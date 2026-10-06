@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as path from 'node:path';
+import { Readable } from 'node:stream';
 import { FilesController, FilesystemController } from './files.controller.js';
 import { FilesService } from './files.service.js';
 
@@ -54,6 +55,53 @@ describe('FilesController', () => {
     filesystemController =
       module.get<FilesystemController>(FilesystemController);
     service = module.get<FilesService>(FilesService);
+  });
+
+  describe('readFileRaw', () => {
+    it.each([
+      [200, undefined, 10],
+      [206, 'bytes 2-5/10', 4],
+      [416, 'bytes */10', 0],
+    ] as const)(
+      'returns media HTTP status %s and streaming headers',
+      async (statusCode, contentRange, length) => {
+        const stream = Readable.from(['test']);
+        service.readFileRaw = jest.fn().mockResolvedValue({
+          stream,
+          mimeType: 'video/mp4',
+          statusCode,
+          contentRange,
+          length,
+        });
+        const res = {
+          status: jest.fn(),
+          setHeader: jest.fn(),
+          once: jest.fn(),
+        };
+        const file = await controller.readFileRaw(
+          encodeURIComponent('/tmp/worktree'),
+          'clips%2Fdemo.mp4',
+          res as never,
+          'bytes=2-5',
+        );
+        expect(service.readFileRaw).toHaveBeenCalledWith(
+          '/tmp/worktree/clips/demo.mp4',
+          '/tmp/worktree',
+          'bytes=2-5',
+        );
+        expect(res.status).toHaveBeenCalledWith(statusCode);
+        expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+        if (contentRange)
+          expect(res.setHeader).toHaveBeenCalledWith(
+            'Content-Range',
+            contentRange,
+          );
+        expect(file.getHeaders()).toMatchObject({ type: 'video/mp4', length });
+        expect(file.getStream()).toBe(stream);
+        res.once.mock.calls[0][1]();
+        expect(stream.destroyed).toBe(true);
+      },
+    );
   });
 
   describe('createDirectory', () => {

@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpException,
   NotFoundException,
   Patch,
@@ -264,8 +265,8 @@ export class FilesController {
 
   /**
    * GET /worktrees/:worktreePath/raw/*path
-   * Returns raw file bytes with a detected Content-Type header.
-   * Used to embed local images (e.g. from chat markdown) that the browser
+   * Streams raw file bytes with Content-Type and byte-range support.
+   * Used to embed local images and videos from chat markdown that the browser
    * can't read from disk directly.
    * worktreePath and filePath are URL-encoded.
    */
@@ -274,25 +275,27 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Param('path') filePath: string,
     @Res({ passthrough: true }) res: Response,
+    @Headers('range') range?: string,
   ): Promise<StreamableFile> {
     const decodedWorktree = decodeURIComponent(worktreePath);
     const decodedFile = decodeURIComponent(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
 
     try {
-      const { buffer, mimeType } = await this.filesService.readFileRaw(
-        absolutePath,
-        decodedWorktree,
-      );
+      const { stream, mimeType, length, statusCode, contentRange } =
+        await this.filesService.readFileRaw(
+          absolutePath,
+          decodedWorktree,
+          range,
+        );
+      res.status(statusCode);
       res.setHeader('Content-Type', mimeType);
+      res.setHeader('Accept-Ranges', 'bytes');
+      if (contentRange) res.setHeader('Content-Range', contentRange);
       res.setHeader('Cache-Control', 'private, max-age=60');
       res.setHeader('X-Content-Type-Options', 'nosniff');
-      // Must be a StreamableFile, not the raw Buffer: Nest's Express adapter
-      // ends with `isObject(body) ? res.json(body) : res.send(body)`, and a
-      // Buffer is an object — so returning it sends `{"type":"Buffer",...}`
-      // under an image content type. Passthrough is kept so the
-      // NotFoundException below still turns into a 404.
-      return new StreamableFile(buffer, { type: mimeType });
+      res.once('close', () => stream.destroy());
+      return new StreamableFile(stream, { type: mimeType, length });
     } catch (error) {
       if (error instanceof Error && error.message.includes('does not exist')) {
         throw new NotFoundException(error.message);

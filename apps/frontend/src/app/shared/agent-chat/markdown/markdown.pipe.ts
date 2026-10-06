@@ -1,10 +1,11 @@
 import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import { getApiBaseUrl } from '@/shared/runtime/runtime-config';
-import { Pipe, PipeTransform, SecurityContext, inject } from '@angular/core';
+import { Pipe, PipeTransform, inject } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/common';
 import { Marked, type Tokens } from 'marked';
+import { sanitizeWithVideos } from './markdown-video';
 
 function codeRenderer(this: unknown, { text, lang }: { text: string; lang?: string }) {
   const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
@@ -87,7 +88,8 @@ function resolveImageSrc(src: string, worktreePath: string, baseDir: readonly st
 
   const encodedWorktree = encodeURIComponent(worktreePath);
   const encodedPath = encodeURIComponent(relativePath);
-  return `${getApiBaseUrl()}/worktrees/${encodedWorktree}/raw/${encodedPath}`;
+  const fragment = src.includes('#') ? src.slice(src.indexOf('#')) : '';
+  return `${getApiBaseUrl()}/worktrees/${encodedWorktree}/raw/${encodedPath}${fragment}`;
 }
 
 /**
@@ -239,7 +241,7 @@ export class MarkdownPipe implements PipeTransform {
   private readonly sanitizer = inject(DomSanitizer);
 
   /**
-   * @param worktreePath Absolute worktree the document lives in; enables local images.
+   * @param worktreePath Absolute worktree the document lives in; enables local media.
    * @param sourcePath Worktree-relative path of the document, so its relative
    *   image links resolve against its own directory.
    */
@@ -259,6 +261,9 @@ export class MarkdownPipe implements PipeTransform {
         clean = annotateLocalFileLinks(clean, worktreePath, sourcePath);
       }
     }
-    return this.sanitizer.sanitize(SecurityContext.HTML, clean) ?? '';
+    return sanitizeWithVideos(clean, this.sanitizer, (src) => {
+      if (!worktreePath) return src;
+      return resolveImageSrc(src, worktreePath, baseDirSegments(sourcePath));
+    });
   }
 }

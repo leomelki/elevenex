@@ -204,4 +204,97 @@ describe('MarkdownPipe', () => {
   it('strips scripts', () => {
     expect(render('<script>alert(1)</script>ok')).not.toContain('<script>');
   });
+
+  function videoHost(markdown: string, sourcePath?: string): HTMLDivElement {
+    const host = document.createElement('div');
+    host.innerHTML = render(markdown, WORKTREE, sourcePath);
+    return host;
+  }
+
+  it('embeds Markdown image and link video references with accessible controls', () => {
+    const host = videoHost('![Demo](clips/demo.mp4)\n\n[Recording](clips/demo.webm)');
+    const videos = Array.from(host.querySelectorAll('video'));
+    expect(videos).toHaveLength(2);
+    expect(videos.map((video) => video.getAttribute('src'))).toEqual([
+      rawUrl('clips/demo.mp4'),
+      rawUrl('clips/demo.webm'),
+    ]);
+    expect(videos.map((video) => video.getAttribute('aria-label'))).toEqual(['Demo', 'Recording']);
+    for (const video of videos) {
+      expect(video.hasAttribute('controls')).toBe(true);
+      expect(video.hasAttribute('playsinline')).toBe(true);
+      expect(video.getAttribute('preload')).toBe('metadata');
+      expect(video.hasAttribute('autoplay')).toBe(false);
+    }
+  });
+
+  it('resolves HTML video sources and posters relative to the document', () => {
+    const host = videoHost(
+      '<video poster="./poster.png" width="480" autoplay onplay="alert(1)">' +
+        '<source src="../clips/demo.mp4#t=2,5" type="video/mp4">' +
+        '<source src="https://cdn.test/demo.webm" type="video/webm"></video>',
+      'docs/guide.md',
+    );
+    const video = host.querySelector('video')!;
+    expect(video.getAttribute('poster')).toBe(rawUrl('docs/poster.png'));
+    expect(video.getAttribute('width')).toBe('480');
+    expect(video.hasAttribute('autoplay')).toBe(false);
+    expect(video.hasAttribute('onplay')).toBe(false);
+    expect(
+      Array.from(video.querySelectorAll('source')).map((source) => source.getAttribute('src')),
+    ).toEqual([`${rawUrl('clips/demo.mp4')}#t=2,5`, 'https://cdn.test/demo.webm']);
+    expect(video.querySelector('source')?.getAttribute('type')).toBe('video/mp4');
+  });
+
+  it('supports absolute local HTML videos and encoded Markdown filenames', () => {
+    expect(
+      videoHost(`<video src="${WORKTREE}/clips/demo.mp4"></video>`)
+        .querySelector('video')
+        ?.getAttribute('src'),
+    ).toBe(rawUrl('clips/demo.mp4'));
+    expect(
+      videoHost('![Demo](<clips/my demo.MP4>)').querySelector('video')?.getAttribute('src'),
+    ).toBe(rawUrl('clips/my demo.MP4'));
+    expect(
+      videoHost('![Demo](clips/demo.mp4#t=2)').querySelector('video')?.getAttribute('src'),
+    ).toBe(`${rawUrl('clips/demo.mp4')}#t=2`);
+  });
+
+  it('preserves remote URLs and does not require a worktree for video embeds', () => {
+    const host = document.createElement('div');
+    host.innerHTML = render('![Demo](https://cdn.test/demo.mp4?token=123#t=2)');
+    expect(host.querySelector('video')?.getAttribute('src')).toBe(
+      'https://cdn.test/demo.mp4?token=123#t=2',
+    );
+    host.innerHTML = render('<video src="demo.webm"></video>');
+    expect(host.querySelector('video')?.getAttribute('src')).toBe('demo.webm');
+  });
+
+  it('keeps ordinary links, images and code examples unchanged', () => {
+    const host = videoHost(
+      '[Doc](guide.md)\n\n![Image](shot.png?name=demo.mp4)\n\n' +
+        '`![Demo](demo.mp4)`\n\n```html\n<video src="demo.mp4"></video>\n```',
+    );
+    expect(host.querySelectorAll('video')).toHaveLength(0);
+    expect(host.querySelector('a')?.textContent).toBe('Doc');
+    expect(host.querySelector('img')?.getAttribute('src')).toBe(rawUrl('shot.png'));
+    expect(host.querySelector('pre')?.textContent).toContain('<video');
+  });
+
+  it('does not bypass sanitization of player attributes, fallback HTML or surrounding content', () => {
+    const host = videoHost(
+      '<video src="javascript:alert(1)" poster="javascript:alert(2)" ' +
+        'style="position:fixed" onerror="alert(3)">' +
+        '<source src="data:text/html,evil"><img src="x" onerror="alert(4)"></video>' +
+        '<script>alert(5)</script><iframe src="https://evil.test"></iframe>' +
+        '<a href="javascript:alert(6)">bad link</a><img src="x" onerror="alert(7)">',
+    );
+    const video = host.querySelector('video')!;
+    expect(video.hasAttribute('src')).toBe(false);
+    expect(video.hasAttribute('poster')).toBe(false);
+    expect(video.hasAttribute('style')).toBe(false);
+    expect(video.querySelectorAll('source, img')).toHaveLength(0);
+    expect(host.querySelectorAll('script, iframe, [onerror]')).toHaveLength(0);
+    expect(host.innerHTML).not.toContain('javascript:');
+  });
 });

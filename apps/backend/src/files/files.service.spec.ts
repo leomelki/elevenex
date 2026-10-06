@@ -29,6 +29,69 @@ describe('FilesService', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  describe('readFileRaw', () => {
+    async function read(range?: string) {
+      const file = path.join(tmpDir, 'demo.mp4');
+      await fs.promises.writeFile(file, '0123456789');
+      const result = await service.readFileRaw(file, tmpDir, range);
+      const chunks: Buffer[] = [];
+      for await (const chunk of result.stream) chunks.push(Buffer.from(chunk));
+      return { ...result, body: Buffer.concat(chunks).toString() };
+    }
+
+    it('streams the complete file without buffering it in the service', async () => {
+      expect(await read()).toMatchObject({
+        body: '0123456789',
+        length: 10,
+        mimeType: 'video/mp4',
+        statusCode: 200,
+      });
+    });
+
+    it.each([
+      ['bytes=2-5', '2345', 'bytes 2-5/10'],
+      ['bytes=7-', '789', 'bytes 7-9/10'],
+      ['bytes=-3', '789', 'bytes 7-9/10'],
+      ['bytes=8-100', '89', 'bytes 8-9/10'],
+      ['bytes=-100', '0123456789', 'bytes 0-9/10'],
+    ])(
+      'streams the requested range %s for video seeking',
+      async (range, body, contentRange) => {
+        expect(await read(range)).toMatchObject({
+          body,
+          length: body.length,
+          contentRange,
+          statusCode: 206,
+        });
+      },
+    );
+
+    it.each([
+      'bytes=10-',
+      'bytes=5-2',
+      'bytes=-0',
+      'bytes=-',
+      'bad',
+      'bytes=0-1,4-5',
+    ])('rejects invalid or unsatisfiable ranges: %s', async (range) => {
+      expect(await read(range)).toMatchObject({
+        body: '',
+        length: 0,
+        statusCode: 416,
+        contentRange: 'bytes */10',
+      });
+    });
+
+    it('rejects files outside the worktree and missing files before streaming', async () => {
+      await expect(
+        service.readFileRaw(path.join(tmpDir, '../outside.mp4'), tmpDir),
+      ).rejects.toThrow('Access denied');
+      await expect(
+        service.readFileRaw(path.join(tmpDir, 'missing.mp4'), tmpDir),
+      ).rejects.toThrow('File does not exist');
+    });
+  });
+
   describe('detectLanguage', () => {
     it('should detect TypeScript from .ts extension', () => {
       expect(detectLanguage('file.ts')).toBe('typescript');

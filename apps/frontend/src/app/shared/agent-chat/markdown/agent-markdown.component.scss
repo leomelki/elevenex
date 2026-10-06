@@ -3,6 +3,21 @@ agent-markdown {
 }
 
 .agent-markdown__content {
+  video.cw-video {
+    display: block;
+    max-width: 100%;
+    max-height: 32rem;
+    margin: 0.5rem 0;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--muted);
+
+    &:focus-visible {
+      outline: 2px solid var(--ring);
+      outline-offset: 2px;
+    }
+  }
+
   > :first-child {
     margin-top: 0;
   }

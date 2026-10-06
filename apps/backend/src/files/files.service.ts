@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { promises as fs, Dirent } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { Readable } from 'node:stream';
 
 export interface FileTreeNode {
   key: string; // Relative path from worktree root
@@ -177,6 +178,8 @@ const MIME_TYPE_MAP: Record<string, string> = {
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
   '.ogv': 'video/ogg',
+  '.mov': 'video/quicktime',
+  '.m4v': 'video/mp4',
   '.mp3': 'audio/mpeg',
   '.ogg': 'audio/ogg',
   '.wav': 'audio/wav',
@@ -1201,29 +1204,86 @@ export class FilesService {
   }
 
   /**
-   * Read raw file bytes with a detected MIME type.
-   * Used to serve binary content (e.g. images referenced from chat markdown).
+   * Stream raw file bytes with a detected MIME type and optional byte range.
+   * Used to serve images and videos referenced from chat markdown.
    */
   async readFileRaw(
     filePath: string,
     worktreePath: string,
-  ): Promise<{ buffer: Buffer; mimeType: string }> {
+    range?: string,
+  ): Promise<{
+    stream: Readable;
+    mimeType: string;
+    length: number;
+    statusCode: 200 | 206 | 416;
+    contentRange?: string;
+  }> {
     // Validate path is within worktree
     if (!isWithinWorktree(worktreePath, filePath)) {
       throw new BadRequestException('Access denied: path outside worktree');
     }
 
-    // Check file exists
+    // Open once and stream from the same handle, avoiding a full video-sized
+    // buffer and allowing browsers to seek using byte-range requests.
+    const handle = await fs
+      .open(filePath, 'r')
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') {
+          throw new BadRequestException(`File does not exist: ${filePath}`);
+        }
+        throw error;
+      });
     try {
-      await fs.access(filePath);
-    } catch {
-      throw new BadRequestException(`File does not exist: ${filePath}`);
+      const stat = await handle.stat();
+      if (!stat.isFile()) throw new BadRequestException('Path is not a file');
+      const mimeType = detectMimeType(filePath);
+      if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+        const suffix = match && !match[1] ? Number(match[2]) : null;
+        const start =
+          suffix !== null
+            ? Math.max(0, stat.size - suffix)
+            : Number(match?.[1]);
+        const end =
+          match?.[1] && match[2]
+            ? Math.min(Number(match[2]), stat.size - 1)
+            : stat.size - 1;
+        if (
+          !match ||
+          (!match[1] && !match[2]) ||
+          suffix === 0 ||
+          !Number.isSafeInteger(start) ||
+          !Number.isSafeInteger(end) ||
+          start >= stat.size ||
+          end < start
+        ) {
+          await handle.close();
+          return {
+            stream: Readable.from([]),
+            mimeType,
+            length: 0,
+            statusCode: 416,
+            contentRange: `bytes */${stat.size}`,
+          };
+        }
+        return {
+          stream: handle.createReadStream({ start, end }),
+          mimeType,
+          length: end - start + 1,
+          statusCode: 206,
+          contentRange: `bytes ${start}-${end}/${stat.size}`,
+        };
+      }
+      return {
+        stream: handle.createReadStream(),
+        mimeType,
+        length: stat.size,
+        statusCode: 200,
+      };
+    } catch (error) {
+      await handle.close();
+      throw error;
     }
-
-    const buffer = await fs.readFile(filePath);
-    const mimeType = detectMimeType(filePath);
-
-    return { buffer, mimeType };
   }
 
   /**
