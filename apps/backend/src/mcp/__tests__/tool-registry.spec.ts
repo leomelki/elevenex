@@ -6,6 +6,7 @@ import { AgentHumanChannelService } from '../human-channel/human-channel.js';
 import { McpAgentTokenService } from '../identity/mcp-agent-token.service.js';
 import { McpConnectionRegistryService } from '../connection/mcp-connection-registry.service.js';
 import type { McpToolServices } from '../tool-registry/mcp-tool-services.js';
+import type { ToolDefinition } from '../tool-registry/tool.types.js';
 
 /**
  * Captures (name, config, handler) per registered tool so a test can invoke a
@@ -98,6 +99,7 @@ function buildRegistry(services: McpToolServices) {
     new AgentHumanChannelService(),
     tokens,
     new McpConnectionRegistryService(),
+    { invalidate: jest.fn() } as never,
   );
 }
 
@@ -159,7 +161,9 @@ describe('ToolRegistry + observe smoke tools', () => {
 
     const result = await server.tools.get('find_sessions')!({}, extraFor());
     expect(result.isError).toBe(true);
-    expect((parse(result).error as { code: string }).code).toBe('scope_required');
+    expect((parse(result).error as { code: string }).code).toBe(
+      'scope_required',
+    );
   });
 
   it('find_sessions filters and paginates compact handles', async () => {
@@ -193,4 +197,106 @@ describe('ToolRegistry + observe smoke tools', () => {
     );
     expect(result.isError).toBeUndefined();
   });
+});
+
+describe('mission autonomy at the MCP boundary', () => {
+  function setup(provider: string, mode: string, destructive: boolean) {
+    const handler = jest.fn().mockResolvedValue({ data: { ok: true } });
+    const requestApproval = jest
+      .fn()
+      .mockResolvedValue({ decision: 'approve' });
+    const registry = new ToolRegistryService(
+      {
+        sessions: {
+          findOne: jest
+            .fn()
+            .mockResolvedValue({
+              id: 42,
+              surface: 'agent',
+              activeAgentProvider: provider,
+              agentAutonomyMode: mode,
+            }),
+        },
+      } as never,
+      new DeltaCursorStore(),
+      new DeepLinkBuilder(),
+      { bindFor: () => ({ requestApproval }) } as never,
+      { resolveSessionId: () => Promise.resolve(42) } as never,
+      new McpConnectionRegistryService(),
+      { invalidate: jest.fn() } as never,
+    );
+    const server = new FakeServer();
+    const tool: ToolDefinition = {
+      name: destructive ? 'remove_repo' : 'create_session',
+      description: 'Test action',
+      costClass: 'instant',
+      inputShape: {},
+      mutates: true,
+      handler,
+    };
+    (
+      registry as unknown as {
+        registerOne(server: unknown, tool: ToolDefinition): void;
+      }
+    ).registerOne(server, tool);
+    return {
+      invoke: () =>
+        server.tools.get(tool.name)!({ repoId: 7 }, extraFor('agent-token')),
+      handler,
+      requestApproval,
+    };
+  }
+
+  it.each(['pi', 'codex'])(
+    'blocks destructive %s calls when approval is denied',
+    async (provider) => {
+      const bag = setup(provider, 'review', true);
+      bag.requestApproval.mockResolvedValue({ decision: 'deny' });
+      const result = await bag.invoke();
+      expect(result.isError).toBe(true);
+      expect(bag.handler).not.toHaveBeenCalled();
+      expect(bag.requestApproval).toHaveBeenCalledWith(
+        expect.objectContaining({ deepLink: '/sessions/42' }),
+      );
+    },
+  );
+
+  it.each(['pi', 'codex'])(
+    'executes destructive %s calls after human approval',
+    async (provider) => {
+      const bag = setup(provider, 'review', true);
+      expect((await bag.invoke()).isError).toBeUndefined();
+      expect(bag.handler).toHaveBeenCalledTimes(1);
+      expect(bag.requestApproval).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['pi', 'codex'])(
+    'gates all %s mutations in Plan mode',
+    async (provider) => {
+      const bag = setup(provider, 'plan', false);
+      await bag.invoke();
+      expect(bag.requestApproval).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    ['pi', 'review', false],
+    ['codex', 'review', false],
+    ['pi', 'full', true],
+    ['codex', 'full', true],
+    ['claude', 'review', true],
+  ])(
+    'allows %s %s calls according to their mandate',
+    async (provider, mode, destructive) => {
+      const bag = setup(
+        provider as string,
+        mode as string,
+        destructive as boolean,
+      );
+      await bag.invoke();
+      expect(bag.handler).toHaveBeenCalledTimes(1);
+      expect(bag.requestApproval).not.toHaveBeenCalled();
+    },
+  );
 });

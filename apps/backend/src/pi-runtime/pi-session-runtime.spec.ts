@@ -132,6 +132,59 @@ describe('PiSessionRuntime', () => {
     );
   });
 
+  it('loads the mission extension and waits for authenticated MCP readiness', async () => {
+    const runtime = new PiSessionRuntime({
+      cwd: '/agent',
+      extensionPath: '/backend/pi-agent-extension.js',
+      env: { ELEVENEX_AGENT_TOKEN: 'mission-token' },
+    });
+    let ready = false;
+    const start = runtime.start().then(() => {
+      ready = true;
+    });
+    await flushAsyncStart();
+    expect(ready).toBe(false);
+    let secondReady = false;
+    const secondStart = runtime.start().then(() => { secondReady = true; });
+    await flushAsyncStart();
+    expect(secondReady).toBe(false);
+    expect(mockSpawn).toHaveBeenCalledWith(
+      'pi',
+      ['--mode', 'rpc', '--extension', '/backend/pi-agent-extension.js'],
+      expect.anything(),
+    );
+    expect(mockBuildAugmentedEnv).toHaveBeenCalledWith(
+      expect.objectContaining({ ELEVENEX_AGENT_TOKEN: 'mission-token' }),
+      '/agent',
+    );
+    child.stdout.emit(
+      'data',
+      Buffer.from(
+        '{"type":"extension_ui_request","statusKey":"elevenex_agent_ready","statusText":"ready"}\n',
+      ),
+    );
+    await start;
+    await secondStart;
+    expect(ready).toBe(true);
+    expect(secondReady).toBe(true);
+  });
+
+  it('fails a mission startup when the Elevenex tools cannot connect', async () => {
+    const runtime = new PiSessionRuntime({
+      cwd: '/agent',
+      extensionPath: '/extension.js',
+    });
+    const start = runtime.start();
+    await flushAsyncStart();
+    child.stdout.emit(
+      'data',
+      Buffer.from(
+        '{"type":"extension_ui_request","statusKey":"elevenex_agent_ready","statusText":"MCP unavailable"}\n',
+      ),
+    );
+    await expect(start).rejects.toThrow('MCP unavailable');
+  });
+
   it('coalesces concurrent async starts into one Pi process', async () => {
     const env = createDeferred<NodeJS.ProcessEnv>();
     mockBuildAugmentedEnv.mockReturnValueOnce(env.promise);
@@ -202,9 +255,9 @@ describe('PiSessionRuntime', () => {
     const runtime = new PiSessionRuntime({ cwd: '/repo/worktree' });
     child.stdin.writeError = new Error('write EPIPE');
 
-    await expect(runtime.send({ type: 'prompt', prompt: 'hello' })).rejects.toThrow(
-      'write EPIPE',
-    );
+    await expect(
+      runtime.send({ type: 'prompt', prompt: 'hello' }),
+    ).rejects.toThrow('write EPIPE');
   });
 
   it('rejects pending RPC commands when the Pi process exits unexpectedly', async () => {

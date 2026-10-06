@@ -1322,6 +1322,39 @@ describe('CodexRuntimeService', () => {
     await iterator.next();
   });
 
+  it('gives Codex missions the full Elevenex toolset and current autonomy instructions', async () => {
+    const { service, appServer, sessionsService } = createService();
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      surface: 'agent',
+      activeAgentProvider: 'codex',
+      agentAutonomyMode: 'review',
+    } as never);
+    const wire = wireAppServerTurn(appServer);
+    const iterator = await startAppServerTurn(service, 'default');
+    const threadParams = (
+      appServer.request.mock.calls.find(
+        ([method]) => method === 'thread/start',
+      ) as any
+    )[1];
+    expect(threadParams.developerInstructions).toContain('Review destructive');
+    expect(threadParams.config.mcp_servers.elevenex).toMatchObject({
+      http_headers: { Authorization: 'Bearer evx_codex_test' },
+      tool_timeout_sec: 660,
+    });
+    expect(
+      threadParams.config.mcp_servers.elevenex.enabled_tools,
+    ).toBeUndefined();
+    expect(
+      threadParams.config.mcp_servers.elevenex_local_computer,
+    ).toBeUndefined();
+    expect(
+      (wire.turnStartParams as any).collaborationMode.settings
+        .developer_instructions,
+    ).toContain('Review destructive');
+    await iterator.return(undefined);
+  });
+
   it('maps Codex auto mode to workspace-write with automatic approval review', async () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);

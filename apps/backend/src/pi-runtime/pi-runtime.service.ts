@@ -12,6 +12,9 @@ import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { basename, dirname, extname, join } from 'path';
+import { getElevenexProxyPort } from '../config/ports.js';
+import { buildMetaAgentPrompt } from '../elevenex-agent/meta-agent-prompt.js';
+import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type {
   AgentForkConversationRequest,
@@ -72,6 +75,7 @@ interface PiRuntimeEntry {
   attachedClients: number;
   idleTimer: NodeJS.Timeout | null;
   lastIdleAt: number;
+  agentConfigDir?: string;
 }
 
 @Injectable()
@@ -84,6 +88,7 @@ export class PiRuntimeService
   private readonly initializingRuns = new Set<number>();
   private readonly runtimeStates = new Map<number, PiRuntimeState>();
   private readonly runtimes = new Map<number, PiRuntimeEntry>();
+  private readonly runtimeStarts = new Map<number, Promise<PiSessionRuntime>>();
   private readonly clientCounts = new Map<number, number>();
   private readonly idleShutdownMs =
     Number(process.env.PI_RUNTIME_IDLE_MS) || DEFAULT_IDLE_SHUTDOWN_MS;
@@ -107,6 +112,7 @@ export class PiRuntimeService
     private readonly hooksService: ClaudeHooksService,
     private readonly titleService: SessionTitleService,
     private readonly settingsService: SettingsService,
+    private readonly mcpAgentTokens: McpAgentTokenService,
   ) {
     super();
     this.authService.on('status', (status: PiAuthStatus) => {
@@ -436,6 +442,22 @@ export class PiRuntimeService
     state.reasoningEffort = effort;
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  async setAgentAutonomy(
+    sessionId: number,
+    mode: string,
+  ): Promise<PiRuntimeStatePayload> {
+    await this.runtimeStarts.get(sessionId);
+    const configDir = this.runtimes.get(sessionId)?.agentConfigDir;
+    if (configDir) {
+      await fs.writeFile(
+        join(configDir, 'prompt.txt'),
+        buildMetaAgentPrompt(mode),
+        'utf8',
+      );
+    }
+    return this.getRuntimeState(sessionId);
   }
 
   async setFastMode(
@@ -775,6 +797,18 @@ export class PiRuntimeService
   }
 
   private async ensureRuntime(sessionId: number): Promise<PiSessionRuntime> {
+    const pending = this.runtimeStarts.get(sessionId);
+    if (pending) return pending;
+    const start = this.createRuntime(sessionId).finally(() => {
+      if (this.runtimeStarts.get(sessionId) === start) {
+        this.runtimeStarts.delete(sessionId);
+      }
+    });
+    this.runtimeStarts.set(sessionId, start);
+    return start;
+  }
+
+  private async createRuntime(sessionId: number): Promise<PiSessionRuntime> {
     const existing = this.runtimes.get(sessionId);
     if (existing) {
       this.clearIdleTimer(existing);
@@ -784,9 +818,34 @@ export class PiRuntimeService
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
     state.cachedWorktreePath = session.worktreePath;
+    let agentConfigDir: string | undefined;
+    let agentEnv: NodeJS.ProcessEnv | undefined;
+    if (session.surface === 'agent') {
+      const token = await this.mcpAgentTokens.ensureToken(sessionId);
+      agentConfigDir = await fs.mkdtemp(join(tmpdir(), 'elevenex-pi-agent-'));
+      await fs.writeFile(
+        join(agentConfigDir, 'prompt.txt'),
+        buildMetaAgentPrompt(session.agentAutonomyMode),
+        'utf8',
+      );
+      agentEnv = {
+        ELEVENEX_AGENT_TOKEN: token,
+        ELEVENEX_AGENT_PROMPT: join(agentConfigDir, 'prompt.txt'),
+        ELEVENEX_MCP_URL:
+          process.env.ELEVENEX_MCP_URL?.trim() ||
+          `http://127.0.0.1:${getElevenexProxyPort()}/api/mcp`,
+      };
+    }
     const runtime = new PiSessionRuntime({
       cwd: session.worktreePath,
       sessionPath: state.piSessionPath,
+      ...(agentEnv
+        ? {
+            // Development uses Nest's compiled sibling; Electron ships a standalone bundle.
+            extensionPath: await this.agentExtensionPath(),
+            env: agentEnv,
+          }
+        : {}),
     });
     const entry: PiRuntimeEntry = {
       runtime,
@@ -795,6 +854,7 @@ export class PiRuntimeService
       attachedClients: this.clientCounts.get(sessionId) ?? 0,
       idleTimer: null,
       lastIdleAt: Date.now(),
+      agentConfigDir,
     };
     this.runtimes.set(sessionId, entry);
 
@@ -808,9 +868,14 @@ export class PiRuntimeService
       this.handleRuntimeExit(sessionId, details);
     });
 
-    await runtime.start();
-    await this.applyConfiguredDefaultModel(sessionId, runtime);
-    await this.refreshStateFromRpc(sessionId);
+    try {
+      await runtime.start();
+      await this.applyConfiguredDefaultModel(sessionId, runtime);
+      await this.refreshStateFromRpc(sessionId);
+    } catch (error) {
+      await this.stopRuntime(sessionId);
+      throw error;
+    }
     this.enforceIdleRuntimeCap();
     return runtime;
   }
@@ -849,6 +914,16 @@ export class PiRuntimeService
       this.logger.warn(
         `Could not apply the default Pi model session=${sessionId} model=${JSON.stringify(configured)}: ${String(error)}`,
       );
+    }
+  }
+
+  private async agentExtensionPath(): Promise<string> {
+    const bundled = join(__dirname, 'pi-agent-extension.mjs');
+    try {
+      await fs.access(bundled);
+      return bundled;
+    } catch {
+      return join(__dirname, 'pi-agent-extension.js');
     }
   }
 
@@ -1290,6 +1365,12 @@ export class PiRuntimeService
     sessionId: number,
     details: { message?: string; stderr?: string },
   ): void {
+    const configDir = this.runtimes.get(sessionId)?.agentConfigDir;
+    if (configDir) {
+      void fs
+        .rm(configDir, { recursive: true, force: true })
+        .catch(() => undefined);
+    }
     this.runtimes.delete(sessionId);
     const state = this.ensureRuntimeState(sessionId);
     if (this.activeRuns.has(sessionId)) {
@@ -1315,7 +1396,13 @@ export class PiRuntimeService
       run.interruptRequested = true;
       run.resolveCompletion();
     }
-    await entry.runtime.stop();
+    try {
+      await entry.runtime.stop();
+    } finally {
+      if (entry.agentConfigDir) {
+        await fs.rm(entry.agentConfigDir, { recursive: true, force: true });
+      }
+    }
   }
 
   private scheduleIdleShutdown(sessionId: number): void {

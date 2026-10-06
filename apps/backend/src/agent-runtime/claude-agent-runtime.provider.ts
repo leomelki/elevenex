@@ -92,6 +92,13 @@ export class ClaudeAgentRuntimeProvider
     return this.mcpService.startAuth(sessionId, serverName);
   }
 
+  setAgentAutonomy(
+    sessionId: number,
+    mode: import('../sessions/sessions.service.js').AgentAutonomyMode,
+  ) {
+    return this.runtimeService.setAgentAutonomy(sessionId, mode);
+  }
+
   setSelectedModel(sessionId: number, model: string | null) {
     return this.runtimeService.setSelectedModel(sessionId, model);
   }

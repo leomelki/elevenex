@@ -202,6 +202,10 @@ export interface AgentLoginStartResult {
 }
 
 export interface AgentRuntimeProviderFeatures {
+  setAgentAutonomy(
+    sessionId: number,
+    mode: import('../sessions/sessions.service.js').AgentAutonomyMode,
+  ): Promise<AgentRuntimeStatePayload>;
   /**
    * Selectable models and thinking levels, independent of any session. Should
    * resolve from cache and refresh in the background rather than blocking on a

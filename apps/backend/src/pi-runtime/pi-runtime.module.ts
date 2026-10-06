@@ -3,6 +3,7 @@ import { ClaudeHooksModule } from '../claude-hooks/claude-hooks.module.js';
 import { SessionsModule } from '../sessions/sessions.module.js';
 import { SessionTitleModule } from '../session-title/session-title.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
+import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { PiAgentRuntimeProvider } from './pi-agent-runtime.provider.js';
 import { PiAuthService } from './pi-auth.service.js';
 import { PiRuntimeService } from './pi-runtime.service.js';
@@ -14,7 +15,12 @@ import { PiRuntimeService } from './pi-runtime.service.js';
     SessionTitleModule,
     SettingsModule,
   ],
-  providers: [PiAgentRuntimeProvider, PiAuthService, PiRuntimeService],
+  providers: [
+    PiAgentRuntimeProvider,
+    PiAuthService,
+    PiRuntimeService,
+    McpAgentTokenService,
+  ],
   exports: [PiAgentRuntimeProvider, PiAuthService, PiRuntimeService],
 })
 export class PiRuntimeModule {}

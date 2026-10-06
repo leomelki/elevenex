@@ -68,6 +68,7 @@ export interface AgentMissionStep {
  */
 export interface MissionSummary {
   sessionId: number;
+  activeAgentProvider?: import('@/shared/models/agent-runtime.model').AgentProviderId;
   title: string;
   /** Persisted session status: created | active | stopped | archived. */
   status: string;
@@ -84,12 +85,7 @@ export interface MissionSummary {
 }
 
 /** A coarse, panel-facing status used to drive the mission row's pill. */
-export type MissionStatusView =
-  | 'running'
-  | 'waiting_approval'
-  | 'complete'
-  | 'error'
-  | 'idle';
+export type MissionStatusView = 'running' | 'waiting_approval' | 'complete' | 'error' | 'idle';
 
 /**
  * Collapse a mission's persisted status + live run phase into a single coarse

@@ -42,9 +42,9 @@ idiomatic next call (\`nextStep\`) — follow those. Do NOT shell out to git/gh,
 change elevenex state by hand; use the tools. (The inner sessions you spawn DO use git and edit files
 inside their own worktrees — you steer them with prompts, you don't do their work.)
 
-You also have a few generic built-in tools (Read, Grep, Glob, Bash, Task/subagents, TodoWrite, web
-search). Use them ONLY for elevenex object-model look-ups (\`project_overview\`, \`session_status\`) and
-tracking your own plan — never to read, run, or analyse the user's codebases. **Any work that touches
+Use the available plan-tracking tool (TodoWrite or update_plan) to track your own mission. Any generic
+built-in tools available in this session are for orchestration only — never to read, run, or analyse
+the user's codebases. Use elevenex tools for object-model look-ups. **Any work that touches
 application code must happen inside an elevenex session — even if the repo has no project or session
 yet.** If you catch yourself about to read application code without a session, stop and set one up.
 
@@ -249,7 +249,7 @@ across the whole mission. If not present, proceed with your defaults.
 1. ORIENT — call \`project_overview\` first to see current state, and get ids from it rather than
    guessing. If you will be working on a specific project, call \`project_overview\` with its
    \`projectId\` and read \`agentInstructions\` before proceeding.
-2. PLAN — form a short, ordered plan and record it with the TodoWrite tool so the human can follow
+2. PLAN — form a short, ordered plan and record it with TodoWrite or update_plan so the human can follow
    along. Keep it updated as steps complete. {{AUTONOMY_PLAN_CLAUSE}}
 3. SET UP — \`find_or_create_project\` → \`add_repo\` → \`assess_worktree_pool\` → \`create_worktree\`
    (poll \`get_worktree_job\`) or \`link_worktree\` → \`create_session\`. \`create_worktree\` makes the
@@ -343,24 +343,25 @@ interface AutonomySubstitution {
   planClause: string;
 }
 
-const AUTONOMY_SUBSTITUTIONS: Record<AgentAutonomyMode, AutonomySubstitution> = {
-  full: {
-    modeName: 'Full autonomy',
-    body: 'Act end-to-end, including risky and irreversible actions, stopping only when you are genuinely blocked or the request is ambiguous. Still notify_user at each milestone so the human can follow along.',
-    planClause: '',
-  },
-  review: {
-    modeName: 'Review destructive',
-    body: 'Set up the environment and run inner sessions freely. But you MUST request_approval BEFORE any risky or irreversible action: stealing a worktree owned by someone else, resetting/archiving a session, deleting a repo, force operations, pushing, and opening or approving PRs. If a tool call is blocked pending approval, that is the system asking you to request it — do so with a clear summary and a deep link.',
-    planClause: '',
-  },
-  plan: {
-    modeName: 'Plan first',
-    body: 'Operate as Review destructive AFTER approval.',
-    planClause:
-      'You are in PLAN mode: present your full ordered plan to the human and STOP. Do not call any mutating tool until the human approves the plan.',
-  },
-};
+const AUTONOMY_SUBSTITUTIONS: Record<AgentAutonomyMode, AutonomySubstitution> =
+  {
+    full: {
+      modeName: 'Full autonomy',
+      body: 'Act end-to-end, including risky and irreversible actions, stopping only when you are genuinely blocked or the request is ambiguous. Still notify_user at each milestone so the human can follow along.',
+      planClause: '',
+    },
+    review: {
+      modeName: 'Review destructive',
+      body: 'Set up the environment and run inner sessions freely. But you MUST request_approval BEFORE any risky or irreversible action: stealing a worktree owned by someone else, resetting/archiving a session, deleting a repo, force operations, pushing, and opening or approving PRs. If a tool call is blocked pending approval, that is the system asking you to request it — do so with a clear summary and a deep link.',
+      planClause: '',
+    },
+    plan: {
+      modeName: 'Plan first',
+      body: 'Operate as Review destructive AFTER approval.',
+      planClause:
+        'You are in PLAN mode: present your full ordered plan to the human and STOP. Do not call any mutating tool until the human approves the plan.',
+    },
+  };
 
 /**
  * Map an autonomy mode to the runtime permission policy it enforces:
@@ -406,9 +407,7 @@ export function normalizeAutonomyMode(
  * Build the meta-agent system-prompt append for a given autonomy mode, with the
  * `{{AUTONOMY*}}` markers substituted.
  */
-export function buildMetaAgentPrompt(
-  mode: string | null | undefined,
-): string {
+export function buildMetaAgentPrompt(mode: string | null | undefined): string {
   const sub = AUTONOMY_SUBSTITUTIONS[normalizeAutonomyMode(mode)];
   return ELEVENEX_META_AGENT_SYSTEM_PROMPT.replace(
     '{{AUTONOMY_PLAN_CLAUSE}}',

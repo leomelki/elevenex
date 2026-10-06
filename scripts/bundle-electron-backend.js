@@ -124,6 +124,17 @@ async function main() {
     logLevel: 'info',
   });
 
+  // Pi loads the mission extension in its own CLI process, outside main.cjs.
+  await esbuild.build({
+    entryPoints: [path.join(backendRoot, 'src', 'pi-runtime', 'pi-agent-extension.ts')],
+    outfile: path.join(backendBundleRoot, 'pi-agent-extension.mjs'),
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    logLevel: 'info',
+  });
+
   console.log(`Electron backend bundle written to ${backendBundleEntry}`);
 }
 

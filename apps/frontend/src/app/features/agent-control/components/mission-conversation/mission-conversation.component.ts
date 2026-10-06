@@ -193,7 +193,9 @@ export class MissionConversationComponent {
   private readonly destroyRef = inject(DestroyRef);
   private readonly tabService = inject(TabService);
 
-  private readonly provider: AgentProviderId = 'claude';
+  private readonly provider = computed<AgentProviderId>(
+    () => this.mission().activeAgentProvider ?? 'claude',
+  );
 
   private readonly conversation = new AgentConversation();
   readonly draft = signal('');
@@ -253,6 +255,7 @@ export class MissionConversationComponent {
   });
 
   private connectedSessionId: number | null = null;
+  private connectedProvider: AgentProviderId | null = null;
   private stickToBottom = true;
   private runStartedAt = 0;
   private elapsedTimer: ReturnType<typeof setInterval> | null = null;
@@ -460,11 +463,13 @@ export class MissionConversationComponent {
   // --- runtime plumbing -----------------------------------------------------
 
   private connect(sessionId: number): void {
-    if (this.connectedSessionId === sessionId) return;
+    const provider = this.provider();
+    if (this.connectedSessionId === sessionId && this.connectedProvider === provider) return;
     this.disconnect();
     this.resetState();
     this.connectedSessionId = sessionId;
-    this.runtime.attach({ sessionId, provider: this.provider }, this.conversation, (event) =>
+    this.connectedProvider = provider;
+    this.runtime.attach({ sessionId, provider }, this.conversation, (event) =>
       this.handleEvent(event),
     );
   }
@@ -472,10 +477,11 @@ export class MissionConversationComponent {
   private disconnect(): void {
     this.runtime.detach();
     this.connectedSessionId = null;
+    this.connectedProvider = null;
   }
 
   private send(message: Record<string, unknown>): void {
-    this.ws.send(this.mission().sessionId, message, this.provider);
+    this.ws.send(this.mission().sessionId, message, this.provider());
   }
 
   private handleEvent(event: ClaudeRuntimeEvent): void {

@@ -7,6 +7,7 @@ import {
   type AgentAutonomyMode,
 } from '../sessions/sessions.service.js';
 import { ElevenexAgentService } from './elevenex-agent.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 import { normalizeAutonomyMode } from './meta-agent-prompt.js';
 
 /** Sentinel name used for pre-warmed standby sessions so they are filtered
@@ -40,11 +41,13 @@ export class AgentStandbyService implements OnModuleInit {
     private readonly sessionsService: SessionsService,
     private readonly tokenService: McpAgentTokenService,
     private readonly claudeRuntime: ClaudeRuntimeService,
+    private readonly settings: SettingsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
-    void this.cleanOrphanedStandbys();
-    this.scheduleStandby(DEFAULT_AGENT_AUTONOMY_MODE);
+    await this.cleanOrphanedStandbys();
+    const { defaultAgentProvider } = await this.settings.findOne();
+    this.scheduleStandby(DEFAULT_AGENT_AUTONOMY_MODE, defaultAgentProvider);
   }
 
   /**
@@ -53,14 +56,17 @@ export class AgentStandbyService implements OnModuleInit {
    * when no warm standby is available, in which case the caller falls back to
    * a cold start.
    */
-  claimStandby(mode: AgentAutonomyMode): number | null {
+  claimStandby(mode: AgentAutonomyMode, provider = 'claude'): number | null {
+    if (provider !== 'claude') return null;
     const id = this.standbySessionId;
     if (id == null || this.standbyMode !== mode) {
       return null;
     }
     // The idle-shutdown timer may have closed the process while it sat unused.
     if (!this.claudeRuntime.isSessionWarm(id)) {
-      this.logger.debug(`Standby session=${id} expired before claim, discarding`);
+      this.logger.debug(
+        `Standby session=${id} expired before claim, discarding`,
+      );
       this.standbySessionId = null;
       this.standbyMode = null;
       return null;
@@ -75,7 +81,18 @@ export class AgentStandbyService implements OnModuleInit {
    * Fire-and-forget: begin warming a replacement standby for the given mode.
    * De-duplicated — a second call while one is in flight is a no-op.
    */
-  scheduleStandby(mode: AgentAutonomyMode): void {
+  scheduleStandby(mode: AgentAutonomyMode, provider = 'claude'): void {
+    if (provider !== 'claude') {
+      const id = this.standbySessionId;
+      this.standbySessionId = null;
+      this.standbyMode = null;
+      if (id != null) {
+        void this.sessionsService.archiveAndStop(id).catch((err: unknown) => {
+          this.logger.warn(`Standby cleanup failed: ${String(err)}`);
+        });
+      }
+      return;
+    }
     if (this.inFlight) {
       return;
     }
@@ -123,9 +140,13 @@ export class AgentStandbyService implements OnModuleInit {
       const orphans = sessions.filter(
         (s) => s.name === STANDBY_SESSION_NAME && s.status !== 'archived',
       );
-      await Promise.all(orphans.map((s) => this.sessionsService.archiveAndStop(s.id)));
+      await Promise.all(
+        orphans.map((s) => this.sessionsService.archiveAndStop(s.id)),
+      );
       if (orphans.length > 0) {
-        this.logger.log(`Archived ${orphans.length} orphaned standby session(s)`);
+        this.logger.log(
+          `Archived ${orphans.length} orphaned standby session(s)`,
+        );
       }
     } catch (err: unknown) {
       this.logger.warn(`Standby cleanup failed: ${String(err)}`);

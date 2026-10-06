@@ -6,6 +6,7 @@ import { AgentRuntimeWebsocketService } from '@/shared/services/agent-runtime-we
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { AgentControlStateService } from './agent-control-state.service';
 import { AgentMissionsApiService } from './agent-missions-api.service';
+import { TabService } from '@/features/session/tab-service';
 import { MissionSummary } from './agent-control.model';
 
 function mission(over: Partial<MissionSummary> = {}): MissionSummary {
@@ -35,10 +36,14 @@ describe('AgentControlStateService', () => {
   };
   let runtimeEvents: Subject<{ type: string; payload?: Record<string, unknown> }>;
   let history: unknown[];
+  const connect = vi.fn();
+  const getHistory = vi.fn();
 
   function makeService(): AgentControlStateService {
     runtimeEvents = new Subject();
     history = [];
+    connect.mockReset().mockImplementation(() => runtimeEvents.asObservable());
+    getHistory.mockReset().mockImplementation(() => of(history));
     api = {
       list: vi.fn(() => of([mission()])),
       create: vi.fn(() => of({ sessionId: 1, deepLink: '/sessions/1' })),
@@ -52,12 +57,13 @@ describe('AgentControlStateService', () => {
     TestBed.configureTestingModule({
       providers: [
         AgentControlStateService,
+        { provide: TabService, useValue: { activeTab: () => null } },
         { provide: AgentMissionsApiService, useValue: api },
         {
           provide: AgentRuntimeWebsocketService,
-          useValue: { connect: () => runtimeEvents.asObservable() },
+          useValue: { connect },
         },
-        { provide: AgentRuntimeApiService, useValue: { getHistory: () => of(history) } },
+        { provide: AgentRuntimeApiService, useValue: { getHistory } },
       ],
     });
     return TestBed.inject(AgentControlStateService);
@@ -67,18 +73,22 @@ describe('AgentControlStateService', () => {
     TestBed.resetTestingModule();
   });
 
-  it('refresh loads missions and selects the first', async () => {
+  it('refresh loads missions without choosing one', async () => {
     const service = makeService();
     await service.refresh();
     expect(api.list).toHaveBeenCalled();
     expect(service.missions().length).toBe(1);
-    expect(service.selectedMissionId()).toBe(1);
+    expect(service.selectedMissionId()).toBeNull();
   });
 
   it('createMission posts, refreshes, and selects the new mission', async () => {
     const service = makeService();
     const id = await service.createMission('Do a thing', 'plan');
-    expect(api.create).toHaveBeenCalledWith({ prompt: 'Do a thing', autonomyMode: 'plan' });
+    expect(api.create).toHaveBeenCalledWith({
+      prompt: 'Do a thing',
+      autonomyMode: 'plan',
+      focusedSessionId: undefined,
+    });
     expect(id).toBe(1);
     expect(service.selectedMissionId()).toBe(1);
     expect(service.isOpen()).toBe(true);
@@ -94,6 +104,7 @@ describe('AgentControlStateService', () => {
   it('setMissionAutonomy patches the mission in place', async () => {
     const service = makeService();
     await service.refresh();
+    service.selectMission(1);
     await service.setMissionAutonomy(1, 'full');
     expect(api.setAutonomy).toHaveBeenCalledWith(1, 'full');
     expect(service.selectedMission()?.autonomyMode).toBe('full');
@@ -102,6 +113,7 @@ describe('AgentControlStateService', () => {
   it('live run_state events update the mission row status', async () => {
     const service = makeService();
     await service.refresh();
+    service.selectMission(1);
     runtimeEvents.next({
       type: 'run_state',
       payload: { runPhase: 'waiting', pendingPermissionRequest: { id: 'x' } },
@@ -114,6 +126,7 @@ describe('AgentControlStateService', () => {
   it('derives the step tree from a TodoWrite tool_use event', async () => {
     const service = makeService();
     await service.refresh();
+    service.selectMission(1);
     runtimeEvents.next({
       type: 'tool_use',
       payload: {
@@ -134,6 +147,15 @@ describe('AgentControlStateService', () => {
     expect(steps.map((s) => s.status)).toEqual(['complete', 'active', 'pending']);
     // in_progress todos render their activeForm.
     expect(steps[1].label).toBe('Running session');
+  });
+
+  it.each(['pi', 'codex'])('uses %s for mission history and live events', async (provider) => {
+    const service = makeService();
+    api.list.mockReturnValue(of([mission({ activeAgentProvider: provider })]));
+    await service.refresh();
+    service.selectMission(1);
+    expect(connect).toHaveBeenCalledWith(1, provider);
+    expect(getHistory).toHaveBeenCalledWith(1, provider);
   });
 
   it('archiveMission archives and refreshes', async () => {

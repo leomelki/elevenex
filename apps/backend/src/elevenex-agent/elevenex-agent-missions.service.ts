@@ -1,8 +1,17 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ElevenexAgentService } from './elevenex-agent.service.js';
-import { AgentStandbyService, STANDBY_SESSION_NAME } from './agent-standby.service.js';
+import {
+  AgentStandbyService,
+  STANDBY_SESSION_NAME,
+} from './agent-standby.service.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
-import { ClaudeRuntimeService } from '../claude-runtime/claude-runtime.service.js';
+import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
+import type {
+  AgentRuntimeProvider,
+  AgentProviderId,
+} from '../agent-runtime/agent-runtime.types.js';
+import type { ClaudeRuntimeStatePayload } from '../claude-runtime/claude-runtime.types.js';
+import { SettingsService } from '../settings/settings.service.js';
 import {
   SessionsService,
   type AgentAutonomyMode,
@@ -14,13 +23,14 @@ import { AgentFocusService } from '../agent-focus/agent-focus.service.js';
 /** Compact mission summary for the panel's mission list. */
 export interface MissionSummary {
   sessionId: number;
+  activeAgentProvider: AgentProviderId;
   title: string;
   status: string;
   runPhase: string | null;
   awaitingApproval: boolean;
   autonomyMode: AgentAutonomyMode;
   // The hidden agent workspace this mission runs in — the panel needs both to
-  // mount the live session view (app-claude-workspace).
+  // mount the live mission conversation.
   repoId: number;
   worktreePath: string;
   deepLink: string;
@@ -43,8 +53,9 @@ export class ElevenexAgentMissionsService {
     private readonly standby: AgentStandbyService,
     private readonly sessionsService: SessionsService,
     private readonly tokenService: McpAgentTokenService,
-    private readonly claudeRuntime: ClaudeRuntimeService,
+    private readonly runtimes: AgentRuntimeRegistryService,
     private readonly agentFocus: AgentFocusService,
+    private readonly settings: SettingsService,
   ) {}
 
   async createMission(input: {
@@ -58,39 +69,60 @@ export class ElevenexAgentMissionsService {
       input.autonomyMode ?? DEFAULT_AGENT_AUTONOMY_MODE,
     );
 
+    const settings = await this.settings.findOne();
+    const defaultAgentProvider =
+      settings.defaultAgentProvider === 'pi' ||
+      settings.defaultAgentProvider === 'codex'
+        ? settings.defaultAgentProvider
+        : 'claude';
+    const provider = this.runtimes.getProvider(defaultAgentProvider);
+
     // Fast path: claim a pre-warmed standby session. The Claude Code process is
     // already running and will accept the first turn with no startup delay.
-    const standbyId = this.standby.claimStandby(autonomyMode);
+    const standbyId = this.standby.claimStandby(
+      autonomyMode,
+      defaultAgentProvider,
+    );
     let sessionId: number;
 
     if (standbyId != null) {
       sessionId = standbyId;
-      await this.sessionsService.update(sessionId, { name: this.deriveTitle(prompt) });
+      await this.sessionsService.update(sessionId, {
+        name: this.deriveTitle(prompt),
+      });
       if (input.model) {
-        await this.claudeRuntime.setSelectedModel(sessionId, input.model);
+        await provider.setSelectedModel(sessionId, input.model);
       }
       await this.sessionsService.start(sessionId);
-      this.logger.log(`Mission warm-start session=${sessionId} autonomy=${autonomyMode}`);
+      this.logger.log(
+        `Mission warm-start session=${sessionId} autonomy=${autonomyMode}`,
+      );
     } else {
       // Cold path: create and wire up a fresh session.
-      const { repoId, worktreePath } = await this.agentService.ensureAgentRepo();
+      const { repoId, worktreePath } =
+        await this.agentService.ensureAgentRepo();
       const session = await this.sessionsService.create({
         repoId,
         worktreePath,
         branchName: 'main',
         surface: 'agent',
-        activeAgentProvider: 'claude',
+        activeAgentProvider: defaultAgentProvider,
         name: this.deriveTitle(prompt),
       });
       sessionId = session.id;
       await this.tokenService.ensureToken(sessionId);
-      await this.sessionsService.updateAgentAutonomyMode(sessionId, autonomyMode);
-      await this.claudeRuntime.setAgentAutonomy(sessionId, autonomyMode);
+      await this.sessionsService.updateAgentAutonomyMode(
+        sessionId,
+        autonomyMode,
+      );
+      await this.applyAutonomy(provider, sessionId, autonomyMode);
       if (input.model) {
-        await this.claudeRuntime.setSelectedModel(sessionId, input.model);
+        await provider.setSelectedModel(sessionId, input.model);
       }
       await this.sessionsService.start(sessionId);
-      this.logger.log(`Mission cold-start session=${sessionId} autonomy=${autonomyMode}`);
+      this.logger.log(
+        `Mission cold-start session=${sessionId} autonomy=${autonomyMode}`,
+      );
     }
 
     // Record the UI focus the user had when launching this mission so the agent
@@ -100,7 +132,7 @@ export class ElevenexAgentMissionsService {
     // Submit the prompt. For warm starts the process is already running so this
     // delivers the first turn immediately; for cold starts it is fire-and-forget
     // to avoid blocking the HTTP response on process startup.
-    void this.claudeRuntime.submitPrompt(sessionId, prompt).catch((err: unknown) => {
+    void provider.submitPrompt(sessionId, prompt).catch((err: unknown) => {
       this.logger.error(
         `Mission prompt submission failed session=${sessionId}: ${String(err)}`,
       );
@@ -108,7 +140,7 @@ export class ElevenexAgentMissionsService {
 
     // Immediately start warming the next standby for the same mode so the
     // following mission launch is instant too.
-    this.standby.scheduleStandby(autonomyMode);
+    this.standby.scheduleStandby(autonomyMode, defaultAgentProvider);
 
     return this.getMission(sessionId);
   }
@@ -135,16 +167,19 @@ export class ElevenexAgentMissionsService {
     sessionId: number,
     mode: AgentAutonomyMode,
   ): Promise<MissionSummary> {
-    await this.findAgentSession(sessionId);
+    const session = await this.findAgentSession(sessionId);
+    const provider = this.runtimes.getProvider(session.activeAgentProvider);
     const normalized = normalizeAutonomyMode(mode);
     await this.sessionsService.updateAgentAutonomyMode(sessionId, normalized);
-    await this.claudeRuntime.setAgentAutonomy(sessionId, normalized);
+    await this.applyAutonomy(provider, sessionId, normalized);
     return this.getMission(sessionId);
   }
 
   async interruptMission(sessionId: number): Promise<void> {
-    await this.findAgentSession(sessionId);
-    await this.claudeRuntime.interrupt(sessionId);
+    const session = await this.findAgentSession(sessionId);
+    await this.runtimes
+      .getProvider(session.activeAgentProvider)
+      .interrupt(sessionId);
   }
 
   async archiveMission(sessionId: number): Promise<void> {
@@ -163,6 +198,7 @@ export class ElevenexAgentMissionsService {
 
   private async toSummary(session: {
     id: number;
+    activeAgentProvider?: string;
     name?: string | null;
     status: string;
     agentAutonomyMode?: string | null;
@@ -174,7 +210,9 @@ export class ElevenexAgentMissionsService {
     let runPhase: string | null = null;
     let awaitingApproval = false;
     try {
-      const state = await this.claudeRuntime.getRuntimeState(session.id);
+      const state = (await this.runtimes
+        .getProvider(session.activeAgentProvider ?? 'claude')
+        .getRuntimeState(session.id)) as ClaudeRuntimeStatePayload;
       runPhase = state.runPhase ?? null;
       awaitingApproval =
         Boolean(state.pendingPermissionRequest) ||
@@ -184,6 +222,7 @@ export class ElevenexAgentMissionsService {
     }
     return {
       sessionId: session.id,
+      activeAgentProvider: session.activeAgentProvider ?? 'claude',
       title: session.name ?? `Mission ${session.id}`,
       status: session.status,
       runPhase,
@@ -195,6 +234,14 @@ export class ElevenexAgentMissionsService {
       createdAt: session.createdAt ?? null,
       updatedAt: session.updatedAt ?? null,
     };
+  }
+
+  private async applyAutonomy(
+    provider: AgentRuntimeProvider,
+    sessionId: number,
+    mode: AgentAutonomyMode,
+  ): Promise<void> {
+    await provider.setAgentAutonomy?.(sessionId, mode);
   }
 
   private deepLink(sessionId: number): string {

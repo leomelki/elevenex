@@ -7,10 +7,19 @@ import { DeepLinkBuilder } from '../deep-link/deep-link.builder.js';
 import { AgentHumanChannelService } from '../human-channel/human-channel.js';
 import { McpAgentTokenService } from '../identity/mcp-agent-token.service.js';
 import { McpConnectionRegistryService } from '../connection/mcp-connection-registry.service.js';
-import { ToolError, type ToolContext, type ToolDefinition } from './tool.types.js';
+import {
+  ToolError,
+  type ToolContext,
+  type ToolDefinition,
+} from './tool.types.js';
 import { envelopeToResult, errorToResult } from './result-envelope.js';
 import { ALL_TOOLS } from '../tools/index.js';
 import { NavigationEventsService } from '../../navigation/navigation-events.service.js';
+import { normalizeAutonomyMode } from '../../elevenex-agent/meta-agent-prompt.js';
+import {
+  isDestructiveElevenexTool,
+  ELEVENEX_MCP_TOOL_PREFIX,
+} from '../agent-tool-policy.js';
 
 /** Hard ceiling the wrapper enforces on any `limit` field, regardless of tool. */
 const MAX_LIMIT = 100;
@@ -54,6 +63,7 @@ export class ToolRegistryService {
         const ctx = await this.buildContext(extra);
         this.enforceCaps(tool, ctx);
         this.enforceGuards(tool, args);
+        await this.enforceMissionAutonomy(tool, args, ctx);
         const env = await tool.handler(args, ctx);
         if (tool.mutates || tool.destructive) {
           this.navEvents.invalidate();
@@ -81,7 +91,8 @@ export class ToolRegistryService {
       annotations: {
         title: tool.title ?? tool.name,
         readOnlyHint:
-          tool.annotations?.readOnlyHint ?? (!tool.mutates && !tool.destructive),
+          tool.annotations?.readOnlyHint ??
+          (!tool.mutates && !tool.destructive),
         destructiveHint:
           tool.annotations?.destructiveHint ?? tool.destructive ?? false,
         idempotentHint: tool.annotations?.idempotentHint,
@@ -91,6 +102,37 @@ export class ToolRegistryService {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (server.registerTool as any)(tool.name, config, handler);
+  }
+
+  /** Claude gates these calls in its SDK hook; other mission providers gate at the server. */
+  private async enforceMissionAutonomy(
+    tool: ToolDefinition,
+    args: Record<string, unknown>,
+    ctx: ToolContext,
+  ): Promise<void> {
+    const risky =
+      tool.destructive ||
+      isDestructiveElevenexTool(`${ELEVENEX_MCP_TOOL_PREFIX}${tool.name}`);
+    if (ctx.agentSessionId == null || (!risky && !tool.mutates)) return;
+    const session = await this.services.sessions.findOne(ctx.agentSessionId);
+    if (session.surface !== 'agent' || session.activeAgentProvider === 'claude')
+      return;
+    const mode = normalizeAutonomyMode(session.agentAutonomyMode);
+    if (mode === 'full' || (mode === 'review' && !risky)) return;
+    ctx.signal.throwIfAborted();
+    const approval = await ctx.human.requestApproval({
+      title: `Allow ${tool.title ?? tool.name}?`,
+      detail: JSON.stringify(args),
+      deepLink: `/sessions/${session.id}`,
+    });
+    ctx.signal.throwIfAborted();
+    if (approval.decision !== 'approve') {
+      throw new ToolError({
+        code: 'approval_denied',
+        message: `The human did not approve ${tool.name}.`,
+        remediation: 'Respect this decision and choose another approach.',
+      });
+    }
   }
 
   /** Assemble the per-call context from the MCP request `extra`. */

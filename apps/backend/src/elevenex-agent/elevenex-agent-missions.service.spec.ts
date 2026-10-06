@@ -1,6 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
-// The missions service imports ClaudeRuntimeService for DI, which transitively
-// loads the ESM-only Claude SDK; stub it so jest can resolve the module graph.
+// Standby DI transitively imports the ESM Claude SDK.
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   forkSession: jest.fn(),
   getSubagentMessages: jest.fn(),
@@ -10,7 +9,7 @@ jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
 import { ElevenexAgentMissionsService } from './elevenex-agent-missions.service.js';
 
 describe('ElevenexAgentMissionsService', () => {
-  const makeBag = () => {
+  const makeBag = (defaultProvider = 'claude') => {
     const agentService = {
       ensureAgentRepo: jest
         .fn()
@@ -32,6 +31,7 @@ describe('ElevenexAgentMissionsService', () => {
         id: 42,
         name: 'Do a thing',
         surface: 'agent',
+        activeAgentProvider: defaultProvider,
         status: 'active',
         agentAutonomyMode: 'plan',
         repoId: 7,
@@ -56,6 +56,12 @@ describe('ElevenexAgentMissionsService', () => {
         pendingUserInputRequest: null,
       }),
     };
+    const runtimes = { getProvider: jest.fn(() => claudeRuntime) };
+    const settings = {
+      findOne: jest
+        .fn()
+        .mockResolvedValue({ defaultAgentProvider: defaultProvider }),
+    };
     const agentFocus = {
       record: jest.fn(),
       get: jest.fn(),
@@ -66,8 +72,9 @@ describe('ElevenexAgentMissionsService', () => {
       standby as never,
       sessionsService as never,
       tokenService as never,
-      claudeRuntime as never,
+      runtimes as never,
       agentFocus as never,
+      settings as never,
     );
     return {
       service,
@@ -77,6 +84,8 @@ describe('ElevenexAgentMissionsService', () => {
       tokenService,
       claudeRuntime,
       agentFocus,
+      runtimes,
+      settings,
     };
   };
 
@@ -131,6 +140,51 @@ describe('ElevenexAgentMissionsService', () => {
       42,
       'claude-opus-4-8',
     );
+  });
+
+  it.each(['pi', 'codex'])(
+    'launches missions using the %s default',
+    async (provider) => {
+      const bag = makeBag(provider);
+      const mission = await bag.service.createMission({
+        prompt: 'hello',
+        autonomyMode: 'full',
+      });
+      expect(bag.sessionsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ activeAgentProvider: provider }),
+      );
+      expect(bag.standby.claimStandby).toHaveBeenCalledWith('full', provider);
+      expect(bag.standby.scheduleStandby).toHaveBeenCalledWith(
+        'full',
+        provider,
+      );
+      expect(bag.runtimes.getProvider).toHaveBeenCalledWith(provider);
+      expect(bag.claudeRuntime.setAgentAutonomy).toHaveBeenCalledWith(
+        42,
+        'full',
+      );
+      expect(bag.claudeRuntime.submitPrompt).toHaveBeenCalledWith(42, 'hello');
+      expect(mission.activeAgentProvider).toBe(provider);
+    },
+  );
+
+  it('keeps existing missions on their persisted provider after defaults change', async () => {
+    const bag = makeBag('pi');
+    bag.settings.findOne.mockResolvedValue({ defaultAgentProvider: 'codex' });
+    await bag.service.setAutonomy(42, 'full');
+    await bag.service.interruptMission(42);
+    expect(bag.runtimes.getProvider).toHaveBeenCalledWith('pi');
+    expect(bag.runtimes.getProvider).not.toHaveBeenCalledWith('codex');
+    expect(bag.claudeRuntime.interrupt).toHaveBeenCalledWith(42);
+  });
+
+  it('reuses the Claude standby without creating another mission session', async () => {
+    const bag = makeBag();
+    bag.standby.claimStandby.mockReturnValue(42);
+    await bag.service.createMission({ prompt: 'hello', model: 'opus' });
+    expect(bag.sessionsService.create).not.toHaveBeenCalled();
+    expect(bag.claudeRuntime.setSelectedModel).toHaveBeenCalledWith(42, 'opus');
+    expect(bag.claudeRuntime.submitPrompt).toHaveBeenCalledWith(42, 'hello');
   });
 
   it('listMissions maps agent sessions to summaries, newest first', async () => {

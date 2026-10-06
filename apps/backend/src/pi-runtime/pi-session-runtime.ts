@@ -27,23 +27,30 @@ export class PiSessionRuntime extends EventEmitter {
   private stderr = '';
   private stopped = false;
   private exited = false;
+  private agentReady: {
+    resolve: () => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+  } | null = null;
 
   constructor(
     private readonly options: {
       cwd: string;
       sessionPath?: string | null;
       timeoutMs?: number;
+      extensionPath?: string;
+      env?: NodeJS.ProcessEnv;
     },
   ) {
     super();
   }
 
   async start(): Promise<void> {
-    if (this.child) return;
     if (this.startPromise) {
       await this.startPromise;
       return;
     }
+    if (this.child) return;
 
     this.startPromise = this.startProcess().finally(() => {
       this.startPromise = null;
@@ -59,7 +66,13 @@ export class PiSessionRuntime extends EventEmitter {
     if (this.options.sessionPath && this.options.sessionPath !== '-1') {
       args.push('--session', this.options.sessionPath);
     }
-    const env = await buildAugmentedEnvAsync(process.env, this.options.cwd);
+    if (this.options.extensionPath) {
+      args.push('--extension', this.options.extensionPath);
+    }
+    const env = await buildAugmentedEnvAsync(
+      { ...process.env, ...this.options.env },
+      this.options.cwd,
+    );
     if (this.stopped || this.child) return;
 
     // Resolve the real pi binary path. On Windows pi is installed via Volta
@@ -69,6 +82,15 @@ export class PiSessionRuntime extends EventEmitter {
     // CVE-2024-27980 mitigation) can launch the batch file. Spawning the bare
     // 'pi' here yields `spawn pi ENOENT` on Windows.
     const { command, shell } = buildSpawnCommand(findBinary('pi') ?? 'pi');
+    const ready = this.options.extensionPath
+      ? new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            this.agentReady = null;
+            reject(new Error('Pi could not connect to the Elevenex tools.'));
+          }, this.options.timeoutMs ?? 30_000);
+          this.agentReady = { resolve, reject, timer };
+        })
+      : null;
     this.child = spawn(command, args, {
       cwd: this.options.cwd,
       env,
@@ -97,6 +119,7 @@ export class PiSessionRuntime extends EventEmitter {
         ),
       );
     });
+    await ready;
   }
 
   async send<T = unknown>(
@@ -144,6 +167,7 @@ export class PiSessionRuntime extends EventEmitter {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.rejectAgentReady(new Error('Pi RPC process stopped.'));
     const child = this.child;
     this.child = null;
     for (const [id, pending] of this.pending) {
@@ -192,6 +216,20 @@ export class PiSessionRuntime extends EventEmitter {
     }
     if (!parsed || typeof parsed !== 'object') return;
     const obj = parsed as Record<string, unknown>;
+    if (
+      obj.type === 'extension_ui_request' &&
+      obj.statusKey === 'elevenex_agent_ready'
+    ) {
+      const ready = this.agentReady;
+      this.agentReady = null;
+      if (ready) {
+        clearTimeout(ready.timer);
+        if (obj.statusText !== 'ready')
+          ready.reject(new Error(String(obj.statusText)));
+        else ready.resolve();
+      }
+      return;
+    }
     if (obj.type === 'response') {
       const response = obj as unknown as PiRpcResponse;
       const id = typeof response.id === 'string' ? response.id : '';
@@ -212,6 +250,7 @@ export class PiSessionRuntime extends EventEmitter {
   private handleExit(error: Error): void {
     if (this.exited) return;
     this.exited = true;
+    this.rejectAgentReady(error);
     const child = this.child;
     this.child = null;
     for (const [id, pending] of this.pending) {
@@ -226,6 +265,14 @@ export class PiSessionRuntime extends EventEmitter {
         pid: child?.pid,
       });
     }
+  }
+
+  private rejectAgentReady(error: Error): void {
+    const ready = this.agentReady;
+    this.agentReady = null;
+    if (!ready) return;
+    clearTimeout(ready.timer);
+    ready.reject(error);
   }
 
   private attachJsonlReader(

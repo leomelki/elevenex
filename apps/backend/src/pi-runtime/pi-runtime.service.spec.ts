@@ -221,6 +221,7 @@ function createService(options?: {
           reasoningEffort: null,
         }),
       } as never,
+      { ensureToken: jest.fn().mockResolvedValue('evx_pi_test') } as never,
     ),
     sessions,
   };
@@ -236,6 +237,23 @@ describe('PiRuntimeService lifecycle', () => {
     mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
     delete process.env.PI_RUNTIME_IDLE_MS;
     delete process.env.PI_RUNTIME_IDLE_CAP;
+  });
+
+  it('coalesces concurrent session startup into one Pi process', async () => {
+    const { service } = createService();
+    mockSpawn.mockReturnValue(
+      createPiProcess('/tmp/pi-session.jsonl') as never,
+    );
+    const runtimeService = service as unknown as {
+      ensureRuntime(id: number): Promise<unknown>;
+    };
+    const [first, second] = await Promise.all([
+      runtimeService.ensureRuntime(1),
+      runtimeService.ensureRuntime(1),
+    ]);
+    expect(first).toBe(second);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    await service.onModuleDestroy();
   });
 
   it('clones and slices Pi JSONL history for assistant anchors', async () => {

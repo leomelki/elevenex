@@ -39,6 +39,10 @@ import {
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { getElevenexProxyPort } from '../config/ports.js';
+import {
+  buildMetaAgentPrompt,
+  permissionModeForAutonomy,
+} from '../elevenex-agent/meta-agent-prompt.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import {
   ClaudeHooksService,
@@ -616,6 +620,15 @@ export class CodexRuntimeService
     }
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
+  }
+
+  async setAgentAutonomy(
+    sessionId: number,
+    mode: string,
+  ): Promise<CodexRuntimeStatePayload> {
+    const policy = permissionModeForAutonomy(mode);
+    await this.setPermissionMode(sessionId, policy.permissionMode);
+    return this.setPlanMode(sessionId, policy.planMode);
   }
 
   async setPlanMode(
@@ -2516,6 +2529,16 @@ export class CodexRuntimeService
 
     try {
       await this.appServer.ensureReady();
+      const session = await this.sessionsService.findOne(sessionId);
+      const isMission = session.surface === 'agent';
+      const missionInstructions = isMission
+        ? buildMetaAgentPrompt(session.agentAutonomyMode)
+        : null;
+      if (isMission) {
+        const policy = permissionModeForAutonomy(session.agentAutonomyMode);
+        state.selectedPermissionMode = policy.permissionMode;
+        state.planMode = policy.planMode;
+      }
       const permissionOptions = state.planMode
         ? {
             sandboxMode: 'read-only' as const,
@@ -2550,6 +2573,9 @@ export class CodexRuntimeService
           ? { modelReasoningEffort: state.reasoningEffort }
           : {}),
         serviceTier,
+        ...(missionInstructions
+          ? { developerInstructions: missionInstructions }
+          : {}),
         sandbox: permissionOptions.sandboxMode,
         approvalPolicy: approvalMap[permissionOptions.approvalPolicy],
         approvalsReviewer,
@@ -2559,15 +2585,15 @@ export class CodexRuntimeService
         // coding sessions do not receive the meta-agent's other Elevenex tools.
         config: {
           mcp_servers: {
-            elevenex_local_computer: {
+            [isMission ? 'elevenex' : 'elevenex_local_computer']: {
               url:
                 process.env.ELEVENEX_MCP_URL?.trim() ||
                 `http://127.0.0.1:${getElevenexProxyPort()}/api/mcp`,
               http_headers: {
                 Authorization: `Bearer ${mcpAgentToken}`,
               },
-              enabled_tools: ['run_local_bash'],
-              tool_timeout_sec: 125,
+              ...(!isMission ? { enabled_tools: ['run_local_bash'] } : {}),
+              tool_timeout_sec: isMission ? 660 : 125,
             },
           },
         },
@@ -2638,7 +2664,7 @@ export class CodexRuntimeService
           // Loaded threads can ignore resume overrides. Apply the current tier
           // on every turn; null clears a previous fast tier when Fast is off.
           serviceTier,
-          ...this.buildCollaborationModeParams(state),
+          ...this.buildCollaborationModeParams(state, missionInstructions),
         },
       );
       const startedTurnId = turnStart.turn?.id;
@@ -3273,6 +3299,7 @@ export class CodexRuntimeService
 
   private buildCollaborationModeParams(
     state: CodexRuntimeState,
+    instructions: string | null = null,
   ): Record<string, unknown> {
     return {
       collaborationMode: {
@@ -3284,7 +3311,7 @@ export class CodexRuntimeService
         settings: {
           model: state.selectedModel ?? this.codexDefaultModel,
           reasoning_effort: state.reasoningEffort,
-          developer_instructions: null,
+          developer_instructions: instructions,
         },
       },
     };

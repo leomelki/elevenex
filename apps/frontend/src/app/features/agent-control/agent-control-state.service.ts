@@ -247,8 +247,11 @@ export class AgentControlStateService {
    */
   private setupLive(sessionId: number): void {
     this.liveSessionId = sessionId;
+    const provider =
+      this.missionsSignal().find((mission) => mission.sessionId === sessionId)
+        ?.activeAgentProvider ?? 'claude';
 
-    void firstValueFrom(this.runtimeApi.getHistory(sessionId, 'claude'))
+    void firstValueFrom(this.runtimeApi.getHistory(sessionId, provider))
       .then((history) => {
         if (this.liveSessionId === sessionId) {
           this.deriveStepsFromHistory(history);
@@ -258,7 +261,7 @@ export class AgentControlStateService {
         /* No history yet — the WS stream will fill it in. */
       });
 
-    this.liveSub = this.runtimeWs.connect(sessionId, 'claude').subscribe({
+    this.liveSub = this.runtimeWs.connect(sessionId, provider).subscribe({
       next: (event) => this.handleRuntimeEvent(sessionId, event),
     });
   }

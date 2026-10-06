@@ -282,6 +282,7 @@ function main() {
   assembleRuntime();
 
   copyRequiredPath(path.join(backendBundleRoot, 'main.cjs'), path.join(stageBackendRoot, 'main.cjs'));
+  copyRequiredPath(path.join(backendBundleRoot, 'pi-agent-extension.mjs'), path.join(stageBackendRoot, 'pi-agent-extension.mjs'));
   copyRequiredPath(path.join(backendRoot, 'drizzle'), path.join(stageBackendRoot, 'drizzle'));
   copyRequiredPath(path.join(backendRoot, 'bin'), path.join(stageBackendRoot, 'bin'));
   ensureDir(path.join(stageBackendRoot, 'node_modules'));
