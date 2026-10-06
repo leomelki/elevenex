@@ -189,7 +189,11 @@ export function canonicalizeAgentTool(
     };
   }
 
-  if (normalized === 'askuserquestion' || normalized === 'requestuserinput') {
+  if (
+    normalized === 'askuserquestion' ||
+    normalized === 'requestuserinput' ||
+    normalized === 'requestuserinputasync'
+  ) {
     return {
       toolKind: 'ask_user_question',
       toolDisplayName: 'Question',

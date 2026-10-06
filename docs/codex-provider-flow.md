@@ -62,6 +62,19 @@ user-input UI. User responses are translated back into Codex response payloads
 such as `accept`, `acceptForSession`, empty permission grants, structured
 question answers, or MCP elicitation actions.
 
+Native `request_user_input_async` questions arrive in completed `agentMessage`
+items with `delivery: "async"` and `questions: [{ title, options?: string[] }]`.
+Elevenex displays them in the shared question form while Codex keeps running.
+Pending questions are queued in session runtime state and survive turn completion
+and frontend reconnects. Answers use `turn/steer` while a turn is active, or a
+new user turn after it completes. Dismissing a native async question removes it
+without sending a follow-up. Runtime state is held in memory, so pending forms
+do not survive a backend restart.
+
+RPC `item/tool/requestUserInput` also honors `isBlocking: false`; omitted values
+keep the blocking behavior for older Codex versions. `serverRequest/resolved`
+clears RPC questions cancelled by Codex without sending a stale response.
+
 ## Event Normalization
 
 Codex SDK items are normalized as follows:

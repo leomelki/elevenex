@@ -478,6 +478,7 @@ export class CodexRuntimeService
     state.liveItems = [];
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
+    state.asyncUserInputRequests.clear();
     state.lastError = null;
     state.contextUsage = null;
     this.emitRunState(sessionId);
@@ -1160,19 +1161,57 @@ export class CodexRuntimeService
     action: 'accept' | 'decline' | 'cancel' = 'accept',
     content?: Record<string, string | number | boolean | string[]>,
   ): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    const asyncRequest = state.asyncUserInputRequests.get(requestId);
+    if (asyncRequest) {
+      state.asyncUserInputRequests.delete(requestId);
+      this.refreshPendingUserInput(sessionId);
+      if (action !== 'accept') return;
+      const prompt = (asyncRequest.questions ?? [])
+        .map((question) => {
+          const value = content?.[question.id ?? question.question];
+          const answer = Array.isArray(value)
+            ? value.join(', ')
+            : String(value ?? '');
+          return `${question.question}\nAnswer: ${answer}`;
+        })
+        .join('\n\n');
+      try {
+        const activeRun = this.activeRuns.get(sessionId);
+        if (activeRun && !activeRun.interruptRequested) {
+          await Promise.race([
+            activeRun.turnReadyPromise,
+            activeRun.completionPromise,
+          ]);
+          if (
+            this.activeRuns.get(sessionId) === activeRun &&
+            activeRun.threadId &&
+            activeRun.turnId &&
+            !activeRun.interruptRequested
+          ) {
+            await this.appServer.request('turn/steer', {
+              threadId: activeRun.threadId,
+              expectedTurnId: activeRun.turnId,
+              input: [{ type: 'text', text: prompt }],
+            });
+          } else {
+            await this.submitPrompt(sessionId, prompt);
+          }
+        } else {
+          await this.submitPrompt(sessionId, prompt);
+        }
+      } catch (error) {
+        state.asyncUserInputRequests.set(requestId, asyncRequest);
+        this.refreshPendingUserInput(sessionId);
+        throw error;
+      }
+      return;
+    }
     const run = this.activeRuns.get(sessionId);
     const pending = run?.userInputRequests.get(requestId);
     if (!pending) return;
     run?.userInputRequests.delete(requestId);
-    const state = this.ensureRuntimeState(sessionId);
-    if (state.pendingUserInputRequest?.requestId === requestId) {
-      state.pendingUserInputRequest = null;
-      state.runPhase = state.pendingPermissionRequest ? 'waiting' : 'running';
-      state.sessionState = state.pendingPermissionRequest
-        ? 'requires_action'
-        : 'running';
-      this.emitRunState(sessionId);
-    }
+    this.refreshPendingUserInput(sessionId);
     pending.resolve({ action, content });
   }
 
@@ -1576,7 +1615,8 @@ export class CodexRuntimeService
     state.canInterrupt = false;
     state.liveItems = [];
     state.pendingPermissionRequest = null;
-    state.pendingUserInputRequest = null;
+    state.pendingUserInputRequest =
+      state.asyncUserInputRequests.values().next().value ?? null;
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
   }
@@ -1590,7 +1630,8 @@ export class CodexRuntimeService
     state.queuePaused = state.pendingPrompts.length > 0;
     state.liveItems = [];
     state.pendingPermissionRequest = null;
-    state.pendingUserInputRequest = null;
+    state.pendingUserInputRequest =
+      state.asyncUserInputRequests.values().next().value ?? null;
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
   }
@@ -1640,6 +1681,7 @@ export class CodexRuntimeService
       liveItems: [],
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
+      asyncUserInputRequests: new Map(),
       lastError: null,
       selectedModel: startup.selectedModel,
       reasoningEffort: startup.reasoningEffort,
@@ -2242,6 +2284,7 @@ export class CodexRuntimeService
         ? state.codexSessionId
         : null;
     let endStream = false;
+    const resolvedUserInputRequests = new Set<string>();
 
     const matchesThread = (params: any): boolean => {
       // Drop notifications until we positively know our thread id (set from
@@ -2257,6 +2300,19 @@ export class CodexRuntimeService
     const handle = (notification: CodexAppServerNotification): void => {
       const params = notification.params as any;
       switch (notification.method) {
+        case 'serverRequest/resolved': {
+          if (!matchesThread(params)) return;
+          const requestId = String(params?.requestId);
+          resolvedUserInputRequests.add(requestId);
+          const run = this.activeRuns.get(sessionId);
+          const pending = run?.userInputRequests.get(requestId);
+          if (pending) {
+            run?.userInputRequests.delete(requestId);
+            pending.resolve({ action: 'cancel' });
+            this.refreshPendingUserInput(sessionId);
+          }
+          return;
+        }
         case 'thread/started':
           // We push our own `thread.started` synchronously after the
           // thread/start or thread/resume response so handleCodexEvent
@@ -2325,6 +2381,7 @@ export class CodexRuntimeService
         }
         case 'item/completed': {
           if (!matchesThread(params)) return;
+          this.receiveCodexAsyncUserInput(sessionId, params?.item);
           const item = this.translateAppServerItem(
             params?.item,
             messageText,
@@ -2430,7 +2487,9 @@ export class CodexRuntimeService
             request.id,
             params,
           );
-          this.appServer.respondToRequest(request.id, response);
+          if (!resolvedUserInputRequests.has(String(request.id))) {
+            this.appServer.respondToRequest(request.id, response);
+          }
           return true;
         }
         case 'mcpServer/elicitation/request': {
@@ -2774,6 +2833,7 @@ export class CodexRuntimeService
     const createdAt = new Date().toISOString();
     const request: ClaudeUserInputRequest = {
       requestId: uiRequestId,
+      isBlocking: params?.isBlocking !== false,
       serverName: 'Codex',
       mode: 'form',
       title: 'Codex needs your input',
@@ -2887,16 +2947,81 @@ export class CodexRuntimeService
     return new Promise((resolve) => {
       const run = this.activeRuns.get(sessionId);
       run?.userInputRequests.set(requestId, { request, resolve });
-      const state = this.ensureRuntimeState(sessionId);
-      state.pendingUserInputRequest = request;
-      state.runPhase = 'waiting';
-      state.sessionState = 'requires_action';
+      this.refreshPendingUserInput(sessionId);
+    });
+  }
+
+  private receiveCodexAsyncUserInput(sessionId: number, item: any): void {
+    if (
+      item?.type !== 'agentMessage' ||
+      item.delivery !== 'async' ||
+      typeof item.id !== 'string' ||
+      !Array.isArray(item.questions)
+    )
+      return;
+    const questions = this.toCodexUserInputQuestions(
+      item.questions.map((question: any, index: number) => ({
+        id: `question-${index + 1}`,
+        question: question?.title,
+        options: Array.isArray(question?.options)
+          ? question.options.map((label: unknown) => ({ label }))
+          : [],
+      })),
+    );
+    if (!questions.length) return;
+    const state = this.ensureRuntimeState(sessionId);
+    const requestId = `codex-async-user-input:${item.id}`;
+    if (state.asyncUserInputRequests.has(requestId)) return;
+    const request: ClaudeUserInputRequest = {
+      requestId,
+      isBlocking: false,
+      serverName: 'Codex',
+      mode: 'form',
+      title: 'Codex needs your input',
+      message: typeof item.text === 'string' ? item.text : '',
+      questions,
+      createdAt: new Date().toISOString(),
+    };
+    state.asyncUserInputRequests.set(requestId, request);
+    this.refreshPendingUserInput(sessionId);
+  }
+
+  private refreshPendingUserInput(sessionId: number): void {
+    const state = this.ensureRuntimeState(sessionId);
+    const run = this.activeRuns.get(sessionId);
+    const previousRequestId = state.pendingUserInputRequest?.requestId;
+    const requests = Array.from(run?.userInputRequests.values() ?? []);
+    state.pendingUserInputRequest =
+      requests.find(({ request }) => request.isBlocking !== false)?.request ??
+      requests[0]?.request ??
+      state.asyncUserInputRequests.values().next().value ??
+      null;
+    const blocking =
+      Boolean(state.pendingPermissionRequest) ||
+      (state.pendingUserInputRequest?.isBlocking !== false &&
+        Boolean(state.pendingUserInputRequest));
+    state.runPhase = blocking
+      ? 'waiting'
+      : run
+        ? 'running'
+        : state.lastError
+          ? 'error'
+          : 'idle';
+    state.sessionState = blocking
+      ? 'requires_action'
+      : run
+        ? 'running'
+        : 'idle';
+    if (
+      state.pendingUserInputRequest &&
+      state.pendingUserInputRequest.requestId !== previousRequestId
+    ) {
       this.emitEvent({
         type: 'user_input_request',
-        payload: { sessionId, request },
+        payload: { sessionId, request: state.pendingUserInputRequest },
       });
-      this.emitRunState(sessionId);
-    });
+    }
+    this.emitRunState(sessionId);
   }
 
   private questionsToJsonSchema(questions: any[]): Record<string, unknown> {
@@ -2996,11 +3121,7 @@ export class CodexRuntimeService
     const state = this.ensureRuntimeState(sessionId);
     if (state.pendingPermissionRequest?.requestId !== requestId) return;
     state.pendingPermissionRequest = null;
-    state.runPhase = state.pendingUserInputRequest ? 'waiting' : 'running';
-    state.sessionState = state.pendingUserInputRequest
-      ? 'requires_action'
-      : 'running';
-    this.emitRunState(sessionId);
+    this.refreshPendingUserInput(sessionId);
   }
 
   /**

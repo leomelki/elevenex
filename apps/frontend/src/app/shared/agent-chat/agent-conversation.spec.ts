@@ -12,6 +12,20 @@ function item(
 }
 
 describe('AgentConversation', () => {
+  it.each([undefined, true, false])('handles completion for isBlocking=%s', (isBlocking) => {
+    const chat = new AgentConversation();
+    const request = {
+      requestId: 'question-1',
+      serverName: 'Codex',
+      message: 'Which approach?',
+      createdAt: '2026-10-05T10:00:00.000Z',
+      isBlocking,
+    };
+    chat.apply({ type: 'user_input_request', payload: { sessionId: 7, request } });
+    chat.apply({ type: 'complete', payload: { sessionId: 7 } });
+    expect(chat.pendingUserInputRequest()).toEqual(isBlocking === false ? request : null);
+    expect(chat.runPhase()).toBe('idle');
+  });
   it('preserves user messages with different numeric provider ids', () => {
     const chat = new AgentConversation();
     chat.live.set([item('provider:2', 'user', 'Continue', '2')]);

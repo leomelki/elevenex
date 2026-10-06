@@ -269,6 +269,7 @@ export interface AgentJsonSchema {
 
 export interface AgentUserInputRequest {
   requestId: string;
+  isBlocking?: boolean;
   serverName: string;
   message: string;
   mode?: 'form' | 'url';

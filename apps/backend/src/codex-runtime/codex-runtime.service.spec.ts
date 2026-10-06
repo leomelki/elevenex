@@ -420,64 +420,224 @@ describe('CodexRuntimeService', () => {
     ]);
   });
 
-  it('adds a live question receipt when Codex user input is answered', async () => {
-    const { service } = createService();
-    const state = (service as any).ensureRuntimeState(7);
-    (service as any).activeRuns.set(7, {
+  it.each([true, false])(
+    'answers Codex user input with isBlocking=%s',
+    async (isBlocking) => {
+      const { service } = createService();
+      const state = (service as any).ensureRuntimeState(7);
+      (service as any).activeRuns.set(7, {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        turnReadyPromise: Promise.resolve(),
+        resolveTurnReady: jest.fn(),
+        abortController: new AbortController(),
+        interruptRequested: false,
+        completionPromise: new Promise<void>(() => undefined),
+        resolveCompletion: jest.fn(),
+        startedAtMs: Date.now(),
+        permissionRequests: new Map(),
+        userInputRequests: new Map(),
+      });
+
+      const response = (service as any).requestCodexToolUserInput(
+        7,
+        'request-1',
+        {
+          itemId: 'question-tool-1',
+          isBlocking,
+          questions: [
+            {
+              id: 'approach',
+              header: 'Approach',
+              question: 'Which approach should we use?',
+              options: [{ label: 'Option A', description: 'Use A.' }],
+            },
+          ],
+        },
+      );
+
+      expect(state.runPhase).toBe(isBlocking ? 'waiting' : 'running');
+
+      expect(state.liveItems).toEqual([
+        expect.objectContaining({
+          kind: 'tool_use',
+          toolUseId: 'question-tool-1',
+          toolKind: 'ask_user_question',
+        }),
+      ]);
+
+      await service.answerUserInput(7, 'request-1', 'accept', {
+        approach: 'Option A',
+      });
+
+      await expect(response).resolves.toEqual({
+        answers: { approach: { answers: ['Option A'] } },
+      });
+      expect(state.liveItems).toEqual([
+        expect.objectContaining({ kind: 'tool_use' }),
+        expect.objectContaining({
+          kind: 'tool_result',
+          toolUseId: 'question-tool-1',
+          content: JSON.stringify({
+            answers: { approach: { answers: ['Option A'] } },
+          }),
+        }),
+      ]);
+    },
+  );
+
+  const asyncQuestionItem = {
+    id: 'async-question-1',
+    type: 'agentMessage',
+    delivery: 'async',
+    text: 'Choose an approach while I inspect the code.',
+    questions: [
+      { title: 'Which approach?', options: ['Minimal', 'Complete'] },
+      { title: 'Any constraints?' },
+    ],
+  };
+
+  it('receives native async questions on the owning thread without blocking it', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const iterator = await startAppServerTurn(service, 'auto');
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7);
+    state.runPhase = 'running';
+    wire.notificationHandler({
+      method: 'item/completed',
+      params: { threadId: 'other-thread', item: asyncQuestionItem },
+    });
+    expect(state.pendingUserInputRequest).toBeNull();
+    wire.notificationHandler({
+      method: 'item/completed',
+      params: { threadId: 'thread-1', item: asyncQuestionItem },
+    });
+    expect(state.pendingUserInputRequest).toMatchObject({
+      requestId: 'codex-async-user-input:async-question-1',
+      isBlocking: false,
+      questions: [
+        {
+          id: 'question-1',
+          question: 'Which approach?',
+          options: [{ label: 'Minimal' }, { label: 'Complete' }],
+        },
+        { id: 'question-2', question: 'Any constraints?', options: [] },
+      ],
+    });
+    // No active run was installed by this generator-only test.
+    expect(state.runPhase).not.toBe('waiting');
+    runtime.finishRun(7);
+    expect(state.pendingUserInputRequest?.isBlocking).toBe(false);
+    await iterator.return(undefined);
+  });
+
+  it('steers async answers into the active turn and restores failed submissions', async () => {
+    const { service, appServer } = createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7);
+    runtime.activeRuns.set(7, {
       threadId: 'thread-1',
       turnId: 'turn-1',
       turnReadyPromise: Promise.resolve(),
-      resolveTurnReady: jest.fn(),
-      abortController: new AbortController(),
-      interruptRequested: false,
-      completionPromise: new Promise<void>(() => undefined),
-      resolveCompletion: jest.fn(),
-      startedAtMs: Date.now(),
       permissionRequests: new Map(),
       userInputRequests: new Map(),
     });
+    runtime.receiveCodexAsyncUserInput(7, asyncQuestionItem);
+    expect(state.runPhase).toBe('running');
+    expect(state.sessionState).toBe('running');
+    const requestId = state.pendingUserInputRequest.requestId;
+    appServer.request.mockRejectedValueOnce(new Error('steer failed'));
+    await expect(
+      service.answerUserInput(7, requestId, 'accept', {
+        'question-1': 'Complete',
+      }),
+    ).rejects.toThrow('steer failed');
+    expect(state.pendingUserInputRequest.requestId).toBe(requestId);
+    await service.answerUserInput(7, requestId, 'accept', {
+      'question-1': 'Complete',
+      'question-2': 'Keep existing APIs',
+    });
+    expect(appServer.request).toHaveBeenLastCalledWith('turn/steer', {
+      threadId: 'thread-1',
+      expectedTurnId: 'turn-1',
+      input: [
+        {
+          type: 'text',
+          text: 'Which approach?\nAnswer: Complete\n\nAny constraints?\nAnswer: Keep existing APIs',
+        },
+      ],
+    });
+    expect(state.pendingUserInputRequest).toBeNull();
+  });
 
-    const response = (service as any).requestCodexToolUserInput(
+  it('queues multiple async questions, keeps them after completion, and accepts a late answer', async () => {
+    const { service } = createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7);
+    const submit = jest
+      .spyOn(service, 'submitPrompt')
+      .mockResolvedValue(undefined);
+    runtime.receiveCodexAsyncUserInput(7, asyncQuestionItem);
+    runtime.receiveCodexAsyncUserInput(7, asyncQuestionItem);
+    runtime.receiveCodexAsyncUserInput(7, {
+      ...asyncQuestionItem,
+      id: 'async-question-2',
+    });
+    expect(state.asyncUserInputRequests.size).toBe(2);
+    runtime.finishRun(7);
+    await service.answerUserInput(
       7,
-      'request-1',
+      state.pendingUserInputRequest.requestId,
+      'decline',
+    );
+    expect(submit).not.toHaveBeenCalled();
+    expect(state.pendingUserInputRequest.requestId).toBe(
+      'codex-async-user-input:async-question-2',
+    );
+    await service.answerUserInput(
+      7,
+      state.pendingUserInputRequest.requestId,
+      'accept',
       {
-        itemId: 'question-tool-1',
-        questions: [
-          {
-            id: 'approach',
-            header: 'Approach',
-            question: 'Which approach should we use?',
-            options: [{ label: 'Option A', description: 'Use A.' }],
-          },
-        ],
+        'question-1': 'Minimal',
+        'question-2': 'None',
       },
     );
+    expect(submit).toHaveBeenCalledWith(
+      7,
+      'Which approach?\nAnswer: Minimal\n\nAny constraints?\nAnswer: None',
+    );
+    expect(state.pendingUserInputRequest).toBeNull();
+  });
 
-    expect(state.liveItems).toEqual([
-      expect.objectContaining({
-        kind: 'tool_use',
-        toolUseId: 'question-tool-1',
-        toolKind: 'ask_user_question',
-      }),
-    ]);
-
-    await service.answerUserInput(7, 'request-1', 'accept', {
-      approach: 'Option A',
+  it('clears resolved RPC questions without sending a stale answer', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const iterator = await startAppServerTurn(service, 'auto');
+    const runtime = service as any;
+    runtime.activeRuns.set(7, {
+      userInputRequests: new Map(),
+      permissionRequests: new Map(),
     });
-
-    await expect(response).resolves.toEqual({
-      answers: { approach: { answers: ['Option A'] } },
+    const response = (wire.requestHandler as any)({
+      id: 42,
+      method: 'item/tool/requestUserInput',
+      params: {
+        threadId: 'thread-1',
+        itemId: 'question-tool-1',
+        isBlocking: false,
+        questions: [{ id: 'scope', question: 'Which scope?' }],
+      },
     });
-    expect(state.liveItems).toEqual([
-      expect.objectContaining({ kind: 'tool_use' }),
-      expect.objectContaining({
-        kind: 'tool_result',
-        toolUseId: 'question-tool-1',
-        content: JSON.stringify({
-          answers: { approach: { answers: ['Option A'] } },
-        }),
-      }),
-    ]);
+    wire.notificationHandler({
+      method: 'serverRequest/resolved',
+      params: { threadId: 'thread-1', requestId: 42 },
+    });
+    await response;
+    expect(runtime.ensureRuntimeState(7).pendingUserInputRequest).toBeNull();
+    expect(appServer.respondToRequest).not.toHaveBeenCalled();
+    await iterator.return(undefined);
   });
 
   async function startAppServerTurn(

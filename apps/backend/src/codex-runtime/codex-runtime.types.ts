@@ -122,6 +122,8 @@ export interface CodexRuntimeState {
   liveItems: ClaudeTranscriptItem[];
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
+  /** Native async questions outlive the turn that emitted them. */
+  asyncUserInputRequests: Map<string, ClaudeUserInputRequest>;
   lastError: string | null;
   selectedModel: string | null;
   reasoningEffort: string | null;

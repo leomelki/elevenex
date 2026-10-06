@@ -2,7 +2,7 @@ import { ClaudeUserInputComponent } from '@/shared/agent-chat/requests/claude-us
 import { ClaudeUserInputRequest } from '@/shared/models/claude-runtime.model';
 import '@angular/compiler';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 function codexQuestionRequest(): ClaudeUserInputRequest {
   return {
@@ -64,6 +64,30 @@ function clickButton(fixture: ComponentFixture<ClaudeUserInputComponent>, label:
 }
 
 describe('ClaudeUserInputComponent question requests', () => {
+  afterEach(() => document.documentElement.classList.remove('dark'));
+
+  it.each(['light', 'dark'])('submits an async free-form answer in %s mode', async (theme) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    const fixture = await render({
+      ...codexQuestionRequest(),
+      isBlocking: false,
+      questions: [{ id: 'question-1', question: 'Any constraints?', options: [] }],
+    });
+    const answers: unknown[] = [];
+    fixture.componentInstance.answer.subscribe((answer) => answers.push(answer));
+    clickOption(fixture, 'Other...');
+    const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = 'Keep existing APIs';
+    textarea.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    clickButton(fixture, 'Next');
+    expect(text(fixture)).toContain('Keep existing APIs');
+    clickButton(fixture, 'Submit');
+    expect(answers).toEqual([
+      { action: 'accept', content: { 'question-1': 'Keep existing APIs' } },
+    ]);
+  });
   it('renders Codex questions with the shared ask-user flow and submits by question id', async () => {
     const fixture = await render(codexQuestionRequest());
     const answers: unknown[] = [];

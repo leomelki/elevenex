@@ -24,6 +24,15 @@ describe('agent-tool-normalization', () => {
       'ask_user_question',
     ],
     ['EnterPlanMode', {}, 'enter_plan_mode'],
+    [
+      'request_user_input_async',
+      {
+        questions: [
+          { title: 'Which scope?', options: ['Frontend', 'Backend'] },
+        ],
+      },
+      'ask_user_question',
+    ],
     ['ExitPlanMode', { plan: 'Do it' }, 'exit_plan_mode'],
     [
       'TodoWrite',

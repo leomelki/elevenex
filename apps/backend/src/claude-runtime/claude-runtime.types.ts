@@ -138,6 +138,8 @@ export interface ClaudePermissionBatchItem {
 
 export interface ClaudeUserInputRequest {
   requestId: string;
+  /** Defaults to true for providers using blocking elicitations. */
+  isBlocking?: boolean;
   serverName: string;
   message: string;
   mode?: 'form' | 'url';

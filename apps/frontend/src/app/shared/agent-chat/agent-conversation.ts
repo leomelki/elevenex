@@ -257,7 +257,9 @@ export class AgentConversation {
         this.runPhase.set('idle');
         this.canInterrupt.set(false);
         this.pendingPermissionRequest.set(null);
-        this.pendingUserInputRequest.set(null);
+        if (this.pendingUserInputRequest()?.isBlocking !== false) {
+          this.pendingUserInputRequest.set(null);
+        }
         return;
       default:
         return;
