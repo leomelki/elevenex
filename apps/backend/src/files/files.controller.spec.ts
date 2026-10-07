@@ -59,6 +59,28 @@ describe('FilesController', () => {
 
   describe('readFileRaw', () => {
     it.each([
+      ['e2e', 'tests', 'user-terminal.spec.ts'],
+      ['images', 'été #1%,draft.png'],
+    ])('preserves decoded wildcard segments: %j', async (...segments) => {
+      const stream = Readable.from(['file contents']);
+      service.readFileRaw = jest.fn().mockResolvedValue({
+        stream,
+        mimeType: 'text/plain',
+        statusCode: 200,
+        length: 13,
+      });
+      const res = { status: jest.fn(), setHeader: jest.fn(), once: jest.fn() };
+
+      await controller.readFileRaw('/tmp/worktree', segments, res as never);
+
+      expect(service.readFileRaw).toHaveBeenCalledWith(
+        path.join('/tmp/worktree', ...segments),
+        '/tmp/worktree',
+        undefined,
+      );
+    });
+
+    it.each([
       [200, undefined, 10],
       [206, 'bytes 2-5/10', 4],
       [416, 'bytes */10', 0],
@@ -167,11 +189,7 @@ describe('FilesController', () => {
       );
 
       expect(result).toEqual([{ path: 'src/app.ts', name: 'app.ts' }]);
-      expect(searchFiles).toHaveBeenCalledWith(
-        '/tmp/worktree path',
-        'app',
-        25,
-      );
+      expect(searchFiles).toHaveBeenCalledWith('/tmp/worktree path', 'app', 25);
     });
 
     it('defaults missing query and limit', async () => {

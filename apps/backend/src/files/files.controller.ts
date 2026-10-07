@@ -24,6 +24,12 @@ type RenameRequest = {
   overwrite?: boolean;
 };
 
+function decodeWildcardPath(value: string | string[]): string {
+  // Express 5 supplies wildcard captures as already-decoded path segments.
+  // Joining preserves directory separators and avoids decoding literal '%' twice.
+  return Array.isArray(value) ? value.join('/') : decodeURIComponent(value);
+}
+
 function toBoolean(value: string | undefined): boolean | undefined {
   if (value === undefined) {
     return undefined;
@@ -74,10 +80,10 @@ export class FilesController {
   @Get(':worktreePath/stat/*path')
   async statPath(
     @Param('worktreePath') worktreePath: string,
-    @Param('path') filePath: string,
+    @Param('path') filePath: string | string[],
   ) {
     const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedFile = decodeURIComponent(filePath);
+    const decodedFile = decodeWildcardPath(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
     return this.filesService.stat(absolutePath, decodedWorktree);
   }
@@ -247,10 +253,10 @@ export class FilesController {
   @Get(':worktreePath/files/*path')
   async readFile(
     @Param('worktreePath') worktreePath: string,
-    @Param('path') filePath: string,
+    @Param('path') filePath: string | string[],
   ) {
     const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedFile = decodeURIComponent(filePath);
+    const decodedFile = decodeWildcardPath(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
 
     try {
@@ -273,12 +279,12 @@ export class FilesController {
   @Get(':worktreePath/raw/*path')
   async readFileRaw(
     @Param('worktreePath') worktreePath: string,
-    @Param('path') filePath: string,
+    @Param('path') filePath: string | string[],
     @Res({ passthrough: true }) res: Response,
     @Headers('range') range?: string,
   ): Promise<StreamableFile> {
     const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedFile = decodeURIComponent(filePath);
+    const decodedFile = decodeWildcardPath(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
 
     try {
@@ -331,11 +337,11 @@ export class FilesController {
   @Put(':worktreePath/files/*path')
   async writeFile(
     @Param('worktreePath') worktreePath: string,
-    @Param('path') filePath: string,
+    @Param('path') filePath: string | string[],
     @Body() body: { content: string },
   ) {
     const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedFile = decodeURIComponent(filePath);
+    const decodedFile = decodeWildcardPath(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
 
     await this.filesService.writeFile(
@@ -367,10 +373,10 @@ export class FilesController {
   @Post(':worktreePath/directories/*path')
   async createDirectory(
     @Param('worktreePath') worktreePath: string,
-    @Param('path') dirPath: string,
+    @Param('path') dirPath: string | string[],
   ) {
     const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedDir = decodeURIComponent(dirPath);
+    const decodedDir = decodeWildcardPath(dirPath);
     const absolutePath = path.join(decodedWorktree, decodedDir);
 
     await this.filesService.createDirectory(absolutePath, decodedWorktree);
@@ -380,11 +386,11 @@ export class FilesController {
   @Patch(':worktreePath/files/*path')
   async rename(
     @Param('worktreePath') worktreePath: string,
-    @Param('path') filePath: string,
+    @Param('path') filePath: string | string[],
     @Body() body: RenameRequest,
   ) {
     const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedFile = decodeURIComponent(filePath);
+    const decodedFile = decodeWildcardPath(filePath);
     const absoluteOldPath = path.join(decodedWorktree, decodedFile);
     const absoluteNewPath = path.join(decodedWorktree, body.newPath);
 
@@ -401,11 +407,11 @@ export class FilesController {
   @Delete(':worktreePath/files/*path')
   async deleteEntry(
     @Param('worktreePath') worktreePath: string,
-    @Param('path') filePath: string,
+    @Param('path') filePath: string | string[],
     @Query('recursive') recursive?: string,
   ) {
     const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedFile = decodeURIComponent(filePath);
+    const decodedFile = decodeWildcardPath(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
 
     await this.filesService.deleteEntry(
