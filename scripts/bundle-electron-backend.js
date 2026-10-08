@@ -3,7 +3,7 @@ const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..');
 const backendRoot = path.join(repoRoot, 'apps', 'backend');
-const backendDistEntry = path.join(backendRoot, 'dist', 'src', 'main.js');
+const backendDistEntry = path.join(backendRoot, 'dist', 'main.js');
 const backendBundleRoot = path.join(backendRoot, 'bundle');
 const backendBundleEntry = path.join(backendBundleRoot, 'main.cjs');
 const EXTERNAL_MODULES = [

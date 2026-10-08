@@ -62,6 +62,9 @@ export default defineConfig({
       env: {
         DB_PATH,
         ELEVENEX_PROXY_PORT: String(BACKEND_PORT),
+        // Use this checkout's migrations and assets even when Playwright is
+        // launched from a packaged app with an inherited runtime-root override.
+        ELEVENEX_BACKEND_RUNTIME_ROOT: repoRoot,
       },
     },
     {

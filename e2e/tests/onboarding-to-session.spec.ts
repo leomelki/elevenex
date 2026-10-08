@@ -7,20 +7,41 @@ import {
 } from '../fixtures/environment';
 
 const PROJECT_NAME = 'E2E Project';
-const WORKSPACE_BRANCH = 'e2e-workspace';
+const TASK_NAME = 'E2E task';
+const TASK_BRANCH = 'e2e-task';
 
 /**
  * Full first-run journey, driven entirely through the UI:
  *
  *   fresh app → onboarding → create project (real git repo)
- *     → create workspace (git worktree) → auto-created session
+ *     → create task (isolated git worktree) → auto-created session
  *
- * Win condition: the project, repo, workspace (worktree) and session are all
+ * Win condition: the project, repo, task (worktree) and session are all
  * visible together in the sidebar tree while sitting inside the session view.
  */
-test('first run: onboarding through to a live session in the sidebar', async ({ page }) => {
+test('first run: onboarding through to a live session in the sidebar', async ({ page }, testInfo) => {
   // The seeded repo's first commit can take a moment to surface as a branch.
   test.setTimeout(180_000);
+  const taskBranch = testInfo.retry ? `${TASK_BRANCH}-retry-${testInfo.retry}` : TASK_BRANCH;
+
+  // CI retries share the backend. Remove this test's partial project and replay
+  // onboarding without replacing the live database or adding a reset API.
+  if (testInfo.retry) {
+    const response = await page.request.get('/api/projects');
+    expect(response.ok()).toBeTruthy();
+    const projects: { id: number; name: string }[] = await response.json();
+    for (const project of projects.filter((project) => project.name === PROJECT_NAME)) {
+      const deleted = await page.request.delete(`/api/projects/${project.id}`);
+      expect(deleted.ok()).toBeTruthy();
+    }
+    await page.route('**/api/settings', async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({
+        response,
+        json: { ...await response.json(), onboardingCompletedAt: null },
+      });
+    });
+  }
 
   // ---------------------------------------------------------------------------
   // 1. Onboarding — fresh database redirects "/" to "/onboarding".
@@ -34,6 +55,7 @@ test('first run: onboarding through to a live session in the sidebar', async ({ 
   await page.getByRole('button', { name: 'Continue' }).click();
 
   // Claude surface step: Claude UI is selected by default — finish.
+  if (testInfo.retry) await page.unroute('**/api/settings');
   await page.getByRole('button', { name: 'Finish setup' }).click();
 
   // Onboarding complete → projects view with the sidebar.
@@ -77,28 +99,24 @@ test('first run: onboarding through to a live session in the sidebar', async ({ 
   await expect(page.locator('.sidebar-label--repo', { hasText: 'test-repo' })).toBeVisible();
 
   // ---------------------------------------------------------------------------
-  // 3. Create a workspace (git worktree) on a brand-new branch.
+  // 3. Create a task with an isolated environment on a brand-new branch.
   // ---------------------------------------------------------------------------
-  await page.getByRole('button', { name: 'New workspace' }).first().click();
+  await page.getByRole('button', { name: 'New task', exact: true }).first().click();
 
-  // Branch search dialog: type a new branch name and create it.
-  const branchFilter = page.getByPlaceholder('Filter branches...');
-  await expect(branchFilter).toBeVisible();
-  await branchFilter.fill(WORKSPACE_BRANCH);
-  await page.getByRole('button', { name: `Create "${WORKSPACE_BRANCH}"` }).click();
+  const taskDialog = page.getByRole('dialog', { name: 'New task', exact: true });
+  await expect(taskDialog).toBeVisible();
+  await taskDialog.getByLabel('Task name').fill(TASK_NAME);
+  await taskDialog.getByLabel('Branch name', { exact: true }).fill(taskBranch);
 
-  // Origin step: base the new branch on the seeded default branch.
-  await page
-    .getByRole('button', { name: new RegExp(`^${TEST_REPO_BRANCH}\\b`) })
-    .click();
-
-  // Worktree sheet: create a fresh worktree (pool is empty on first run).
-  await page.getByRole('button', { name: 'Create a new worktree' }).click();
-  await page.getByRole('button', { name: 'Create and link' }).click();
+  // Explicitly select the seeded default branch as the base for the new task.
+  await taskDialog.getByRole('button', { name: 'Change', exact: true }).click();
+  await taskDialog.getByRole('option', { name: new RegExp(`^${TEST_REPO_BRANCH}\\b`) }).click();
+  await taskDialog.getByRole('button', { name: 'Create task', exact: true }).click();
+  await expect(taskDialog).toBeHidden();
 
   // ---------------------------------------------------------------------------
   // 4. Win condition — a session was auto-created and we land in its view,
-  //    with project + repo + workspace + session all visible in the sidebar.
+  //    with project + repo + task + session all visible in the sidebar.
   // ---------------------------------------------------------------------------
   await expect(page).toHaveURL(/\/sessions\/\d+$/, { timeout: 60_000 });
 
@@ -110,12 +128,12 @@ test('first run: onboarding through to a live session in the sidebar', async ({ 
   // The worktree path is derived by the backend, so match on the row existing
   // and carrying the branch we created rather than a hard-coded path.
   await expect(
-    page.locator('[data-workspace-row]').first(),
-    'worktree visible in sidebar',
+    page.locator('[data-workspace-row]', { hasText: TASK_NAME }),
+    'task environment visible in sidebar',
   ).toBeVisible();
   await expect(
-    page.locator('.sidebar-label--branch', { hasText: WORKSPACE_BRANCH }),
-    'worktree branch label visible in sidebar',
+    page.locator('.sidebar-label--branch', { hasText: taskBranch }),
+    'task branch label visible in sidebar',
   ).toBeVisible();
   await expect(
     page.locator('[data-session-row-id]').first(),
