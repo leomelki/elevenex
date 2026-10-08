@@ -830,9 +830,112 @@ describe('CodexRuntimeService', () => {
     expect(authService.getStatus).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      kind: 'assistant' as const,
+      boundary: { lastTurnId: 'turn-1' },
+      retained: 1,
+    },
+    {
+      kind: 'user' as const,
+      boundary: { beforeTurnId: 'turn-2' },
+      retained: 1,
+    },
+    {
+      kind: 'user' as const,
+      boundary: { beforeTurnId: 'turn-1' },
+      retained: 0,
+    },
+  ])(
+    'uses native fork boundaries for $kind with $retained retained turns',
+    async ({ kind, boundary, retained }) => {
+      const { service, historyService, appServer } = createService();
+      historyService.forkHistory.mockResolvedValueOnce({
+        threadId: 'source-thread',
+        ...boundary,
+        draft: kind === 'user' ? 'edited prompt' : null,
+        anchorExcerpt: 'anchor',
+      });
+      appServer.request.mockResolvedValueOnce(forkResult('source-thread', 3));
+      appServer.request.mockResolvedValueOnce(
+        forkResult('forked-thread', retained),
+      );
+
+      await expect(
+        service.forkConversation({
+          parentSessionId: 7,
+          childSessionId: 8,
+          anchorMessageId: 'anchor',
+          anchorMessageKind: kind,
+          childSessionName: 'Fork',
+        }),
+      ).resolves.toMatchObject({ providerSessionId: 'forked-thread' });
+
+      expect(appServer.request.mock.calls).toEqual([
+        ['thread/read', { threadId: 'source-thread', includeTurns: true }],
+        ['thread/fork', { threadId: 'source-thread', ...boundary }],
+      ]);
+      expect(historyService.waitForHistory).toHaveBeenCalledWith(
+        'forked-thread',
+        retained,
+        '/tmp/fork.jsonl',
+      );
+    },
+  );
+
+  it('edits using a native fork without calling the removed rollback RPC', async () => {
+    const { service, sessionsService, appServer } = createService();
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 3));
+    appServer.request.mockResolvedValueOnce(forkResult('rewound-thread', 1));
+
+    await service.rewindConversation(7, 'codex-record:3');
+
+    expect(appServer.request.mock.calls).toEqual([
+      ['thread/read', { threadId: 'source-thread', includeTurns: true }],
+      ['thread/fork', { threadId: 'source-thread', beforeTurnId: 'turn-2' }],
+    ]);
+    expect(sessionsService.updateCodexSessionId).toHaveBeenCalledWith(
+      7,
+      'rewound-thread',
+    );
+  });
+
+  it('rejects a native fork that loses retained turns without replacing the original', async () => {
+    const { service, sessionsService, historyService, appServer } =
+      createService();
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 3));
+    appServer.request.mockResolvedValueOnce(forkResult('rewound-thread', 0));
+
+    await expect(
+      service.rewindConversation(7, 'codex-record:3'),
+    ).rejects.toThrow('requested fork history');
+
+    expect(sessionsService.updateCodexSessionId).not.toHaveBeenCalled();
+    expect(historyService.waitForHistory).not.toHaveBeenCalled();
+  });
+
+  it('rejects an in-progress assistant boundary before creating a fork', async () => {
+    const { service, appServer } = createService();
+    const source = forkResult('source-thread');
+    source.thread.turns[0].status = 'inProgress';
+    appServer.request.mockResolvedValueOnce(source);
+
+    await expect(
+      service.forkConversation({
+        parentSessionId: 7,
+        childSessionId: 8,
+        anchorMessageId: 'assistant-1',
+        anchorMessageKind: 'assistant',
+        childSessionName: 'Fork',
+      }),
+    ).rejects.toThrow('still running');
+    expect(appServer.request).toHaveBeenCalledTimes(1);
+  });
+
   it('forks history while a Codex run is active', async () => {
     const { service, historyService, appServer } = createService();
     (service as any).activeRuns.set(7, {});
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 2));
     appServer.request.mockResolvedValueOnce(forkResult('forked-thread'));
     appServer.request.mockResolvedValueOnce(forkResult('forked-thread', 1));
 
@@ -853,6 +956,7 @@ describe('CodexRuntimeService', () => {
     );
     expect(appServer.request).toHaveBeenCalledWith('thread/fork', {
       threadId: 'source-thread',
+      lastTurnId: 'turn-1',
     });
     expect(appServer.request).toHaveBeenCalledWith('thread/rollback', {
       threadId: 'forked-thread',
@@ -878,6 +982,7 @@ describe('CodexRuntimeService', () => {
       draft: 'try this instead',
       anchorExcerpt: 'try this instead',
     });
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 2));
     appServer.request.mockResolvedValueOnce(forkResult('forked-thread'));
     appServer.request.mockResolvedValueOnce(forkResult('forked-thread', 1));
 
@@ -891,6 +996,7 @@ describe('CodexRuntimeService', () => {
 
     expect(appServer.request).toHaveBeenCalledWith('thread/fork', {
       threadId: 'source-thread',
+      beforeTurnId: 'turn-2',
     });
     expect(appServer.request).toHaveBeenCalledWith('thread/rollback', {
       threadId: 'forked-thread',
@@ -913,6 +1019,7 @@ describe('CodexRuntimeService', () => {
     historyService.waitForHistory.mockResolvedValue([
       { id: 'user-1', kind: 'user', content: 'first' },
     ]);
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 3));
     appServer.request.mockResolvedValueOnce(forkResult('rewound-thread', 3));
     appServer.request.mockResolvedValueOnce(forkResult('rewound-thread', 1));
 
@@ -924,6 +1031,7 @@ describe('CodexRuntimeService', () => {
     );
     expect(appServer.request).toHaveBeenCalledWith('thread/fork', {
       threadId: 'source-thread',
+      beforeTurnId: 'turn-2',
     });
     expect(appServer.request).toHaveBeenCalledWith('thread/rollback', {
       threadId: 'rewound-thread',
@@ -944,6 +1052,7 @@ describe('CodexRuntimeService', () => {
   it('keeps the original thread when the rewound rollout is not ready', async () => {
     const { service, sessionsService, historyService, appServer } =
       createService();
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 2));
     appServer.request.mockResolvedValueOnce(forkResult('rewound-thread'));
     appServer.request.mockResolvedValueOnce(forkResult('rewound-thread', 1));
     historyService.waitForHistory.mockRejectedValueOnce(
@@ -957,6 +1066,7 @@ describe('CodexRuntimeService', () => {
 
   it('rejects a missing fork boundary without replacing the original thread', async () => {
     const { service, sessionsService, appServer } = createService();
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 1));
     appServer.request.mockResolvedValueOnce(forkResult('rewound-thread', 1));
     await expect(
       service.rewindConversation(7, 'codex-record:3'),
@@ -968,6 +1078,7 @@ describe('CodexRuntimeService', () => {
   it('rejects an incorrect rollback without publishing empty history', async () => {
     const { service, sessionsService, historyService, appServer } =
       createService();
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 2));
     appServer.request.mockResolvedValueOnce(forkResult('rewound-thread'));
     appServer.request.mockResolvedValueOnce(forkResult('rewound-thread', 0));
     await expect(
@@ -983,6 +1094,7 @@ describe('CodexRuntimeService', () => {
       threadId: 'source-thread',
       beforeTurnId: 'turn-1',
     });
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 2));
     appServer.request.mockResolvedValueOnce(forkResult('rewound-thread'));
     appServer.request.mockResolvedValueOnce(forkResult('rewound-thread', 0));
     await expect(
@@ -997,6 +1109,7 @@ describe('CodexRuntimeService', () => {
 
   it('does not rollback when forking at the latest assistant turn', async () => {
     const { service, appServer } = createService();
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 1));
     appServer.request.mockResolvedValueOnce(forkResult('forked-thread', 1));
     await service.forkConversation({
       parentSessionId: 7,
@@ -1005,7 +1118,7 @@ describe('CodexRuntimeService', () => {
       anchorMessageKind: 'assistant',
       childSessionName: 'Fork',
     });
-    expect(appServer.request).toHaveBeenCalledTimes(1);
+    expect(appServer.request).toHaveBeenCalledTimes(2);
   });
 
   it('rejects Codex rewinds while a run is active', async () => {
@@ -1020,6 +1133,7 @@ describe('CodexRuntimeService', () => {
 
   it('prevents overlapping edits and prompts while a rewind is awaiting persistence', async () => {
     const { service, historyService, appServer } = createService();
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 2));
     appServer.request.mockResolvedValueOnce(forkResult('rewound-thread'));
     appServer.request.mockResolvedValueOnce(forkResult('rewound-thread', 1));
     let finish!: (history: unknown[]) => void;

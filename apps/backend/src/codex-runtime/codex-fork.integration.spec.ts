@@ -2,6 +2,7 @@ jest.mock('../session-title/session-title.service.js', () => ({
   SessionTitleService: class SessionTitleService {},
 }));
 
+import type { ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
@@ -15,6 +16,19 @@ import { CodexRuntimeService } from './codex-runtime.service.js';
 const integration = process.env.ELEVENEX_CODEX_TEST_BIN
   ? describe
   : describe.skip;
+
+async function stopAppServer(client: CodexAppServerClient) {
+  const child = (client as unknown as { child: ChildProcess | null }).child;
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
+    client.onModuleDestroy();
+    return;
+  }
+  const exited = new Promise<void>((resolve) =>
+    child.once('exit', () => resolve()),
+  );
+  client.onModuleDestroy();
+  await exited;
+}
 
 integration('Codex fork persistence with the installed app-server', () => {
   it('retains earlier turns when forking, editing repeatedly, and reopening', async () => {
@@ -130,22 +144,24 @@ integration('Codex fork persistence with the installed app-server', () => {
           (id === 7 ? parent : child).codexSessionId = threadId;
         },
       };
-      const runtime = new CodexRuntimeService(
-        sessions as never,
-        {} as never,
-        history,
-        appServer,
-        { updateRuntimeActivity: () => undefined } as never,
-        {} as never,
-        {
-          getAgentProviderDefaults: () => ({
-            model: null,
-            reasoningEffort: null,
-          }),
-        } as never,
-        {} as never,
-        {} as never,
-      );
+      const createRuntime = (client: CodexAppServerClient) =>
+        new CodexRuntimeService(
+          sessions as never,
+          {} as never,
+          history,
+          client,
+          { updateRuntimeActivity: () => undefined } as never,
+          {} as never,
+          {
+            getAgentProviderDefaults: () => ({
+              model: null,
+              reasoningEffort: null,
+            }),
+          } as never,
+          {} as never,
+          {} as never,
+        );
+      let runtime = createRuntime(appServer);
       const sourceHistory = await history.getHistory(sourceId);
       const anchor = sourceHistory.find((item) => item.content === 'answer-2')!;
       const fork = await runtime.forkConversation({
@@ -173,7 +189,9 @@ integration('Codex fork persistence with the installed app-server', () => {
       expect(await readFile(sourcePath, 'utf8')).toBe(sourceContent);
 
       // A new app-server reads the persisted child, independently of the
-      // in-memory thread that created it.
+      // in-memory thread that created it. Stop the original server first;
+      // current CLIs reject simultaneous writers from separate app-servers.
+      await stopAppServer(appServer);
       const reopened = new CodexAppServerClient();
       clients.push(reopened);
       const resumed = await reopened.request<any>('thread/resume', {
@@ -188,6 +206,8 @@ integration('Codex fork persistence with the installed app-server', () => {
         ),
       ).toEqual(['prompt-1', 'answer-1']);
 
+      runtime = createRuntime(reopened);
+
       const first = (await history.getHistory(child.codexSessionId)).find(
         (item) => item.kind === 'user',
       )!;
@@ -196,7 +216,7 @@ integration('Codex fork persistence with the installed app-server', () => {
       ).toEqual([]);
       expect(await history.getHistory(child.codexSessionId)).toEqual([]);
     } finally {
-      clients.forEach((client) => client.onModuleDestroy());
+      await Promise.all(clients.map(stopAppServer));
       if (previousHome === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previousHome;
       if (previousBinary === undefined) delete process.env.ELEVENEX_CODEX_BIN;

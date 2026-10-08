@@ -496,31 +496,62 @@ export class CodexRuntimeService
     beforeTurnId?: string;
     lastTurnId?: string;
   }): Promise<{ threadId: string; history: ClaudeTranscriptItem[] }> {
-    // Older installed CLIs silently ignore lastTurnId/beforeTurnId. Fork the
-    // complete thread, then trim the child using the supported rollback RPC.
-    // Request turns so the boundary is validated against what was copied.
+    // Validate the boundary before creating a child, including when a native
+    // beforeTurnId fork excludes that turn from its response entirely.
+    const source = await this.appServer.request<CodexThreadHistoryResult>(
+      'thread/read',
+      { threadId: target.threadId, includeTurns: true },
+    );
+    if (
+      source.thread?.id !== target.threadId ||
+      !Array.isArray(source.thread.turns)
+    ) {
+      throw new Error('Codex did not return the source thread history.');
+    }
+    const index = source.thread.turns.findIndex(
+      (turn) => turn.id === (target.beforeTurnId ?? target.lastTurnId),
+    );
+    if (index < 0)
+      throw new Error('The selected Codex turn was not copied into the fork.');
+    if (
+      target.lastTurnId &&
+      source.thread.turns[index].status === 'inProgress'
+    ) {
+      throw new ConflictException(
+        'Cannot fork through a Codex turn that is still running.',
+      );
+    }
+    const retained = source.thread.turns.slice(
+      0,
+      index + (target.beforeTurnId ? 0 : 1),
+    );
+    // Current CLIs trim natively and no longer expose thread/rollback. Older
+    // CLIs ignore the boundary fields, so only use rollback if the returned
+    // child still contains the complete source prefix.
     const fork = await this.appServer.request<CodexThreadHistoryResult>(
       'thread/fork',
-      { threadId: target.threadId },
+      {
+        threadId: target.threadId,
+        ...(target.beforeTurnId
+          ? { beforeTurnId: target.beforeTurnId }
+          : { lastTurnId: target.lastTurnId }),
+      },
     );
     const thread = fork.thread;
     if (!thread?.id || !Array.isArray(thread.turns)) {
       throw new Error('Codex did not return the forked thread history.');
     }
-    const index = thread.turns.findIndex(
-      (turn) => turn.id === (target.beforeTurnId ?? target.lastTurnId),
-    );
-    if (index < 0)
-      throw new Error('The selected Codex turn was not copied into the fork.');
-    if (target.lastTurnId && thread.turns[index].status === 'inProgress') {
-      throw new ConflictException(
-        'Cannot fork through a Codex turn that is still running.',
-      );
+    if (
+      thread.turns.length < retained.length ||
+      thread.turns
+        .slice(0, retained.length)
+        .some((turn, i) => turn.id !== retained[i].id) ||
+      (thread.turns.length > retained.length &&
+        thread.turns[retained.length].id !==
+          source.thread.turns[retained.length]?.id)
+    ) {
+      throw new Error('Codex did not retain the requested fork history.');
     }
-    const retained = thread.turns.slice(
-      0,
-      index + (target.beforeTurnId ? 0 : 1),
-    );
     const numTurns = thread.turns.length - retained.length;
     if (numTurns > 0) {
       const rollback = await this.appServer.request<CodexThreadHistoryResult>(
