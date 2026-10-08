@@ -196,9 +196,12 @@ export class CodexRuntimeService
 {
   private readonly logger = new Logger('CodexRuntimeService');
   private readonly activeRuns = new Map<number, CodexActiveRunState>();
+  // Keep unconfirmed server turns addressable even after the local stream ends.
+  private readonly unconfirmedStops = new Map<number, CodexActiveRunState>();
   private readonly rewindingSessions = new Set<number>();
   private readonly runtimeStates = new Map<number, CodexRuntimeState>();
   private readonly invalidatedSessions = new Set<number>();
+  private readonly sessionGenerations = new Map<number, number>();
   private codexModels: ClaudeModelOption[] = [...CODEX_MODELS];
   private codexDefaultModel = DEFAULT_CODEX_MODEL;
   private lastModelRefreshAt = 0;
@@ -734,11 +737,17 @@ export class CodexRuntimeService
     titlePrompt?: string,
     images?: AgentImageInput[],
   ): Promise<void> {
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
     this.assertNotRewinding(sessionId);
     const trimmedPrompt = prompt.trim();
     const validatedImages = this.validateImageInputs(images);
     if (!trimmedPrompt && !validatedImages.length) {
       return;
+    }
+    if (this.unconfirmedStops.has(sessionId)) {
+      throw new ConflictException(
+        'Codex has not confirmed that the previous turn stopped. Retry stopping it before continuing.',
+      );
     }
     if (
       this.activeRuns.has(sessionId) ||
@@ -772,6 +781,14 @@ export class CodexRuntimeService
     if (shouldLoadSessionForTitle) {
       const hadCachedWorktreePath = Boolean(worktreePath);
       const session = await this.sessionsService.findOne(sessionId);
+      if (
+        this.invalidatedSessions.has(sessionId) ||
+        generation !== (this.sessionGenerations.get(sessionId) ?? 0)
+      ) {
+        throw new ConflictException(
+          'This session was closed. Reopen its task before continuing.',
+        );
+      }
       worktreePath = session.worktreePath;
       isNewSession =
         (!session.codexSessionId || session.codexSessionId === '-1') &&
@@ -789,6 +806,14 @@ export class CodexRuntimeService
     if (!worktreePath) {
       throw new BadRequestException(
         `Session ${sessionId} does not have a worktree path`,
+      );
+    }
+    if (
+      this.invalidatedSessions.has(sessionId) ||
+      generation !== (this.sessionGenerations.get(sessionId) ?? 0)
+    ) {
+      throw new ConflictException(
+        'This session was closed. Reopen its task before continuing.',
       );
     }
     const resolvedWorktreePath = worktreePath;
@@ -940,12 +965,18 @@ export class CodexRuntimeService
       state.queuePaused = true;
       this.emitRunState(sessionId);
     }
-    const run = this.activeRuns.get(sessionId);
+    const run =
+      this.activeRuns.get(sessionId) ?? this.unconfirmedStops.get(sessionId);
     if (!run) {
       return;
     }
     run.interruptRequested = true;
+    this.unconfirmedStops.set(sessionId, run);
     this.resolvePendingCodexRequests(run);
+    run.abortController.abort();
+    // An in-flight turn/start must return its IDs before we can stop it. If
+    // initialization was cancelled before dispatch, completion wins instead.
+    await Promise.race([run.turnReadyPromise, run.completionPromise]);
     // Tell the app-server to cancel the in-flight turn so it stops producing
     // model output; the abort signal also closes the local notification loop.
     if (run.threadId && run.turnId) {
@@ -955,18 +986,36 @@ export class CodexRuntimeService
           { threadId: run.threadId, turnId: run.turnId },
           5_000,
         );
-      } catch (error) {
-        this.logger.debug(
-          `turn/interrupt failed for session ${sessionId}: ${String(error)}`,
-        );
+      } catch {
+        // A turn may already have completed. Verify its state below; a failed
+        // request alone is never evidence that its checkout is safe to reuse.
       }
+      await this.confirmTurnStopped(run);
     }
-    run.abortController.abort();
     await run.completionPromise.catch(() => undefined);
+    this.unconfirmedStops.delete(sessionId);
     if (this.activeRuns.get(sessionId) === run) {
       this.activeRuns.delete(sessionId);
       this.finalizeInterruptedRun(sessionId);
     }
+  }
+
+  private async confirmTurnStopped(run: CodexActiveRunState): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    do {
+      const response = await this.appServer.request<{
+        thread?: { turns?: Array<{ id: string; status: string }> };
+      }>('thread/read', { threadId: run.threadId, includeTurns: true }, 2_000);
+      const turn = response.thread?.turns?.find(
+        (turn) => turn.id === run.turnId,
+      );
+      if (turn && ['completed', 'interrupted', 'failed'].includes(turn.status))
+        return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    } while (Date.now() < deadline);
+    throw new ConflictException(
+      'Codex has not confirmed that the turn stopped. The task environment remains reserved; retry stopping it.',
+    );
   }
 
   async cancelPendingPrompt(sessionId: number, id: string): Promise<void> {
@@ -1261,9 +1310,17 @@ export class CodexRuntimeService
 
   async cleanupSession(sessionId: number): Promise<void> {
     this.invalidatedSessions.add(sessionId);
+    this.sessionGenerations.set(
+      sessionId,
+      (this.sessionGenerations.get(sessionId) ?? 0) + 1,
+    );
     await this.interrupt(sessionId);
     this.activeRuns.delete(sessionId);
     this.runtimeStates.delete(sessionId);
+  }
+
+  reactivateSession(sessionId: number): void {
+    this.invalidatedSessions.delete(sessionId);
   }
 
   private handleCodexEvent(
@@ -1730,7 +1787,8 @@ export class CodexRuntimeService
       selectedModel: startup.selectedModel,
       reasoningEffort: startup.reasoningEffort,
       fastMode:
-        this.settingsService.getAgentProviderDefaults('codex').fastMode === true &&
+        this.settingsService.getAgentProviderDefaults('codex').fastMode ===
+          true &&
         availableModels.find((model) => model.id === startup.selectedModel)
           ?.supportsFastMode === true,
       selectedPermissionMode: 'auto',
@@ -2563,7 +2621,9 @@ export class CodexRuntimeService
 
     try {
       await this.appServer.ensureReady();
+      if (signal.aborted) return;
       const session = await this.sessionsService.findOne(sessionId);
+      if (signal.aborted) return;
       const isMission = session.surface === 'agent';
       const missionInstructions = isMission
         ? buildMetaAgentPrompt(session.agentAutonomyMode)
@@ -2596,6 +2656,7 @@ export class CodexRuntimeService
       const approvalsReviewer = permissionOptions.approvalsReviewer ?? 'user';
       const serviceTier = state.fastMode ? 'fast' : null;
       const mcpAgentToken = await this.mcpAgentTokens.ensureToken(sessionId);
+      if (signal.aborted) return;
 
       // Load or create the thread before dispatching the turn. Calling
       // thread/resume on an already-loaded thread can ignore configuration
@@ -2684,6 +2745,11 @@ export class CodexRuntimeService
       if (activeRun) activeRun.threadId = threadIdFilter;
 
       // Now start the turn.
+      if (signal.aborted || activeRun?.interruptRequested) return;
+      // Queued prompts bypass the gateway and may wait through an external
+      // checkout switch. Revalidate ownership immediately before execution.
+      await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
+      if (signal.aborted || activeRun?.interruptRequested) return;
       const turnStart = await this.appServer.request<CodexTurnStartResult>(
         'turn/start',
         {

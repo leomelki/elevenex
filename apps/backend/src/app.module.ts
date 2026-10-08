@@ -35,6 +35,7 @@ import { ElevenexMcpModule } from './mcp/elevenex-mcp.module.js';
 import { ElevenexAgentModule } from './elevenex-agent/elevenex-agent.module.js';
 import { AgentFocusModule } from './agent-focus/agent-focus.module.js';
 import { ShellEnvService } from './config/shell-env.service.js';
+import { TasksModule } from './tasks/tasks.module.js';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { ShellEnvService } from './config/shell-env.service.js';
     BranchesModule,
     WorktreesModule,
     WorkspacesModule,
+    TasksModule,
     SessionsModule,
     NavigationModule,
     TerminalModule,

@@ -61,6 +61,13 @@ describe('AgentRuntimeCleanupService', () => {
     expect(claude.cleanupSession).toHaveBeenCalledWith(7);
     expect(codex.cleanupSession).toHaveBeenCalledWith(7);
   });
+
+  it('reactivates providers that retain session lifecycle state', async () => {
+    const claude = createProvider('claude');
+    claude.reactivateSession = jest.fn();
+    await createService([claude, createProvider('stateless')]).reactivateSession(42);
+    expect(claude.reactivateSession).toHaveBeenCalledWith(42);
+  });
 });
 
 function createService(providers: AgentRuntimeProvider[]) {

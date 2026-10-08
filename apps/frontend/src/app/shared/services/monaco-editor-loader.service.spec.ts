@@ -41,7 +41,9 @@ describe('MonacoEditorLoaderService', () => {
     expect(languageIds).toEqual(expect.arrayContaining(['go', 'rust', 'typescript']));
     expect(window.monaco).toBe(monaco);
     expect(globalThis.MonacoEnvironment?.getWorker).toEqual(expect.any(Function));
-    expect(Array.from(document.scripts).some((element) => element.src.includes('/vs/'))).toBe(false);
+    expect(Array.from(document.scripts).some((element) => element.src.includes('/vs/'))).toBe(
+      false,
+    );
     expect(
       Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')).some(
         (element) => element.href.includes('/vs/'),

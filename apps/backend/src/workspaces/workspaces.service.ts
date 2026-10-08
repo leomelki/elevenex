@@ -1,3 +1,4 @@
+import { isSqliteUniqueConstraintError } from '../database/sqlite-errors.js';
 import {
   BadRequestException,
   ConflictException,
@@ -5,7 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { worktreeSimpleGit } from '../config/system-paths.js';
@@ -25,6 +26,14 @@ import {
 } from '../worktrees/worktree-pool.service.js';
 
 export interface WorkspaceSnapshot {
+  archivedAt?: string | null;
+  taskState?: string;
+  taskBranch?: string | null;
+  sourceRef?: string | null;
+  checkoutMode?: string;
+  startingCommit?: string | null;
+  finalCommit?: string | null;
+  taskError?: string | null;
   id: number;
   repoId: number;
   name: string;
@@ -93,13 +102,24 @@ export class WorkspacesService {
     const rows = await this.db
       .select()
       .from(schema.workspaces)
-      .where(eq(schema.workspaces.repoId, repo.id));
+      .where(
+        and(
+          eq(schema.workspaces.repoId, repo.id),
+          isNull(schema.workspaces.archivedAt),
+        ),
+      );
 
     const gitWorktrees = await this.safeListWorktrees(repo.path);
     const byRealPath = await this.indexWorktreesByRealPath(gitWorktrees);
 
     const snapshots = await Promise.all(
       rows.map(async (workspace) => {
+        if (
+          workspace.archivedAt ||
+          workspace.linkStatus === 'unlinked' ||
+          (workspace.taskState && workspace.taskState !== 'ready')
+        )
+          return this.toCachedSnapshot(workspace);
         const key = await this.realPathOrRaw(workspace.path);
         const gitInfo = byRealPath.get(key) ?? null;
         const isMissing = !gitInfo && !(await this.pathExists(workspace.path));
@@ -117,6 +137,7 @@ export class WorkspacesService {
           : null;
 
         return {
+          ...this.taskMetadata(workspace),
           id: workspace.id,
           repoId: workspace.repoId,
           name: workspace.name,
@@ -157,12 +178,15 @@ export class WorkspacesService {
     repo: typeof schema.repos.$inferSelect,
   ): Promise<WorkspaceSnapshot[]> {
     await this.ensureDefaultWorkspace(repo);
-    await this.worktreePoolService.reconcileRepo(repo);
-
     const rows = await this.db
       .select()
       .from(schema.workspaces)
-      .where(eq(schema.workspaces.repoId, repo.id));
+      .where(
+        and(
+          eq(schema.workspaces.repoId, repo.id),
+          isNull(schema.workspaces.archivedAt),
+        ),
+      );
 
     return rows
       .map((workspace) => this.toCachedSnapshot(workspace))
@@ -325,6 +349,10 @@ export class WorkspacesService {
     const repo = await this.findRepo(workspace.repoId);
     await this.projectsService.assertProjectIsActive(repo.projectId);
     this.assertLinked(workspace);
+    if (workspace.taskRequestId)
+      throw new BadRequestException(
+        'Start another task to work on a different branch.',
+      );
 
     const branch = branchName.trim();
     if (!branch) {
@@ -399,6 +427,10 @@ export class WorkspacesService {
       return { branchName, workspace: nextWorkspace };
     }
 
+    if (workspace.taskRequestId)
+      throw new BadRequestException(
+        'Start another task to work on a different branch.',
+      );
     const dirty = await this.isDirty(workspace.path);
     if (dirty) {
       throw new BadRequestException(
@@ -421,6 +453,21 @@ export class WorkspacesService {
 
   async deleteWorkspace(id: number, removeFromDisk: boolean, repoId?: number) {
     const workspace = await this.findOneForRepo(id, repoId);
+    if (workspace.taskRequestId || workspace.archivedAt)
+      throw new BadRequestException('Finish the task to preserve its history.');
+    const history = await this.db
+      .select({ id: schema.workspaces.id })
+      .from(schema.workspaces)
+      .where(
+        and(
+          eq(schema.workspaces.path, workspace.path),
+          eq(schema.workspaces.linkStatus, 'unlinked'),
+        ),
+      );
+    if (history.length)
+      throw new BadRequestException(
+        'This environment has task history. Finish its current task instead.',
+      );
     const repo = await this.findRepo(workspace.repoId);
     await this.projectsService.assertProjectIsActive(repo.projectId);
 
@@ -462,6 +509,7 @@ export class WorkspacesService {
         and(
           eq(schema.sessions.repoId, repoId),
           eq(schema.sessions.worktreePath, worktreePath),
+          isNull(schema.sessions.workspaceId),
         ),
       );
   }
@@ -489,6 +537,11 @@ export class WorkspacesService {
     >();
 
     for (const session of sessions) {
+      if (
+        session.workspaceId &&
+        existing.some((workspace) => workspace.id === session.workspaceId)
+      )
+        continue;
       if (
         workspaceByRealPath.has(await this.realPathOrRaw(session.worktreePath))
       ) {
@@ -528,10 +581,7 @@ export class WorkspacesService {
     try {
       return await this.db.insert(schema.workspaces).values(values).returning();
     } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.includes('UNIQUE constraint failed')
-      ) {
+      if (isSqliteUniqueConstraintError(error)) {
         throw new ConflictException(
           'A workspace with this name or path already exists.',
         );
@@ -569,6 +619,7 @@ export class WorkspacesService {
       .where(eq(schema.workspaces.repoId, repoId));
     const target = await this.realPathOrRaw(worktreePath);
     for (const workspace of rows) {
+      if (workspace.archivedAt || workspace.linkStatus === 'unlinked') continue;
       if ((await this.realPathOrRaw(workspace.path)) === target) {
         return workspace;
       }
@@ -688,6 +739,12 @@ export class WorkspacesService {
   }
 
   private assertLinked(workspace: typeof schema.workspaces.$inferSelect) {
+    if (workspace.archivedAt)
+      throw new BadRequestException(
+        'Reopen this task before using its environment.',
+      );
+    if (workspace.taskState && workspace.taskState !== 'ready')
+      throw new BadRequestException('This task environment is not ready.');
     if (workspace.linkStatus === 'unlinked') {
       throw new BadRequestException(
         'Workspace is unlinked from its worktree. Link it back before using it.',
@@ -735,15 +792,17 @@ export class WorkspacesService {
         : null;
 
     return {
+      ...this.taskMetadata(workspace),
       id: workspace.id,
       repoId: workspace.repoId,
       name: workspace.name,
       path: workspace.path,
       isDefault: workspace.isDefault,
       createdFromRef: workspace.createdFromRef,
-      currentBranch: branchLikeRef,
-      head: null,
-      isDetached: false,
+      currentBranch:
+        workspace.taskBranch ?? workspace.desiredBranch ?? branchLikeRef,
+      head: workspace.finalCommit ?? workspace.startingCommit,
+      isDetached: workspace.checkoutMode === 'snapshot',
       isBare: false,
       isLocked: false,
       lockReason: null,
@@ -761,6 +820,19 @@ export class WorkspacesService {
         workspace.pendingStashStatus as PendingStashStatus | null,
       branchCheckedOutElsewhere: false,
       checkedOutElsewherePath: null,
+    };
+  }
+
+  private taskMetadata(workspace: typeof schema.workspaces.$inferSelect) {
+    return {
+      archivedAt: workspace.archivedAt,
+      taskState: workspace.taskState,
+      taskBranch: workspace.taskBranch,
+      sourceRef: workspace.sourceRef,
+      checkoutMode: workspace.checkoutMode,
+      startingCommit: workspace.startingCommit,
+      finalCommit: workspace.finalCommit,
+      taskError: workspace.taskError,
     };
   }
 

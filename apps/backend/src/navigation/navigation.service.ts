@@ -33,6 +33,14 @@ export interface SessionFolderInTree {
 }
 
 export interface WorkspaceInTree {
+  archivedAt?: string | null;
+  taskState?: string;
+  taskBranch?: string | null;
+  sourceRef?: string | null;
+  checkoutMode?: string;
+  startingCommit?: string | null;
+  finalCommit?: string | null;
+  taskError?: string | null;
   id: number;
   name: string;
   path: string;
@@ -114,7 +122,7 @@ export class NavigationService {
           repos.map(async (repo) => {
             const [workspaces, sessions, folders] = await Promise.all([
               this.workspacesService.listCachedForRepo(repo),
-              this.sessionsService.findByRepo(repo.id),
+              this.sessionsService.findByRepo(repo.id, { includeFinishedTasks: false }),
               this.sessionFoldersService.listByRepo(repo.id),
             ]);
             const workspacesWithSessions =
@@ -172,7 +180,7 @@ export class NavigationService {
             try {
               const [workspaces, sessions, folders] = await Promise.all([
                 this.workspacesService.listForRepo(repo),
-                this.sessionsService.findByRepo(repo.id),
+                this.sessionsService.findByRepo(repo.id, { includeFinishedTasks: false }),
                 this.sessionFoldersService.listByRepo(repo.id),
               ]);
 

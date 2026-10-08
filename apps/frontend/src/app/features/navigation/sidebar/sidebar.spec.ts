@@ -44,6 +44,9 @@ import { SessionsService } from '../../../shared/services/sessions.service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { Tab, TabService } from '../../session/tab-service';
 import { Sidebar } from './sidebar';
+import { TaskUiService } from '@/features/tasks/task-ui.service';
+import { TasksApiService } from '@/features/tasks/tasks-api.service';
+import { TaskOperationsService } from '@/features/tasks/task-operations.service';
 
 @Directive({
   selector: 'dialog[trackNativeModal]',
@@ -56,6 +59,9 @@ class MockTrackNativeModalDirective {
 }
 
 describe('Sidebar', () => {
+  const taskUiMock = { create: vi.fn(), finish: vi.fn(), finishing: signal(new Set<number>()) };
+  const tasksApiMock = { rename: vi.fn(() => of({})) };
+
   const defaultWorkspaceKey = 'workspace-1--1169402078';
 
   function makeBranch(): NavigationBranch {
@@ -435,6 +441,9 @@ describe('Sidebar', () => {
     HTMLDialogElement.prototype.close ??= vi.fn();
     Element.prototype.scrollIntoView ??= vi.fn();
 
+    taskUiMock.create.mockClear();
+    taskUiMock.finish.mockClear();
+    tasksApiMock.rename.mockClear();
     TestBed.resetTestingModule();
     TestBed.overrideComponent(Sidebar, {
       set: {
@@ -448,6 +457,9 @@ describe('Sidebar', () => {
       schemas: [NO_ERRORS_SCHEMA],
       providers: [
         provideZard(),
+        { provide: TaskUiService, useValue: taskUiMock },
+        { provide: TasksApiService, useValue: tasksApiMock },
+        { provide: TaskOperationsService, useValue: { track: vi.fn() } },
         { provide: Router, useValue: routerMock },
         { provide: NavigationService, useValue: navigationServiceMock },
         { provide: SessionsService, useValue: sessionsServiceMock },
@@ -565,7 +577,7 @@ describe('Sidebar', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[aria-label="New session folder"]')).toBeNull();
     expect(fixture.nativeElement.querySelector('[data-workspace-new-session="2"]')).toBeNull();
-    expect(fixture.nativeElement.querySelector('[aria-label="Link back"]')).toBeTruthy();
+    expect(fixture.nativeElement.querySelector('[aria-label="Open task setup"]')).toBeTruthy();
   });
 
   it('shows a compact new-session action below a linked workspace session list', () => {
@@ -993,12 +1005,12 @@ describe('Sidebar', () => {
     const addBranchButton = el.querySelector(
       '[data-empty-repo-add-workspace="1"]',
     ) as HTMLButtonElement | null;
-    expect(addBranchButton?.textContent).toContain('New workspace');
-    expect(addBranchButton?.textContent).toContain('Create a named worktree');
+    expect(addBranchButton?.textContent).toContain('New task');
+    expect(addBranchButton?.textContent).toContain('Start from a new or existing branch');
 
     addBranchButton?.click();
 
-    expect(branchSearch.open).toHaveBeenCalledWith([tree()[0].repos[0]]);
+    expect(taskUiMock.create).toHaveBeenCalledWith({ repoId: 1, repoName: 'Repo One' });
   });
 
   it('shows the new-workspace action when a repo has Git branches but none added to elevenex', () => {
@@ -1136,12 +1148,13 @@ describe('Sidebar', () => {
     expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
   });
 
-  it('renders distinct remove-from-project and delete-worktree actions for worktree branches', () => {
+  it('offers finishing without destructive environment removal in the task menu', () => {
     const fixture = createSidebar();
     const el = openWorkspaceMenu(fixture);
 
-    expect(getWorktreeRemoveTrigger(el, '/tmp/repo-one-main')).toBeTruthy();
-    expect(getWorktreeDeleteTrigger(el, '/tmp/repo-one-main')).toBeTruthy();
+    expect(el.textContent).toContain('Finish task');
+    expect(getWorktreeRemoveTrigger(el, '/tmp/repo-one-main')).toBeNull();
+    expect(getWorktreeDeleteTrigger(el, '/tmp/repo-one-main')).toBeNull();
   });
 
   it('keeps session creation direct and opens branch actions without collapsing the workspace', () => {
@@ -1160,7 +1173,7 @@ describe('Sidebar', () => {
     getWorkspaceBranchTrigger(menu, '/tmp/repo-one-main')!.click();
     vi.advanceTimersByTime(0);
     fixture.detectChanges();
-    expect(branchSearch.open).toHaveBeenCalledWith([tree()[0].repos[0]]);
+    expect(taskUiMock.create).toHaveBeenCalledWith({ repoId: 1, repoName: 'Repo One', mode: 'existing' });
     expect(navigationServiceMock.toggleExpand).not.toHaveBeenCalled();
     expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull();
   });
@@ -1178,7 +1191,7 @@ describe('Sidebar', () => {
     const menu = document.querySelector<HTMLElement>('[data-slot="dropdown-menu-content"]')!;
     expect(menu).toBeTruthy();
     menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-    expect(document.activeElement?.textContent).toContain('Switch branch');
+    expect(document.activeElement?.textContent).toContain('Start another task');
     menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     fixture.detectChanges();
     expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull();
@@ -1216,7 +1229,7 @@ describe('Sidebar', () => {
     fixture.componentInstance.branchSearch = branchSearch;
     getWorkspaceBranchTrigger(menu, '/tmp/repo-one-main')!.click();
     vi.advanceTimersByTime(0);
-    expect(branchSearch.open).toHaveBeenCalledWith([tree()[0].repos[0]]);
+    expect(taskUiMock.create).toHaveBeenCalledWith({ repoId: 1, repoName: 'Repo One', mode: 'existing' });
     expect(document.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull();
   });
 
@@ -1304,7 +1317,7 @@ describe('Sidebar', () => {
     const fixture = createSidebar();
     const menu = openWorkspaceMenu(fixture);
     [...menu.querySelectorAll<HTMLButtonElement>('button')]
-      .find((item) => item.textContent?.includes('Rename worktree'))!
+      .find((item) => item.textContent?.includes('Rename task'))!
       .click();
     fixture.detectChanges();
     const input = fixture.nativeElement.querySelector(
@@ -1344,84 +1357,29 @@ describe('Sidebar', () => {
 
     component.saveWorkspaceName(repo, workspace, event);
 
-    expect(workspacesServiceMock.rename).toHaveBeenCalledWith(repo.id, workspace.id, 'Repo One 1');
+    expect(tasksApiMock.rename).toHaveBeenCalledWith(workspace.id, 'Repo One 1');
     expect(component.editingWorkspaceId()).toBeNull();
     expect(component.workspaceRenameBusyId()).toBeNull();
     expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
-    expect(toast.success).toHaveBeenCalledWith('Worktree renamed');
+    expect(toast.success).toHaveBeenCalledWith('Task renamed');
   });
 
-  it('shows inline loading and blocks duplicate workspace branch switches while checkout is pending', () => {
-    const switchSubject = new Subject<{}>();
-    workspacesServiceMock.switchBranch.mockReturnValue(switchSubject.asObservable());
-
+  it('starts another task without switching the current checkout or disturbing sessions', () => {
     const fixture = createSidebar();
-    const component = fixture.componentInstance;
-    const el = fixture.nativeElement as HTMLElement;
     const repo = tree()[0].repos[0];
-    const workspace = component.filterWorkspaces(repo)[0];
-    component.branchSearch = { open: vi.fn() };
-
-    component.switchWorkspaceBranch(repo, workspace);
-    component.onBranchSearchSelect({ repo, branch: makeBranchInfo('feature') });
-    fixture.detectChanges();
-
-    expect(workspacesServiceMock.switchBranch).toHaveBeenCalledWith(
-      1,
-      workspace.id,
-      'feature',
-      false,
-    );
-    expect(component.switchingWorkspace()).toEqual({
-      repoId: 1,
-      workspaceId: workspace.id,
-      branchName: 'feature',
-    });
-
-    const row = getWorkspaceRow(el, '/tmp/repo-one-main');
-    expect(row?.querySelector('button')?.disabled).toBe(true);
-    expect(row?.textContent).toContain('Switching…');
-    expect(getWorkspaceBranchTrigger(el, '/tmp/repo-one-main')).toBeNull();
-
-    component.switchWorkspaceBranch(repo, workspace);
-    expect(workspacesServiceMock.switchBranch).toHaveBeenCalledOnce();
-
-    switchSubject.next({});
-    switchSubject.complete();
-    fixture.detectChanges();
-
-    expect(component.switchingWorkspace()).toBeNull();
-    expect(getWorkspaceRow(el, '/tmp/repo-one-main')?.textContent).not.toContain('Switching…');
-    expect(
-      getWorkspaceBranchTrigger(openWorkspaceMenu(fixture), '/tmp/repo-one-main'),
-    ).toBeTruthy();
-    expect(navigationServiceMock.refreshTree).toHaveBeenCalledOnce();
+    const workspace = fixture.componentInstance.filterWorkspaces(repo)[0];
+    fixture.componentInstance.switchWorkspaceBranch(repo, workspace);
+    expect(taskUiMock.create).toHaveBeenCalledWith({ repoId: repo.id, repoName: repo.name, mode: 'existing' });
+    expect(workspacesServiceMock.switchBranch).not.toHaveBeenCalled();
+    expect(tabServiceMock.closeTab).not.toHaveBeenCalled();
   });
 
-  it('clears workspace branch switch loading and shows the backend error on failure', () => {
-    const switchSubject = new Subject<{}>();
-    workspacesServiceMock.switchBranch.mockReturnValue(switchSubject.asObservable());
-
+  it('opens task creation with an unambiguous existing branch reference', () => {
     const fixture = createSidebar();
-    const component = fixture.componentInstance;
-    const el = fixture.nativeElement as HTMLElement;
     const repo = tree()[0].repos[0];
-    const workspace = component.filterWorkspaces(repo)[0];
-    component.branchSearch = { open: vi.fn() };
-
-    component.switchWorkspaceBranch(repo, workspace);
-    component.onBranchSearchSelect({ repo, branch: makeBranchInfo('feature') });
-    fixture.detectChanges();
-
-    expect(getWorkspaceRow(el, '/tmp/repo-one-main')?.textContent).toContain('Switching…');
-
-    switchSubject.error({ error: { message: 'Branch is already checked out' } });
-    fixture.detectChanges();
-
-    expect(component.switchingWorkspace()).toBeNull();
-    expect(getWorkspaceRow(el, '/tmp/repo-one-main')?.textContent).not.toContain('Switching…');
-    expect(toast.error).toHaveBeenCalledWith('Branch is already checked out');
-    expect(navigationServiceMock.refreshTree).not.toHaveBeenCalled();
+    fixture.componentInstance.onBranchSearchSelect({ repo, branch: makeBranchInfo('feature') });
+    expect(taskUiMock.create).toHaveBeenCalledWith({ repoId: repo.id, repoName: repo.name, mode: 'existing', branch: 'refs/heads/feature' });
+    expect(workspacesServiceMock.switchBranch).not.toHaveBeenCalled();
   });
 
   it('renders a pending workspace row while creation is in progress', () => {

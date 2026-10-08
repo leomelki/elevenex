@@ -85,6 +85,11 @@ export const routes: Routes = [
       import('./features/projects/project-detail/project-detail').then(m => m.ProjectDetail),
   },
   {
+    path: 'tasks/:id',
+    canActivate: [canAccessAppRoute],
+    loadComponent: () => import('./features/tasks/task-detail.component').then(m => m.TaskDetailComponent),
+  },
+  {
     path: 'sessions',
     canActivate: [canAccessAppRoute],
     loadComponent: () =>

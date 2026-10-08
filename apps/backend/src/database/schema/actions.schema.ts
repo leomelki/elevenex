@@ -1,8 +1,10 @@
 import { integer, text, sqliteTable } from 'drizzle-orm/sqlite-core';
+import { workspaces } from './workspaces.schema.js';
 
 export const actions = sqliteTable('actions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   worktreePath: text('worktree_path').notNull(),
+  workspaceId: integer('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
   name: text('name').notNull(),
   command: text('command').notNull(),
   status: text('status').notNull().default('idle'),

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { TasksService } from '../../tasks/tasks.service.js';
 import { ProjectsService } from '../../projects/projects.service.js';
 import { ReposService } from '../../repos/repos.service.js';
 import { SessionsService } from '../../sessions/sessions.service.js';
@@ -50,5 +51,6 @@ export class McpToolServices {
     readonly conversationExport: ConversationExportService,
     readonly agentFocus: AgentFocusService,
     readonly localComputer: LocalComputerChannelGateway,
+    readonly tasks: TasksService,
   ) {}
 }

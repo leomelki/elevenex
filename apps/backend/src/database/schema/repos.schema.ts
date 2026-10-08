@@ -12,6 +12,7 @@ export const repos = sqliteTable(
     path: text('path').notNull(),
     color: text('color'), // Hex color for repo identification (e.g., '#3b82f6')
     preferredContextRootRef: text('preferred_context_root_ref'),
+    taskBaseRef: text('task_base_ref'),
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

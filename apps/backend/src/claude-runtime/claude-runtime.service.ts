@@ -10,7 +10,17 @@ import {
 } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { access, readdir, readFile, realpath, writeFile } from 'fs/promises';
+import {
+  access,
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'fs/promises';
 import { constants as fsConstants, readFileSync } from 'fs';
 import { createRequire } from 'module';
 import { homedir, tmpdir } from 'os';
@@ -271,6 +281,7 @@ export interface ClaudeTranscriptFileRef {
 /** The session fields the Claude runtime needs to build/launch a runtime. */
 interface AgentRuntimeSession {
   worktreePath: string;
+  transcriptWorktreePath?: string | null;
   claudeSessionId: string | null;
   surface?: string;
   agentAutonomyMode?: string | null;
@@ -513,6 +524,7 @@ export class ClaudeRuntimeService
   private readonly lastPrewarmAt = new Map<number, number>();
   private readonly runtimeStates = new Map<number, RuntimeState>();
   private readonly invalidatedSessions = new Set<number>();
+  private readonly sessionGenerations = new Map<number, number>();
   // Active MCP OAuth flows whose underlying Claude CLI subprocess (and loopback
   // callback server) must be kept alive until the browser redirect returns.
   // Keyed by `${sessionId}:${serverName}`, with a parallel port→key index so
@@ -602,7 +614,7 @@ export class ClaudeRuntimeService
     // transcript we cannot locate.
     const transcriptHistory = await this.loadHistoryFromTranscript(
       sessionId,
-      session.worktreePath,
+      session.transcriptWorktreePath ?? session.worktreePath,
       session.claudeSessionId,
       interactionsByToolUseId,
     );
@@ -612,7 +624,7 @@ export class ClaudeRuntimeService
 
     try {
       const messages = await getSessionMessages(session.claudeSessionId, {
-        dir: session.worktreePath,
+        dir: session.transcriptWorktreePath ?? session.worktreePath,
       });
       if (messages.length > 0) {
         const normalized = this.normalizeHistory(
@@ -778,7 +790,7 @@ export class ClaudeRuntimeService
         subagent,
         history: this.normalizeHistory(
           await getSubagentMessages(session.claudeSessionId, trimmedAgentId, {
-            dir: session.worktreePath,
+            dir: session.transcriptWorktreePath ?? session.worktreePath,
           }),
           new Map(),
         ),
@@ -830,7 +842,10 @@ export class ClaudeRuntimeService
       worktreePath: session.worktreePath,
       claudeSessionId,
       transcriptPath: claudeSessionId
-        ? await this.findTranscriptPath(session.worktreePath, claudeSessionId)
+        ? await this.findTranscriptPath(
+            session.transcriptWorktreePath ?? session.worktreePath,
+            claudeSessionId,
+          )
         : null,
     };
   }
@@ -850,6 +865,12 @@ export class ClaudeRuntimeService
 
   async cleanupSession(sessionId: number): Promise<void> {
     this.invalidatedSessions.add(sessionId);
+    this.sessionGenerations.set(
+      sessionId,
+      (this.sessionGenerations.get(sessionId) ?? 0) + 1,
+    );
+    const pendingCreation = this.sessionRuntimeCreateInFlight.get(sessionId);
+    const pendingPrewarm = this.prewarmInFlight.get(sessionId);
     this.cancelMcpAuthFlowsForSession(sessionId);
     this.initializingRuns.delete(sessionId);
     this.pendingInterrupts.delete(sessionId);
@@ -862,15 +883,21 @@ export class ClaudeRuntimeService
     }
     const runtime = this.sessionRuntimes.get(sessionId);
     if (runtime) {
-      await runtime.close().catch(() => undefined);
+      await runtime.close();
       this.sessionRuntimes.delete(sessionId);
     }
+    await pendingCreation?.catch(() => undefined);
+    await pendingPrewarm?.catch(() => undefined);
     this.sessionRuntimeCreateInFlight.delete(sessionId);
     this.activeRuns.delete(sessionId);
     this.runtimeStates.delete(sessionId);
     this.prewarmInFlight.delete(sessionId);
     this.lastPrewarmAt.delete(sessionId);
     this.claudeHooksService.clearStatus(sessionId);
+  }
+
+  reactivateSession(sessionId: number): void {
+    this.invalidatedSessions.delete(sessionId);
   }
 
   async rewindConversation(
@@ -894,7 +921,7 @@ export class ClaudeRuntimeService
     }
 
     const transcriptPath = await this.findTranscriptPath(
-      session.worktreePath,
+      session.transcriptWorktreePath ?? session.worktreePath,
       session.claudeSessionId,
     );
 
@@ -999,7 +1026,7 @@ export class ClaudeRuntimeService
     }
 
     const transcriptPath = await this.findTranscriptPath(
-      session.worktreePath,
+      session.transcriptWorktreePath ?? session.worktreePath,
       session.claudeSessionId,
     );
     if (!transcriptPath) {
@@ -1061,7 +1088,7 @@ export class ClaudeRuntimeService
     }
 
     const result = await forkSession(session.claudeSessionId, {
-      dir: session.worktreePath,
+      dir: session.transcriptWorktreePath ?? session.worktreePath,
       upToMessageId,
       title: request.childSessionName,
     });
@@ -1667,6 +1694,7 @@ export class ClaudeRuntimeService
     // relative edit paths for permission diff previews.
     state.worktreePath = session.worktreePath;
 
+    await this.rebindTranscript(sessionId, session);
     const canUseTool = this.createCanUseTool(sessionId, state);
     const onElicitation = this.createOnElicitation(sessionId, state);
     const options = await this.buildQueryOptions(
@@ -1850,6 +1878,7 @@ export class ClaudeRuntimeService
     titlePrompt?: string,
     images?: ClaudeImageInput[],
   ): Promise<void> {
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
     const startedAtMs = Date.now();
     const runId = randomUUID().slice(0, 8);
     const trimmedPrompt = prompt.trim();
@@ -1876,7 +1905,16 @@ export class ClaudeRuntimeService
     let initializationState: RuntimeState | null = null;
     let runRegistered = false;
     try {
+      await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
       const rawSession = await this.sessionsService.findOne(sessionId);
+      if (
+        this.invalidatedSessions.has(sessionId) ||
+        generation !== (this.sessionGenerations.get(sessionId) ?? 0)
+      ) {
+        throw new ConflictException(
+          'This session was closed. Reopen its task before continuing.',
+        );
+      }
       // Detect blank TUI sessions: claudeSessionId was set by the SessionStart hook
       // when the TUI launched, but no messages were ever sent so no real conversation
       // exists. The previous hydrate will have recorded lastHistoryItemCount=0 /
@@ -1993,6 +2031,14 @@ export class ClaudeRuntimeService
         session,
         state,
       );
+      if (
+        this.invalidatedSessions.has(sessionId) ||
+        generation !== (this.sessionGenerations.get(sessionId) ?? 0)
+      ) {
+        throw new ConflictException(
+          'This session was closed. Reopen its task before continuing.',
+        );
+      }
       const hadStartedRuntime = runtime.startedAtMs != null;
       const queryCreatedAtMs = Date.now();
       const resume =
@@ -2076,8 +2122,9 @@ export class ClaudeRuntimeService
 
       this.emitRunState(sessionId);
       try {
+        await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
         const run = this.activeRuns.get(sessionId);
-        if (!run?.interruptRequested) {
+        if (run && run.runId === runId && !run.interruptRequested) {
           await runtime.submitTurn(
             this.buildSdkUserMessage(trimmedPrompt, validatedImages),
           );
@@ -2126,11 +2173,16 @@ export class ClaudeRuntimeService
         this.enforceIdleRuntimeLimit(sessionId);
       }
     } catch (error) {
-      this.initializingRuns.delete(sessionId);
+      if (this.initializingRuns.get(sessionId) === runId)
+        this.initializingRuns.delete(sessionId);
       if (this.pendingInterrupts.get(sessionId) === runId) {
         this.pendingInterrupts.delete(sessionId);
       }
-      if (!runRegistered && initializationState) {
+      if (
+        !runRegistered &&
+        initializationState &&
+        generation === (this.sessionGenerations.get(sessionId) ?? 0)
+      ) {
         const message = error instanceof Error ? error.message : String(error);
         initializationState.lastError = message;
         initializationState.runPhase = 'error';
@@ -4848,7 +4900,8 @@ export class ClaudeRuntimeService
       selectedModel: startup.selectedModel,
       reasoningEffort: startup.reasoningEffort,
       fastMode:
-        this.settingsService.getAgentProviderDefaults('claude').fastMode === true &&
+        this.settingsService.getAgentProviderDefaults('claude').fastMode ===
+          true &&
         availableModels.find((model) => model.id === startup.selectedModel)
           ?.supportsFastMode === true,
       selectedPermissionMode: 'auto',
@@ -7353,6 +7406,48 @@ export class ClaudeRuntimeService
     } catch {
       return false;
     }
+  }
+
+  private async rebindTranscript(
+    sessionId: number,
+    session: AgentRuntimeSession,
+  ): Promise<void> {
+    if (
+      !session.claudeSessionId ||
+      session.claudeSessionId === '-1' ||
+      !session.transcriptWorktreePath ||
+      session.transcriptWorktreePath === session.worktreePath
+    )
+      return;
+    const source = await this.findTranscriptPath(
+      session.transcriptWorktreePath,
+      session.claudeSessionId,
+    );
+    if (!source)
+      throw new ConflictException(
+        'The saved conversation could not be found. Start a new session in this task.',
+      );
+    const destination = this.getTranscriptPath(
+      session.worktreePath,
+      session.claudeSessionId,
+    );
+    await mkdir(dirname(destination), { recursive: true });
+    // The persisted provenance is authoritative. A previous assignment may have
+    // left an older copy here; replace it atomically before changing provenance.
+    // Runtime startup awaits this method, so a failed DB write cannot extend the
+    // destination and a retry can safely copy the same authoritative source.
+    const temporary = `${destination}.${randomUUID()}.tmp`;
+    try {
+      await copyFile(source, temporary, fsConstants.COPYFILE_EXCL);
+      await rename(temporary, destination);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+    await this.db
+      .update(schema.sessions)
+      .set({ transcriptWorktreePath: session.worktreePath })
+      .where(eq(schema.sessions.id, sessionId));
+    session.transcriptWorktreePath = session.worktreePath;
   }
 
   private getTranscriptPath(

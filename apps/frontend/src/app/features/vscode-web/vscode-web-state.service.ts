@@ -1,9 +1,9 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { getBackendOrigin } from '@/shared/runtime/runtime-config';
 
-export function toWorkspaceRootUri(worktreePath: string): string {
+export function toWorkspaceRootUri(worktreePath: string, taskId?: number | null): string {
   const normalized = worktreePath.replace(/\\/g, '/').replace(/\/+$/, '') || worktreePath;
-  return `workspace-vfs://elevenex/?worktreePath=${encodeURIComponent(normalized)}`;
+  return `workspace-vfs://elevenex/?worktreePath=${encodeURIComponent(normalized)}${taskId ? `&taskId=${taskId}` : ''}`;
 }
 
 export function buildVSCodeIframeKey(projectId: number, worktreePath: string): string {
@@ -39,7 +39,31 @@ export class VSCodeWebStateService {
   private iframeReady = signal<Map<string, boolean>>(new Map());
   private iframeTheme = new Map<string, boolean>();
 
-  getOrCreateIframe(iframeKey: string, worktreePath: string, container: HTMLElement, isDark: boolean): HTMLIFrameElement {
+  /** Check every mounted editor, including hidden tabs, before releasing a checkout. */
+  async checkTaskEditors(worktreePath: string, save = false): Promise<number> {
+    const editors = [...this.iframeInstances].filter(([key]) => key.endsWith(`:${worktreePath}`));
+    const results = await Promise.all(editors.map(([, iframe]) => new Promise<number>((resolve, reject) => {
+      const requestId = crypto.randomUUID();
+      const origin = new URL(iframe.src).origin;
+      const cleanup = () => { clearTimeout(timeout); window.removeEventListener('message', listener); };
+      const listener = (event: MessageEvent) => {
+        if (event.source !== iframe.contentWindow || event.origin !== origin || event.data?.type !== 'elevenex-editor-check-result' || event.data.requestId !== requestId) return;
+        cleanup();
+        if (event.data.error || (save && event.data.dirty > 0)) reject(new Error(event.data.error || 'Some editor documents are still unsaved. Save them before finishing.'));
+        else resolve(Number(event.data.dirty) || 0);
+      };
+      const timeout = setTimeout(() => { cleanup(); reject(new Error('The editor is not ready. Wait for it to load, then finish the task.')); }, 8000);
+      window.addEventListener('message', listener);
+      iframe.contentWindow?.postMessage({ type: 'elevenex-editor-check', requestId, save }, origin);
+    })));
+    return results.reduce((count, dirty) => count + dirty, 0);
+  }
+
+  destroyForPath(worktreePath: string): void {
+    for (const key of [...this.iframeInstances.keys()]) if (key.endsWith(`:${worktreePath}`)) this.destroyIframe(key);
+  }
+
+  getOrCreateIframe(iframeKey: string, worktreePath: string, container: HTMLElement, isDark: boolean, taskId?: number | null): HTMLIFrameElement {
     const existing = this.iframeInstances.get(iframeKey);
     if (existing) {
       this.attachIframe(existing, container);
@@ -52,7 +76,7 @@ export class VSCodeWebStateService {
     iframe.style.background = 'transparent';
 
     const params = new URLSearchParams({
-      workspace: toWorkspaceRootUri(worktreePath),
+      workspace: toWorkspaceRootUri(worktreePath, taskId),
       extensionPaths: '/vscode-ext1,/vscode-ext2',
       theme: isDark ? 'dark' : 'light',
     });

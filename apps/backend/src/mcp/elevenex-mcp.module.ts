@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TasksModule } from '../tasks/tasks.module.js';
 import { DatabaseModule } from '../database/database.module.js';
 import { ProjectsModule } from '../projects/projects.module.js';
 import { ReposModule } from '../repos/repos.module.js';
@@ -35,6 +36,7 @@ import { LocalComputerChannelGateway } from './local-computer/local-computer-cha
 @Module({
   imports: [
     DatabaseModule,
+    TasksModule,
     ProjectsModule,
     ReposModule,
     SessionsModule,

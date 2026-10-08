@@ -184,6 +184,10 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
         }
         case 'submit_prompt':
           await this.assertSessionMutable(sessionId);
+          if (
+            (await this.sessionsService.findOne(sessionId)).status === 'stopped'
+          )
+            await this.sessionsService.reactivateRuntime(sessionId);
           // Record the UI focus for this turn before submitting so the agent can
           // pull it via get_focused_session. A missing/null id clears any prior
           // focus so a stale tab is never reported.
@@ -196,7 +200,8 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           );
           return;
         case 'interrupt':
-          await this.assertSessionMutable(sessionId);
+          // Stopping remains available when a checkout has drifted or setup failed.
+          await this.sessionsService.findOne(sessionId);
           await provider.interrupt(sessionId);
           return;
         case 'approve_permission':
@@ -261,6 +266,7 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   private async assertSessionMutable(sessionId: number): Promise<void> {
+    await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
     const session = await this.sessionsService.findOne(sessionId);
     if (session.status === 'archived') {
       throw new BadRequestException('Archived sessions are read-only');

@@ -44,8 +44,12 @@ export class BackendClient {
    * @param baseUrl - Backend API base URL (default: http://localhost:3001/api/files)
    *                   Production: configurable via extension settings
    */
-  constructor(baseUrl: string = `${getBrowserLocation()?.origin ?? 'http://localhost:3000'}/api/worktrees`) {
+  constructor(baseUrl: string = `${getBrowserLocation()?.origin ?? 'http://localhost:3000'}/api/worktrees`, private readonly taskId?: number) {
     this.baseUrl = baseUrl;
+  }
+
+  private mutationHeaders(): Record<string, string> {
+    return { 'Content-Type': 'application/json', ...(this.taskId ? { 'x-elevenex-task-id': String(this.taskId) } : {}) };
   }
 
   /**
@@ -422,9 +426,7 @@ export class BackendClient {
 
     const response = await fetch(url, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: this.mutationHeaders(),
       body: JSON.stringify(payload)
     });
 
@@ -436,7 +438,7 @@ export class BackendClient {
   async createDirectory(worktreePath: string, path: string): Promise<void> {
     const uri = this.assertSafePath(worktreePath, path);
     const url = this.buildMutationUrl(worktreePath, 'directories', path);
-    const response = await fetch(url, { method: 'POST' });
+    const response = await fetch(url, { method: 'POST', headers: this.mutationHeaders() });
 
     if (!response.ok) {
       throw this.mapHttpError(response.status, uri);
@@ -454,9 +456,7 @@ export class BackendClient {
     const url = this.buildMutationUrl(worktreePath, 'files', oldPath);
     const response = await fetch(url, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: this.mutationHeaders(),
       body: JSON.stringify({ newPath, overwrite })
     });
 
@@ -470,7 +470,7 @@ export class BackendClient {
     const url = this.buildMutationUrl(worktreePath, 'files', path, {
       recursive: recursive ? 'true' : 'false'
     });
-    const response = await fetch(url, { method: 'DELETE' });
+    const response = await fetch(url, { method: 'DELETE', headers: this.mutationHeaders() });
 
     if (!response.ok) {
       throw this.mapHttpError(response.status, uri);

@@ -47,10 +47,13 @@ export class ZardDialogRef<T = any, R = any, U = any> {
     if (isPlatformBrowser(this.platformId)) {
       fromEvent<KeyboardEvent>(document, 'keydown')
         .pipe(
-          filter(event => event.key === 'Escape'),
+          filter((event) => event.key === 'Escape' && !event.defaultPrevented),
           takeUntil(this.destroy$),
         )
-        .subscribe(() => this.close());
+        .subscribe((event) => {
+          event.preventDefault();
+          this.trigger(eTriggerAction.CANCEL);
+        });
     }
   }
 

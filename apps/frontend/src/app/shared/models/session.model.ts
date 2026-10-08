@@ -10,6 +10,7 @@ export interface Session {
   surface?: 'session' | 'embedded_plan_chat' | string;
   isTemporary?: boolean;
   workspaceName?: string | null;
+  workspaceArchivedAt?: string | null;
   status: 'created' | 'active' | 'archived' | 'stopped';
   archivedByFolder?: boolean;
   activeAgentProvider: string;

@@ -1,3 +1,4 @@
+import { TaskUiService } from '@/features/tasks/task-ui.service';
 import { Component, inject, OnInit, OnDestroy, signal, viewChild, computed } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -128,6 +129,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
   private deleteProjectDialogRef = viewChild<TrackNativeModalDirective>('deleteProjectDialog');
   private removeRepoDialogRef = viewChild<TrackNativeModalDirective>('removeRepoDialog');
   private removeSshForwardDialogRef = viewChild<TrackNativeModalDirective>('removeSshForwardDialog');
+  taskUi = inject(TaskUiService);
   private worktreeSheet = viewChild<WorktreeSheet>('worktreeSheet');
   private sshRefreshTimer: number | null = null;
   private routeSubscription: Subscription | null = null;

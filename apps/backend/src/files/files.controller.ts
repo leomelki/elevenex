@@ -1,9 +1,11 @@
 import {
   Body,
+  ConflictException,
   Controller,
   Delete,
   Get,
   Headers,
+  Inject,
   HttpException,
   NotFoundException,
   Patch,
@@ -18,6 +20,9 @@ import type { Response } from 'express';
 import { FilesService } from './files.service.js';
 import * as path from 'node:path';
 import { GetPathSuggestionsDto } from './dto/get-path-suggestions.dto.js';
+import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
+import { eq } from 'drizzle-orm';
+import * as schema from '../database/schema/index.js';
 
 type RenameRequest = {
   newPath: string;
@@ -62,7 +67,17 @@ export class FilesystemController {
 
 @Controller('worktrees')
 export class FilesController {
-  constructor(private readonly filesService: FilesService) {}
+  constructor(private readonly filesService: FilesService, @Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+
+  private async assertTaskWrite(worktreePath: string, taskId?: string) {
+    // A cached editor may outlive its task or the checkout assigned to it.
+    if (!taskId) return;
+    const id = Number(taskId);
+    const task = Number.isSafeInteger(id) && id > 0 ? (await this.db.select().from(schema.workspaces).where(eq(schema.workspaces.id, id)).limit(1))[0] : undefined;
+    if (!task || task.archivedAt || task.taskState !== 'ready' || task.linkStatus !== 'linked' || path.resolve(task.path) !== path.resolve(worktreePath)) {
+      throw new ConflictException('This editor belongs to an inactive task. Reopen the task before saving files.');
+    }
+  }
 
   @Get(':worktreePath/stat')
   async statRoot(
@@ -339,8 +354,10 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Param('path') filePath: string | string[],
     @Body() body: { content: string },
+    @Headers('x-elevenex-task-id') taskId?: string,
   ) {
     const decodedWorktree = decodeURIComponent(worktreePath);
+    await this.assertTaskWrite(decodedWorktree, taskId);
     const decodedFile = decodeWildcardPath(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
 
@@ -357,8 +374,10 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Query('path') filePath: string,
     @Body() body: { content: string },
+    @Headers('x-elevenex-task-id') taskId?: string,
   ) {
     const decodedWorktree = decodeURIComponent(worktreePath);
+    await this.assertTaskWrite(decodedWorktree, taskId);
     const decodedFile = decodeURIComponent(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
 
@@ -374,8 +393,10 @@ export class FilesController {
   async createDirectory(
     @Param('worktreePath') worktreePath: string,
     @Param('path') dirPath: string | string[],
+    @Headers('x-elevenex-task-id') taskId?: string,
   ) {
     const decodedWorktree = decodeURIComponent(worktreePath);
+    await this.assertTaskWrite(decodedWorktree, taskId);
     const decodedDir = decodeWildcardPath(dirPath);
     const absolutePath = path.join(decodedWorktree, decodedDir);
 
@@ -388,8 +409,10 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Param('path') filePath: string | string[],
     @Body() body: RenameRequest,
+    @Headers('x-elevenex-task-id') taskId?: string,
   ) {
     const decodedWorktree = decodeURIComponent(worktreePath);
+    await this.assertTaskWrite(decodedWorktree, taskId);
     const decodedFile = decodeWildcardPath(filePath);
     const absoluteOldPath = path.join(decodedWorktree, decodedFile);
     const absoluteNewPath = path.join(decodedWorktree, body.newPath);
@@ -409,8 +432,10 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Param('path') filePath: string | string[],
     @Query('recursive') recursive?: string,
+    @Headers('x-elevenex-task-id') taskId?: string,
   ) {
     const decodedWorktree = decodeURIComponent(worktreePath);
+    await this.assertTaskWrite(decodedWorktree, taskId);
     const decodedFile = decodeWildcardPath(filePath);
     const absolutePath = path.join(decodedWorktree, decodedFile);
 

@@ -214,4 +214,7 @@ export class CodexAgentRuntimeProvider
   cleanupSession(sessionId: number) {
     return this.runtimeService.cleanupSession(sessionId);
   }
+  reactivateSession(sessionId: number) {
+    this.runtimeService.reactivateSession(sessionId);
+  }
 }

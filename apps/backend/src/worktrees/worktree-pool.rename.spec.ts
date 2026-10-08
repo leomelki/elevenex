@@ -324,10 +324,16 @@ describe('WorktreePoolService.rename (real git)', () => {
       const items = await service.listForRepo(repo);
 
       expect(items.map((item) => item.path)).toEqual([repoPath]);
-      expect(await db.select().from(schema.workspaces)).toEqual([]);
-      expect(await db.select().from(schema.sessions)).toEqual([
-        { ...session, workspaceId: null, folderId: null },
+      expect(await db.select().from(schema.workspaces)).toEqual([
+        expect.objectContaining({
+          id: workspace.id,
+          taskState: 'failed',
+          linkStatus: 'unlinked',
+          poolWorktreeId: null,
+        }),
       ]);
+      expect(await db.select().from(schema.sessions)).toEqual([session]);
+      expect(await db.select().from(schema.sessionFolders)).toEqual([folder]);
     },
   );
 

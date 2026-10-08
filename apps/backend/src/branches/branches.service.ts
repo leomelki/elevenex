@@ -16,6 +16,8 @@ export interface BranchInfo {
 @Injectable()
 export class BranchesService {
   private cache = new Map<string, { data: BranchInfo[]; timestamp: number }>();
+  private readonly inFlight = new Map<string, Promise<BranchInfo[]>>();
+  private readonly generations = new Map<string, number>();
   private readonly CACHE_TTL_MS = 5_000;
 
   private getCacheKey(repoPath: string, includeRemote: boolean): string {
@@ -23,6 +25,8 @@ export class BranchesService {
   }
 
   invalidateCache(repoPath: string): void {
+    this.generations.set(repoPath, (this.generations.get(repoPath) ?? 0) + 1);
+    this.inFlight.delete(repoPath);
     for (const key of this.cache.keys()) {
       if (key.startsWith(repoPath + ':')) {
         this.cache.delete(key);
@@ -34,19 +38,40 @@ export class BranchesService {
     repoPath: string,
     includeRemote = false,
   ): Promise<BranchInfo[]> {
-    const cacheKey = this.getCacheKey(repoPath, includeRemote);
+    // Local and remote searches share one enumeration, even while a large
+    // repository's first read is still running.
+    const cacheKey = this.getCacheKey(repoPath, true);
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
-      return cached.data;
+      return includeRemote
+        ? cached.data
+        : cached.data.filter((branch) => !branch.isRemote);
     }
+    let pending = this.inFlight.get(repoPath);
+    if (!pending) {
+      const generation = this.generations.get(repoPath) ?? 0;
+      pending = this.readBranches(repoPath)
+        .then((data) => {
+          if ((this.generations.get(repoPath) ?? 0) === generation)
+            this.cache.set(cacheKey, { data, timestamp: Date.now() });
+          return data;
+        })
+        .finally(() => {
+          if (this.inFlight.get(repoPath) === pending)
+            this.inFlight.delete(repoPath);
+        });
+      this.inFlight.set(repoPath, pending);
+    }
+    const data = await pending;
+    return includeRemote ? data : data.filter((branch) => !branch.isRemote);
+  }
 
+  private async readBranches(repoPath: string): Promise<BranchInfo[]> {
     try {
       // Use separate SimpleGit instances for true parallelism
       // (simple-git serializes commands per instance)
       const [branchSummary, worktreePaths] = await Promise.all([
-        worktreeSimpleGit(repoPath).branch(
-          includeRemote ? ['-a'] : [],
-        ) as Promise<BranchSummary>,
+        worktreeSimpleGit(repoPath).branch(['-a']) as Promise<BranchSummary>,
         this.listWorktreePaths(worktreeSimpleGit(repoPath)),
       ]);
 
@@ -62,10 +87,6 @@ export class BranchesService {
 
       for (const [branchName, info] of Object.entries(branchSummary.branches)) {
         const isRemote = branchName.startsWith('remotes/');
-
-        if (isRemote && !includeRemote) {
-          continue;
-        }
 
         const displayName = isRemote
           ? branchName.replace(/^remotes\//, '')
@@ -110,7 +131,6 @@ export class BranchesService {
         });
       }
 
-      this.cache.set(cacheKey, { data: branches, timestamp: Date.now() });
       return branches;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';

@@ -1,4 +1,9 @@
 export interface Workspace {
+  archivedAt?: string | null;
+  taskState?: 'preparing' | 'ready' | 'failed' | 'finishing';
+  taskBranch?: string | null;
+  sourceRef?: string | null;
+  checkoutMode?: 'branch' | 'snapshot';
   id: number;
   repoId: number;
   name: string;

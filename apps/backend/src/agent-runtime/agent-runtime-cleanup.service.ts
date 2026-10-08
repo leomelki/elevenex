@@ -9,6 +9,19 @@ export class AgentRuntimeCleanupService implements AgentRuntimeCleanup {
 
   constructor(private readonly moduleRef: ModuleRef) {}
 
+  async reactivateSession(sessionId: number): Promise<void> {
+    const registry = this.moduleRef.get(AgentRuntimeRegistryService, {
+      strict: false,
+    });
+    await Promise.all(
+      registry
+        .listProviders()
+        .map((info) =>
+          registry.getProvider(info.id).reactivateSession?.(sessionId),
+        ),
+    );
+  }
+
   async cleanupSession(sessionId: number): Promise<void> {
     const registry = this.moduleRef.get(AgentRuntimeRegistryService, {
       strict: false,

@@ -1,3 +1,7 @@
+import { TaskUiService } from '@/features/tasks/task-ui.service';
+import { TasksApiService } from '@/features/tasks/tasks-api.service';
+import { TaskOperationsService } from '@/features/tasks/task-operations.service';
+import { TaskHistoryComponent } from '@/features/tasks/task-history.component';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 import { PlannotatorStateService } from '@/features/plannotator';
 import { TodosService } from '@/features/productivity/todos.service';
@@ -84,7 +88,7 @@ import {
   lucideTrash2,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Observable } from 'rxjs';
 import { BranchInfo } from '../../../shared/models/branch.model';
 import {
   NavigationBranch,
@@ -107,6 +111,7 @@ import { WorktreeSheet } from '../worktree-sheet/worktree-sheet';
   imports: [
     NgIcon,
     RouterLink,
+    TaskHistoryComponent,
     WorktreeSheet,
     BranchSearch,
     ZardInputDirective,
@@ -168,6 +173,11 @@ export class Sidebar implements OnInit, OnDestroy {
   macNativeChrome = input(false);
   macTrafficLightsVisible = input(false);
   navService = inject(NavigationService);
+  taskUi = inject(TaskUiService);
+  private tasksApi = inject(TasksApiService);
+  private taskOperations = inject(TaskOperationsService);
+  finishedRepoIds = signal(new Set<number>());
+  toggleFinished(repoId: number) { this.finishedRepoIds.update(ids => { const next = new Set(ids); if (next.has(repoId)) next.delete(repoId); else next.add(repoId); return next; }); }
   private router = inject(Router);
   private workspacesService = inject(WorkspacesService);
   private sessionsService = inject(SessionsService);
@@ -484,7 +494,12 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   onWorkspaceClick(repo: NavigationRepo, workspace: NavigationWorkspace) {
-    this.navService.toggleExpand(`workspace-${repo.id}-${workspace.id}`);
+    this.navService.expandKey(`workspace-${repo.id}-${workspace.id}`);
+    if (!workspace.isDefault && workspace.id > 0) {
+      const session = [...workspace.sessions].reverse().find(session => session.status !== 'archived');
+      if (session && (!workspace.taskState || workspace.taskState === 'ready')) this.navService.openSession(session.id);
+      else void this.router.navigate(['/tasks', workspace.id]);
+    }
     this.clearDeleteSessionConfirmationIfHidden();
   }
 
@@ -522,7 +537,7 @@ export class Sidebar implements OnInit, OnDestroy {
 
   getWorkspaceTooltip(workspace: NavigationWorkspace): string {
     return [
-      workspace.name,
+      workspace.isDefault ? 'Repository checkout' : workspace.name,
       `Branch: ${workspace.currentBranch || 'detached'}`,
       workspace.linkStatus === 'unlinked' ? 'Status: unlinked from worktree' : 'Status: linked',
       `Path: ${workspace.path}`,
@@ -1154,16 +1169,17 @@ export class Sidebar implements OnInit, OnDestroy {
     }
 
     this.workspaceRenameBusyId.set(workspace.id);
-    this.workspacesService.rename(repo.id, workspace.id, name).subscribe({
+    const rename: Observable<unknown> = workspace.isDefault ? this.workspacesService.rename(repo.id, workspace.id, name) : this.tasksApi.rename(workspace.id, name);
+    rename.subscribe({
       next: () => {
         this.workspaceRenameBusyId.set(null);
         this.editingWorkspaceId.set(null);
         this.navService.refreshTree();
-        toast.success('Worktree renamed');
+        toast.success('Task renamed');
       },
       error: (err) => {
         this.workspaceRenameBusyId.set(null);
-        toast.error(err?.error?.message || 'Could not rename worktree');
+        toast.error(err?.error?.message || 'Could not rename task');
       },
     });
   }
@@ -1735,7 +1751,7 @@ export class Sidebar implements OnInit, OnDestroy {
 
   filterWorkspaces(repo: NavigationRepo): NavigationWorkspace[] {
     if (repo.workspaces) {
-      return repo.workspaces;
+      return repo.workspaces.filter(workspace => !workspace.archivedAt).sort((a, b) => Number(a.isDefault) - Number(b.isDefault) || a.id - b.id);
     }
 
     return (repo.branches ?? []).map((branch, index) => ({
@@ -1781,54 +1797,12 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   openBranchSearchForRepo(repo: NavigationRepo) {
-    this.branchSelectionTarget = null;
-    if (this.branchSearch) {
-      this.branchSearch.open([repo]);
-      return;
-    }
-    this.openCreateWorkspaceSheet(repo, 'HEAD', true);
+    this.taskUi.create({ repoId: repo.id, repoName: repo.name });
   }
 
   onBranchSearchSelect(event: { repo: NavigationRepo; branch: BranchInfo }) {
-    const target = this.branchSelectionTarget;
-    this.branchSelectionTarget = null;
-
-    if (target) {
-      if (event.branch.hasWorktree) {
-        this.worktreeSheet.open(
-          event.repo.id,
-          event.branch.name,
-          event.repo.path,
-          event.repo.name,
-          false,
-        );
-        return;
-      }
-      this.checkoutWorkspaceBranch(target.repo, target.workspace, event.branch.name);
-      return;
-    }
-
-    this.openCreateWorktree(event.repo, event.branch);
-  }
-
-  private openCreateWorkspaceSheet(
-    repo: NavigationRepo,
-    branchName: string,
-    autoCreateSession: boolean,
-  ) {
-    if (this.openingWorkspaceRepoId() !== null) {
-      return;
-    }
-
-    this.openingWorkspaceRepoId.set(repo.id);
-    this.openWorktreeTimer = window.setTimeout(() => {
-      this.openWorktreeTimer = null;
-      try {
-        this.worktreeSheet.open(repo.id, branchName, repo.path, repo.name, autoCreateSession);
-      } finally {
-        this.openingWorkspaceRepoId.set(null);
-      }
-    }, 0);
+    this.taskUi.create({ repoId: event.repo.id, repoName: event.repo.name, mode: 'existing',
+      branch: (event.branch.isRemote ? 'refs/remotes/' : 'refs/heads/') + event.branch.name });
   }
 
   openCreateWorktree(
@@ -1858,15 +1832,7 @@ export class Sidebar implements OnInit, OnDestroy {
   }
 
   switchWorkspaceBranch(repo: NavigationRepo, workspace: NavigationWorkspace) {
-    if (this.isSwitchingWorkspace(repo, workspace) || this.isWorkspaceUnlinked(workspace)) {
-      return;
-    }
-
-    this.branchSelectionTarget = { repo, workspace };
-    if (this.branchSearch) {
-      this.branchSearch.open([repo]);
-      return;
-    }
+    this.taskUi.create({ repoId: repo.id, repoName: repo.name, mode: 'existing' });
   }
 
   isSwitchingWorkspace(repo: NavigationRepo, workspace: NavigationWorkspace): boolean {
@@ -1874,30 +1840,8 @@ export class Sidebar implements OnInit, OnDestroy {
     return switching?.repoId === repo.id && switching.workspaceId === workspace.id;
   }
 
-  private checkoutWorkspaceBranch(
-    repo: NavigationRepo,
-    workspace: NavigationWorkspace,
-    branchName: string,
-  ) {
-    const force =
-      workspace.isDirty &&
-      window.confirm('This workspace has uncommitted changes. Continue with checkout?');
-    if (workspace.isDirty && !force) return;
-    this.switchingWorkspace.set({ repoId: repo.id, workspaceId: workspace.id, branchName });
-    this.workspacesService.switchBranch(repo.id, workspace.id, branchName, force).subscribe({
-      next: () => {
-        toast.success('Workspace branch switched');
-        this.switchingWorkspace.set(null);
-        this.navService.refreshTree();
-      },
-      error: (err) => {
-        this.switchingWorkspace.set(null);
-        toast.error(err?.error?.message || 'Could not switch branch');
-      },
-    });
-  }
-
   openLinkWorkspaceBack(repo: NavigationRepo, workspace: NavigationWorkspace) {
+    if (workspace.taskState) { void this.router.navigate(['/tasks', workspace.id]); return; }
     this.worktreeSheet.open(
       repo.id,
       workspace.desiredBranch || workspace.currentBranch || 'HEAD',

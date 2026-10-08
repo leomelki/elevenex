@@ -73,9 +73,7 @@ describe('ActionPtyManager', () => {
   const mockBuildTmuxInlineEnvPrefix = jest.mocked(buildTmuxInlineEnvPrefix);
   const mockFindBinary = jest.mocked(findBinary);
   const mockGetDefaultUserShell = jest.mocked(getDefaultUserShell);
-  const mockNormalizeShellForPlatform = jest.mocked(
-    normalizeShellForPlatform,
-  );
+  const mockNormalizeShellForPlatform = jest.mocked(normalizeShellForPlatform);
   const mockShouldUseTmux = jest.mocked(shouldUseTmux);
 
   let tmpDir: string;
@@ -139,6 +137,60 @@ describe('ActionPtyManager', () => {
         COLORTERM: 'truecolor',
       }),
     });
+  });
+
+  it('waits for direct action exit when finishing a task', async () => {
+    mockFindBinary.mockReturnValue(null);
+    const process = createMockPty();
+    process.onExit.mockImplementation((callback) => {
+      process.on('exit', callback);
+      return { dispose: () => process.off('exit', callback) };
+    });
+    mockSpawn.mockReturnValue(process as never);
+    manager = new ActionPtyManager();
+    manager.registerPersistence({
+      markRunning: jest.fn(),
+      flushCurrentOutput: jest.fn(),
+      finalizeRun: jest.fn(),
+    });
+    await manager.start({ id: 10, worktreePath: tmpDir, command: 'build' });
+    let stopped = false;
+    const pending = manager.stop(10, true).then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    process.emit('exit', { exitCode: 0 });
+    await pending;
+    expect(manager.isRunning(10)).toBe(false);
+  });
+
+  it('retains the environment if an action is still starting and rechecks ownership before spawning', async () => {
+    mockFindBinary.mockReturnValue(null);
+    const env = createDeferred<NodeJS.ProcessEnv>();
+    mockBuildAugmentedEnv.mockReturnValueOnce(env.promise);
+    manager = new ActionPtyManager();
+    const assertCanRun = jest
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('Task finished'));
+    manager.registerPersistence({
+      assertCanRun,
+      markRunning: jest.fn(),
+      flushCurrentOutput: jest.fn(),
+      finalizeRun: jest.fn(),
+    });
+    const pending = manager.start({
+      id: 10,
+      worktreePath: tmpDir,
+      command: 'build',
+    });
+    const rejected = expect(pending).rejects.toThrow('Task finished');
+    await new Promise((resolve) => setImmediate(resolve));
+    await expect(manager.stop(10, true)).rejects.toThrow('still starting');
+    env.resolve({});
+    await rejected;
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it('does not resolve or invoke tmux when the backend is local', async () => {

@@ -1,0 +1,261 @@
+<div
+  class="mx-auto flex h-full w-full max-w-2xl flex-col justify-center overflow-y-auto px-6 py-10"
+  data-task-detail
+>
+  @if (task(); as task) {
+    <div class="space-y-6 rounded-xl border border-border bg-card p-6 shadow-sm sm:p-8">
+      <header>
+        <p class="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          {{ task.archivedAt ? 'Finished task' : 'Task' }}
+        </p>
+        <h1 class="break-words text-2xl font-semibold tracking-tight">{{ task.name }}</h1>
+        <p class="mt-2 break-all text-sm text-muted-foreground">
+          {{ task.sourceRef || task.taskBranch || branch() | branchRef }}
+          @if (task.checkoutMode === 'snapshot') {
+            <span class="ml-2 rounded bg-muted px-2 py-1 text-xs">Revision snapshot</span>
+          }
+        </p>
+      </header>
+      @if (task.archivedAt) {
+        <p class="text-sm text-muted-foreground">
+          Finished {{ task.archivedAt | date: 'medium' }}. Your conversations and branch are
+          preserved.
+        </p>
+        @if (task.linkStatus === 'linked') {
+          <p class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">
+            Environment kept with this task. Its local files are preserved.
+          </p>
+        }
+        <button z-button (click)="reopen()" [zDisabled]="busy()">
+          {{ busy() ? 'Reopening…' : 'Reopen task' }}
+        </button>
+        <div class="space-y-2 border-t border-border pt-4">
+          <h2 class="text-sm font-medium">Conversations</h2>
+          @for (session of task.sessions; track session.id) {
+            <a
+              [routerLink]="['/sessions', session.id]"
+              class="flex items-center justify-between rounded-lg border border-border px-3 py-3 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              ><span>{{ session.name || 'Session ' + session.id }}</span
+              ><span class="text-xs text-muted-foreground">Read history →</span></a
+            >
+          } @empty {
+            <p class="text-sm text-muted-foreground">No conversations yet.</p>
+          }
+        </div>
+      } @else if (task.taskState === 'failed') {
+        <div role="alert" class="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+          <h2 class="font-medium">
+            {{
+              task.error?.code === 'finish_failed'
+                ? 'Finish needs your attention'
+                : 'Setup needs your attention'
+            }}
+          </h2>
+          <p class="mt-1 text-sm text-muted-foreground">
+            {{ task.error?.message || 'The environment could not be prepared.' }}
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          @if (task.error?.existingTaskId) {
+            <a z-button [routerLink]="['/tasks', task.error!.existingTaskId]">Open existing task</a>
+          }
+          @if (task.error?.canSnapshot) {
+            <button
+              z-button
+              [zDisabled]="busy()"
+              (click)="retry({ checkoutMode: 'snapshot', environment: 'automatic' })"
+            >
+              Work at this revision
+            </button>
+          }
+          @if (task.error?.code === 'external_checkout') {
+            <button
+              z-button
+              zType="outline"
+              [zDisabled]="busy()"
+              (click)="retry({ confirmExternal: true })"
+            >
+              Use this checkout
+            </button>
+          }
+          @if (task.error?.code === 'remote_differs') {
+            <button
+              z-button
+              zType="outline"
+              [zDisabled]="busy()"
+              (click)="
+                retry({ branchName: 'refs/heads/' + task.error!.localBranch, mode: 'existing' })
+              "
+            >
+              Use local branch
+            </button>
+          }
+          @if (task.error?.code === 'fetch_failed' && task.error?.savedCommit) {
+            <button
+              z-button
+              zType="outline"
+              [zDisabled]="busy()"
+              (click)="retry({ useSavedRef: true })"
+            >
+              Use saved revision {{ task.error!.savedCommit!.slice(0, 7) }}
+            </button>
+          }
+          @if (task.error?.code === 'worktree_limit_reached') {
+            <button
+              z-button
+              zType="outline"
+              [zDisabled]="busy()"
+              (click)="retry({ confirmOverLimit: true })"
+            >
+              Create one more environment
+            </button>
+          }
+          @if (task.error?.code === 'branch_exists') {
+            <button
+              z-button
+              zType="outline"
+              [zDisabled]="busy()"
+              (click)="retry({ mode: 'existing' })"
+            >
+              Use existing branch
+            </button>
+          }
+          @if (task.error?.code === 'branch_missing' && task.finalCommit) {
+            <button
+              z-button
+              [zDisabled]="busy()"
+              (click)="retry({ mode: 'new', baseRef: task.finalCommit!, branchName: branch() })"
+            >
+              Restore branch from saved commit
+            </button>
+          }
+          @if (task.error?.code !== 'finish_failed') {
+            <button z-button zType="outline" [zDisabled]="busy()" (click)="retry()">
+              {{ task.error?.code === 'branch_changed' ? 'Restore task checkout' : 'Try again' }}
+            </button>
+          }
+          <button z-button zType="ghost" [zDisabled]="busy()" (click)="taskUi.finish(task.id)">
+            Finish task
+          </button>
+        </div>
+        @if (task.error?.code !== 'finish_failed' && task.error?.code !== 'branch_changed') {
+          <details class="rounded-lg border border-border p-3">
+            <summary class="cursor-pointer text-sm font-medium">Change setup</summary>
+            <div class="mt-3 space-y-3">
+              <label class="block text-xs font-medium" for="task-retry-branch">Branch</label
+              ><input
+                z-input
+                id="task-retry-branch"
+                [value]="branch()"
+                (input)="branch.set($any($event.target).value)"
+              />
+              <label class="block text-xs font-medium" for="task-retry-base"
+                >Base for a new branch</label
+              ><input
+                z-input
+                id="task-retry-base"
+                [value]="base()"
+                (input)="base.set($any($event.target).value)"
+              />
+              <div class="flex flex-wrap gap-2">
+                <button
+                  z-button
+                  zType="outline"
+                  [zDisabled]="busy() || !branch()"
+                  (click)="retry({ branchName: branch(), mode: 'existing', environment: 'new' })"
+                >
+                  Use existing branch</button
+                ><button
+                  z-button
+                  [zDisabled]="busy() || !branch() || !base()"
+                  (click)="
+                    retry({
+                      branchName: branch(),
+                      baseRef: base(),
+                      mode: 'new',
+                      environment: 'new',
+                    })
+                  "
+                >
+                  Create branch
+                </button>
+              </div>
+            </div>
+          </details>
+        }
+      } @else {
+        <div class="flex items-center gap-3 text-sm" role="status">
+          <span
+            class="size-5 animate-spin rounded-full border-2 border-muted border-t-primary"
+            aria-hidden="true"
+          ></span
+          >{{
+            task.taskState === 'finishing'
+              ? 'Finishing your task…'
+              : task.preparationStage === 'refreshing_ref'
+                ? 'Refreshing the selected branch…'
+                : task.preparationStage === 'restoring_sessions'
+                  ? 'Restoring your conversations…'
+                  : 'Preparing your checkout…'
+          }}
+        </div>
+        <p class="text-sm text-muted-foreground">You can leave this screen. Setup will continue.</p>
+        @if (task.taskState === 'preparing') {
+          <button
+            z-button
+            zType="ghost"
+            [zDisabled]="taskUi.finishing().has(task.id)"
+            (click)="taskUi.finish(task.id)"
+          >
+            Cancel setup and finish task
+          </button>
+        }
+      }
+      @if (!task.archivedAt && task.taskState !== 'finishing') {
+        <div class="space-y-2 border-t border-border pt-4">
+          <label for="task-draft" class="text-sm font-medium">Draft your first message</label>
+          <textarea
+            z-input
+            id="task-draft"
+            rows="4"
+            maxlength="100000"
+            class="resize-y"
+            placeholder="Describe what you want to do…"
+            [value]="draft()"
+            (input)="setDraft($any($event.target).value)"
+          ></textarea>
+          <p class="text-xs text-muted-foreground">
+            {{
+              draftSaving()
+                ? 'Saving…'
+                : draftUnsaved()
+                  ? 'Draft has not been saved. Keep this screen open and retry.'
+                  : 'Saved with your task. Send it when you’re ready.'
+            }}
+          </p>
+          @if (draftUnsaved()) {
+            <button
+              z-button
+              zType="ghost"
+              zSize="sm"
+              [zDisabled]="draftSaving()"
+              (click)="retryDraft()"
+            >
+              Retry save
+            </button>
+          }
+        </div>
+      }
+      @if (error()) {
+        <p role="alert" class="text-sm text-destructive">{{ error() }}</p>
+      }
+    </div>
+  } @else {
+    <p class="text-sm text-muted-foreground" role="status">{{ error() || 'Loading task…' }}</p>
+    @if (error()) {
+      <button z-button zType="outline" class="mt-3 self-start" (click)="reloadTask()">
+        Try again
+      </button>
+    }
+  }
+</div>

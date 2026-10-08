@@ -1,3 +1,6 @@
+import { ProjectsService } from '../projects/projects.service.js';
+import { SessionsService } from '../sessions/sessions.service.js';
+import { createTestDb } from '../database/testing/create-test-db.js';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
@@ -5,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import Database from 'better-sqlite3';
-import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import { type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { eq } from 'drizzle-orm';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -13,30 +16,6 @@ import * as path from 'node:path';
 import { ReposService } from './repos.service.js';
 import { DRIZZLE } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
-
-function createTestDb() {
-  const sqlite = new Database(':memory:');
-  sqlite.pragma('foreign_keys = ON');
-  sqlite.exec(`
-    CREATE TABLE projects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE repos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      path TEXT NOT NULL,
-      color TEXT,
-      preferred_context_root_ref TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(project_id, path)
-    );
-  `);
-  return { db: drizzle(sqlite, { schema }), sqlite };
-}
 
 describe('ReposService', () => {
   let service: ReposService;
@@ -69,7 +48,17 @@ describe('ReposService', () => {
     fs.mkdirSync(nonGitDir);
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ReposService, { provide: DRIZZLE, useValue: db }],
+      providers: [
+        {
+          provide: SessionsService,
+          useValue: {
+            archiveAllByProject: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        ProjectsService,
+        ReposService,
+        { provide: DRIZZLE, useValue: db },
+      ],
     }).compile();
 
     service = module.get<ReposService>(ReposService);

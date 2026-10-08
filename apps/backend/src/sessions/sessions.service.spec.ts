@@ -1,3 +1,5 @@
+import * as path from 'node:path';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import Database from 'better-sqlite3';
@@ -13,92 +15,11 @@ import { SettingsService } from '../settings/settings.service.js';
 function createTestDb() {
   const sqlite = new Database(':memory:');
   sqlite.pragma('foreign_keys = ON');
-  sqlite.exec(`
-    CREATE TABLE projects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      archived_at TEXT,
-      hidden INTEGER NOT NULL DEFAULT 0,
-      agent_instructions TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE repos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      path TEXT NOT NULL,
-      color TEXT,
-      preferred_context_root_ref TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(project_id, path)
-    );
-    CREATE TABLE workspaces (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      path TEXT NOT NULL,
-      pool_worktree_id INTEGER,
-      is_default INTEGER NOT NULL DEFAULT 0,
-      created_from_ref TEXT,
-      link_status TEXT NOT NULL DEFAULT 'linked',
-      desired_branch TEXT,
-      unlinked_at TEXT,
-      unlinked_by_project_id INTEGER,
-      pending_stash_commit TEXT,
-      pending_stash_message TEXT,
-      pending_stash_created_at TEXT,
-      pending_stash_status TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(repo_id, name),
-      UNIQUE(repo_id, path)
-    );
-    CREATE TABLE sessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
-      workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL,
-      folder_id INTEGER,
-      branch_name TEXT NOT NULL,
-      worktree_path TEXT NOT NULL,
-      name TEXT,
-      surface TEXT NOT NULL DEFAULT 'session',
-      is_temporary INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'created',
-      archived_by_folder INTEGER NOT NULL DEFAULT 0,
-      mcp_agent_token TEXT,
-      agent_autonomy_mode TEXT,
-      plan_mode INTEGER,
-      active_agent_provider TEXT NOT NULL DEFAULT 'claude',
-      claude_session_id TEXT DEFAULT '-1',
-      codex_session_id TEXT DEFAULT '-1',
-      pi_session_path TEXT DEFAULT '-1',
-      antigravity_session_id TEXT DEFAULT '-1',
-      has_injected_worktree_context INTEGER NOT NULL DEFAULT 0,
-      has_unreviewed_completion INTEGER NOT NULL DEFAULT 0,
-      last_completion_at TEXT,
-      last_completion_kind TEXT,
-      last_state_change_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE plan_chat_forks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      parent_session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      child_session_id INTEGER NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
-      provider TEXT NOT NULL,
-      review_id TEXT NOT NULL,
-      anchor_message_id TEXT NOT NULL,
-      anchor_message_kind TEXT NOT NULL,
-      anchor_excerpt TEXT,
-      plan_excerpt TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE UNIQUE INDEX plan_chat_forks_parent_review_idx
-      ON plan_chat_forks(parent_session_id, review_id);
-  `);
-  return { db: drizzle(sqlite, { schema }), sqlite };
+  const db = drizzle(sqlite, { schema });
+  migrate(db, {
+    migrationsFolder: path.resolve(__dirname, '..', '..', 'drizzle'),
+  });
+  return { db, sqlite };
 }
 
 describe('SessionsService', () => {
@@ -112,8 +33,12 @@ describe('SessionsService', () => {
     kill: jest.Mock;
     isAlive: jest.Mock;
     killTmuxSession: jest.Mock;
+    stopForTask: jest.Mock;
   };
-  let agentRuntimeCleanupMock: { cleanupSession: jest.Mock };
+  let agentRuntimeCleanupMock: {
+    cleanupSession: jest.Mock;
+    reactivateSession: jest.Mock;
+  };
   let settingsServiceMock: { findOne: jest.Mock };
 
   beforeEach(async () => {
@@ -145,9 +70,11 @@ describe('SessionsService', () => {
       kill: jest.fn(),
       isAlive: jest.fn(),
       killTmuxSession: jest.fn(),
+      stopForTask: jest.fn(),
     };
     agentRuntimeCleanupMock = {
       cleanupSession: jest.fn().mockResolvedValue(undefined),
+      reactivateSession: jest.fn().mockResolvedValue(undefined),
     };
     settingsServiceMock = {
       findOne: jest.fn().mockResolvedValue({
@@ -186,6 +113,20 @@ describe('SessionsService', () => {
 
   afterEach(() => {
     sqliteConn.close();
+  });
+
+  it('reactivates the provider when restarting an ordinarily stopped session', async () => {
+    const session = await service.create({
+      repoId,
+      branchName: 'main',
+      worktreePath: '/tmp/worktree',
+    });
+    await service.kill(session.id);
+    await service.start(session.id);
+    expect(agentRuntimeCleanupMock.reactivateSession).toHaveBeenCalledWith(
+      session.id,
+    );
+    expect((await service.findOne(session.id)).status).toBe('active');
   });
 
   describe('create', () => {
@@ -600,7 +541,23 @@ describe('SessionsService', () => {
   });
 
   describe('archive', () => {
-    it('marks archived and returns before process cleanup finishes', async () => {
+    it('uses strict terminal shutdown when finishing a task and propagates failure', async () => {
+      const created = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/wt',
+      });
+      ptyManagerMock.stopForTask.mockRejectedValueOnce(
+        new Error('Process did not stop'),
+      );
+      await expect(service.archiveAndStop(created.id, true)).rejects.toThrow(
+        'Process did not stop',
+      );
+      expect(ptyManagerMock.stopForTask).toHaveBeenCalledWith(created.id);
+      expect(ptyManagerMock.kill).not.toHaveBeenCalled();
+    });
+
+    it('marks archived and waits for process cleanup before returning', async () => {
       const created = await service.create({
         repoId,
         branchName: 'main',
@@ -613,9 +570,11 @@ describe('SessionsService', () => {
         }),
       );
 
-      const archived = await service.archive(created.id);
+      const pendingArchive = service.archive(created.id);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const interim = await service.findOne(created.id);
 
-      expect(archived.status).toBe('archived');
+      expect(interim.status).toBe('archived');
       expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(
         created.id,
       );
@@ -628,7 +587,8 @@ describe('SessionsService', () => {
       expect(persisted.status).toBe('archived');
 
       resolveCleanup();
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      const archived = await pendingArchive;
+      expect(archived.status).toBe('archived');
 
       expect(ptyManagerMock.kill).toHaveBeenCalledWith(created.id);
       expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(created.id);

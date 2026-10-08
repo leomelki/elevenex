@@ -138,6 +138,21 @@ describe('PtyManager', () => {
     });
   });
 
+  it('waits for agent terminal exit before finishing its task and rejects a stale startup', async () => {
+    const process = createMockPty();
+    process.onExit.mockImplementation(callback => { process.on('exit', callback); return { dispose: () => process.off('exit', callback) }; });
+    mockSpawn.mockReturnValue(process as never);
+    await manager.spawn(7, '/repo/worktree');
+    let stopped = false;
+    const pending = manager.stopForTask(7).then(() => { stopped = true; });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    process.emit('exit', { exitCode: 0 });
+    await pending;
+    expect(manager.isAlive(7)).toBe(false);
+    expect(await manager.spawn(7, '/repo/worktree', undefined, 0)).toBeNull();
+  });
+
   it('cancels an in-flight spawn before any PTY process starts', async () => {
     const env = createDeferred<NodeJS.ProcessEnv>();
     const envRequested = createDeferred<void>();

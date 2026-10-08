@@ -5,6 +5,7 @@ import { BehaviorSubject, of } from 'rxjs';
 import { describe, beforeEach, afterEach, expect, it, vi } from 'vitest';
 
 import { ProjectDetail } from './project-detail';
+import { TaskUiService } from '@/features/tasks/task-ui.service';
 import { BrowserIsolationService } from '@/shared/services/browser-isolation.service';
 import { ModalOverlayStateService } from '@/shared/services/modal-overlay-state.service';
 import { NavigationService } from '@/shared/services/navigation.service';
@@ -83,7 +84,9 @@ describe('ProjectDetail', () => {
     getByProject: vi.fn(() => of(repos)),
     add: vi.fn(),
     remove: vi.fn(() => of(undefined)),
-    updatePreferredContextRootRef: vi.fn(() => of({ ...repos[0], preferredContextRootRef: 'origin/develop' })),
+    updatePreferredContextRootRef: vi.fn(() =>
+      of({ ...repos[0], preferredContextRootRef: 'origin/develop' }),
+    ),
   };
   const sshForwardsServiceMock = {
     isSupported: vi.fn(() => Promise.resolve(true)),
@@ -138,6 +141,7 @@ describe('ProjectDetail', () => {
     await TestBed.configureTestingModule({
       imports: [ProjectDetail],
       providers: [
+        { provide: TaskUiService, useValue: { create: vi.fn() } },
         { provide: ProjectsService, useValue: projectsServiceMock },
         { provide: ReposService, useValue: reposServiceMock },
         { provide: SshForwardsService, useValue: sshForwardsServiceMock },
@@ -239,13 +243,16 @@ describe('ProjectDetail', () => {
 
     const browserTab = fixture.debugElement
       .queryAll(By.css('.project-section-tabs button'))
-      .find(button => button.nativeElement.textContent.includes('Browser Isolation'))!
+      .find((button) => button.nativeElement.textContent.includes('Browser Isolation'))!
       .nativeElement as HTMLButtonElement;
     browserTab.click();
     fixture.detectChanges();
 
     expect(fixture.componentInstance.activeSection()).toBe('browser');
-    expect(navigate).toHaveBeenCalledWith([], expect.objectContaining({ fragment: 'browser-settings' }));
+    expect(navigate).toHaveBeenCalledWith(
+      [],
+      expect.objectContaining({ fragment: 'browser-settings' }),
+    );
   });
 
   it('saves repository default context roots and removes repositories', async () => {
@@ -255,7 +262,10 @@ describe('ProjectDetail', () => {
     component.updateRepoContextRootDraft(repos[0].id, 'origin/develop');
     await component.saveRepoContextRoot(repos[0]);
 
-    expect(reposServiceMock.updatePreferredContextRootRef).toHaveBeenCalledWith(10, 'origin/develop');
+    expect(reposServiceMock.updatePreferredContextRootRef).toHaveBeenCalledWith(
+      10,
+      'origin/develop',
+    );
 
     component.showRemoveRepoDialog.set(repos[0]);
     component.removeRepo();
@@ -269,7 +279,7 @@ describe('ProjectDetail', () => {
 
     const stopButton = fixture.debugElement
       .queryAll(By.css('button'))
-      .find(button => button.nativeElement.textContent.includes('Stop'))!
+      .find((button) => button.nativeElement.textContent.includes('Stop'))!
       .nativeElement as HTMLButtonElement;
     stopButton.click();
 
@@ -282,7 +292,7 @@ describe('ProjectDetail', () => {
 
     const isolatedButton = fixture.debugElement
       .queryAll(By.css('.browser-mode-option'))
-      .find(button => button.nativeElement.textContent.includes('Isolated'))!
+      .find((button) => button.nativeElement.textContent.includes('Isolated'))!
       .nativeElement as HTMLButtonElement;
     isolatedButton.click();
 

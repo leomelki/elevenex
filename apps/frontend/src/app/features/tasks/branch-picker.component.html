@@ -1,0 +1,62 @@
+<div class="space-y-2">
+  <label class="block text-sm font-medium" for="task-branch-search">{{ label() }}</label>
+  <input
+    z-input
+    id="task-branch-search"
+    type="search"
+    placeholder="Search local and remote branches…"
+    [value]="query()"
+    (input)="search($any($event.target).value)"
+    (keydown)="key($event)"
+    role="combobox"
+    aria-autocomplete="list"
+    aria-controls="task-branch-results"
+    aria-expanded="true"
+    [attr.aria-activedescendant]="branches().length ? 'task-branch-option-' + index() : null"
+  />
+  <div
+    id="task-branch-results"
+    role="listbox"
+    [attr.aria-label]="label()"
+    class="max-h-56 overflow-y-auto rounded-lg border border-border bg-background p-1"
+    [attr.aria-busy]="loading()"
+  >
+    @for (
+      branch of branches();
+      track (branch.isRemote ? 'remote:' : 'local:') + branch.name;
+      let i = $index
+    ) {
+      <button
+        type="button"
+        tabindex="-1"
+        role="option"
+        [id]="'task-branch-option-' + i"
+        [attr.aria-selected]="isSelected(branch)"
+        class="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        [class.bg-accent]="index() === i"
+        (click)="picked.emit(branch)"
+        (focus)="index.set(i)"
+      >
+        <span class="min-w-0 flex-1 truncate font-medium">{{ branch.name }}</span>
+        <span class="shrink-0 text-xs text-muted-foreground">{{
+          branch.isRemote ? 'Remote' : 'Local'
+        }}</span>
+        @if (branch.hasWorktree) {
+          <span class="shrink-0 text-xs text-muted-foreground">Checked out</span>
+        }
+        @if (isSelected(branch)) {
+          <span class="text-primary" aria-hidden="true">✓</span>
+        }
+      </button>
+    } @empty {
+      <p class="px-3 py-6 text-center text-sm text-muted-foreground" role="status">
+        {{ loading() ? 'Loading branches…' : error() || 'No matching branches' }}
+      </p>
+    }
+  </div>
+  @if (selected()) {
+    <p class="break-all text-xs text-muted-foreground">
+      Selected: <span class="font-medium text-foreground">{{ selected() | branchRef }}</span>
+    </p>
+  }
+</div>

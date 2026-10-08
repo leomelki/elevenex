@@ -1,0 +1,33 @@
+<div class="space-y-5" cdkTrapFocus [cdkTrapFocusAutoCapture]="true">
+  <div>
+    <h2 class="text-xl font-semibold">Finish task</h2>
+    <p class="mt-1 break-words text-sm text-muted-foreground">{{ data.task.name }}</p>
+  </div>
+  <p class="text-sm">
+    Your conversations and branch will be preserved. Environments with local edits stay reserved for
+    this task.
+  </p>
+  @if (data.agents || data.terminals || data.actions) {
+    <div class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">
+      <p class="font-medium">Running work will be stopped</p>
+      <p class="mt-1 text-muted-foreground">
+        {{ data.agents }} agents · {{ data.terminals }} terminals · {{ data.actions }} actions
+      </p>
+    </div>
+  }
+  @if (data.dirtyEditors) {
+    <p class="text-sm">
+      {{ data.dirtyEditors }} unsaved editor documents will be saved before finishing.
+    </p>
+  }
+  @if (error()) {
+    <p class="text-sm text-destructive" role="alert">{{ error() }}</p>
+  }
+  <footer class="flex justify-end gap-2 border-t border-border pt-4">
+    <button z-button zType="ghost" (click)="cancel()" [zDisabled]="busy()" cdkFocusInitial>
+      Cancel</button
+    ><button z-button [zDisabled]="busy()" (click)="finish()">
+      {{ busy() ? 'Finishing…' : data.dirtyEditors ? 'Save and finish' : 'Stop and finish' }}
+    </button>
+  </footer>
+</div>

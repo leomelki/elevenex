@@ -66,7 +66,10 @@ describe('WorktreeContextService', () => {
     }).compile();
 
     service = module.get(WorktreeContextService);
+    jest.spyOn(service as any, 'readCurrentBranch').mockResolvedValue(null);
   });
+
+  afterEach(() => jest.restoreAllMocks());
 
   it('coalesces concurrent snapshot requests for the same worktree', async () => {
     const branchContext = {
@@ -282,7 +285,7 @@ describe('WorktreeContextService', () => {
     expect(touchSpy).toHaveBeenCalledWith(1, '/tmp/worktree-e');
   });
 
-  it('does not mark or refetch when consume is disabled or already injected', async () => {
+  it('records a disabled context choice without fetching and leaves already consumed context alone', async () => {
     sessionsServiceMock.findOne.mockResolvedValueOnce({
       id: 7,
       repoId: 1,
@@ -297,6 +300,13 @@ describe('WorktreeContextService', () => {
       shouldInject: false,
       contextSentence: null,
     });
+    expect(
+      sessionsServiceMock.markWorktreeContextInjected,
+    ).toHaveBeenCalledWith(7);
+    expect(
+      sessionsServiceMock.markWorktreeContextInjected,
+    ).toHaveBeenCalledTimes(1);
+    sessionsServiceMock.markWorktreeContextInjected.mockClear();
 
     sessionsServiceMock.findOne.mockResolvedValueOnce({
       id: 8,

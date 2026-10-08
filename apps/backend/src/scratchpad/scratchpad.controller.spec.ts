@@ -1,7 +1,10 @@
+import { ProjectsService } from '../projects/projects.service.js';
+import { SessionsService } from '../sessions/sessions.service.js';
+import { createTestDb } from '../database/testing/create-test-db.js';
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import Database from 'better-sqlite3';
-import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import { type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import {
   ScratchpadController,
   ScratchpadSectionController,
@@ -9,31 +12,6 @@ import {
 import { ScratchpadService } from './scratchpad.service.js';
 import { DRIZZLE } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
-
-function createTestDb() {
-  const sqlite = new Database(':memory:');
-  sqlite.pragma('foreign_keys = ON');
-  sqlite.exec(`
-    CREATE TABLE projects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE scratchpad_sections (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      description TEXT,
-      content TEXT NOT NULL DEFAULT '',
-      is_markdown INTEGER NOT NULL DEFAULT 1,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-  return { db: drizzle(sqlite, { schema }), sqlite };
-}
 
 describe('ScratchpadController', () => {
   let controller: ScratchpadController;
@@ -50,7 +28,17 @@ describe('ScratchpadController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ScratchpadController, ScratchpadSectionController],
-      providers: [ScratchpadService, { provide: DRIZZLE, useValue: db }],
+      providers: [
+        {
+          provide: SessionsService,
+          useValue: {
+            archiveAllByProject: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        ProjectsService,
+        ScratchpadService,
+        { provide: DRIZZLE, useValue: db },
+      ],
     }).compile();
 
     controller = module.get<ScratchpadController>(ScratchpadController);

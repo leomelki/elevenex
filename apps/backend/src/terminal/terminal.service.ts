@@ -42,7 +42,9 @@ export class TerminalService {
   private async startSessionInternal(
     sessionId: number,
   ): Promise<{ success: boolean; resumed: boolean; error?: string }> {
+    const generation = this.ptyManager.getGeneration(sessionId);
     const session = await this.sessionsService.findOne(sessionId);
+    await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
 
     if (session.status === 'archived') {
       throw new BadRequestException('Archived sessions cannot be started');
@@ -73,6 +75,8 @@ export class TerminalService {
         const spawned = await this.ptyManager.spawn(
           sessionId,
           session.worktreePath,
+          undefined,
+          generation,
         );
         if (spawned === null) {
           return {
@@ -101,6 +105,7 @@ export class TerminalService {
           sessionId,
           session.worktreePath,
           claudeSessionId,
+          generation,
         );
         if (spawned === null) {
           return {
@@ -130,6 +135,8 @@ export class TerminalService {
       const spawned = await this.ptyManager.spawn(
         sessionId,
         session.worktreePath,
+        undefined,
+        generation,
       );
       if (spawned === null) {
         return {

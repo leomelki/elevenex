@@ -7,7 +7,11 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { EventEmitter } from 'events';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, isNull, or, eq } from 'drizzle-orm';
+import {
+  currentWorkspaceForPath,
+  assertWorkspaceCanExecute,
+} from '../workspaces/workspace-ownership.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { ActionPtyManager } from './action-pty-manager.service.js';
@@ -37,6 +41,14 @@ export class ActionsService extends EventEmitter implements OnModuleInit {
     // several actions at once must not trip the 10-listener warning.
     this.setMaxListeners(0);
     this.ptyManager.registerPersistence({
+      assertCanRun: async (actionId, worktreePath) => {
+        const action = await this.findOne(actionId);
+        await assertWorkspaceCanExecute(this.db, action.workspaceId);
+        if (action.worktreePath !== worktreePath)
+          throw new BadRequestException(
+            'The task environment changed. Start the action again.',
+          );
+      },
       markRunning: (actionId) => this.markRunning(actionId),
       flushCurrentOutput: (actionId, output) =>
         this.flushCurrentOutput(actionId, output),
@@ -82,11 +94,14 @@ export class ActionsService extends EventEmitter implements OnModuleInit {
   }
 
   async create(dto: { worktreePath: string; name: string; command: string }) {
+    const workspace = await currentWorkspaceForPath(this.db, dto.worktreePath);
+    if (workspace) await assertWorkspaceCanExecute(this.db, workspace.id);
     const timestamp = new Date().toISOString();
     const rows = await this.db
       .insert(schema.actions)
       .values({
         worktreePath: dto.worktreePath,
+        workspaceId: workspace?.id ?? null,
         name: dto.name.trim(),
         command: dto.command.trim(),
         status: 'idle',
@@ -99,10 +114,21 @@ export class ActionsService extends EventEmitter implements OnModuleInit {
   }
 
   async listByWorktree(worktreePath: string) {
+    const workspace = await currentWorkspaceForPath(this.db, worktreePath);
     return this.db
       .select()
       .from(schema.actions)
-      .where(eq(schema.actions.worktreePath, worktreePath))
+      .where(
+        and(
+          eq(schema.actions.worktreePath, worktreePath),
+          workspace
+            ? or(
+                eq(schema.actions.workspaceId, workspace.id),
+                isNull(schema.actions.workspaceId),
+              )
+            : isNull(schema.actions.workspaceId),
+        ),
+      )
       .orderBy(asc(schema.actions.createdAt));
   }
 
@@ -174,6 +200,7 @@ export class ActionsService extends EventEmitter implements OnModuleInit {
 
   async run(id: number) {
     const action = await this.findOne(id);
+    await assertWorkspaceCanExecute(this.db, action.workspaceId);
     if (this.ptyManager.isRunning(id) || action.status === 'running') {
       throw new BadRequestException(
         `Action "${action.name}" is already running`,
@@ -206,10 +233,10 @@ export class ActionsService extends EventEmitter implements OnModuleInit {
     return this.findOne(id);
   }
 
-  async stop(id: number) {
+  async stop(id: number, requireStopped = false) {
     await this.findOne(id);
-    const stopped = await this.ptyManager.stop(id);
-    if (!stopped) {
+    const stopped = await this.ptyManager.stop(id, requireStopped);
+    if (!stopped && !requireStopped) {
       throw new BadRequestException('Action is not running');
     }
 

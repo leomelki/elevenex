@@ -7,6 +7,158 @@ jest.mock('../session-title/session-title.service.js', () => ({
 import { CodexRuntimeService } from './codex-runtime.service.js';
 
 describe('CodexRuntimeService', () => {
+  it('does not dispatch a turn after cleanup cancels initialization', async () => {
+    const { service, appServer } = createService();
+    wireAppServerTurn(appServer);
+    let releaseReady!: () => void;
+    let entered!: () => void;
+    const entering = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    appServer.ensureReady.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseReady = resolve;
+          entered();
+        }),
+    );
+    const prompt = service.submitPrompt(7, 'Old checkout');
+    await entering;
+    const cleanup = service.cleanupSession(7);
+    releaseReady();
+    await Promise.all([prompt, cleanup]);
+    expect(
+      appServer.request.mock.calls.some(
+        (call: unknown[]) => call[0] === 'turn/start',
+      ),
+    ).toBe(false);
+  });
+
+  it('waits for an in-flight turn/start and confirms its server shutdown before cleanup completes', async () => {
+    const { service, appServer } = createService();
+    wireAppServerTurn(appServer);
+    let entered!: () => void;
+    let release!: () => void;
+    const starting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') {
+        entered();
+        await gate;
+        return { turn: { id: 'turn-1' } };
+      }
+      if (method === 'thread/read')
+        return { thread: { turns: [{ id: 'turn-1', status: 'interrupted' }] } };
+      return {};
+    });
+    const prompt = service.submitPrompt(7, 'Old checkout');
+    await starting;
+    const cleanup = service.cleanupSession(7);
+    release();
+    await Promise.all([prompt, cleanup]);
+    expect(appServer.request).toHaveBeenCalledWith(
+      'turn/interrupt',
+      { threadId: 'thread-1', turnId: 'turn-1' },
+      5_000,
+    );
+    expect(appServer.request).toHaveBeenCalledWith(
+      'thread/read',
+      { threadId: 'thread-1', includeTurns: true },
+      2_000,
+    );
+  });
+
+  it('retains an unconfirmed server turn so failed shutdown can be retried', async () => {
+    const { service, appServer } = createService();
+    const runtime = service as any;
+    runtime.activeRuns.set(7, {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      turnReadyPromise: Promise.resolve(),
+      completionPromise: Promise.resolve(),
+      abortController: new AbortController(),
+      permissionRequests: new Map(),
+      userInputRequests: new Map(),
+      interruptRequested: false,
+    });
+    appServer.request.mockRejectedValue(new Error('Codex disconnected'));
+    await expect(service.cleanupSession(7)).rejects.toThrow(
+      'Codex disconnected',
+    );
+    expect(runtime.unconfirmedStops.has(7)).toBe(true);
+    service.reactivateSession(7);
+    await expect(service.submitPrompt(7, 'Continue')).rejects.toThrow(
+      'previous turn stopped',
+    );
+    runtime.activeRuns.delete(7);
+    appServer.request.mockImplementation(async (method: string) =>
+      method === 'thread/read'
+        ? { thread: { turns: [{ id: 'turn-1', status: 'interrupted' }] } }
+        : {},
+    );
+    await service.cleanupSession(7);
+    expect(runtime.unconfirmedStops.has(7)).toBe(false);
+  });
+
+  it('accepts a new prompt after reactivation and reloads the task’s current environment', async () => {
+    const { service, sessionsService } = createService();
+    (service as any).ensureRuntimeState(7).cachedWorktreePath =
+      '/tmp/previous-environment';
+    const run = jest
+      .spyOn(service as any, 'runTurnOnAppServer')
+      .mockImplementation(async function* () {});
+    await service.cleanupSession(7);
+    service.reactivateSession(7);
+    await service.submitPrompt(7, 'Continue the investigation');
+    expect(sessionsService.findOne).toHaveBeenCalledWith(7);
+    expect(run).toHaveBeenCalledWith(
+      7,
+      expect.anything(),
+      '/tmp/project',
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('rechecks checkout ownership before dispatching a queued or direct prompt', async () => {
+    const { service, sessionsService, appServer } = createService();
+    sessionsService.assertSessionWorkspaceLinked.mockRejectedValue(
+      new Error('Restore this task’s branch'),
+    );
+    appServer.request.mockResolvedValue({ thread: { id: 'thread-1' } });
+    await service.submitPrompt(7, 'Continue');
+    expect(
+      appServer.request.mock.calls.some(([method]) => method === 'turn/start'),
+    ).toBe(false);
+    expect((service as any).runtimeStates.get(7).lastError).toContain(
+      'Restore',
+    );
+  });
+
+  it('rejects a stale initialization after cleanup and reactivation', async () => {
+    const { service, sessionsService } = createService();
+    let release!: (value: typeof session) => void;
+    sessionsService.findOne.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    const run = jest.spyOn(service as any, 'runTurnOnAppServer');
+    const pending = service.submitPrompt(7, 'Old prompt');
+    const rejected = expect(pending).rejects.toThrow('closed');
+    await service.cleanupSession(7);
+    service.reactivateSession(7);
+    release(session);
+    await rejected;
+    expect(run).not.toHaveBeenCalled();
+    expect((service as any).runtimeStates.has(7)).toBe(false);
+  });
+
   it.each([
     { query: 'legacy query' },
     { query: '', action: { type: 'search', query: 'structured query' } },
@@ -80,8 +232,15 @@ describe('CodexRuntimeService', () => {
     planMode: false as boolean | null,
   };
 
-  function createService(defaults: { model: string | null; reasoningEffort: string | null; fastMode?: boolean } = { model: null, reasoningEffort: null }) {
+  function createService(
+    defaults: {
+      model: string | null;
+      reasoningEffort: string | null;
+      fastMode?: boolean;
+    } = { model: null, reasoningEffort: null },
+  ) {
     const sessionsService = {
+      assertSessionWorkspaceLinked: jest.fn().mockResolvedValue(undefined),
       findOne: jest
         .fn<() => Promise<typeof session>>()
         .mockResolvedValue(session),
@@ -126,6 +285,7 @@ describe('CodexRuntimeService', () => {
     };
     const titleService = {
       generate: jest.fn<() => Promise<string | null>>().mockResolvedValue(null),
+      isAutoGeneratedName: jest.fn(() => false),
     };
     const appServer = {
       prewarm: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -1208,7 +1368,11 @@ describe('CodexRuntimeService', () => {
   });
 
   it('starts new sessions with the default preset fast mode', () => {
-    const { service } = createService({ model: 'gpt-5.5', reasoningEffort: 'low', fastMode: true });
+    const { service } = createService({
+      model: 'gpt-5.5',
+      reasoningEffort: 'low',
+      fastMode: true,
+    });
     const state = (service as any).ensureRuntimeState(7, null);
     expect(state.selectedModel).toBe('gpt-5.5');
     expect(state.reasoningEffort).toBe('low');
@@ -1216,7 +1380,11 @@ describe('CodexRuntimeService', () => {
   });
 
   it('does not enable preset fast mode for a model without support', () => {
-    const { service } = createService({ model: 'unknown-model', reasoningEffort: null, fastMode: true });
+    const { service } = createService({
+      model: 'unknown-model',
+      reasoningEffort: null,
+      fastMode: true,
+    });
     expect((service as any).ensureRuntimeState(7, null).fastMode).toBe(false);
   });
 

@@ -6,8 +6,20 @@ import {
   BadRequestException,
   forwardRef,
 } from '@nestjs/common';
-import { eq, and, count, inArray, ne, type SQL } from 'drizzle-orm';
+import {
+  eq,
+  and,
+  count,
+  inArray,
+  ne,
+  isNull,
+  isNotNull,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import { EventEmitter } from 'events';
+import { assertWorkspaceCanExecute } from '../workspaces/workspace-ownership.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { PtyManager } from '../terminal/pty-manager.service.js';
@@ -42,6 +54,7 @@ type SessionCompletionKind = (typeof VALID_COMPLETION_KINDS)[number];
 
 interface SessionListOptions {
   includeHidden?: boolean;
+  includeFinishedTasks?: boolean;
 }
 
 /**
@@ -113,6 +126,7 @@ export class SessionsService extends EventEmitter {
         folderId: dto.folderId ?? null,
         branchName: resolved.branchName,
         worktreePath: resolved.worktreePath,
+        transcriptWorktreePath: resolved.worktreePath,
         name: sessionName,
         surface,
         isTemporary: dto.isTemporary ?? false,
@@ -149,7 +163,7 @@ export class SessionsService extends EventEmitter {
           `Workspace with id ${dto.workspaceId} not found`,
         );
       }
-      this.assertWorkspaceLinked(rows[0]);
+      await this.assertWorkspaceLinked(rows[0]);
 
       const branchName = await this.resolveCurrentBranch(rows[0].path);
       return {
@@ -170,7 +184,7 @@ export class SessionsService extends EventEmitter {
       dto.worktreePath,
     );
     if (workspace) {
-      this.assertWorkspaceLinked(workspace);
+      await this.assertWorkspaceLinked(workspace);
     }
     return {
       workspaceId: workspace?.id ?? null,
@@ -183,7 +197,17 @@ export class SessionsService extends EventEmitter {
     const rows = await this.db
       .select()
       .from(schema.sessions)
-      .where(this.visibleWhere(eq(schema.sessions.repoId, repoId), options));
+      .where(
+        this.visibleWhere(
+          and(
+            eq(schema.sessions.repoId, repoId),
+            options.includeFinishedTasks === false
+              ? sql`not exists (select 1 from ${schema.workspaces} where ${schema.workspaces.id} = ${schema.sessions.workspaceId} and ${schema.workspaces.archivedAt} is not null)`
+              : undefined,
+          )!,
+          options,
+        ),
+      );
     return rows.map((session) => this.withInferredActiveAgentProvider(session));
   }
 
@@ -312,6 +336,7 @@ export class SessionsService extends EventEmitter {
         projectId: schema.repos.projectId,
         repoColor: schema.repos.color,
         workspaceName: schema.workspaces.name,
+        workspaceArchivedAt: schema.workspaces.archivedAt,
       })
       .from(schema.sessions)
       .innerJoin(schema.repos, eq(schema.sessions.repoId, schema.repos.id))
@@ -325,12 +350,19 @@ export class SessionsService extends EventEmitter {
       throw new NotFoundException(`Session with id ${id} not found`);
     }
 
-    const { session, projectId, repoColor, workspaceName } = rows[0];
+    const {
+      session,
+      projectId,
+      repoColor,
+      workspaceName,
+      workspaceArchivedAt,
+    } = rows[0];
     return this.withInferredActiveAgentProvider({
       ...session,
       projectId,
       repoColor,
       workspaceName,
+      workspaceArchivedAt,
     });
   }
 
@@ -836,6 +868,7 @@ export class SessionsService extends EventEmitter {
   }
 
   async deleteByWorktreePath(worktreePath: string) {
+    await this.assertNoTaskHistoryForPath(worktreePath);
     // Kill PTY/tmux for all sessions in this worktree before deleting
     const sessions = await this.findByWorktreePath(worktreePath, {
       includeHidden: true,
@@ -850,6 +883,7 @@ export class SessionsService extends EventEmitter {
   }
 
   async deleteByRepoAndWorktreePath(repoId: number, worktreePath: string) {
+    await this.assertNoTaskHistoryForPath(worktreePath);
     const sessions = await this.findByRepoAndWorktreePath(
       repoId,
       worktreePath,
@@ -868,6 +902,26 @@ export class SessionsService extends EventEmitter {
           eq(schema.sessions.repoId, repoId),
           eq(schema.sessions.worktreePath, worktreePath),
         ),
+      );
+  }
+
+  private async assertNoTaskHistoryForPath(worktreePath: string) {
+    const task = await this.db
+      .select({ id: schema.workspaces.id })
+      .from(schema.workspaces)
+      .where(
+        and(
+          eq(schema.workspaces.path, worktreePath),
+          or(
+            isNotNull(schema.workspaces.taskRequestId),
+            isNotNull(schema.workspaces.archivedAt),
+          ),
+        ),
+      )
+      .limit(1);
+    if (task.length)
+      throw new BadRequestException(
+        'This environment has task history. Finish its task instead of deleting conversations by directory.',
       );
   }
 
@@ -911,7 +965,7 @@ export class SessionsService extends EventEmitter {
     return archived;
   }
 
-  async archiveAndStop(id: number) {
+  async archiveAndStop(id: number, requireCleanup = false) {
     const session = await this.findOne(id);
 
     const archived =
@@ -919,7 +973,7 @@ export class SessionsService extends EventEmitter {
         ? this.withInferredActiveAgentProvider(session)
         : await this.updateStatus(id, 'archived');
 
-    await this.cleanupArchivedSessionProcesses(id);
+    await this.cleanupArchivedSessionProcesses(id, requireCleanup);
     return archived;
   }
 
@@ -940,21 +994,27 @@ export class SessionsService extends EventEmitter {
     );
   }
 
-  private async cleanupArchivedSessionProcesses(id: number) {
+  private async cleanupArchivedSessionProcesses(
+    id: number,
+    requireCleanup = false,
+  ) {
+    let cleanupError: unknown;
     try {
       await this.agentRuntimeCleanup.cleanupSession(id);
     } catch (error) {
+      cleanupError = error;
       this.logger.error(
         `Failed to clean up agent runtime while archiving session ${id}`,
         error instanceof Error ? error.stack : String(error),
       );
     } finally {
-      // 1. Kill the PTY process if running
-      this.ptyManager.kill(id);
-
-      // 2. Kill the tmux session if exists
-      await this.ptyManager.killTmuxSession(id);
+      if (requireCleanup) await this.ptyManager.stopForTask(id);
+      else {
+        this.ptyManager.kill(id);
+        await this.ptyManager.killTmuxSession(id);
+      }
     }
+    if (requireCleanup && cleanupError) throw cleanupError;
   }
 
   async archiveAllByProject(projectId: number) {
@@ -988,6 +1048,7 @@ export class SessionsService extends EventEmitter {
       }
     }
     await this.assertSessionWorkspaceLinked(session.id);
+    await this.reactivateRuntime(id);
 
     const updated = await this.updateStatus(id, 'stopped');
     if (!updated.archivedByFolder) return updated;
@@ -997,6 +1058,10 @@ export class SessionsService extends EventEmitter {
       .where(eq(schema.sessions.id, id))
       .returning();
     return this.withInferredActiveAgentProvider(rows[0]);
+  }
+
+  async reactivateRuntime(id: number): Promise<void> {
+    await this.agentRuntimeCleanup.reactivateSession?.(id);
   }
 
   async reset(id: number) {
@@ -1083,6 +1148,7 @@ export class SessionsService extends EventEmitter {
     await this.assertSessionWorkspaceLinked(id);
 
     // Update status to indicate starting
+    await this.reactivateRuntime(id);
     await this.updateStatus(id, 'active');
 
     return { success: true, resumed: false };
@@ -1166,22 +1232,31 @@ export class SessionsService extends EventEmitter {
         and(
           eq(schema.workspaces.repoId, repoId),
           eq(schema.workspaces.path, worktreePath),
+          eq(schema.workspaces.linkStatus, 'linked'),
+          isNull(schema.workspaces.archivedAt),
         ),
       );
     return rows[0] ?? null;
   }
 
-  private assertWorkspaceLinked(
+  private async assertWorkspaceLinked(
     workspace: typeof schema.workspaces.$inferSelect,
   ) {
+    if (workspace.archivedAt)
+      throw new BadRequestException(
+        'Reopen this task before starting a session.',
+      );
+    if (workspace.taskState && workspace.taskState !== 'ready')
+      throw new BadRequestException('The task environment is not ready.');
     if (workspace.linkStatus === 'unlinked') {
       throw new BadRequestException(
         'This workspace is unlinked from its worktree. Link it back before using sessions.',
       );
     }
+    await assertWorkspaceCanExecute(this.db, workspace.id);
   }
 
-  private async assertSessionWorkspaceLinked(sessionId: number) {
+  async assertSessionWorkspaceLinked(sessionId: number) {
     const rows = await this.db
       .select({ workspace: schema.workspaces })
       .from(schema.sessions)
@@ -1193,7 +1268,7 @@ export class SessionsService extends EventEmitter {
 
     const workspace = rows[0]?.workspace ?? null;
     if (workspace) {
-      this.assertWorkspaceLinked(workspace);
+      await this.assertWorkspaceLinked(workspace);
     }
   }
 

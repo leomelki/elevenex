@@ -1,3 +1,4 @@
+import { isSqliteUniqueConstraintError } from '../database/sqlite-errors.js';
 import {
   BadRequestException,
   ConflictException,
@@ -75,10 +76,7 @@ export class ReposService {
         .returning();
       return rows[0];
     } catch (error: unknown) {
-      if (
-        error instanceof Error &&
-        error.message.includes('UNIQUE constraint failed')
-      ) {
+      if (isSqliteUniqueConstraintError(error)) {
         throw new ConflictException(
           'This folder is already added to this project.',
         );

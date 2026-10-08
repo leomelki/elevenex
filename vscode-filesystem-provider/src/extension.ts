@@ -245,7 +245,8 @@ export async function activate(context: ExtensionContext): Promise<WorkspaceVfsP
   const wsBaseUrl = `${wsProtocol}//${browserLocation?.host ?? 'localhost:3000'}`;
 
   // Create BackendClient for REST API calls
-  const backendClient = new BackendClient(`${origin}/api/worktrees`);
+  const taskId = Number(new URLSearchParams(folder.uri.query).get('taskId')) || undefined;
+  const backendClient = new BackendClient(`${origin}/api/worktrees`, taskId);
 
   // Create WebSocketClient for real-time file sync (Plan 02)
   const wsClient = new WebSocketClient(worktreePath, wsBaseUrl);
@@ -311,6 +312,19 @@ export async function activate(context: ExtensionContext): Promise<WorkspaceVfsP
   if (typeof BroadcastChannel !== 'undefined') {
     const fileBridge = new BroadcastChannel(fileBridgeChannelName(worktreePath));
     const handleParentMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'elevenex-editor-check' && typeof event.data.requestId === 'string') {
+        const request = event.data;
+        void (async () => {
+          try {
+            if (request.save) await workspace.saveAll(false);
+            const dirty = workspace.textDocuments.filter(document => document.isDirty).length;
+            fileBridge.postMessage({ type: 'elevenex-editor-check-result', requestId: request.requestId, dirty });
+          } catch {
+            fileBridge.postMessage({ type: 'elevenex-editor-check-result', requestId: request.requestId, error: 'Could not save editor documents.' });
+          }
+        })();
+        return;
+      }
       const data = event.data as Partial<ElevenExOpenFileMessage> | undefined;
       if (data?.type !== 'elevenex-open-file' || typeof data.path !== 'string') {
         return;

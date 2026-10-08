@@ -3,6 +3,8 @@ import { Logger } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { homedir } from 'os';
 import { join } from 'path';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   forkSession: jest.fn(),
   getSubagentMessages: jest.fn(),
@@ -70,6 +72,7 @@ describe('ClaudeRuntimeService', () => {
   let db: any;
   let interactionRows: Array<typeof schema.claudeToolInteractions.$inferSelect>;
   let sessionsService: {
+    assertSessionWorkspaceLinked: jest.Mock;
     findOne: jest.Mock;
     updateStatus: jest.Mock;
     updateClaudeSessionId: jest.Mock;
@@ -91,6 +94,50 @@ describe('ClaudeRuntimeService', () => {
   let loggerWarnSpy: jest.SpyInstance;
   let loggerDebugSpy: jest.SpyInstance;
   const originalClaudeBin = process.env.ELEVENEX_CLAUDE_BIN;
+
+  it('copies a reopened task transcript into its new runtime directory while retaining the original history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'elevenex-task-transcript-'));
+    const source = join(root, 'original.jsonl');
+    const destination = join(root, 'resumed', 'conversation.jsonl');
+    try {
+      await writeFile(source, '{"message":"Investigation findings"}\n');
+      jest
+        .spyOn(service as any, 'findTranscriptPath')
+        .mockResolvedValue(source);
+      jest
+        .spyOn(service as any, 'getTranscriptPath')
+        .mockReturnValue(destination);
+      db.update = jest.fn(() => ({
+        set: jest.fn(() => ({ where: jest.fn().mockResolvedValue(undefined) })),
+      }));
+      const session = {
+        claudeSessionId: 'saved-session',
+        transcriptWorktreePath: '/tmp/previous',
+        worktreePath: '/tmp/new',
+      };
+      await (service as any).rebindTranscript(7, session);
+      expect(await readFile(destination, 'utf8')).toBe(
+        await readFile(source, 'utf8'),
+      );
+      expect(session.transcriptWorktreePath).toBe('/tmp/new');
+      expect(db.update).toHaveBeenCalledWith(schema.sessions);
+      // A retry must not overwrite a transcript already extended by the new runtime.
+      await writeFile(destination, 'Continued investigation');
+      await (service as any).rebindTranscript(7, session);
+      expect(await readFile(destination, 'utf8')).toBe(
+        'Continued investigation',
+      );
+      // Returning to a directory used before must replace its stale copy.
+      session.worktreePath = '/tmp/previous';
+      (service as any).findTranscriptPath.mockResolvedValue(destination);
+      (service as any).getTranscriptPath.mockReturnValue(source);
+      await (service as any).rebindTranscript(7, session);
+      expect(await readFile(source, 'utf8')).toBe('Continued investigation');
+      expect(session.transcriptWorktreePath).toBe('/tmp/previous');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -137,6 +184,7 @@ describe('ClaudeRuntimeService', () => {
     };
 
     sessionsService = {
+      assertSessionWorkspaceLinked: jest.fn().mockResolvedValue(undefined),
       findOne: jest.fn().mockResolvedValue({
         id: 7,
         worktreePath: '/tmp/project',
@@ -1427,6 +1475,47 @@ describe('ClaudeRuntimeService', () => {
     expect((query as jest.Mock).mock.calls[0][0].options).toHaveProperty(
       'pathToClaudeCodeExecutable',
     );
+  });
+
+  it('accepts a fresh prompt after a finished task reactivates its conversation', async () => {
+    (query as jest.Mock).mockReturnValue({
+      supportedModels: jest.fn().mockResolvedValue([]),
+      close: jest.fn(),
+      [Symbol.asyncIterator]: () => successfulResultIterator(),
+    });
+    await service.cleanupSession(7);
+    await expect(service.submitPrompt(7, 'Archived')).rejects.toThrow('closed');
+    expect(query).not.toHaveBeenCalled();
+    service.reactivateSession(7);
+    await service.submitPrompt(7, 'Continue the investigation');
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks checkout ownership before starting a prompt dispatched outside the gateway', async () => {
+    sessionsService.assertSessionWorkspaceLinked.mockRejectedValue(
+      new Error('Restore this task’s branch'),
+    );
+    await expect(service.submitPrompt(7, 'Continue')).rejects.toThrow(
+      'Restore',
+    );
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('rejects initialization from a previous task activation even after the task reopens', async () => {
+    const session = await sessionsService.findOne(7);
+    let release!: (value: unknown) => void;
+    sessionsService.findOne.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    const pending = service.submitPrompt(7, 'Old prompt');
+    const rejected = expect(pending).rejects.toThrow('closed');
+    await service.cleanupSession(7);
+    service.reactivateSession(7);
+    release(session);
+    await rejected;
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('queues prompts submitted while a run is still initializing', async () => {

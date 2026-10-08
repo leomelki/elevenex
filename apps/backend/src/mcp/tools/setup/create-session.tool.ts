@@ -28,6 +28,7 @@ export const createSessionTool = defineTool({
       .int()
       .positive()
       .describe('Repo the session belongs to. From project_overview / add_repo.'),
+    taskId: z.number().int().positive().optional().describe('Ready task to create another conversation in. Takes the task’s current environment.'),
     workspaceId: z
       .number()
       .int()
@@ -74,7 +75,7 @@ export const createSessionTool = defineTool({
     }
 
     if (
-      args.workspaceId === undefined &&
+      args.workspaceId === undefined && args.taskId === undefined &&
       !(args.worktreePath && args.branchName)
     ) {
       throw new ToolError({
@@ -90,7 +91,7 @@ export const createSessionTool = defineTool({
     try {
       session = await sessions.create({
         repoId: args.repoId,
-        workspaceId: args.workspaceId,
+        workspaceId: args.taskId ?? args.workspaceId,
         worktreePath: args.worktreePath,
         branchName: args.branchName,
         name: args.name,

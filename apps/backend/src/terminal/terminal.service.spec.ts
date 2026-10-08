@@ -16,11 +16,13 @@ describe('TerminalService', () => {
   let sessionsService: {
     findOne: jest.Mock;
     updateStatus: jest.Mock;
+    assertSessionWorkspaceLinked: jest.Mock;
   };
   let ptyManager: {
     isAlive: jest.Mock;
     hasTmuxSession: jest.Mock;
     spawn: jest.Mock;
+    getGeneration: jest.Mock;
   };
 
   beforeEach(() => {
@@ -29,12 +31,14 @@ describe('TerminalService', () => {
     sessionsService = {
       findOne: jest.fn(),
       updateStatus: jest.fn(),
+      assertSessionWorkspaceLinked: jest.fn(),
     };
 
     ptyManager = {
       isAlive: jest.fn(),
       hasTmuxSession: jest.fn(),
       spawn: jest.fn(),
+      getGeneration: jest.fn(() => 0),
     };
 
     service = new TerminalService(
@@ -60,7 +64,12 @@ describe('TerminalService', () => {
 
     const result = await service.startSession(1);
 
-    expect(ptyManager.spawn).toHaveBeenCalledWith(1, process.cwd());
+    expect(ptyManager.spawn).toHaveBeenCalledWith(
+      1,
+      process.cwd(),
+      undefined,
+      0,
+    );
     expect(result).toEqual({ success: true, resumed: true });
     expect(sessionsService.updateStatus).toHaveBeenCalledWith(1, 'active');
   });
@@ -81,6 +90,7 @@ describe('TerminalService', () => {
       1,
       process.cwd(),
       'claude-session-1',
+      0,
     );
     expect(result).toEqual({ success: true, resumed: true });
     expect(sessionsService.updateStatus).toHaveBeenCalledWith(1, 'active');
@@ -106,8 +116,15 @@ describe('TerminalService', () => {
       1,
       process.cwd(),
       'claude-session-1',
+      0,
     );
-    expect(ptyManager.spawn).toHaveBeenNthCalledWith(2, 1, process.cwd());
+    expect(ptyManager.spawn).toHaveBeenNthCalledWith(
+      2,
+      1,
+      process.cwd(),
+      undefined,
+      0,
+    );
     expect(result).toEqual({ success: true, resumed: false });
     expect(sessionsService.updateStatus).toHaveBeenCalledWith(1, 'active');
   });
@@ -149,6 +166,7 @@ describe('TerminalService', () => {
       1,
       process.cwd(),
       'claude-session-1',
+      0,
     );
     expect(result).toEqual({
       success: false,

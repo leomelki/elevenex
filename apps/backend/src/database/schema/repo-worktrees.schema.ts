@@ -8,6 +8,7 @@ export const repoWorktrees = sqliteTable(
     path: text('path').notNull(),
     name: text('name').notNull(),
     createdFromRef: text('created_from_ref'),
+    managed: integer('managed', { mode: 'boolean' }).notNull().default(false),
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

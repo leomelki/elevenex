@@ -74,6 +74,7 @@ function makeServices(opts: {
       // Also a real EventEmitter, like the production SessionsService, for
       // parity with the runtime double above.
       sessions: Object.assign(new EventEmitter(), {
+        assertSessionWorkspaceLinked: jest.fn().mockResolvedValue(undefined),
         findOne: jest
           .fn()
           .mockImplementation(async () => {

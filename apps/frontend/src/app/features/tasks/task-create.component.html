@@ -1,0 +1,174 @@
+<form
+  class="space-y-5"
+  (submit)="$event.preventDefault(); create()"
+  cdkTrapFocus
+  [cdkTrapFocusAutoCapture]="true"
+  data-task-create
+>
+  <div>
+    <h2 class="text-xl font-semibold tracking-tight">New task</h2>
+    <p class="mt-1 text-sm text-muted-foreground">
+      {{ data.repoName }} <span aria-hidden="true">·</span> Build, investigate, or review.
+    </p>
+  </div>
+  <div
+    class="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1"
+    role="group"
+    aria-label="Task starting point"
+  >
+    <button
+      z-button
+      type="button"
+      [zType]="mode() === 'new' ? 'outline' : 'ghost'"
+      [attr.aria-pressed]="mode() === 'new'"
+      (click)="setMode('new')"
+    >
+      New branch
+    </button>
+    <button
+      z-button
+      type="button"
+      [zType]="mode() === 'existing' ? 'outline' : 'ghost'"
+      [attr.aria-pressed]="mode() === 'existing'"
+      (click)="setMode('existing')"
+    >
+      Existing branch
+    </button>
+  </div>
+  <div class="space-y-2">
+    <label for="task-name" class="text-sm font-medium"
+      >Task name <span class="font-normal text-muted-foreground">optional</span></label
+    >
+    <input
+      z-input
+      id="task-name"
+      maxlength="160"
+      placeholder="What are you working on?"
+      [value]="name()"
+      (input)="setName($any($event.target).value)"
+      cdkFocusInitial
+    />
+  </div>
+  @if (mode() === 'new') {
+    <div class="space-y-2">
+      <label for="task-new-branch" class="text-sm font-medium">Branch name</label>
+      <input
+        z-input
+        id="task-new-branch"
+        maxlength="240"
+        placeholder="e.g. investigate-slow-search"
+        spellcheck="false"
+        [value]="branch()"
+        (input)="setBranch($any($event.target).value)"
+      />
+      <p class="text-xs text-muted-foreground">Generated from the task name. You can edit it.</p>
+    </div>
+    <div class="space-y-2">
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-medium">Start from</span>
+        <button
+          z-button
+          zType="ghost"
+          zSize="sm"
+          type="button"
+          (click)="basePicker.set(!basePicker())"
+          [attr.aria-expanded]="basePicker()"
+        >
+          {{ basePicker() ? 'Done' : 'Change' }}
+        </button>
+      </div>
+      @if (basePicker() || !base()) {
+        <app-task-branch-picker
+          [repoId]="data.repoId"
+          [selected]="base()"
+          label="Base branch"
+          (picked)="
+            base.set(($event.isRemote ? 'refs/remotes/' : 'refs/heads/') + $event.name);
+            basePicker.set(false)
+          "
+        />
+        <input
+          z-input
+          aria-label="Base reference"
+          placeholder="Or enter a branch, tag, or commit"
+          [value]="base()"
+          (input)="base.set($any($event.target).value)"
+        />
+      } @else {
+        <p
+          class="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm font-medium break-all"
+        >
+          {{ base() | branchRef }}
+        </p>
+      }
+      <p class="text-xs text-muted-foreground">Remote branches are refreshed before setup.</p>
+    </div>
+  } @else {
+    <app-task-branch-picker
+      [repoId]="data.repoId"
+      [selected]="branch()"
+      (picked)="setBranch(($event.isRemote ? 'refs/remotes/' : 'refs/heads/') + $event.name)"
+      (confirmed)="create()"
+    />
+    <p class="text-xs text-muted-foreground">
+      Press Enter to select a branch, then Enter again to create your task.
+    </p>
+  }
+  <div class="rounded-lg border border-border bg-muted/20 px-3 py-3">
+    <div class="flex items-center justify-between gap-2">
+      <div>
+        <p class="text-sm font-medium">Environment</p>
+        <p class="text-xs text-muted-foreground">
+          {{
+            environment() === 'automatic'
+              ? 'Chosen automatically. Your other tasks keep their own checkouts.'
+              : 'Custom environment selection'
+          }}
+        </p>
+      </div>
+      <button
+        z-button
+        zType="ghost"
+        zSize="sm"
+        type="button"
+        (click)="showOptions()"
+        [attr.aria-expanded]="options()"
+      >
+        Options
+      </button>
+    </div>
+    @if (options()) {
+      <app-option-select
+        class="mt-3"
+        ariaLabel="Use environment"
+        [options]="environmentOptions"
+        [value]="environment()"
+        (valueChange)="selectEnvironment($event)"
+      />
+      @if (environment() === 'existing') {
+        <app-option-select
+          class="mt-2"
+          ariaLabel="Existing environment"
+          placeholder="Choose an available environment…"
+          [options]="availableEnvironments()"
+          [value]="worktreeId()?.toString() || ''"
+          (valueChange)="worktreeId.set(+$event)"
+        />
+      }
+      @if (environmentsError()) {
+        <p role="status" class="mt-2 text-xs text-warning">{{ environmentsError() }}</p>
+      }
+    }
+  </div>
+  @if (error()) {
+    <p role="alert" class="text-sm text-destructive">{{ error() }}</p>
+  }
+  <footer class="flex items-center justify-end gap-2 border-t border-border pt-4">
+    <button z-button zType="ghost" type="button" (click)="cancel()" [zDisabled]="busy()">
+      Cancel
+    </button>
+    <button z-button type="submit" [zDisabled]="!canCreate()" data-create-task-submit>
+      {{ busy() ? 'Creating…' : 'Create task' }}
+    </button>
+  </footer>
+</form>

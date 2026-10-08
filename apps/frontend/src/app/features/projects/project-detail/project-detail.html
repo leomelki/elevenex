@@ -132,7 +132,7 @@
               <ng-icon name="lucideGitBranch" size="24" />
               <div>
                 <h3>No repositories attached</h3>
-                <p>Add a Git repository to make branches, worktrees, and sessions available in the sidebar.</p>
+                <p>Add a Git repository to start tasks and conversations.</p>
               </div>
               @if (!isArchived()) {
                 <button z-button zType="outline" zSize="sm" type="button" (click)="openAddRepoDialog()">Add repository</button>
@@ -184,9 +184,9 @@
                   </div>
 
                   <div class="repo-row__actions">
-                    <button z-button zType="ghost" zSize="sm" type="button" [zDisabled]="isArchived()" [attr.aria-label]="'Manage worktrees for ' + repo.name" (click)="openRepoWorktrees(repo)">
+                    <button z-button zType="ghost" zSize="sm" type="button" [zDisabled]="isArchived()" [attr.aria-label]="'New task in ' + repo.name" (click)="taskUi.create({repoId: repo.id, repoName: repo.name})">
                       <ng-icon name="lucideGitBranch" size="14" />
-                      Worktrees
+                      New task
                     </button>
                     <button z-button zType="ghost" zSize="sm" type="button" class="text-destructive" [zDisabled]="isArchived()" [attr.aria-label]="'Remove ' + repo.name" (click)="openRemoveRepoDialog(repo)">
                       <ng-icon name="lucideTrash2" size="14" />

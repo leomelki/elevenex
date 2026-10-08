@@ -1,0 +1,57 @@
+@if (task(); as task) {
+  <div
+    class="flex min-h-12 items-center gap-3 border-b border-border bg-card px-4 py-2"
+    data-task-header
+  >
+    <div class="min-w-0 flex-1">
+      @if (editing()) {
+        <input
+          #nameInput
+          z-input
+          class="h-7 max-w-sm text-sm"
+          aria-label="Task name"
+          maxlength="160"
+          [value]="task.name"
+          [disabled]="saving()"
+          (blur)="rename($any($event.target).value)"
+          (keydown.enter)="rename($any($event.target).value)"
+          (keydown.escape)="editing.set(false)"
+        />
+      } @else {
+        <button
+          class="max-w-full truncate text-sm font-semibold hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          title="Rename task"
+          (click)="editing.set(true)"
+        >
+          {{ task.name }}
+        </button>
+      }
+      <div class="flex items-center gap-2 text-xs text-muted-foreground">
+        <span class="truncate">{{ task.taskBranch || task.sourceRef }}</span>
+        @if (task.checkoutMode === 'snapshot') {
+          <span class="shrink-0 rounded bg-muted px-1.5">Snapshot</span>
+        }
+        @if (task.archivedAt) {
+          <span class="shrink-0 text-success">Finished</span>
+        }
+      </div>
+    </div>
+    @if (task.archivedAt) {
+      <a z-button zSize="sm" zType="outline" [routerLink]="['/tasks', task.id]">View task</a>
+    } @else if (task.taskState === 'failed') {
+      <a z-button zSize="sm" zType="outline" [routerLink]="['/tasks', task.id]"
+        >Resolve task issue</a
+      >
+    } @else {
+      <button
+        z-button
+        zSize="sm"
+        zType="outline"
+        [zDisabled]="task.taskState !== 'ready' || taskUi.finishing().has(task.id)"
+        (click)="taskUi.finish(task.id)"
+      >
+        {{ taskUi.finishing().has(task.id) ? 'Finishing…' : 'Finish task' }}
+      </button>
+    }
+  </div>
+}

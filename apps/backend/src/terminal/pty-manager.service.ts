@@ -1,3 +1,4 @@
+import { terminatePtyAndWait } from './pty-termination.js';
 import {
   Injectable,
   OnModuleDestroy,
@@ -122,6 +123,8 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private processes = new Map<number, PtySession>();
   private readonly spawnInFlight = new Map<number, Promise<pty.IPty | null>>();
   private readonly cancelledSpawns = new Set<number>();
+  private readonly strictStops = new Set<number>();
+  private readonly generations = new Map<number, number>();
   private readonly tmuxResizeState = new Map<number, TmuxResizeState>();
   private pendingKills = new Map<number, pty.IPty>();
   private readonly logger = new Logger('PtyManager');
@@ -144,8 +147,10 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     sessionId: number,
     worktreePath: string,
     resumeSessionId?: string,
+    generation = this.getGeneration(sessionId),
   ): Promise<pty.IPty | null> {
-    if (this.shuttingDown) return null;
+    if (this.shuttingDown || generation !== this.getGeneration(sessionId))
+      return null;
 
     const inFlight = this.spawnInFlight.get(sessionId);
     if (inFlight) {
@@ -228,7 +233,11 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       );
       if (this.cancelledSpawns.has(sessionId)) {
         this.cancelledSpawns.delete(sessionId);
-        if (tmuxSession && this.processes.get(sessionId)?.pty === tmuxSession) {
+        if (
+          tmuxSession &&
+          this.processes.get(sessionId)?.pty === tmuxSession &&
+          !this.strictStops.has(sessionId)
+        ) {
           this.killProcess(sessionId);
         }
         return null;
@@ -562,6 +571,37 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     this.tmuxResizeState.delete(sessionId);
     if (this.tmuxManager.isTmuxAvailable()) {
       await this.tmuxManager.killSession(sessionId);
+    }
+  }
+
+  getGeneration(sessionId: number): number {
+    return this.generations.get(sessionId) ?? 0;
+  }
+
+  /** Strict lifecycle shutdown: do not release a task checkout before process exit. */
+  async stopForTask(sessionId: number): Promise<void> {
+    this.generations.set(sessionId, this.getGeneration(sessionId) + 1);
+    this.strictStops.add(sessionId);
+    try {
+      const pending = this.spawnInFlight.get(sessionId);
+      if (pending) {
+        this.cancelledSpawns.add(sessionId);
+        await pending;
+      }
+      const session = this.processes.get(sessionId);
+      if (session) {
+        this.pendingKills.set(sessionId, session.pty);
+        await terminatePtyAndWait(session.pty);
+        if (this.processes.get(sessionId)?.pty === session.pty)
+          this.processes.delete(sessionId);
+      }
+      await this.killTmuxSession(sessionId);
+      if (await this.hasTmuxSession(sessionId))
+        throw new Error(
+          'The session terminal could not stop. Its task environment is still reserved.',
+        );
+    } finally {
+      this.strictStops.delete(sessionId);
     }
   }
 

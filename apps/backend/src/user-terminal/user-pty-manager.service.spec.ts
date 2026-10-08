@@ -103,6 +103,29 @@ describe('UserPtyManager', () => {
     );
   });
 
+  it('waits for terminal exit before releasing a task environment', async () => {
+    mockShouldUseTmux.mockReturnValue(false);
+    const process = createMockPty();
+    process.onExit.mockImplementation((callback) => {
+      process.on('exit', callback);
+      return { dispose: () => process.off('exit', callback) };
+    });
+    mockSpawn.mockReturnValue(process as never);
+    manager = new UserPtyManager({ sendToTerminal: jest.fn() } as never);
+    await manager.spawn(3, '/repo/worktree', '/bin/zsh');
+    let stopped = false;
+    const pending = manager.destroy(3, true).then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    expect(manager.isAlive(3)).toBe(true);
+    process.emit('exit', { exitCode: 0 });
+    await pending;
+    expect(manager.isAlive(3)).toBe(false);
+    expect(await manager.spawn(3, '/repo/worktree', '/bin/zsh', 0)).toBeNull();
+  });
+
   it('coalesces concurrent async spawns for the same terminal', async () => {
     const env = createDeferred<NodeJS.ProcessEnv>();
     const envRequested = createDeferred<void>();

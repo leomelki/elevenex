@@ -1,44 +1,13 @@
+import { SessionsService } from '../sessions/sessions.service.js';
+import { createTestDb } from '../database/testing/create-test-db.js';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import Database from 'better-sqlite3';
-import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import { type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { ProjectsService } from './projects.service.js';
 import { DRIZZLE } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
-
-function createTestDb() {
-  const sqlite = new Database(':memory:');
-  sqlite.pragma('foreign_keys = ON');
-  sqlite.exec(`
-    CREATE TABLE projects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE repos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      path TEXT NOT NULL,
-      color TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(project_id, path)
-    );
-    CREATE TABLE browser_isolation_settings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      mode TEXT NOT NULL DEFAULT 'shared',
-      shared_globs TEXT NOT NULL DEFAULT '[]',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE UNIQUE INDEX browser_isolation_settings_project_idx
-      ON browser_isolation_settings(project_id);
-  `);
-  return { db: drizzle(sqlite, { schema }), sqlite };
-}
 
 describe('ProjectsService', () => {
   let service: ProjectsService;
@@ -51,7 +20,16 @@ describe('ProjectsService', () => {
     sqlite = testDb.sqlite;
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ProjectsService, { provide: DRIZZLE, useValue: db }],
+      providers: [
+        {
+          provide: SessionsService,
+          useValue: {
+            archiveAllByProject: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        ProjectsService,
+        { provide: DRIZZLE, useValue: db },
+      ],
     }).compile();
 
     service = module.get<ProjectsService>(ProjectsService);

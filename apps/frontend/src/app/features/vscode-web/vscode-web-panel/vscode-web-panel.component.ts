@@ -137,6 +137,7 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
   sessionId = input.required<number>();
   projectId = input.required<number>();
   worktreePath = input.required<string>();
+  taskId = input<number | null>();
 
   @ViewChild('container', { static: true }) container!: ElementRef<HTMLDivElement>;
 
@@ -230,7 +231,7 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
     } else {
       this.stateService.setReady(iframeKey, false);
       this.isLoading.set(true);
-      const iframe = this.stateService.getOrCreateIframe(iframeKey, worktreePath, container, this.themeService.isDark());
+      const iframe = this.stateService.getOrCreateIframe(iframeKey, worktreePath, container, this.themeService.isDark(), this.taskId());
       this.armReadyTimeout(iframeKey, sessionId);
       iframe.addEventListener('load', () => {
         if (this.currentSessionId === sessionId) {

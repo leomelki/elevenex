@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
+import { ServerConnectionService } from '@/shared/services/server-connection.service';
 import type { RemoteLinkSharingState } from '@/shared/runtime/electron-remote-link';
 
 import { RemoteShareStatusBarComponent } from './remote-share-status-bar.component';
@@ -25,9 +26,13 @@ describe('RemoteShareStatusBarComponent', () => {
   let emitSharing: (state: RemoteLinkSharingState) => void;
 
   const api = {
-    getSharing: vi.fn(async () => sharing({ enabled: false, status: 'stopped', connectedPeers: 0 })),
+    getSharing: vi.fn(async () =>
+      sharing({ enabled: false, status: 'stopped', connectedPeers: 0 }),
+    ),
     list: vi.fn(async () => []),
-    disableSharing: vi.fn(async () => sharing({ enabled: false, status: 'stopped', connectedPeers: 0 })),
+    disableSharing: vi.fn(async () =>
+      sharing({ enabled: false, status: 'stopped', connectedPeers: 0 }),
+    ),
     onSharingChanged: vi.fn((callback: (state: RemoteLinkSharingState) => void) => {
       emitSharing = callback;
       return () => undefined;
@@ -36,6 +41,8 @@ describe('RemoteShareStatusBarComponent', () => {
   };
 
   const onboardingStateMock = {
+    readSnapshot: vi.fn(() => ({ mode: 'local' })),
+    snapshotState: vi.fn(() => ({ mode: 'local' })),
     getPairedState: vi.fn(() => null),
     setPairedState: vi.fn(),
     markPairedConnected: vi.fn(),
@@ -45,7 +52,10 @@ describe('RemoteShareStatusBarComponent', () => {
   async function render() {
     TestBed.configureTestingModule({
       imports: [RemoteShareStatusBarComponent],
-      providers: [{ provide: OnboardingStateService, useValue: onboardingStateMock }],
+      providers: [
+        { provide: OnboardingStateService, useValue: onboardingStateMock },
+        { provide: ServerConnectionService, useValue: { setTransportAvailable: vi.fn() } },
+      ],
     });
     const fixture = TestBed.createComponent(RemoteShareStatusBarComponent);
     fixture.detectChanges();
@@ -75,7 +85,9 @@ describe('RemoteShareStatusBarComponent', () => {
     emitSharing(sharing());
     fixture.detectChanges();
 
-    const band = (fixture.nativeElement as HTMLElement).querySelector<HTMLElement>('.remote-share-bar');
+    const band = (fixture.nativeElement as HTMLElement).querySelector<HTMLElement>(
+      '.remote-share-bar',
+    );
     expect(band?.getAttribute('role')).toBe('status');
     expect(band?.textContent).toContain('A paired desktop is remotely connected to this machine');
   });
@@ -85,9 +97,9 @@ describe('RemoteShareStatusBarComponent', () => {
     emitSharing(sharing({ connectedPeers: 2 }));
     fixture.detectChanges();
 
-    expect((fixture.nativeElement as HTMLElement).querySelector('.remote-share-bar')?.textContent).toContain(
-      '2 paired desktops are remotely connected to this machine',
-    );
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('.remote-share-bar')?.textContent,
+    ).toContain('2 paired desktops are remotely connected to this machine');
   });
 
   it('disappears when the last peer drops', async () => {

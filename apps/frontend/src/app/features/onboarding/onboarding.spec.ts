@@ -27,13 +27,16 @@ describe('Onboarding', () => {
 
   const onboardingConnectionMock = {
     isSupported: vi.fn(async () => true),
+    isWslSupported: vi.fn(async () => false),
     pickIdentityFile: vi.fn(async () => '/tmp/id_ed25519'),
-    connect: vi.fn(async (): Promise<any> => ({
-      kind: 'success' as const,
-      serverId: 99,
-      localPort: 4310,
-      installStatus: 'available' as const,
-    })),
+    connect: vi.fn(
+      async (): Promise<any> => ({
+        kind: 'success' as const,
+        serverId: 99,
+        localPort: 4310,
+        installStatus: 'available' as const,
+      }),
+    ),
   };
 
   const onboardingStateMock = {
@@ -84,7 +87,7 @@ describe('Onboarding', () => {
     await fixture.whenStable();
     await Promise.resolve();
     await Promise.resolve();
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     fixture.detectChanges();
   }
 
@@ -125,7 +128,7 @@ describe('Onboarding', () => {
 
     const text = fixture.nativeElement.textContent;
     expect(text).toContain('Your default agent is Codex.');
-    expect(text).toContain('Codex and Pi do not have a separate UI/TUI setting');
+    expect(text).toContain('Codex, Pi, and Antigravity do not have a separate UI/TUI setting');
     expect(text).toContain('Claude TUI uses your plan quota');
     expect(text).not.toContain('Choose how Claude opens.');
   });

@@ -102,7 +102,9 @@ describe('BackendRestartComponent', () => {
     await Promise.resolve();
     fixture.detectChanges();
 
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Backend restarted.');
+    await vi.waitFor(() =>
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Backend restarted.'),
+    );
     expect(restartButton(fixture).disabled).toBe(false);
   });
 
@@ -154,7 +156,9 @@ describe('BackendRestartComponent', () => {
     await Promise.resolve();
     fixture.detectChanges();
 
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Could not restart the backend.');
+    await vi.waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Could not restart the backend.'),
+    );
     expect(restartButton(fixture).disabled).toBe(false);
   });
 });

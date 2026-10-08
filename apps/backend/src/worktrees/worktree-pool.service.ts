@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { worktreeSimpleGit } from '../config/system-paths.js';
@@ -364,6 +364,7 @@ export class WorktreePoolService {
       path: realWorktreePath,
       name,
       createdFromRef: branchName || startPoint,
+      managed: true,
     });
     const item = (await this.listForRepo(repo)).find(
       (candidate) => candidate.id === rows[0].id,
@@ -395,6 +396,7 @@ export class WorktreePoolService {
     }
 
     const owner = await this.findLinkedWorkspace(pool.id);
+    if (owner?.workspace.taskRequestId || owner?.workspace.archivedAt) throw new ConflictException('This environment belongs to a task. Open or finish that task first.');
     const projectWorkspace = await this.findProjectWorkspace(repo.id, pool.id);
     const ownerIsCurrentProject = owner?.repo.projectId === repo.projectId;
     const now = new Date().toISOString();
@@ -474,6 +476,10 @@ export class WorktreePoolService {
   ) {
     await this.projectsService.assertProjectIsActive(repo.projectId);
     const pool = await this.findPoolForRepo(repo, worktreeId);
+    const owner = await this.findLinkedWorkspace(pool.id);
+    if (owner?.workspace.taskRequestId || owner?.workspace.archivedAt) throw new ConflictException('Rename the task instead of moving its environment.');
+    const history = await this.db.select({ id: schema.workspaces.id }).from(schema.workspaces).where(and(eq(schema.workspaces.path, pool.path), eq(schema.workspaces.linkStatus, 'unlinked')));
+    if (history.length) throw new ConflictException('This environment has task history and cannot be moved.');
     const name = this.normalizeName(newName);
     const newPath = path.join(
       path.dirname(repo.path),
@@ -671,11 +677,8 @@ export class WorktreePoolService {
     this.db.transaction((tx) => {
       for (const workspace of workspaceRows) {
         if (!workspace.isDefault && missingPaths.has(workspace.path)) {
-          tx.update(schema.sessions)
-            .set({ workspaceId: null })
-            .where(eq(schema.sessions.workspaceId, workspace.id))
-            .run();
-          tx.delete(schema.workspaces)
+          tx.update(schema.workspaces)
+            .set({ poolWorktreeId: null, linkStatus: 'unlinked', taskState: 'failed', taskError: JSON.stringify({ message: 'The task environment is missing. Reopen or choose another environment.' }) })
             .where(eq(schema.workspaces.id, workspace.id))
             .run();
         }
@@ -859,7 +862,7 @@ export class WorktreePoolService {
       .where(eq(schema.workspaces.repoId, repo.id));
 
     for (const workspace of workspaces) {
-      if (workspace.poolWorktreeId) continue;
+      if (workspace.poolWorktreeId || workspace.archivedAt || workspace.taskRequestId || workspace.linkStatus === 'unlinked') continue;
       const pool = await this.findPoolByPath(root, workspace.path);
       if (!pool) continue;
       await this.db
@@ -959,6 +962,7 @@ export class WorktreePoolService {
         and(
           eq(schema.workspaces.repoId, repoId),
           eq(schema.workspaces.poolWorktreeId, poolWorktreeId),
+          isNull(schema.workspaces.archivedAt),
         ),
       );
     const workspace = rows[0] ?? null;

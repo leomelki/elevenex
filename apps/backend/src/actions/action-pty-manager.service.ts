@@ -18,6 +18,7 @@ import {
 } from '../config/system-paths.js';
 import { execFileQuiet } from '../terminal/async-process.js';
 import { shouldUseTmux } from '../config/backend-runtime-mode.js';
+import { terminatePtyAndWait } from '../terminal/pty-termination.js';
 
 type ActionStatus = 'idle' | 'running' | 'success' | 'failed' | 'stopped';
 
@@ -42,6 +43,7 @@ interface RunningAction {
 }
 
 interface ActionPersistence {
+  assertCanRun?(actionId: number, worktreePath: string): Promise<void>;
   markRunning(actionId: number): Promise<void>;
   flushCurrentOutput(actionId: number, output: string): Promise<void>;
   finalizeRun(
@@ -117,9 +119,11 @@ export class ActionPtyManager
         throw new Error('Action persistence is not registered');
       }
 
+      await this.persistence.assertCanRun?.(action.id, action.worktreePath);
       await this.persistence.markRunning(action.id);
 
       const env = await this.buildEnv(action.worktreePath);
+      await this.persistence.assertCanRun?.(action.id, action.worktreePath);
 
       let ptyProcess: pty.IPty | null = null;
 
@@ -137,9 +141,16 @@ export class ActionPtyManager
     }
   }
 
-  async stop(actionId: number): Promise<boolean> {
+  async stop(actionId: number, requireStopped = false): Promise<boolean> {
+    if (requireStopped && this.startingActions.has(actionId))
+      throw new Error(
+        'This action is still starting. Finish the task again after startup settles.',
+      );
     const session = this.processes.get(actionId);
-    if (!session) return false;
+    if (!session) {
+      if (requireStopped) await this.killTmuxSession(actionId, true);
+      return false;
+    }
 
     session.stopRequested = true;
 
@@ -153,8 +164,9 @@ export class ActionPtyManager
           '-t',
           session.tmuxSessionName,
         ]);
-      } catch {
-        /* already dead */
+      } catch (error) {
+        if (requireStopped && (await this.hasTmuxSessionForAction(actionId)))
+          throw error;
       }
 
       // Kill the tail process
@@ -178,6 +190,9 @@ export class ActionPtyManager
       // Finalize immediately
       const exitCode = (await this.readExitCode(actionId)) ?? -1;
       await this.handleExit(actionId, exitCode);
+    } else if (requireStopped) {
+      await terminatePtyAndWait(session.pty);
+      await this.handleExit(actionId, -1);
     } else {
       session.pty.kill('SIGTERM');
 
@@ -286,7 +301,10 @@ export class ActionPtyManager
     return this.tmuxSessionExists(this.getTmuxSessionName(actionId));
   }
 
-  async killTmuxSession(actionId: number): Promise<void> {
+  async killTmuxSession(
+    actionId: number,
+    requireStopped = false,
+  ): Promise<void> {
     if (!this.isTmuxAvailable()) return;
     const tmuxSessionName = this.getTmuxSessionName(actionId);
     try {
@@ -295,8 +313,9 @@ export class ActionPtyManager
         '-t',
         tmuxSessionName,
       ]);
-    } catch {
-      // Session may not exist
+    } catch (error) {
+      if (requireStopped && (await this.hasTmuxSessionForAction(actionId)))
+        throw error;
     }
     // Clean up associated files
     await fs.unlink(this.getLogFilePath(actionId)).catch(() => undefined);

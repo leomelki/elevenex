@@ -3,7 +3,7 @@
   [class.right-0]="isOpen()"
 >
   <div class="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
-    <h2 class="text-sm font-semibold">Tasks</h2>
+    <h2 class="text-sm font-semibold">Checklist</h2>
     <button z-button zType="ghost" class="h-8 w-8 p-0" (click)="onClose()">
       <ng-icon name="lucideX" size="16" />
     </button>
@@ -19,7 +19,7 @@
           [value]="newTodoText()"
           (input)="newTodoText.set($any($event.target).value)"
           (keydown)="onNewTodoKeydown($event)"
-          placeholder="Add a task..."
+          placeholder="Add an item..."
           class="flex-1 text-sm"
         />
         <button z-button zType="default" (click)="addTodo()" [disabled]="!newTodoText().trim()">
@@ -32,7 +32,7 @@
       <div class="p-4 text-center text-muted-foreground text-sm">Loading...</div>
     } @else if (todos().length === 0) {
       <div class="flex h-[100px] items-center justify-center">
-        <p class="text-sm text-muted-foreground text-center">No tasks. Add one above.</p>
+        <p class="text-sm text-muted-foreground text-center">No checklist items. Add one above.</p>
       </div>
     } @else {
       <!-- Pending todos -->

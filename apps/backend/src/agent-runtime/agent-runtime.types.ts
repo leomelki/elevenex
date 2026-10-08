@@ -189,6 +189,7 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
   resumePendingPrompts(sessionId: number): Promise<void>;
   clearPendingPrompts(sessionId: number): Promise<void>;
   cleanupSession(sessionId: number): Promise<void>;
+  reactivateSession?(sessionId: number): Promise<void> | void;
 }
 
 export type AgentLoginMode = 'oauth' | 'api_key';
@@ -292,6 +293,7 @@ export type AgentRuntimeProvider = AgentRuntimeProviderBase &
 
 export interface AgentRuntimeCleanup {
   cleanupSession(sessionId: number): Promise<void>;
+  reactivateSession?(sessionId: number): Promise<void>;
 }
 
 export interface AgentForkConversationRequest {

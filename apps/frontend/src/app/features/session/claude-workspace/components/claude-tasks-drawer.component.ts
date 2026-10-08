@@ -45,9 +45,9 @@ export class ClaudeTasksDrawerComponent {
         const sheet = this.sheets.create<unknown, undefined>({
           zContent: content,
           zViewContainerRef: this.viewContainer,
-          zTitle: 'Tasks',
-          zAriaLabel: 'Tasks',
-          zCloseLabel: 'Close tasks',
+          zTitle: 'Agent steps',
+          zAriaLabel: 'Agent steps',
+          zCloseLabel: 'Close agent steps',
           zSide: 'right',
           zSize: 'custom',
           zHideFooter: true,

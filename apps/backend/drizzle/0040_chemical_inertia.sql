@@ -1,0 +1,1 @@
+ALTER TABLE `workspaces` ADD `task_draft` text DEFAULT '' NOT NULL;

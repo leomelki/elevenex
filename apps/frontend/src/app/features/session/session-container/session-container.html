@@ -1,5 +1,6 @@
 <div class="session-container h-full flex flex-col">
   @if (hasTabs()) {
+    <app-task-header [taskId]="activeTab()?.workspaceId" />
     <!-- Tab Bar -->
     <app-tab-bar
       [tabs]="tabs()"
@@ -154,6 +155,7 @@
                 <z-resizable-panel [zDefaultSize]="45" [zMin]="25" [zMax]="70">
                   @if (showFilesPanel()) {
                     <app-vscode-web-panel
+                      [taskId]="activeTab()?.workspaceId"
                       [sessionId]="activeSessionId()!"
                       [projectId]="projectId()!"
                       [worktreePath]="worktreePath()!"

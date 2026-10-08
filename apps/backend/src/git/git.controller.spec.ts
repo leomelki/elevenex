@@ -166,6 +166,7 @@ describe('GitController', () => {
       expect(result).toEqual(mockSummary);
       expect(mockGetStatusSummary).toHaveBeenCalledWith(
         '/test/path with spaces',
+        { conflictsOnly: false },
       );
     });
   });

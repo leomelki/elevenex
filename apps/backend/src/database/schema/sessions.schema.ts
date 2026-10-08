@@ -16,6 +16,8 @@ export const sessions = sqliteTable('sessions', {
   }),
   branchName: text('branch_name').notNull(),
   worktreePath: text('worktree_path').notNull(),
+  transcriptWorktreePath: text('transcript_worktree_path'),
+  archivedByTask: integer('archived_by_task', { mode: 'boolean' }).notNull().default(false),
   name: text('name'),
   surface: text('surface').notNull().default('session'),
   // Temporary sessions survive refreshes/reconnects, but are deleted when

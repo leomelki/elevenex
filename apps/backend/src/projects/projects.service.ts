@@ -1,3 +1,4 @@
+import { isSqliteUniqueConstraintError } from '../database/sqlite-errors.js';
 import {
   BadRequestException,
   ConflictException,
@@ -30,10 +31,7 @@ export class ProjectsService {
     const notHidden = eq(schema.projects.hidden, false);
 
     if (state === 'all') {
-      return this.db
-        .select()
-        .from(schema.projects)
-        .where(notHidden);
+      return this.db.select().from(schema.projects).where(notHidden);
     }
 
     return this.db
@@ -97,10 +95,7 @@ export class ProjectsService {
         return project;
       });
     } catch (error: unknown) {
-      if (
-        error instanceof Error &&
-        error.message.includes('UNIQUE constraint failed')
-      ) {
+      if (isSqliteUniqueConstraintError(error)) {
         throw new ConflictException('Project name already exists');
       }
       throw error;
@@ -178,7 +173,10 @@ export class ProjectsService {
     await this.findOne(id);
     const rows = await this.db
       .update(schema.projects)
-      .set({ agentInstructions: instructions, updatedAt: new Date().toISOString() })
+      .set({
+        agentInstructions: instructions,
+        updatedAt: new Date().toISOString(),
+      })
       .where(eq(schema.projects.id, id))
       .returning();
     return rows[0];

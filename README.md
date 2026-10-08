@@ -6,9 +6,11 @@ It is built to replace the usual pile of editor windows, terminal tabs, browser 
 
 ## What It Does
 
-- Organizes work as `project -> repo -> branch/worktree -> session`.
+- Organizes work as `project -> repository -> task -> session`.
 - Lets you keep multiple coding sessions open and jump between them without losing context.
-- Gives each worktree its own dedicated workspace, so edits, terminal activity, and session state stay attached to the right branch.
+- Creates named tasks for implementation, investigation, or review, starting from a new branch or an existing local or remote branch.
+- Chooses a clean environment automatically, keeping concurrent tasks isolated. Task names can change independently of their branches.
+- Finishes and reopens tasks without losing their branches or conversations. Checkouts with local edits remain reserved; clean managed checkouts can be reused.
 - Adds a dedicated Claude Code workspace so AI sessions feel like a first-class part of the app instead of just another terminal tab.
 - Brings code editing, terminal access, git context, and browser-based workflows into one place instead of scattering them across five apps.
 - Makes it easier to review diffs, manage commits, inspect GitHub state, and stay on top of branch-level work while you code.

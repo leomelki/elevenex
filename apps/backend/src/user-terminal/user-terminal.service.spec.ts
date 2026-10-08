@@ -17,6 +17,7 @@ describe('UserTerminalService', () => {
     destroy: jest.Mock;
     isAlive: jest.Mock;
     spawn: jest.Mock;
+    getGeneration: jest.Mock;
   };
 
   beforeEach(() => {
@@ -26,6 +27,7 @@ describe('UserTerminalService', () => {
       destroy: jest.fn(),
       isAlive: jest.fn(),
       spawn: jest.fn(),
+      getGeneration: jest.fn(() => 0),
     };
 
     service = new UserTerminalService({} as never, ptyManager as never);
@@ -57,7 +59,12 @@ describe('UserTerminalService', () => {
 
     const result = await service.startTerminal(3);
 
-    expect(ptyManager.spawn).toHaveBeenCalledWith(3, process.cwd(), '/bin/zsh');
+    expect(ptyManager.spawn).toHaveBeenCalledWith(
+      3,
+      process.cwd(),
+      '/bin/zsh',
+      0,
+    );
     expect(result).toEqual({
       success: false,
       error: 'Terminal start was cancelled',

@@ -82,9 +82,10 @@ function notMainWorktree() {
 }
 
 describe('setup tool group', () => {
-  it('registers all 16 setup tools', () => {
+  it('registers task lifecycle tools alongside the compatibility setup tools', () => {
     expect(SETUP_TOOLS.map((t) => t.name).sort()).toEqual(
       [
+        'create_task', 'list_tasks', 'get_task', 'rename_task', 'retry_task', 'finish_task', 'reopen_task',
         'add_repo',
         'assess_worktree_pool',
         'create_session',

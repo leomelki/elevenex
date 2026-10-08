@@ -1,0 +1,41 @@
+<div class="space-y-1 px-2 pb-2 pl-12" aria-label="Finished tasks">
+  @for (task of tasks(); track task.id) {
+    <a
+      [routerLink]="['/tasks', task.id]"
+      class="block rounded-md px-2 py-2 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      ><span class="block truncate">{{ task.name }}</span
+      ><span class="text-xs text-muted-foreground"
+        >{{ task.archivedAt | date: 'MMM d' }} · {{ task.taskBranch || task.sourceRef }}</span
+      ></a
+    >
+  } @empty {
+    <p class="px-2 py-2 text-xs text-muted-foreground" role="status">
+      {{
+        loading()
+          ? 'Loading…'
+          : error()
+            ? 'Could not load finished tasks.'
+            : 'No finished tasks yet.'
+      }}
+    </p>
+  }
+  @if (error() && !tasks().length) {
+    <button
+      type="button"
+      class="px-2 py-2 text-xs text-primary focus-visible:ring-2 focus-visible:ring-ring"
+      (click)="retry()"
+    >
+      Try again
+    </button>
+  }
+  @if (hasMore()) {
+    <button
+      type="button"
+      class="px-2 py-2 text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      [disabled]="loading()"
+      (click)="loadMore()"
+    >
+      {{ loading() ? 'Loading…' : error() ? 'Try loading more again' : 'Load more' }}
+    </button>
+  }
+</div>

@@ -78,6 +78,10 @@ const WORKBENCH_BOOTSTRAP_SCRIPT = `${WORKBENCH_BOOTSTRAP_MARKER}
         decodeURIComponent(workspaceUrl.host || workspaceUrl.pathname);
       fileBridge = new BroadcastChannel('elevenex-vscode:' + workspacePath);
       fileBridge.addEventListener('message', function (event) {
+        if (event.data && event.data.type === 'elevenex-editor-check-result') {
+          window.parent.postMessage(event.data, '*');
+          return;
+        }
         if (!event.data || event.data.type !== 'elevenex-file-bridge-ready') return;
         fileBridgeReady = true;
         pendingFileRequests.splice(0).forEach(function (request) {
@@ -90,7 +94,8 @@ const WORKBENCH_BOOTSTRAP_SCRIPT = `${WORKBENCH_BOOTSTRAP_MARKER}
   }
 
   window.addEventListener('message', function (event) {
-    if (event.source !== window.parent || !event.data || event.data.type !== 'elevenex-open-file') {
+    if (event.source !== window.parent || !event.data ||
+        (event.data.type !== 'elevenex-open-file' && event.data.type !== 'elevenex-editor-check')) {
       return;
     }
     if (!fileBridge) {

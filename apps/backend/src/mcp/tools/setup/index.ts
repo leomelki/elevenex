@@ -1,4 +1,5 @@
 import type { ToolDefinition } from '../../tool-registry/tool.types.js';
+import { TASK_TOOLS } from './task.tools.js';
 import { findOrCreateProjectTool } from './find-or-create-project.tool.js';
 import { addRepoTool } from './add-repo.tool.js';
 import { removeRepoTool } from './remove-repo.tool.js';
@@ -25,6 +26,7 @@ import { deleteProjectTool } from './delete-project.tool.js';
  * returns a handle to poll instead of blocking.
  */
 export const SETUP_TOOLS: ToolDefinition[] = [
+  ...TASK_TOOLS,
   findOrCreateProjectTool,
   addRepoTool,
   removeRepoTool,

@@ -383,6 +383,7 @@ describe('ClaudeHooksService', () => {
     expect(sessionTitleService.generate).toHaveBeenCalledWith(
       '/tmp/project',
       'Please ship this change',
+      'claude',
     );
     expect(sessionsService.renameFromGeneratedTitle).not.toHaveBeenCalled();
 
@@ -423,6 +424,7 @@ describe('ClaudeHooksService', () => {
     expect(sessionTitleService.generate).toHaveBeenCalledWith(
       '/tmp/project',
       '/status',
+      'claude',
     );
     expect(sessionsService.renameFromGeneratedTitle).toHaveBeenCalledWith(
       7,

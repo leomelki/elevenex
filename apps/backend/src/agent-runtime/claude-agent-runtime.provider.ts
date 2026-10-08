@@ -200,4 +200,7 @@ export class ClaudeAgentRuntimeProvider
   cleanupSession(sessionId: number) {
     return this.runtimeService.cleanupSession(sessionId);
   }
+  reactivateSession(sessionId: number) {
+    this.runtimeService.reactivateSession(sessionId);
+  }
 }

@@ -289,6 +289,7 @@ describe('observe tool group', () => {
             turns,
           },
           running,
+          itemCount: turns.length * 2,
         })),
       };
       return { sessions: sessionsMock(), conversationExport };
@@ -306,8 +307,8 @@ describe('observe tool group', () => {
       expect(res.data).toMatchObject({ delta: false, newTurns: 2, totalTurns: 2 });
       expect((res.data as { markdown: string }).markdown).toContain('## Turn 1');
       expect((res.data as { markdown: string }).markdown).toContain('## Turn 2');
-      // Cursor is stored as turn count under the precision-scoped key
-      expect(ctx.cursors.get('t', '7:small')).toBe('2');
+      // Cursor tracks turn boundaries and content additions at this precision.
+      expect(ctx.cursors.get('t', '7:small')).toBe('2:4');
     });
 
     it('second call delivers only new turns (delta=true) with correct global turn numbers', async () => {
@@ -329,6 +330,7 @@ describe('observe tool group', () => {
           turns: [...turns, newTurn],
         },
         running: false,
+        itemCount: 4,
       });
 
       const second = await readSessionTool.handler(
@@ -339,7 +341,7 @@ describe('observe tool group', () => {
       // Turn number must reflect global position (turn 2, not turn 1)
       expect((second.data as { markdown: string }).markdown).toContain('## Turn 2');
       expect((second.data as { markdown: string }).markdown).not.toContain('## Turn 1');
-      expect(ctx.cursors.get('t', '7:small')).toBe('2');
+      expect(ctx.cursors.get('t', '7:small')).toBe('2:4');
     });
 
     it('returns newTurns=0 with no markdown when nothing is new', async () => {
@@ -448,7 +450,7 @@ describe('observe tool group', () => {
         makeCtx(services),
       );
       expect((res.data as { matchCount: number }).matchCount).toBe(0);
-      expect(res.nextStep).toContain('broader');
+      expect(res.nextStep).toContain('broaden your query');
     });
 
     it('throws on invalid regexp', async () => {

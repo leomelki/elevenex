@@ -281,6 +281,7 @@ export class AgentRuntimeController {
   }
 
   private async assertSessionMutable(sessionId: number): Promise<void> {
+    await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
     const session = await this.sessionsService.findOne(sessionId);
     if (session.status === 'archived') {
       throw new BadRequestException('Archived sessions are read-only');

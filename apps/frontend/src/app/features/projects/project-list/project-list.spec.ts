@@ -15,7 +15,12 @@ import { SshForwardsService } from '@/shared/services/ssh-forwards.service';
 
 const projects = [
   { id: 1, name: 'Platform', createdAt: '2026-01-02T00:00:00Z', updatedAt: '2026-01-05T00:00:00Z' },
-  { id: 2, name: 'Storefront', createdAt: '2026-02-02T00:00:00Z', updatedAt: '2026-02-05T00:00:00Z' },
+  {
+    id: 2,
+    name: 'Storefront',
+    createdAt: '2026-02-02T00:00:00Z',
+    updatedAt: '2026-02-05T00:00:00Z',
+  },
 ];
 
 describe('ProjectList', () => {
@@ -96,7 +101,7 @@ describe('ProjectList', () => {
     const fixture = TestBed.createComponent(ProjectList);
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.textContent).toContain('2 configured workspaces');
+    expect(fixture.nativeElement.textContent).toContain('2 active projects');
     expect(fixture.nativeElement.textContent).toContain('Platform');
     expect(fixture.nativeElement.textContent).toContain('Storefront');
     expect(fixture.nativeElement.textContent).toContain('Updated');
@@ -122,7 +127,8 @@ describe('ProjectList', () => {
     const fixture = TestBed.createComponent(ProjectList);
     fixture.detectChanges();
 
-    const input = fixture.debugElement.query(By.css('input[type="search"]')).nativeElement as HTMLInputElement;
+    const input = fixture.debugElement.query(By.css('input[type="search"]'))
+      .nativeElement as HTMLInputElement;
     input.value = 'platform';
     input.dispatchEvent(new Event('input'));
     fixture.detectChanges();
@@ -137,7 +143,7 @@ describe('ProjectList', () => {
     expect(fixture.nativeElement.textContent).toContain('No matching projects');
   });
 
-  it('renders the first-project prompt and opens the agent panel when no projects exist', () => {
+  it('renders the first-project prompt and asks the agent when submitted', async () => {
     projectsServiceMock.getAll.mockReturnValue(of([]));
 
     const fixture = TestBed.createComponent(ProjectList);
@@ -145,7 +151,15 @@ describe('ProjectList', () => {
 
     expect(fixture.nativeElement.textContent).toContain('Create your first project');
     expect(fixture.nativeElement.textContent).toContain('Create project manually');
-    expect(agentStateMock.open).toHaveBeenCalled();
+    const input = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
+    input.value = 'Create my web app';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await fixture.whenStable();
+    expect(agentStateMock.createMission).toHaveBeenCalledWith('Create my web app');
   });
 
   it('opens the create wizard from the query param', async () => {
@@ -163,7 +177,9 @@ describe('ProjectList', () => {
     const fixture = TestBed.createComponent(ProjectList);
     fixture.detectChanges();
 
-    const row = fixture.debugElement.queryAll(By.css('button'))[1].nativeElement as HTMLButtonElement;
+    const row = Array.from(
+      fixture.nativeElement.querySelectorAll('button') as NodeListOf<HTMLButtonElement>,
+    ).find((button) => button.textContent?.includes('Platform'))!;
     row.click();
 
     expect(navigate).toHaveBeenCalledWith(['/projects', 1]);

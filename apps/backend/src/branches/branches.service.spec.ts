@@ -48,6 +48,37 @@ describe('BranchesService', () => {
   });
 
   describe('getBranches', () => {
+    it('coalesces simultaneous local and remote searches into one enumeration', async () => {
+      const read = jest.spyOn(service as any, 'readBranches');
+      const [local, all] = await Promise.all([
+        service.getBranches(mainRepoPath),
+        service.getBranches(mainRepoPath, true),
+      ]);
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(local.every((branch) => !branch.isRemote)).toBe(true);
+      expect(all).toEqual(local);
+    });
+
+    it('does not repopulate an invalidated cache from an older read', async () => {
+      let resolveOld!: (value: unknown[]) => void;
+      const fresh = [{ name: 'fresh', isRemote: false }];
+      const read = jest
+        .spyOn(service as any, 'readBranches')
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveOld = resolve;
+            }),
+        )
+        .mockResolvedValue(fresh);
+      const old = service.getBranches(mainRepoPath);
+      service.invalidateCache(mainRepoPath);
+      expect(await service.getBranches(mainRepoPath)).toEqual(fresh);
+      resolveOld([{ name: 'old', isRemote: false }]);
+      await old;
+      expect(await service.getBranches(mainRepoPath)).toEqual(fresh);
+      expect(read).toHaveBeenCalledTimes(2);
+    });
     it('should return local branches with correct info', async () => {
       const branches = await service.getBranches(mainRepoPath);
 

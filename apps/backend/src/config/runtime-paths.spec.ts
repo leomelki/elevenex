@@ -19,6 +19,9 @@ const mockCreateRequire = jest.mocked(createRequire);
 
 describe('runtime-paths', () => {
   const originalCwd = process.cwd;
+  const originalRuntimeRoot = process.env.ELEVENEX_BACKEND_RUNTIME_ROOT;
+  const workbench = (root: string) =>
+    join(root, 'out', 'vs', 'code', 'browser', 'workbench', 'workbench.html');
 
   beforeEach(() => {
     jest.resetAllMocks();
@@ -28,11 +31,14 @@ describe('runtime-paths', () => {
 
   afterAll(() => {
     process.cwd = originalCwd;
+    if (originalRuntimeRoot === undefined)
+      delete process.env.ELEVENEX_BACKEND_RUNTIME_ROOT;
+    else process.env.ELEVENEX_BACKEND_RUNTIME_ROOT = originalRuntimeRoot;
   });
 
   it('prefers a staged vscode-web-dist directory when present', () => {
     mockExistsSync.mockImplementation(
-      (targetPath: any) => targetPath === '/repo/vscode-web-dist',
+      (targetPath: any) => targetPath === workbench('/repo/vscode-web-dist'),
     );
 
     expect(getBackendVSCodeStaticPath()).toBe('/repo/vscode-web-dist');
@@ -44,7 +50,9 @@ describe('runtime-paths', () => {
         targetPath === '/repo/package.json' ||
         targetPath === '/repo/apps/backend/package.json' ||
         targetPath ===
-          '/repo/node_modules/.pnpm/vscode-web@1.91.1/node_modules/vscode-web/dist'
+          workbench(
+            '/repo/node_modules/.pnpm/vscode-web@1.91.1/node_modules/vscode-web/dist',
+          )
       );
     });
 

@@ -45,6 +45,8 @@ export interface Tab {
   sessionId: number;
   sessionName: string;
   workspaceName?: string | null;
+  workspaceId?: number | null;
+  workspaceArchivedAt?: string | null;
   branchName: string;
   worktreePath: string;
   status: Session['status'];
@@ -102,6 +104,12 @@ export class TabService {
           t.sessionId === session.id
             ? {
                 ...t,
+                workspaceId: session.workspaceId,
+                workspaceArchivedAt: session.workspaceArchivedAt,
+                workspaceName: session.workspaceName,
+                worktreePath: session.worktreePath,
+                branchName: session.branchName,
+                status: session.status,
                 activeAgentProvider: this.providerForSession(session),
                 hasStartedAgentRuntime: this.hasStartedAgentRuntime(session),
                 isTemporary: session.isTemporary,
@@ -118,6 +126,8 @@ export class TabService {
     const newTab: Tab = {
       sessionId: session.id,
       sessionName: session.name ?? `Session ${session.id}`,
+      workspaceId: session.workspaceId,
+      workspaceArchivedAt: session.workspaceArchivedAt,
       workspaceName: session.workspaceName,
       branchName: session.branchName,
       worktreePath: session.worktreePath,

@@ -5,7 +5,11 @@ import {
   forwardRef,
   Logger,
 } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
+import {
+  currentWorkspaceForPath,
+  assertWorkspaceCanExecute,
+} from '../workspaces/workspace-ownership.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { UserPtyManager } from './user-pty-manager.service.js';
@@ -29,6 +33,8 @@ export class UserTerminalService {
   ) {}
 
   async create(dto: { worktreePath: string; name?: string }) {
+    const workspace = await currentWorkspaceForPath(this.db, dto.worktreePath);
+    if (workspace) await assertWorkspaceCanExecute(this.db, workspace.id);
     const shell = this.defaultShell;
     const name = dto.name || path.basename(shell);
 
@@ -36,6 +42,7 @@ export class UserTerminalService {
       .insert(schema.userTerminals)
       .values({
         worktreePath: dto.worktreePath,
+        workspaceId: workspace?.id ?? null,
         name,
         shell,
       })
@@ -45,10 +52,21 @@ export class UserTerminalService {
   }
 
   async listByWorktree(worktreePath: string) {
+    const workspace = await currentWorkspaceForPath(this.db, worktreePath);
     return this.db
       .select()
       .from(schema.userTerminals)
-      .where(eq(schema.userTerminals.worktreePath, worktreePath))
+      .where(
+        and(
+          eq(schema.userTerminals.worktreePath, worktreePath),
+          workspace
+            ? or(
+                eq(schema.userTerminals.workspaceId, workspace.id),
+                isNull(schema.userTerminals.workspaceId),
+              )
+            : isNull(schema.userTerminals.workspaceId),
+        ),
+      )
       .orderBy(schema.userTerminals.createdAt);
   }
 
@@ -102,7 +120,9 @@ export class UserTerminalService {
   private async startTerminalInternal(
     terminalId: number,
   ): Promise<{ success: boolean; error?: string }> {
+    const generation = this.ptyManager.getGeneration(terminalId);
     const terminal = await this.findOne(terminalId);
+    await assertWorkspaceCanExecute(this.db, terminal.workspaceId);
 
     // Verify worktree path exists
     try {
@@ -128,6 +148,7 @@ export class UserTerminalService {
         terminalId,
         terminal.worktreePath,
         terminal.shell,
+        generation,
       );
       if (spawned === null) {
         return { success: false, error: 'Terminal start was cancelled' };

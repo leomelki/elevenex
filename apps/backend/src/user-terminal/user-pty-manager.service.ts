@@ -21,6 +21,7 @@ import {
 } from '../config/system-paths.js';
 import { execFileQuiet } from '../terminal/async-process.js';
 import { shouldUseTmux } from '../config/backend-runtime-mode.js';
+import { terminatePtyAndWait } from '../terminal/pty-termination.js';
 
 const TMUX_SESSION_PREFIX = 'elevenex-uterm';
 
@@ -48,6 +49,8 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private processes = new Map<number, UserPtySession>();
   private readonly spawnInFlight = new Map<number, Promise<pty.IPty | null>>();
   private readonly cancelledSpawns = new Set<number>();
+  private readonly generations = new Map<number, number>();
+  private readonly strictStops = new Set<number>();
   private readonly tmuxResizeState = new Map<number, TmuxResizeState>();
   private pendingKills = new Set<number>();
   private readonly logger = new Logger('UserPtyManager');
@@ -109,8 +112,10 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     terminalId: number,
     worktreePath: string,
     shell: string,
+    generation = this.getGeneration(terminalId),
   ): Promise<pty.IPty | null> {
-    if (this.shuttingDown) return null;
+    if (this.shuttingDown || generation !== this.getGeneration(terminalId))
+      return null;
 
     const inFlight = this.spawnInFlight.get(terminalId);
     if (inFlight) {
@@ -172,7 +177,8 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
         this.cancelledSpawns.delete(terminalId);
         if (
           tmuxSession &&
-          this.processes.get(terminalId)?.pty === tmuxSession
+          this.processes.get(terminalId)?.pty === tmuxSession &&
+          !this.strictStops.has(terminalId)
         ) {
           this.killProcess(terminalId);
         }
@@ -426,8 +432,31 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   }
 
   /** Kill both PTY and tmux session — used when deleting a terminal */
-  async destroy(terminalId: number): Promise<boolean> {
-    this.kill(terminalId);
+  getGeneration(terminalId: number): number {
+    return this.generations.get(terminalId) ?? 0;
+  }
+
+  async destroy(terminalId: number, requireStopped = false): Promise<boolean> {
+    this.generations.set(terminalId, this.getGeneration(terminalId) + 1);
+    if (requireStopped) {
+      this.strictStops.add(terminalId);
+      try {
+        const pending = this.spawnInFlight.get(terminalId);
+        if (pending) {
+          this.cancelledSpawns.add(terminalId);
+          await pending;
+        }
+        const session = this.processes.get(terminalId);
+        if (session) {
+          this.pendingKills.add(terminalId);
+          await terminatePtyAndWait(session.pty);
+          if (this.processes.get(terminalId)?.pty === session.pty)
+            this.processes.delete(terminalId);
+        }
+      } finally {
+        this.strictStops.delete(terminalId);
+      }
+    } else this.kill(terminalId);
     this.tmuxResizeState.delete(terminalId);
 
     if (this.isTmuxAvailable()) {
@@ -438,8 +467,12 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
           '-t',
           tmuxSessionName,
         ]);
-      } catch {
-        // Session may not exist
+      } catch (error) {
+        if (
+          requireStopped &&
+          (await this.hasTmuxSessionForTerminal(terminalId))
+        )
+          throw error;
       }
     }
     return true;

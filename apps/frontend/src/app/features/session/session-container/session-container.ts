@@ -1,3 +1,4 @@
+import { TaskHeaderComponent } from '@/features/tasks/task-header.component';
 import {
   Component,
   inject,
@@ -117,6 +118,7 @@ type ClaudeSurfaceMode = 'workspace' | 'terminal';
   standalone: true,
   imports: [
     CommonModule,
+    TaskHeaderComponent,
     TabBar,
     ClaudeTerminalComponent,
     ClaudeWorkspaceComponent,
@@ -223,7 +225,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   worktreePath = computed(() => {
     const activeId = this.activeSessionId();
     const tab = this.tabs().find((t) => t.sessionId === activeId);
-    return tab?.worktreePath ?? null;
+    return tab?.workspaceArchivedAt || tab?.status === 'archived' ? null : tab?.worktreePath ?? null;
   });
 
   // Computed projectId from active session
@@ -1573,6 +1575,8 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   onTabUnarchiveRequest(sessionId: number): void {
+    const tab = this.tabs().find(tab => tab.sessionId === sessionId);
+    if (tab?.workspaceArchivedAt && tab.workspaceId) { void this.router.navigate(['/tasks', tab.workspaceId]); return; }
     if (this.unarchivingSessionId() !== null) {
       return;
     }

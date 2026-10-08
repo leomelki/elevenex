@@ -1,4 +1,4 @@
-import { integer, text, sqliteTable, unique } from 'drizzle-orm/sqlite-core';
+import { integer, text, sqliteTable, index } from 'drizzle-orm/sqlite-core';
 import { repos } from './repos.schema.js';
 import { repoWorktrees } from './repo-worktrees.schema.js';
 
@@ -19,6 +19,17 @@ export const workspaces = sqliteTable(
       .notNull()
       .default(false),
     createdFromRef: text('created_from_ref'),
+    archivedAt: text('archived_at'),
+    taskState: text('task_state').notNull().default('ready'),
+    taskBranch: text('task_branch'),
+    sourceRef: text('source_ref'),
+    checkoutMode: text('checkout_mode').notNull().default('branch'),
+    startingCommit: text('starting_commit'),
+    finalCommit: text('final_commit'),
+    taskConfig: text('task_config'),
+    taskError: text('task_error'),
+    taskDraft: text('task_draft').notNull().default(''),
+    taskRequestId: text('task_request_id').unique(),
     linkStatus: text('link_status').notNull().default('linked'),
     desiredBranch: text('desired_branch'),
     unlinkedAt: text('unlinked_at'),
@@ -35,7 +46,7 @@ export const workspaces = sqliteTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (table) => [
-    unique().on(table.repoId, table.name),
-    unique().on(table.repoId, table.path),
+    index('workspaces_repo_lifecycle_idx').on(table.repoId, table.archivedAt),
+    index('workspaces_assignment_idx').on(table.poolWorktreeId, table.linkStatus),
   ],
 );

@@ -36,6 +36,7 @@ export const promptSessionTool = defineTool({
   },
   handler: async (args, ctx) => {
     const { sessions } = ctx.services;
+    await sessions.assertSessionWorkspaceLinked(args.sessionId);
     const { session, provider } = await resolveSessionProvider(ctx, args.sessionId);
 
     // Idempotent start: archived sessions throw inside start(); active ones are

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { Readable } from 'node:stream';
 import { FilesController, FilesystemController } from './files.controller.js';
 import { FilesService } from './files.service.js';
+import { DRIZZLE } from '../database/database.provider.js';
 
 /** Minimal Express response stand-in for the NDJSON streaming endpoint. */
 interface MockResponse {
@@ -27,11 +28,15 @@ describe('FilesController', () => {
   let controller: FilesController;
   let filesystemController: FilesystemController;
   let service: FilesService;
+  const taskRow = { id: 12, path: '/tmp/checkout', taskState: 'ready', linkStatus: 'linked', archivedAt: null as string | null };
+  const taskLookup = jest.fn();
 
   beforeEach(async () => {
+    taskLookup.mockResolvedValue([{ ...taskRow }]);
     const module: TestingModule = await Test.createTestingModule({
       controllers: [FilesController, FilesystemController],
       providers: [
+        { provide: DRIZZLE, useValue: { select: () => ({ from: () => ({ where: () => ({ limit: taskLookup }) }) }) } },
         {
           provide: FilesService,
           useValue: {
@@ -55,6 +60,19 @@ describe('FilesController', () => {
     filesystemController =
       module.get<FilesystemController>(FilesystemController);
     service = module.get<FilesService>(FilesService);
+  });
+
+  it('rejects a stale editor after its task is finished or assigned to a different directory', async () => {
+    for (const row of [{ ...taskRow, archivedAt: '2026-10-08' }, { ...taskRow, taskState: 'finishing' }, { ...taskRow, path: '/tmp/another-checkout' }]) {
+      taskLookup.mockResolvedValue([row]);
+      await expect(controller.writeFile(encodeURIComponent('/tmp/checkout'), 'notes.md', { content: 'old editor' }, '12')).rejects.toThrow('inactive task');
+    }
+    expect(service.writeFile).not.toHaveBeenCalled();
+  });
+
+  it('allows a current task editor to save', async () => {
+    await controller.writeFile(encodeURIComponent('/tmp/checkout'), 'notes.md', { content: 'findings' }, '12');
+    expect(service.writeFile).toHaveBeenCalledWith('/tmp/checkout/notes.md', 'findings', '/tmp/checkout');
   });
 
   describe('readFileRaw', () => {

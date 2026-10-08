@@ -31,9 +31,9 @@ describe('ClaudeTasksDrawerComponent', () => {
 
   it('opens a named modal with focus trapping and restores focus on dismissal', async () => {
     const { fixture, dialog, trigger } = await openDrawer();
-    expect(dialog.getAttribute('aria-label')).toBe('Tasks');
+    expect(dialog.getAttribute('aria-label')).toBe('Agent steps');
     expect(dialog.getAttribute('aria-modal')).toBe('true');
-    const button = dialog.querySelector<HTMLButtonElement>('[aria-label="Close tasks"]')!;
+    const button = dialog.querySelector<HTMLButtonElement>('[aria-label="Close agent steps"]')!;
     expect(button).not.toBeNull();
     expect(document.activeElement).toBe(button);
     // Assert the real CDK focus trap is attached and enabled, rather than a CSS marker.
@@ -73,7 +73,7 @@ describe('ClaudeTasksDrawerComponent', () => {
 
   it('renders live task input updates inside the open sheet', async () => {
     const { fixture, dialog } = await openDrawer();
-    expect(dialog.textContent).toContain('No tasks yet');
+    expect(dialog.textContent).toContain('No agent steps yet');
     fixture.componentRef.setInput('tasks', [
       {
         taskId: 'task-1',
@@ -84,6 +84,6 @@ describe('ClaudeTasksDrawerComponent', () => {
     ]);
     fixture.detectChanges();
     expect(dialog.textContent).toContain('Inspect files');
-    expect(dialog.textContent).not.toContain('No tasks yet');
+    expect(dialog.textContent).not.toContain('No agent steps yet');
   });
 });

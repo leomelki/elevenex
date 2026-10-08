@@ -49,6 +49,7 @@ export class ZardDialogOptions<T, U> {
   zOnCancel?: EventEmitter<T> | OnClickCallback<T> = noopFn;
   zOnOk?: EventEmitter<T> | OnClickCallback<T> = noopFn;
   zTitle?: string | TemplateRef<T>;
+  zAriaLabel?: string;
   zViewContainerRef?: ViewContainerRef;
   zWidth?: string;
 }
@@ -61,6 +62,7 @@ export class ZardDialogOptions<T, U> {
       <button
         type="button"
         data-testid="z-close-header-button"
+        aria-label="Close dialog"
         z-button
         zType="ghost"
         zSize="sm"
@@ -149,6 +151,9 @@ export class ZardDialogOptions<T, U> {
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [provideIcons({ lucideX })],
   host: {
+    role: 'dialog',
+    'aria-modal': 'true',
+    '[attr.aria-label]': "config.zAriaLabel ?? (typeof config.zTitle === 'string' ? config.zTitle : null)",
     '[class]': 'classes()',
     '[style.width]': 'config.zWidth ? config.zWidth : null',
     'animate.enter': 'dialog-enter',

@@ -195,7 +195,7 @@ describe('WorktreePoolService', () => {
   });
 
   it.each([true, false])(
-    'removes deleted worktrees and workspace links across projects (still registered: %s)',
+    'preserves task and session history when worktrees disappear across projects (still registered: %s)',
     async (stillRegistered) => {
       await service.reconcileRepo(repo);
       const pool = (await db.select().from(schema.repoWorktrees)).find(
@@ -240,12 +240,10 @@ describe('WorktreePoolService', () => {
       expect(
         (await db.select().from(schema.repoWorktrees)).map((row) => row.path),
       ).toEqual([REPO_PATH]);
-      expect(
-        (await db.select().from(schema.workspaces)).map((row) => row.path),
-      ).toEqual([REPO_PATH]);
-      expect(await db.select().from(schema.sessions)).toEqual([
-        { ...session, workspaceId: null },
-      ]);
+      const preserved = await db.select().from(schema.workspaces);
+      expect(preserved).toHaveLength(4);
+      expect(preserved.filter(row => !row.isDefault).every(row => row.linkStatus === 'unlinked' && row.taskState === 'failed' && row.poolWorktreeId === null)).toBe(true);
+      expect(await db.select().from(schema.sessions)).toEqual([session]);
       expect(await service.getWorktreeQuota(repo)).toMatchObject({ count: 0 });
 
       const streamed: WorktreePoolItem[] = [];
