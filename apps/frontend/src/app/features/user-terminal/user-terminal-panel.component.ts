@@ -6,6 +6,7 @@ import {
   effect,
   computed,
   viewChildren,
+  DestroyRef,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -13,6 +14,7 @@ import { lucidePlus, lucideX, lucideTerminal } from '@ng-icons/lucide';
 import { UserTerminalStateService } from './user-terminal-state.service';
 import { UserTerminalApiService } from '@/shared/services/user-terminal-api.service';
 import { UserTerminalViewComponent } from './user-terminal-view.component';
+import { TerminalRendererService } from '@/shared/services/terminal-renderer.service';
 import { firstValueFrom } from 'rxjs';
 
 @Component({
@@ -29,6 +31,8 @@ export class UserTerminalPanelComponent {
 
   private state = inject(UserTerminalStateService);
   private api = inject(UserTerminalApiService);
+  private sessions = inject(TerminalRendererService);
+  private destroyRef = inject(DestroyRef);
   private currentWorktree = '';
 
   terminalViews = viewChildren(UserTerminalViewComponent);
@@ -46,7 +50,13 @@ export class UserTerminalPanelComponent {
   });
 
   private async loadTerminals(worktreePath: string): Promise<void> {
+    const previous = this.state.getTerminals(worktreePath);
     const terminals = await this.state.loadTerminals(worktreePath);
+    for (const terminal of previous) {
+      if (!terminals.some((entry) => entry.id === terminal.id))
+        this.sessions.remove('user', terminal.id);
+    }
+    if (this.destroyRef.destroyed || worktreePath !== this.worktreePath()) return;
 
     // Auto-create first terminal if none exist
     if (terminals.length === 0) {
@@ -63,7 +73,7 @@ export class UserTerminalPanelComponent {
 
     // Focus the new terminal after it renders
     setTimeout(() => {
-      const view = this.terminalViews().find(v => v.terminalId === terminal.id);
+      const view = this.terminalViews().find((v) => v.terminalId === terminal.id);
       view?.fit();
       view?.focus();
     }, 50);
@@ -76,7 +86,7 @@ export class UserTerminalPanelComponent {
     this.state.setActiveTerminal(wt, terminalId);
 
     setTimeout(() => {
-      const view = this.terminalViews().find(v => v.terminalId === terminalId);
+      const view = this.terminalViews().find((v) => v.terminalId === terminalId);
       view?.fit();
       view?.focus();
     }, 0);
@@ -88,6 +98,7 @@ export class UserTerminalPanelComponent {
     if (!wt) return;
 
     await firstValueFrom(this.api.remove(terminalId));
+    this.sessions.remove('user', terminalId);
     this.state.removeTerminal(wt, terminalId);
 
     // Close panel if no terminals left

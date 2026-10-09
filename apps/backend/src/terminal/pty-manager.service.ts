@@ -18,6 +18,7 @@ import { TmuxManager } from './tmux-manager.service.js';
 import { PlannotatorRegistryService } from '../plannotator/plannotator-registry.service.js';
 import { getBackendHelperPath } from '../config/runtime-paths.js';
 import {
+  buildAugmentedEnv,
   buildAugmentedEnvAsync,
   buildTmuxInlineEnvPrefix,
   findBinary,
@@ -186,7 +187,11 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     // Kill existing process if any
     this.killProcess(sessionId);
 
-    const hooksArgs = await this.buildHooksSettingsArgs();
+    // A running tmux session already has its hooks and shell environment.
+    // Reattaching only needs a client, not a new login-shell probe or settings file.
+    const hooksArgs = reusingTmuxSession
+      ? []
+      : await this.buildHooksSettingsArgs();
     if (this.cancelledSpawns.has(sessionId)) {
       this.cancelledSpawns.delete(sessionId);
       return null;
@@ -205,7 +210,9 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
     const env = buildManagedPlannotatorEnv(sessionId, this.wrapperScriptPath, {
       ...stripInheritedTmuxEnv(
-        await buildAugmentedEnvAsync(process.env, worktreePath),
+        reusingTmuxSession
+          ? buildAugmentedEnv(process.env, worktreePath)
+          : await buildAugmentedEnvAsync(process.env, worktreePath),
       ),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
@@ -230,6 +237,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
         worktreePath,
         args,
         env,
+        reusingTmuxSession,
       );
       if (this.cancelledSpawns.has(sessionId)) {
         this.cancelledSpawns.delete(sessionId);
@@ -256,13 +264,14 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     worktreePath: string,
     args: string[],
     env: NodeJS.ProcessEnv,
+    reusingTmuxSession: boolean,
   ): Promise<pty.IPty | null> {
     const sessionName = `elevenex-${sessionId}`;
     const tmuxBin = this.tmuxManager.getTmuxBin();
 
     try {
       // Check if tmux session already exists
-      if (await this.tmuxManager.sessionExists(sessionId)) {
+      if (reusingTmuxSession) {
         this.logger.log(`Attaching to existing tmux session ${sessionName}`);
         // Update tmux session environment so new processes inherit plannotator vars
         const plannotatorEnvVars = [
@@ -272,29 +281,26 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
           'ELEVENEX_PORT',
           'CLAUDE_CODE_NO_FLICKER',
         ];
-        for (const key of plannotatorEnvVars) {
-          if (env[key]) {
-            try {
-              await execFileQuiet(
-                tmuxBin,
-                ['set-environment', '-t', sessionName, key, env[key]],
-                {
-                  env,
-                },
-              );
-            } catch {
-              // Ignore - tmux may not support set-environment in all cases
-            }
-          }
-        }
+        const envCommands = plannotatorEnvVars
+          .filter((key) => env[key])
+          .map((key) => ['set-environment', '-t', sessionName, key, env[key]!]);
+        envCommands.push([
+          'set-environment',
+          '-u',
+          '-t',
+          sessionName,
+          'PLANNOTATOR_PORT',
+        ]);
         try {
           await execFileQuiet(
             tmuxBin,
-            ['set-environment', '-u', '-t', sessionName, 'PLANNOTATOR_PORT'],
+            envCommands.flatMap((command, index) =>
+              index === 0 ? command : [';', ...command],
+            ),
             { env },
           );
         } catch {
-          // Ignore - tmux may not support unset in all cases
+          // Older tmux versions may not support all environment operations.
         }
         // Enable mouse mode so tmux handles scrollback via copy-mode
         try {
@@ -749,32 +755,26 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     env: NodeJS.ProcessEnv,
     includeHistoryLimit: boolean,
   ): Promise<void> {
-    await execFileQuiet(
-      tmuxBin,
+    // tmux accepts multiple commands in one invocation, avoiding a process
+    // launch for every option on creation and reattachment.
+    const commands = [
       ['set-window-option', '-t', sessionName, 'alternate-screen', 'on'],
-      { env },
-    );
-    await execFileQuiet(
-      tmuxBin,
       ['set-option', '-t', sessionName, 'mouse', 'on'],
-      {
-        env,
-      },
-    );
-    if (includeHistoryLimit) {
-      await execFileQuiet(
-        tmuxBin,
-        ['set-option', '-t', sessionName, 'history-limit', '50000'],
-        { env },
-      );
-    }
-    await execFileQuiet(
-      tmuxBin,
       ['set-option', '-t', sessionName, 'status', 'off'],
-      {
-        env,
-      },
+    ];
+    if (includeHistoryLimit) {
+      commands.push([
+        'set-option',
+        '-t',
+        sessionName,
+        'history-limit',
+        '50000',
+      ]);
+    }
+    const args = commands.flatMap((command, index) =>
+      index === 0 ? command : [';', ...command],
     );
+    await execFileQuiet(tmuxBin, args, { env });
     await this.setTmuxWindowSizeModeLatest(tmuxBin, sessionName);
   }
 

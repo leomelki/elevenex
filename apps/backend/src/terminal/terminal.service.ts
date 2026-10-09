@@ -50,6 +50,15 @@ export class TerminalService {
       throw new BadRequestException('Archived sessions cannot be started');
     }
 
+    // Reusing a live terminal needs neither a directory probe nor a redundant
+    // status write. Workspace ownership is still checked above.
+    if (this.ptyManager.isAlive(sessionId)) {
+      if (session.status !== 'active') {
+        await this.sessionsService.updateStatus(sessionId, 'active');
+      }
+      return { success: true, resumed: true };
+    }
+
     // Verify worktree path exists
     try {
       await fs.access(session.worktreePath);
@@ -59,13 +68,6 @@ export class TerminalService {
         resumed: false,
         error: `Worktree path does not exist: ${session.worktreePath}`,
       };
-    }
-
-    // Check if PTY is already running for this session
-    if (this.ptyManager.isAlive(sessionId)) {
-      console.log(`PTY already running for session ${sessionId}, reusing`);
-      await this.sessionsService.updateStatus(sessionId, 'active');
-      return { success: true, resumed: true };
     }
 
     // Check if tmux session exists (we can reattach)

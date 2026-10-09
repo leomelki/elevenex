@@ -124,6 +124,12 @@ export class UserTerminalService {
     const terminal = await this.findOne(terminalId);
     await assertWorkspaceCanExecute(this.db, terminal.workspaceId);
 
+    // A live shell can still be used if its original directory was moved or
+    // removed. Avoid a filesystem round trip on every reattachment.
+    if (this.ptyManager.isAlive(terminalId)) {
+      return { success: true };
+    }
+
     // Verify worktree path exists
     try {
       await fs.access(terminal.worktreePath);
@@ -132,14 +138,6 @@ export class UserTerminalService {
         success: false,
         error: `Worktree path does not exist: ${terminal.worktreePath}`,
       };
-    }
-
-    // Check if PTY is already running
-    if (this.ptyManager.isAlive(terminalId)) {
-      this.logger.log(
-        `PTY already running for terminal ${terminalId}, reusing`,
-      );
-      return { success: true };
     }
 
     // Spawn (handles both fresh create and tmux reattach internally)

@@ -52,6 +52,26 @@ describe('TerminalService', () => {
     jest.restoreAllMocks();
   });
 
+  it('reuses an active terminal without probing its worktree or rewriting status', async () => {
+    sessionsService.findOne.mockResolvedValue({
+      id: 1,
+      status: 'active',
+      worktreePath: '/removed',
+    });
+    ptyManager.isAlive.mockReturnValue(true);
+    jest.spyOn(fs, 'access').mockRejectedValue(new Error('ENOENT'));
+    await expect(service.startSession(1)).resolves.toEqual({
+      success: true,
+      resumed: true,
+    });
+    expect(sessionsService.assertSessionWorkspaceLinked).toHaveBeenCalledWith(
+      1,
+    );
+    expect(fs.access).not.toHaveBeenCalled();
+    expect(sessionsService.updateStatus).not.toHaveBeenCalled();
+    expect(ptyManager.spawn).not.toHaveBeenCalled();
+  });
+
   it('reattaches to an existing tmux session without spawning a fresh Claude resume', async () => {
     sessionsService.findOne.mockResolvedValue({
       id: 1,

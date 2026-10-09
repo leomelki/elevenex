@@ -14,6 +14,7 @@ import * as path from 'path';
 import { UserTerminalGateway } from './user-terminal.gateway.js';
 import { generateTmuxScrollConfig } from '../terminal/tmux-scroll-config.js';
 import {
+  buildAugmentedEnv,
   buildAugmentedEnvAsync,
   findBinary,
   normalizeShellForPlatform,
@@ -122,13 +123,14 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       return inFlight;
     }
 
-    const promise = this.spawnInternal(terminalId, worktreePath, shell).finally(
-      () => {
+    // Register the in-flight operation before startup or cancellation can run.
+    const promise = Promise.resolve()
+      .then(() => this.spawnInternal(terminalId, worktreePath, shell))
+      .finally(() => {
         if (this.spawnInFlight.get(terminalId) === promise) {
           this.spawnInFlight.delete(terminalId);
         }
-      },
-    );
+      });
     this.spawnInFlight.set(terminalId, promise);
     return promise;
   }
@@ -147,9 +149,22 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       this.killProcess(terminalId);
     }
 
+    const tmuxSessionName = this.getTmuxSessionName(terminalId);
+    const useTmux = this.isTmuxAvailable();
+    const reusingTmuxSession =
+      useTmux && (await this.tmuxSessionExists(tmuxSessionName));
+    if (this.cancelledSpawns.has(terminalId) || this.shuttingDown) {
+      this.cancelledSpawns.delete(terminalId);
+      return null;
+    }
     const env: NodeJS.ProcessEnv = {
       ...stripInheritedTmuxEnv(
-        await buildAugmentedEnvAsync(process.env, worktreePath),
+        // A fresh shell needs the project environment, including login profiles
+        // that an interactive non-login shell does not source. A running tmux
+        // session already owns that environment and only needs a new client.
+        reusingTmuxSession
+          ? buildAugmentedEnv(process.env, worktreePath)
+          : await buildAugmentedEnvAsync(process.env, worktreePath),
       ),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
@@ -163,15 +178,14 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       this.killProcess(terminalId);
     }
 
-    const tmuxSessionName = this.getTmuxSessionName(terminalId);
-
-    if (this.isTmuxAvailable()) {
+    if (useTmux) {
       const tmuxSession = await this.spawnWithTmux(
         terminalId,
         worktreePath,
         shell,
         env,
         tmuxSessionName,
+        reusingTmuxSession,
       );
       if (this.cancelledSpawns.has(terminalId)) {
         this.cancelledSpawns.delete(terminalId);
@@ -203,9 +217,12 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     shell: string,
     env: NodeJS.ProcessEnv,
     tmuxSessionName: string,
+    reusingTmuxSession: boolean,
   ): Promise<pty.IPty | null> {
     try {
-      if (!(await this.tmuxSessionExists(tmuxSessionName))) {
+      if (this.cancelledSpawns.has(terminalId) || this.shuttingDown)
+        return null;
+      if (!reusingTmuxSession) {
         this.logger.log(
           `Creating tmux session ${tmuxSessionName} in ${worktreePath}`,
         );
@@ -244,6 +261,8 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       }
 
       await this.configureScrollBindings();
+      if (this.cancelledSpawns.has(terminalId) || this.shuttingDown)
+        return null;
       return this.attachTmuxSession(terminalId, env, tmuxSessionName);
     } catch (error) {
       this.logger.error(
@@ -299,6 +318,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       }
       this.processes.delete(terminalId);
       // No auto-restart for user terminals
+      this.gateway.onProcessExit(terminalId);
     });
 
     return ptyProcess;
@@ -347,6 +367,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
         return;
       }
       this.processes.delete(terminalId);
+      this.gateway.onProcessExit(terminalId);
     });
 
     return ptyProcess;
@@ -524,37 +545,27 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     env: NodeJS.ProcessEnv,
     includeHistoryLimit: boolean,
   ): Promise<void> {
-    await execFileQuiet(
-      this.tmuxBin,
+    // tmux accepts multiple commands in one invocation, avoiding a process
+    // launch for every option on creation and reattachment.
+    const commands = [
       ['set-window-option', '-t', tmuxSessionName, 'alternate-screen', 'on'],
-      { env },
-    );
-    await execFileQuiet(
-      this.tmuxBin,
       ['set-option', '-t', tmuxSessionName, 'mouse', 'on'],
-      {
-        env,
-      },
-    );
-    if (includeHistoryLimit) {
-      await execFileQuiet(
-        this.tmuxBin,
-        ['set-option', '-t', tmuxSessionName, 'history-limit', '50000'],
-        { env },
-      );
-    }
-    await execFileQuiet(
-      this.tmuxBin,
       ['set-option', '-t', tmuxSessionName, 'status', 'off'],
-      {
-        env,
-      },
-    );
-    await execFileQuiet(
-      this.tmuxBin,
       ['set-option', '-t', tmuxSessionName, 'focus-events', 'on'],
-      { env },
+    ];
+    if (includeHistoryLimit) {
+      commands.push([
+        'set-option',
+        '-t',
+        tmuxSessionName,
+        'history-limit',
+        '50000',
+      ]);
+    }
+    const args = commands.flatMap((command, index) =>
+      index === 0 ? command : [';', ...command],
     );
+    await execFileQuiet(this.tmuxBin, args, { env });
     await this.setTmuxWindowSizeModeLatest(tmuxSessionName);
   }
 

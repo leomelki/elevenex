@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import * as pty from 'node-pty';
 import { UserPtyManager } from './user-pty-manager.service.js';
 import {
+  buildAugmentedEnv,
   buildAugmentedEnvAsync,
   findBinary,
   normalizeShellForPlatform,
@@ -15,6 +16,7 @@ jest.mock('node-pty', () => ({
 }));
 
 jest.mock('../config/system-paths.js', () => ({
+  buildAugmentedEnv: jest.fn(),
   buildAugmentedEnvAsync: jest.fn(),
   findBinary: jest.fn(() => null),
   normalizeShellForPlatform: jest.fn((shell: string) => shell),
@@ -61,7 +63,8 @@ function createDeferred<T>() {
 
 describe('UserPtyManager', () => {
   const mockSpawn = jest.mocked(pty.spawn);
-  const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnvAsync);
+  const mockBuildAugmentedEnv = jest.mocked(buildAugmentedEnv);
+  const mockBuildAugmentedEnvAsync = jest.mocked(buildAugmentedEnvAsync);
   const mockFindBinary = jest.mocked(findBinary);
   const mockNormalizeShellForPlatform = jest.mocked(normalizeShellForPlatform);
   const mockStripInheritedTmuxEnv = jest.mocked(stripInheritedTmuxEnv);
@@ -72,7 +75,8 @@ describe('UserPtyManager', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
-    mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
+    mockBuildAugmentedEnv.mockReturnValue({ PATH: '/mock/bin' });
+    mockBuildAugmentedEnvAsync.mockResolvedValue({ PATH: '/mock/bin' });
     mockFindBinary.mockReturnValue(null);
     mockNormalizeShellForPlatform.mockImplementation((shell) => shell);
     mockStripInheritedTmuxEnv.mockImplementation((env) => env);
@@ -81,6 +85,7 @@ describe('UserPtyManager', () => {
     mockSpawn.mockReturnValue(createMockPty() as never);
     manager = new UserPtyManager({
       sendToTerminal: jest.fn(),
+      onProcessExit: jest.fn(),
     } as never);
   });
 
@@ -90,6 +95,7 @@ describe('UserPtyManager', () => {
     mockFindBinary.mockClear();
     manager = new UserPtyManager({
       sendToTerminal: jest.fn(),
+      onProcessExit: jest.fn(),
     } as never);
 
     await manager.spawn(4, '/repo/worktree', '/bin/zsh');
@@ -111,7 +117,10 @@ describe('UserPtyManager', () => {
       return { dispose: () => process.off('exit', callback) };
     });
     mockSpawn.mockReturnValue(process as never);
-    manager = new UserPtyManager({ sendToTerminal: jest.fn() } as never);
+    manager = new UserPtyManager({
+      sendToTerminal: jest.fn(),
+      onProcessExit: jest.fn(),
+    } as never);
     await manager.spawn(3, '/repo/worktree', '/bin/zsh');
     let stopped = false;
     const pending = manager.destroy(3, true).then(() => {
@@ -126,41 +135,162 @@ describe('UserPtyManager', () => {
     expect(await manager.spawn(3, '/repo/worktree', '/bin/zsh', 0)).toBeNull();
   });
 
-  it('coalesces concurrent async spawns for the same terminal', async () => {
+  it('waits for the project login environment before starting a fresh shell', async () => {
+    mockShouldUseTmux.mockReturnValue(false);
+    manager = new UserPtyManager({
+      sendToTerminal: jest.fn(),
+      onProcessExit: jest.fn(),
+    } as never);
     const env = createDeferred<NodeJS.ProcessEnv>();
-    const envRequested = createDeferred<void>();
-    mockBuildAugmentedEnv.mockImplementation(() => {
-      envRequested.resolve();
-      return env.promise;
-    });
+    mockBuildAugmentedEnvAsync.mockReturnValue(env.promise);
 
+    const pending = manager.spawn(3, '/repo/worktree', '/bin/zsh');
+    await Promise.resolve();
+
+    expect(mockBuildAugmentedEnvAsync).toHaveBeenCalledWith(
+      process.env,
+      '/repo/worktree',
+    );
+    expect(mockSpawn).not.toHaveBeenCalled();
+    env.resolve({ PATH: '/repo/project/bin', PROJECT_LOGIN_ENV: 'configured' });
+    await pending;
+    expect(mockSpawn).toHaveBeenCalledWith(
+      '/bin/zsh',
+      [],
+      expect.objectContaining({
+        cwd: '/repo/worktree',
+        env: {
+          PATH: '/repo/project/bin',
+          PROJECT_LOGIN_ENV: 'configured',
+          TERM: 'xterm-256color',
+          COLORTERM: 'truecolor',
+        },
+      }),
+    );
+  });
+
+  it('reattaches to an existing tmux shell without another login environment probe', async () => {
+    mockFindBinary.mockReturnValue('/usr/bin/tmux');
+    manager = new UserPtyManager({
+      sendToTerminal: jest.fn(),
+      onProcessExit: jest.fn(),
+    } as never);
+    await manager.spawn(3, '/repo/worktree', '/bin/zsh');
+
+    expect(mockBuildAugmentedEnvAsync).not.toHaveBeenCalled();
+    expect(mockBuildAugmentedEnv).toHaveBeenCalledWith(
+      process.env,
+      '/repo/worktree',
+    );
+    expect(mockSpawn).toHaveBeenCalledWith(
+      '/usr/bin/tmux',
+      ['attach', '-t', 'elevenex-uterm-3'],
+      expect.anything(),
+    );
+    expect(
+      mockExecFileQuiet.mock.calls.filter(
+        ([, args]) => args[0] === 'has-session',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('waits for the project login environment when creating a new tmux shell', async () => {
+    mockFindBinary.mockReturnValue('/usr/bin/tmux');
+    const env = createDeferred<NodeJS.ProcessEnv>();
+    mockBuildAugmentedEnvAsync.mockReturnValue(env.promise);
+    mockExecFileQuiet.mockImplementation(async (_file, args) => {
+      if (args[0] === 'has-session') throw new Error('No session');
+    });
+    manager = new UserPtyManager({
+      sendToTerminal: jest.fn(),
+      onProcessExit: jest.fn(),
+    } as never);
+    const pending = manager.spawn(3, '/repo/worktree', '/bin/zsh');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(
+      mockExecFileQuiet.mock.calls.some(
+        ([, args]) => args[0] === 'new-session',
+      ),
+    ).toBe(false);
+
+    env.resolve({ PATH: '/repo/project/bin' });
+    await pending;
+    expect(mockExecFileQuiet).toHaveBeenCalledWith(
+      '/usr/bin/tmux',
+      expect.arrayContaining(['new-session']),
+      expect.objectContaining({
+        env: expect.objectContaining({ PATH: '/repo/project/bin' }),
+      }),
+    );
+  });
+
+  it('coalesces concurrent spawns for the same terminal', async () => {
     const firstSpawn = manager.spawn(3, '/repo/worktree', '/bin/zsh');
     const secondSpawn = manager.spawn(3, '/repo/worktree', '/bin/zsh');
-    await envRequested.promise;
-
-    env.resolve({ PATH: '/mock/bin' });
     await Promise.all([firstSpawn, secondSpawn]);
 
+    expect(mockBuildAugmentedEnvAsync).toHaveBeenCalledTimes(1);
     expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 
-  it('cancels an in-flight spawn before any terminal PTY starts', async () => {
-    const env = createDeferred<NodeJS.ProcessEnv>();
-    const envRequested = createDeferred<void>();
-    mockBuildAugmentedEnv.mockImplementation(() => {
-      envRequested.resolve();
-      return env.promise;
+  it('cancels an in-flight tmux spawn before any terminal PTY starts', async () => {
+    mockFindBinary.mockReturnValue('/usr/bin/tmux');
+    manager = new UserPtyManager({
+      sendToTerminal: jest.fn(),
+      onProcessExit: jest.fn(),
+    } as never);
+    const sessionCheck = createDeferred<void>();
+    const checkRequested = createDeferred<void>();
+    mockExecFileQuiet.mockImplementation((_file, args) => {
+      if (args.includes('has-session')) {
+        checkRequested.resolve();
+        return sessionCheck.promise;
+      }
+      return Promise.resolve();
     });
-
     const spawnPromise = manager.spawn(3, '/repo/worktree', '/bin/zsh');
-    await envRequested.promise;
+    await checkRequested.promise;
 
     expect(manager.kill(3)).toBe(true);
-    env.resolve({ PATH: '/mock/bin' });
-
+    sessionCheck.resolve();
     await expect(spawnPromise).resolves.toBeNull();
     expect(mockSpawn).not.toHaveBeenCalled();
+    expect(manager.isAlive(3)).toBe(false);
   });
+
+  it('cancels a fresh shell while its project environment is loading', async () => {
+    const env = createDeferred<NodeJS.ProcessEnv>();
+    mockBuildAugmentedEnvAsync.mockReturnValue(env.promise);
+    const pending = manager.spawn(3, '/repo/worktree', '/bin/zsh');
+    await Promise.resolve();
+    manager.kill(3);
+    env.resolve({ PATH: '/repo/project/bin' });
+
+    await expect(pending).resolves.toBeNull();
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    'notifies the gateway when the current shell exits (tmux=%s)',
+    async (useTmux) => {
+      mockFindBinary.mockReturnValue(useTmux ? '/usr/bin/tmux' : null);
+      const gateway = { sendToTerminal: jest.fn(), onProcessExit: jest.fn() };
+      manager = new UserPtyManager(gateway as never);
+      const shell = (await manager.spawn(
+        3,
+        '/repo/worktree',
+        '/bin/zsh',
+      )) as unknown as MockPty;
+      shell.onExit.mock.calls[0][0]({ exitCode: 0, signal: undefined });
+
+      expect(manager.isAlive(3)).toBe(false);
+      expect(gateway.onProcessExit).toHaveBeenCalledTimes(1);
+      expect(gateway.onProcessExit).toHaveBeenCalledWith(3);
+      manager.write(3, 'input after exit');
+      expect(shell.write).not.toHaveBeenCalled();
+    },
+  );
 
   it('ignores stale exit events from a replaced terminal PTY process', async () => {
     jest.useFakeTimers();
@@ -184,6 +314,10 @@ describe('UserPtyManager', () => {
       });
 
       expect(manager.isAlive(3)).toBe(true);
+      const gateway = (
+        manager as unknown as { gateway: { onProcessExit: jest.Mock } }
+      ).gateway;
+      expect(gateway.onProcessExit).not.toHaveBeenCalled();
 
       (second as MockPty).onExit.mock.calls[0][0]({
         exitCode: 0,
@@ -191,6 +325,8 @@ describe('UserPtyManager', () => {
       });
 
       expect(manager.isAlive(3)).toBe(false);
+      expect(gateway.onProcessExit).toHaveBeenCalledTimes(1);
+      expect(gateway.onProcessExit).toHaveBeenCalledWith(3);
       jest.advanceTimersByTime(5000);
     } finally {
       jest.useRealTimers();
@@ -201,6 +337,7 @@ describe('UserPtyManager', () => {
     mockFindBinary.mockReturnValue('/usr/bin/tmux');
     manager = new UserPtyManager({
       sendToTerminal: jest.fn(),
+      onProcessExit: jest.fn(),
     } as never);
 
     const firstResize = createDeferred<void>();
@@ -254,7 +391,7 @@ describe('UserPtyManager', () => {
   });
   it('keeps a direct PTY alive on UI detach and replays output produced while hidden', async () => {
     mockShouldUseTmux.mockReturnValue(false);
-    const gateway = { sendToTerminal: jest.fn() };
+    const gateway = { sendToTerminal: jest.fn(), onProcessExit: jest.fn() };
     manager = new UserPtyManager(gateway as never);
     const process = (await manager.spawn(
       3,
@@ -279,13 +416,10 @@ describe('UserPtyManager', () => {
 
   it('allows a local terminal to finish starting after the UI detaches', async () => {
     mockShouldUseTmux.mockReturnValue(false);
-    const gateway = { sendToTerminal: jest.fn() };
+    const gateway = { sendToTerminal: jest.fn(), onProcessExit: jest.fn() };
     manager = new UserPtyManager(gateway as never);
-    const env = createDeferred<NodeJS.ProcessEnv>();
-    mockBuildAugmentedEnv.mockReturnValue(env.promise);
     const spawn = manager.spawn(3, '/repo/worktree', '/bin/zsh');
     manager.detach(3);
-    env.resolve({ PATH: '/mock/bin' });
 
     await expect(spawn).resolves.not.toBeNull();
     expect(manager.isAlive(3)).toBe(true);
@@ -295,7 +429,7 @@ describe('UserPtyManager', () => {
     jest.useFakeTimers();
     try {
       mockShouldUseTmux.mockReturnValue(false);
-      const gateway = { sendToTerminal: jest.fn() };
+      const gateway = { sendToTerminal: jest.fn(), onProcessExit: jest.fn() };
       manager = new UserPtyManager(gateway as never);
       const process = (await manager.spawn(
         3,
@@ -321,18 +455,10 @@ describe('UserPtyManager', () => {
 
   it('cancels pending local spawns when the backend shuts down', async () => {
     mockShouldUseTmux.mockReturnValue(false);
-    const gateway = { sendToTerminal: jest.fn() };
+    const gateway = { sendToTerminal: jest.fn(), onProcessExit: jest.fn() };
     manager = new UserPtyManager(gateway as never);
-    const env = createDeferred<NodeJS.ProcessEnv>();
-    const envRequested = createDeferred<void>();
-    mockBuildAugmentedEnv.mockImplementation(() => {
-      envRequested.resolve();
-      return env.promise;
-    });
     const spawn = manager.spawn(3, '/repo/worktree', '/bin/zsh');
-    await envRequested.promise;
     manager.onModuleDestroy();
-    env.resolve({ PATH: '/mock/bin' });
 
     await expect(spawn).resolves.toBeNull();
     expect(mockSpawn).not.toHaveBeenCalled();
@@ -342,7 +468,10 @@ describe('UserPtyManager', () => {
     jest.useFakeTimers();
     try {
       mockFindBinary.mockReturnValue('/usr/bin/tmux');
-      manager = new UserPtyManager({ sendToTerminal: jest.fn() } as never);
+      manager = new UserPtyManager({
+        sendToTerminal: jest.fn(),
+        onProcessExit: jest.fn(),
+      } as never);
       const process = (await manager.spawn(
         3,
         '/repo/worktree',

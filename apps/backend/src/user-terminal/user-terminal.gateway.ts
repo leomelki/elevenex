@@ -26,6 +26,9 @@ const MAX_STARTUP_INPUT_QUEUE_BYTES = 256 * 1024;
 
 @Injectable()
 export class UserTerminalGateway implements OnModuleDestroy {
+  // Application close code shared with UserTerminalWebsocketService: the shell
+  // exited, so automatic network retries must not launch another shell.
+  private static readonly PROCESS_EXIT_CLOSE_CODE = 4000;
   private wss: WebSocketServer | null = null;
   private connections = new Map<number, TerminalConnection>();
 
@@ -169,6 +172,17 @@ export class UserTerminalGateway implements OnModuleDestroy {
       this.ptyManager.detach(terminalId);
       this.connections.delete(terminalId);
     });
+  }
+
+  onProcessExit(terminalId: number): void {
+    const connection = this.connections.get(terminalId);
+    if (!connection) return;
+    // Invalidate startup callbacks and close handlers before closing the socket.
+    this.connections.delete(terminalId);
+    connection.ws.close(
+      UserTerminalGateway.PROCESS_EXIT_CLOSE_CODE,
+      'Terminal process exited',
+    );
   }
 
   sendToTerminal(terminalId: number, data: Buffer | string): void {

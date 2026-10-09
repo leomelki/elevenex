@@ -1,129 +1,102 @@
 import '@angular/compiler';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { BehaviorSubject } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import { ClaudeTerminalComponent } from './claude-terminal.component';
+import { TerminalConnectionState } from '@/shared/services/terminal-websocket.service';
 import {
-  TerminalConnectionState,
-  TerminalWebsocketService,
-} from '../../../shared/services/terminal-websocket.service';
-import { TabService } from '../tab-service';
-import { Router } from '@angular/router';
+  TerminalRenderer,
+  TerminalRendererService,
+} from '@/shared/services/terminal-renderer.service';
+
+const makeState = (patch: Partial<TerminalConnectionState> = {}): TerminalConnectionState => ({
+  phase: 'connecting',
+  retryAttempt: 0,
+  retryActive: false,
+  nextRetryAt: null,
+  msUntilNextRetry: null,
+  ...patch,
+});
+
+function setup() {
+  const state$ = new BehaviorSubject<TerminalConnectionState>(makeState());
+  const session = {
+    state$,
+    terminalId: 17,
+    kind: 'agent',
+    terminal: { cols: 80, rows: 24 },
+    fitAddon: { fit: vi.fn() },
+  } as unknown as TerminalRenderer;
+  const renderer = { attach: vi.fn(() => session), release: vi.fn(), setVisible: vi.fn() };
+  const component = new ClaudeTerminalComponent(renderer as unknown as TerminalRendererService);
+  component.sessionId = 17;
+  component.container = { nativeElement: document.createElement('div') };
+  (component as unknown as { connectWebSocket: () => void }).connectWebSocket();
+  (component as unknown as { socketInitialized: boolean }).socketInitialized = true;
+  return { component, renderer, session, state$ };
+}
 
 describe('ClaudeTerminalComponent', () => {
-  const makeState = (
-    patch: Partial<TerminalConnectionState> = {},
-  ): TerminalConnectionState => ({
-    phase: 'connecting',
-    retryAttempt: 0,
-    retryActive: false,
-    nextRetryAt: null,
-    msUntilNextRetry: null,
-    ...patch,
-  });
-
-  it('tracks connection state from the websocket service', () => {
-    const onData$ = new Subject<string>();
-    const onOpen$ = new Subject<void>();
-    const onClose$ = new Subject<CloseEvent>();
-    const onError$ = new Subject<Event>();
-    const state$ = new BehaviorSubject<TerminalConnectionState>(makeState());
-
-    const wsService = {
-      connect: vi.fn().mockReturnValue({
-        onData$: onData$.asObservable(),
-        onOpen$: onOpen$.asObservable(),
-        onClose$: onClose$.asObservable(),
-        onError$: onError$.asObservable(),
-        state$: state$.asObservable(),
-      }),
-      setRetryActive: vi.fn(),
-      disconnect: vi.fn(),
-      send: vi.fn(),
-      resize: vi.fn(),
-    } as unknown as TerminalWebsocketService;
-
-    const tabService = {
-      selectPreviousTab: vi.fn(),
-      selectNextTab: vi.fn(),
-    } as unknown as TabService;
-
-    const router = {
-      navigate: vi.fn(),
-    } as unknown as Router;
-
-    const component = new ClaudeTerminalComponent(wsService, tabService, router);
-    component.sessionId = 17;
-    (component as unknown as { terminal?: { cols: number; rows: number } }).terminal = { cols: 80, rows: 24 };
-
-    (component as unknown as { connectWebSocket: () => void }).connectWebSocket();
+  it('tracks retained connection state, including an already connected renderer', () => {
+    const { component, state$ } = setup();
     expect(component.connecting()).toBe(true);
-
-    state$.next(makeState({
-      phase: 'disconnected',
-      retryActive: true,
-      msUntilNextRetry: 500,
-    }));
+    state$.next(makeState({ phase: 'disconnected', retryActive: true, msUntilNextRetry: 500 }));
     expect(component.connecting()).toBe(false);
     expect(component.connected()).toBe(false);
     expect(component.retryLabel()).toBe('0.5s');
-
     state$.next(makeState({ phase: 'reconnecting', retryActive: true }));
     expect(component.connecting()).toBe(true);
-
-    onOpen$.next();
     state$.next(makeState({ phase: 'connected', retryActive: true }));
     expect(component.connected()).toBe(true);
+    component.ngOnDestroy();
   });
 
   it('starts and stops visible-only retries when visibility changes', () => {
-    const state$ = new BehaviorSubject<TerminalConnectionState>(makeState({
-      phase: 'disconnected',
-    }));
+    const { component, renderer, session } = setup();
+    for (const isVisible of [true, false]) {
+      component.isVisible = isVisible;
+      component.ngOnChanges({
+        isVisible: {
+          currentValue: isVisible,
+          previousValue: !isVisible,
+          firstChange: false,
+          isFirstChange: () => false,
+        },
+      });
+    }
+    expect(renderer.setVisible).toHaveBeenNthCalledWith(1, session, true);
+    expect(renderer.setVisible).toHaveBeenNthCalledWith(2, session, false);
+    component.ngOnDestroy();
+  });
 
-    const wsService = {
-      connect: vi.fn().mockReturnValue({
-        onData$: new Subject<string>().asObservable(),
-        onOpen$: new Subject<void>().asObservable(),
-        onClose$: new Subject<CloseEvent>().asObservable(),
-        onError$: new Subject<Event>().asObservable(),
-        state$: state$.asObservable(),
-      }),
-      setRetryActive: vi.fn(),
-      disconnect: vi.fn(),
-      send: vi.fn(),
-      resize: vi.fn(),
-    } as unknown as TerminalWebsocketService;
-
-    const component = new ClaudeTerminalComponent(
-      wsService,
-      { selectPreviousTab: vi.fn(), selectNextTab: vi.fn() } as unknown as TabService,
-      { navigate: vi.fn() } as unknown as Router,
-    );
-
+  it('releases the old renderer before attaching a different session', () => {
+    const { component, renderer, session } = setup();
     component.sessionId = 23;
-    component.isVisible = true;
-    (component as unknown as { connectWebSocket: () => void }).connectWebSocket();
-    (component as unknown as { socketInitialized: boolean }).socketInitialized = true;
     component.ngOnChanges({
-      isVisible: {
-        currentValue: true,
-        previousValue: false,
+      sessionId: {
+        currentValue: 23,
+        previousValue: 17,
         firstChange: false,
         isFirstChange: () => false,
       },
     });
+    expect(renderer.release).toHaveBeenCalledWith(session);
+    expect(renderer.attach).toHaveBeenLastCalledWith(
+      'agent',
+      23,
+      component.container.nativeElement,
+      false,
+    );
+    expect(renderer.release.mock.invocationCallOrder[0]).toBeLessThan(
+      renderer.attach.mock.invocationCallOrder[1],
+    );
+    component.ngOnDestroy();
+  });
 
-    component.isVisible = false;
-    component.ngOnChanges({
-      isVisible: {
-        currentValue: false,
-        previousValue: true,
-        firstChange: false,
-        isFirstChange: () => false,
-      },
-    });
-
-    expect(wsService.setRetryActive).toHaveBeenNthCalledWith(1, 23, true);
-    expect(wsService.setRetryActive).toHaveBeenNthCalledWith(2, 23, false);
+  it('releases the renderer on destruction and unsubscribes from state updates', () => {
+    const { component, renderer, session, state$ } = setup();
+    component.ngOnDestroy();
+    expect(renderer.release).toHaveBeenCalledWith(session);
+    state$.next(makeState({ phase: 'connected' }));
+    expect(component.connectionPhase()).toBe('disconnected');
   });
 });

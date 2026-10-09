@@ -19,7 +19,6 @@ interface Connection {
   closeSubject: Subject<CloseEvent>;
   errorSubject: Subject<Event>;
   stateSubject: BehaviorSubject<TerminalConnectionState>;
-  hasOpened: boolean;
   manuallyClosed: boolean;
   reconnectAttempts: number;
   retryActive: boolean;
@@ -54,6 +53,7 @@ export class TerminalWebsocketService {
         return this.toObservers(existing);
       }
 
+      this.retryNow(sessionId, existing);
       return this.toObservers(existing);
     }
 
@@ -139,7 +139,6 @@ export class TerminalWebsocketService {
         nextRetryAt: null,
         msUntilNextRetry: null,
       }),
-      hasOpened: false,
       manuallyClosed: false,
       reconnectAttempts: 0,
       retryActive: false,
@@ -151,11 +150,14 @@ export class TerminalWebsocketService {
   }
 
   private createWebSocket(sessionId: number): WebSocket {
-    const wsUrl = getWebSocketUrl('/terminal', new URLSearchParams({
-      sessionId: String(sessionId),
-    }));
+    const wsUrl = getWebSocketUrl(
+      '/terminal',
+      new URLSearchParams({
+        sessionId: String(sessionId),
+      }),
+    );
     console.log(`Creating WebSocket connection for session ${sessionId}:`, wsUrl);
-    return new WebSocket(wsUrl);
+    return this.ngZone.runOutsideAngular(() => new WebSocket(wsUrl));
   }
 
   private openSocket(
@@ -172,9 +174,12 @@ export class TerminalWebsocketService {
       msUntilNextRetry: null,
     });
 
-    connection.ws.onopen = () => {
+    const ws = connection.ws;
+    const isCurrentSocket = () =>
+      this.connections.get(sessionId) === connection && connection.ws === ws;
+    ws.onopen = () => {
+      if (!isCurrentSocket()) return;
       console.log(`WebSocket connected for session ${sessionId}`);
-      connection.hasOpened = true;
       connection.reconnectAttempts = 0;
       this.clearHandshakeTimeout(connection);
       this.clearReconnectTimeout(connection);
@@ -190,13 +195,13 @@ export class TerminalWebsocketService {
       });
     };
 
-    connection.ws.onmessage = (event) => {
-      this.ngZone.run(() => {
-        connection.dataSubject.next(event.data);
-      });
+    ws.onmessage = (event) => {
+      if (!isCurrentSocket()) return;
+      this.ngZone.runOutsideAngular(() => connection.dataSubject.next(event.data));
     };
 
-    connection.ws.onclose = (event) => {
+    ws.onclose = (event) => {
+      if (!isCurrentSocket()) return;
       console.log(`WebSocket closed for session ${sessionId}:`, event.code, event.reason);
       this.clearHandshakeTimeout(connection);
       this.clearReconnectTimeout(connection);
@@ -227,7 +232,8 @@ export class TerminalWebsocketService {
       }
     };
 
-    connection.ws.onerror = (error) => {
+    ws.onerror = (error) => {
+      if (!isCurrentSocket()) return;
       console.error(`WebSocket error for session ${sessionId}:`, error);
       this.ngZone.run(() => {
         connection.errorSubject.next(error);
@@ -238,7 +244,11 @@ export class TerminalWebsocketService {
   }
 
   private ensureHandshakeTimeout(sessionId: number, connection: Connection): void {
-    if (connection.handshakeTimeoutId || connection.hasOpened || connection.manuallyClosed) {
+    if (
+      connection.handshakeTimeoutId ||
+      connection.ws.readyState !== WebSocket.CONNECTING ||
+      connection.manuallyClosed
+    ) {
       return;
     }
 
@@ -357,10 +367,7 @@ export class TerminalWebsocketService {
     };
   }
 
-  private updateState(
-    connection: Connection,
-    patch: Partial<TerminalConnectionState>,
-  ): void {
+  private updateState(connection: Connection, patch: Partial<TerminalConnectionState>): void {
     connection.stateSubject.next({
       ...connection.stateSubject.value,
       ...patch,

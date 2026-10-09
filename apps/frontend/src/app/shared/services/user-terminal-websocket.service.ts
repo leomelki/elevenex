@@ -2,7 +2,11 @@ import { Injectable, NgZone } from '@angular/core';
 import { BehaviorSubject, Subject, Observable } from 'rxjs';
 import { getWebSocketUrl } from '../runtime/runtime-config';
 
-export type UserTerminalConnectionPhase = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
+export type UserTerminalConnectionPhase =
+  | 'connecting'
+  | 'connected'
+  | 'disconnected'
+  | 'reconnecting';
 
 export interface UserTerminalConnectionState {
   phase: UserTerminalConnectionPhase;
@@ -19,7 +23,6 @@ interface Connection {
   closeSubject: Subject<CloseEvent>;
   errorSubject: Subject<Event>;
   stateSubject: BehaviorSubject<UserTerminalConnectionState>;
-  hasOpened: boolean;
   manuallyClosed: boolean;
   reconnectAttempts: number;
   retryActive: boolean;
@@ -32,6 +35,8 @@ interface Connection {
 @Injectable({ providedIn: 'root' })
 export class UserTerminalWebsocketService {
   private static readonly HANDSHAKE_TIMEOUT_MS = 8000;
+  // UserTerminalGateway sends this when the PTY exits, rather than on network loss.
+  private static readonly PROCESS_EXIT_CLOSE_CODE = 4000;
   private connections = new Map<number, Connection>();
 
   constructor(private readonly ngZone: NgZone) {}
@@ -54,6 +59,7 @@ export class UserTerminalWebsocketService {
         return this.toObservers(existing);
       }
 
+      this.retryNow(terminalId, existing);
       return this.toObservers(existing);
     }
 
@@ -109,7 +115,11 @@ export class UserTerminalWebsocketService {
       return;
     }
 
-    if (connection.stateSubject.value.phase === 'disconnected') {
+    if (
+      connection.stateSubject.value.phase === 'disconnected' ||
+      connection.ws.readyState === WebSocket.CLOSING ||
+      connection.ws.readyState === WebSocket.CLOSED
+    ) {
       this.retryNow(terminalId, connection);
     }
   }
@@ -134,7 +144,6 @@ export class UserTerminalWebsocketService {
         nextRetryAt: null,
         msUntilNextRetry: null,
       }),
-      hasOpened: false,
       manuallyClosed: false,
       reconnectAttempts: 0,
       retryActive: true,
@@ -146,11 +155,14 @@ export class UserTerminalWebsocketService {
   }
 
   private createWebSocket(terminalId: number): WebSocket {
-    const wsUrl = getWebSocketUrl('/user-terminal', new URLSearchParams({
-      terminalId: String(terminalId),
-    }));
+    const wsUrl = getWebSocketUrl(
+      '/user-terminal',
+      new URLSearchParams({
+        terminalId: String(terminalId),
+      }),
+    );
     console.log(`Creating WebSocket connection for user terminal ${terminalId}:`, wsUrl);
-    return new WebSocket(wsUrl);
+    return this.ngZone.runOutsideAngular(() => new WebSocket(wsUrl));
   }
 
   private openSocket(
@@ -163,9 +175,12 @@ export class UserTerminalWebsocketService {
     connection.nextRetryAt = null;
     this.updateState(connection, { phase, nextRetryAt: null, msUntilNextRetry: null });
 
-    connection.ws.onopen = () => {
+    const ws = connection.ws;
+    const isCurrentSocket = () =>
+      this.connections.get(terminalId) === connection && connection.ws === ws;
+    ws.onopen = () => {
+      if (!isCurrentSocket()) return;
       console.log(`WebSocket connected for user terminal ${terminalId}`);
-      connection.hasOpened = true;
       connection.reconnectAttempts = 0;
       this.clearHandshakeTimeout(connection);
       this.clearReconnectTimeout(connection);
@@ -181,13 +196,15 @@ export class UserTerminalWebsocketService {
       });
     };
 
-    connection.ws.onmessage = (event) => {
-      this.ngZone.run(() => {
-        connection.dataSubject.next(event.data);
-      });
+    ws.onmessage = (event) => {
+      if (!isCurrentSocket()) return;
+      // xterm renders independently of Angular; output must not trigger app-wide
+      // change detection for every PTY packet.
+      this.ngZone.runOutsideAngular(() => connection.dataSubject.next(event.data));
     };
 
-    connection.ws.onclose = (event) => {
+    ws.onclose = (event) => {
+      if (!isCurrentSocket()) return;
       console.log(`WebSocket closed for user terminal ${terminalId}:`, event.code, event.reason);
       this.clearHandshakeTimeout(connection);
       this.clearReconnectTimeout(connection);
@@ -206,14 +223,19 @@ export class UserTerminalWebsocketService {
         return;
       }
 
-      this.updateState(connection, { phase: 'disconnected', nextRetryAt: null, msUntilNextRetry: null });
+      this.updateState(connection, {
+        phase: 'disconnected',
+        nextRetryAt: null,
+        msUntilNextRetry: null,
+      });
 
       if (this.shouldRetry(connection, event)) {
         this.scheduleReconnect(terminalId, connection);
       }
     };
 
-    connection.ws.onerror = (error) => {
+    ws.onerror = (error) => {
+      if (!isCurrentSocket()) return;
       console.error(`WebSocket error for user terminal ${terminalId}:`, error);
       this.ngZone.run(() => {
         connection.errorSubject.next(error);
@@ -224,7 +246,11 @@ export class UserTerminalWebsocketService {
   }
 
   private ensureHandshakeTimeout(terminalId: number, connection: Connection): void {
-    if (connection.handshakeTimeoutId || connection.hasOpened || connection.manuallyClosed) {
+    if (
+      connection.handshakeTimeoutId ||
+      connection.ws.readyState !== WebSocket.CONNECTING ||
+      connection.manuallyClosed
+    ) {
       return;
     }
 
@@ -239,8 +265,12 @@ export class UserTerminalWebsocketService {
     }, UserTerminalWebsocketService.HANDSHAKE_TIMEOUT_MS);
   }
 
-  private shouldRetry(connection: Connection, _event: CloseEvent): boolean {
-    return !connection.manuallyClosed && connection.retryActive;
+  private shouldRetry(connection: Connection, event: CloseEvent): boolean {
+    return (
+      !connection.manuallyClosed &&
+      connection.retryActive &&
+      event.code !== UserTerminalWebsocketService.PROCESS_EXIT_CLOSE_CODE
+    );
   }
 
   private scheduleReconnect(terminalId: number, connection: Connection): void {
@@ -339,10 +369,7 @@ export class UserTerminalWebsocketService {
     };
   }
 
-  private updateState(
-    connection: Connection,
-    patch: Partial<UserTerminalConnectionState>,
-  ): void {
+  private updateState(connection: Connection, patch: Partial<UserTerminalConnectionState>): void {
     connection.stateSubject.next({
       ...connection.stateSubject.value,
       ...patch,

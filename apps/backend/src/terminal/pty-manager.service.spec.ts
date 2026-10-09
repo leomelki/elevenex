@@ -3,6 +3,7 @@ import { readFile, rm } from 'node:fs/promises';
 import * as pty from 'node-pty';
 import { PtyManager } from './pty-manager.service.js';
 import {
+  buildAugmentedEnv,
   buildAugmentedEnvAsync,
   buildTmuxInlineEnvPrefix,
   stripInheritedTmuxEnv,
@@ -14,6 +15,7 @@ jest.mock('node-pty', () => ({
 }));
 
 jest.mock('../config/system-paths.js', () => ({
+  buildAugmentedEnv: jest.fn(() => ({ PATH: '/mock/bin' })),
   buildAugmentedEnvAsync: jest.fn(),
   buildTmuxInlineEnvPrefix: jest.fn(() => "PATH='/mock/bin'"),
   findBinary: jest.fn(() => null),
@@ -84,6 +86,7 @@ describe('PtyManager', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    jest.mocked(buildAugmentedEnv).mockReturnValue({ PATH: '/mock/bin' });
     mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
     mockBuildTmuxInlineEnvPrefix.mockReturnValue("PATH='/mock/bin'");
     mockStripInheritedTmuxEnv.mockImplementation((env) => env);
@@ -129,6 +132,29 @@ describe('PtyManager', () => {
     expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 
+  it('reattaches to tmux using cached env and a single session check', async () => {
+    tmuxManager.isTmuxAvailable.mockReturnValue(true);
+    tmuxManager.sessionExists.mockResolvedValue(true);
+    await manager.spawn(7, '/repo/worktree');
+
+    expect(tmuxManager.sessionExists).toHaveBeenCalledTimes(1);
+    expect(mockBuildAugmentedEnv).not.toHaveBeenCalled();
+    expect(buildAugmentedEnv).toHaveBeenCalledWith(
+      process.env,
+      '/repo/worktree',
+    );
+    expect(mockSpawn).toHaveBeenCalledWith(
+      '/usr/bin/tmux',
+      ['attach', '-t', 'elevenex-7'],
+      expect.any(Object),
+    );
+    const environmentCommands = mockExecFileQuiet.mock.calls.filter(
+      ([, args]) => args[0] === 'set-environment',
+    );
+    expect(environmentCommands).toHaveLength(1);
+    expect(environmentCommands[0][1]).toContain('PLANNOTATOR_PORT');
+  });
+
   it('launches Claude Code with fullscreen rendering enabled in direct PTYs', async () => {
     await manager.spawn(7, '/repo/worktree');
 
@@ -140,11 +166,16 @@ describe('PtyManager', () => {
 
   it('waits for agent terminal exit before finishing its task and rejects a stale startup', async () => {
     const process = createMockPty();
-    process.onExit.mockImplementation(callback => { process.on('exit', callback); return { dispose: () => process.off('exit', callback) }; });
+    process.onExit.mockImplementation((callback) => {
+      process.on('exit', callback);
+      return { dispose: () => process.off('exit', callback) };
+    });
     mockSpawn.mockReturnValue(process as never);
     await manager.spawn(7, '/repo/worktree');
     let stopped = false;
-    const pending = manager.stopForTask(7).then(() => { stopped = true; });
+    const pending = manager.stopForTask(7).then(() => {
+      stopped = true;
+    });
     await Promise.resolve();
     expect(stopped).toBe(false);
     process.emit('exit', { exitCode: 0 });

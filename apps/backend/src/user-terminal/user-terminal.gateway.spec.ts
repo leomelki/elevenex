@@ -65,6 +65,57 @@ describe('UserTerminalGateway', () => {
     jest.clearAllMocks();
   });
 
+  it('closes an exited shell without restarting it and starts a shell on reopen', async () => {
+    gateway.attachToServer(mockServer);
+    const start = createDeferred<{ success: boolean }>();
+    mockTerminalService.startTerminal.mockReturnValueOnce(start.promise);
+    mockTerminalService.startTerminal.mockResolvedValue({ success: true });
+    const connectionHandler = mockWss.on.mock.calls.find(
+      (call) => call[0] === 'connection',
+    )?.[1] as (
+      ws: WebSocket,
+      request: { url: string; headers: { host: string } },
+    ) => void;
+    const handlers = new Map<string, (data?: Buffer) => void>();
+    const ws = {
+      on: jest.fn((event: string, handler: (data?: Buffer) => void) => {
+        handlers.set(event, handler);
+        return ws;
+      }),
+      close: jest.fn(),
+      send: jest.fn(),
+      readyState: WebSocket.OPEN,
+    } as unknown as jest.Mocked<WebSocket>;
+    const request = {
+      url: '/user-terminal?terminalId=3',
+      headers: { host: 'localhost:3000' },
+    };
+    connectionHandler(ws, request);
+    handlers.get('message')?.(Buffer.from('queued before exit'));
+    gateway.onProcessExit(3);
+    expect(ws.close).toHaveBeenCalledWith(4000, 'Terminal process exited');
+    handlers.get('close')?.();
+    start.resolve({ success: true });
+    await start.promise;
+    await Promise.resolve();
+    expect(mockPtyManager.write).not.toHaveBeenCalled();
+    expect(mockPtyManager.detach).not.toHaveBeenCalled();
+    expect(mockTerminalService.startTerminal).toHaveBeenCalledTimes(1);
+
+    const reopened = {
+      on: jest.fn().mockReturnThis(),
+      close: jest.fn(),
+      send: jest.fn(),
+      readyState: WebSocket.OPEN,
+    } as unknown as WebSocket;
+    connectionHandler(reopened, request);
+    await Promise.resolve();
+    expect(mockTerminalService.startTerminal).toHaveBeenCalledTimes(2);
+    // Old close events must not detach the newly started shell.
+    handlers.get('close')?.();
+    expect(mockPtyManager.detach).not.toHaveBeenCalled();
+  });
+
   it('does not let a stale websocket close kill a newer user terminal connection', () => {
     gateway.attachToServer(mockServer);
     mockTerminalService.startTerminal.mockResolvedValue({ success: true });

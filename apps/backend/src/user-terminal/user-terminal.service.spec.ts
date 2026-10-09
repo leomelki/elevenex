@@ -34,6 +34,7 @@ describe('UserTerminalService', () => {
     jest.spyOn(service, 'findOne').mockResolvedValue({
       id: 3,
       worktreePath: process.cwd(),
+      workspaceId: null,
       shell: '/bin/zsh',
       name: 'zsh',
       createdAt: new Date().toISOString(),
@@ -51,6 +52,15 @@ describe('UserTerminalService', () => {
 
     expect(result).toEqual({ success: true });
     expect(ptyManager.spawn).not.toHaveBeenCalled();
+    expect(fs.access).not.toHaveBeenCalled();
+  });
+
+  it('reuses a live shell even if its original worktree path was removed', async () => {
+    ptyManager.isAlive.mockReturnValue(true);
+    jest.spyOn(fs, 'access').mockRejectedValue(new Error('ENOENT'));
+
+    await expect(service.startTerminal(3)).resolves.toEqual({ success: true });
+    expect(fs.access).not.toHaveBeenCalled();
   });
 
   it('does not report success when async terminal spawn was cancelled', async () => {

@@ -50,15 +50,18 @@ describe('TerminalWebsocketService', () => {
   beforeEach(() => {
     MockWebSocket.instances = [];
     vi.useFakeTimers();
-    (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket = MockWebSocket as unknown as typeof WebSocket;
+    (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket =
+      MockWebSocket as unknown as typeof WebSocket;
     service = new TerminalWebsocketService({
       run: <T>(fn: () => T): T => fn(),
+      runOutsideAngular: <T>(fn: () => T): T => fn(),
     } as never);
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket = originalWebSocket;
+    (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket =
+      originalWebSocket;
   });
 
   it('reuses an already open socket for the same session', () => {
@@ -114,7 +117,7 @@ describe('TerminalWebsocketService', () => {
       const previous = history[index - 1];
       return previous?.retryAttempt !== state.retryAttempt;
     });
-    expect(retryStates.map(state => state.msUntilNextRetry)).toEqual(expectedDelays);
+    expect(retryStates.map((state) => state.msUntilNextRetry)).toEqual(expectedDelays);
   });
 
   it('does not retry while retries are inactive', () => {
@@ -129,7 +132,7 @@ describe('TerminalWebsocketService', () => {
   it('triggers an immediate retry when a disconnected terminal becomes visible', () => {
     const connection = service.connect(10);
     const phases: string[] = [];
-    connection.state$.subscribe(state => {
+    connection.state$.subscribe((state) => {
       phases.push(state.phase);
     });
 
@@ -154,5 +157,17 @@ describe('TerminalWebsocketService', () => {
 
     expect(MockWebSocket.instances.length).toBe(1);
     expect(connection.state$).toBeTruthy();
+  });
+  it('times out a stalled handshake after a previously successful connection', () => {
+    service.connect(11);
+    service.setRetryActive(11, true);
+    MockWebSocket.instances[0].emitOpen();
+    MockWebSocket.instances[0].emitClose();
+    vi.advanceTimersByTime(500);
+    expect(MockWebSocket.instances).toHaveLength(2);
+    vi.advanceTimersByTime(8000);
+    expect(MockWebSocket.instances[1].readyState).toBe(MockWebSocket.CLOSED);
+    vi.advanceTimersByTime(500);
+    expect(MockWebSocket.instances).toHaveLength(3);
   });
 });
