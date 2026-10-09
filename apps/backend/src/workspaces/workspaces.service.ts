@@ -19,6 +19,7 @@ import {
 import { SessionsService } from '../sessions/sessions.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
+import { compareWorkspaceOrder } from './workspace-order.js';
 import {
   PendingStashStatus,
   WorktreeLinkStatus,
@@ -39,6 +40,7 @@ export interface WorkspaceSnapshot {
   name: string;
   path: string;
   isDefault: boolean;
+  sortOrder?: number | null;
   createdFromRef: string | null;
   currentBranch: string | null;
   head: string | null;
@@ -81,7 +83,7 @@ export class WorkspacesService {
       .insert(schema.workspaces)
       .values({
         repoId: repo.id,
-        name: 'Default',
+        name: 'Main checkout',
         path: repo.path,
         isDefault: true,
         createdFromRef: 'HEAD',
@@ -168,10 +170,7 @@ export class WorkspacesService {
       }),
     );
 
-    return snapshots.sort((a, b) => {
-      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+    return snapshots.sort(compareWorkspaceOrder);
   }
 
   async listCachedForRepo(
@@ -190,10 +189,7 @@ export class WorkspacesService {
 
     return rows
       .map((workspace) => this.toCachedSnapshot(workspace))
-      .sort((a, b) => {
-        if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
+      .sort(compareWorkspaceOrder);
   }
 
   async findOne(id: number) {
@@ -325,6 +321,8 @@ export class WorkspacesService {
 
   async renameWorkspace(id: number, name: string, repoId?: number) {
     const workspace = await this.findOneForRepo(id, repoId);
+    if (workspace.isDefault)
+      throw new BadRequestException('The main checkout has a fixed name.');
     const repo = await this.findRepo(workspace.repoId);
     await this.projectsService.assertProjectIsActive(repo.projectId);
 
@@ -825,6 +823,7 @@ export class WorkspacesService {
 
   private taskMetadata(workspace: typeof schema.workspaces.$inferSelect) {
     return {
+      sortOrder: workspace.sortOrder,
       archivedAt: workspace.archivedAt,
       taskState: workspace.taskState,
       taskBranch: workspace.taskBranch,

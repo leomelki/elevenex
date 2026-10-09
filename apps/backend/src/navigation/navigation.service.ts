@@ -5,6 +5,7 @@ import { SessionsService } from '../sessions/sessions.service.js';
 import { WorkspacesService } from '../workspaces/workspaces.service.js';
 import { SessionFoldersService } from '../sessions/session-folders.service.js';
 import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
+import { compareWorkspaceOrder } from '../workspaces/workspace-order.js';
 
 export interface SessionInTree {
   id: number;
@@ -33,6 +34,7 @@ export interface SessionFolderInTree {
 }
 
 export interface WorkspaceInTree {
+  sortOrder?: number | null;
   archivedAt?: string | null;
   taskState?: string;
   taskBranch?: string | null;
@@ -356,10 +358,7 @@ export class NavigationService {
     return [
       ...Array.from(workspaceMap.values()),
       ...Array.from(virtualWorkspaceByPath.values()),
-    ].sort((a, b) => {
-      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+    ].sort(compareWorkspaceOrder);
   }
 
   private getOrCreateVirtualWorkspace(

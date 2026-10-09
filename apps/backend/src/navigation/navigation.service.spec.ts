@@ -125,6 +125,21 @@ describe('NavigationService', () => {
     await expect(service.getNavigationTree()).resolves.toEqual([]);
   });
 
+  it('uses the same saved task order in the light and full trees, with the main checkout first', async () => {
+    mockProjectsService.findAll.mockResolvedValue([{ id: 1, name: 'Project' }] as never);
+    mockReposService.findByProject.mockResolvedValue([repo]);
+    mockSessionsService.findByRepo.mockResolvedValue([]);
+    const workspaces = [
+      workspace({ id: 3, name: 'Alpha', isDefault: false, sortOrder: 2 }),
+      workspace({ id: 4, name: 'Zebra', isDefault: false, sortOrder: 1 }),
+      workspace({ id: 99, name: 'Main checkout', isDefault: true, sortOrder: 99 }),
+    ];
+    mockWorkspacesService.listForRepo.mockResolvedValue(workspaces);
+    mockWorkspacesService.listCachedForRepo.mockResolvedValue(workspaces);
+    for (const result of [await service.getNavigationTreeLight(), await service.getNavigationTree()])
+      expect(result[0].repos[0].workspaces.map((item) => item.id)).toEqual([99, 4, 3]);
+  });
+
   it('groups live and archived sessions under workspaces', async () => {
     mockProjectsService.findAll.mockResolvedValue([
       {

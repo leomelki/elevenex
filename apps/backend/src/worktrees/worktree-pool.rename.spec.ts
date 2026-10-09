@@ -344,7 +344,7 @@ describe('WorktreePoolService.rename (real git)', () => {
 
     await expect(
       service.rename(repo, pool.id, 'something-else'),
-    ).rejects.toThrow(/main working tree/i);
+    ).rejects.toThrow(/main checkout/i);
     await expect(fs.stat(repoPath)).resolves.toBeTruthy();
   });
 

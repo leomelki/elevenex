@@ -6,6 +6,7 @@ import { NavigationProject } from '../models/navigation-tree.model';
 import { Session, SessionFolder } from '../models/session.model';
 import { ClaudeStatusService } from './claude-status.service';
 import { migratedWindowScopedKey } from './scoped-storage';
+import { getBackendOrigin } from '../runtime/runtime-config';
 
 type SessionCompletionPatch = Pick<
   Session,
@@ -36,6 +37,7 @@ export class NavigationService {
   private fullRefreshInFlight = false;
   private fullRefreshQueued = false;
   private cachedSessionNames = new Map<number, string>();
+  private pendingTaskOrders = new Map<number, { origin: string; taskIds: number[] }>();
 
   constructor() {
     const claudeStatus = inject(ClaudeStatusService);
@@ -127,6 +129,37 @@ export class NavigationService {
     this.applySessionNamePatch(sessionId, name);
   }
 
+  previewTaskOrder(repoId: number, taskIds: number[]): void {
+    this.pendingTaskOrders.set(repoId, { origin: getBackendOrigin(), taskIds });
+    this.tree.update((projects) => this.applyPendingTaskOrders(projects));
+  }
+
+  finishTaskOrder(repoId: number, origin: string): void {
+    if (this.pendingTaskOrders.get(repoId)?.origin === origin)
+      this.pendingTaskOrders.delete(repoId);
+    if (getBackendOrigin() === origin) this.refreshTree();
+  }
+
+  private applyPendingTaskOrders(projects: NavigationProject[]): NavigationProject[] {
+    if (!this.pendingTaskOrders.size) return projects;
+    const origin = getBackendOrigin();
+    return projects.map((project) => ({
+      ...project,
+      repos: project.repos.map((repo) => {
+        const pending = this.pendingTaskOrders.get(repo.id);
+        if (!pending || pending.origin !== origin) return repo;
+        const positions = new Map(pending.taskIds.map((id, index) => [id, index + 1]));
+        return {
+          ...repo,
+          workspaces: repo.workspaces?.map((workspace) => ({
+            ...workspace,
+            sortOrder: positions.get(workspace.id) ?? workspace.sortOrder,
+          })),
+        };
+      }),
+    }));
+  }
+
   addSessionFolder(folder: SessionFolder): void {
     this.tree.update((projects) =>
       projects.map((project) => ({
@@ -187,6 +220,7 @@ export class NavigationService {
   }
 
   private applyCachedSessionNames(data: NavigationProject[]): NavigationProject[] {
+    data = this.applyPendingTaskOrders(data);
     if (this.cachedSessionNames.size === 0) {
       return data;
     }

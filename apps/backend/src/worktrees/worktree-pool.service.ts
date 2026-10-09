@@ -477,6 +477,8 @@ export class WorktreePoolService {
     await this.projectsService.assertProjectIsActive(repo.projectId);
     const pool = await this.findPoolForRepo(repo, worktreeId);
     const owner = await this.findLinkedWorkspace(pool.id);
+    if (owner?.workspace.isDefault || (await this.samePath(pool.path, repo.path)))
+      throw new BadRequestException('The main checkout has a fixed name and location.');
     if (owner?.workspace.taskRequestId || owner?.workspace.archivedAt) throw new ConflictException('Rename the task instead of moving its worktree.');
     const history = await this.db.select({ id: schema.workspaces.id }).from(schema.workspaces).where(and(eq(schema.workspaces.path, pool.path), eq(schema.workspaces.linkStatus, 'unlinked')));
     if (history.length) throw new ConflictException('This worktree has task history and cannot be moved.');

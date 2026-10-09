@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import * as schema from '../database/schema/index.js';
 import { DrizzleDB } from '../database/database.provider.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
+import * as systemPaths from '../config/system-paths.js';
 import { WorktreesService } from '../worktrees/worktrees.service.js';
 import { WorktreePoolService } from '../worktrees/worktree-pool.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
@@ -30,6 +31,7 @@ import { TaskGitService, taskBranchSlug } from './task-git.service.js';
 import { TaskWorktreeAllocator } from './task-worktree-allocator.service.js';
 import { TaskSetup } from './task.types.js';
 import { assertWorkspaceCanExecute } from '../workspaces/workspace-ownership.js';
+import { compareWorkspaceOrder } from '../workspaces/workspace-order.js';
 
 jest.setTimeout(60000);
 
@@ -179,6 +181,97 @@ describe('Task lifecycle with real Git and migrations', () => {
     return settled(task.id);
   }
 
+  it('persists manual task order, retains concurrent tasks, and appends new tasks after reordering', async () => {
+    const [first, second, concurrent] = await db
+      .insert(schema.workspaces)
+      .values([
+        { repoId: repo.id, name: 'First', path: '/first' },
+        { repoId: repo.id, name: 'Second', path: '/second' },
+        {
+          repoId: repo.id,
+          name: 'Created in another window',
+          path: '/concurrent',
+        },
+      ])
+      .returning();
+    expect(await service.move(repo.id, second.id, first.id)).toEqual({
+      taskIds: [second.id, first.id, concurrent.id],
+    });
+    expect(
+      (await service.list(repo.id, 'active', 1)).map((item) => item.id),
+    ).toEqual([second.id]);
+    expect(
+      (await service.list(repo.id, 'active', 1, second.id)).map(
+        (item) => item.id,
+      ),
+    ).toEqual([first.id]);
+    expect(
+      (await service.list(repo.id, 'active', 1, first.id)).map(
+        (item) => item.id,
+      ),
+    ).toEqual([concurrent.id]);
+    const latest = await create('newest');
+    const rows = await db.select().from(schema.workspaces);
+    expect(rows.sort(compareWorkspaceOrder).map((task) => task.id)).toEqual([
+      second.id,
+      first.id,
+      concurrent.id,
+      latest.id,
+    ]);
+    expect(await service.move(repo.id, second.id)).toEqual({
+      taskIds: [first.id, concurrent.id, latest.id, second.id],
+    });
+    expect(await service.move(repo.id, first.id, first.id)).toEqual({
+      taskIds: [first.id, concurrent.id, latest.id, second.id],
+    });
+    expect((await service.list(repo.id)).map((item) => item.id)).toEqual([
+      first.id,
+      concurrent.id,
+      latest.id,
+      second.id,
+    ]);
+  });
+
+  it('rejects reordering the main checkout, finished tasks, and another repository’s tasks', async () => {
+    const [otherRepo] = await db
+      .insert(schema.repos)
+      .values({
+        projectId: repo.projectId,
+        name: 'Other',
+        path: '/other',
+      })
+      .returning();
+    const [main, active, finished, foreign] = await db
+      .insert(schema.workspaces)
+      .values([
+        {
+          repoId: repo.id,
+          name: 'Main checkout',
+          path: repo.path,
+          isDefault: true,
+        },
+        { repoId: repo.id, name: 'Active', path: '/active' },
+        {
+          repoId: repo.id,
+          name: 'Finished',
+          path: '/finished',
+          archivedAt: new Date().toISOString(),
+        },
+        { repoId: otherRepo.id, name: 'Foreign', path: '/foreign' },
+      ])
+      .returning();
+    const original = await db.select().from(schema.workspaces);
+    for (const task of [main, finished, foreign])
+      await expect(service.move(repo.id, task.id)).rejects.toThrow(
+        'Only active tasks',
+      );
+    for (const target of [main, finished, foreign])
+      await expect(service.move(repo.id, active.id, target.id)).rejects.toThrow(
+        'no longer available',
+      );
+    expect(await db.select().from(schema.workspaces)).toEqual(original);
+  });
+
   it('keeps a new task preparing when the pool reconciles before checkout allocation', async () => {
     let release!: () => void;
     let entered!: () => void;
@@ -310,20 +403,84 @@ describe('Task lifecycle with real Git and migrations', () => {
     );
   });
 
-  it('retains an externally switched checkout without recording another branch’s commit as the task result', async () => {
+  it.each([false, true])(
+    'finishes and reopens the current branch after a user switch (dirty=%s)',
+    async (dirty) => {
+      const task = await create('original-task');
+      const git = worktreeSimpleGit(task.path);
+      await git.raw(['checkout', '-b', 'other-work']);
+      await git.raw(['commit', '--allow-empty', '-m', 'User work']);
+      const head = await gitService.resolve(task.path, 'HEAD');
+      if (dirty)
+        await writeFile(join(task.path, 'notes.txt'), 'Keep these notes');
+      const finished = await service.finish(task.id);
+      expect(finished).toMatchObject({
+        linkStatus: dirty ? 'linked' : 'unlinked',
+        taskBranch: 'other-work',
+        checkoutMode: 'branch',
+        finalCommit: head,
+      });
+      await service.reopen(task.id);
+      const reopened = await settled(task.id);
+      expect(reopened).toMatchObject({
+        taskState: 'ready',
+        taskBranch: 'other-work',
+      });
+      expect((await gitService.status(reopened.path)).branch).toBe(
+        'other-work',
+      );
+      if (dirty)
+        expect(await readFile(join(reopened.path, 'notes.txt'), 'utf8')).toBe(
+          'Keep these notes',
+        );
+    },
+  );
+
+  it('finishes and reopens a detached revision after starting on a branch', async () => {
     const task = await create('original-task');
     const git = worktreeSimpleGit(task.path);
-    await git.raw(['checkout', '-b', 'other-work']);
-    await git.raw(['commit', '--allow-empty', '-m', 'Unrelated work']);
-    const finished = await service.finish(task.id);
-    expect(finished).toMatchObject({
-      linkStatus: 'linked',
-      taskBranch: 'original-task',
-      finalCommit: task.startingCommit,
+    await git.raw(['checkout', '--detach']);
+    await git.raw(['commit', '--allow-empty', '-m', 'Detached work']);
+    const head = await gitService.resolve(task.path, 'HEAD');
+    expect(await service.finish(task.id)).toMatchObject({
+      checkoutMode: 'snapshot',
+      taskBranch: null,
+      finalCommit: head,
     });
-    expect((await gitService.status(task.path)).branch).toBe('other-work');
-    expect(await db.select().from(schema.taskReservations)).toHaveLength(1);
-    expect((await create('next-task')).path).not.toBe(task.path);
+    await service.reopen(task.id);
+    const reopened = await settled(task.id);
+    expect(reopened.taskState).toBe('ready');
+    expect(await gitService.status(reopened.path)).toMatchObject({
+      branch: null,
+      head,
+    });
+  });
+
+  it('retains a clean worktree while a rebase is paused', async () => {
+    const task = await create('paused-rebase');
+    const git = worktreeSimpleGit(task.path);
+    await writeFile(join(task.path, 'feature.txt'), 'Task work');
+    await git.add('feature.txt');
+    await git.commit('Task work');
+    await worktreeSimpleGit(repoPath).raw([
+      'commit',
+      '--allow-empty',
+      '-m',
+      'Advance main',
+    ]);
+    await expect(
+      git.raw(['rebase', '--exec', 'false', 'main']),
+    ).rejects.toThrow();
+    expect(await gitService.status(task.path)).toMatchObject({
+      dirty: false,
+      conflicts: false,
+      branch: null,
+    });
+    expect(await service.finish(task.id)).toMatchObject({
+      linkStatus: 'linked',
+    });
+    expect(await gitService.hasOperationInProgress(task.path)).toBe(true);
+    await git.raw(['rebase', '--abort']);
   });
 
   it('detects detached terminals and retains the checkout when terminal shutdown fails', async () => {
@@ -564,27 +721,149 @@ describe('Task lifecycle with real Git and migrations', () => {
     expect(taskBranchSlug('a'.repeat(99) + ' / more')).toBe('a'.repeat(99));
   });
 
-  it('blocks branch drift and restores the owned checkout without losing local files', async () => {
+  it('allows branch switches and detached HEAD without losing files or reserving the original branch', async () => {
     const task = await create('intended');
     await writeFile(join(task.path, 'notes.txt'), 'Investigation notes');
-    await worktreeSimpleGit(task.path).raw(['checkout', '-b', 'unrelated']);
-    await expect(assertWorkspaceCanExecute(db, task.id)).rejects.toThrow(
-      'Restore',
+    const git = worktreeSimpleGit(task.path);
+    await git.raw(['checkout', '-b', 'unrelated']);
+    await expect(assertWorkspaceCanExecute(db, task.id)).resolves.toMatchObject(
+      { taskState: 'ready' },
     );
     expect(await service.get(task.id)).toMatchObject({
-      taskState: 'failed',
-      error: { code: 'branch_changed' },
+      taskState: 'ready',
+      error: null,
     });
-    await expect(
-      service.retry(task.id, { branchName: 'unrelated' }),
-    ).rejects.toThrow('separate task');
+    expect(
+      (await db.select().from(schema.taskReservations))[0].branchName,
+    ).toBeNull();
+    const another = await create('intended', {
+      mode: 'existing',
+      branchName: 'intended',
+    });
+    expect(another.taskState).toBe('ready');
+    expect(another.path).not.toBe(task.path);
+    await git.raw(['checkout', '--detach']);
+    await expect(assertWorkspaceCanExecute(db, task.id)).resolves.toMatchObject(
+      { taskState: 'ready' },
+    );
+    expect(await readFile(join(task.path, 'notes.txt'), 'utf8')).toBe(
+      'Investigation notes',
+    );
+  });
+
+  it('recovers an old branch failure on retry without changing the checkout', async () => {
+    const task = await create('intended');
+    const git = worktreeSimpleGit(task.path);
+    await git.raw(['checkout', '-b', 'unrelated']);
+    await db
+      .update(schema.workspaces)
+      .set({
+        taskState: 'failed',
+        taskError: JSON.stringify({ code: 'branch_changed' }),
+      })
+      .where(eq(schema.workspaces.id, task.id));
     expect(await service.retry(task.id)).toMatchObject({
       taskState: 'ready',
-      path: task.path,
-      taskBranch: 'intended',
+      error: null,
     });
-    expect((await gitService.status(task.path)).branch).toBe('intended');
-    expect((await gitService.status(task.path)).dirty).toBe(true);
+    expect((await gitService.status(task.path)).branch).toBe('unrelated');
+  });
+
+  it('recommends the repository default rather than a previously used base', async () => {
+    await worktreeSimpleGit(repoPath).raw(['branch', 'release']);
+    await db
+      .update(schema.repos)
+      .set({ taskBaseRef: 'refs/heads/release' })
+      .where(eq(schema.repos.id, repo.id));
+    expect((await service.defaults(repo.id)).baseRef).toBe('refs/heads/main');
+    await create('from-release', { baseRef: 'refs/heads/release' });
+    expect((await service.defaults(repo.id)).baseRef).toBe('refs/heads/main');
+  });
+
+  it('does not turn a transient observation error into a failed migrated task', async () => {
+    const task = await create('legacy');
+    await db
+      .update(schema.workspaces)
+      .set({
+        taskConfig: null,
+        taskBranch: null,
+        startingCommit: null,
+        taskRequestId: `legacy-workspace-${task.id}`,
+      })
+      .where(eq(schema.workspaces.id, task.id));
+    const observation = jest
+      .spyOn(systemPaths, 'worktreeSimpleGit')
+      .mockReturnValueOnce({
+        revparse: jest.fn(async () => {
+          throw new Error('Git temporarily unavailable');
+        }),
+      } as never);
+    try {
+      expect(await service.get(task.id)).toMatchObject({
+        taskState: 'ready',
+        error: { code: 'checkout_unavailable' },
+      });
+    } finally {
+      observation.mockRestore();
+    }
+    expect(
+      (
+        await db
+          .select()
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.id, task.id))
+      )[0],
+    ).toMatchObject({ taskState: 'ready', taskError: null });
+    expect(await service.get(task.id)).toMatchObject({
+      taskState: 'ready',
+      taskBranch: 'legacy',
+      error: null,
+    });
+  });
+  it('keeps a legacy task usable through a rebase without recording a temporary snapshot', async () => {
+    const mainGit = worktreeSimpleGit(repoPath);
+    await writeFile(join(repoPath, 'shared.txt'), 'base\n');
+    await mainGit.add('shared.txt');
+    await mainGit.commit('Base file');
+    const task = await create('intended');
+    await db
+      .update(schema.workspaces)
+      .set({
+        taskConfig: null,
+        taskBranch: null,
+        startingCommit: null,
+        taskRequestId: `legacy-workspace-${task.id}`,
+      })
+      .where(eq(schema.workspaces.id, task.id));
+    const taskGit = worktreeSimpleGit(task.path);
+    await writeFile(join(task.path, 'shared.txt'), 'task edit\n');
+    await taskGit.add('shared.txt');
+    await taskGit.commit('Task edit');
+    await writeFile(join(repoPath, 'shared.txt'), 'main edit\n');
+    await mainGit.add('shared.txt');
+    await mainGit.commit('Main edit');
+    await expect(taskGit.raw(['rebase', 'main'])).rejects.toThrow();
+    expect((await taskGit.revparse(['--abbrev-ref', 'HEAD'])).trim()).toBe(
+      'HEAD',
+    );
+    await expect(assertWorkspaceCanExecute(db, task.id)).resolves.toMatchObject(
+      { taskState: 'ready' },
+    );
+    expect(await service.get(task.id)).toMatchObject({
+      taskState: 'ready',
+      taskBranch: null,
+      startingCommit: null,
+      error: null,
+    });
+    expect((await taskGit.status()).conflicted).toContain('shared.txt');
+    await taskGit.raw(['rebase', '--abort']);
+    expect(await service.get(task.id)).toMatchObject({
+      taskBranch: 'intended',
+      checkoutMode: 'branch',
+    });
+    await expect(assertWorkspaceCanExecute(db, task.id)).resolves.toMatchObject(
+      { taskState: 'ready' },
+    );
   });
 
   it('allows finishing other tasks and cancelling setup during a stalled remote refresh', async () => {

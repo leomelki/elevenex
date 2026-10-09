@@ -163,13 +163,13 @@ export class SessionsService extends EventEmitter {
           `Workspace with id ${dto.workspaceId} not found`,
         );
       }
-      await this.assertWorkspaceLinked(rows[0]);
+      const workspace = await this.assertWorkspaceLinked(rows[0]);
 
-      const branchName = await this.resolveCurrentBranch(rows[0].path);
+      const branchName = await this.resolveCurrentBranch(workspace.path);
       return {
-        workspaceId: rows[0].id,
-        branchName: branchName ?? dto.branchName ?? 'detached',
-        worktreePath: rows[0].path,
+        workspaceId: workspace.id,
+        branchName: branchName ?? 'detached',
+        worktreePath: workspace.path,
       };
     }
 
@@ -184,10 +184,16 @@ export class SessionsService extends EventEmitter {
       dto.worktreePath,
     );
     if (workspace) {
-      await this.assertWorkspaceLinked(workspace);
+      const current = await this.assertWorkspaceLinked(workspace);
+      return {
+        workspaceId: current.id,
+        branchName:
+          (await this.resolveCurrentBranch(current.path)) ?? 'detached',
+        worktreePath: current.path,
+      };
     }
     return {
-      workspaceId: workspace?.id ?? null,
+      workspaceId: null,
       branchName: dto.branchName,
       worktreePath: dto.worktreePath,
     };
@@ -1246,14 +1252,12 @@ export class SessionsService extends EventEmitter {
       throw new BadRequestException(
         'Reopen this task before starting a session.',
       );
-    if (workspace.taskState && workspace.taskState !== 'ready')
-      throw new BadRequestException('The task worktree is not ready.');
     if (workspace.linkStatus === 'unlinked') {
       throw new BadRequestException(
         'This workspace is unlinked from its worktree. Link it back before using sessions.',
       );
     }
-    await assertWorkspaceCanExecute(this.db, workspace.id);
+    return (await assertWorkspaceCanExecute(this.db, workspace.id))!;
   }
 
   async assertSessionWorkspaceLinked(sessionId: number) {

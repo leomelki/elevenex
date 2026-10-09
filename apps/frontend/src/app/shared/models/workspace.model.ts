@@ -1,4 +1,5 @@
 export interface Workspace {
+  sortOrder?: number | null;
   archivedAt?: string | null;
   taskState?: 'preparing' | 'ready' | 'failed' | 'finishing';
   taskBranch?: string | null;

@@ -1,4 +1,5 @@
 <div class="sidebar-shell h-full flex flex-col bg-sidebar" [class.sidebar-shell--desktop]="desktopMode()" [class.sidebar-shell--mac]="macNativeChrome()">
+  <span class="sr-only" aria-live="polite">{{ taskOrderAnnouncement() }}</span>
   <!-- Sidebar Header -->
   <div class="sidebar-brand" [class.sidebar-brand--mac-controls-visible]="macTrafficLightsVisible()" (dblclick)="onHeaderDoubleClick($event)">
     <div class="sidebar-brand__content">
@@ -149,27 +150,57 @@
                 <!-- Workspace node -->
                 <div
                   class="sidebar-tree-row w-full text-left group"
+                  [class]="workspace.isDefault ? 'my-1 rounded-lg border border-sidebar-border bg-sidebar-accent/30' : ''"
+                  [style.height]="workspace.isDefault ? '48px' : '40px'"
+                  [style.width]="workspace.isDefault ? 'calc(100% - 48px)' : null"
+                  [style.margin-left]="workspace.isDefault ? '40px' : null"
+                  [class.opacity-40]="draggingTask()?.id === workspace.id"
+                  [class.task-drop-before]="taskDropTarget()?.id === workspace.id && !taskDropTarget()?.after"
+                  [class.task-drop-after]="taskDropTarget()?.id === workspace.id && taskDropTarget()?.after"
+                  [attr.data-task-id]="workspace.id"
+                  [attr.data-default-checkout]="workspace.isDefault ? '' : null"
                   [class.sidebar-tree-row--busy]="
                     isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace)
                   "
                   [class.opacity-60]="isWorkspaceUnlinked(workspace)"
                   [attr.data-workspace-row]="workspace.path"
                   [attr.title]="getWorkspaceTooltip(workspace)"
-                  [style.padding-left]="'48px'"
+                  [style.padding-left]="workspace.isDefault ? '8px' : '48px'"
                   (contextmenu)="openWorkspaceContextMenu($event, repo, workspace, workspaceMenu)"
+                  (dragover)="onTaskDragOver($event, repo, workspace)"
+                  (dragleave)="onTaskDragLeave($event, workspace)"
+                  (drop)="onTaskDrop($event, repo, workspace)"
                 >
-                  <button type="button" class="shrink-0 rounded focus-visible:ring-2 focus-visible:ring-ring" [attr.aria-label]="'Expand ' + workspace.name" [attr.aria-expanded]="isExpanded('workspace-' + repo.id + '-' + workspace.id)" (click)="navService.toggleExpand('workspace-' + repo.id + '-' + workspace.id)"><ng-icon [name]="isExpanded('workspace-' + repo.id + '-' + workspace.id) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!size-4 text-muted-foreground" /></button>
+                  @if (!workspace.isDefault && workspace.id > 0) {
+                    <button
+                      type="button"
+                      class="absolute left-7 flex size-4 cursor-grab items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100 active:cursor-grabbing disabled:cursor-wait"
+                      draggable="true"
+                      [disabled]="orderingRepoId() !== null"
+                      [attr.aria-label]="'Reorder ' + workspace.name"
+                      aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+                      title="Drag to reorder · Alt+↑ / Alt+↓"
+                      [attr.data-task-drag-handle]="workspace.id"
+                      (click)="$event.stopPropagation()"
+                      (dragstart)="onTaskDragStart($event, repo, workspace)"
+                      (dragend)="onTaskDragEnd()"
+                      (keydown.alt.arrowup)="onTaskOrderKeydown($event, repo, workspace, -1)"
+                      (keydown.alt.arrowdown)="onTaskOrderKeydown($event, repo, workspace, 1)"
+                    ><ng-icon name="lucideGripVertical" size="14" /></button>
+                  }
+                  <button type="button" class="shrink-0 rounded focus-visible:ring-2 focus-visible:ring-ring" [attr.aria-label]="'Expand ' + (workspace.isDefault ? 'main checkout' : workspace.name)" [attr.aria-expanded]="isExpanded('workspace-' + repo.id + '-' + workspace.id)" (click)="navService.toggleExpand('workspace-' + repo.id + '-' + workspace.id)"><ng-icon [name]="isExpanded('workspace-' + repo.id + '-' + workspace.id) ? 'lucideChevronDown' : 'lucideChevronRight'" class="!size-4 text-muted-foreground" /></button>
                   <button
                     type="button"
                     class="flex h-full min-w-0 items-center gap-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-wait"
                     [class.flex-1]="editingWorkspaceId() !== workspace.id"
-                    [class.pr-14]="editingWorkspaceId() !== workspace.id"
+                    [class.pr-14]="editingWorkspaceId() !== workspace.id && !workspace.isDefault"
+                    [class.pr-2]="workspace.isDefault"
                     [class.shrink-0]="editingWorkspaceId() === workspace.id"
                     [disabled]="
                       openingWorkspaceRepoId() !== null || isSwitchingWorkspace(repo, workspace)
                     "
                     [attr.aria-expanded]="isExpanded('workspace-' + repo.id + '-' + workspace.id)"
-                    [attr.aria-label]="workspace.name"
+                    [attr.aria-label]="workspace.isDefault ? 'Main checkout' : workspace.name"
                     (click)="onWorkspaceClick(repo, workspace)"
                   >
                     @if (isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace) || workspace.taskState === 'preparing' || workspace.taskState === 'finishing') {
@@ -182,28 +213,15 @@
                         class="!w-4 !h-4 text-destructive shrink-0"
                       />
                     } @else {
-                      <ng-icon name="lucideFolderOpen" class="!w-4 !h-4 text-foreground shrink-0" />
+                      <ng-icon [name]="workspace.isDefault ? 'lucideHouse' : 'lucideFolderOpen'" class="!w-4 !h-4 text-foreground shrink-0" />
                     }
                     @if (editingWorkspaceId() !== workspace.id) {
-                      <span
-                        class="text-sm truncate flex-1 sidebar-label--branch"
+                      <app-task-navigation-label
+                        class="sidebar-label--branch"
+                        [workspace]="workspace"
                         [title]="getWorkspaceTooltip(workspace)"
                         (dblclick)="startEditWorkspace(workspace, $event)"
-                      >
-                        {{ workspace.isDefault ? 'Repository checkout' : workspace.name }}
-                        @if (workspace.currentBranch !== workspace.name) {
-                          <span class="text-xs text-muted-foreground">{{
-                            workspace.currentBranch || 'detached'
-                          }}</span>
-                        }
-                        @if (workspace.taskState === 'preparing') { <span class="text-xs text-muted-foreground">Preparing…</span> } @else if (workspace.taskState === 'failed') { <span class="text-xs text-warning">Needs attention</span> } @else if (isWorkspaceUnlinked(workspace)) { <span class="text-xs text-warning">Environment needed</span> }
-                        @if (workspace.hasConflicts) {
-                          <span class="text-xs text-destructive">Conflicts</span>
-                        }
-                        @if (workspace.pendingStashStatus === 'pending') {
-                          <span class="text-xs text-warning">Stash</span>
-                        }
-                      </span>
+                      />
                     }
                   </button>
                   @if (editingWorkspaceId() === workspace.id) {
@@ -255,8 +273,8 @@
                         [zDropdownMenu]="workspaceMenu"
                         [zDisabled]="openingWorkspaceRepoId() !== null"
                         class="sidebar-branch-action"
-                        title="Task actions"
-                        [attr.aria-label]="'Actions for ' + workspace.name"
+                        [title]="workspace.isDefault ? 'Main checkout actions' : 'Task actions'"
+                        [attr.aria-label]="'Actions for ' + (workspace.isDefault ? 'main checkout' : workspace.name)"
                         [attr.data-workspace-actions-trigger]="workspace.path"
                       >
                         <ng-icon name="lucideEllipsis" class="!w-3.5 !h-3.5" />
@@ -267,10 +285,10 @@
                     #workspaceMenu="zDropdownMenuContent"
                     zAlign="end"
                     class="w-64 max-w-[calc(100vw-2rem)]"
-                    [aria-label]="'Actions for ' + workspace.name"
+                    [aria-label]="'Actions for ' + (workspace.isDefault ? 'main checkout' : workspace.name)"
                   >
                     <z-dropdown-menu-label class="truncate">{{
-                      workspace.name
+                      workspace.isDefault ? 'Main checkout' : workspace.name
                     }}</z-dropdown-menu-label>
                     <z-dropdown-menu-group aria-label="Work">
                       <button
@@ -327,6 +345,7 @@
                         <ng-icon name="lucideFolderPlus" class="!w-4 !h-4" />
                         New session folder…
                       </button>
+                      @if (!workspace.isDefault) {
                       <button
                         type="button"
                         z-dropdown-menu-item
@@ -350,9 +369,15 @@
                         <ng-icon name="lucidePencil" class="!w-4 !h-4" />
                         Rename task…
                       </button>
+                      }
                     </z-dropdown-menu-group>
-                    <z-dropdown-menu-separator />
                     @if (!workspace.isDefault) {
+                      <z-dropdown-menu-separator />
+                      <z-dropdown-menu-group aria-label="Task order">
+                        <button type="button" z-dropdown-menu-item class="w-full text-left" [disabled]="!canMoveTask(repo, workspace, -1)" (click)="moveTask(repo, workspace, -1)"><ng-icon name="lucideChevronUp" class="!size-4" />Move up</button>
+                        <button type="button" z-dropdown-menu-item class="w-full text-left" [disabled]="!canMoveTask(repo, workspace, 1)" (click)="moveTask(repo, workspace, 1)"><ng-icon name="lucideChevronDown" class="!size-4" />Move down</button>
+                      </z-dropdown-menu-group>
+                      <z-dropdown-menu-separator />
                       <z-dropdown-menu-group aria-label="Task lifecycle"><button type="button" z-dropdown-menu-item class="w-full text-left" [disabled]="workspace.taskState === 'preparing' || workspace.taskState === 'finishing'" (click)="taskUi.finish(workspace.id)"><ng-icon name="lucideCheckSquare" class="!size-4" />Finish task</button></z-dropdown-menu-group>
                     }
                   </z-dropdown-menu-content>

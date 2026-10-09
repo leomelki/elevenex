@@ -44,6 +44,7 @@ import { SessionsService } from '../../../shared/services/sessions.service';
 import { TabColorService } from '../../../shared/services/tab-color.service';
 import { Tab, TabService } from '../../session/tab-service';
 import { Sidebar } from './sidebar';
+import { TaskNavigationLabelComponent } from './task-navigation-label.component';
 import { TaskUiService } from '@/features/tasks/task-ui.service';
 import { TasksApiService } from '@/features/tasks/tasks-api.service';
 import { TaskOperationsService } from '@/features/tasks/task-operations.service';
@@ -60,7 +61,7 @@ class MockTrackNativeModalDirective {
 
 describe('Sidebar', () => {
   const taskUiMock = { create: vi.fn(), finish: vi.fn(), finishing: signal(new Set<number>()) };
-  const tasksApiMock = { rename: vi.fn(() => of({})) };
+  const tasksApiMock = { rename: vi.fn(() => of({})), move: vi.fn(() => of({ taskIds: [] as number[] })) };
 
   const defaultWorkspaceKey = 'workspace-1--1169402078';
 
@@ -184,6 +185,8 @@ describe('Sidebar', () => {
     expandedKeys,
     loadTree: vi.fn(),
     refreshTree: vi.fn(),
+    previewTaskOrder: vi.fn(),
+    finishTaskOrder: vi.fn(),
     openSession: vi.fn(),
     addSessionFolder: vi.fn((folder) => {
       tree.update((projects) =>
@@ -444,10 +447,13 @@ describe('Sidebar', () => {
     taskUiMock.create.mockClear();
     taskUiMock.finish.mockClear();
     tasksApiMock.rename.mockClear();
+    tasksApiMock.move.mockReset().mockReturnValue(of({ taskIds: [] }));
+    navigationServiceMock.previewTaskOrder.mockClear();
+    navigationServiceMock.finishTaskOrder.mockClear();
     TestBed.resetTestingModule();
     TestBed.overrideComponent(Sidebar, {
       set: {
-        imports: [NgIcon, MockTrackNativeModalDirective, ...ZardDropdownImports],
+        imports: [NgIcon, TaskNavigationLabelComponent, MockTrackNativeModalDirective, ...ZardDropdownImports],
         schemas: [NO_ERRORS_SCHEMA],
       },
     });
@@ -1310,6 +1316,77 @@ describe('Sidebar', () => {
     expect(workspacesServiceMock.remove).not.toHaveBeenCalled();
     expect(workspacesServiceMock.removeFromProject).not.toHaveBeenCalled();
     expect(fixture.componentInstance.editingWorkspaceId()).toBeNull();
+  });
+
+  it('pins a distinct main checkout first and keeps it out of renaming and reordering', () => {
+    showPersistedWorkspace();
+    const main = { ...makeWorkspace(), isDefault: true, name: 'Old custom name', sortOrder: 99 };
+    const task = { ...makeWorkspace(), id: 3, name: 'Fix search', path: '/task', sortOrder: 1 };
+    tree.update((projects) => projects.map((project) => ({
+      ...project,
+      repos: project.repos.map((repo) => ({ ...repo, workspaces: [task, main] })),
+    })));
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    expect(component.filterWorkspaces(tree()[0].repos[0]).map((item) => item.id)).toEqual([main.id, task.id]);
+    const row = fixture.nativeElement.querySelector('[data-default-checkout]') as HTMLElement;
+    expect(row.textContent).toContain('Main checkout');
+    expect(row.textContent).toContain('Default');
+    expect(row.querySelector('[data-task-drag-handle]')).toBeNull();
+    row.querySelector('app-task-navigation-label')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(component.editingWorkspaceId()).toBeNull();
+    const menu = openWorkspaceMenu(fixture);
+    expect(menu.textContent).not.toContain('Rename task');
+    expect(menu.textContent).not.toContain('Move up');
+    expect(menu.textContent).not.toContain('Finish task');
+  });
+
+  it('saves a keyboard reorder optimistically and prevents overlapping requests', () => {
+    showPersistedWorkspace();
+    const first = makeWorkspace();
+    const second = { ...first, id: 3, name: 'Second task', path: '/second' };
+    tree.update((projects) => projects.map((project) => ({
+      ...project,
+      repos: project.repos.map((repo) => ({ ...repo, workspaces: [first, second] })),
+    })));
+    const response = new Subject<{ taskIds: number[] }>();
+    tasksApiMock.move.mockReturnValue(response);
+    const fixture = createSidebar();
+    const handle = fixture.nativeElement.querySelector('[data-task-drag-handle="3"]') as HTMLButtonElement;
+    handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true, bubbles: true }));
+    expect(tasksApiMock.move).toHaveBeenCalledWith(1, second.id, first.id);
+    expect(navigationServiceMock.previewTaskOrder).toHaveBeenCalledWith(1, [second.id, first.id]);
+    fixture.componentInstance.moveTask(tree()[0].repos[0], first, 1);
+    expect(tasksApiMock.move).toHaveBeenCalledTimes(1);
+    response.next({ taskIds: [second.id, first.id] });
+    response.complete();
+    expect(fixture.componentInstance.orderingRepoId()).toBeNull();
+    expect(fixture.componentInstance.taskOrderAnnouncement()).toContain('Second task moved to position 1');
+    expect(navigationServiceMock.finishTaskOrder).toHaveBeenCalledOnce();
+  });
+
+  it('reorders a dragged task after its target while leaving the main checkout fixed', () => {
+    showPersistedWorkspace();
+    const first = makeWorkspace();
+    const second = { ...first, id: 3, name: 'Second task', path: '/second' };
+    const main = { ...first, id: 4, isDefault: true, path: '/main' };
+    tree.update((projects) => projects.map((project) => ({
+      ...project,
+      repos: project.repos.map((repo) => ({ ...repo, workspaces: [main, first, second] })),
+    })));
+    const fixture = createSidebar();
+    const component = fixture.componentInstance;
+    const repo = tree()[0].repos[0];
+    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as DragEvent;
+    component.draggingTask.set({ repoId: repo.id, id: first.id });
+    component.taskDropTarget.set({ id: main.id, after: false });
+    component.onTaskDrop(event, repo, main);
+    expect(tasksApiMock.move).not.toHaveBeenCalled();
+    component.taskDropTarget.set({ id: second.id, after: true });
+    component.onTaskDrop(event, repo, second);
+    expect(tasksApiMock.move).toHaveBeenCalledWith(repo.id, first.id, null);
+    expect(navigationServiceMock.previewTaskOrder).toHaveBeenCalledWith(repo.id, [second.id, first.id]);
+    expect(component.draggingTask()).toBeNull();
   });
 
   it('focuses the inline name input when renaming through the menu', () => {

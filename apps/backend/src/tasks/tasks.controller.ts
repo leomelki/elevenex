@@ -30,6 +30,9 @@ class FinishTaskDto {
 class TaskDraftDto {
   @IsString() @MaxLength(100000) text!: string;
 }
+class MoveTaskDto {
+  @IsOptional() @IsInt() @Min(1) beforeTaskId?: number | null;
+}
 class RetryTaskDto {
   @IsString() @IsOptional() @MaxLength(160) name?: string;
   @IsString() @IsOptional() @MaxLength(240) branchName?: string;
@@ -75,6 +78,13 @@ export class TasksController {
     @Body() input: CreateTaskDto,
   ) {
     return this.tasks.create(+repoId, input);
+  }
+  @Patch('repos/:repoId/tasks/:taskId/order') move(
+    @Param('repoId') repoId: string,
+    @Param('taskId') taskId: string,
+    @Body() input: MoveTaskDto,
+  ) {
+    return this.tasks.move(+repoId, +taskId, input.beforeTaskId);
   }
   @Get('tasks/:id') get(@Param('id') id: string) {
     return this.tasks.get(+id);

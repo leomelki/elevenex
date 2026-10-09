@@ -1,174 +1,196 @@
 <form
   class="space-y-5"
-  (submit)="$event.preventDefault(); create()"
+  (submit)="$event.preventDefault(); submit()"
   cdkTrapFocus
   [cdkTrapFocusAutoCapture]="true"
   data-task-create
+  [attr.data-task-step]="step()"
 >
-  <div>
-    <h2 class="text-xl font-semibold tracking-tight">New task</h2>
+  <header>
+    <p class="mb-2 text-xs font-medium text-muted-foreground">{{ data.repoName }}</p>
+    <h2 class="text-xl font-semibold tracking-tight">
+      {{
+        step() === 'setup' ? 'New task' : step() === 'branch' ? 'Choose a branch' : 'Choose a base'
+      }}
+    </h2>
     <p class="mt-1 text-sm text-muted-foreground">
-      {{ data.repoName }} <span aria-hidden="true">·</span> Build, investigate, or review.
+      @if (step() === 'setup') {
+        Give your task a name and choose where it runs.
+      } @else if (step() === 'branch') {
+        Create a branch or use an existing one.
+      } @else {
+        Start <span class="font-medium text-foreground break-all">{{ branch() }}</span> from the
+        default branch, or choose another.
+      }
     </p>
-  </div>
-  <div
-    class="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1"
-    role="group"
-    aria-label="Task starting point"
-  >
-    <button
-      z-button
-      type="button"
-      [zType]="mode() === 'new' ? 'outline' : 'ghost'"
-      [attr.aria-pressed]="mode() === 'new'"
-      (click)="setMode('new')"
-    >
-      New branch
-    </button>
-    <button
-      z-button
-      type="button"
-      [zType]="mode() === 'existing' ? 'outline' : 'ghost'"
-      [attr.aria-pressed]="mode() === 'existing'"
-      (click)="setMode('existing')"
-    >
-      Existing branch
-    </button>
-  </div>
-  <div class="space-y-2">
-    <label for="task-name" class="text-sm font-medium"
-      >Task name <span class="font-normal text-muted-foreground">optional</span></label
-    >
-    <input
-      z-input
-      id="task-name"
-      maxlength="160"
-      placeholder="What are you working on?"
-      [value]="name()"
-      (input)="setName($any($event.target).value)"
-      cdkFocusInitial
-    />
-  </div>
-  @if (mode() === 'new') {
+    <ol class="mt-4 flex items-center gap-2 text-xs" aria-label="Task creation steps">
+      @for (item of ['setup', 'branch', 'base']; track item; let i = $index) {
+        <li class="flex items-center gap-2" [attr.aria-current]="step() === item ? 'step' : null">
+          @if (i > 0) {
+            <span class="h-px w-5 bg-border" aria-hidden="true"></span>
+          }
+          <span
+            class="flex size-5 items-center justify-center rounded-full bg-muted text-muted-foreground"
+            [class.bg-primary]="step() === item"
+            [class.text-primary-foreground]="step() === item"
+            >{{ i + 1 }}</span
+          >
+          <span
+            [class.text-foreground]="step() === item"
+            [class.font-medium]="step() === item"
+            class="text-muted-foreground"
+            >{{ i === 0 ? 'Task' : i === 1 ? 'Branch' : 'Base' }}</span
+          >
+        </li>
+      }
+    </ol>
+  </header>
+  @if (step() === 'setup') {
     <div class="space-y-2">
-      <label for="task-new-branch" class="text-sm font-medium">Branch name</label>
+      <label for="task-name" class="text-sm font-medium"
+        >Task name <span class="font-normal text-muted-foreground">optional</span></label
+      >
       <input
         z-input
-        id="task-new-branch"
-        maxlength="240"
-        placeholder="e.g. investigate-slow-search"
-        spellcheck="false"
-        [value]="branch()"
-        (input)="setBranch($any($event.target).value)"
+        id="task-name"
+        maxlength="160"
+        placeholder="What are you working on?"
+        [value]="name()"
+        (input)="setName($any($event.target).value)"
+        cdkFocusInitial
       />
-      <p class="text-xs text-muted-foreground">Generated from the task name. You can edit it.</p>
+      <p class="text-xs text-muted-foreground">We’ll suggest a branch name from this.</p>
     </div>
     <div class="space-y-2">
-      <div class="flex items-center justify-between">
-        <span class="text-sm font-medium">Start from</span>
-        <button
-          z-button
-          zType="ghost"
-          zSize="sm"
-          type="button"
-          (click)="basePicker.set(!basePicker())"
-          [attr.aria-expanded]="basePicker()"
-        >
-          {{ basePicker() ? 'Done' : 'Change' }}
-        </button>
-      </div>
-      @if (basePicker() || !base()) {
-        <app-task-branch-picker
-          [repoId]="data.repoId"
-          [selected]="base()"
-          label="Base branch"
-          (picked)="
-            base.set(($event.isRemote ? 'refs/remotes/' : 'refs/heads/') + $event.name);
-            basePicker.set(false)
-          "
-        />
-        <input
-          z-input
-          aria-label="Base reference"
-          placeholder="Or enter a branch, tag, or commit"
-          [value]="base()"
-          (input)="base.set($any($event.target).value)"
-        />
-      } @else {
-        <p
-          class="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm font-medium break-all"
-        >
-          {{ base() | branchRef }}
-        </p>
-      }
-      <p class="text-xs text-muted-foreground">Remote branches are refreshed before setup.</p>
-    </div>
-  } @else {
-    <app-task-branch-picker
-      [repoId]="data.repoId"
-      [selected]="branch()"
-      (picked)="setBranch(($event.isRemote ? 'refs/remotes/' : 'refs/heads/') + $event.name)"
-      (confirmed)="create()"
-    />
-    <p class="text-xs text-muted-foreground">
-      Press Enter to select a branch, then Enter again to create your task.
-    </p>
-  }
-  <div class="rounded-lg border border-border bg-muted/20 px-3 py-3">
-    <div class="flex items-center justify-between gap-2">
-      <div>
-        <p class="text-sm font-medium">Worktree</p>
-        <p class="text-xs text-muted-foreground">
-          {{
-            environment() === 'automatic'
-              ? 'Chosen automatically. Your other tasks keep their own checkouts.'
-              : 'Custom worktree selection'
-          }}
-        </p>
-      </div>
-      <button
-        z-button
-        zType="ghost"
-        zSize="sm"
-        type="button"
-        (click)="showOptions()"
-        [attr.aria-expanded]="options()"
-      >
-        Options
-      </button>
-    </div>
-    @if (options()) {
+      <p id="task-worktree-label" class="text-sm font-medium">Worktree</p>
       <app-option-select
-        class="mt-3"
         ariaLabel="Use worktree"
         [options]="environmentOptions"
         [value]="environment()"
         (valueChange)="selectEnvironment($event)"
       />
+      <p class="text-xs text-muted-foreground">
+        {{
+          environment() === 'automatic'
+            ? 'Reuse a clean available worktree, or create one. Other tasks keep their own checkouts.'
+            : environment() === 'new'
+              ? 'Create a separate checkout for this task.'
+              : 'Choose a clean, unowned checkout. Unavailable worktrees are shown with their status.'
+        }}
+      </p>
       @if (environment() === 'existing') {
         <app-option-select
-          class="mt-2"
           ariaLabel="Existing worktree"
           placeholder="Choose an available worktree…"
+          [emptyText]="environmentsLoading() ? 'Loading worktrees…' : 'No worktrees found'"
           [options]="availableEnvironments()"
           [value]="worktreeId()?.toString() || ''"
           (valueChange)="worktreeId.set(+$event)"
         />
+        @if (noAvailableWorktrees()) {
+          <p role="status" class="text-xs text-warning">
+            No clean, unowned worktree is available. Choose Automatic or create a new one.
+          </p>
+        }
       }
       @if (environmentsError()) {
-        <p role="status" class="mt-2 text-xs text-warning">{{ environmentsError() }}</p>
+        <p role="status" class="text-xs text-warning">{{ environmentsError() }}</p>
       }
+    </div>
+    @if (data.branch) {
+      <p class="rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm">
+        Branch: <span class="font-medium">{{ data.branch | branchRef }}</span>
+      </p>
     }
-  </div>
+  } @else {
+    <div
+      class="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
+    >
+      <span class="min-w-0 flex-1 truncate font-medium text-foreground">{{
+        name() || 'Name from branch'
+      }}</span>
+      <span class="max-w-[50%] shrink-0 truncate" [title]="worktreeLabel()">{{
+        worktreeLabel()
+      }}</span>
+    </div>
+    @if (step() === 'branch') {
+      <app-task-branch-picker
+        [repoId]="data.repoId"
+        [selected]="mode() === 'existing' ? branch() : ''"
+        [initialQuery]="branchQuery()"
+        [allowCreate]="true"
+        [autofocus]="true"
+        [disabled]="busy()"
+        [selectionPending]="suggestionLoading()"
+        (queryChange)="editBranchQuery($event)"
+        (createRequested)="chooseNewBranch($event)"
+        (picked)="chooseExistingBranch($event)"
+        (confirmed)="create()"
+      />
+      @if (suggestionLoading()) {
+        <p role="status" class="text-xs text-muted-foreground">
+          Checking the suggested branch name…
+        </p>
+      }
+      <p class="text-xs text-muted-foreground">Existing branches skip the base step.</p>
+    } @else {
+      @if (!customReference()) {
+        <app-task-branch-picker
+          [repoId]="data.repoId"
+          label="Base branch"
+          [selected]="base()"
+          [recommendedRef]="defaultBase()"
+          [initialQuery]="baseQuery()"
+          [autofocus]="true"
+          [disabled]="busy() || defaultsLoading()"
+          (queryChange)="baseQuery.set($event)"
+          (referencePicked)="chooseBase($event)"
+          (picked)="chooseBase(($event.isRemote ? 'refs/remotes/' : 'refs/heads/') + $event.name)"
+          (confirmed)="create()"
+        />
+      } @else {
+        <div class="space-y-2">
+          <label for="task-base-ref" class="text-sm font-medium">Branch, tag, or commit</label>
+          <input
+            z-input
+            id="task-base-ref"
+            placeholder="Enter a reference"
+            [value]="base()"
+            [disabled]="busy()"
+            (input)="base.set($any($event.target).value)"
+          />
+        </div>
+      }
+      <div class="flex items-center justify-between gap-2">
+        <p class="text-xs text-muted-foreground">Remote branches are refreshed before setup.</p>
+        <button
+          z-button
+          zType="ghost"
+          zSize="sm"
+          type="button"
+          [zDisabled]="busy()"
+          (click)="toggleCustomReference()"
+        >
+          {{ customReference() ? 'Choose a branch' : 'Use a tag or commit' }}
+        </button>
+      </div>
+    }
+  }
   @if (error()) {
     <p role="alert" class="text-sm text-destructive">{{ error() }}</p>
   }
-  <footer class="flex items-center justify-end gap-2 border-t border-border pt-4">
-    <button z-button zType="ghost" type="button" (click)="cancel()" [zDisabled]="busy()">
-      Cancel
-    </button>
-    <button z-button type="submit" [zDisabled]="!canCreate()" data-create-task-submit>
-      {{ busy() ? 'Creating…' : 'Create task' }}
+  <footer class="flex items-center justify-between gap-2 border-t border-border pt-4">
+    @if (step() === 'setup') {
+      <button z-button zType="ghost" type="button" (click)="cancel()" [zDisabled]="busy()">
+        Cancel
+      </button>
+    } @else {
+      <button z-button zType="ghost" type="button" (click)="back()" [zDisabled]="busy()">
+        Back
+      </button>
+    }
+    <button z-button type="submit" [zDisabled]="!canSubmit()" data-create-task-submit>
+      {{ submitLabel() }}
     </button>
   </footer>
 </form>

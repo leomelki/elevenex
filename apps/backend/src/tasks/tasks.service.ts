@@ -9,7 +9,18 @@ import {
   OnApplicationBootstrap,
   Optional,
 } from '@nestjs/common';
-import { and, desc, eq, isNull, isNotNull, lt, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  isNull,
+  isNotNull,
+  lt,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
@@ -24,7 +35,9 @@ import { TaskGitService, taskBranchSlug } from './task-git.service.js';
 import { TaskWorktreeAllocator } from './task-worktree-allocator.service.js';
 import { TaskSetup } from './task.types.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
-import { workspaceCheckoutError } from '../workspaces/workspace-ownership.js';
+import { refreshWorkspaceCheckout } from '../workspaces/workspace-ownership.js';
+import { compareWorkspaceOrder } from '../workspaces/workspace-order.js';
+import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
 
 type Task = typeof schema.workspaces.$inferSelect;
 type Repo = typeof schema.repos.$inferSelect;
@@ -113,6 +126,7 @@ export class TasksService implements OnApplicationBootstrap {
 
   async get(id: number) {
     let task = await this.record(id);
+    let observationError: Record<string, unknown> | null = null;
     // Migrated tasks retain their identity. Observe their branch once, on demand,
     // rather than scanning every checkout during backend startup.
     if (
@@ -126,42 +140,76 @@ export class TasksService implements OnApplicationBootstrap {
       try {
         const [branch, head] = await Promise.all([
           worktreeSimpleGit(task.path)
-            .raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])
-            .catch(() => ''),
+            .revparse(['--abbrev-ref', 'HEAD'])
+            .then((value) => (value.trim() === 'HEAD' ? '' : value.trim())),
           this.git.resolve(task.path, 'HEAD'),
         ]);
-        await worktreeSimpleGit(task.path).raw([
-          'update-ref',
-          `refs/elevenex/tasks/${id}/start`,
-          head,
-        ]);
-        await this.update(id, {
-          taskBranch: branch.trim() || null,
-          sourceRef: branch.trim() || head,
-          startingCommit: task.startingCommit ?? head,
-          checkoutMode: branch.trim() ? 'branch' : 'snapshot',
-        });
+        // Detached HEAD can be temporary (rebase/bisect). Defer legacy branch
+        // identity until it is attached, rather than permanently labelling it a snapshot.
+        if (branch.trim()) {
+          await worktreeSimpleGit(task.path).raw([
+            'update-ref',
+            `refs/elevenex/tasks/${id}/start`,
+            head,
+          ]);
+          await this.db
+            .update(schema.workspaces)
+            .set({
+              taskBranch: branch.trim() || null,
+              sourceRef: branch.trim() || head,
+              startingCommit: task.startingCommit ?? head,
+              checkoutMode: branch.trim() ? 'branch' : 'snapshot',
+            })
+            .where(
+              and(
+                eq(schema.workspaces.id, id),
+                eq(schema.workspaces.path, task.path),
+                eq(schema.workspaces.taskState, 'ready'),
+                eq(schema.workspaces.linkStatus, 'linked'),
+                isNull(schema.workspaces.archivedAt),
+                isNull(schema.workspaces.taskBranch),
+                isNull(schema.workspaces.startingCommit),
+                isNull(schema.workspaces.taskConfig),
+              ),
+            );
+        }
       } catch {
-        await this.update(id, {
-          taskState: 'failed',
-          taskError: JSON.stringify({
-            code: 'environment_missing',
-            message:
-              'This task’s checkout is unavailable. Choose a branch and retry setup.',
-          }),
-        });
+        if (await isMissingWorktreePath(task.path)) {
+          await this.db
+            .update(schema.workspaces)
+            .set({
+              taskState: 'failed',
+              taskError: JSON.stringify({
+                code: 'environment_missing',
+                message:
+                  'This task’s checkout is unavailable. Choose a branch and retry setup.',
+              }),
+            })
+            .where(
+              and(
+                eq(schema.workspaces.id, id),
+                eq(schema.workspaces.path, task.path),
+                eq(schema.workspaces.taskState, 'ready'),
+                isNull(schema.workspaces.archivedAt),
+              ),
+            );
+        } else {
+          observationError = {
+            code: 'checkout_unavailable',
+            message: 'Could not verify the task worktree. Try again.',
+          };
+        }
       }
       task = await this.record(id);
     }
-    const checkoutError = await workspaceCheckoutError(task);
-    if (checkoutError) {
-      await this.update(
-        id,
-        { taskState: 'failed', taskError: JSON.stringify(checkoutError) },
-        'ready',
-      );
-      task = await this.record(id);
-    }
+    const checked = await refreshWorkspaceCheckout(this.db, task);
+    if (
+      checked.workspace &&
+      (checked.workspace.taskState !== task.taskState ||
+        checked.workspace.taskError !== task.taskError)
+    )
+      this.navigationEvents?.invalidate();
+    task = checked.workspace ?? (await this.record(id));
     const sessions = await this.db
       .select()
       .from(schema.sessions)
@@ -172,8 +220,9 @@ export class TasksService implements OnApplicationBootstrap {
         ),
       )
       .orderBy(schema.sessions.id);
-    let error: Record<string, unknown> | null = null;
-    if (task.taskError) {
+    let error: Record<string, unknown> | null =
+      checked.error ?? observationError;
+    if (task.taskError && !error) {
       try {
         error = JSON.parse(task.taskError);
       } catch {
@@ -209,6 +258,24 @@ export class TasksService implements OnApplicationBootstrap {
     limit = 50,
     cursor?: number,
   ) {
+    const position = sql<number>`coalesce(${schema.workspaces.sortOrder}, ${schema.workspaces.id})`;
+    const cursorRow =
+      cursor && state === 'active'
+        ? (
+            await this.db
+              .select({ position })
+              .from(schema.workspaces)
+              .where(
+                and(
+                  eq(schema.workspaces.id, cursor),
+                  eq(schema.workspaces.repoId, repoId),
+                  eq(schema.workspaces.isDefault, false),
+                  isNull(schema.workspaces.archivedAt),
+                ),
+              )
+          )[0]
+        : undefined;
+    if (cursor && state === 'active' && !cursorRow) return [];
     return this.db
       .select()
       .from(schema.workspaces)
@@ -219,16 +286,30 @@ export class TasksService implements OnApplicationBootstrap {
           state === 'finished'
             ? isNotNull(schema.workspaces.archivedAt)
             : isNull(schema.workspaces.archivedAt),
-          cursor ? lt(schema.workspaces.id, cursor) : undefined,
+          cursor
+            ? state === 'finished'
+              ? lt(schema.workspaces.id, cursor)
+              : or(
+                  gt(position, cursorRow!.position),
+                  and(
+                    eq(position, cursorRow!.position),
+                    gt(schema.workspaces.id, cursor),
+                  ),
+                )
+            : undefined,
         ),
       )
-      .orderBy(desc(schema.workspaces.id))
+      .orderBy(
+        ...(state === 'finished'
+          ? [desc(schema.workspaces.id)]
+          : [asc(position), asc(schema.workspaces.id)]),
+      )
       .limit(Math.min(100, Math.max(1, limit || 50)));
   }
 
   async defaults(repoId: number, name = '') {
     const repo = await this.repo(repoId);
-    const baseRef = await this.git.defaultBase(repo.path, repo.taskBaseRef);
+    const baseRef = await this.git.defaultBase(repo.path);
     let branchName = taskBranchSlug(name);
     if (name.trim()) {
       const stem = branchName;
@@ -320,45 +401,13 @@ export class TasksService implements OnApplicationBootstrap {
       throw new ConflictException(
         'Finish this task again to complete process cleanup.',
       );
+    // Old branch-mismatch failures recover without checking out or changing files.
+    const checked = await refreshWorkspaceCheckout(this.db, task);
     if (
-      task.taskError &&
-      JSON.parse(task.taskError).code === 'branch_changed'
-    ) {
-      if (Object.keys(patch).length)
-        throw new ConflictException(
-          'Restore this task’s checkout first. Start a separate task for another branch.',
-        );
-      const repo = await this.repo(task.repoId);
-      const key = await this.git.repositoryKey(repo.path);
-      return this.git.exclusive(key, async () => {
-        const current = await this.record(id);
-        await this.projects.assertProjectIsActive(repo.projectId);
-        if (current.archivedAt)
-          throw new ConflictException('Reopen this task first.');
-        if (
-          current.taskState !== 'failed' ||
-          !current.taskError ||
-          JSON.parse(current.taskError).code !== 'branch_changed'
-        )
-          return this.get(id);
-        const running = await this.finishPreview(id);
-        if (running.agents || running.terminals || running.actions)
-          throw new ConflictException(
-            'Stop running agents, terminals, and actions before restoring this checkout.',
-          );
-        await worktreeSimpleGit(current.path).raw(
-          current.checkoutMode === 'snapshot'
-            ? [
-                'checkout',
-                '--detach',
-                current.finalCommit || current.startingCommit!,
-              ]
-            : ['checkout', current.taskBranch!],
-        );
-        await this.update(id, { taskState: 'ready', taskError: null });
-        return this.get(id);
-      });
-    }
+      checked.workspace?.taskState === 'ready' &&
+      checked.workspace.linkStatus === 'linked'
+    )
+      return this.get(id);
     const saved: TaskSetup = task.taskConfig
       ? JSON.parse(task.taskConfig)
       : {
@@ -404,6 +453,57 @@ export class TasksService implements OnApplicationBootstrap {
       name: name.trim() || task.sourceRef || task.taskBranch || task.name,
     });
     return this.get(id);
+  }
+
+  async move(repoId: number, taskId: number, beforeTaskId?: number | null) {
+    const repo = await this.repo(repoId);
+    await this.projects.assertProjectIsActive(repo.projectId);
+    // A single SQLite transaction resolves the latest order, including tasks
+    // created since the client loaded. No filesystem or network work is held.
+    const taskIds = this.db.transaction((tx) => {
+      const tasks = tx
+        .select({
+          id: schema.workspaces.id,
+          isDefault: schema.workspaces.isDefault,
+          sortOrder: schema.workspaces.sortOrder,
+        })
+        .from(schema.workspaces)
+        .where(
+          and(
+            eq(schema.workspaces.repoId, repoId),
+            eq(schema.workspaces.isDefault, false),
+            isNull(schema.workspaces.archivedAt),
+          ),
+        )
+        .all()
+        .sort(compareWorkspaceOrder);
+      const task = tasks.find((candidate) => candidate.id === taskId);
+      if (!task)
+        throw new BadRequestException(
+          'Only active tasks in this repository can be reordered.',
+        );
+      if (beforeTaskId === taskId) return tasks.map((item) => item.id);
+      const ordered = tasks.filter((item) => item.id !== taskId);
+      const index =
+        beforeTaskId == null
+          ? ordered.length
+          : ordered.findIndex((item) => item.id === beforeTaskId);
+      if (index < 0)
+        throw new ConflictException(
+          'The destination task is no longer available. Refresh and try again.',
+        );
+      ordered.splice(index, 0, task);
+      for (const [position, item] of ordered.entries()) {
+        if (item.sortOrder === position + 1) continue;
+        tx.update(schema.workspaces)
+          .set({ sortOrder: position + 1 })
+          .where(eq(schema.workspaces.id, item.id))
+          .run();
+      }
+      return ordered.map((item) => item.id);
+    });
+    this.navigationEvents?.invalidate();
+    return { taskIds };
   }
 
   async saveDraft(id: number, text: string) {
@@ -504,8 +604,7 @@ export class TasksService implements OnApplicationBootstrap {
     if (!initialSetup.resolvedCommit) {
       const base =
         initialSetup.mode === 'new'
-          ? initialSetup.baseRef ||
-            (await this.git.defaultBase(repo.path, repo.taskBaseRef))
+          ? initialSetup.baseRef || (await this.git.defaultBase(repo.path))
           : initialSetup.branchName;
       if (!base)
         throw new BadRequestException(
@@ -530,8 +629,7 @@ export class TasksService implements OnApplicationBootstrap {
       if (!setup.resolvedCommit) {
         const base =
           setup.mode === 'new'
-            ? setup.baseRef ||
-              (await this.git.defaultBase(repo.path, repo.taskBaseRef))
+            ? setup.baseRef || (await this.git.defaultBase(repo.path))
             : setup.branchName;
         if (!base)
           throw new BadRequestException(
@@ -681,11 +779,6 @@ export class TasksService implements OnApplicationBootstrap {
         `refs/elevenex/tasks/${id}/start`,
         current.startingCommit ?? setup.resolvedCommit!,
       ]);
-      if (setup.mode === 'new' && setup.baseRef)
-        await this.db
-          .update(schema.repos)
-          .set({ taskBaseRef: setup.baseRef })
-          .where(eq(schema.repos.id, repo.id));
       await this.db
         .delete(schema.worktreeContexts)
         .where(
@@ -808,6 +901,7 @@ export class TasksService implements OnApplicationBootstrap {
         let released = current.linkStatus !== 'linked';
         let finalCommit = current.finalCommit;
         let taskBranch = current.taskBranch;
+        let checkoutMode = current.checkoutMode;
         if (!released && current.path) {
           const pool = current.poolWorktreeId
             ? (
@@ -819,20 +913,11 @@ export class TasksService implements OnApplicationBootstrap {
             : null;
           try {
             const status = await this.git.status(current.path);
-            const checkoutMatches =
-              current.checkoutMode === 'snapshot'
-                ? status.branch === null
-                : !current.taskBranch || status.branch === current.taskBranch;
-            // A checkout changed outside Elevenex still belongs to this task.
-            // Retain it, and never record another branch's HEAD as its result.
-            finalCommit = checkoutMatches
-              ? status.head
-              : current.taskBranch
-                ? await this.git
-                    .resolve(repo.path, `refs/heads/${current.taskBranch}`)
-                    .catch(() => current.finalCommit ?? current.startingCommit)
-                : (current.finalCommit ?? current.startingCommit);
-            taskBranch = taskBranch ?? status.branch;
+            // Tasks own a worktree, not a fixed branch. Save the state the
+            // user/agent left behind so reopening resumes that work.
+            finalCommit = status.head;
+            taskBranch = status.branch;
+            checkoutMode = status.branch ? 'branch' : 'snapshot';
             if (finalCommit)
               await worktreeSimpleGit(repo.path).raw([
                 'update-ref',
@@ -840,10 +925,10 @@ export class TasksService implements OnApplicationBootstrap {
                 finalCommit,
               ]);
             if (
-              checkoutMatches &&
               pool?.managed &&
               !status.dirty &&
-              !status.conflicts
+              !status.conflicts &&
+              !(await this.git.hasOperationInProgress(current.path))
             ) {
               await worktreeSimpleGit(current.path).raw([
                 'checkout',
@@ -867,6 +952,7 @@ export class TasksService implements OnApplicationBootstrap {
           taskState: 'ready',
           finalCommit,
           taskBranch,
+          checkoutMode,
           sourceRef: current.sourceRef ?? taskBranch,
           ...(released
             ? {

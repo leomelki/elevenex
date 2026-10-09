@@ -7,6 +7,7 @@ import { of, Subject } from 'rxjs';
 import { NavigationProject } from '../models/navigation-tree.model';
 import { NavigationService } from './navigation.service';
 import { windowScopedKey } from './scoped-storage';
+import { getBackendOrigin } from '../runtime/runtime-config';
 import { ClaudeStatusService } from './claude-status.service';
 
 describe('NavigationService', () => {
@@ -415,6 +416,31 @@ describe('NavigationService', () => {
 
     expect(service.tree()[0].repos[0].workspaces![0].sessions).toEqual([]);
     expect(service.tree()[0].repos[0].workspaces![0].head).toBe('fresh-head');
+  });
+
+  it('keeps optimistic task order through stale tree responses and then accepts the saved order', () => {
+    const original = makeTree([]);
+    const repo = original[0].repos[0];
+    const main = repo.workspaces![0];
+    repo.workspaces!.push(
+      { ...main, id: 4, name: 'First', isDefault: false, sortOrder: 1 },
+      { ...main, id: 5, name: 'Second', isDefault: false, sortOrder: 2 },
+    );
+    const pendingLight = new Subject<NavigationProject[]>();
+    httpGetMock.mockImplementation((url) => url.endsWith('/light') ? pendingLight : of(original));
+    service.tree.set(original);
+    service.loadTree();
+    service.previewTaskOrder(repo.id, [5, 4]);
+    pendingLight.next(original);
+    expect(service.tree()[0].repos[0].workspaces!.find((item) => item.id === 5)!.sortOrder).toBe(1);
+    expect(service.tree()[0].repos[0].workspaces!.find((item) => item.id === 4)!.sortOrder).toBe(2);
+    const saved = structuredClone(original);
+    saved[0].repos[0].workspaces![1].sortOrder = 3;
+    saved[0].repos[0].workspaces![2].sortOrder = 4;
+    httpGetMock.mockReturnValue(of(saved));
+    service.finishTaskOrder(repo.id, getBackendOrigin());
+    expect(service.tree()[0].repos[0].workspaces![1].sortOrder).toBe(3);
+    expect(service.tree()[0].repos[0].workspaces![2].sortOrder).toBe(4);
   });
 
   it('refreshes once per tree invalidation without depending on tree responses', () => {

@@ -27,6 +27,7 @@ import { Project } from '@/shared/models/project.model';
 import type { ReviewChat } from '@/shared/models/review-chat.model';
 import { SshForward } from '@/shared/models/ssh-forward.model';
 import { getElectronWindowControlsApi } from '@/shared/runtime/electron-window-controls';
+import { getBackendOrigin } from '@/shared/runtime/runtime-config';
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { CursorService } from '@/shared/services/cursor.service';
@@ -73,6 +74,8 @@ import {
   lucideFolderOpen,
   lucideFolderPlus,
   lucideGitBranch,
+  lucideGripVertical,
+  lucideHouse,
   lucideMessageCircleDashed,
   lucideMessagesSquare,
   lucideMoon,
@@ -88,7 +91,7 @@ import {
   lucideTrash2,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
-import { firstValueFrom, Observable } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 import { BranchInfo } from '../../../shared/models/branch.model';
 import {
   NavigationBranch,
@@ -105,6 +108,7 @@ import { TabService } from '../../session/tab-service';
 import { BranchSearch } from '../branch-search/branch-search';
 import { EnvironmentSwitcherComponent } from '../environment-switcher/environment-switcher.component';
 import { WorktreeSheet } from '../worktree-sheet/worktree-sheet';
+import { TaskNavigationLabelComponent } from './task-navigation-label.component';
 
 @Component({
   selector: 'app-sidebar',
@@ -112,6 +116,7 @@ import { WorktreeSheet } from '../worktree-sheet/worktree-sheet';
     NgIcon,
     RouterLink,
     TaskHistoryComponent,
+    TaskNavigationLabelComponent,
     WorktreeSheet,
     BranchSearch,
     ZardInputDirective,
@@ -134,6 +139,8 @@ import { WorktreeSheet } from '../worktree-sheet/worktree-sheet';
       lucideEllipsis,
       lucideFolder,
       lucideGitBranch,
+      lucideGripVertical,
+      lucideHouse,
       lucideFolderOpen,
       lucideTerminal,
       lucideCircleDashed,
@@ -203,6 +210,16 @@ export class Sidebar implements OnInit, OnDestroy {
   private host: ElementRef<HTMLElement> = inject(ElementRef);
   private readonly workspaceDropdown = inject(ZardDropdownService);
   readonly timeTick = signal(Date.now());
+  readonly orderingRepoId = signal<number | null>(null);
+  readonly draggingTask = signal<{ repoId: number; id: number } | null>(null);
+  readonly taskDropTarget = signal<{ id: number; after: boolean } | null>(null);
+  readonly taskOrderAnnouncement = signal('');
+  // Navigation updates replace repo records. Cache positions so menu checks
+  // stay constant-time even when a repository has many tasks.
+  private readonly taskOrderCache = new WeakMap<NavigationRepo, {
+    tasks: NavigationWorkspace[];
+    indexes: Map<number, number>;
+  }>();
 
   activeSessionId = this.tabService.activeSessionId;
   /** Review discussions for the active session, for the Discussions node. */
@@ -537,7 +554,7 @@ export class Sidebar implements OnInit, OnDestroy {
 
   getWorkspaceTooltip(workspace: NavigationWorkspace): string {
     return [
-      workspace.isDefault ? 'Repository checkout' : workspace.name,
+      workspace.isDefault ? 'Main checkout · default repository working directory' : workspace.name,
       `Branch: ${workspace.currentBranch || 'detached'}`,
       workspace.linkStatus === 'unlinked' ? 'Status: unlinked from worktree' : 'Status: linked',
       `Path: ${workspace.path}`,
@@ -1139,6 +1156,7 @@ export class Sidebar implements OnInit, OnDestroy {
     event.stopPropagation();
     if (
       this.workspaceRenameBusyId() !== null ||
+      workspace.isDefault ||
       workspace.id <= 0 ||
       workspace.isMissing ||
       this.isWorkspaceUnlinked(workspace)
@@ -1160,7 +1178,7 @@ export class Sidebar implements OnInit, OnDestroy {
   saveWorkspaceName(repo: NavigationRepo, workspace: NavigationWorkspace, event: Event) {
     event.preventDefault();
     event.stopPropagation();
-    if (this.workspaceRenameBusyId() !== null) return;
+    if (workspace.isDefault || this.workspaceRenameBusyId() !== null) return;
 
     const name = (event.target as HTMLInputElement).value.trim();
     if (!name || name === workspace.name) {
@@ -1169,8 +1187,7 @@ export class Sidebar implements OnInit, OnDestroy {
     }
 
     this.workspaceRenameBusyId.set(workspace.id);
-    const rename: Observable<unknown> = workspace.isDefault ? this.workspacesService.rename(repo.id, workspace.id, name) : this.tasksApi.rename(workspace.id, name);
-    rename.subscribe({
+    this.tasksApi.rename(workspace.id, name).subscribe({
       next: () => {
         this.workspaceRenameBusyId.set(null);
         this.editingWorkspaceId.set(null);
@@ -1751,7 +1768,11 @@ export class Sidebar implements OnInit, OnDestroy {
 
   filterWorkspaces(repo: NavigationRepo): NavigationWorkspace[] {
     if (repo.workspaces) {
-      return repo.workspaces.filter(workspace => !workspace.archivedAt).sort((a, b) => Number(a.isDefault) - Number(b.isDefault) || a.id - b.id);
+      return repo.workspaces.filter(workspace => !workspace.archivedAt).sort((a, b) =>
+        Number(b.isDefault) - Number(a.isDefault) ||
+        (a.sortOrder ?? (a.id > 0 ? a.id : Number.MAX_SAFE_INTEGER)) -
+        (b.sortOrder ?? (b.id > 0 ? b.id : Number.MAX_SAFE_INTEGER)) || a.id - b.id,
+      );
     }
 
     return (repo.branches ?? []).map((branch, index) => ({
@@ -1785,6 +1806,118 @@ export class Sidebar implements OnInit, OnDestroy {
       sessionFolders: [],
       archivedSessionFolders: [],
     }));
+  }
+
+  private orderedTasks(repo: NavigationRepo): NavigationWorkspace[] {
+    const cached = this.taskOrderCache.get(repo);
+    if (cached) return cached.tasks;
+    const tasks = this.filterWorkspaces(repo).filter((task) => !task.isDefault && task.id > 0);
+    this.taskOrderCache.set(repo, {
+      tasks,
+      indexes: new Map(tasks.map((task, index) => [task.id, index])),
+    });
+    return tasks;
+  }
+
+  canMoveTask(repo: NavigationRepo, task: NavigationWorkspace, direction: number): boolean {
+    if (this.orderingRepoId() !== null || task.isDefault || task.id <= 0) return false;
+    const tasks = this.orderedTasks(repo);
+    const index = this.taskOrderCache.get(repo)!.indexes.get(task.id) ?? -1;
+    return index >= 0 && index + direction >= 0 && index + direction < tasks.length;
+  }
+
+  moveTask(repo: NavigationRepo, task: NavigationWorkspace, direction: number): void {
+    if (!this.canMoveTask(repo, task, direction)) return;
+    const tasks = [...this.orderedTasks(repo)];
+    const index = tasks.findIndex((item) => item.id === task.id);
+    tasks.splice(index, 1);
+    tasks.splice(index + direction, 0, task);
+    this.persistTaskOrder(repo, task, tasks);
+  }
+
+  onTaskOrderKeydown(event: Event, repo: NavigationRepo, task: NavigationWorkspace, direction: number): void {
+    if (!(event as KeyboardEvent).altKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.moveTask(repo, task, direction);
+  }
+
+  onTaskDragStart(event: DragEvent, repo: NavigationRepo, task: NavigationWorkspace): void {
+    event.stopPropagation();
+    if (!event.dataTransfer || task.isDefault || task.id <= 0 || this.orderingRepoId() !== null) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.setData('application/x-elevenex-task', String(task.id));
+    event.dataTransfer.effectAllowed = 'move';
+    const row = (event.currentTarget as HTMLElement).closest<HTMLElement>('[data-workspace-row]');
+    if (row) event.dataTransfer.setDragImage(row, 24, 20);
+    this.draggingTask.set({ repoId: repo.id, id: task.id });
+  }
+
+  onTaskDragOver(event: DragEvent, repo: NavigationRepo, task: NavigationWorkspace): void {
+    const source = this.draggingTask();
+    if (!source || source.repoId !== repo.id || source.id === task.id || task.isDefault || task.id <= 0) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    this.taskDropTarget.set({ id: task.id, after: event.clientY > bounds.top + bounds.height / 2 });
+  }
+
+  onTaskDragLeave(event: DragEvent, task: NavigationWorkspace): void {
+    if ((event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) return;
+    if (this.taskDropTarget()?.id === task.id) this.taskDropTarget.set(null);
+  }
+
+  onTaskDragEnd(): void {
+    this.draggingTask.set(null);
+    this.taskDropTarget.set(null);
+  }
+
+  onTaskDrop(event: DragEvent, repo: NavigationRepo, target: NavigationWorkspace): void {
+    const source = this.draggingTask();
+    const drop = this.taskDropTarget();
+    if (!source || source.repoId !== repo.id || !drop || drop.id !== target.id || target.isDefault) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const tasks = this.orderedTasks(repo);
+    const task = tasks.find((item) => item.id === source.id);
+    this.onTaskDragEnd();
+    if (!task) return;
+    const ordered = tasks.filter((item) => item.id !== task.id);
+    const index = ordered.findIndex((item) => item.id === target.id);
+    if (index < 0) return;
+    ordered.splice(index + Number(drop.after), 0, task);
+    if (ordered.every((item, position) => item.id === tasks[position].id)) return;
+    this.persistTaskOrder(repo, task, ordered);
+  }
+
+  private persistTaskOrder(repo: NavigationRepo, task: NavigationWorkspace, ordered: NavigationWorkspace[]): void {
+    if (this.orderingRepoId() !== null) return;
+    this.workspaceDropdown.close();
+    const origin = getBackendOrigin();
+    const previousIds = this.orderedTasks(repo).map((item) => item.id);
+    const index = ordered.findIndex((item) => item.id === task.id);
+    this.orderingRepoId.set(repo.id);
+    this.navService.previewTaskOrder(repo.id, ordered.map((item) => item.id));
+    this.tasksApi.move(repo.id, task.id, ordered[index + 1]?.id ?? null).subscribe({
+      next: () => {
+        if (getBackendOrigin() === origin)
+          this.taskOrderAnnouncement.set(`${task.name} moved to position ${index + 1} of ${ordered.length} tasks.`);
+      },
+      error: (error) => {
+        if (getBackendOrigin() === origin) {
+          this.navService.previewTaskOrder(repo.id, previousIds);
+          toast.error(error?.error?.message || 'Could not save task order');
+        }
+        this.orderingRepoId.set(null);
+        this.navService.finishTaskOrder(repo.id, origin);
+      },
+      complete: () => {
+        this.orderingRepoId.set(null);
+        this.navService.finishTaskOrder(repo.id, origin);
+      },
+    });
   }
 
   getPendingWorkspaces(repo: NavigationRepo): PendingWorkspaceCreation[] {

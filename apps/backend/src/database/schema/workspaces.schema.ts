@@ -18,6 +18,7 @@ export const workspaces = sqliteTable(
     isDefault: integer('is_default', { mode: 'boolean' })
       .notNull()
       .default(false),
+    sortOrder: integer('sort_order'),
     createdFromRef: text('created_from_ref'),
     archivedAt: text('archived_at'),
     taskState: text('task_state').notNull().default('ready'),

@@ -1,0 +1,26 @@
+@let item = workspace();
+<span class="block truncate text-sm font-medium leading-5">
+  {{ item.isDefault ? 'Main checkout' : item.name }}
+</span>
+<span class="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
+  @if (item.isDefault) {
+    <span class="shrink-0 rounded border border-border bg-sidebar px-1 text-[10px] font-medium leading-4">Default</span>
+  }
+  @if (item.taskState === 'preparing') {
+    <span class="truncate">Preparing…</span>
+  } @else if (item.taskState === 'finishing') {
+    <span class="truncate">Finishing…</span>
+  } @else if (item.taskState === 'failed' || item.linkStatus === 'unlinked') {
+    <span class="truncate text-warning">{{ item.taskState === 'failed' ? 'Needs attention' : 'Worktree needed' }}</span>
+  } @else {
+    <span class="truncate">{{ item.currentBranch || item.taskBranch || (item.isDefault ? 'Repository working directory' : 'Detached revision') }}</span>
+  }
+  @if (item.hasConflicts) {
+    <span class="shrink-0 text-destructive">Conflicts</span>
+  } @else if (item.isDirty) {
+    <span class="shrink-0 text-warning">Edits</span>
+  }
+  @if (item.pendingStashStatus === 'pending') {
+    <span class="shrink-0 text-warning">Stash</span>
+  }
+</span>

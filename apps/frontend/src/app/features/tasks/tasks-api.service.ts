@@ -32,6 +32,12 @@ export class TasksApiService {
   rename(id: number, name: string) {
     return this.http.patch<Task>(`/api/tasks/${id}`, { name });
   }
+  move(repoId: number, taskId: number, beforeTaskId: number | null) {
+    return this.http.patch<{ taskIds: number[] }>(
+      `/api/repos/${repoId}/tasks/${taskId}/order`,
+      { beforeTaskId },
+    );
+  }
   draft(id: number, text: string) {
     return this.http.patch(`/api/tasks/${id}/draft`, { text });
   }

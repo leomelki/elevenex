@@ -1139,6 +1139,23 @@
   background: color-mix(in oklch, var(--sidebar-accent) 64%, transparent);
 }
 
+// Insertion markers stay outside row contents and do not change layout while dragging.
+.task-drop-before::before,
+.task-drop-after::after {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  left: 48px;
+  right: 8px;
+  height: 2px;
+  background: var(--primary);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.task-drop-before::before { top: 0; }
+.task-drop-after::after { bottom: 0; }
+
 .workspace-actions {
   pointer-events: none;
 
@@ -1161,6 +1178,7 @@
 }
 
 @media (hover: none) {
+  [data-task-drag-handle] { opacity: 1; }
   .workspace-actions {
     opacity: 1;
     pointer-events: auto;

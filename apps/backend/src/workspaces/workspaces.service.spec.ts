@@ -117,6 +117,22 @@ describe('WorkspacesService', () => {
     expect(workspaces[0].isDefault).toBe(true);
   });
 
+  it('keeps the main checkout first and preserves task order in cached and full listings', async () => {
+    const [first, second] = await db.insert(schema.workspaces).values([
+      { repoId: repo.id, name: 'Zebra', path: '/tmp/zebra', taskState: 'preparing', sortOrder: 2 },
+      { repoId: repo.id, name: 'Alpha', path: '/tmp/alpha', taskState: 'preparing', sortOrder: 1 },
+    ]).returning();
+    const main = await service.ensureDefaultWorkspace(repo);
+    const [latest] = await db.insert(schema.workspaces).values({
+      repoId: repo.id, name: 'A new task', path: '', taskState: 'preparing',
+    }).returning();
+    for (const listing of [service.listCachedForRepo(repo), service.listForRepo(repo)]) {
+      expect((await listing).map((item) => item.id)).toEqual([main.id, second.id, first.id, latest.id]);
+    }
+    await expect(service.renameWorkspace(main.id, 'Renamed')).rejects.toThrow('fixed name');
+    expect((await service.findOne(main.id)).name).toBe('Main checkout');
+  });
+
   it('does not recreate deleted workspaces from historical sessions on repeated listings', async () => {
     const [session] = await db
       .insert(schema.sessions)

@@ -351,6 +351,13 @@ describe('WorktreePoolService', () => {
     await Promise.all(pending);
   });
 
+  it('protects the repository checkout from pool renaming and moving', async () => {
+    await service.reconcileRepo(repo);
+    const main = (await db.select().from(schema.repoWorktrees)).find((item) => item.path === REPO_PATH)!;
+    await expect(service.rename(repo, main.id, 'Another name')).rejects.toThrow('fixed name and location');
+    expect(worktreesServiceMock.moveWorktree).not.toHaveBeenCalled();
+  });
+
   it('renames a pool worktree, moving it and repointing its workspace and context row', async () => {
     await service.reconcileRepo(repo);
     const pool = (await db.select().from(schema.repoWorktrees)).find(

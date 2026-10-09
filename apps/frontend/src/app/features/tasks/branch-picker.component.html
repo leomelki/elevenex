@@ -4,59 +4,88 @@
     z-input
     id="task-branch-search"
     type="search"
-    placeholder="Search local and remote branches…"
+    autocomplete="off"
+    spellcheck="false"
+    [placeholder]="
+      allowCreate() ? 'Search branches or enter a new name…' : 'Search local and remote branches…'
+    "
     [value]="query()"
+    [disabled]="disabled()"
     (input)="search($any($event.target).value)"
     (keydown)="key($event)"
     role="combobox"
     aria-autocomplete="list"
     aria-controls="task-branch-results"
     aria-expanded="true"
-    [attr.aria-activedescendant]="branches().length ? 'task-branch-option-' + index() : null"
+    [attr.aria-activedescendant]="options().length ? 'task-branch-option-' + index() : null"
+    [attr.aria-busy]="loading()"
   />
   <div
     id="task-branch-results"
     role="listbox"
     [attr.aria-label]="label()"
-    class="max-h-56 overflow-y-auto rounded-lg border border-border bg-background p-1"
+    class="max-h-64 overflow-y-auto rounded-lg border border-border bg-background p-1"
     [attr.aria-busy]="loading()"
   >
-    @for (
-      branch of branches();
-      track (branch.isRemote ? 'remote:' : 'local:') + branch.name;
-      let i = $index
-    ) {
+    @for (option of options(); track optionKey(option); let i = $index) {
       <button
         type="button"
         tabindex="-1"
         role="option"
         [id]="'task-branch-option-' + i"
-        [attr.aria-selected]="isSelected(branch)"
-        class="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        [attr.aria-selected]="optionSelected(option)"
+        [attr.data-branch-kind]="option.kind"
+        [disabled]="disabled() || selectionPending() || (loading() && option.kind !== 'default')"
+        class="flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
         [class.bg-accent]="index() === i"
-        (click)="picked.emit(branch)"
+        (click)="choose(option)"
+        (mouseenter)="index.set(i)"
         (focus)="index.set(i)"
       >
-        <span class="min-w-0 flex-1 truncate font-medium">{{ branch.name }}</span>
-        <span class="shrink-0 text-xs text-muted-foreground">{{
-          branch.isRemote ? 'Remote' : 'Local'
-        }}</span>
-        @if (branch.hasWorktree) {
-          <span class="shrink-0 text-xs text-muted-foreground">Checked out</span>
+        <ng-icon
+          [name]="
+            option.kind === 'create'
+              ? 'lucidePlus'
+              : option.kind === 'branch' && option.branch.isRemote
+                ? 'lucideGlobe2'
+                : 'lucideGitBranch'
+          "
+          size="16"
+          class="shrink-0 text-muted-foreground"
+        />
+        @if (option.kind === 'create') {
+          <span class="min-w-0 flex-1 truncate font-medium"
+            >Create <span class="text-primary">{{ option.name }}</span></span
+          >
+          <span class="shrink-0 text-xs text-muted-foreground">New branch</span>
+        } @else if (option.kind === 'default') {
+          <span class="min-w-0 flex-1 truncate font-medium">{{ option.ref | branchRef }}</span>
+          <span
+            class="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
+            >Default</span
+          >
+        } @else {
+          <span class="min-w-0 flex-1 truncate font-medium">{{ option.branch.name }}</span>
+          <span class="shrink-0 text-xs text-muted-foreground">{{
+            option.branch.isRemote ? 'Remote' : 'Local'
+          }}</span>
+          @if (option.branch.hasWorktree) {
+            <span class="shrink-0 text-xs text-muted-foreground">Checked out</span>
+          }
         }
-        @if (isSelected(branch)) {
-          <span class="text-primary" aria-hidden="true">✓</span>
+        @if (optionSelected(option)) {
+          <ng-icon name="lucideCheck" size="16" class="shrink-0 text-primary" aria-hidden="true" />
         }
       </button>
-    } @empty {
-      <p class="px-3 py-6 text-center text-sm text-muted-foreground" role="status">
+    }
+    @if (loading() || error() || !options().length) {
+      <p class="px-3 py-5 text-center text-sm text-muted-foreground" role="status">
         {{ loading() ? 'Loading branches…' : error() || 'No matching branches' }}
       </p>
     }
   </div>
-  @if (selected()) {
-    <p class="break-all text-xs text-muted-foreground">
-      Selected: <span class="font-medium text-foreground">{{ selected() | branchRef }}</span>
-    </p>
-  }
+  <p class="text-xs text-muted-foreground">
+    ↑↓ to navigate <span aria-hidden="true">·</span> Enter to
+    {{ allowCreate() ? 'select' : 'create task' }}
+  </p>
 </div>

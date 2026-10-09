@@ -164,18 +164,7 @@ export class TaskGitService {
     }
   }
 
-  async defaultBase(
-    repoPath: string,
-    preference?: string | null,
-  ): Promise<string | null> {
-    if (preference) {
-      try {
-        await this.resolve(repoPath, preference);
-        return preference;
-      } catch {
-        /* Preference no longer exists. */
-      }
-    }
+  async defaultBase(repoPath: string): Promise<string | null> {
     const git = worktreeSimpleGit(repoPath);
     const remotes = (await git.getRemotes()).sort((a, b) =>
       a.name === 'origin'
@@ -208,6 +197,38 @@ export class TaskGitService {
       if (await this.hasLocalBranch(repoPath, branch))
         return `refs/heads/${branch}`;
     return null;
+  }
+
+  /** A clean index can still belong to a paused rebase, bisect, or sequencer. */
+  async hasOperationInProgress(worktreePath: string): Promise<boolean> {
+    const gitDir = (
+      await worktreeSimpleGit(worktreePath).raw([
+        'rev-parse',
+        '--absolute-git-dir',
+      ])
+    ).trim();
+    const markers = [
+      'rebase-merge',
+      'rebase-apply',
+      'sequencer',
+      'MERGE_HEAD',
+      'CHERRY_PICK_HEAD',
+      'REVERT_HEAD',
+      'BISECT_LOG',
+    ];
+    const present = await Promise.all(
+      markers.map(async (marker) => {
+        try {
+          await fs.stat(path.join(gitDir, marker));
+          return true;
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+          throw error;
+        }
+      }),
+    );
+    return present.some(Boolean);
   }
 
   async status(worktreePath: string): Promise<{
