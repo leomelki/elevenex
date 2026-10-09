@@ -101,7 +101,10 @@ export class AskUserQuestionFlowComponent {
   }
 
   isOtherSelected(question: AskUserQuestion): boolean {
-    return (this.selectedAnswers()[this.questionKey(question)] ?? []).includes('__other__');
+    return (
+      question.options.length === 0 ||
+      (this.selectedAnswers()[this.questionKey(question)] ?? []).includes('__other__')
+    );
   }
 
   toggleOption(question: AskUserQuestion, label: string, checked: boolean): void {
@@ -155,7 +158,10 @@ export class AskUserQuestionFlowComponent {
   showNextButton(): boolean {
     const question = this.activeQuestion();
     if (!question) return false;
-    return (this.selectedAnswers()[this.questionKey(question)] ?? []).length > 0;
+    return (
+      this.isOtherSelected(question) ||
+      (this.selectedAnswers()[this.questionKey(question)] ?? []).length > 0
+    );
   }
 
   advance(): void {
@@ -183,6 +189,7 @@ export class AskUserQuestionFlowComponent {
 
   serializeAnswer(question: AskUserQuestion): string {
     const key = this.questionKey(question);
+    if (question.options.length === 0) return (this.otherAnswers()[key] ?? '').trim();
     const mapped = (this.selectedAnswers()[key] ?? []).map((selection) =>
       selection === '__other__' ? (this.otherAnswers()[key] ?? '').trim() : selection,
     );
@@ -192,11 +199,10 @@ export class AskUserQuestionFlowComponent {
   private canAdvanceQuestion(question: AskUserQuestion): boolean {
     const key = this.questionKey(question);
     const selections = this.selectedAnswers()[key] ?? [];
-    if (selections.length === 0) return false;
-    if (selections.includes('__other__')) {
+    if (this.isOtherSelected(question)) {
       return !!this.otherAnswers()[key]?.trim();
     }
-    return true;
+    return selections.length > 0;
   }
 }
 

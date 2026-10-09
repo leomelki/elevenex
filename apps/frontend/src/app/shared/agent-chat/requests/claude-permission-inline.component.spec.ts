@@ -175,6 +175,27 @@ describe('ClaudePermissionInlineComponent ask-user wizard', () => {
     expect(text(fixture)).toContain('Question 2 of 2');
   });
 
+  it('accepts a question without options directly as text', async () => {
+    const fixture = await render(
+      askRequest('perm-ask-text', [{ question: 'Any constraints?', options: [] }]),
+    );
+    const approvals: unknown[] = [];
+    fixture.componentInstance.approve.subscribe((approval) => approvals.push(approval));
+
+    expect(text(fixture)).not.toContain('Other...');
+    expect(fixture.nativeElement.querySelector('.cw-ask__opt')).toBeNull();
+    setOtherAnswer(fixture, 'Keep existing APIs');
+    clickButton(fixture, 'Next');
+    clickButton(fixture, 'Submit');
+
+    expect(approvals).toEqual([
+      {
+        remember: false,
+        content: { answers: { 'Any constraints?': 'Keep existing APIs' } },
+      },
+    ]);
+  });
+
   it('submits all answers from the final recap with the existing payload shape', async () => {
     const fixture = await render();
     const approvals: unknown[] = [];

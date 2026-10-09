@@ -75,14 +75,35 @@ describe('ClaudeUserInputComponent question requests', () => {
     });
     const answers: unknown[] = [];
     fixture.componentInstance.answer.subscribe((answer) => answers.push(answer));
-    clickOption(fixture, 'Other...');
     const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
-    textarea.value = 'Keep existing APIs';
+    expect(textarea).not.toBeNull();
+    expect(textarea.getAttribute('aria-label')).toBe('Any constraints?');
+    expect(text(fixture)).not.toContain('Other...');
+    expect(fixture.nativeElement.querySelector('input')).toBeNull();
+    const nextButton = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
+    ).find((button) => (button.textContent ?? '').includes('Next'))!;
+    expect(nextButton.disabled).toBe(true);
+    textarea.value = '   ';
+    textarea.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    clickButton(fixture, 'Next');
+    expect(nextButton.disabled).toBe(true);
+    expect(text(fixture)).toContain('Question 1 of 1');
+    textarea.value = '  Keep existing APIs  ';
     textarea.dispatchEvent(new Event('input'));
     fixture.detectChanges();
     await fixture.whenStable();
+    expect(nextButton.disabled).toBe(false);
     clickButton(fixture, 'Next');
     expect(text(fixture)).toContain('Keep existing APIs');
+    clickButton(fixture, 'Back');
+    await fixture.whenStable();
+    expect((fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement).value).toBe(
+      '  Keep existing APIs  ',
+    );
+    expect(text(fixture)).not.toContain('Other...');
+    clickButton(fixture, 'Next');
     clickButton(fixture, 'Submit');
     expect(answers).toEqual([
       { action: 'accept', content: { 'question-1': 'Keep existing APIs' } },
