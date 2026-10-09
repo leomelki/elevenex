@@ -106,12 +106,16 @@ test('first run: onboarding through to a live session in the sidebar', async ({ 
   const taskDialog = page.getByRole('dialog', { name: 'New task', exact: true });
   await expect(taskDialog).toBeVisible();
   await taskDialog.getByLabel('Task name').fill(TASK_NAME);
-  await taskDialog.getByLabel('Branch name', { exact: true }).fill(taskBranch);
+  await taskDialog.getByRole('button', { name: 'Continue', exact: true }).click();
+
+  // The task wizard now chooses the branch and its base in separate steps.
+  await taskDialog.getByRole('combobox', { name: 'Branch', exact: true }).fill(taskBranch);
+  await taskDialog.getByRole('option', { name: `Create ${taskBranch} New branch`, exact: true }).click();
 
   // Explicitly select the seeded default branch as the base for the new task.
-  await taskDialog.getByRole('button', { name: 'Change', exact: true }).click();
+  // Selecting the base submits the task and starts asynchronous worktree setup.
+  await expect(taskDialog.getByRole('combobox', { name: 'Base branch', exact: true })).toBeVisible();
   await taskDialog.getByRole('option', { name: new RegExp(`^${TEST_REPO_BRANCH}\\b`) }).click();
-  await taskDialog.getByRole('button', { name: 'Create task', exact: true }).click();
   await expect(taskDialog).toBeHidden();
 
   // ---------------------------------------------------------------------------
