@@ -1,3 +1,4 @@
+import { freshLocalMediaUrl } from '../media/local-media-url';
 import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import { getApiBaseUrl } from '@/shared/runtime/runtime-config';
 import { Pipe, PipeTransform, inject } from '@angular/core';
@@ -5,7 +6,7 @@ import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/common';
 import { Marked, type Tokens } from 'marked';
-import { sanitizeWithVideos } from './markdown-video';
+import { isVideoFile, sanitizeWithVideos } from './markdown-video';
 
 function codeRenderer(this: unknown, { text, lang }: { text: string; lang?: string }) {
   const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
@@ -19,7 +20,7 @@ function codeRenderer(this: unknown, { text, lang }: { text: string; lang?: stri
 }
 
 // Matches an existing URL scheme (data:, http:, https:, etc). Paths without one are
-// treated as local files and rewritten to the backend's worktree file API so they can
+// treated as local files and rewritten to the backend file APIs so they can
 // be loaded regardless of whether the backend is local or reached through an SSH tunnel.
 const HAS_URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 const WINDOWS_ABSOLUTE_PATH = /^[a-z]:[\\/]/i;
@@ -67,33 +68,67 @@ function decodePath(value: string): string {
  * being rendered — because that is what they mean in the file on disk. A doc
  * at `docs/guide.md` writing `./img/a.png` means `docs/img/a.png`, not
  * `img/a.png`. An absolute path inside the worktree, which is how agents cite
- * files, is that worktree file; any other leading `/` is worktree-root-relative.
+ * files, is that worktree file. Chat absolute paths can reference any host media;
+ * repository documents preserve their worktree-root-relative link convention.
  */
-function resolveImageSrc(src: string, worktreePath: string, baseDir: readonly string[]): string {
-  if (!src || HAS_URL_SCHEME.test(src) || src.startsWith('//')) return src;
+function resolveImageSrc(
+  src: string,
+  worktreePath: string,
+  baseDir: readonly string[],
+  documentRelative = false,
+): string {
+  if (!src || src.startsWith('//')) return src;
+  let target = src;
+  const fileUrl = /^file:/i.test(src);
+  if (fileUrl) {
+    try {
+      target = new URL(src).pathname;
+    } catch {
+      return src;
+    }
+    if (/^\/[a-z]:\//i.test(target)) target = target.slice(1);
+  } else if (HAS_URL_SCHEME.test(src) && !WINDOWS_ABSOLUTE_PATH.test(src)) return src;
 
-  // A query or fragment is meaningless for a file read, and encoding it into
-  // the path would look for a filename that contains the `?`.
-  const filePath = decodePath(src.split(/[?#]/)[0]);
+  const filePath = decodePath(target.split(/[?#]/)[0]).replace(/\\/g, '/');
   if (!filePath) return src;
-
-  const root = worktreePath.replace(/[\\/]+$/, '');
-  const segments = filePath.startsWith(`${root}/`)
+  const root = worktreePath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const fragment = src.includes('#') ? src.slice(src.indexOf('#')) : '';
+  const insideRoot =
+    !!root &&
+    (WINDOWS_ABSOLUTE_PATH.test(root)
+      ? filePath.toLowerCase().startsWith(`${root.toLowerCase()}/`)
+      : filePath.startsWith(`${root}/`));
+  const absolute =
+    filePath.startsWith('/') || WINDOWS_ABSOLUTE_PATH.test(filePath) || filePath.startsWith('~/');
+  if (
+    fileUrl ||
+    (insideRoot && !normalizeLocalFilePath(filePath.slice(root.length + 1).split('/'))) ||
+    (absolute &&
+      !insideRoot &&
+      (!documentRelative || WINDOWS_ABSOLUTE_PATH.test(filePath) || filePath.startsWith('~/')))
+  ) {
+    return `${getApiBaseUrl()}/filesystem/media?path=${encodeURIComponent(filePath)}${fragment}`;
+  }
+  if (!worktreePath) return src;
+  const segments = insideRoot
     ? filePath.slice(root.length + 1).split('/')
     : filePath.startsWith('/')
       ? filePath.split('/')
       : [...baseDir, ...filePath.split('/')];
+  // Chat references can also reach outside the checkout through parent paths.
+  if (!documentRelative && !absolute && !normalizeLocalFilePath(segments)) {
+    const resolved = normalizeSegments([...root.split('/'), ...segments]);
+    const prefix = WINDOWS_ABSOLUTE_PATH.test(root) ? '' : '/';
+    return `${getApiBaseUrl()}/filesystem/media?path=${encodeURIComponent(prefix + resolved)}${fragment}`;
+  }
   const relativePath = normalizeSegments(segments);
   if (!relativePath) return src;
-
-  const encodedWorktree = encodeURIComponent(worktreePath);
-  const encodedPath = encodeURIComponent(relativePath);
-  const fragment = src.includes('#') ? src.slice(src.indexOf('#')) : '';
-  return `${getApiBaseUrl()}/worktrees/${encodedWorktree}/raw/${encodedPath}${fragment}`;
+  return `${getApiBaseUrl()}/worktrees/${encodeURIComponent(worktreePath)}/raw/${encodeURIComponent(relativePath)}${fragment}`;
 }
 
 /**
- * Resolve every local `<img>` in sanitized HTML.
+ * Resolve media URLs in inert HTML before sanitizing so file:// and Windows
+ * paths become backend URLs rather than being discarded as unknown schemes.
  *
  * Done on the parsed output rather than in marked's image renderer so it also
  * reaches raw HTML: documents size images with `<img src width>`, which marked
@@ -101,18 +136,54 @@ function resolveImageSrc(src: string, worktreePath: string, baseDir: readonly st
  * app's own URL. A `<template>` keeps the pass inert — images parsed into it do
  * not start fetching the unresolved `src`.
  */
-function resolveLocalImages(
+function resolveLocalMedia(
   html: string,
   worktreePath: string,
   baseDir: readonly string[],
+  documentRelative: boolean,
 ): string {
   const template = document.createElement('template');
   template.innerHTML = html;
+  for (const element of Array.from(
+    template.content.querySelectorAll('img[src], video[src], source[src], video[poster], a[href]'),
+  )) {
+    if (element.tagName === 'A') {
+      const href = element.getAttribute('href') || '';
+      if (isVideoFile(href))
+        element.setAttribute(
+          'href',
+          resolveImageSrc(href, worktreePath, baseDir, documentRelative),
+        );
+      continue;
+    }
+    for (const attribute of ['src', 'poster']) {
+      const value = element.getAttribute(attribute);
+      if (value)
+        element.setAttribute(
+          attribute,
+          resolveImageSrc(value, worktreePath, baseDir, documentRelative),
+        );
+    }
+  }
+  return template.innerHTML;
+}
+
+function makeImagesInteractive(html: string, mediaRevision?: string): string {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  let index = 0;
   for (const image of Array.from(template.content.querySelectorAll('img[src]'))) {
+    const src = image.getAttribute('src') || '';
+    if (isVideoFile(src)) continue;
+    if (mediaRevision)
+      image.setAttribute('src', freshLocalMediaUrl(src, `${mediaRevision}-${index++}`));
+    image.setAttribute('tabindex', '0');
+    image.setAttribute('role', 'button');
     image.setAttribute(
-      'src',
-      resolveImageSrc(image.getAttribute('src') ?? '', worktreePath, baseDir),
+      'aria-label',
+      `Enlarge image: ${image.getAttribute('alt') || 'Image preview'}`,
     );
+    if (!image.hasAttribute('title')) image.setAttribute('title', 'Click to enlarge');
   }
   return template.innerHTML;
 }
@@ -249,21 +320,28 @@ export class MarkdownPipe implements PipeTransform {
     value: string | null | undefined,
     worktreePath?: string | null,
     sourcePath?: string | null,
+    mediaRevision?: string,
   ): SafeHtml {
     if (!value) return '';
     const rendered = marked.parse(value) as string;
-    let clean = DOMPurify.sanitize(rendered, { USE_PROFILES: { html: true } });
+    const resolved = resolveLocalMedia(
+      rendered,
+      worktreePath || '',
+      baseDirSegments(sourcePath),
+      !!sourcePath,
+    );
+    let clean = DOMPurify.sanitize(resolved, { USE_PROFILES: { html: true } });
     if (worktreePath) {
-      if (clean.includes('<img')) {
-        clean = resolveLocalImages(clean, worktreePath, baseDirSegments(sourcePath));
-      }
       if (clean.includes('<a')) {
         clean = annotateLocalFileLinks(clean, worktreePath, sourcePath);
       }
     }
-    return sanitizeWithVideos(clean, this.sanitizer, (src) => {
-      if (!worktreePath) return src;
-      return resolveImageSrc(src, worktreePath, baseDirSegments(sourcePath));
-    });
+    return sanitizeWithVideos(
+      makeImagesInteractive(clean, mediaRevision),
+      this.sanitizer,
+      (src) => {
+        return resolveImageSrc(src, worktreePath || '', baseDirSegments(sourcePath), !!sourcePath);
+      },
+    );
   }
 }

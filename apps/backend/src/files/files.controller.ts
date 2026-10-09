@@ -55,6 +55,31 @@ function toArray(value: string | string[] | undefined): string[] | undefined {
 export class FilesystemController {
   constructor(private readonly filesService: FilesService) {}
 
+  @Get('media')
+  async readMedia(
+    @Query('path') filePath: string,
+    @Res({ passthrough: true }) res: Response,
+    @Headers('range') range?: string,
+  ): Promise<StreamableFile> {
+    try {
+      const { stream, mimeType, length, statusCode, contentRange } =
+        await this.filesService.readLocalMedia(filePath ?? '', range);
+      res.status(statusCode);
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Accept-Ranges', 'bytes');
+      if (contentRange) res.setHeader('Content-Range', contentRange);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.once('close', () => stream.destroy());
+      return new StreamableFile(stream, { type: mimeType, length });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('does not exist')) {
+        throw new NotFoundException(error.message);
+      }
+      throw error;
+    }
+  }
+
   @Get('path-suggestions')
   async suggestPaths(@Query() query: GetPathSuggestionsDto) {
     return this.filesService.suggestPaths(
@@ -313,7 +338,7 @@ export class FilesController {
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Accept-Ranges', 'bytes');
       if (contentRange) res.setHeader('Content-Range', contentRange);
-      res.setHeader('Cache-Control', 'private, max-age=60');
+      res.setHeader('Cache-Control', /^(image|video)\//.test(mimeType) ? 'no-store' : 'private, max-age=60');
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.once('close', () => stream.destroy());
       return new StreamableFile(stream, { type: mimeType, length });

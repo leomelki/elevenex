@@ -29,6 +29,29 @@ describe('FilesService', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  describe('readLocalMedia', () => {
+    it('streams media outside a repository with byte-range support', async () => {
+      const file = path.join(tmpDir, 'outside.mp4');
+      await fs.promises.writeFile(file, '0123456789');
+      const result = await service.readLocalMedia(file, 'bytes=2-5');
+      const chunks: Buffer[] = [];
+      for await (const chunk of result.stream) chunks.push(Buffer.from(chunk));
+      expect(Buffer.concat(chunks).toString()).toBe('2345');
+      expect(result).toMatchObject({ statusCode: 206, contentRange: 'bytes 2-5/10', mimeType: 'video/mp4' });
+    });
+
+    it('supports home-relative media', async () => {
+      const raw = jest.spyOn(service, 'readFileRaw').mockResolvedValue({ stream: require('node:stream').Readable.from([]), mimeType: 'image/png', length: 0, statusCode: 200 });
+      await service.readLocalMedia('~/Pictures/shot.png');
+      expect(raw).toHaveBeenCalledWith(path.join(os.homedir(), 'Pictures/shot.png'), path.join(os.homedir(), 'Pictures'), undefined);
+    });
+
+    it('rejects relative paths and non-media files', async () => {
+      await expect(service.readLocalMedia('relative.png')).rejects.toThrow('absolute');
+      await expect(service.readLocalMedia(path.join(tmpDir, 'notes.txt'))).rejects.toThrow('image or video');
+    });
+  });
+
   describe('readFileRaw', () => {
     async function read(range?: string) {
       const file = path.join(tmpDir, 'demo.mp4');

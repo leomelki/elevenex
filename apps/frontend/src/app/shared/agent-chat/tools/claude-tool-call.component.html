@@ -316,9 +316,17 @@
           }
           @case ('read') {
             @if (resultImages().length) {
-              <div class="cw-tool__images">
+              <div class="cw-tool__images" mediaPreview>
                 @for (image of resultImages(); track $index) {
-                  <img class="cw-tool__image" [src]="image.dataUrl" [alt]="readImageAlt()" />
+                  <img
+                    role="button"
+                    tabindex="0"
+                    title="Click to enlarge"
+                    [attr.aria-label]="'Enlarge: ' + readImageAlt()"
+                    class="cw-tool__image cursor-zoom-in rounded-lg focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+                    [src]="image.dataUrl"
+                    [alt]="readImageAlt()"
+                  />
                 }
               </div>
             }

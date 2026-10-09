@@ -64,13 +64,22 @@
         class="cw-comp__images flex flex-wrap gap-1.5 border-b border-dashed border-border pt-2 pr-2.5 pb-1 pl-3.5"
         role="list"
         aria-label="Attached images"
+        mediaPreview
       >
         @for (img of attachedImages(); track img.id) {
           <div
             class="cw-comp__image relative size-16 overflow-hidden rounded-lg border border-border bg-muted"
             role="listitem"
           >
-            <img class="block size-full object-cover" [src]="img.dataUrl" [alt]="img.name" />
+            <img
+              role="button"
+              tabindex="0"
+              title="Click to enlarge"
+              [attr.aria-label]="'Enlarge: ' + img.name"
+              class="block size-full cursor-zoom-in object-cover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+              [src]="img.dataUrl"
+              [alt]="img.name"
+            />
             <button
               type="button"
               z-button

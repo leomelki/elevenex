@@ -75,6 +75,27 @@ describe('FilesController', () => {
     expect(service.writeFile).toHaveBeenCalledWith('/tmp/checkout/notes.md', 'findings', '/tmp/checkout');
   });
 
+  it('streams external media with decoded query paths, range headers, and disconnect cleanup', async () => {
+    const stream = Readable.from(['test']);
+    service.readLocalMedia = jest.fn().mockResolvedValue({ stream, mimeType: 'video/mp4', statusCode: 206, contentRange: 'bytes 2-5/10', length: 4 });
+    const res = { status: jest.fn(), setHeader: jest.fn(), once: jest.fn() };
+    const file = await filesystemController.readMedia('/tmp/été #1%,demo.mp4', res as never, 'bytes=2-5');
+    expect(service.readLocalMedia).toHaveBeenCalledWith('/tmp/été #1%,demo.mp4', 'bytes=2-5');
+    expect(res.status).toHaveBeenCalledWith(206);
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 2-5/10');
+    expect(file.getStream()).toBe(stream);
+    res.once.mock.calls[0][1]();
+    expect(stream.destroyed).toBe(true);
+  });
+
+  it('prevents caching worktree images', async () => {
+    service.readFileRaw = jest.fn().mockResolvedValue({ stream: Readable.from(['image']), mimeType: 'image/png', length: 5, statusCode: 200 });
+    const res = { status: jest.fn(), setHeader: jest.fn(), once: jest.fn() };
+    await controller.readFileRaw('/tmp/worktree', 'shot.png', res as never);
+    expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+  });
+
   describe('readFileRaw', () => {
     it.each([
       ['e2e', 'tests', 'user-terminal.spec.ts'],
@@ -131,6 +152,7 @@ describe('FilesController', () => {
         );
         expect(res.status).toHaveBeenCalledWith(statusCode);
         expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+        expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
         if (contentRange)
           expect(res.setHeader).toHaveBeenCalledWith(
             'Content-Range',

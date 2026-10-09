@@ -1,0 +1,135 @@
+<div
+  class="flex w-full min-w-0 flex-col overflow-hidden rounded-xl bg-background text-foreground"
+  cdkTrapFocus
+  [cdkTrapFocusAutoCapture]="true"
+>
+  <header class="flex items-center gap-3 border-b border-border px-4 py-3">
+    <ng-icon name="lucideImage" class="shrink-0 text-muted-foreground" />
+    <div class="min-w-0 flex-1">
+      <h2 class="truncate text-sm font-medium" [title]="image().label">{{ image().label }}</h2>
+      <p class="text-xs text-muted-foreground">{{ dimensions() || 'Image preview' }}</p>
+    </div>
+    <div class="flex items-center gap-1" aria-label="Image zoom controls">
+      <button
+        type="button"
+        z-button
+        zType="ghost"
+        zSize="icon-sm"
+        aria-label="Zoom out"
+        title="Zoom out (−)"
+        [disabled]="zoom() === 0 || failed()"
+        (click)="zoom.set(zoom() - 1)"
+      >
+        <ng-icon name="lucideMinus" />
+      </button>
+      <span class="w-12 text-center text-xs tabular-nums text-muted-foreground">{{
+        zoom() === 0 ? 'Fit' : zoom() * 100 + '%'
+      }}</span>
+      <button
+        type="button"
+        z-button
+        zType="ghost"
+        zSize="icon-sm"
+        aria-label="Zoom in"
+        title="Zoom in (+)"
+        [disabled]="zoom() === 3 || failed()"
+        (click)="zoom.set(zoom() + 1)"
+      >
+        <ng-icon name="lucidePlus" />
+      </button>
+      <button
+        type="button"
+        z-button
+        zType="ghost"
+        zSize="icon-sm"
+        aria-label="Fit image to window"
+        title="Fit to window (0)"
+        [disabled]="zoom() === 0"
+        (click)="zoom.set(0)"
+      >
+        <ng-icon name="lucideMaximize" />
+      </button>
+    </div>
+    <button
+      type="button"
+      z-button
+      zType="ghost"
+      zSize="icon-sm"
+      cdkFocusInitial
+      aria-label="Close image preview"
+      title="Close (Esc)"
+      (click)="dialog.close()"
+    >
+      <ng-icon name="lucideX" />
+    </button>
+  </header>
+  <div
+    class="relative h-[min(72dvh,900px,calc(100dvh-10rem))] overflow-auto bg-muted/40 p-4"
+    aria-label="Image preview"
+    [attr.aria-busy]="loading()"
+  >
+    @if (loading()) {
+      <div
+        class="absolute inset-4 animate-pulse rounded-lg bg-muted motion-reduce:animate-none"
+        role="status"
+      >
+        <span class="sr-only">Loading image</span>
+      </div>
+    }
+    @if (failed()) {
+      <div class="flex h-full flex-col items-center justify-center gap-2 text-center" role="status">
+        <ng-icon name="lucideImage" class="text-muted-foreground" />
+        <p class="text-sm font-medium">Image unavailable</p>
+        <p class="text-xs text-muted-foreground">The file may have been moved or deleted.</p>
+      </div>
+    } @else {
+      @for (item of [image()]; track item) {
+        <img
+          [src]="item.src"
+          [alt]="item.label"
+          class="block"
+          [class]="zoom() === 0 ? 'h-full w-full object-contain' : 'max-w-none mx-auto'"
+          [style.width]="zoom() ? 'auto' : null"
+          [style.zoom]="zoom() || 1"
+          [class.invisible]="loading()"
+          (load)="loaded($event)"
+          (error)="loading.set(false); failed.set(true)"
+        />
+      }
+    }
+  </div>
+  <footer class="flex items-center justify-between gap-3 border-t border-border px-4 py-2">
+    <span class="text-xs text-muted-foreground">Esc to close · + / − to zoom</span>
+    <div class="flex items-center gap-2">
+      @if (data.images.length > 1) {
+        <button
+          type="button"
+          z-button
+          zType="ghost"
+          zSize="icon-sm"
+          aria-label="Previous image"
+          title="Previous image (←)"
+          [disabled]="index() === 0"
+          (click)="move(-1)"
+        >
+          <ng-icon name="lucideChevronLeft" />
+        </button>
+        <span class="text-xs tabular-nums text-muted-foreground" aria-live="polite"
+          >{{ index() + 1 }} / {{ data.images.length }}</span
+        >
+        <button
+          type="button"
+          z-button
+          zType="ghost"
+          zSize="icon-sm"
+          aria-label="Next image"
+          title="Next image (→)"
+          [disabled]="index() === data.images.length - 1"
+          (click)="move(1)"
+        >
+          <ng-icon name="lucideChevronRight" />
+        </button>
+      }
+    </div>
+  </footer>
+</div>

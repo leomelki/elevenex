@@ -53,6 +53,39 @@ describe('MarkdownPipe', () => {
     )}`;
   }
 
+  it.each([
+    ['/tmp/outside.png', '/tmp/outside.png'],
+    ['~/Pictures/shot.png', '~/Pictures/shot.png'],
+    ['file:///tmp/my%20shot.png', '/tmp/my shot.png'],
+    ['C:/Users/me/shot.png', 'C:/Users/me/shot.png'],
+    ['../outside.png', '/tmp/outside.png'],
+    ['/tmp/repo/../outside.png', '/tmp/repo/../outside.png'],
+  ])('resolves external chat image %s on the backend host', (href, path) => {
+    expect(imageSrc(`![Shot](${href})`, WORKTREE)).toBe(
+      `${API_BASE}/filesystem/media?path=${encodeURIComponent(path)}`,
+    );
+  });
+
+  it('resolves absolute media without a checkout context', () => {
+    expect(imageSrc('![Shot](/tmp/shot.png)')).toBe(
+      `${API_BASE}/filesystem/media?path=%2Ftmp%2Fshot.png`,
+    );
+  });
+
+  it('resolves external video sources and posters and preserves seek fragments', () => {
+    const host = document.createElement('div');
+    host.innerHTML = render(
+      '<video poster="/tmp/poster.png"><source src="file:///tmp/demo.mp4#t=2"></video>',
+      WORKTREE,
+    );
+    expect(host.querySelector('source')?.getAttribute('src')).toBe(
+      `${API_BASE}/filesystem/media?path=%2Ftmp%2Fdemo.mp4#t=2`,
+    );
+    expect(host.querySelector('video')?.getAttribute('poster')).toBe(
+      `${API_BASE}/filesystem/media?path=%2Ftmp%2Fposter.png`,
+    );
+  });
+
   it('renders headings, tables and fenced code', () => {
     const html = render(
       [

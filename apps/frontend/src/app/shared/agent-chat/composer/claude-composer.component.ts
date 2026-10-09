@@ -1,3 +1,4 @@
+import { MediaPreviewDirective } from '../media/media-preview.directive';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { AgentAutocompleteItem, AgentPendingPrompt } from '@/shared/models/agent-runtime.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
@@ -85,6 +86,7 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
   selector: 'cw-composer',
   standalone: true,
   imports: [
+    MediaPreviewDirective,
     CommonModule,
     FormsModule,
     NgIcon,

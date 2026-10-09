@@ -4,10 +4,23 @@ import type { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 const VIDEO_FILE = /\.(?:mp4|webm|ogv|mov|m4v)$/i;
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
+export function isVideoFile(src: string): boolean {
+  // Local media is served through a query-based endpoint; classify the filename.
+  try {
+    const url = new URL(src);
+    if (url.pathname.endsWith('/filesystem/media'))
+      return VIDEO_FILE.test(url.searchParams.get('path') || '');
+  } catch {
+    /* Relative filenames are valid media references. */
+  }
+  return VIDEO_FILE.test(src.split(/[?#]/)[0]);
+}
+
 function safeMediaUrl(value: string): string | null {
   const url = value.trim();
   if (!url || /[\u0000-\u001f\u007f]/.test(url)) return null;
-  if (URL_SCHEME.test(url) && !/^(?:https?|blob):/i.test(url)) return null;
+  if (URL_SCHEME.test(url) && !/^(?:https?|blob|file):/i.test(url) && !/^[a-z]:[\\/]/i.test(url))
+    return null;
   return url;
 }
 
@@ -28,7 +41,7 @@ export function sanitizeWithVideos(
     // Links/images inside an HTML player are its fallback content, not new embeds.
     if (element.parentElement?.closest('video')) continue;
     const src = element.getAttribute(element.tagName === 'A' ? 'href' : 'src');
-    if (element.tagName !== 'VIDEO' && (!src || !VIDEO_FILE.test(src.split(/[?#]/)[0]))) continue;
+    if (element.tagName !== 'VIDEO' && (!src || !isVideoFile(src))) continue;
 
     const video = document.createElement('video');
     video.setAttribute('controls', '');

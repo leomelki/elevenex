@@ -1,3 +1,4 @@
+import { MediaPreviewDirective } from '../media/media-preview.directive';
 import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import {
   ChangeDetectionStrategy,
@@ -13,15 +14,17 @@ import { MarkdownPipe, resolveLocalFileTarget } from './markdown.pipe';
 /** Sanitized agent Markdown with consistent document styling and local-file navigation. */
 @Component({
   selector: 'agent-markdown',
-  imports: [MarkdownPipe],
+  imports: [MarkdownPipe, MediaPreviewDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   host: { '(click)': 'openLink($event)', '(auxclick)': 'openLink($event)' },
   template:
-    '<div class="agent-markdown__content" [innerHTML]="content() | cwMarkdown: worktreePath(): sourcePath()"></div>',
+    '<div class="agent-markdown__content" mediaPreview [innerHTML]="content() | cwMarkdown: worktreePath(): sourcePath(): mediaRevision"></div>',
   styleUrl: './agent-markdown.component.scss',
 })
 export class AgentMarkdownComponent {
+  // One revision per mounted message; streaming updates keep existing media URLs.
+  readonly mediaRevision = crypto.randomUUID();
   readonly content = input<string | null | undefined>('');
   readonly worktreePath = input<string | null>(null);
   readonly sourcePath = input<string | null>(null);

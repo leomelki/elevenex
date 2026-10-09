@@ -1,3 +1,4 @@
+import { MediaPreviewDirective } from '../media/media-preview.directive';
 import { AgentMarkdownComponent } from '@/shared/agent-chat/markdown/agent-markdown.component';
 import {
   detectHljsLang,
@@ -112,6 +113,7 @@ type Todo = ToolTodoItem;
   selector: 'cw-tool-call',
   standalone: true,
   imports: [
+    MediaPreviewDirective,
     ZardButtonComponent,
     CommonModule,
     NgIcon,

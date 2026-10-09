@@ -1207,6 +1207,19 @@ export class FilesService {
    * Stream raw file bytes with a detected MIME type and optional byte range.
    * Used to serve images and videos referenced from chat markdown.
    */
+  async readLocalMedia(filePath: string, range?: string) {
+    const expanded = expandHomePath(filePath);
+    if (!path.isAbsolute(expanded)) {
+      throw new BadRequestException('Media path must be absolute');
+    }
+    if (!/^(image|video)\//.test(detectMimeType(expanded))) {
+      throw new BadRequestException('Path must refer to an image or video');
+    }
+    // Local agents can cite media anywhere on their host, including symlinks.
+    // Keep the general worktree file API scoped to its existing root.
+    return this.readFileRaw(expanded, path.dirname(expanded), range);
+  }
+
   async readFileRaw(
     filePath: string,
     worktreePath: string,
