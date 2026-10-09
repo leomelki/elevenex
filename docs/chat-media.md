@@ -40,9 +40,12 @@ host for SSH sessions). Paths with spaces can be wrapped in `<...>` or URL encod
 The local media endpoint supports image and video formats only.
 
 Click an image, or focus it and press Enter or Space, to open a larger preview.
-The viewer provides fit-to-window and 100–300% zoom, previous/next images within
+The viewer provides fit-to-window and smooth zoom up to 300%, previous/next images within
 the message, loading and unavailable states. Use arrow keys to navigate, `+`/`-`
 to zoom, `0` to fit, and Escape to close. Focus returns to the image on dismissal.
+In the enlarged image viewer, pinch the trackpad to zoom smoothly around the
+pointer, and scroll with two fingers to pan horizontally or vertically. Panning
+stops at the image edges. Fit-to-window and changing images reset the view.
 Videos use their native playback, seeking, and fullscreen controls.
 
 Local media responses are not cached. Each displayed chat message has its own

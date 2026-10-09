@@ -17,13 +17,13 @@
         zSize="icon-sm"
         aria-label="Zoom out"
         title="Zoom out (−)"
-        [disabled]="zoom() === 0 || failed()"
-        (click)="zoom.set(zoom() - 1)"
+        [disabled]="zoom() === 0 || loading() || failed()"
+        (click)="changeZoom(-1)"
       >
         <ng-icon name="lucideMinus" />
       </button>
       <span class="w-12 text-center text-xs tabular-nums text-muted-foreground">{{
-        zoom() === 0 ? 'Fit' : zoom() * 100 + '%'
+        zoomLabel()
       }}</span>
       <button
         type="button"
@@ -32,8 +32,8 @@
         zSize="icon-sm"
         aria-label="Zoom in"
         title="Zoom in (+)"
-        [disabled]="zoom() === 3 || failed()"
-        (click)="zoom.set(zoom() + 1)"
+        [disabled]="zoom() >= 3 || loading() || failed()"
+        (click)="changeZoom(1)"
       >
         <ng-icon name="lucidePlus" />
       </button>
@@ -45,7 +45,7 @@
         aria-label="Fit image to window"
         title="Fit to window (0)"
         [disabled]="zoom() === 0"
-        (click)="zoom.set(0)"
+        (click)="fit()"
       >
         <ng-icon name="lucideMaximize" />
       </button>
@@ -64,7 +64,8 @@
     </button>
   </header>
   <div
-    class="relative h-[min(72dvh,900px,calc(100dvh-10rem))] overflow-auto bg-muted/40 p-4"
+    #viewport
+    class="relative h-[min(72dvh,900px,calc(100dvh-10rem))] overflow-hidden overscroll-none bg-muted/40"
     aria-label="Image preview"
     [attr.aria-busy]="loading()"
   >
@@ -77,7 +78,10 @@
       </div>
     }
     @if (failed()) {
-      <div class="flex h-full flex-col items-center justify-center gap-2 text-center" role="status">
+      <div
+        class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center"
+        role="status"
+      >
         <ng-icon name="lucideImage" class="text-muted-foreground" />
         <p class="text-sm font-medium">Image unavailable</p>
         <p class="text-xs text-muted-foreground">The file may have been moved or deleted.</p>
@@ -87,10 +91,11 @@
         <img
           [src]="item.src"
           [alt]="item.label"
-          class="block"
-          [class]="zoom() === 0 ? 'h-full w-full object-contain' : 'max-w-none mx-auto'"
-          [style.width]="zoom() ? 'auto' : null"
-          [style.zoom]="zoom() || 1"
+          class="pointer-events-none absolute top-1/2 left-1/2 block max-w-none select-none"
+          [draggable]="false"
+          [style.width.px]="naturalSize().width || null"
+          [style.height.px]="naturalSize().height || null"
+          [style.transform]="imageTransform()"
           [class.invisible]="loading()"
           (load)="loaded($event)"
           (error)="loading.set(false); failed.set(true)"
@@ -99,7 +104,9 @@
     }
   </div>
   <footer class="flex items-center justify-between gap-3 border-t border-border px-4 py-2">
-    <span class="text-xs text-muted-foreground">Esc to close · + / − to zoom</span>
+    <span class="text-xs text-muted-foreground"
+      >Pinch to zoom · Two fingers to pan · Esc to close</span
+    >
     <div class="flex items-center gap-2">
       @if (data.images.length > 1) {
         <button
