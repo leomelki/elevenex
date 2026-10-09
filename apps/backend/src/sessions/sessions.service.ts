@@ -921,7 +921,7 @@ export class SessionsService extends EventEmitter {
       .limit(1);
     if (task.length)
       throw new BadRequestException(
-        'This environment has task history. Finish its task instead of deleting conversations by directory.',
+        'This worktree has task history. Finish its task instead of deleting conversations by directory.',
       );
   }
 
@@ -1247,7 +1247,7 @@ export class SessionsService extends EventEmitter {
         'Reopen this task before starting a session.',
       );
     if (workspace.taskState && workspace.taskState !== 'ready')
-      throw new BadRequestException('The task environment is not ready.');
+      throw new BadRequestException('The task worktree is not ready.');
     if (workspace.linkStatus === 'unlinked') {
       throw new BadRequestException(
         'This workspace is unlinked from its worktree. Link it back before using sessions.',

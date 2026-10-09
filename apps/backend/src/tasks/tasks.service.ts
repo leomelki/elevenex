@@ -193,7 +193,7 @@ export class TasksService implements OnApplicationBootstrap {
           ? {
               code: 'environment_missing',
               message:
-                'This task needs an environment. Choose a branch and retry setup.',
+                'This task needs a worktree. Choose a branch and retry setup.',
             }
           : null),
       preparationStage: task.taskConfig
@@ -309,7 +309,7 @@ export class TasksService implements OnApplicationBootstrap {
     const task = await this.record(id);
     if (task.archivedAt)
       throw new ConflictException(
-        'Reopen this task before preparing its environment.',
+        'Reopen this task before preparing its worktree.',
       );
     if (
       task.taskState !== 'failed' &&
@@ -445,7 +445,7 @@ export class TasksService implements OnApplicationBootstrap {
         task.linkStatus !== 'linked'
       )
         throw new ConflictException(
-          'Wait for this task’s environment before opening a conversation.',
+          'Wait for this task’s worktree before opening a conversation.',
         );
       const session = (
         await this.db
@@ -668,7 +668,7 @@ export class TasksService implements OnApplicationBootstrap {
       if (!alreadyCorrect) {
         if (status.dirty)
           throw new ConflictException(
-            'The selected environment now has local edits. Choose another environment.',
+            'The selected worktree now has local edits. Choose another worktree.',
           );
         await worktreeSimpleGit(environment.path).raw(
           setup.checkoutMode === 'snapshot'
@@ -854,7 +854,7 @@ export class TasksService implements OnApplicationBootstrap {
             }
           } catch (error) {
             this.logger.warn(
-              `Task ${id} finished with its environment retained: ${String(error)}`,
+              `Task ${id} finished with its worktree retained: ${String(error)}`,
             );
           }
         }
@@ -884,7 +884,7 @@ export class TasksService implements OnApplicationBootstrap {
           taskError: JSON.stringify({
             code: 'finish_failed',
             message:
-              'Could not stop all task processes. The environment remains reserved. Finish this task again to retry cleanup.',
+              'Could not stop all task processes. The worktree remains reserved. Finish this task again to retry cleanup.',
           }),
         });
         throw error;

@@ -396,7 +396,7 @@ export class WorktreePoolService {
     }
 
     const owner = await this.findLinkedWorkspace(pool.id);
-    if (owner?.workspace.taskRequestId || owner?.workspace.archivedAt) throw new ConflictException('This environment belongs to a task. Open or finish that task first.');
+    if (owner?.workspace.taskRequestId || owner?.workspace.archivedAt) throw new ConflictException('This worktree belongs to a task. Open or finish that task first.');
     const projectWorkspace = await this.findProjectWorkspace(repo.id, pool.id);
     const ownerIsCurrentProject = owner?.repo.projectId === repo.projectId;
     const now = new Date().toISOString();
@@ -477,9 +477,9 @@ export class WorktreePoolService {
     await this.projectsService.assertProjectIsActive(repo.projectId);
     const pool = await this.findPoolForRepo(repo, worktreeId);
     const owner = await this.findLinkedWorkspace(pool.id);
-    if (owner?.workspace.taskRequestId || owner?.workspace.archivedAt) throw new ConflictException('Rename the task instead of moving its environment.');
+    if (owner?.workspace.taskRequestId || owner?.workspace.archivedAt) throw new ConflictException('Rename the task instead of moving its worktree.');
     const history = await this.db.select({ id: schema.workspaces.id }).from(schema.workspaces).where(and(eq(schema.workspaces.path, pool.path), eq(schema.workspaces.linkStatus, 'unlinked')));
-    if (history.length) throw new ConflictException('This environment has task history and cannot be moved.');
+    if (history.length) throw new ConflictException('This worktree has task history and cannot be moved.');
     const name = this.normalizeName(newName);
     const newPath = path.join(
       path.dirname(repo.path),
@@ -657,7 +657,9 @@ export class WorktreePoolService {
       ...worktrees.map((worktree) => worktree.path),
       ...poolRows.map((pool) => pool.path),
       ...workspaceRows
-        .filter((workspace) => !workspace.isDefault)
+        // Tasks have no checkout until allocation finishes. An empty path is
+        // pending setup, not evidence that a worktree was deleted.
+        .filter((workspace) => !workspace.isDefault && workspace.path)
         .map((workspace) => workspace.path),
     ]);
     const missingPaths = new Set<string>();
@@ -676,10 +678,30 @@ export class WorktreePoolService {
     // Explicitly detach references: older migrations lack ON DELETE SET NULL.
     this.db.transaction((tx) => {
       for (const workspace of workspaceRows) {
-        if (!workspace.isDefault && missingPaths.has(workspace.path)) {
+        if (
+          !workspace.isDefault &&
+          workspace.taskState !== 'preparing' &&
+          workspace.taskState !== 'finishing' &&
+          missingPaths.has(workspace.path)
+        ) {
           tx.update(schema.workspaces)
-            .set({ poolWorktreeId: null, linkStatus: 'unlinked', taskState: 'failed', taskError: JSON.stringify({ message: 'The task environment is missing. Reopen or choose another environment.' }) })
-            .where(eq(schema.workspaces.id, workspace.id))
+            .set({
+              poolWorktreeId: null,
+              linkStatus: 'unlinked',
+              taskState: 'failed',
+              taskError: JSON.stringify({
+                message:
+                  'The task worktree is missing. Reopen or choose another worktree.',
+              }),
+            })
+            // Setup may assign another checkout while filesystem checks run.
+            .where(
+              and(
+                eq(schema.workspaces.id, workspace.id),
+                eq(schema.workspaces.path, workspace.path),
+                eq(schema.workspaces.taskState, workspace.taskState),
+              ),
+            )
             .run();
         }
       }

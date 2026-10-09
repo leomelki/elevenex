@@ -466,7 +466,7 @@ export class WorkspacesService {
       );
     if (history.length)
       throw new BadRequestException(
-        'This environment has task history. Finish its current task instead.',
+        'This worktree has task history. Finish its current task instead.',
       );
     const repo = await this.findRepo(workspace.repoId);
     await this.projectsService.assertProjectIsActive(repo.projectId);
@@ -741,10 +741,10 @@ export class WorkspacesService {
   private assertLinked(workspace: typeof schema.workspaces.$inferSelect) {
     if (workspace.archivedAt)
       throw new BadRequestException(
-        'Reopen this task before using its environment.',
+        'Reopen this task before using its worktree.',
       );
     if (workspace.taskState && workspace.taskState !== 'ready')
-      throw new BadRequestException('This task environment is not ready.');
+      throw new BadRequestException('This task worktree is not ready.');
     if (workspace.linkStatus === 'unlinked') {
       throw new BadRequestException(
         'Workspace is unlinked from its worktree. Link it back before using it.',

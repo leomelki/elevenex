@@ -46,7 +46,7 @@ export class ActionsService extends EventEmitter implements OnModuleInit {
         await assertWorkspaceCanExecute(this.db, action.workspaceId);
         if (action.worktreePath !== worktreePath)
           throw new BadRequestException(
-            'The task environment changed. Start the action again.',
+            'The task worktree changed. Start the action again.',
           );
       },
       markRunning: (actionId) => this.markRunning(actionId),

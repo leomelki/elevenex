@@ -103,7 +103,7 @@ export class TaskWorktreeAllocator {
       if ((!pool?.managed || realPath === realRoot) && !setup.confirmExternal) {
         throw new ConflictException({
           code: 'external_checkout',
-          message: 'This branch is checked out in an external environment.',
+          message: 'This branch is checked out in an external worktree.',
           path: realPath,
           canSnapshot: true,
         });
@@ -195,7 +195,7 @@ export class TaskWorktreeAllocator {
     }
     if (setup.environment === 'existing')
       throw new ConflictException(
-        'The selected environment is in use or has local changes. Choose another environment.',
+        'The selected worktree is in use or has local changes. Choose another worktree.',
       );
     await this.pool.assertWithinWorktreeLimit(repo, setup.confirmOverLimit);
     const stem = path.join(
@@ -242,7 +242,7 @@ export class TaskWorktreeAllocator {
         .values({
           repoRootPath: realRoot,
           path: worktreePath,
-          name: `Environment ${task.id}`,
+          name: `Worktree ${task.id}`,
           managed: true,
           createdFromRef: setup.resolvedCommit,
         })
@@ -306,7 +306,7 @@ export class TaskWorktreeAllocator {
       throw new ConflictException({
         code: 'environment_reserved',
         message:
-          'This branch or environment was just reserved by another task. Choose another environment or start at its revision.',
+          'This branch or worktree was just reserved by another task. Choose another worktree or start at its revision.',
         canSnapshot: true,
       });
     }

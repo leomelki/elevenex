@@ -41,7 +41,7 @@ export async function workspaceCheckoutError(workspace: Workspace) {
     return {
       code: 'environment_missing',
       message:
-        'This task’s checkout is unavailable. Choose another environment before continuing.',
+        'This task’s checkout is unavailable. Choose another worktree before continuing.',
     };
   } finally {
     if (checkoutReads.get(workspace.path) === pending)
@@ -92,7 +92,7 @@ export async function assertWorkspaceCanExecute(
     workspace.taskState !== 'ready'
   ) {
     throw new BadRequestException(
-      'Reopen the task and wait for its environment before running commands.',
+      'Reopen the task and wait for its worktree before running commands.',
     );
   }
   const error = await workspaceCheckoutError(workspace);

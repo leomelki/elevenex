@@ -20,6 +20,7 @@ import { WorktreesService } from '../worktrees/worktrees.service.js';
 import { WorktreePoolService } from '../worktrees/worktree-pool.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 import { BranchesService } from '../branches/branches.service.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { UserPtyManager } from '../user-terminal/user-pty-manager.service.js';
@@ -177,6 +178,53 @@ describe('Task lifecycle with real Git and migrations', () => {
     });
     return settled(task.id);
   }
+
+  it('keeps a new task preparing when the pool reconciles before checkout allocation', async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const entering = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    jest.spyOn(gitService, 'refresh').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+          entered();
+        }),
+    );
+    const pool = new WorktreePoolService(
+      db,
+      new WorktreesService(),
+      {} as SessionsService,
+      {} as ProjectsService,
+      hooks as unknown as ClaudeHooksService,
+      {
+        getMaxWorktreesPerRepo: jest.fn(async () => 0),
+      } as unknown as SettingsService,
+    );
+    const task = await service.create(repo.id, {
+      requestId: randomUUID(),
+      mode: 'new',
+      branchName: 'reconcile-during-setup',
+      baseRef: 'main',
+    });
+    await entering;
+    try {
+      await pool.getWorktreeQuota(repo);
+      expect(await service.get(task.id)).toMatchObject({
+        taskState: 'preparing',
+        path: '',
+        error: null,
+      });
+    } finally {
+      release();
+    }
+    expect(await settled(task.id)).toMatchObject({
+      taskState: 'ready',
+      linkStatus: 'linked',
+      error: null,
+    });
+  });
 
   it('creates one task per request, with a stopped initial session and independent display name', async () => {
     const input: TaskSetup = {

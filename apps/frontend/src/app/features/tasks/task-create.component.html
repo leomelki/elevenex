@@ -117,12 +117,12 @@
   <div class="rounded-lg border border-border bg-muted/20 px-3 py-3">
     <div class="flex items-center justify-between gap-2">
       <div>
-        <p class="text-sm font-medium">Environment</p>
+        <p class="text-sm font-medium">Worktree</p>
         <p class="text-xs text-muted-foreground">
           {{
             environment() === 'automatic'
               ? 'Chosen automatically. Your other tasks keep their own checkouts.'
-              : 'Custom environment selection'
+              : 'Custom worktree selection'
           }}
         </p>
       </div>
@@ -140,7 +140,7 @@
     @if (options()) {
       <app-option-select
         class="mt-3"
-        ariaLabel="Use environment"
+        ariaLabel="Use worktree"
         [options]="environmentOptions"
         [value]="environment()"
         (valueChange)="selectEnvironment($event)"
@@ -148,8 +148,8 @@
       @if (environment() === 'existing') {
         <app-option-select
           class="mt-2"
-          ariaLabel="Existing environment"
-          placeholder="Choose an available environment…"
+          ariaLabel="Existing worktree"
+          placeholder="Choose an available worktree…"
           [options]="availableEnvironments()"
           [value]="worktreeId()?.toString() || ''"
           (valueChange)="worktreeId.set(+$event)"

@@ -267,6 +267,59 @@ describe('WorktreePoolService', () => {
     ).toContain(FEATURE_PATH);
   });
 
+  it.each(['preparing', 'finishing'])(
+    'preserves an in-flight task operation when its previous checkout is missing (%s)',
+    async (taskState) => {
+      const [task] = await db
+        .insert(schema.workspaces)
+        .values({
+          repoId: repo.id,
+          name: 'In-flight task',
+          path: DETACHED_PATH,
+          linkStatus: 'unlinked',
+          taskState,
+        })
+        .returning();
+      jest
+        .mocked(isMissingWorktreePath)
+        .mockImplementation(async (value) => value === DETACHED_PATH);
+
+      await service.reconcileRepo(repo);
+
+      expect(
+        await db.select().from(schema.workspaces).where(eq(schema.workspaces.id, task.id)),
+      ).toEqual([task]);
+    },
+  );
+
+  it('ignores a missing-checkout result if the task was reassigned during the filesystem check', async () => {
+    const [task] = await db
+      .insert(schema.workspaces)
+      .values({ repoId: repo.id, name: 'Reassigned task', path: DETACHED_PATH })
+      .returning();
+    jest.mocked(isMissingWorktreePath).mockImplementation(async (value) => {
+      if (value !== DETACHED_PATH) return false;
+      await db
+        .update(schema.workspaces)
+        .set({ path: FEATURE_PATH })
+        .where(eq(schema.workspaces.id, task.id));
+      return true;
+    });
+
+    await service.reconcileRepo(repo);
+
+    const [updated] = await db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, task.id));
+    expect(updated).toMatchObject({
+      path: FEATURE_PATH,
+      taskState: 'ready',
+      linkStatus: 'linked',
+      taskError: null,
+    });
+  });
+
   it('preserves saved state when the repository cannot be listed', async () => {
     await service.reconcileRepo(repo);
     const before = await db.select().from(schema.repoWorktrees);

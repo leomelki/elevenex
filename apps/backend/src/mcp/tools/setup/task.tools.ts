@@ -43,13 +43,13 @@ const setupShape = {
     .enum(['automatic', 'new'])
     .optional()
     .describe(
-      'Automatic clean environment reuse (default) or a new environment.',
+      'Automatic clean worktree reuse (default) or a new worktree.',
     ),
   confirmOverLimit: z
     .boolean()
     .optional()
     .describe(
-      'True only when the human explicitly approved exceeding the configured environment limit.',
+      'True only when the human explicitly approved exceeding the configured worktree limit.',
     ),
   confirmExternal: z
     .boolean()
@@ -112,7 +112,7 @@ export const TASK_TOOLS = [
     costClass: 'heavy',
     mutates: true,
     description:
-      'Create a named task and prepare its isolated environment automatically. Returns immediately; poll get_task until ready, then prompt its initial session. Prefer this to worktree provisioning.',
+      'Create a named task and prepare its isolated worktree automatically. Returns immediately; poll get_task until ready, then prompt its initial session. Prefer this to worktree provisioning.',
     inputShape: {
       repoId: z.number().int().positive().describe('Repository ID.'),
       requestId: z
@@ -183,7 +183,7 @@ export const TASK_TOOLS = [
     title: 'Get task',
     costClass: 'instant',
     description:
-      'Observe task preparation, errors, environment assignment, and up to 50 conversation handles. Finished task history needs no checkout.',
+      'Observe task preparation, errors, worktree assignment, and up to 50 conversation handles. Finished task history needs no checkout.',
     inputShape: { taskId },
     handler: async (args, ctx) => ({
       data: handle(await run(() => ctx.services.tasks.get(args.taskId))),
@@ -195,7 +195,7 @@ export const TASK_TOOLS = [
     costClass: 'instant',
     mutates: true,
     description:
-      'Rename the display label of a task without changing its branch or environment.',
+      'Rename the display label of a task without changing its branch or worktree.',
     inputShape: {
       taskId,
       name: z.string().min(1).max(160).describe('New display name.'),
@@ -238,7 +238,7 @@ export const TASK_TOOLS = [
     mutates: true,
     destructive: true,
     description:
-      'Archive a task and stop its processes, preserving its branch and conversations. Dirty environments stay reserved. Running work requires explicit confirmation.',
+      'Archive a task and stop its processes, preserving its branch and conversations. Dirty worktrees stay reserved. Running work requires explicit confirmation.',
     inputShape: {
       taskId,
       confirmStop: z
@@ -262,7 +262,7 @@ export const TASK_TOOLS = [
     costClass: 'heavy',
     mutates: true,
     description:
-      'Reopen a finished task with the same identity and conversations. Automatically prepare an environment; agents remain stopped.',
+      'Reopen a finished task with the same identity and conversations. Automatically prepare a worktree; agents remain stopped.',
     inputShape: { taskId },
     handler: async (args, ctx) => ({
       data: handle(await run(() => ctx.services.tasks.reopen(args.taskId))),

@@ -67,10 +67,10 @@ export class TaskCreateComponent {
       value: 'automatic',
       label: 'Automatic',
       badge: 'Recommended',
-      description: 'Reuse a clean available environment, or create one.',
+      description: 'Reuse a clean available worktree, or create one.',
     },
-    { value: 'new', label: 'Create a new environment' },
-    { value: 'existing', label: 'Choose an existing environment' },
+    { value: 'new', label: 'Create a new worktree' },
+    { value: 'existing', label: 'Choose an existing worktree' },
   ];
   readonly availableEnvironments = computed<OptionSelectItem[]>(() =>
     this.environments().map((item) => ({
@@ -162,7 +162,7 @@ export class TaskCreateComponent {
           next: (list) => this.environments.set(list),
           error: () =>
             this.environmentsError.set(
-              'Could not load environments. Automatic selection is available.',
+              'Could not load worktrees. Automatic selection is available.',
             ),
         });
   }

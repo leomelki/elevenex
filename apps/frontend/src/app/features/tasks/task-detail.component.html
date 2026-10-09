@@ -23,7 +23,7 @@
         </p>
         @if (task.linkStatus === 'linked') {
           <p class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">
-            Environment kept with this task. Its local files are preserved.
+            Worktree kept with this task. Its local files are preserved.
           </p>
         }
         <button z-button (click)="reopen()" [zDisabled]="busy()">
@@ -52,7 +52,7 @@
             }}
           </h2>
           <p class="mt-1 text-sm text-muted-foreground">
-            {{ task.error?.message || 'The environment could not be prepared.' }}
+            {{ task.error?.message || 'The worktree could not be prepared.' }}
           </p>
         </div>
         <div class="flex flex-wrap gap-2">
@@ -107,7 +107,7 @@
               [zDisabled]="busy()"
               (click)="retry({ confirmOverLimit: true })"
             >
-              Create one more environment
+              Create one more worktree
             </button>
           }
           @if (task.error?.code === 'branch_exists') {
