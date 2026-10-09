@@ -77,7 +77,11 @@ for (const theme of ['light', 'dark'] as const) {
         // Wait for fitting/resizing before sending more output than fits onscreen.
         if (sent || typeof message !== 'string' || !message.includes('"resize"')) return;
         sent = true;
-        socket.send(Array.from({ length: 120 }, (_, i) => `history-${i}\r\n`).join(''));
+        // A restarted shell produces fresh output, rather than replaying the
+        // same history markers into the renderer's retained scrollback.
+        socket.send(terminalConnections === 1
+          ? Array.from({ length: 120 }, (_, i) => `history-${i}\r\n`).join('')
+          : 'restarted-shell-ready\r\n');
       });
     });
 
@@ -112,6 +116,7 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(terminal).toHaveCount(0);
     await toggle.click();
     await expect(terminal.getByText('Disconnected', { exact: true })).toHaveCount(0);
+    await expect(rows).toContainText('restarted-shell-ready');
     await expect(rows).toContainText('history-119');
     expect(terminalConnections).toBe(2);
 
@@ -124,8 +129,8 @@ for (const theme of ['light', 'dark'] as const) {
     // wheel path until the oldest line is rendered instead of assuming a delta.
     await expect.poll(async () => {
       await page.mouse.wheel(0, -10000);
-      return rows.textContent();
-    }).toContain('history-0');
+      return rows.locator(':scope > div').first().textContent();
+    }).toBe('history-0');
 
     // xterm uses xterm-decoration-top on selected glyphs. They must stay visible.
     await terminal.locator('.xterm-helper-textarea').press('Control+Shift+KeyA');
