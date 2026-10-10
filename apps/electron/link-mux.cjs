@@ -34,6 +34,8 @@ const FRAME = {
   // forwarding, and cannot substitute its own to insert itself into the direct
   // connection.
   SIGNAL: 4,
+  // Explicit destination for user TCP forwards. Sent only after capability negotiation.
+  OPEN: 5,
 };
 
 const FLAG = {
@@ -334,12 +336,49 @@ class MuxSession extends EventEmitter {
     );
   }
 
-  open() {
+  async requirePortForwarding({ timeoutMs = 3000 } = {}) {
+    if (this.portForwardingSupported) return;
+    if (!this.isOpen()) throw new Error('The paired desktop is disconnected.');
+    if (this.portForwardingPromise) return this.portForwardingPromise;
+    this.portForwardingPromise = new Promise((resolve, reject) => {
+      const finish = (error) => {
+        clearTimeout(timer);
+        clearInterval(retry);
+        this.removeListener('signal', onSignal);
+        this.removeListener('close', onClose);
+        error ? reject(error) : resolve();
+      };
+      const onSignal = (message) => {
+        if (message?.type === 'port-forwarding-supported' && message.version === 1) {
+          this.portForwardingSupported = true;
+          finish();
+        }
+      };
+      const onClose = () => finish(new Error('The paired desktop disconnected.'));
+      const timer = setTimeout(() => finish(new Error('Update Elevenex on the paired desktop to use port forwarding.')), timeoutMs);
+      // The first query can share a TCP packet with the handshake confirmation,
+      // before the other side has attached its mux consumer. Queries are
+      // idempotent; retry within the same deadline rather than misidentifying
+      // that startup race as an older desktop.
+      const query = () => this.sendSignal({ type: 'port-forwarding-query', version: 1 });
+      const retry = setInterval(query, 250);
+      retry.unref?.();
+      this.on('signal', onSignal);
+      this.once('close', onClose);
+      query();
+    }).finally(() => { this.portForwardingPromise = null; });
+    return this.portForwardingPromise;
+  }
+
+  open(target = null) {
     if (this.closed) {
       throw new Error('Cannot open a stream on a closed link session');
     }
     if (this.streams.size >= this.maxConcurrentStreams) {
       throw new Error('Too many concurrent remote link streams');
+    }
+    if (target && (!this.portForwardingSupported || !validForwardTarget(target))) {
+      throw new Error('Port forwarding is unavailable or the destination is invalid.');
     }
     const streamId = this.nextStreamId;
     this.nextStreamId += 2;
@@ -348,6 +387,10 @@ class MuxSession extends EventEmitter {
       maxFrameBytes: this.maxFrameBytes,
     });
     this.streams.set(streamId, stream);
+    if (target) {
+      stream.acknowledged = true;
+      this.sendFrame(FRAME.OPEN, FLAG.SYN, streamId, 0, Buffer.from(JSON.stringify(target)));
+    }
     return stream;
   }
 
@@ -425,10 +468,31 @@ class MuxSession extends EventEmitter {
       } catch {
         return; // A peer on a newer protocol may send shapes we cannot read.
       }
+      if (payload?.type === 'port-forward-error' && typeof payload.error === 'string') {
+        const stream = this.streams.get(payload.streamId);
+        if (stream) {
+          stream.resetSent = true;
+          stream.destroy(new Error(payload.error.slice(0, 512)));
+        }
+        return;
+      }
       this.emit('signal', payload);
       return;
     }
 
+    // Unknown frame types must never become backend request bytes.
+    if (![FRAME.DATA, FRAME.WINDOW_UPDATE, FRAME.OPEN].includes(frame.type)) return;
+    let target = null;
+    if (frame.type === FRAME.OPEN) {
+      try {
+        if (!this.acceptPortForwards || frame.payload.length > 1024) throw new Error();
+        target = JSON.parse(frame.payload.toString('utf8'));
+        if (!validForwardTarget(target) || this.streams.has(frame.streamId)) throw new Error();
+      } catch {
+        this.sendFrame(FRAME.DATA, FLAG.RST, frame.streamId, 0, null);
+        return;
+      }
+    }
     let stream = this.streams.get(frame.streamId);
 
     if (!stream) {
@@ -448,6 +512,7 @@ class MuxSession extends EventEmitter {
       // The peer has evidently seen this id, so our first frame back needs no SYN.
       stream.acknowledged = true;
       this.streams.set(frame.streamId, stream);
+      stream.target = target;
       this.emit('stream', stream);
     }
 
@@ -461,7 +526,7 @@ class MuxSession extends EventEmitter {
       return;
     }
 
-    if (frame.payload.length > 0) {
+    if (frame.type !== FRAME.OPEN && frame.payload.length > 0) {
       stream.onData(frame.payload);
     }
 
@@ -469,6 +534,12 @@ class MuxSession extends EventEmitter {
       stream.onRemoteEnd();
     }
   }
+}
+
+function validForwardTarget(target) {
+  return target && typeof target.host === 'string' && target.host.length > 0
+    && target.host.length <= 253 && !/[\s\x00-\x1f\x7f/\\]/.test(target.host)
+    && Number.isInteger(target.port) && target.port > 0 && target.port <= 65535;
 }
 
 function createMuxSession(channel, options) {
@@ -485,6 +556,7 @@ module.exports = {
   MuxStream,
   PROTOCOL_VERSION,
   createMuxSession,
+  validForwardTarget,
   decodeFrame,
   encodeFrame,
 };

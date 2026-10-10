@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
+import { toast } from 'ngx-sonner';
 import { describe, beforeEach, expect, it, vi } from 'vitest';
 
 import { ProjectOnboardingWizard } from './project-onboarding-wizard';
@@ -8,6 +9,7 @@ import { PathAutocompleteService } from '@/shared/services/path-autocomplete.ser
 import { ProjectsService } from '@/shared/services/projects.service';
 import { ReposService } from '@/shared/services/repos.service';
 import { SshForwardsService } from '@/shared/services/ssh-forwards.service';
+import { SshForward } from '@/shared/models/ssh-forward.model';
 
 vi.mock('ngx-sonner', () => ({
   toast: {
@@ -32,7 +34,7 @@ const repo = {
   createdAt: '2026-01-03T00:00:00Z',
 };
 
-const forward = {
+const forward: SshForward = {
   id: 20,
   projectId: 1,
   name: 'Port 3000',
@@ -73,6 +75,7 @@ describe('ProjectOnboardingWizard', () => {
     })),
     isSupported: vi.fn(() => Promise.resolve(true)),
     create: vi.fn(() => of(forward)),
+    start: vi.fn(() => of(forward)),
   };
   const navigationServiceMock = {
     refreshTree: vi.fn(),
@@ -175,5 +178,72 @@ describe('ProjectOnboardingWizard', () => {
     fixture.componentInstance.close();
 
     expect(cancelled).toHaveBeenCalled();
+  });
+
+  it('shows a saved forward startup failure and retries its id without duplicating project setup', async () => {
+    const fixture = await render();
+    const component = fixture.componentInstance;
+    const completed = vi.fn();
+    component.completed.subscribe(completed);
+    component.updateProjectName('Platform');
+    component.updateRepoPath(component.repos()[0].id, '/work/api');
+    component.addForwardRow();
+    component.activeStep.set('review');
+    sshForwardsServiceMock.create.mockReturnValueOnce(of({
+      ...forward, status: 'error', lastError: 'Local port 3000 is already in use.',
+    }));
+
+    await component.submit();
+    fixture.detectChanges();
+    expect(component.submissionError()).toContain('was saved, but could not start');
+    expect(fixture.nativeElement.textContent).toContain('Local port 3000 is already in use.');
+    expect(fixture.nativeElement.textContent).toContain('Retry remaining setup');
+    expect(component.forwards()[0].forward?.id).toBe(20);
+    expect(completed).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+
+    sshForwardsServiceMock.start.mockReturnValueOnce(throwError(() => new Error('Still occupied.')));
+    await component.submit();
+    expect(component.submissionError()).toBe('Still occupied.');
+    expect(completed).not.toHaveBeenCalled();
+    await component.submit();
+    expect(sshForwardsServiceMock.start).toHaveBeenCalledWith(20);
+    expect(sshForwardsServiceMock.start).toHaveBeenCalledTimes(2);
+    expect(sshForwardsServiceMock.create).toHaveBeenCalledTimes(1);
+    expect(projectsServiceMock.create).toHaveBeenCalledTimes(1);
+    expect(reposServiceMock.add).toHaveBeenCalledTimes(1);
+    expect(component.forwards()[0].error).toBe('');
+    expect(completed).toHaveBeenCalledWith(project);
+  });
+
+  it('lets the user finish with a saved forward after opting out of its failed startup', async () => {
+    const fixture = await render();
+    const component = fixture.componentInstance;
+    const completed = vi.fn();
+    component.completed.subscribe(completed);
+    component.updateProjectName('Platform');
+    component.updateRepoPath(component.repos()[0].id, '/work/api');
+    component.addForwardRow();
+    sshForwardsServiceMock.create.mockReturnValueOnce(of({
+      ...forward, status: 'error', lastError: 'Update the paired desktop.',
+    }));
+    await component.submit();
+
+    component.activeStep.set('ports');
+    fixture.detectChanges();
+    const checkbox = fixture.nativeElement.querySelector('.project-wizard-checkbox input') as HTMLInputElement;
+    expect(checkbox.disabled).toBe(false);
+    checkbox.click();
+    expect(component.forwards()[0].startImmediately).toBe(false);
+    fixture.detectChanges();
+    expect(checkbox.disabled).toBe(false);
+    checkbox.click();
+    expect(component.forwards()[0].startImmediately).toBe(true);
+    checkbox.click();
+    await component.submit();
+
+    expect(sshForwardsServiceMock.create).toHaveBeenCalledTimes(1);
+    expect(sshForwardsServiceMock.start).not.toHaveBeenCalled();
+    expect(completed).toHaveBeenCalledWith(project);
   });
 });

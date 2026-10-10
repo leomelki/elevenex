@@ -1,3 +1,5 @@
+import type { OnboardingMode, PairedDeviceState } from '@/shared/models/onboarding.model';
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute, convertToParamMap, Router } from '@angular/router';
@@ -72,6 +74,7 @@ const forwards: SshForward[] = [
 describe('ProjectDetail', () => {
   let originalLocalStorage: Storage | undefined;
 
+  const onboardingSnapshot = signal({ mode: 'local' as OnboardingMode, paired: null as PairedDeviceState | null, remoteConnectionReady: false });
   const paramMap = new BehaviorSubject(convertToParamMap({ id: '1' }));
   const fragment = new BehaviorSubject<string | null>(null);
   const navigate = vi.fn(() => Promise.resolve(true));
@@ -112,6 +115,7 @@ describe('ProjectDetail', () => {
     paramMap.next(convertToParamMap({ id: '1' }));
     fragment.next(null);
     vi.clearAllMocks();
+    onboardingSnapshot.set({ mode: 'local', paired: null, remoteConnectionReady: false });
 
     originalLocalStorage = globalThis.localStorage;
     const localValues = new Map<string, string>();
@@ -171,7 +175,8 @@ describe('ProjectDetail', () => {
         {
           provide: OnboardingStateService,
           useValue: {
-            readSnapshot: vi.fn(() => ({ remoteConnectionReady: false })),
+            snapshotState: onboardingSnapshot,
+            readSnapshot: vi.fn(() => onboardingSnapshot()),
             getActiveServer: vi.fn(() => null),
           },
         },
@@ -221,7 +226,7 @@ describe('ProjectDetail', () => {
     const fixture = await render();
 
     expect(fixture.componentInstance.activeSection()).toBe('ssh');
-    expect(fixture.nativeElement.textContent).toContain('SSH Port Forwarding');
+    expect(fixture.nativeElement.textContent).toContain('Port forwarding');
     expect(fixture.nativeElement.textContent).toContain('App');
     expect(fixture.nativeElement.textContent).toContain('Live');
   });
@@ -298,4 +303,55 @@ describe('ProjectDetail', () => {
 
     expect(browserIsolationServiceMock.save).toHaveBeenCalledWith(1, 'isolated', []);
   });
+
+  it.each([true, false])('uses listener state for the action when a paired forward has an error (running=%s)', async (running) => {
+    fragment.next('ssh-forwarding');
+    const fixture = await render();
+    fixture.componentInstance.sshForwards.set([{
+      ...forwards[0], pairedDeviceId: 3, status: 'error', running,
+      lastError: 'Cannot reach the remote service.',
+    }]);
+    fixture.detectChanges();
+
+    const action = fixture.debugElement.queryAll(By.css('.forward-row__actions button'))
+      .find(button => button.nativeElement.textContent.trim() === (running ? 'Stop' : 'Start'))!;
+    expect(action).toBeDefined();
+    action.nativeElement.click();
+    expect(running ? sshForwardsServiceMock.stop : sshForwardsServiceMock.start).toHaveBeenCalledWith(20);
+    expect(running ? sshForwardsServiceMock.start : sshForwardsServiceMock.stop).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['127.0.0.1', 5432, '127.0.0.1:5432'],
+    ['::1', 443, '[::1]:443'],
+    ['[::1]', 443, '[::1]:443'],
+  ] as const)('copies a protocol-neutral local address for %s', async (bindAddress, localPort, expected) => {
+    const fixture = await render();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    try {
+      await fixture.componentInstance.copyForwardAddress({ ...forwards[0], bindAddress, localPort });
+      expect(writeText).toHaveBeenCalledWith(expected);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it('offers a single port field for paired desktops and hides SSH configuration', async () => {
+    onboardingSnapshot.set({ ...onboardingSnapshot(), mode: 'paired', paired: { id: 3, name: 'Studio', localPort: 51234 } });
+    const fixture = await render();
+    fixture.componentInstance.openAddSshForwardDialog();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Forward a port from Studio');
+    expect(fixture.componentInstance.showAdvancedSshSettings()).toBe(false);
+    expect(fixture.componentInstance.canCreateSshForward()).toBe(true);
+    fixture.componentInstance.toggleAdvancedSshSettings();
+    fixture.detectChanges();
+    const dialog = fixture.nativeElement.querySelector('dialog');
+    expect(dialog.textContent).toContain('Remote port');
+    expect(dialog.textContent).not.toContain('SSH host');
+    expect(dialog.textContent).not.toContain('SSH user');
+    fixture.componentInstance.updateSshForwardField('remotePort', 65536);
+    expect(fixture.componentInstance.canCreateSshForward()).toBe(false);
+  });
+
 });

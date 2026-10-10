@@ -73,7 +73,7 @@
           <strong>{{ repos().length }}</strong>
         </button>
         <button type="button" class="summary-tile" [class.summary-tile--active]="activeSection() === 'ssh'" (click)="selectSection('ssh')">
-          <span>SSH forwards</span>
+          <span>Port forwards</span>
           <strong>{{ activeForwardCount() }} live / {{ sshForwards().length }}</strong>
         </button>
         <button type="button" class="summary-tile" [class.summary-tile--active]="activeSection() === 'browser'" (click)="selectSection('browser')">
@@ -97,7 +97,7 @@
         </button>
         <button type="button" [class.is-active]="activeSection() === 'ssh'" [attr.aria-pressed]="activeSection() === 'ssh'" (click)="selectSection('ssh')">
           <ng-icon name="lucideServer" size="14" />
-          SSH Forwarding
+          Port forwarding
         </button>
         <button type="button" [class.is-active]="activeSection() === 'browser'" [attr.aria-pressed]="activeSection() === 'browser'" (click)="selectSection('browser')">
           <ng-icon name="lucideShield" size="14" />
@@ -201,12 +201,12 @@
       }
 
       @if (activeSection() === 'ssh') {
-        <section id="ssh-forwarding" class="project-section" aria-label="SSH forwarding">
+        <section id="ssh-forwarding" class="project-section" aria-label="Port forwarding">
           <div class="section-toolbar">
             <div>
               <p class="section-eyebrow">Project networking</p>
-              <h2>SSH Port Forwarding</h2>
-              <p>Save repeatable tunnels, see live ports, and start or stop them from this project.</p>
+              <h2>Port forwarding</h2>
+              <p>{{ pairedDesktop() ? 'Use services on the paired desktop through a local port. Forwards resume automatically when the desktop reconnects.' : 'Save repeatable tunnels, see live ports, and start or stop them from this project.' }}</p>
             </div>
             @if (!isArchived()) {
               <button z-button type="button" (click)="openAddSshForwardDialog()">
@@ -249,7 +249,7 @@
             <div class="compact-empty-state">
               <ng-icon name="lucideServer" size="24" />
               <div>
-                <h3>No SSH forwards saved</h3>
+                <h3>No port forwards saved</h3>
                 <p>Use this for databases, private web apps, or any remote service you want on a stable local port.</p>
               </div>
               @if (!isArchived()) {
@@ -280,13 +280,20 @@
                   </div>
 
                   <div class="forward-row__meta">
-                    <div><span>SSH</span><strong>{{ forward.connectionLabel }}</strong></div>
+                    <div><span>{{ forward.pairedDeviceId ? 'Desktop' : 'SSH' }}</span><strong>{{ forward.connectionLabel }}</strong></div>
                     <div><span>Local</span><strong>{{ forward.bindAddress }}:{{ forward.localPort }}</strong></div>
                     <div><span>Remote</span><strong>{{ forward.remoteHost }}:{{ forward.remotePort }}</strong></div>
-                    <div><span>Process</span><strong>{{ forward.pid ?? 'Not running' }}</strong></div>
+                    @if (!forward.pairedDeviceId) {
+                      <div><span>Process</span><strong>{{ forward.pid ?? 'Not running' }}</strong></div>
+                    }
                   </div>
 
                   <div class="forward-row__actions">
+                    @if (isForwardRunning(forward)) {
+                      <button z-button zType="outline" zSize="sm" type="button" (click)="copyForwardAddress(forward)">
+                        Copy local address
+                      </button>
+                    }
                     <button
                       z-button
                       zType="outline"
@@ -295,8 +302,8 @@
                       [zLoading]="isForwardBusy(forward)"
                       [zDisabled]="isArchived() || isForwardBusy(forward) || !canToggleForwarding()"
                       (click)="toggleSshForward(forward)">
-                      <ng-icon [name]="forward.status === 'active' || forward.status === 'connecting' ? 'lucideSquare' : 'lucidePlay'" size="14" />
-                      {{ forward.status === 'active' || forward.status === 'connecting' ? 'Stop' : 'Start' }}
+                      <ng-icon [name]="isForwardRunning(forward) ? 'lucideSquare' : 'lucidePlay'" size="14" />
+                      {{ isForwardRunning(forward) ? 'Stop' : 'Start' }}
                     </button>
                     <button
                       z-button
@@ -313,7 +320,7 @@
                   </div>
 
                   @if (forward.lastError) {
-                    <div class="forward-alert">
+                    <div class="forward-alert" [class.forward-alert--waiting]="forward.status === 'connecting'">
                       <div class="forward-alert__header">
                         <span>{{ forward.lastError }}</span>
                         @if (forward.debugDetails) {
@@ -533,7 +540,7 @@
 
   @if (showRemoveSshForwardDialog()) {
     <dialog #removeSshForwardDialog="trackedNativeModal" trackNativeModal class="project-dialog" (close)="closeRemoveSshForwardDialog()">
-      <h4>Remove SSH forward</h4>
+      <h4>Remove port forward</h4>
       <p>The saved configuration will be deleted and any active tunnel will be stopped first.</p>
       <div class="project-dialog__actions">
         <button z-button zType="ghost" type="button" (click)="closeRemoveSshForwardDialog()">Cancel</button>
@@ -567,17 +574,18 @@
 
   @if (showAddSshForwardDialog()) {
     <dialog #addSshForwardDialog="trackedNativeModal" trackNativeModal class="project-dialog project-dialog--wide" (close)="closeAddSshForwardDialog()">
-      <h4>Quick SSH forward</h4>
+      <h4>{{ pairedDesktop() ? 'Forward a port from ' + pairedDesktop()!.name : 'Quick SSH forward' }}</h4>
       <p>Pick the port you want locally. By default it forwards the same port on the remote side.</p>
 
       <div class="ssh-quick-shell">
         <div class="ssh-port-hero">
           <div>
-            <span>Port to forward</span>
+            <label for="quick-forward-port">Port to forward</label>
             <p>Local and remote port stay aligned unless advanced settings are open.</p>
           </div>
           <input
             z-input
+            id="quick-forward-port"
             class="ssh-port-input"
             type="number"
             min="1"
@@ -587,7 +595,15 @@
         </div>
 
         <div class="ssh-default-summary" [class.is-empty]="!sshForwardDefaults()">
-          @if (sshForwardDefaults()) {
+          @if (pairedDesktop(); as desktop) {
+            <div>
+              <strong>Using paired desktop {{ desktop.name }}</strong>
+              <button z-button zType="ghost" zSize="sm" type="button" (click)="toggleAdvancedSshSettings()">
+                {{ showAdvancedSshSettings() ? 'Hide advanced' : 'Advanced settings' }}
+              </button>
+            </div>
+            <p>Available at 127.0.0.1:{{ quickForwardPort() }} on this computer. If that port is busy, choose a different local port in Advanced settings.</p>
+          } @else if (sshForwardDefaults()) {
             <div>
               <strong>{{ usingActiveServerDefaults() ? 'Using current server' : 'Using your last SSH defaults' }}</strong>
               <button type="button" (click)="toggleAdvancedSshSettings()">
@@ -613,22 +629,24 @@
             <span>Name</span>
             <input z-input type="text" placeholder="Port 5432" [value]="newSshForward().name" (input)="updateSshForwardField('name', $any($event.target).value)" />
           </label>
-          <label class="project-field">
-            <span>SSH host</span>
-            <input z-input type="text" placeholder="bastion.example.com" [value]="newSshForward().sshHost" (input)="updateSshForwardField('sshHost', $any($event.target).value)" />
-          </label>
-          <label class="project-field">
-            <span>SSH user</span>
-            <input z-input type="text" placeholder="deploy" [value]="newSshForward().sshUser || ''" (input)="updateSshForwardField('sshUser', $any($event.target).value)" />
-          </label>
-          <label class="project-field">
-            <span>SSH port</span>
-            <input z-input type="number" min="1" max="65535" [value]="asText(newSshForward().sshPort)" (input)="updateSshForwardField('sshPort', +$any($event.target).value)" />
-          </label>
-          <label class="project-field">
-            <span>Bind address</span>
-            <input z-input type="text" [value]="newSshForward().bindAddress" (input)="updateSshForwardField('bindAddress', $any($event.target).value)" />
-          </label>
+          @if (!pairedDesktop()) {
+            <label class="project-field">
+              <span>SSH host</span>
+              <input z-input type="text" placeholder="bastion.example.com" [value]="newSshForward().sshHost" (input)="updateSshForwardField('sshHost', $any($event.target).value)" />
+            </label>
+            <label class="project-field">
+              <span>SSH user</span>
+              <input z-input type="text" placeholder="deploy" [value]="newSshForward().sshUser || ''" (input)="updateSshForwardField('sshUser', $any($event.target).value)" />
+            </label>
+            <label class="project-field">
+              <span>SSH port</span>
+              <input z-input type="number" min="1" max="65535" [value]="asText(newSshForward().sshPort)" (input)="updateSshForwardField('sshPort', +$any($event.target).value)" />
+            </label>
+            <label class="project-field">
+              <span>Bind address</span>
+              <input z-input type="text" [value]="newSshForward().bindAddress" (input)="updateSshForwardField('bindAddress', $any($event.target).value)" />
+            </label>
+          }
           <label class="project-field">
             <span>Local port</span>
             <input z-input type="number" min="1" max="65535" [value]="asText(newSshForward().localPort)" (input)="updateSshForwardField('localPort', +$any($event.target).value)" />
@@ -650,7 +668,7 @@
           [checked]="newSshForward().startImmediately"
           [disabled]="!sshForwardingSupported()"
           (change)="updateSshForwardField('startImmediately', $any($event.target).checked)" />
-        <span>Start the tunnel immediately after saving</span>
+        <span>Start forwarding immediately after saving</span>
       </label>
 
       <div class="project-dialog__actions">

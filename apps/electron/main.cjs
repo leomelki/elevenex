@@ -4904,6 +4904,10 @@ ipcMain.handle('elevenex-ssh-forwarding:pick-identity-file', async (event) => {
 
 ipcMain.handle('elevenex-remote-link:is-supported', () => true);
 
+ipcMain.handle('elevenex-remote-link:forward-start', (_event, payload) => linkManager.startForward(Number(payload?.deviceId), payload));
+ipcMain.handle('elevenex-remote-link:forward-stop', (_event, payload) => linkManager.stopForward(Number(payload?.deviceId), Number(payload?.id)));
+ipcMain.handle('elevenex-remote-link:forward-state', (_event, payload) => linkManager.getForwardState(Number(payload?.deviceId), Number(payload?.id)));
+
 ipcMain.handle('elevenex-remote-link:get-sharing', () => linkManager.sharingView());
 
 // Separate from get-sharing on purpose: this is the only call that returns the

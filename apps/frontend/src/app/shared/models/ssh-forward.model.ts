@@ -3,6 +3,8 @@ export type SshForwardStatus = 'inactive' | 'connecting' | 'active' | 'stopping'
 export interface SshForward {
   id: number;
   projectId: number;
+  pairedDeviceId?: number;
+  pairedDeviceName?: string;
   name: string;
   sshHost: string;
   sshPort: number;
@@ -14,6 +16,7 @@ export interface SshForward {
   createdAt: string;
   updatedAt: string;
   status: SshForwardStatus;
+  running?: boolean;
   pid: number | null;
   startedAt: string | null;
   stoppedAt: string | null;

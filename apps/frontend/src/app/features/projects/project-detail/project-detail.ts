@@ -61,6 +61,11 @@ export class ProjectDetail implements OnInit, OnDestroy {
   private onboardingState = inject(OnboardingStateService);
   private agentControl = inject(AgentControlStateService);
 
+  readonly pairedDesktop = computed(() => {
+    const snapshot = this.onboardingState.snapshotState();
+    return snapshot.mode === 'paired' ? snapshot.paired : null;
+  });
+
   activeSection = signal<ProjectDetailSection>('repos');
   project = signal<Project | null>(null);
   repos = signal<Repo[]>([]);
@@ -229,7 +234,9 @@ export class ProjectDetail implements OnInit, OnDestroy {
     let defaults: SshForwardDefaults | null;
     let fromActiveServer = false;
 
-    if (activeServer) {
+    if (this.pairedDesktop()) {
+      defaults = { sshHost: this.pairedDesktop()!.name, sshPort: 22, bindAddress: '127.0.0.1', remoteHost: 'localhost', startImmediately: true };
+    } else if (activeServer) {
       defaults = {
         sshHost: activeServer.sshHost,
         sshUser: activeServer.sshUser ?? undefined,
@@ -353,12 +360,13 @@ export class ProjectDetail implements OnInit, OnDestroy {
     }).subscribe({
       next: (forward) => {
         this.sshForwards.update(list => [forward, ...list]);
-        toast.success(forward.status === 'active' ? 'SSH forward started' : 'SSH forward saved');
+        if (forward.lastError) toast.error(`Forward saved, but could not start: ${forward.lastError}`);
+        else toast.success(forward.status === 'active' ? 'Port forward started' : 'Port forward saved');
         this.closeAddSshForwardDialog();
         this.addingSshForward.set(false);
       },
       error: (err: unknown) => {
-        toast.error(this.getErrorMessage(err, 'Could not create SSH forward.'));
+        toast.error(this.getErrorMessage(err, 'Could not create port forward.'));
         this.addingSshForward.set(false);
       },
     });
@@ -520,7 +528,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
   toggleSshForward(forward: SshForward) {
     if (this.isArchived()) return;
 
-    const action = forward.status === 'active' || forward.status === 'connecting'
+    const action = this.isForwardRunning(forward)
       ? this.sshForwardsService.stop(forward.id)
       : this.sshForwardsService.start(forward.id);
 
@@ -563,17 +571,19 @@ export class ProjectDetail implements OnInit, OnDestroy {
 
     return Boolean(
       value.name.trim()
-      && value.sshHost.trim()
+      && (this.pairedDesktop() || value.sshHost.trim())
       && value.bindAddress.trim()
       && value.remoteHost.trim()
-      && Number(value.localPort) > 0
-      && Number(value.remotePort) > 0
-      && Number(value.sshPort) > 0,
+      && [value.localPort, value.remotePort, ...(this.pairedDesktop() ? [] : [value.sshPort])].every(port => Number.isInteger(port) && port >= 1 && port <= 65535),
     );
   }
 
   isForwardBusy(forward: SshForward) {
     return this.togglingForwardId() === forward.id || forward.status === 'stopping';
+  }
+
+  isForwardRunning(forward: SshForward) {
+    return forward.running ?? (forward.status === 'active' || forward.status === 'connecting');
   }
 
   canToggleForwarding() {
@@ -585,7 +595,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
       case 'active':
         return 'Live';
       case 'connecting':
-        return 'Starting';
+        return this.pairedDesktop() ? 'Reconnecting' : 'Starting';
       case 'stopping':
         return 'Stopping';
       case 'error':
@@ -622,6 +632,17 @@ export class ProjectDetail implements OnInit, OnDestroy {
       ? `${value.sshUser!.trim()}@${value.sshHost.trim()}:${value.sshPort}`
       : `${value.sshHost.trim()}:${value.sshPort}`;
     return `${sshTarget} | bind ${value.bindAddress.trim()} | remote host ${value.remoteHost.trim()}`;
+  }
+
+  async copyForwardAddress(forward: SshForward) {
+    try {
+      const host = forward.bindAddress.includes(':') && !forward.bindAddress.startsWith('[')
+        ? `[${forward.bindAddress}]` : forward.bindAddress;
+      await navigator.clipboard.writeText(`${host}:${forward.localPort}`);
+      toast.success('Local address copied');
+    } catch {
+      toast.error('Could not copy the address.');
+    }
   }
 
   toggleAdvancedSshSettings() {

@@ -1,3 +1,5 @@
+import type { ElectronSshForwardRuntimeState } from './electron-ssh-forwarding';
+
 declare global {
   interface ElevenexElectronBridge {
     remoteLink?: ElectronRemoteLinkApi;
@@ -65,6 +67,9 @@ export interface RemoteLinkEnableSharingPayload {
 }
 
 export interface ElectronRemoteLinkApi {
+  startForward?(payload: { deviceId: number; id: number; bindAddress: string; localPort: number; remoteHost: string; remotePort: number }): Promise<ElectronSshForwardRuntimeState>;
+  stopForward?(deviceId: number, id: number): Promise<ElectronSshForwardRuntimeState | null>;
+  getForwardState?(deviceId: number, id: number): Promise<ElectronSshForwardRuntimeState | null>;
   isSupported(): Promise<boolean>;
   getSharing(): Promise<RemoteLinkSharingState>;
   /** Returns the pairing code, which is the credential — request only on demand. */

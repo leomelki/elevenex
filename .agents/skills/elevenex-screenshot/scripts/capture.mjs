@@ -34,6 +34,8 @@ Options:
   --backend-url <url>  Backend origin (default: http://127.0.0.1:11111).
   --frontend-url <url> Frontend origin (default: http://127.0.0.1:4200).
   --theme <mode>       light (default) or dark.
+  --paired-device <name>
+                       Preview paired-desktop UI using --backend-url; no live pairing is created.
   --width <px>         Viewport width (default: 1600).
   --height <px>        Viewport height (default: 1000).
   --wait <ms>          Extra settling time after load (default: 3500).
@@ -396,7 +398,7 @@ async function main() {
     const executablePath = await chooseExecutable(chromium);
     browser = await chromium.launch({ headless: true, executablePath });
     const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
-    await page.addInitScript(({ theme, backendOrigin }) => {
+    await page.addInitScript(({ theme, backendOrigin, pairedDevice }) => {
       window.__ELEVENEX_RUNTIME__ = {
         apiBaseUrl: `${backendOrigin}/api`,
         backendOrigin,
@@ -404,16 +406,16 @@ async function main() {
         windowId: 'w0',
       };
       localStorage.setItem('elevenex-onboarding-session@w0', JSON.stringify({
-        mode: 'local',
+        mode: pairedDevice ? 'paired' : 'local',
         currentStep: 'project',
         activeServerId: null,
         remoteConnectionReady: true,
         projectHandoffAcknowledged: true,
         wsl: null,
-        paired: null,
+        paired: pairedDevice ? { id: 1, name: pairedDevice, localPort: Number(new URL(backendOrigin).port) } : null,
       }));
       localStorage.setItem('elevenex-theme', theme);
-    }, { theme: args.theme || 'light', backendOrigin: backendUrl });
+    }, { theme: args.theme || 'light', backendOrigin: backendUrl, pairedDevice: args['paired-device'] || null });
 
     await page.goto(`${frontendUrl}${route}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await page.waitForTimeout(settleMs);

@@ -417,7 +417,7 @@ describe('OnboardingStartupService', () => {
     const service = createService();
     await service.prepareStartupPortForwardPrompt(server);
 
-    await expect(service.startStartupPortForward(1)).rejects.toThrow('Could not start SSH forward 1.');
+    await expect(service.startStartupPortForward(1)).rejects.toThrow('Could not start port forward 1.');
     expect(service.startupPortForwardPrompt()?.forwards).toHaveLength(1);
   });
 
@@ -476,6 +476,26 @@ describe('OnboardingStartupService', () => {
     resolve();
     await startup;
     expect(navigationServiceMock.refreshTree).not.toHaveBeenCalled();
+  });
+
+  it('offers only inactive forwards for the paired desktop and active projects after startup', async () => {
+    const paired = { id: 3, name: 'Studio', localPort: 51234 };
+    onboardingStateMock.readSnapshot.mockReturnValue({ mode: 'paired', paired });
+    remoteLinkMock.connect.mockResolvedValue(undefined);
+    const base = { localPort: 3000, remoteHost: 'localhost', remotePort: 3000, destinationLabel: '', projectId: 5, status: 'inactive', pairedDeviceId: 3 };
+    sshForwardsServiceMock.getAll.mockReturnValue(of([
+      { ...base, id: 1, name: 'Preview' },
+      { ...base, id: 2, status: 'active' },
+      { ...base, id: 3, pairedDeviceId: 4 },
+      { ...base, id: 4, projectId: 999 },
+      { ...base, id: 5, pairedDeviceId: undefined },
+      { ...base, id: 6, status: 'error', running: true, lastError: 'Remote service unavailable.' },
+      { ...base, id: 7, status: 'connecting', running: true },
+    ]));
+    const service = createService();
+    await service.initialize();
+    expect(service.startupPortForwardPrompt()?.serverLabel).toBe('Studio');
+    expect(service.startupPortForwardPrompt()?.forwards.map(forward => forward.id)).toEqual([1]);
   });
 
 });

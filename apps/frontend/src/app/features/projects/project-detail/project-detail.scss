@@ -332,7 +332,7 @@
 .compact-metrics span,
 .forward-row__meta span,
 .debug-panel span,
-.ssh-port-hero span,
+.ssh-port-hero label,
 .project-field span {
   display: block;
   color: var(--muted-foreground);
@@ -449,6 +449,12 @@
   background: color-mix(in oklch, var(--destructive) 9%, var(--background));
   color: color-mix(in oklch, var(--destructive) 82%, var(--foreground));
   font-size: 0.8rem;
+}
+
+.forward-alert--waiting {
+  border-color: color-mix(in oklch, var(--warning) 30%, var(--border));
+  background: color-mix(in oklch, var(--warning) 9%, var(--background));
+  color: var(--foreground);
 }
 
 .forward-alert__header {

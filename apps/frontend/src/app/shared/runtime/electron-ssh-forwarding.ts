@@ -13,6 +13,8 @@ export {};
 export interface ElectronSshForwardRuntimeState {
   id: number;
   status: 'inactive' | 'connecting' | 'active' | 'stopping' | 'error';
+  /** A listener can remain open after an individual forwarded connection fails. */
+  running?: boolean;
   installStatus?: 'unknown' | 'available' | 'missing' | 'needs-update' | 'unsupported-os' | 'missing-prereqs';
   pid: number | null;
   startedAt: string | null;

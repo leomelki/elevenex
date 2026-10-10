@@ -1,3 +1,5 @@
+import { getElectronRemoteLinkApi } from '../runtime/electron-remote-link';
+import { readOnboardingStateSnapshot } from './onboarding-state.service';
 import { Injectable } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { defer, from, Observable } from 'rxjs';
@@ -30,6 +32,8 @@ export interface SshForwardDefaults {
 }
 
 interface StoredSshForward {
+  pairedDeviceId?: number;
+  pairedDeviceName?: string;
   id: number;
   projectId: number;
   name: string;
@@ -77,6 +81,7 @@ function loopbackUpgradeStorageKey(): string {
 
 @Injectable({ providedIn: 'root' })
 export class SshForwardsService {
+  private readonly startErrors = new Map<number, string>();
   getByProject(projectId: number): Observable<SshForward[]> {
     return defer(() => from(this.loadByProject(projectId)));
   }
@@ -106,6 +111,10 @@ export class SshForwardsService {
   }
 
   async isSupported(): Promise<boolean> {
+    if (readOnboardingStateSnapshot().mode === 'paired') {
+      const api = getElectronRemoteLinkApi();
+      return !!(api?.startForward && api.stopForward && api.getForwardState);
+    }
     const api = getElectronSshForwardingApi();
     if (!api) {
       return false;
@@ -156,12 +165,15 @@ export class SshForwardsService {
   private async createInternal(projectId: number, payload: CreateSshForwardPayload): Promise<SshForward> {
     this.assertValidPayload(payload);
 
+    const snapshot = readOnboardingStateSnapshot();
+    const paired = snapshot.mode === 'paired' ? snapshot.paired : null;
     const store = this.readStore();
     const entries = store[projectId] ?? [];
     const now = new Date().toISOString();
     const stored: StoredSshForward = {
-      id: Date.now() + Math.floor(Math.random() * 1000),
+      id: Date.now() * 1000 + Math.floor(Math.random() * 1000),
       projectId,
+      ...(paired ? { pairedDeviceId: paired.id, pairedDeviceName: paired.name } : {}),
       name: payload.name.trim(),
       sshHost: payload.sshHost.trim(),
       sshUser: payload.sshUser?.trim() || null,
@@ -176,10 +188,16 @@ export class SshForwardsService {
 
     store[projectId] = [stored, ...entries];
     this.writeStore(store);
-    this.writeDefaults(payload);
+    if (!paired) this.writeDefaults(payload);
 
     if (payload.startImmediately && await this.isSupported()) {
-      return this.startStored(stored);
+      try {
+        return await this.startStored(stored);
+      } catch (error) {
+        // The definition is already saved; show its failure without inviting a duplicate save.
+        this.startErrors.set(stored.id, error instanceof Error ? error.message : 'Could not start the port forward.');
+        return this.toViewModel(stored, null);
+      }
     }
 
     return this.enrich(stored);
@@ -187,10 +205,25 @@ export class SshForwardsService {
 
   private async startInternal(id: number): Promise<SshForward> {
     const stored = this.findStoredById(id);
-    return this.startStored(stored);
+    try {
+      return await this.startStored(stored);
+    } catch (error) {
+      this.startErrors.set(id, error instanceof Error ? error.message : 'Could not start the port forward.');
+      throw error;
+    }
   }
 
   private async startStored(stored: StoredSshForward): Promise<SshForward> {
+    if (stored.pairedDeviceId) {
+      const api = getElectronRemoteLinkApi();
+      if (!api?.startForward) throw new Error('Paired port forwarding is only available in the desktop app.');
+      const runtime = await api.startForward({
+        deviceId: stored.pairedDeviceId, id: stored.id, bindAddress: stored.bindAddress,
+        localPort: stored.localPort, remoteHost: stored.remoteHost, remotePort: stored.remotePort,
+      });
+      this.startErrors.delete(stored.id);
+      return this.toViewModel(stored, runtime);
+    }
     const api = getElectronSshForwardingApi();
     if (!api || !(await this.isSupported())) {
       throw new Error('SSH forwarding is only available in the Electron app.');
@@ -207,34 +240,46 @@ export class SshForwardsService {
       remotePort: stored.remotePort,
     });
 
+    this.startErrors.delete(stored.id);
     return this.toViewModel(stored, runtime);
   }
 
   private async stopInternal(id: number): Promise<SshForward> {
     const stored = this.findStoredById(id);
     const api = getElectronSshForwardingApi();
-    const runtime = api && await this.isSupported() ? await api.stop(id) : null;
+    const runtime = stored.pairedDeviceId
+      ? await getElectronRemoteLinkApi()?.stopForward?.(stored.pairedDeviceId, id) ?? null
+      : api ? await api.stop(id) : null;
+    this.startErrors.delete(id);
     return this.toViewModel(stored, runtime);
   }
 
   private async removeInternal(id: number): Promise<SshForward> {
+    const storageKey = forwardsStorageKey();
     const store = this.readStore();
     const stored = this.findStoredById(id, store);
     const entries = store[stored.projectId] ?? [];
     const api = getElectronSshForwardingApi();
 
-    if (api && await this.isSupported()) {
+    if (stored.pairedDeviceId) {
+      await getElectronRemoteLinkApi()?.stopForward?.(stored.pairedDeviceId, id);
+    } else if (api) {
       await api.stop(id);
     }
+    this.startErrors.delete(id);
 
-    store[stored.projectId] = entries.filter(entry => entry.id !== id);
-    this.writeStore(store);
+    const latest = this.readStore(storageKey, false);
+    latest[stored.projectId] = (latest[stored.projectId] ?? entries).filter(entry => entry.id !== id);
+    this.writeStore(latest, storageKey);
     return this.toViewModel(stored, null);
   }
 
   private async enrich(stored: StoredSshForward): Promise<SshForward> {
     const api = getElectronSshForwardingApi();
-    const runtime = api && await this.isSupported() ? await api.getState(stored.id) : null;
+    const runtime = stored.pairedDeviceId
+      ? await getElectronRemoteLinkApi()?.getForwardState?.(stored.pairedDeviceId, stored.id) ?? null
+      : api ? await api.getState(stored.id) : null;
+    if (runtime?.status === 'active' || runtime?.status === 'connecting') this.startErrors.delete(stored.id);
     return this.toViewModel(stored, runtime);
   }
 
@@ -244,14 +289,15 @@ export class SshForwardsService {
   ): SshForward {
     return {
       ...stored,
-      status: runtime?.status ?? 'inactive',
+      status: this.startErrors.has(stored.id) && (!runtime || runtime.status === 'inactive') ? 'error' : runtime?.status ?? 'inactive',
+      running: runtime?.running ?? (runtime?.status === 'active' || runtime?.status === 'connecting' || runtime?.status === 'stopping'),
       pid: runtime?.pid ?? null,
       startedAt: runtime?.startedAt ?? null,
       stoppedAt: runtime?.stoppedAt ?? null,
-      lastError: runtime?.lastError ?? null,
+      lastError: runtime?.lastError ?? this.startErrors.get(stored.id) ?? null,
       debugDetails: runtime?.debugDetails ?? null,
       destinationLabel: `${stored.bindAddress}:${stored.localPort} -> ${stored.remoteHost}:${stored.remotePort}`,
-      connectionLabel: stored.sshUser
+      connectionLabel: stored.pairedDeviceId ? stored.pairedDeviceName || 'Paired desktop' : stored.sshUser
         ? `${stored.sshUser}@${stored.sshHost}:${stored.sshPort}`
         : `${stored.sshHost}:${stored.sshPort}`,
     };
@@ -259,11 +305,20 @@ export class SshForwardsService {
 
   private assertValidPayload(payload: CreateSshForwardPayload) {
     if (!payload.name.trim()) throw new Error('Name is required');
-    if (!payload.sshHost.trim()) throw new Error('SSH host is required');
+    const snapshot = readOnboardingStateSnapshot();
+    const paired = snapshot.mode === 'paired';
+    if (paired && !snapshot.paired) throw new Error('Choose a paired desktop before saving a forward.');
+    if (!paired && !payload.sshHost.trim()) throw new Error('SSH host is required');
+    if (paired && !['127.0.0.1', 'localhost', '::1'].includes(payload.bindAddress.trim())) {
+      throw new Error('Paired forwards must bind to a loopback address.');
+    }
     if (!payload.bindAddress.trim()) throw new Error('Bind address is required');
     if (!payload.remoteHost.trim()) throw new Error('Remote host is required');
+    if (paired && (payload.remoteHost.trim().length > 253 || /[\s\x00-\x1f\x7f/\\]/.test(payload.remoteHost.trim()))) {
+      throw new Error('Remote host must be a hostname or IP address.');
+    }
 
-    for (const port of [payload.sshPort, payload.localPort, payload.remotePort]) {
+    for (const port of [payload.localPort, payload.remotePort, ...(paired ? [] : [payload.sshPort])]) {
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new Error('Ports must be between 1 and 65535');
       }
@@ -281,9 +336,9 @@ export class SshForwardsService {
     throw new Error(`SSH forward ${id} was not found`);
   }
 
-  private readStore(): SshForwardStore {
+  private readStore(storageKey = forwardsStorageKey(), upgradeLoopback = true): SshForwardStore {
     try {
-      const raw = localStorage.getItem(forwardsStorageKey());
+      const raw = localStorage.getItem(storageKey);
       if (!raw) {
         return {};
       }
@@ -291,7 +346,7 @@ export class SshForwardsService {
       if (typeof parsed !== 'object' || parsed === null) {
         return {};
       }
-      return this.upgradeLoopbackRemoteHostsOnce(parsed);
+      return upgradeLoopback ? this.upgradeLoopbackRemoteHostsOnce(parsed) : parsed;
     } catch {
       return {};
     }
@@ -309,6 +364,7 @@ export class SshForwardsService {
     let changed = false;
     for (const entries of Object.values(store)) {
       for (const entry of entries ?? []) {
+        if (entry.pairedDeviceId) continue;
         const upgraded = preferredRemoteHost(`${entry.remoteHost ?? ''}`);
         if (upgraded !== entry.remoteHost) {
           entry.remoteHost = upgraded;
@@ -325,8 +381,8 @@ export class SshForwardsService {
     return store;
   }
 
-  private writeStore(store: SshForwardStore) {
-    localStorage.setItem(forwardsStorageKey(), JSON.stringify(store));
+  private writeStore(store: SshForwardStore, storageKey = forwardsStorageKey()) {
+    localStorage.setItem(storageKey, JSON.stringify(store));
   }
 
   private writeDefaults(payload: CreateSshForwardPayload) {

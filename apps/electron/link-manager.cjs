@@ -13,6 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createLinkClient, createLinkHost } = require('./link-runtime.cjs');
+const { createPortForwards } = require('./link-port-forwards.cjs');
 const { createLinkStore } = require('./link-store.cjs');
 const {
   createPairing,
@@ -281,7 +282,9 @@ function createLinkManager({
     let runtime = clients.get(link.id);
     if (!runtime) {
       const client = createLinkClient({ pairing: link, localPort: 0, createPeer, openRendezvous });
-      runtime = { client, status: client.toStatus(), connectPromise: null };
+      runtime = { client, status: client.toStatus(), connectPromise: null,
+        forwards: createPortForwards({ getSession: () => client.activeSession(), getStatus: () => client.status }),
+      };
       clients.set(link.id, runtime);
       client.on('status', (status) => {
         // A stopped/replaced client must never publish over its successor.
@@ -300,6 +303,7 @@ function createLinkManager({
         await current.client.start();
       } catch (error) {
         if (clients.get(link.id) === current) clients.delete(link.id);
+        await current.forwards.close();
         await current.client.stop().catch(() => {});
         throw error;
       }
@@ -320,12 +324,26 @@ function createLinkManager({
       return false;
     }
     clients.delete(Number(id));
-    await runtime.client.stop().catch(() => {});
+    await Promise.all([runtime.forwards.close(), runtime.client.stop().catch(() => {})]);
     const link = store.getLink(id);
     if (link) {
       onLinkStatus({ id: Number(id), ...linkView(link) });
     }
     return true;
+  }
+
+  function startForward(deviceId, payload) {
+    const runtime = clients.get(Number(deviceId));
+    if (!runtime) throw new Error('Connect to the paired desktop before starting a forward.');
+    return runtime.forwards.start(payload);
+  }
+
+  function stopForward(deviceId, id) {
+    return clients.get(Number(deviceId))?.forwards.stop(id) ?? null;
+  }
+
+  function getForwardState(deviceId, id) {
+    return clients.get(Number(deviceId))?.forwards.getState(id) ?? null;
   }
 
   async function stopAll() {
@@ -334,6 +352,9 @@ function createLinkManager({
   }
 
   return {
+    startForward,
+    stopForward,
+    getForwardState,
     addLink,
     connect,
     defaultHostLabel,

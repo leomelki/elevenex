@@ -39,7 +39,9 @@ function normalizeUser(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-function matchesServer(forward: SshForward, server: SavedServer): boolean {
+function matchesServer(forward: SshForward, server: SavedServer | PairedDeviceState): boolean {
+  if (!('sshHost' in server)) return forward.pairedDeviceId === server.id;
+  if (forward.pairedDeviceId) return false;
   return forward.sshHost === server.sshHost
     && normalizeUser(forward.sshUser) === normalizeUser(server.sshUser)
     && forward.sshPort === server.sshPort;
@@ -200,6 +202,7 @@ export class OnboardingStartupService {
       await this.remoteLink.connect(paired.id, signal);
       if (signal.aborted) return;
       if (!signal.aborted) this.navigationService.refreshTree();
+      await this.prepareStartupPortForwardPrompt(paired);
     } catch {
       // Nothing to retry against here — the device row in the environment
       // switcher carries the link's real status, and selecting it retries with
@@ -219,7 +222,7 @@ export class OnboardingStartupService {
     this._startupPortForwardPrompt.set(null);
   }
 
-  async prepareStartupPortForwardPrompt(server: SavedServer): Promise<void> {
+  async prepareStartupPortForwardPrompt(server: SavedServer | PairedDeviceState): Promise<void> {
     const generation = this.connectionGeneration;
     const [allForwards, activeProjects] = await Promise.all([
       firstValueFrom(this.sshForwardsService.getAll().pipe(timeout(8000))).catch(() => []),
@@ -230,7 +233,7 @@ export class OnboardingStartupService {
     const pending = allForwards
       .filter(forward => matchesServer(forward, server))
       .filter(forward => activeProjectIds.has(forward.projectId))
-      .filter(forward => forward.status !== 'active' && forward.status !== 'connecting')
+      .filter(forward => !forward.running && forward.status !== 'active' && forward.status !== 'connecting')
       .map(toPromptItem);
 
     if (pending.length === 0) {
@@ -239,7 +242,7 @@ export class OnboardingStartupService {
     }
 
     this._startupPortForwardPrompt.set({
-      serverLabel: server.sshUser
+      serverLabel: !('sshHost' in server) ? server.name : server.sshUser
         ? `${server.sshUser}@${server.sshHost}:${server.sshPort}`
         : `${server.sshHost}:${server.sshPort}`,
       totalCount: pending.length,
@@ -282,7 +285,7 @@ export class OnboardingStartupService {
         ...nextPrompt,
         startingIds: nextPrompt.startingIds.filter(value => value !== id),
       });
-      throw new Error(`Could not start SSH forward ${id}.`);
+      throw new Error(`Could not start port forward ${id}.`);
     }
   }
 

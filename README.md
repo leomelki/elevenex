@@ -145,6 +145,24 @@ Elevenex can connect to remote servers over SSH and automatically prepare a remo
 - Once prerequisites are present, Elevenex downloads a versioned runtime artifact to `~/.elevenex`, updates it when the app commit SHA changes, and starts the backend in a detached `tmux` session.
 - The remote backend is kept separate from the SSH connection so it survives frontend shutdowns and reconnects cleanly later.
 
+## Paired Desktop Port Forwarding
+
+When connected to a paired desktop, open a project's **Port forwarding** tab and
+choose **New forward**. Enter the service's port and save; Elevenex forwards it to
+the same port at `127.0.0.1` on your computer using the existing encrypted link.
+No SSH credentials or additional router setup are needed. **Copy local address**
+puts the host and port on your clipboard. Forwarding carries TCP traffic, including HTTP,
+HTTPS, WebSockets, and database connections; UDP is not supported.
+
+**Advanced settings** let you use a different local port when one is occupied or
+change the remote host and port. Local listeners stay on loopback. `localhost`
+on the paired desktop reaches both IPv4 and IPv6 services. Active forwards keep
+their local ports through connection loss and resume when the desktop reconnects;
+existing connections need to reconnect. Stopping a forward or disconnecting the
+desktop releases its local ports and connections. Definitions are saved per
+project and paired desktop, with a prompt to start them again after reopening.
+Both desktops need a version of Elevenex that supports port forwarding.
+
 ## Database And Schema Changes
 
 Elevenex uses a local SQLite database in the backend, with Drizzle ORM on top of `better-sqlite3`.

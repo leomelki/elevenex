@@ -131,6 +131,9 @@ contextBridge.exposeInMainWorld('__ELEVENEX_ELECTRON__', {
     pickIdentityFile: () => ipcRenderer.invoke('elevenex-ssh-forwarding:pick-identity-file'),
   },
   remoteLink: {
+    startForward: (payload) => ipcRenderer.invoke('elevenex-remote-link:forward-start', payload),
+    stopForward: (deviceId, id) => ipcRenderer.invoke('elevenex-remote-link:forward-stop', { deviceId, id }),
+    getForwardState: (deviceId, id) => ipcRenderer.invoke('elevenex-remote-link:forward-state', { deviceId, id }),
     isSupported: () => ipcRenderer.invoke('elevenex-remote-link:is-supported'),
     // Sharing this machine's backend with another device.
     getSharing: () => ipcRenderer.invoke('elevenex-remote-link:get-sharing'),

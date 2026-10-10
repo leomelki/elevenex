@@ -170,6 +170,8 @@ export class EnvironmentConnectionManagerService {
       this.sshRuntimeRecovery.clearRemoteDisconnect();
       this.onboardingStartup.clearStartupFailure();
       await this.finalizeWorkspaceHandoff();
+      const paired = this.snapshot().paired;
+      if (paired) await this.onboardingStartup.prepareStartupPortForwardPrompt(paired).catch(() => undefined);
     });
   }
 

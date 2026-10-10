@@ -43,7 +43,7 @@ projects = signal<Project[]>([]);
   // Only SSH backends run on a genuinely separate machine that needs a port
   // forward to reach a project's dev server from this browser view. WSL
   // shares localhost with Windows the same way Local does, so it doesn't.
-  showPortForwardStep = computed(() => this.onboardingState.snapshotState().mode === 'ssh');
+  showPortForwardStep = computed(() => ['ssh', 'paired'].includes(this.onboardingState.snapshotState().mode ?? ''));
   projectCountLabel = computed(() => {
     const count = this.projects().length;
     const stateLabel = this.listState() === 'archived' ? 'archived' : 'active';

@@ -203,26 +203,28 @@
 
                 @if (forward.showAdvanced) {
                   <div class="project-wizard-grid">
-                    <label class="project-wizard-field">
-                      <span>SSH host</span>
-                      <input z-input type="text" [value]="forward.sshHost" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'sshHost', $any($event.target).value)" />
-                    </label>
+                    @if (!pairedDesktop()) {
+                      <label class="project-wizard-field">
+                        <span>SSH host</span>
+                        <input z-input type="text" [value]="forward.sshHost" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'sshHost', $any($event.target).value)" />
+                      </label>
 
-                    <label class="project-wizard-field">
-                      <span>SSH user</span>
-                      <input z-input type="text" [value]="forward.sshUser || ''" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'sshUser', $any($event.target).value)" />
-                    </label>
+                      <label class="project-wizard-field">
+                        <span>SSH user</span>
+                        <input z-input type="text" [value]="forward.sshUser || ''" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'sshUser', $any($event.target).value)" />
+                      </label>
 
-                    <label class="project-wizard-field">
-                      <span>SSH port</span>
-                      <input z-input type="number" min="1" max="65535" [value]="asText(forward.sshPort)" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'sshPort', +$any($event.target).value)" />
-                    </label>
+                      <label class="project-wizard-field">
+                        <span>SSH port</span>
+                        <input z-input type="number" min="1" max="65535" [value]="asText(forward.sshPort)" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'sshPort', +$any($event.target).value)" />
+                      </label>
 
-                    <label class="project-wizard-field">
-                      <span>Bind address</span>
-                      <input z-input type="text" [value]="forward.bindAddress" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'bindAddress', $any($event.target).value)" />
-                    </label>
+                      <label class="project-wizard-field">
+                        <span>Bind address</span>
+                        <input z-input type="text" [value]="forward.bindAddress" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'bindAddress', $any($event.target).value)" />
+                      </label>
 
+                    }
                     <label class="project-wizard-field">
                       <span>Remote host</span>
                       <input z-input type="text" [value]="forward.remoteHost" [disabled]="forward.status === 'created'" (input)="updateForwardField(forward.id, 'remoteHost', $any($event.target).value)" />
@@ -236,7 +238,7 @@
                   <input
                     type="checkbox"
                     [checked]="forward.startImmediately"
-                    [disabled]="!sshForwardingSupported() || forward.status === 'created'"
+                    [disabled]="!sshForwardingSupported() || (forward.status === 'created' && !forward.error)"
                     (change)="updateForwardField(forward.id, 'startImmediately', $any($event.target).checked)"
                   />
                   <span>Start immediately after saving</span>
@@ -340,7 +342,7 @@
           </button>
         } @else {
           <button z-button type="button" [zLoading]="submitting()" [zDisabled]="submitting()" (click)="submit()">
-            {{ ctaLabel() }}
+            {{ submissionError() && createdProject() ? 'Retry remaining setup' : ctaLabel() }}
           </button>
         }
       </div>

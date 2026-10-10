@@ -45,14 +45,27 @@ function serveStreams(session, { targetHost = '127.0.0.1', targetPort, getTarget
     throw new TypeError('serveStreams requires a target port');
   }
 
+  session.acceptPortForwards = true;
+  session.on('signal', (message) => {
+    if (message?.type === 'port-forwarding-query' && message.version === 1) {
+      session.sendSignal({ type: 'port-forwarding-supported', version: 1 });
+    }
+  });
   session.on('stream', (stream) => {
-    const port = getTargetPort ? getTargetPort() : targetPort;
+    const port = stream.target?.port ?? (getTargetPort ? getTargetPort() : targetPort);
     if (!Number.isInteger(port) || port <= 0) {
       stream.destroy();
       onError?.(new Error('The shared backend is not running.'));
       return;
     }
-    const socket = net.connect({ host: targetHost, port, allowHalfOpen: true });
+    const socket = net.connect({
+      host: stream.target?.host ?? targetHost, port, allowHalfOpen: true,
+      // localhost must reach both IPv4-only and IPv6-only development servers.
+      autoSelectFamily: true,
+    });
+    const timer = setTimeout(() => socket.destroy(new Error('Timed out connecting to the remote service.')), 10000);
+    timer.unref?.();
+    socket.once('close', () => clearTimeout(timer));
     socket.setNoDelay(true);
     // Until the backend accepts, the peer's bytes queue in the stream's own
     // buffer; bridging only after 'connect' keeps write errors on one path.
@@ -61,12 +74,19 @@ function serveStreams(session, { targetHost = '127.0.0.1', targetPort, getTarget
     stream.on('error', onStreamError);
     stream.once('close', onStreamClose);
     socket.once('connect', () => {
+      clearTimeout(timer);
       stream.removeListener('error', onStreamError);
       stream.removeListener('close', onStreamClose);
       if (stream.destroyed) socket.destroy();
       else bridge(socket, stream, onError);
     });
     socket.once('error', (error) => {
+      if (stream.target && !stream.destroyed) {
+        session.sendSignal({
+          type: 'port-forward-error', streamId: stream.streamId,
+          error: `Cannot reach ${stream.target.host}:${port} on the paired desktop (${error.code || error.message}). Check that the service is running.`,
+        });
+      }
       stream.destroy();
       if (onError) {
         onError(error);
@@ -77,10 +97,13 @@ function serveStreams(session, { targetHost = '127.0.0.1', targetPort, getTarget
 
 // Connecting side: a loopback listener whose connections become streams.
 function createLocalListener(
-  { host = '127.0.0.1', port = 0, getSession, onError } = {},
+  { host = '127.0.0.1', port = 0, getSession, target = null, onError, onConnect } = {},
 ) {
   const sockets = new Set();
-  const server = net.createServer({ allowHalfOpen: true }, (socket) => {
+  const server = net.createServer({ allowHalfOpen: true }, async (socket) => {
+    socket.pause();
+    // Observe errors while capability negotiation is in flight.
+    socket.on('error', () => {});
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
     const session = getSession();
@@ -94,7 +117,10 @@ function createLocalListener(
     socket.setNoDelay(true);
     let stream;
     try {
-      stream = session.open();
+      if (target) await session.requirePortForwarding();
+      if (socket.destroyed) return;
+      stream = session.open(target);
+      onConnect?.();
     } catch (error) {
       socket.destroy();
       if (onError) {
@@ -103,8 +129,10 @@ function createLocalListener(
       return;
     }
     bridge(socket, stream, onError);
+    socket.resume();
   });
 
+  server.maxConnections = 512;
   server.on('error', (error) => {
     if (onError) {
       onError(error);

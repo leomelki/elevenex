@@ -1,3 +1,4 @@
+import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, computed, effect, inject, input, OnInit, output, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -81,6 +82,12 @@ export class ProjectOnboardingWizard implements OnInit {
   private readonly sshForwardsService = inject(SshForwardsService);
   private readonly navigationService = inject(NavigationService);
 
+  private readonly onboardingState = inject(OnboardingStateService);
+  readonly pairedDesktop = computed(() => {
+    const snapshot = this.onboardingState.snapshotState();
+    return snapshot.mode === 'paired' ? snapshot.paired : null;
+  });
+
   embedded = input(false);
   heading = input('Create a new project');
   subheading = input('Add repositories and optional forwarded ports in one flow.');
@@ -143,7 +150,10 @@ export class ProjectOnboardingWizard implements OnInit {
     if (this.existingProject()) {
       this.activeStep.set('repos');
     }
-    this.sshDefaults.set(this.sshForwardsService.getLastDefaults());
+    const paired = this.pairedDesktop();
+    this.sshDefaults.set(paired
+      ? { sshHost: paired.name, sshPort: 22, bindAddress: '127.0.0.1', remoteHost: 'localhost', startImmediately: true }
+      : this.sshForwardsService.getLastDefaults());
     this.sshForwardingSupported.set(await this.sshForwardsService.isSupported());
   }
 
@@ -218,7 +228,7 @@ export class ProjectOnboardingWizard implements OnInit {
       ? {
           ...forward,
           [key]: value,
-          error: '',
+          error: forward.status === 'created' ? forward.error : '',
           status: forward.status === 'created' ? 'created' : 'idle',
         }
       : forward));
@@ -244,9 +254,9 @@ export class ProjectOnboardingWizard implements OnInit {
   }
 
   getForwardSummary(forward: WizardForwardDraft) {
-    const sshTarget = forward.sshUser?.trim()
+    const sshTarget = this.pairedDesktop()?.name ?? (forward.sshUser?.trim()
       ? `${forward.sshUser.trim()}@${forward.sshHost.trim()}:${forward.sshPort}`
-      : `${forward.sshHost.trim()}:${forward.sshPort}`;
+      : `${forward.sshHost.trim()}:${forward.sshPort}`);
     return `${sshTarget} • ${forward.bindAddress.trim()}:${forward.localPort} → ${forward.remoteHost.trim()}:${forward.remotePort}`;
   }
 
@@ -323,7 +333,7 @@ export class ProjectOnboardingWizard implements OnInit {
   private isForwardValid(forward: WizardForwardDraft) {
     return Boolean(
       forward.name.trim()
-      && forward.sshHost.trim()
+      && (this.pairedDesktop() || forward.sshHost.trim())
       && forward.bindAddress.trim()
       && forward.remoteHost.trim()
       && Number.isInteger(forward.localPort)
@@ -331,7 +341,10 @@ export class ProjectOnboardingWizard implements OnInit {
       && Number.isInteger(forward.sshPort)
       && forward.localPort > 0
       && forward.remotePort > 0
-      && forward.sshPort > 0,
+      && forward.sshPort > 0
+      && forward.localPort <= 65535
+      && forward.remotePort <= 65535
+      && forward.sshPort <= 65535,
     );
   }
 
@@ -387,7 +400,7 @@ export class ProjectOnboardingWizard implements OnInit {
 
   private async ensureForwardsCreated(projectId: number) {
     for (const forward of this.forwards()) {
-      if (forward.status === 'created') {
+      if (forward.status === 'created' && !forward.error) {
         continue;
       }
 
@@ -396,25 +409,37 @@ export class ProjectOnboardingWizard implements OnInit {
       }
 
       try {
-        const created = await firstValueFrom(this.sshForwardsService.create(projectId, {
-          name: forward.name.trim(),
-          sshHost: forward.sshHost.trim(),
-          sshUser: forward.sshUser?.trim() || undefined,
-          sshPort: forward.sshPort,
-          bindAddress: forward.bindAddress.trim(),
-          localPort: forward.localPort,
-          remoteHost: forward.remoteHost.trim(),
-          remotePort: forward.remotePort,
-          startImmediately: forward.startImmediately,
-        }));
+        // A failed start still saves the definition. Retry that id instead of
+        // creating another definition (and potentially another listener).
+        let created: SshForward;
+        if (forward.forward) {
+          created = forward.startImmediately
+            ? await firstValueFrom(this.sshForwardsService.start(forward.forward.id))
+            : forward.forward;
+        } else {
+          created = await firstValueFrom(this.sshForwardsService.create(projectId, {
+            name: forward.name.trim(),
+            sshHost: forward.sshHost.trim(),
+            sshUser: forward.sshUser?.trim() || undefined,
+            sshPort: forward.sshPort,
+            bindAddress: forward.bindAddress.trim(),
+            localPort: forward.localPort,
+            remoteHost: forward.remoteHost.trim(),
+            remotePort: forward.remotePort,
+            startImmediately: forward.startImmediately,
+          }));
+        }
 
         this.forwards.update(list => list.map(entry => entry.id === forward.id
           ? { ...entry, status: 'created', error: '', forward: created }
           : entry));
+        if (forward.startImmediately && (created.status === 'error' || created.lastError)) {
+          throw new Error(`Forward "${forward.name.trim()}" was saved, but could not start: ${created.lastError || 'Forwarding failed.'} Retry setup or turn off "Start immediately after saving".`);
+        }
       } catch (error) {
         const message = this.getErrorMessage(error, `Could not save forward ${forward.name.trim()}.`);
         this.forwards.update(list => list.map(entry => entry.id === forward.id
-          ? { ...entry, status: 'error', error: message }
+          ? { ...entry, status: entry.forward ? 'created' : 'error', error: message }
           : entry));
         throw new Error(message);
       }
