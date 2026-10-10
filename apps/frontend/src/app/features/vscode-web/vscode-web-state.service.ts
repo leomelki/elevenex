@@ -41,7 +41,18 @@ export class VSCodeWebStateService {
 
   /** Check every mounted editor, including hidden tabs, before releasing a checkout. */
   async checkTaskEditors(worktreePath: string, save = false): Promise<number> {
-    const editors = [...this.iframeInstances].filter(([key]) => key.endsWith(`:${worktreePath}`));
+    const editors = [...this.iframeInstances].filter(([key, iframe]) => {
+      if (!key.endsWith(`:${worktreePath}`)) return false;
+      // Angular removes the panel's container when Files is closed or the
+      // route changes. Its iframe then has no browsing context, even though
+      // hideIframe left the element cached. Only live editors can hold dirty
+      // documents or answer the check; discard stale entries for recreation.
+      if (!iframe.isConnected) {
+        this.destroyIframe(key);
+        return false;
+      }
+      return true;
+    });
     const results = await Promise.all(editors.map(([, iframe]) => new Promise<number>((resolve, reject) => {
       const requestId = crypto.randomUUID();
       const origin = new URL(iframe.src).origin;
