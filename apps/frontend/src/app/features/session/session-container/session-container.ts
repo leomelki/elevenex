@@ -205,6 +205,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   claudeWorkspaces = viewChildren(ClaudeWorkspaceComponent);
   private readonly browserPanel = viewChild(BrowserPanelComponent);
   private readonly vscodePanel = viewChild(VSCodeWebPanelComponent);
+  protected readonly editorStartupSessionId = signal<number | null>(null);
 
   tabs = this.tabService.tabs;
   activeSessionId = this.tabService.activeSessionId;
@@ -786,6 +787,34 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   constructor() {
+    effect((onCleanup) => {
+      const sessionId = this.activeSessionId();
+      const workspace = this.claudeWorkspaces().find((item) => item.sessionId() === sessionId);
+      const ready = workspace?.runtime.hydrated() ??
+        (this.showClaudeTerminalFallback() && !this.showClaudeTerminalTranscriptMirror());
+      if (!sessionId || !ready) {
+        this.editorStartupSessionId.set(null);
+        return;
+      }
+      if (untracked(this.editorStartupSessionId) === sessionId) return;
+      // Give the chat a paint before starting a new VS Code workbench. The
+      // iframe otherwise competes for CPU and backend requests during loading.
+      let firstFrame: number | null = null;
+      let secondFrame: number | null = null;
+      const render = afterNextRender(() => {
+        firstFrame = requestAnimationFrame(() => {
+          secondFrame = requestAnimationFrame(() => {
+            if (this.activeSessionId() === sessionId) this.editorStartupSessionId.set(sessionId);
+          });
+        });
+      }, { injector: this.injector });
+      onCleanup(() => {
+        render.destroy();
+        if (firstFrame !== null) cancelAnimationFrame(firstFrame);
+        if (secondFrame !== null) cancelAnimationFrame(secondFrame);
+      });
+    });
+
     effect(() => {
       const activeId = this.activeSessionId();
       if (activeId && this.showClaudeTerminalFallback()) {

@@ -19,7 +19,7 @@ export interface ServerConnectionState {
   reconnectAttempt: number;
 }
 
-type Waiter = { resolve: () => void; reject: (error: Error) => void; cleanup: () => void };
+type Waiter = { allowRestored: boolean; resolve: () => void; reject: (error: Error) => void; cleanup: () => void };
 
 @Injectable({ providedIn: 'root' })
 export class ServerConnectionService implements OnDestroy {
@@ -80,11 +80,20 @@ export class ServerConnectionService implements OnDestroy {
   }
 
   waitUntilInteractive(signal?: AbortSignal): Promise<void> {
+    return this.waitUntilReady(false, signal);
+  }
+
+  /** Reads can refill the UI while the restored-connection notice is visible. */
+  waitUntilReadable(signal?: AbortSignal): Promise<void> {
+    return this.waitUntilReady(true, signal);
+  }
+
+  private waitUntilReady(allowRestored: boolean, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return Promise.reject(signal.reason);
     this.start();
     this.repointIfBackendChanged();
 
-    if (this.isInteractive()) {
+    if (this.isInteractive() || (allowRestored && this._state().phase === 'restored')) {
       return Promise.resolve();
     }
 
@@ -94,7 +103,7 @@ export class ServerConnectionService implements OnDestroy {
         waiter.cleanup();
         reject(signal?.reason ?? new Error('Connection wait canceled.'));
       };
-      const waiter: Waiter = { resolve, reject, cleanup: () => signal?.removeEventListener('abort', abort) };
+      const waiter: Waiter = { allowRestored, resolve, reject, cleanup: () => signal?.removeEventListener('abort', abort) };
       if (signal?.aborted) { abort(); return; }
       signal?.addEventListener('abort', abort, { once: true });
       this.waiters.push(waiter);
@@ -339,6 +348,7 @@ export class ServerConnectionService implements OnDestroy {
       lastConnectedAt: now,
       reconnectAttempt: 0,
     }));
+    this.resolveWaiters();
     this.clearRestoredTimer();
     this.restoredTimer = setTimeout(() => {
       this.ngZone.run(() => {
@@ -402,6 +412,10 @@ export class ServerConnectionService implements OnDestroy {
     const waiters = this.waiters;
     this.waiters = [];
     for (const waiter of waiters) {
+      if (!this.isInteractive() && !waiter.allowRestored) {
+        this.waiters.push(waiter);
+        continue;
+      }
       waiter.cleanup();
       waiter.resolve();
     }

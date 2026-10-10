@@ -27,6 +27,7 @@ pnpm screenshot:ui --session 213 --name prompt-context --prompt "distinct prompt
 pnpm screenshot:ui --path /settings --name settings-dark --theme dark --state none
 pnpm screenshot:ui --session 213 --name prompt-chat-only --selector .cw-workspace
 pnpm screenshot:ui --session 213 --name remote-session --backend-url http://127.0.0.1:45678
+pnpm screenshot:ui --session 213 --name session-loading --state none --profile-load
 ```
 
 When the requested state needs interaction, pass an ordered JSON action plan. Prefer stable

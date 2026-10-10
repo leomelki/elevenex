@@ -138,6 +138,8 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
   projectId = input.required<number>();
   worktreePath = input.required<string>();
   taskId = input<number | null>();
+  /** Delay cold workbench startup while the session's chat is loading. */
+  startupAllowed = input(true);
 
   @ViewChild('container', { static: true }) container!: ElementRef<HTMLDivElement>;
 
@@ -174,6 +176,19 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
       const projectId = this.projectId();
       const path = this.worktreePath();
       if (!path) return;
+      if (!this.startupAllowed() && !this.stateService.hasIframe(buildVSCodeIframeKey(projectId, path))) {
+        // A cold session switch must not leave the previous session's files
+        // visible while its new transcript is loading.
+        if (this.currentIframeKey) {
+          this.stateService.hideIframe(this.currentIframeKey);
+          this.currentIframeKey = null;
+          this.disconnectFileChangeSocket();
+          this.clearReadyTimeout();
+        }
+        this.isLoading.set(true);
+        this.startupIssue.set(null);
+        return;
+      }
 
       if (sessionId !== this.currentSessionId || this.currentSessionId === null) {
         this.handleSessionChange(sessionId, projectId, path);
@@ -192,7 +207,7 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
     const sessionId = this.sessionId();
     const projectId = this.projectId();
     const path = this.worktreePath();
-    if (path) {
+    if (path && (this.startupAllowed() || this.stateService.hasIframe(buildVSCodeIframeKey(projectId, path)))) {
       this.createOrShowIframe(sessionId, projectId, path);
     }
   }

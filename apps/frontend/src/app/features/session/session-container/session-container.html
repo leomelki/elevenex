@@ -155,6 +155,7 @@
                 <z-resizable-panel [zDefaultSize]="45" [zMin]="25" [zMax]="70">
                   @if (showFilesPanel()) {
                     <app-vscode-web-panel
+                      [startupAllowed]="editorStartupSessionId() === activeSessionId()"
                       [taskId]="activeTab()?.workspaceId"
                       [sessionId]="activeSessionId()!"
                       [projectId]="projectId()!"

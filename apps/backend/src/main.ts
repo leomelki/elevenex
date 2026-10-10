@@ -19,6 +19,7 @@ import { ClaudeHooksGateway } from './claude-hooks/claude-hooks.gateway.js';
 import { ClaudeRuntimeGateway } from './claude-runtime/claude-runtime.gateway.js';
 import { ClaudeTerminalTranscriptMirrorGateway } from './claude-runtime/claude-terminal-transcript-mirror.gateway.js';
 import { AgentRuntimeGateway } from './agent-runtime/agent-runtime.gateway.js';
+import { createHistoryCompression } from './agent-runtime/history-compression.js';
 import { BackendLogsGateway } from './backend-logs/backend-logs.gateway.js';
 import { ServerConnectionGateway } from './server-connection/server-connection.gateway.js';
 import { ClaudeRuntimeService } from './claude-runtime/claude-runtime.service.js';
@@ -308,6 +309,7 @@ async function bootstrap() {
   // The limit is well over express' 100 kB default because composer drafts
   // carry image attachments as base64 data URLs (the composer itself accepts up
   // to 20 MB, the draft store keeps up to 8 MB of it).
+  app.use(createHistoryCompression());
   app.useBodyParser('json', { limit: '12mb' });
   app.useBodyParser('urlencoded', { extended: true, limit: '12mb' });
 

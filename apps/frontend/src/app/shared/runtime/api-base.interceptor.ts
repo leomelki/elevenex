@@ -26,7 +26,9 @@ const apiBaseInterceptor: HttpInterceptorFn = (req, next) => untracked(() => {
 
   const ready = new Observable<void>((subscriber) => {
     const controller = new AbortController();
-    untracked(() => serverConnection.waitUntilInteractive(controller.signal)).then(
+    untracked(() => req.method === 'GET' || req.method === 'HEAD'
+      ? serverConnection.waitUntilReadable(controller.signal)
+      : serverConnection.waitUntilInteractive(controller.signal)).then(
       () => { subscriber.next(); subscriber.complete(); },
       (error) => subscriber.error(error),
     );

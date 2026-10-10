@@ -14,7 +14,7 @@ import { SessionsService } from '../sessions/sessions.service.js';
 import { AgentFocusService } from '../agent-focus/agent-focus.service.js';
 
 type AgentRuntimeClientAction =
-  | { type: 'hydrate' }
+  | { type: 'hydrate'; includeHistory?: boolean }
   | {
       type: 'submit_prompt';
       prompt: string;
@@ -54,7 +54,13 @@ type AgentRuntimeClientAction =
 export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   private wss: WebSocketServer | null = null;
   private readonly clients = new Map<string, Set<WebSocket>>();
-  private readonly hydrationInFlight = new WeakMap<WebSocket, Promise<void>>();
+  private readonly hydrationInFlight = new WeakMap<
+    WebSocket,
+    {
+      includeHistory: boolean;
+      promise: Promise<void>;
+    }
+  >();
 
   constructor(
     private readonly registry: AgentRuntimeRegistryService,
@@ -151,7 +157,12 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
     try {
       switch (action.type) {
         case 'hydrate': {
-          if (this.hydrationInFlight.has(ws)) return;
+          const active = this.hydrationInFlight.get(ws);
+          if (
+            active &&
+            (active.includeHistory || action.includeHistory === false)
+          )
+            return;
           // History must not wait for provider initialization/auth checks. Each
           // snapshot can render as soon as it is ready, in either order.
           const send = (event: unknown) => {
@@ -171,18 +182,29 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
               .getRuntimeState(sessionId)
               .then((payload) => send({ type: 'runtime_snapshot', payload }))
               .catch(reportError),
-            provider
-              .getHistory(sessionId)
-              .then((history) =>
-                send({
-                  type: 'history_snapshot',
-                  payload: { sessionId, history },
-                }),
-              )
-              .catch(reportError),
+            ...(action.includeHistory === false
+              ? []
+              : [
+                  provider
+                    .getHistory(sessionId)
+                    .then((history) =>
+                      send({
+                        type: 'history_snapshot',
+                        payload: { sessionId, history },
+                      }),
+                    )
+                    .catch(reportError),
+                ]),
           ]).then(() => undefined);
-          this.hydrationInFlight.set(ws, hydration);
-          void hydration.finally(() => this.hydrationInFlight.delete(ws));
+          const request = {
+            includeHistory: action.includeHistory !== false,
+            promise: hydration,
+          };
+          this.hydrationInFlight.set(ws, request);
+          void hydration.finally(() => {
+            if (this.hydrationInFlight.get(ws) === request)
+              this.hydrationInFlight.delete(ws);
+          });
           return;
         }
         case 'submit_prompt':

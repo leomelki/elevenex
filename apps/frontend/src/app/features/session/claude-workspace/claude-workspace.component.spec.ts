@@ -615,6 +615,67 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(element.textContent).toContain('Previously saved reply');
   });
 
+  it('renders HTTP history while the WebSocket is still connecting', () => {
+    const history$ = new Subject<ClaudeTranscriptItem[]>();
+    const api = TestBed.inject(AgentRuntimeApiService);
+    const getHistory = vi.spyOn(api, 'getHistory').mockReturnValue(history$);
+    wsMock.connectionState$.mockReturnValue(of('connecting'));
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    expect(getHistory).toHaveBeenCalledWith(7, 'claude');
+    expect(fixture.nativeElement.querySelector('cw-transcript-loading-skeleton')).not.toBeNull();
+    history$.next([{
+      id: 'saved', kind: 'assistant', content: 'Loaded without the socket',
+      timestamp: '2026-01-01T00:00:00.000Z',
+    }]);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.runtime.wsConnected()).toBe(false);
+    expect(fixture.nativeElement.querySelector('cw-transcript-loading-skeleton')).toBeNull();
+    expect(fixture.nativeElement.textContent).toContain('Loaded without the socket');
+  });
+
+  it('cancels an initial HTTP history read when a socket snapshot wins the race', () => {
+    const history$ = new Subject<ClaudeTranscriptItem[]>();
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    vi.spyOn(TestBed.inject(AgentRuntimeApiService), 'getHistory').mockReturnValue(history$);
+    wsMock.connect.mockReturnValue(events$);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    expect(history$.observed).toBe(true);
+    events$.next({ type: 'history_snapshot', payload: { sessionId: 7, history: [] } });
+    expect(history$.observed).toBe(false);
+    expect(fixture.componentInstance.runtime.showLoading()).toBe(false);
+  });
+
+  it('cancels initial history when changing sessions or rewinding', () => {
+    const old$ = new Subject<ClaudeTranscriptItem[]>();
+    const current$ = new Subject<ClaudeTranscriptItem[]>();
+    vi.spyOn(TestBed.inject(AgentRuntimeApiService), 'getHistory')
+      .mockReturnValueOnce(old$).mockReturnValueOnce(current$);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    fixture.componentRef.setInput('sessionId', 8);
+    fixture.detectChanges();
+    expect(old$.observed).toBe(false);
+    expect(current$.observed).toBe(true);
+    fixture.componentInstance.runtime.beginConversationRewind();
+    expect(current$.observed).toBe(false);
+  });
+
+  it('falls back to socket history if the initial HTTP read fails', () => {
+    const history$ = new Subject<ClaudeTranscriptItem[]>();
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    vi.spyOn(TestBed.inject(AgentRuntimeApiService), 'getHistory').mockReturnValue(history$);
+    wsMock.connect.mockReturnValue(events$);
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    history$.error(new Error('HTTP unavailable'));
+    expect(wsMock.send).toHaveBeenLastCalledWith(7, { type: 'hydrate' });
+    expect(fixture.componentInstance.runtime.showLoading()).toBe(true);
+    events$.next({ type: 'history_snapshot', payload: { sessionId: 7, history: [] } });
+    expect(fixture.componentInstance.runtime.showLoading()).toBe(false);
+  });
+
   it('refreshes autocomplete after session metadata arrives', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());
@@ -741,7 +802,7 @@ describe('ClaudeWorkspaceComponent', () => {
     fixture.detectChanges();
 
     expect(wsMock.connect).toHaveBeenCalledWith(7);
-    expect(wsMock.send).toHaveBeenCalledWith(7, { type: 'hydrate' });
+    expect(wsMock.send).toHaveBeenCalledWith(7, { type: 'hydrate', includeHistory: false });
   });
 
   it('restores saved composer drafts with text, diff mentions, and images', async () => {

@@ -25,8 +25,13 @@ describe('AgentRuntimeGateway hydration', () => {
       {} as any,
     );
     const ws = { readyState: WebSocket.OPEN as number, send: jest.fn() };
-    const hydrate = () =>
-      (gateway as any).handleMessage('codex', 7, ws, '{"type":"hydrate"}');
+    const hydrate = (includeHistory = true) =>
+      (gateway as any).handleMessage(
+        'codex',
+        7,
+        ws,
+        JSON.stringify({ type: 'hydrate', includeHistory }),
+      );
     const events = () =>
       ws.send.mock.calls.map(([message]) => JSON.parse(message));
     return { runtime, history, provider, ws, hydrate, events };
@@ -47,6 +52,32 @@ describe('AgentRuntimeGateway hydration', () => {
     test.runtime.resolve({ sessionId: 7 });
     await new Promise(setImmediate);
     expect(test.events()[1].type).toBe('runtime_snapshot');
+  });
+
+  it('skips socket history when HTTP owns the initial transcript load', async () => {
+    const test = setup();
+    await test.hydrate(false);
+    expect(test.provider.getHistory).not.toHaveBeenCalled();
+    test.runtime.resolve({ sessionId: 7 });
+    await new Promise(setImmediate);
+    expect(test.events()).toEqual([
+      { type: 'runtime_snapshot', payload: { sessionId: 7 } },
+    ]);
+  });
+
+  it('allows history fallback while runtime-only hydration is still pending', async () => {
+    const test = setup();
+    await test.hydrate(false);
+    await test.hydrate();
+    expect(test.provider.getHistory).toHaveBeenCalledTimes(1);
+    test.history.resolve([]);
+    await new Promise(setImmediate);
+    expect(test.events()).toContainEqual({
+      type: 'history_snapshot',
+      payload: { sessionId: 7, history: [] },
+    });
+    test.runtime.resolve({ sessionId: 7 });
+    await new Promise(setImmediate);
   });
 
   it('coalesces repeated hydrates and permits a fresh hydrate after completion', async () => {

@@ -39,12 +39,13 @@ Options:
   --width <px>         Viewport width (default: 1600).
   --height <px>        Viewport height (default: 1000).
   --wait <ms>          Extra settling time after load (default: 3500).
+  --profile-load      Report initial chat timing and browser long tasks.
   --help               Show this help.
 `;
 
 function parseArgs(argv) {
   const values = {};
-  const boolean = new Set(['help']);
+  const boolean = new Set(['help', 'profile-load']);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (!token.startsWith('--')) throw new Error(`Unexpected argument: ${token}`);
@@ -398,6 +399,57 @@ async function main() {
     const executablePath = await chooseExecutable(chromium);
     browser = await chromium.launch({ headless: true, executablePath });
     const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
+    const loadEvents = [];
+    const profileStart = performance.now();
+    if (args['profile-load']) {
+      page.on('requestfinished', request => {
+        const pathname = new URL(request.url()).pathname;
+        const history = /\/api\/sessions\/(\d+)\/agents\/[^/]+\/history$/.exec(pathname);
+        if (history) loadEvents.push({
+          stage: 'http-history-ready', sessionId: history[1],
+          ms: performance.now() - profileStart,
+          duration: request.timing().responseEnd,
+        });
+      });
+      page.on('websocket', socket => {
+        if (!socket.url().includes('/agent-runtime')) return;
+        const sessionId = new URL(socket.url()).searchParams.get('sessionId');
+        loadEvents.push({ stage: 'socket-created', sessionId, ms: performance.now() - profileStart });
+        socket.on('framesent', event => {
+          if (String(event.payload).includes('"hydrate"'))
+            loadEvents.push({ stage: 'hydrate-sent', sessionId, ms: performance.now() - profileStart });
+        });
+        socket.on('framereceived', event => {
+          try {
+            const data = JSON.parse(String(event.payload));
+            if (data.type.endsWith('_snapshot'))
+              loadEvents.push({ stage: data.type, sessionId, ms: performance.now() - profileStart });
+          } catch { /* Non-JSON frames are not session snapshots. */ }
+        });
+      });
+      await page.addInitScript(() => {
+        const profile = window.__ELEVENEX_LOAD_PROFILE__ = { events: [], longTasks: [] };
+        new PerformanceObserver(list => {
+          for (const entry of list.getEntries())
+            profile.longTasks.push({ start: entry.startTime, duration: entry.duration });
+        }).observe({ type: 'longtask', buffered: true });
+        let skeletonSeen = false;
+        let chatSeen = false;
+        new MutationObserver(() => {
+          if (!skeletonSeen && document.querySelector('cw-transcript-loading-skeleton')) {
+            skeletonSeen = true;
+            profile.events.push({ stage: 'skeleton', ms: performance.now() });
+          }
+          if (!chatSeen && document.querySelector('.cw-transcript') &&
+            !document.querySelector('cw-transcript-loading-skeleton')) {
+            chatSeen = true;
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+              profile.events.push({ stage: 'chat-painted', ms: performance.now() });
+            }));
+          }
+        }).observe(document, { childList: true, subtree: true });
+      });
+    }
     await page.addInitScript(({ theme, backendOrigin, pairedDevice }) => {
       window.__ELEVENEX_RUNTIME__ = {
         apiBaseUrl: `${backendOrigin}/api`,
@@ -457,6 +509,20 @@ async function main() {
       height,
       output: outputPath,
     };
+    if (args['profile-load']) {
+      await page.waitForFunction(() =>
+        window.__ELEVENEX_LOAD_PROFILE__.events.some(event => event.stage === 'chat-painted'),
+        null, { timeout: 20_000 },
+      );
+      const browserProfile = await page.evaluate(() => window.__ELEVENEX_LOAD_PROFILE__);
+      const skeleton = browserProfile.events.find(event => event.stage === 'skeleton');
+      const painted = browserProfile.events.find(event => event.stage === 'chat-painted');
+      result.loadProfile = {
+        socketEvents: loadEvents,
+        skeletonDurationMs: skeleton && painted ? painted.ms - skeleton.ms : null,
+        browser: browserProfile,
+      };
+    }
     console.log(JSON.stringify(result, null, 2));
     console.log(`SCREENSHOT_PATH=${outputPath}`);
   } catch (error) {

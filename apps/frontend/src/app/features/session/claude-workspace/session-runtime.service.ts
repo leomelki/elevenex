@@ -75,6 +75,7 @@ export class SessionRuntime {
     this.transcriptRevision += 1;
     this.rewindingVersion = this.bootstrapVersion;
     this.historyRefresh = null;
+    this.cancelInitialHistoryLoad();
   }
 
   endConversationRewind(version: number): void {
@@ -240,6 +241,7 @@ export class SessionRuntime {
 
   private wsStateSub: Subscription | null = null;
   private transcriptEventsSub: Subscription | null = null;
+  private initialHistoryRequest: { subscription: Subscription | null } | null = null;
 
   readonly isTranscriptReadOnly = computed(() => this.archived || this.readOnlyTranscript);
 
@@ -835,6 +837,7 @@ export class SessionRuntime {
   }
 
   private disconnectTranscriptSocket(sessionId: number): void {
+    this.cancelInitialHistoryLoad();
     this.transcriptEventsSub?.unsubscribe();
     this.transcriptEventsSub = null;
     this.wsStateSub?.unsubscribe();
@@ -895,12 +898,6 @@ export class SessionRuntime {
     const version = ++this.bootstrapVersion;
     this.bootstrappedProvider = this.currentProvider();
     this.loading.set(true);
-    if (!this.readOnlyTranscript) {
-      this.notify({ type: 'load-context' });
-      void this.loadProviders();
-    } else if (this.terminalTranscriptMirror) {
-      this.notify({ type: 'load-context' });
-    }
 
     this.transcriptEventsSub = this.activeTranscriptSocket()
       .connect(this.sessionId)
@@ -911,13 +908,57 @@ export class SessionRuntime {
 
     this.subscribeConnectionState();
 
-    this.activeTranscriptSocket().send(this.sessionId, { type: 'hydrate' });
+    this.activeTranscriptSocket().send(this.sessionId, {
+      type: 'hydrate',
+      ...(!this.readOnlyTranscript ? { includeHistory: false } : {}),
+    });
+
+    // Persisted messages do not need a live runtime or a WebSocket handshake.
+    // Start this before optional context, provider and autocomplete requests.
+    if (!this.readOnlyTranscript) {
+      this.loadInitialHistory(version);
+      this.notify({ type: 'load-context' });
+      void this.loadProviders();
+    } else if (this.terminalTranscriptMirror) {
+      this.notify({ type: 'load-context' });
+    }
 
     if (!this.readOnlyTranscript) {
       void this.refreshAutocomplete(version).catch(() => undefined);
       this.notify({ type: 'load-actions' });
     }
     if (version === this.bootstrapVersion) this.loading.set(false);
+  }
+
+  private loadInitialHistory(version: number): void {
+    this.cancelInitialHistoryLoad();
+    const revision = this.transcriptRevision;
+    const request = { subscription: null as Subscription | null };
+    this.initialHistoryRequest = request;
+    request.subscription = this.agentApi.getHistory(this.sessionId, this.currentProvider())
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (history) => {
+          if (this.initialHistoryRequest !== request || !this.isCurrentConversation(version) ||
+            revision !== this.transcriptRevision) return;
+          this.flushDeltas();
+          this.handleRuntimeEvent({
+            type: 'history_snapshot', payload: { sessionId: this.sessionId, history },
+          });
+        },
+        error: () => {
+          if (this.initialHistoryRequest !== request || !this.isCurrentConversation(version)) return;
+          this.cancelInitialHistoryLoad();
+          // Keep the socket hydration path as a fallback if HTTP fails.
+          this.activeTranscriptSocket().send(this.sessionId, { type: 'hydrate' });
+        },
+      });
+  }
+
+  private cancelInitialHistoryLoad(): void {
+    const request = this.initialHistoryRequest;
+    this.initialHistoryRequest = null;
+    request?.subscription?.unsubscribe();
   }
 
   private async bootstrapArchived(): Promise<void> {
@@ -991,6 +1032,7 @@ export class SessionRuntime {
   private handleRuntimeEvent(event: ClaudeRuntimeEvent): void {
     switch (event.type) {
       case 'session_snapshot':
+        this.cancelInitialHistoryLoad();
         this.conversation.applyHistoryRefresh(event.payload.history);
         this.applyRuntimeState(event.payload);
         this.hydrated.set(true);
@@ -1000,6 +1042,7 @@ export class SessionRuntime {
         this.applyRuntimeState(event.payload);
         return;
       case 'history_snapshot':
+        this.cancelInitialHistoryLoad();
         this.conversation.apply(event);
         this.hydrated.set(true);
         this.loading.set(false);

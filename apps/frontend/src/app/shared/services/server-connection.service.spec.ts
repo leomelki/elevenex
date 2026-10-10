@@ -182,6 +182,41 @@ describe('ServerConnectionService', () => {
     expect(resolved).toHaveBeenCalledTimes(1);
   });
 
+  it('releases reads as soon as the paired backend responds, while writes wait for the notice', async () => {
+    service.start();
+    MockWebSocket.instances[0].emitOpen();
+    MockWebSocket.instances[0].emitMessage(JSON.stringify({ type: 'ready', serverTime: '2026-10-10' }));
+    service.setTransportAvailable(false);
+    const read = vi.fn();
+    const write = vi.fn();
+    void service.waitUntilReadable().then(read);
+    void service.waitUntilInteractive().then(write);
+    service.setTransportAvailable(true);
+    MockWebSocket.instances[1].emitOpen();
+    await Promise.resolve();
+    expect(read).not.toHaveBeenCalled();
+    MockWebSocket.instances[1].emitMessage(JSON.stringify({ type: 'ready', serverTime: '2026-10-10' }));
+    await Promise.resolve();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(write).not.toHaveBeenCalled();
+    expect(service.isInteractive()).toBe(false);
+    await expect(service.waitUntilReadable()).resolves.toBeUndefined();
+    vi.advanceTimersByTime(1500);
+    await Promise.resolve();
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels pending reads and rejects them when the backend switches', async () => {
+    const controller = new AbortController();
+    const canceled = service.waitUntilReadable(controller.signal);
+    controller.abort(new Error('Session changed'));
+    await expect(canceled).rejects.toThrow('Session changed');
+    const switched = service.waitUntilReadable();
+    window.__ELEVENEX_RUNTIME__ = { backendOrigin: 'http://other-backend.test' };
+    service.recheck();
+    await expect(switched).rejects.toThrow('backend changed');
+  });
+
   it('treats missed heartbeats as a disconnect', () => {
     service.start();
     MockWebSocket.instances[0].emitOpen();

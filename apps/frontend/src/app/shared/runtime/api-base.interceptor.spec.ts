@@ -11,6 +11,9 @@ describe('apiBaseInterceptor', () => {
   let httpMock: HttpTestingController;
   let resolveGate: (() => void) | null = null;
   const serverConnectionMock = {
+    waitUntilReadable: vi.fn(() => new Promise<void>((resolve) => {
+      resolveGate = resolve;
+    })),
     waitUntilInteractive: vi.fn(() => new Promise<void>((resolve) => {
       resolveGate = resolve;
     })),
@@ -38,11 +41,11 @@ describe('apiBaseInterceptor', () => {
     window.__ELEVENEX_RUNTIME__ = undefined;
   });
 
-  it('waits for server interactivity before sending relative backend requests', async () => {
+  it('waits for server readiness before sending relative backend reads', async () => {
     const response = vi.fn();
     http.get('/api/info').subscribe(response);
 
-    expect(serverConnectionMock.waitUntilInteractive).toHaveBeenCalledTimes(1);
+    expect(serverConnectionMock.waitUntilReadable).toHaveBeenCalledTimes(1);
     httpMock.expectNone('http://backend.test/api/info');
 
     resolveGate?.();
@@ -54,7 +57,7 @@ describe('apiBaseInterceptor', () => {
     expect(response).toHaveBeenCalledWith({ backendSha: 'abc123' });
   });
 
-  it('waits for server interactivity before sending absolute backend requests', async () => {
+  it('waits for server readiness before sending absolute backend reads', async () => {
     const response = vi.fn();
     http.get('http://backend.test/vscode-static/index.html', { responseType: 'text' }).subscribe(response);
 
@@ -68,6 +71,16 @@ describe('apiBaseInterceptor', () => {
     expect(response).toHaveBeenCalledWith('<html></html>');
   });
 
+  it('keeps mutations behind the interactivity gate', async () => {
+    http.post('/api/sessions/1/agents/codex/model', { model: 'test' }).subscribe();
+    expect(serverConnectionMock.waitUntilInteractive).toHaveBeenCalledTimes(1);
+    expect(serverConnectionMock.waitUntilReadable).not.toHaveBeenCalled();
+    httpMock.expectNone('http://backend.test/api/sessions/1/agents/codex/model');
+    resolveGate?.();
+    await Promise.resolve();
+    httpMock.expectOne('http://backend.test/api/sessions/1/agents/codex/model').flush({});
+  });
+
   it('does not gate absolute external URLs', () => {
     const response = vi.fn();
     http.get('https://example.com/data').subscribe(response);
@@ -75,7 +88,7 @@ describe('apiBaseInterceptor', () => {
     const request = httpMock.expectOne('https://example.com/data');
     request.flush({ ok: true });
 
-    expect(serverConnectionMock.waitUntilInteractive).not.toHaveBeenCalled();
+    expect(serverConnectionMock.waitUntilReadable).not.toHaveBeenCalled();
     expect(response).toHaveBeenCalledWith({ ok: true });
   });
 
@@ -84,7 +97,7 @@ describe('apiBaseInterceptor', () => {
     // effect, so a signal read while gating would re-run that effect — and
     // resend its request — every time the connection changed.
     const interactive = signal(true);
-    serverConnectionMock.waitUntilInteractive.mockImplementationOnce(() => {
+    serverConnectionMock.waitUntilReadable.mockImplementationOnce(() => {
       interactive();
       return Promise.resolve();
     });
