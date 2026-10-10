@@ -49,7 +49,12 @@ jobs:
       - name: Build backend bundle and macOS runtime tarball
         run: pnpm backend:bundle && pnpm electron:backend:prepare
 
-      - name: Build, Sign, and Notarize macOS desktop package
+      - name: Build frontend and prepare desktop assets
+        run: pnpm frontend:build && pnpm source-maps:collect && pnpm electron:stage-version
+
+      # Only the DMG is published and used by our updater. Building an unused
+      # maximum-compression ZIP added over six minutes to recent release jobs.
+      - name: Package, sign, and notarize macOS DMG
         env:
           CSC_LINK: ${{ secrets.APPLE_CERT_BASE64 }}
           CERT_PASS: ${{ secrets.APPLE_CERT_PASSWORD }}
@@ -62,7 +67,7 @@ jobs:
           for key in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
             test -n "$(printenv "$key")" || { echo "Missing required signing credential: $key"; exit 1; }
           done
-          pnpm electron:package:mac
+          pnpm --dir apps/electron package:mac
 
       - name: Verify Developer ID signature and notarization
         env:

@@ -84,9 +84,9 @@
       "icon": "assets/macos-runtime-icon.png",
       "category": "public.app-category.developer-tools",
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ],
+      "compression": "normal",
       "forceCodeSigning": true,
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
