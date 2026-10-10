@@ -593,6 +593,28 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(element.textContent).toContain('Start with a prompt.');
   });
 
+  it('shows history before a slow runtime snapshot arrives', () => {
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    wsMock.connect.mockReturnValue(events$.asObservable());
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    events$.next({
+      type: 'history_snapshot',
+      payload: { sessionId: 7, history: [{
+        id: 'saved-reply', kind: 'assistant', content: 'Previously saved reply',
+        timestamp: '2026-01-01T00:00:00.000Z',
+      }] },
+    });
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('cw-transcript-loading-skeleton')).toBeNull();
+    expect(element.textContent).toContain('Previously saved reply');
+    events$.next({ type: 'runtime_snapshot', payload: runtimeState() });
+    fixture.detectChanges();
+    expect(element.querySelector('cw-transcript-loading-skeleton')).toBeNull();
+    expect(element.textContent).toContain('Previously saved reply');
+  });
+
   it('refreshes autocomplete after session metadata arrives', async () => {
     const events$ = new Subject<ClaudeRuntimeEvent>();
     wsMock.connect.mockReturnValue(events$.asObservable());

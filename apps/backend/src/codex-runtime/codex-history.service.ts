@@ -16,6 +16,7 @@ import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import type { CodexHistorySessionSummary } from './codex-runtime.types.js';
 import type { AgentForkConversationRequest } from '../agent-runtime/agent-runtime.types.js';
+import { TranscriptFileCache } from '../agent-runtime/transcript-file-cache.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -40,6 +41,12 @@ export const CODEX_HISTORY_SESSIONS_ROOT = Symbol(
 export class CodexHistoryService {
   private readonly logger = new Logger('CodexHistoryService');
   private readonly sessionsRoot: string;
+  private readonly historyCache = new TranscriptFileCache<
+    ClaudeTranscriptItem[]
+  >();
+  private readonly sessionPaths = new Map<string, string>();
+  private readonly pathSearches = new Map<string, Promise<string | null>>();
+  private fileScan: Promise<string[]> | null = null;
 
   constructor(
     @Optional()
@@ -59,8 +66,9 @@ export class CodexHistoryService {
     if (!path) {
       return [];
     }
-    const records = await this.readJsonl(path);
-    return this.normalizeRecords(records);
+    return this.historyCache.read(path, async () =>
+      this.normalizeRecords(await this.readJsonl(path)),
+    );
   }
 
   /** Do not publish a fork until its rollout contains the retained turns. */
@@ -631,11 +639,46 @@ export class CodexHistoryService {
   }
 
   private async findSessionFile(sessionId: string): Promise<string | null> {
-    const paths = await this.findJsonlFiles(this.sessionsRoot);
-    return (
-      paths.find((path) => basename(path).includes(sessionId)) ??
-      (await this.findFileBySessionMeta(paths, sessionId))
-    );
+    const cached = this.sessionPaths.get(sessionId);
+    if (cached) {
+      try {
+        await fs.access(cached);
+        return cached;
+      } catch {
+        this.sessionPaths.delete(sessionId);
+      }
+    }
+    const existing = this.pathSearches.get(sessionId);
+    if (existing) return existing;
+    const search = (async () => {
+      // Opening several tabs must not launch duplicate recursive scans.
+      const scan = (this.fileScan ??= this.findJsonlFiles(this.sessionsRoot));
+      let paths: string[];
+      try {
+        paths = await scan;
+      } finally {
+        if (this.fileScan === scan) this.fileScan = null;
+      }
+      const path =
+        paths.find((candidate) => basename(candidate).includes(sessionId)) ??
+        (await this.findFileBySessionMeta(paths, sessionId));
+      if (path) {
+        if (this.sessionPaths.size >= 512) {
+          this.sessionPaths.delete(this.sessionPaths.keys().next().value!);
+        }
+        this.sessionPaths.set(sessionId, path);
+      }
+      // Missing files are deliberately not cached: newly created forks and
+      // rollouts may appear immediately after this lookup.
+      return path;
+    })();
+    this.pathSearches.set(sessionId, search);
+    try {
+      return await search;
+    } finally {
+      if (this.pathSearches.get(sessionId) === search)
+        this.pathSearches.delete(sessionId);
+    }
   }
 
   private async findFileBySessionMeta(

@@ -1,4 +1,5 @@
 import { contextPercentage } from '../agent-runtime/context-usage.js';
+import { TranscriptFileCache } from '../agent-runtime/transcript-file-cache.js';
 import {
   BadRequestException,
   ConflictException,
@@ -518,6 +519,8 @@ export class ClaudeRuntimeService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger('ClaudeRuntimeService');
+  private readonly transcriptHistoryCache = new TranscriptFileCache<ClaudeTranscriptItem[]>();
+  private readonly transcriptPaths = new Map<string, string>();
   private readonly activeRuns = new Map<number, ActiveRunState>();
   private readonly sessionRuntimes = new Map<number, ClaudeSessionRuntime>();
   private readonly sessionRuntimeCreateInFlight = new Map<
@@ -6561,11 +6564,16 @@ export class ClaudeRuntimeService
     }
 
     try {
-      const records = await this.loadTranscriptRecords(transcriptPath);
-      const normalized = this.normalizeTranscriptRecords(
-        records,
-        interactionsByToolUseId,
+      const normalized = await this.transcriptHistoryCache.read(transcriptPath, async () =>
+        this.normalizeTranscriptRecords(await this.loadTranscriptRecords(transcriptPath)),
       );
+      // Decisions live in SQLite and can change without a transcript append.
+      // Attach them after cache retrieval so permission feedback stays fresh.
+      for (const item of normalized) {
+        if (item.kind === 'tool_use' && item.toolUseId) {
+          item.interaction = interactionsByToolUseId.get(item.toolUseId);
+        }
+      }
       this.recordHistorySnapshot(
         this.ensureRuntimeState(sessionId, claudeSessionId),
         normalized,
@@ -7549,6 +7557,7 @@ export class ClaudeRuntimeService
     worktreePath: string,
     claudeSessionId: string,
   ): Promise<string | null> {
+    const key = JSON.stringify([worktreePath, claudeSessionId]);
     const computedPath = this.getTranscriptPath(worktreePath, claudeSessionId);
     if (await this.pathExists(computedPath)) {
       return computedPath;
@@ -7565,6 +7574,12 @@ export class ClaudeRuntimeService
       }
     }
 
+    // Prefer the current runtime directory even if an older fallback copy is
+    // still present after a transcript migration.
+    const cachedPath = this.transcriptPaths.get(key);
+    if (cachedPath && await this.pathExists(cachedPath)) return cachedPath;
+    this.transcriptPaths.delete(key);
+
     const projectsDir = join(homedir(), '.claude', 'projects');
     try {
       const entries = await readdir(projectsDir);
@@ -7575,6 +7590,10 @@ export class ClaudeRuntimeService
           `${claudeSessionId}.jsonl`,
         );
         if (await this.pathExists(candidatePath)) {
+          if (this.transcriptPaths.size >= 256) {
+            this.transcriptPaths.delete(this.transcriptPaths.keys().next().value!);
+          }
+          this.transcriptPaths.set(key, candidatePath);
           return candidatePath;
         }
       }

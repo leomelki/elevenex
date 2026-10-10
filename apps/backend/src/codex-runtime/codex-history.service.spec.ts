@@ -4,6 +4,47 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 describe('CodexHistoryService', () => {
+  it('reuses a resolved rollout and reloads history after appends and replacement', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-cache-'));
+    try {
+      const service = new CodexHistoryService(root);
+      const path = join(root, 'thread-cached.jsonl');
+      await writeFile(
+        path,
+        jsonl([
+          { type: 'session_meta', payload: { id: 'cached' } },
+          ...turnRecords('first', 'original'),
+        ]),
+      );
+      const scan = jest.spyOn(service as any, 'findJsonlFiles');
+      const read = jest.spyOn(service as any, 'readJsonl');
+      await service.getHistory('cached');
+      await service.getHistory('cached');
+      expect(scan).toHaveBeenCalledTimes(1);
+      expect(read).toHaveBeenCalledTimes(1);
+      await appendFile(path, jsonl(turnRecords('second', 'new prompt')));
+      expect(
+        (await service.getHistory('cached')).map((item) => item.content),
+      ).toContain('new prompt');
+      expect(scan).toHaveBeenCalledTimes(1);
+      await rm(path);
+      const moved = join(root, 'moved-cached.jsonl');
+      await writeFile(
+        moved,
+        jsonl([
+          { type: 'session_meta', payload: { id: 'cached' } },
+          ...turnRecords('replacement', 'replacement prompt'),
+        ]),
+      );
+      expect(
+        (await service.getHistory('cached')).map((item) => item.content),
+      ).toEqual(['replacement prompt', 'answer: replacement prompt']);
+      expect(scan).toHaveBeenCalledTimes(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('restores native web searches with all queries and a completion receipt', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
     try {

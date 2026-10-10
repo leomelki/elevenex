@@ -54,6 +54,7 @@ type AgentRuntimeClientAction =
 export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   private wss: WebSocketServer | null = null;
   private readonly clients = new Map<string, Set<WebSocket>>();
+  private readonly hydrationInFlight = new WeakMap<WebSocket, Promise<void>>();
 
   constructor(
     private readonly registry: AgentRuntimeRegistryService,
@@ -150,36 +151,38 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
     try {
       switch (action.type) {
         case 'hydrate': {
-          const runtimeState = await provider.getRuntimeState(sessionId);
-          ws.send(
-            JSON.stringify({ type: 'runtime_snapshot', payload: runtimeState }),
-          );
-          void provider
-            .getHistory(sessionId)
-            .then((history) => {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(
-                  JSON.stringify({
-                    type: 'history_snapshot',
-                    payload: { sessionId, history },
-                  }),
-                );
-              }
-            })
-            .catch((error) => {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(
-                  JSON.stringify({
-                    type: 'error',
-                    payload: {
-                      sessionId,
-                      message:
-                        error instanceof Error ? error.message : String(error),
-                    },
-                  }),
-                );
-              }
+          if (this.hydrationInFlight.has(ws)) return;
+          // History must not wait for provider initialization/auth checks. Each
+          // snapshot can render as soon as it is ready, in either order.
+          const send = (event: unknown) => {
+            if (ws.readyState === WebSocket.OPEN)
+              ws.send(JSON.stringify(event));
+          };
+          const reportError = (error: unknown) =>
+            send({
+              type: 'error',
+              payload: {
+                sessionId,
+                message: error instanceof Error ? error.message : String(error),
+              },
             });
+          const hydration = Promise.all([
+            provider
+              .getRuntimeState(sessionId)
+              .then((payload) => send({ type: 'runtime_snapshot', payload }))
+              .catch(reportError),
+            provider
+              .getHistory(sessionId)
+              .then((history) =>
+                send({
+                  type: 'history_snapshot',
+                  payload: { sessionId, history },
+                }),
+              )
+              .catch(reportError),
+          ]).then(() => undefined);
+          this.hydrationInFlight.set(ws, hydration);
+          void hydration.finally(() => this.hydrationInFlight.delete(ws));
           return;
         }
         case 'submit_prompt':

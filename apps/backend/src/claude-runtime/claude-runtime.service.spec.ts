@@ -93,6 +93,8 @@ describe('ClaudeRuntimeService', () => {
   let loggerLogSpy: jest.SpyInstance;
   let loggerWarnSpy: jest.SpyInstance;
   let loggerDebugSpy: jest.SpyInstance;
+  let transcriptFixtureRoot: string;
+  let transcriptFixturePath: string;
   const originalClaudeBin = process.env.ELEVENEX_CLAUDE_BIN;
 
   it('copies a reopened task transcript into its new runtime directory while retaining the original history', async () => {
@@ -141,6 +143,9 @@ describe('ClaudeRuntimeService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    transcriptFixtureRoot = await mkdtemp(join(tmpdir(), 'claude-history-fixture-'));
+    transcriptFixturePath = join(transcriptFixtureRoot, 'claude-session-1.jsonl');
+    await writeFile(transcriptFixturePath, 'fixture');
     if (originalClaudeBin === undefined) {
       delete process.env.ELEVENEX_CLAUDE_BIN;
     } else {
@@ -232,7 +237,8 @@ describe('ClaudeRuntimeService', () => {
     service = module.get(ClaudeRuntimeService);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await rm(transcriptFixtureRoot, { recursive: true, force: true });
     if (originalClaudeBin === undefined) {
       delete process.env.ELEVENEX_CLAUDE_BIN;
     } else {
@@ -2612,7 +2618,7 @@ describe('ClaudeRuntimeService', () => {
     jest
       .spyOn(service as never, 'findTranscriptPath' as never)
       .mockResolvedValue(
-        '/tmp/.claude/projects/project/claude-session-1.jsonl',
+        transcriptFixturePath,
       );
     jest
       .spyOn(service as never, 'loadTranscriptRecords' as never)
@@ -2643,7 +2649,7 @@ describe('ClaudeRuntimeService', () => {
     jest
       .spyOn(service as never, 'findTranscriptPath' as never)
       .mockResolvedValue(
-        '/tmp/.claude/projects/project/claude-session-1.jsonl',
+        transcriptFixturePath,
       );
     jest
       .spyOn(service as never, 'loadTranscriptRecords' as never)
@@ -2688,12 +2694,38 @@ describe('ClaudeRuntimeService', () => {
     jest
       .spyOn(service as never, 'findTranscriptPath' as never)
       .mockResolvedValue(
-        '/tmp/.claude/projects/project/claude-session-1.jsonl',
+        transcriptFixturePath,
       );
     jest
       .spyOn(service as never, 'loadTranscriptRecords' as never)
       .mockResolvedValue(records as never);
   };
+
+  it('reuses parsed history while refreshing SQLite permission decisions', async () => {
+    mockTranscript([{
+      type: 'assistant', uuid: 'assistant-cached',
+      timestamp: '2026-04-24T09:00:00.000Z',
+      message: { content: [{ type: 'tool_use', id: 'tool-cached', name: 'Read', input: {} }] },
+    }]);
+    const read = (service as any).loadTranscriptRecords;
+    expect((await service.getHistory(7))[0].interaction).toBeUndefined();
+    interactionRows.push({
+      id: 1, sessionId: 7, toolUseId: 'tool-cached', toolName: 'Read',
+      interactionKind: 'permission', decision: 'denied', remember: false,
+      responseContent: null, requestSnapshot: '{}',
+      createdAt: '2026-04-24T09:00:00.000Z', resolvedAt: '2026-04-24T09:00:01.000Z',
+    });
+    expect((await service.getHistory(7))[0].interaction?.decision).toBe('denied');
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefers the current transcript over an older cached fallback copy', async () => {
+    const runtime = service as any;
+    runtime.transcriptPaths.set(JSON.stringify(['/worktree', 'claude-session-1']), '/old-copy');
+    jest.spyOn(runtime, 'getTranscriptPath').mockReturnValue('/current-copy');
+    jest.spyOn(runtime, 'pathExists').mockResolvedValue(true);
+    expect(await runtime.findTranscriptPath('/worktree', 'claude-session-1')).toBe('/current-copy');
+  });
 
   it('keeps an answered turn that a retry storm pushed off the parent chain', async () => {
     // A 429 burst writes its own records against the prompt, and the prompt
