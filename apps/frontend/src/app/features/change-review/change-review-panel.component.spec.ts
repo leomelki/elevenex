@@ -867,6 +867,62 @@ describe('ChangeReviewPanelComponent', () => {
     expect(fixture.componentInstance.diffsOutdated()).toBe(true);
   });
 
+  it('reloads uncommitted files after a commit invalidates a queued diff', async () => {
+    recreatePanelWithLatestGitSummary(gitSummary({ hasChanges: true }));
+    await flushSummary(summary([file('src/a.ts'), file('src/b.ts')], 'uncommitted'));
+    expect(windowCalls).toHaveLength(1);
+
+    windowCalls[0].response.error({
+      error: { message: 'File is not changed in this scope: src/a.ts' },
+    });
+    await flush();
+    fixture.detectChanges();
+
+    expect(summaryCalls).toHaveLength(2);
+    expect(summaryCalls[1].scope).toBe('uncommitted');
+    expect(serviceMock.clearCache).toHaveBeenCalledWith('/tmp/repo');
+    expect(serviceMock.getSummary).toHaveBeenLastCalledWith(
+      '/tmp/repo',
+      'uncommitted',
+      true,
+      false,
+    );
+    expect(windowCalls).toHaveLength(1);
+    expect(fixture.componentInstance.loadingSummary()).toBe(true);
+
+    // A partial commit leaves a different set of changes. Only those files
+    // should be requested, even before the next git status poll.
+    await flushSummary(summary([file('src/remaining.ts')], 'uncommitted', { headSha: 'head456' }));
+    expect(windowCalls.map((call) => call.path)).toEqual(['src/a.ts', 'src/remaining.ts']);
+    windowCalls[1].response.next(fileWindow('src/remaining.ts', 'uncommitted'));
+    await flush();
+    fixture.detectChanges();
+    fixture.componentInstance.onDiffScroll();
+    await flush();
+
+    expect(windowCalls).toHaveLength(2);
+    expect(fixture.componentInstance.windowLoadState()).toEqual({ running: false, total: 0 });
+    expect(fixture.componentInstance.summary()?.files.map((item) => item.path)).toEqual([
+      'src/remaining.ts',
+    ]);
+  });
+
+  it('clears the changes view when the commit leaves no uncommitted files', async () => {
+    recreatePanelWithLatestGitSummary(gitSummary({ hasChanges: true }));
+    await flushSummary(summary([file('src/a.ts')], 'uncommitted'));
+    windowCalls[0].response.error({
+      error: { message: 'File is not changed in this scope: src/a.ts' },
+    });
+    await flush();
+    await flushSummary(summary([], 'uncommitted', { headSha: 'head456' }));
+    fixture.componentInstance.onDiffScroll();
+
+    expect(windowCalls).toHaveLength(1);
+    expect(fixture.componentInstance.fileStates().size).toBe(0);
+    expect(fixture.componentInstance.visibleRows()).toEqual([]);
+    expect(fixture.componentInstance.error()).toBeNull();
+  });
+
   it('shows the merge conflict resolver inside the diff panel', async () => {
     await flushSummary(summary([file('src/a.ts')]));
     fixture.detectChanges();

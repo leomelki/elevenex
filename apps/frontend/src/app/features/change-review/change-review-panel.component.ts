@@ -552,6 +552,12 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
     this.windowLoader.events.pipe(takeUntilDestroyed()).subscribe((event) => {
       const { request } = event;
       if (request.generation !== this.generation) return;
+      if (event.type === 'stale') {
+        // Refresh the base too: git status polling may not have observed the
+        // new HEAD yet, and the backend can still have the old base cached.
+        void this.refresh(true);
+        return;
+      }
       if (event.type === 'loaded') {
         this.applyFileWindow(event.window, request);
         return;
