@@ -17,7 +17,6 @@ export interface Session {
   claudeSessionId: string;
   codexSessionId: string;
   piSessionPath?: string;
-  antigravitySessionId?: string;
   hasInjectedWorktreeContext: boolean;
   hasUnreviewedCompletion: boolean;
   lastCompletionAt: string | null;

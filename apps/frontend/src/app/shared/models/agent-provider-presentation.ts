@@ -18,19 +18,13 @@ export interface AgentProviderPresentation {
  * list at all — it renders whatever `GET /api/agent-providers` reports, so an
  * unknown provider still works there.
  */
-export const AGENT_PROVIDER_PRESENTATIONS: readonly AgentProviderPresentation[] =
-  [
-    { id: 'claude', label: 'Claude', icon: 'lucideSparkles' },
-    { id: 'codex', label: 'Codex', icon: 'lucideFileText' },
-    { id: 'pi', label: 'Pi', icon: 'lucideNotebookPen' },
-    { id: 'antigravity', label: 'Antigravity', icon: 'lucideOrbit' },
-  ] as const;
+export const AGENT_PROVIDER_PRESENTATIONS: readonly AgentProviderPresentation[] = [
+  { id: 'claude', label: 'Claude', icon: 'lucideSparkles' },
+  { id: 'codex', label: 'Codex', icon: 'lucideFileText' },
+  { id: 'pi', label: 'Pi', icon: 'lucideNotebookPen' },
+] as const;
 
 /** Icon lookup for provider ids reported by the backend. */
-export const AGENT_PROVIDER_ICONS: Record<string, string> =
-  Object.fromEntries(
-    AGENT_PROVIDER_PRESENTATIONS.map((provider) => [
-      provider.id,
-      provider.icon,
-    ]),
-  );
+export const AGENT_PROVIDER_ICONS: Record<string, string> = Object.fromEntries(
+  AGENT_PROVIDER_PRESENTATIONS.map((provider) => [provider.id, provider.icon]),
+);

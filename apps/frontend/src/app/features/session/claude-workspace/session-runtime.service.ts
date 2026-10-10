@@ -57,11 +57,7 @@ import { getHttpErrorMessage } from './workspace-error';
 
 /**
  * Providers gated behind a card in the workspace: Codex and Pi collect their
- * credentials here, Claude only needs its CLI installed. Antigravity is absent:
- * its auth status can't be verified from the backend yet (see
- * docs/antigravity-provider-flow.md), so gating on `authenticated === true`
- * would lock every Antigravity session out permanently — a failed prompt
- * surfaces its own error instead.
+ * credentials here, Claude only needs its CLI installed.
  */
 const LOGIN_CARD_PROVIDERS = new Set(['claude', 'codex', 'pi']);
 

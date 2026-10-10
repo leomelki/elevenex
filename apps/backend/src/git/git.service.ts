@@ -35,19 +35,10 @@ const COMMIT_CONVENTION_DOC_FILENAMES = [
   'CONTRIBUTING.md',
 ];
 const MAX_COMMIT_MESSAGE_CONVENTION_DOC_CHARS = 6_000;
-/** Shape `buildCommitMessagePrompt` asks for, for providers that can enforce it. */
-const COMMIT_MESSAGE_JSON_SCHEMA = {
-  type: 'object',
-  properties: {
-    subject: { type: 'string' },
-    body: { type: ['string', 'null'] },
-  },
-  required: ['subject', 'body'],
-} as const satisfies Record<string, unknown>;
 const COMMIT_MESSAGE_CLAUDE_SYSTEM_PROMPT =
   'You generate git commit messages. You have no tool access. Follow the ' +
   'user instructions exactly and respond with nothing but the requested JSON.';
-type CommitMessageProvider = 'claude' | 'codex' | 'pi' | 'antigravity';
+type CommitMessageProvider = 'claude' | 'codex' | 'pi';
 interface CommitMessagePromptInput {
   worktreePath: string;
   branchName: string;
@@ -90,7 +81,7 @@ export interface CommitMessageSuggestion {
   subject: string;
   body: string | null;
   confidence: 'high' | 'medium' | 'low';
-  source: 'external' | 'claude' | 'codex' | 'pi' | 'antigravity' | 'fallback';
+  source: 'external' | 'claude' | 'codex' | 'pi' | 'fallback';
 }
 
 export interface PushResult {
@@ -1067,25 +1058,6 @@ export class GitService {
     );
   }
 
-  private async generateCommitMessageWithAntigravity(
-    input: CommitMessagePromptInput,
-  ): Promise<CommitMessageSuggestion | null> {
-    return this.generateCommitSuggestionWithRetry('antigravity', (retryHint) =>
-      this.textAgentGenerationService.generate({
-        provider: 'antigravity',
-        worktreePath: input.worktreePath,
-        prompt: this.buildCommitMessagePrompt({ ...input, retryHint }),
-        taskName: 'commit-message',
-        antigravity: {
-          // `agy` otherwise wraps the JSON in prose or markdown fences, which
-          // costs a retry per suggestion. `--json-schema` makes it return a
-          // validated object instead.
-          jsonSchema: COMMIT_MESSAGE_JSON_SCHEMA,
-        },
-      }),
-    );
-  }
-
   private async generateCommitSuggestionWithRetry(
     source: CommitMessageSuggestion['source'],
     generate: (
@@ -1123,8 +1095,6 @@ export class GitService {
         return this.generateCommitMessageWithCodex(input);
       case 'pi':
         return this.generateCommitMessageWithPi(input);
-      case 'antigravity':
-        return this.generateCommitMessageWithAntigravity(input);
     }
   }
 
@@ -1479,8 +1449,7 @@ export class GitService {
     if (
       provider === 'claude' ||
       provider === 'codex' ||
-      provider === 'pi' ||
-      provider === 'antigravity'
+      provider === 'pi'
     ) {
       return provider;
     }

@@ -1,4 +1,4 @@
-export type AgentProviderId = 'claude' | 'codex' | 'pi' | 'antigravity' | 'opencode' | string;
+export type AgentProviderId = 'claude' | 'codex' | 'pi' | 'opencode' | string;
 
 export interface AgentRuntimeProviderCapabilities {
   mcp: boolean;

@@ -1,12 +1,6 @@
 import { EventEmitter } from 'events';
 
-export type AgentProviderId =
-  | 'claude'
-  | 'codex'
-  | 'pi'
-  | 'antigravity'
-  | 'opencode'
-  | string;
+export type AgentProviderId = 'claude' | 'codex' | 'pi' | 'opencode' | string;
 export type AgentPermissionMode = string;
 export type AgentReasoningEffort =
   | 'low'

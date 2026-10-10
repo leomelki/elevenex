@@ -4,7 +4,6 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideFileText,
   lucideNotebookPen,
-  lucideOrbit,
   lucidePlus,
   lucideSparkles,
   lucideTrash2,
@@ -72,7 +71,6 @@ const EFFORT_HINTS: Record<string, string> = {
     provideIcons({
       lucideFileText,
       lucideNotebookPen,
-      lucideOrbit,
       lucidePlus,
       lucideSparkles,
       lucideTrash2,

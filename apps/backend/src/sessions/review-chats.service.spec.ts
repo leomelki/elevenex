@@ -231,8 +231,8 @@ describe('ReviewChatsService', () => {
       repoId,
       branchName: 'main',
       worktreePath: '/tmp/worktree',
-      name: 'Antigravity parent',
-      activeAgentProvider: 'antigravity',
+      name: 'Unsupported provider parent',
+      activeAgentProvider: 'unsupported',
     });
 
     await expect(

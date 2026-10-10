@@ -14,20 +14,8 @@ import {
 import { resolveCodexBinary } from '../codex-runtime/codex-binary.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
 import { SettingsService } from '../settings/settings.service.js';
-import { AntigravityProcessClient } from '../antigravity-runtime/antigravity-process-client.js';
-import type { AntigravityResultEvent } from '../antigravity-runtime/antigravity-runtime.types.js';
 
-/**
- * These one-shot flows run without `--dangerously-skip-permissions`, so `agy`
- * auto-denies every tool call — and a denied call ends the turn with an empty
- * response rather than an error. Telling the model up front to answer from the
- * prompt is what keeps it from spending the turn on a tool it cannot use.
- */
-const ANTIGRAVITY_NO_TOOLS_PREAMBLE =
-  'Do not use any tools. Do not run commands and do not read files. ' +
-  'Everything you need is in this message; answer directly from it.';
-
-export type TextAgentProvider = 'claude' | 'codex' | 'pi' | 'antigravity';
+export type TextAgentProvider = 'claude' | 'codex' | 'pi';
 
 export function readCodexExecAgentMessage(line: string): string | null {
   try {
@@ -95,17 +83,6 @@ export interface GenerateTextWithAgentRequest {
     model?: string;
     timeoutMs?: number;
   };
-  antigravity?: {
-    /** Omitted by default so Antigravity uses whatever model the account defaults to. */
-    model?: string;
-    timeoutMs?: number;
-    /**
-     * JSON schema enforced on the final result (`agy --json-schema`). When
-     * set, `agy` also returns a parsed `structured_output` object, which is
-     * far more reliable than scraping the prose response.
-     */
-    jsonSchema?: Record<string, unknown>;
-  };
 }
 
 export interface GenerateTextWithAgentResult {
@@ -130,8 +107,6 @@ export class TextAgentGenerationService {
         return this.generateWithCodex(request);
       case 'pi':
         return this.generateWithPi(request);
-      case 'antigravity':
-        return this.generateWithAntigravity(request);
     }
   }
 
@@ -442,136 +417,6 @@ export class TextAgentGenerationService {
     } finally {
       await runtime.stop().catch(() => undefined);
     }
-  }
-
-  /**
-   * Runs a one-shot, read-only Antigravity turn.
-   *
-   * This drives `agy`'s stream-json session protocol rather than its `-p`
-   * print mode, even though the flows here want a single block of text.
-   * Print mode only accepts the prompt as a command-line argument (it does
-   * not read stdin), and these prompts embed a diff plus convention docs —
-   * on Windows that blows past the ~32k command-line limit and the spawn
-   * fails outright with `ENAMETOOLONG`, which is what made commit-message
-   * generation fail on any non-trivial change. The stream protocol takes the
-   * prompt as one NDJSON line on stdin, so prompt size is a non-issue.
-   *
-   * Read-only by construction: no `--dangerously-skip-permissions`, so `agy`
-   * auto-denies any tool call. Because a denied tool ends the turn with an
-   * empty response, the prompt is prefixed with an explicit instruction to
-   * answer directly instead of reaching for tools.
-   */
-  private async generateWithAntigravity(
-    request: GenerateTextWithAgentRequest,
-  ): Promise<GenerateTextWithAgentResult | null> {
-    if (typeof request.prompt !== 'string') {
-      this.logger.warn(
-        `[${request.taskName}] Antigravity generation requires a string prompt`,
-      );
-      return null;
-    }
-
-    const model = this.resolveModel('antigravity', request.antigravity?.model);
-    const schema = request.antigravity?.jsonSchema;
-    const timeoutMs = request.antigravity?.timeoutMs ?? 120_000;
-
-    const client = new AntigravityProcessClient({
-      cwd: request.worktreePath,
-      extraArgs: [
-        // `agy` does not treat its process cwd as the workspace; without this
-        // it works out of an empty scratch directory and can see no repo
-        // context at all.
-        '--add-dir',
-        request.worktreePath,
-        // Prompts embed raw diffs and file contents; without this a line
-        // starting with `/` is expanded as a slash command.
-        '--disable-slash-commands',
-        ...(schema ? ['--json-schema', JSON.stringify(schema)] : []),
-        ...(model ? ['--model', model] : []),
-      ],
-    });
-
-    try {
-      await client.start();
-      const result = await this.withTimeout(
-        client.prompt(`${ANTIGRAVITY_NO_TOOLS_PREAMBLE}\n\n${request.prompt}`),
-        timeoutMs,
-        `Antigravity turn exceeded ${timeoutMs}ms`,
-      );
-
-      if (result.status === 'ERROR' || result.status === 'INVALID') {
-        this.logger.warn(
-          `[${request.taskName}] Antigravity query failed: ${
-            result.error || result.status
-          }`,
-        );
-        return null;
-      }
-
-      const text = this.readAntigravityText(result);
-      // A turn whose tool calls were all auto-denied still reports SUCCESS,
-      // but with an empty response. Returning '' here would look like a parse
-      // failure to callers; name the real cause instead.
-      if (!text.trim()) {
-        const stderr = client.getStderr().trim();
-        this.logger.warn(
-          `[${request.taskName}] Antigravity returned an empty response ` +
-            `(status=${result.status}, stderr: ${stderr || 'none'}). This ` +
-            'usually means the model called a tool and headless mode ' +
-            'auto-denied it.',
-        );
-        return null;
-      }
-      return { provider: 'antigravity', model, text };
-    } catch (error) {
-      this.logger.warn(
-        `[${request.taskName}] Antigravity query failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return null;
-    } finally {
-      await client.stop().catch(() => undefined);
-    }
-  }
-
-  /**
-   * Reads a turn's text, preferring the schema-validated object.
-   *
-   * With `--json-schema`, `agy` returns the validated object in
-   * `structured_output` while `response` keeps the model's raw prose
-   * (markdown fences, restated JSON, trailing tool chatter), so the
-   * structured form is what callers should parse.
-   */
-  private readAntigravityText(result: AntigravityResultEvent): string {
-    const structured = (result as unknown as Record<string, unknown>)[
-      'structured_output'
-    ];
-    if (structured && typeof structured === 'object') {
-      return JSON.stringify(structured);
-    }
-    return result.response ?? '';
-  }
-
-  private withTimeout<T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-    message: string,
-  ): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-      timer.unref?.();
-      promise.then(
-        (value) => {
-          clearTimeout(timer);
-          resolve(value);
-        },
-        (error: unknown) => {
-          clearTimeout(timer);
-          reject(error instanceof Error ? error : new Error(String(error)));
-        },
-      );
-    });
   }
 
   private async loadClaudeSdk(): Promise<{

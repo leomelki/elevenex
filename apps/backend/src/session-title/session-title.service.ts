@@ -140,8 +140,7 @@ export class SessionTitleService {
   ): TextAgentProvider | null {
     return provider === 'claude' ||
       provider === 'codex' ||
-      provider === 'pi' ||
-      provider === 'antigravity'
+      provider === 'pi'
       ? provider
       : null;
   }

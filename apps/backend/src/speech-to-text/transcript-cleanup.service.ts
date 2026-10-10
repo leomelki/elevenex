@@ -77,7 +77,6 @@ export class TranscriptCleanupService {
             tools: [],
           },
           ...(model ? { codex: { model } } : {}),
-          ...(model ? { antigravity: { model } } : {}),
         }),
         CLEANUP_TIMEOUT_MS,
       );
@@ -158,8 +157,7 @@ export class TranscriptCleanupService {
   ): TextAgentProvider | null {
     return provider === 'claude' ||
       provider === 'codex' ||
-      provider === 'pi' ||
-      provider === 'antigravity'
+      provider === 'pi'
       ? provider
       : null;
   }
