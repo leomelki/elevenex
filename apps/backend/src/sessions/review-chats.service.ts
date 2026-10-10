@@ -524,6 +524,8 @@ export class ReviewChatsService {
           childSessionId,
           providerSessionId,
         );
+      } else if (provider === 'opencode') {
+        await this.sessionsService.updateOpenCodeSessionId(childSessionId, providerSessionId);
       }
     } else {
       await this.sessionsService.updateActiveAgentProvider(
@@ -658,7 +660,7 @@ export class ReviewChatsService {
   }
 
   private normalizeProvider(provider: AgentProviderId): AgentProviderId {
-    if (provider === 'claude' || provider === 'codex') {
+    if (provider === 'claude' || provider === 'codex' || provider === 'opencode') {
       return provider;
     }
     throw new BadRequestException(

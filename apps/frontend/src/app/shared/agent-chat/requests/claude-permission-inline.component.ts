@@ -278,7 +278,7 @@ export class ClaudePermissionInlineComponent {
     }
   }
 
-  submitQuestionAnswers(answers: Record<string, string>): void {
+  submitQuestionAnswers(answers: Record<string, string | string[]>): void {
     this.approve.emit({
       remember: false,
       content: { answers },

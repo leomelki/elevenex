@@ -1,3 +1,5 @@
+import { OnboardingAgentCardComponent } from './onboarding-agent-card.component';
+import { AGENT_PROVIDER_PRESENTATIONS } from '@/shared/models/agent-provider-presentation';
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -39,7 +41,7 @@ type OnboardingStep = 'connection' | 'ssh' | 'paired' | 'install' | 'agent' | 'c
 
 @Component({
   selector: 'app-onboarding',
-  imports: [NgIcon, ZardButtonComponent, ZardInputDirective, PathAutocompleteInputComponent, RemoteLinkPanelComponent],
+  imports: [OnboardingAgentCardComponent, NgIcon, ZardButtonComponent, ZardInputDirective, PathAutocompleteInputComponent, RemoteLinkPanelComponent],
   templateUrl: './onboarding.html',
   host: { class: 'block flex-1 overflow-y-auto' },
   viewProviders: [
@@ -79,7 +81,15 @@ export class Onboarding implements OnInit {
   activeStep = signal<OnboardingStep>('connection');
   connectionError = signal('');
   installMessage = signal('');
+  readonly agentProviders = AGENT_PROVIDER_PRESENTATIONS;
+  readonly agentDescriptions: Record<DefaultAgentProvider, string> = {
+    claude: 'Use Claude Code as the default agent and choose between UI or terminal next.',
+    codex: 'Use Codex as the default agent in the chat workspace.',
+    pi: 'Use Pi as the default agent in the chat workspace.',
+    opencode: 'Use OpenCode with your preferred models, custom agents, skills, and MCP servers.',
+  };
   selectedAgent = signal<DefaultAgentProvider>('claude');
+  readonly selectedAgentLabel = computed(() => this.agentProviders.find((provider) => provider.id === this.selectedAgent())?.label ?? this.selectedAgent());
   selectedSurface = signal<DefaultClaudeSessionSurface>('claude-ui');
 
   serverName = signal('');

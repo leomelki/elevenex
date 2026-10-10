@@ -1,4 +1,4 @@
-export type PlanReviewProvider = 'codex' | 'claude';
+export type PlanReviewProvider = 'codex' | 'claude' | 'opencode';
 
 export type PlanReviewSource = 'transcript-plan' | 'exit-plan-permission';
 

@@ -141,6 +141,18 @@ describe('ReviewChatsService', () => {
     return sessionsService.findOne(parent.id);
   }
 
+  it('persists the native OpenCode id for inline review discussions', async () => {
+    const parent = await createParent();
+    await sessionsService.updateOpenCodeSessionId(parent.id, 'open-parent');
+    provider.forkConversation.mockResolvedValue({
+      providerSessionId: 'open-review-chat',
+    });
+    const result = await reviewChats.create(parent.id, { anchors: [ANCHOR] });
+    expect(result.session.activeAgentProvider).toBe('opencode');
+    expect(result.session.opencodeSessionId).toBe('open-review-chat');
+    expect(provider.setPlanMode).toHaveBeenCalledWith(result.session.id, true);
+  });
+
   it('forks a hidden, plan-mode-locked child anchored to the selection', async () => {
     const parent = await createParent();
 
@@ -243,9 +255,9 @@ describe('ReviewChatsService', () => {
   it('requires at least one anchor', async () => {
     const parent = await createParent();
 
-    await expect(reviewChats.create(parent.id, { anchors: [] })).rejects.toThrow(
-      /at least one code selection/i,
-    );
+    await expect(
+      reviewChats.create(parent.id, { anchors: [] }),
+    ).rejects.toThrow(/at least one code selection/i);
   });
 
   it('caps the number of open discussions per session', async () => {
@@ -372,9 +384,9 @@ describe('ReviewChatsService', () => {
     });
     await reviewChats.promote(parent.id, reviewChat.id);
 
-    await expect(
-      reviewChats.promote(parent.id, reviewChat.id),
-    ).rejects.toThrow(/already been opened as a session/i);
+    await expect(reviewChats.promote(parent.id, reviewChat.id)).rejects.toThrow(
+      /already been opened as a session/i,
+    );
   });
 
   it('hides discussions from normal session listings until promoted', async () => {
@@ -396,7 +408,10 @@ describe('ReviewChatsService', () => {
     });
 
     expect(await reviewChats.findByParent(parent.id)).toHaveLength(2);
-    const filtered = await reviewChats.findByParent(parent.id, 'src/app/bar.ts');
+    const filtered = await reviewChats.findByParent(
+      parent.id,
+      'src/app/bar.ts',
+    );
     expect(filtered.map((chat) => chat.filePath)).toEqual(['src/app/bar.ts']);
   });
 

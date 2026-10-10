@@ -587,4 +587,48 @@ describe('ClaudeStatusBarComponent', () => {
 
     expect(fixture.nativeElement.querySelector('.cw-sb__usage-trigger')).toBeNull();
   });
+  it('uses OpenCode permission hints and preserves native variant names', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('currentProvider', 'opencode');
+    fixture.componentRef.setInput('availableModels', [
+      {
+        id: 'local/model',
+        displayName: 'Local',
+        description: '',
+        supportsEffort: true,
+        reasoningEfforts: ['fast', 'deep'],
+        supportsFastMode: false,
+      },
+    ]);
+    fixture.componentRef.setInput('selectedModel', 'local/model');
+    fixture.detectChanges();
+    expect(
+      fixture.componentInstance.permissionOptions().find((option) => option.id === 'default')?.hint,
+    ).toContain('OpenCode');
+    expect(fixture.componentInstance.reasoningEffortOptions().map((option) => option.id)).toEqual([
+      '',
+      'fast',
+      'deep',
+    ]);
+  });
+  it('offers provider connection management in an existing OpenCode conversation', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('currentProvider', 'opencode');
+    fixture.detectChanges();
+    let requested = false;
+    fixture.componentInstance.connectProvider.subscribe(() => {
+      requested = true;
+    });
+    (
+      fixture.nativeElement.querySelector('[aria-label="Agent settings"]') as HTMLButtonElement
+    ).click();
+    fixture.detectChanges();
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    const connect = [...overlay.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Connect model provider'),
+    )!;
+    expect(connect).toBeTruthy();
+    connect.click();
+    expect(requested).toBe(true);
+  });
 });

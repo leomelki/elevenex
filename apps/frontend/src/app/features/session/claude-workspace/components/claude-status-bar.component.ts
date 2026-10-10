@@ -141,6 +141,7 @@ export class ClaudeStatusBarComponent {
   readonly openTerminal = output<void>();
   readonly openTasks = output<void>();
   readonly openMcp = output<void>();
+  readonly connectProvider = output<void>();
   readonly export = output<void>();
 
   readonly visiblePlanUsage = computed(() => {
@@ -193,12 +194,22 @@ export class ClaudeStatusBarComponent {
   }
 
   readonly permissionOptions = computed(() => {
-    if (this.currentProvider() === 'codex') {
+    if (this.currentProvider() === 'codex' || this.currentProvider() === 'opencode') {
       return PERMISSION_MODES.filter((opt) =>
         ['auto', 'default', 'acceptEdits', 'bypassPermissions'].includes(opt.id),
       ).map((opt) => ({
         ...opt,
-        hint: CODEX_PERMISSION_MODE_HINTS[opt.id] ?? opt.hint,
+        hint:
+          this.currentProvider() === 'opencode'
+            ? ((
+                {
+                  default: 'Use OpenCode project permission rules',
+                  auto: 'Allow file edits; ask before other tools',
+                  acceptEdits: 'Allow file edits; ask before other tools',
+                  bypassPermissions: 'Allow all tools for this session',
+                } as Partial<Record<ClaudePermissionMode, string>>
+              )[opt.id] ?? opt.hint)
+            : (CODEX_PERMISSION_MODE_HINTS[opt.id] ?? opt.hint),
       }));
     }
     const effectiveModel = this.selectedModelOption();
@@ -267,6 +278,12 @@ export class ClaudeStatusBarComponent {
     // rather than offering levels the model would reject. "Default effort"
     // (the empty id) always stays available.
     const supported = this.selectedModelOption()?.reasoningEfforts;
+    if (this.currentProvider() === 'opencode' && supported) {
+      return [
+        { id: '', label: 'Default', hint: 'OpenCode default variant' },
+        ...supported.map((id) => ({ id, label: id, hint: 'OpenCode model variant' })),
+      ];
+    }
     const base = supported?.length
       ? REASONING_EFFORTS.filter(
           (option) => option.id === '' || supported.includes(option.id as string),

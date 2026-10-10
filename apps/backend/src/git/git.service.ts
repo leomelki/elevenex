@@ -38,7 +38,7 @@ const MAX_COMMIT_MESSAGE_CONVENTION_DOC_CHARS = 6_000;
 const COMMIT_MESSAGE_CLAUDE_SYSTEM_PROMPT =
   'You generate git commit messages. You have no tool access. Follow the ' +
   'user instructions exactly and respond with nothing but the requested JSON.';
-type CommitMessageProvider = 'claude' | 'codex' | 'pi';
+type CommitMessageProvider = 'claude' | 'codex' | 'pi' | 'opencode';
 interface CommitMessagePromptInput {
   worktreePath: string;
   branchName: string;
@@ -81,7 +81,7 @@ export interface CommitMessageSuggestion {
   subject: string;
   body: string | null;
   confidence: 'high' | 'medium' | 'low';
-  source: 'external' | 'claude' | 'codex' | 'pi' | 'fallback';
+  source: 'external' | 'claude' | 'codex' | 'pi' | 'opencode' | 'fallback';
 }
 
 export interface PushResult {
@@ -966,7 +966,9 @@ export class GitService {
     }
   }
 
-  private async readCommitConventionDocs(worktreePath: string): Promise<string> {
+  private async readCommitConventionDocs(
+    worktreePath: string,
+  ): Promise<string> {
     const sections = await Promise.all(
       COMMIT_CONVENTION_DOC_FILENAMES.map(async (filename) => {
         try {
@@ -987,7 +989,9 @@ export class GitService {
       }),
     );
 
-    return sections.filter((section): section is string => section !== null).join('\n\n');
+    return sections
+      .filter((section): section is string => section !== null)
+      .join('\n\n');
   }
 
   private buildCompactStatusSummary(files: string[]): string {
@@ -1066,7 +1070,11 @@ export class GitService {
   ): Promise<CommitMessageSuggestion | null> {
     let lastRawText = '';
     let retryHint: string | undefined;
-    for (let attempt = 1; attempt <= COMMIT_MESSAGE_MAX_ATTEMPTS; attempt += 1) {
+    for (
+      let attempt = 1;
+      attempt <= COMMIT_MESSAGE_MAX_ATTEMPTS;
+      attempt += 1
+    ) {
       const result = await generate(retryHint);
       lastRawText = result?.text ?? '';
       const suggestion = this.parseCommitSuggestion(lastRawText, source);
@@ -1093,6 +1101,15 @@ export class GitService {
         return this.generateCommitMessageWithClaude(input);
       case 'codex':
         return this.generateCommitMessageWithCodex(input);
+      case 'opencode':
+        return this.generateCommitSuggestionWithRetry('opencode', (retryHint) =>
+          this.textAgentGenerationService.generate({
+            provider: 'opencode',
+            worktreePath: input.worktreePath,
+            prompt: this.buildCommitMessagePrompt({ ...input, retryHint }),
+            taskName: 'commit-message',
+          }),
+        );
       case 'pi':
         return this.generateCommitMessageWithPi(input);
     }
@@ -1449,7 +1466,8 @@ export class GitService {
     if (
       provider === 'claude' ||
       provider === 'codex' ||
-      provider === 'pi'
+      provider === 'pi' ||
+      provider === 'opencode'
     ) {
       return provider;
     }

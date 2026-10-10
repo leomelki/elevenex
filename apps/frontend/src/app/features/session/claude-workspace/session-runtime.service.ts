@@ -59,7 +59,7 @@ import { getHttpErrorMessage } from './workspace-error';
  * Providers gated behind a card in the workspace: Codex and Pi collect their
  * credentials here, Claude only needs its CLI installed.
  */
-const LOGIN_CARD_PROVIDERS = new Set(['claude', 'codex', 'pi']);
+const LOGIN_CARD_PROVIDERS = new Set(['claude', 'codex', 'pi', 'opencode']);
 
 @Injectable()
 export class SessionRuntime {
@@ -242,10 +242,17 @@ export class SessionRuntime {
   readonly isTranscriptReadOnly = computed(() => this.archived || this.readOnlyTranscript);
 
   /** True when the current provider is unavailable or needs credentials. */
+  readonly providerLoginRequested = linkedSignal(() => {
+    this.currentProvider();
+    return false;
+  });
+
   readonly showProviderLogin = computed(() => {
     if (this.readOnlyTranscript) return false;
     if (this.archived) return false;
     if (!LOGIN_CARD_PROVIDERS.has(this.currentProvider())) return false;
+    if (this.providerLoginRequested()) return true;
+    if (this.currentProvider() === 'opencode' && this.availableModels().length > 0) return false;
     const status = this.providerAuthStatus();
     if (!status) return false;
     return status.authenticated !== true;
@@ -448,6 +455,7 @@ export class SessionRuntime {
     }
   }
   reset(): void {
+    this.providerLoginRequested.set(false);
     this.conversation.reset();
 
     this.bootstrapVersion += 1;
@@ -803,6 +811,22 @@ export class SessionRuntime {
 
   /** A login card reported success — confirm it against the backend. */
   onProviderAuthenticated(): void {
+    this.providerLoginRequested.set(false);
+    const provider = this.currentProvider();
+    void this.refreshAuthStatus(provider).then(() => {
+      if (
+        provider === 'opencode' &&
+        this.currentProvider() === provider &&
+        !this.destroyRef.destroyed
+      ) {
+        this.ws.send(this.sessionId, { type: 'hydrate', includeHistory: false });
+        void this.refreshAutocomplete(this.bootstrapVersion).catch(() => undefined);
+      }
+    });
+  }
+
+  requestProviderLogin(): void {
+    this.providerLoginRequested.set(true);
     void this.refreshAuthStatus(this.currentProvider());
   }
 
@@ -931,19 +955,26 @@ export class SessionRuntime {
     const revision = this.transcriptRevision;
     const request = { subscription: null as Subscription | null };
     this.initialHistoryRequest = request;
-    request.subscription = this.agentApi.getHistory(this.sessionId, this.currentProvider())
+    request.subscription = this.agentApi
+      .getHistory(this.sessionId, this.currentProvider())
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (history) => {
-          if (this.initialHistoryRequest !== request || !this.isCurrentConversation(version) ||
-            revision !== this.transcriptRevision) return;
+          if (
+            this.initialHistoryRequest !== request ||
+            !this.isCurrentConversation(version) ||
+            revision !== this.transcriptRevision
+          )
+            return;
           this.flushDeltas();
           this.handleRuntimeEvent({
-            type: 'history_snapshot', payload: { sessionId: this.sessionId, history },
+            type: 'history_snapshot',
+            payload: { sessionId: this.sessionId, history },
           });
         },
         error: () => {
-          if (this.initialHistoryRequest !== request || !this.isCurrentConversation(version)) return;
+          if (this.initialHistoryRequest !== request || !this.isCurrentConversation(version))
+            return;
           this.cancelInitialHistoryLoad();
           // Keep the socket hydration path as a fallback if HTTP fails.
           this.activeTranscriptSocket().send(this.sessionId, { type: 'hydrate' });
@@ -1026,6 +1057,8 @@ export class SessionRuntime {
   }
 
   private handleRuntimeEvent(event: ClaudeRuntimeEvent): void {
+    // Apply buffered tokens in stream order before a full part or snapshot replaces their baseline.
+    if (event.type !== 'message_delta' && event.type !== 'thinking_delta') this.flushDeltas();
     switch (event.type) {
       case 'session_snapshot':
         this.cancelInitialHistoryLoad();
@@ -1147,13 +1180,22 @@ export class SessionRuntime {
     const promise = (async () => {
       try {
         const history = await firstValueFrom(this.api.getHistory(this.sessionId));
-        if (version !== this.bootstrapVersion || revision !== this.transcriptRevision ||
-          this.rewindingVersion === version || this.destroyRef.destroyed) return;
+        if (
+          version !== this.bootstrapVersion ||
+          revision !== this.transcriptRevision ||
+          this.rewindingVersion === version ||
+          this.destroyRef.destroyed
+        )
+          return;
         this.flushDeltas();
         this.conversation.applyHistoryRefresh(history);
       } catch (error) {
-        if (version === this.bootstrapVersion && revision === this.transcriptRevision &&
-          this.rewindingVersion !== version && !this.destroyRef.destroyed) {
+        if (
+          version === this.bootstrapVersion &&
+          revision === this.transcriptRevision &&
+          this.rewindingVersion !== version &&
+          !this.destroyRef.destroyed
+        ) {
           this.conversation.lastError.set(
             getHttpErrorMessage(error, 'Could not refresh conversation history.'),
           );
@@ -1169,6 +1211,7 @@ export class SessionRuntime {
   }
 
   applyRuntimeState(state: ClaudeRuntimeState): void {
+    this.flushDeltas();
     this.updatePendingPrompts(state.pendingPrompts ?? []);
     this.conversation.applyRuntimeState(state);
     this.warmState.set(state.warmState);
@@ -1234,6 +1277,7 @@ export class SessionRuntime {
     if (this.flushRafId !== null) cancelAnimationFrame(this.flushRafId);
     this.flushRafId = null;
     this.flushScheduled = false;
+    if (!this.pendingDeltas.length) return;
     const deltas = new Map<string, string>();
     for (const { itemId, delta } of this.pendingDeltas.splice(0)) {
       deltas.set(itemId, (deltas.get(itemId) ?? '') + delta);

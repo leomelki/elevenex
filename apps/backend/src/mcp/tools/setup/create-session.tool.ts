@@ -1,4 +1,5 @@
 ﻿import { z } from 'zod';
+import { DEFAULT_AGENT_PROVIDERS } from '../../../settings/settings.types.js';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 
 /**
@@ -56,7 +57,7 @@ export const createSessionTool = defineTool({
       .optional()
       .describe('Optional session name; auto-generated (e.g. "Session 3") if omitted.'),
     provider: z
-      .enum(['claude', 'codex', 'pi'])
+      .enum(DEFAULT_AGENT_PROVIDERS)
       .default('claude')
       .describe("Inner agent provider for this session. Default 'claude'."),
   },

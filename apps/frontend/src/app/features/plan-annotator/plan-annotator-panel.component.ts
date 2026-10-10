@@ -105,7 +105,11 @@ export class PlanAnnotatorPanelComponent {
 
   readonly readonly = computed(() => this.review()?.readonly === true);
   readonly providerLabel = computed(() =>
-    this.review()?.provider === 'codex' ? 'Codex' : 'Claude Code',
+    this.review()?.provider === 'codex'
+      ? 'Codex'
+      : this.review()?.provider === 'opencode'
+        ? 'OpenCode'
+        : 'Claude Code',
   );
   readonly activeRailMode = computed<PlanReviewRailMode>(() => {
     const review = this.review();

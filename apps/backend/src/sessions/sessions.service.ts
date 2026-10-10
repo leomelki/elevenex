@@ -65,6 +65,7 @@ interface SessionProviderColumns {
   claudeSessionId?: string | null;
   codexSessionId?: string | null;
   piSessionPath?: string | null;
+  opencodeSessionId?: string | null;
 }
 
 @Injectable()
@@ -589,6 +590,22 @@ export class SessionsService extends EventEmitter {
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 
+  async updateOpenCodeSessionId(id: number, opencodeSessionId: string) {
+    await this.findOne(id);
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({
+        activeAgentProvider: 'opencode',
+        opencodeSessionId,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.sessions.id, id))
+      .returning();
+    if (!rows.length)
+      throw new NotFoundException(`Session with id ${id} not found`);
+    return this.withInferredActiveAgentProvider(rows[0]);
+  }
+
   async updateActiveAgentProvider(id: number, provider: AgentProviderId) {
     if (typeof provider !== 'string') {
       throw new BadRequestException('Provider must be a string');
@@ -632,6 +649,7 @@ export class SessionsService extends EventEmitter {
    * another arm to a nested conditional.
    */
   private static readonly PROVIDER_SESSION_COLUMNS = [
+    ['opencode', 'opencodeSessionId'],
     ['pi', 'piSessionPath'],
     ['codex', 'codexSessionId'],
     ['claude', 'claudeSessionId'],

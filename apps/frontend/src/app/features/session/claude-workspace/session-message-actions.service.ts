@@ -230,7 +230,7 @@ export class SessionMessageActions {
     const review = this.planReviewForMessage(item);
     if (!review) return false;
     if (this.runtime.runPhase() !== 'idle' || this.runtime.submitting()) return false;
-    if (review.provider === 'codex') {
+    if (review.provider === 'codex' || review.provider === 'opencode') {
       return this.runtime.planMode();
     }
     return !review.readonly;
@@ -277,7 +277,7 @@ export class SessionMessageActions {
       return;
     }
     if (
-      review.provider !== 'codex' ||
+      (review.provider !== 'codex' && review.provider !== 'opencode') ||
       this.runtime.runPhase() !== 'idle' ||
       this.runtime.submitting()
     )
@@ -317,7 +317,7 @@ export class SessionMessageActions {
       return;
     }
 
-    if (review.provider !== 'codex') return;
+    if (review.provider !== 'codex' && review.provider !== 'opencode') return;
     await this.draft.submitPrompt({ text: message, images: [] });
     this.planReviewClosed.next(review);
   }
@@ -337,7 +337,7 @@ export class SessionMessageActions {
       return;
     }
 
-    if (review.provider !== 'codex') return;
+    if (review.provider !== 'codex' && review.provider !== 'opencode') return;
     await this.draft.submitPrompt({ text: payload.message, images: [] });
     this.planReviewClosed.next(review);
   }

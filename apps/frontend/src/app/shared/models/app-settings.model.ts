@@ -1,7 +1,7 @@
 import { SessionToolbarButtonPreference } from './session-toolbar-button.model';
 
 export type DefaultClaudeSessionSurface = 'claude-ui' | 'tui';
-export type DefaultAgentProvider = 'claude' | 'codex' | 'pi';
+export type DefaultAgentProvider = 'claude' | 'codex' | 'pi' | 'opencode';
 
 /**
  * Worktrees a repo may hold before creating another one has to be confirmed.

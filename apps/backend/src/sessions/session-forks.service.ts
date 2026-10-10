@@ -157,6 +157,11 @@ export class SessionForksService {
           childSessionId,
           providerSessionId,
         );
+      } else if (provider === 'opencode') {
+        await this.sessionsService.updateOpenCodeSessionId(
+          childSessionId,
+          providerSessionId,
+        );
       } else if (provider === 'pi') {
         await this.sessionsService.updatePiSessionPath(
           childSessionId,

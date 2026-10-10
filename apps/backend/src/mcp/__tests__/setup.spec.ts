@@ -109,6 +109,10 @@ describe('setup tool group', () => {
   });
 
   describe('create_session', () => {
+    it('accepts OpenCode through the shared provider schemas', () => {
+      expect(createSessionTool.inputShape.provider.parse('opencode')).toBe('opencode');
+      expect(generateWorktreeContextTool.inputShape.provider.parse('opencode')).toBe('opencode');
+    });
     it('creates a session from a workspaceId and returns a handle', async () => {
       const create = jest.fn().mockResolvedValue({
         id: 55,

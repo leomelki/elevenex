@@ -1,3 +1,5 @@
+import { OpenCodeRuntimeModule } from '../opencode-runtime/opencode-runtime.module.js';
+import { OpenCodeAgentRuntimeProvider } from '../opencode-runtime/opencode-agent-runtime.provider.js';
 import { Module, forwardRef } from '@nestjs/common';
 import { ClaudeRuntimeModule } from '../claude-runtime/claude-runtime.module.js';
 import { ClaudeRuntimeController } from '../claude-runtime/claude-runtime.controller.js';
@@ -24,6 +26,7 @@ import {
     forwardRef(() => ClaudeRuntimeModule),
     forwardRef(() => CodexRuntimeModule),
     forwardRef(() => PiRuntimeModule),
+    forwardRef(() => OpenCodeRuntimeModule),
   ],
   controllers: [AgentRuntimeController, ClaudeRuntimeController],
   providers: [
@@ -34,11 +37,13 @@ import {
         claudeProvider: ClaudeAgentRuntimeProvider,
         codexProvider: CodexAgentRuntimeProvider,
         piProvider: PiAgentRuntimeProvider,
-      ) => [claudeProvider, codexProvider, piProvider],
+        openCodeProvider: OpenCodeAgentRuntimeProvider,
+      ) => [claudeProvider, codexProvider, piProvider, openCodeProvider],
       inject: [
         ClaudeAgentRuntimeProvider,
         CodexAgentRuntimeProvider,
         PiAgentRuntimeProvider,
+        OpenCodeAgentRuntimeProvider,
       ],
     },
     AgentRuntimeRegistryService,

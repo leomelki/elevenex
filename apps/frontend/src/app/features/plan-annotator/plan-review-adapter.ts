@@ -119,7 +119,7 @@ export function isSamePlanReview(
 }
 
 export function normalizeReviewProvider(provider: AgentProviderId): PlanReviewProvider | null {
-  return provider === 'codex' || provider === 'claude' ? provider : null;
+  return provider === 'codex' || provider === 'claude' || provider === 'opencode' ? provider : null;
 }
 
 function stableReviewId(prefix: string, id: string): string {

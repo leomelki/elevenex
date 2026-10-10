@@ -114,7 +114,11 @@ export class ConversationExportService {
   async buildModel(
     sessionId: number,
     provider: string,
-  ): Promise<{ model: ConversationExportModel; running: boolean; itemCount: number }> {
+  ): Promise<{
+    model: ConversationExportModel;
+    running: boolean;
+    itemCount: number;
+  }> {
     const session = await this.sessionsService.findOne(sessionId);
     const runtime = this.registry.getProvider(provider);
     const items = await runtime.getHistory(sessionId);
@@ -139,7 +143,11 @@ export class ConversationExportService {
       running = false;
     }
 
-    return { model: buildExportModel(items, meta), running, itemCount: items.length };
+    return {
+      model: buildExportModel(items, meta),
+      running,
+      itemCount: items.length,
+    };
   }
 
   async buildMention(sessionId: number): Promise<ConversationMentionResult> {
@@ -180,16 +188,20 @@ export class ConversationExportService {
         ? session.claudeSessionId
         : provider === 'codex'
           ? session.codexSessionId
-          : provider === 'pi'
-            ? session.piSessionPath
-            : null;
+          : provider === 'opencode'
+            ? session.opencodeSessionId
+            : provider === 'pi'
+              ? session.piSessionPath
+              : null;
 
     return {
       sessionId,
       title: model.meta.title,
       provider,
       providerSessionId:
-        providerSessionId && providerSessionId !== '-1' ? providerSessionId : null,
+        providerSessionId && providerSessionId !== '-1'
+          ? providerSessionId
+          : null,
       branch: model.meta.branch,
       status: session.status,
       transcriptExportPath: artifactPath,
@@ -257,7 +269,9 @@ export class ConversationExportService {
       const wanted = new Set(options.ids);
       selected = items.filter((item) => wanted.has(item.id));
     } else if (options.sinceMessageId) {
-      const index = items.findIndex((item) => item.id === options.sinceMessageId);
+      const index = items.findIndex(
+        (item) => item.id === options.sinceMessageId,
+      );
       // Unknown cursor (e.g. history was compacted away): fall back to the full
       // list so the caller still gets the latest items rather than nothing.
       selected = index === -1 ? items : items.slice(index + 1);
@@ -306,8 +320,12 @@ function truncateText(text: string): string {
 
 // --- pure model building --------------------------------------------------
 
-function compactNestedSessionMentions(model: ConversationExportModel): ConversationExportModel {
-  const compactItem = (item: ClaudeTranscriptItem | null): ClaudeTranscriptItem | null => {
+function compactNestedSessionMentions(
+  model: ConversationExportModel,
+): ConversationExportModel {
+  const compactItem = (
+    item: ClaudeTranscriptItem | null,
+  ): ClaudeTranscriptItem | null => {
     if (!item?.content?.includes('<elevenex_session_mention>')) return item;
     return {
       ...item,
@@ -318,7 +336,9 @@ function compactNestedSessionMentions(model: ConversationExportModel): Conversat
             .split('\n')
             .map((line) => line.trim())
             .filter((line) =>
-              /^(Session|Session ID|Provider|Provider session ID|Branch|Status|Transcript export):/.test(line),
+              /^(Session|Session ID|Provider|Provider session ID|Branch|Status|Transcript export):/.test(
+                line,
+              ),
             );
           return [
             '[Previously mentioned session; nested snapshot omitted.]',

@@ -27,6 +27,8 @@ export interface AgentLoginStartResult {
 }
 
 export interface AgentAuthStatus {
+  providers?: { id: string; name: string; connected: boolean }[];
+  authMethods?: Record<string, { type: 'oauth' | 'api'; label: string; prompts?: unknown[] }[]>;
   isAuthenticating: boolean;
   output: string[];
   error?: string;

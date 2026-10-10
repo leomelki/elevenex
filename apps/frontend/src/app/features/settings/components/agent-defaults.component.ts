@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideFileText,
+  lucideTerminal,
   lucideNotebookPen,
   lucidePlus,
   lucideSparkles,
@@ -70,6 +71,7 @@ const EFFORT_HINTS: Record<string, string> = {
   viewProviders: [
     provideIcons({
       lucideFileText,
+      lucideTerminal,
       lucideNotebookPen,
       lucidePlus,
       lucideSparkles,
@@ -157,8 +159,9 @@ export class AgentDefaults {
   );
   readonly presetCanChooseEffort = computed(
     () =>
-      this.presetCatalog()?.models.find((item) => item.id === this.presetModel())
-        ?.supportsEffort !== false,
+      this.presetCatalog()?.models.find(
+        (item) => item.id === (this.presetModel() || this.presetCatalog()?.providerDefaultModelId),
+      )?.supportsEffort !== false,
   );
   readonly presetModelOptions = computed<OptionSelectItem[]>(() => {
     const catalog = this.presetCatalog();
@@ -172,7 +175,9 @@ export class AgentDefaults {
   });
   readonly presetEffortOptions = computed<OptionSelectItem[]>(() => {
     const catalog = this.presetCatalog();
-    const model = catalog?.models.find((item) => item.id === this.presetModel());
+    const model = catalog?.models.find(
+      (item) => item.id === (this.presetModel() || catalog.providerDefaultModelId),
+    );
     if (model?.supportsEffort === false) return [AGENT_DEFAULT_OPTION];
     const efforts = model?.reasoningEfforts?.length
       ? model.reasoningEfforts

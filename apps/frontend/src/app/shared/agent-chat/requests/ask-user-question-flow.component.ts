@@ -54,7 +54,8 @@ export class AskUserQuestionFlowComponent {
   readonly questions = input.required<AskUserQuestion[]>();
   readonly declineLabel = input('Decline');
   readonly submitLabel = input('Submit');
-  readonly submitted = output<Record<string, string>>();
+  readonly structuredAnswers = input(false);
+  readonly submitted = output<Record<string, string | string[]>>();
   readonly decline = output<void>();
 
   readonly currentQuestionIndex = signal(0);
@@ -181,10 +182,21 @@ export class AskUserQuestionFlowComponent {
       Object.fromEntries(
         this.questions().map((question) => [
           this.questionKey(question),
-          this.serializeAnswer(question),
+          this.structuredAnswers() && question.multiSelect
+            ? this.answerValues(question)
+            : this.serializeAnswer(question),
         ]),
       ),
     );
+  }
+
+  private answerValues(question: AskUserQuestion): string[] {
+    const key = this.questionKey(question);
+    return (this.selectedAnswers()[key] ?? [])
+      .map((selection) =>
+        selection === '__other__' ? (this.otherAnswers()[key] ?? '').trim() : selection,
+      )
+      .filter(Boolean);
   }
 
   serializeAnswer(question: AskUserQuestion): string {

@@ -57,7 +57,10 @@ export function canonicalizeAgentTool(
     return {
       toolKind: 'read',
       toolDisplayName: 'Read',
-      toolInput: { ...data, file_path: stringField(data, 'file_path', 'path') },
+      toolInput: {
+        ...data,
+        file_path: stringField(data, 'file_path', 'path', 'filePath'),
+      },
     };
   }
 
@@ -71,7 +74,10 @@ export function canonicalizeAgentTool(
     return {
       toolKind: 'write',
       toolDisplayName: data['old_string'] === '' ? 'Create' : 'Write',
-      toolInput: { ...data, file_path: stringField(data, 'file_path', 'path') },
+      toolInput: {
+        ...data,
+        file_path: stringField(data, 'file_path', 'path', 'filePath'),
+      },
     };
   }
 
@@ -87,7 +93,13 @@ export function canonicalizeAgentTool(
     return {
       toolKind: 'edit',
       toolDisplayName: 'Edit',
-      toolInput: { ...data, file_path: stringField(data, 'file_path', 'path') },
+      toolInput: {
+        ...data,
+        file_path: stringField(data, 'file_path', 'path', 'filePath'),
+        ...(typeof data['oldString'] === 'string'
+          ? { old_string: data['oldString'], new_string: data['newString'] }
+          : {}),
+      },
     };
   }
 
@@ -101,6 +113,7 @@ export function canonicalizeAgentTool(
 
   if (
     normalized === 'bash' ||
+    normalized === 'shell' ||
     normalized === 'powershell' ||
     normalized === 'shellcommand' ||
     normalized === 'runshellcommand' ||
@@ -161,7 +174,11 @@ export function canonicalizeAgentTool(
     };
   }
 
-  if (normalized === 'filechanges') {
+  if (
+    normalized === 'filechanges' ||
+    normalized === 'patch' ||
+    normalized === 'applypatch'
+  ) {
     return {
       toolKind: 'file_changes',
       toolDisplayName: 'File changes',
@@ -171,6 +188,7 @@ export function canonicalizeAgentTool(
 
   if (
     normalized === 'task' ||
+    normalized === 'subagent' ||
     normalized === 'agent' ||
     normalized === 'agenttool'
   ) {
@@ -191,6 +209,7 @@ export function canonicalizeAgentTool(
 
   if (
     normalized === 'askuserquestion' ||
+    normalized === 'question' ||
     normalized === 'requestuserinput' ||
     normalized === 'requestuserinputasync'
   ) {
@@ -201,7 +220,7 @@ export function canonicalizeAgentTool(
     };
   }
 
-  if (normalized === 'enterplanmode') {
+  if (normalized === 'enterplanmode' || normalized === 'planenter') {
     return {
       toolKind: 'enter_plan_mode',
       toolDisplayName: 'Plan mode',
@@ -209,7 +228,7 @@ export function canonicalizeAgentTool(
     };
   }
 
-  if (normalized === 'exitplanmode') {
+  if (normalized === 'exitplanmode' || normalized === 'planexit') {
     return {
       toolKind: 'exit_plan_mode',
       toolDisplayName: 'Plan review',

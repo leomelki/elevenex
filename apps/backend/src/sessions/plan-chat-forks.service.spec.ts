@@ -123,6 +123,23 @@ describe('PlanChatForksService', () => {
     return sessionsService.findOne(parent.id);
   }
 
+  it('persists the native OpenCode id when creating a plan Q&A fork', async () => {
+    const parent = await createParent();
+    await sessionsService.updateOpenCodeSessionId(parent.id, 'open-parent');
+    provider.forkConversation.mockResolvedValue({
+      providerSessionId: 'open-plan-chat',
+    });
+    const result = await planChatsService.ensure(parent.id, {
+      reviewId: 'open-plan',
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      planMarkdown: '# Plan',
+    });
+    expect(result.session.activeAgentProvider).toBe('opencode');
+    expect(result.session.opencodeSessionId).toBe('open-plan-chat');
+    expect(provider.setPlanMode).toHaveBeenCalledWith(result.session.id, true);
+  });
+
   it('creates and reuses hidden plan chat forks by review id', async () => {
     const parent = await createParent();
     provider.forkConversation.mockResolvedValue({

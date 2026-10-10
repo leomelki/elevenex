@@ -1,4 +1,5 @@
 ﻿import { z } from 'zod';
+import { DEFAULT_AGENT_PROVIDERS } from '../../../settings/settings.types.js';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 
 /**
@@ -29,7 +30,7 @@ export const generateWorktreeContextTool = defineTool({
       .default(false)
       .describe('Regenerate even if a cached sentence exists. Default false.'),
     provider: z
-      .enum(['claude', 'codex', 'pi'])
+      .enum(DEFAULT_AGENT_PROVIDERS)
       .default('claude')
       .describe("LLM provider for generation. Default 'claude'."),
   },

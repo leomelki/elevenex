@@ -16,6 +16,7 @@ export interface Session {
   activeAgentProvider: string;
   claudeSessionId: string;
   codexSessionId: string;
+  opencodeSessionId?: string | null;
   piSessionPath?: string;
   hasInjectedWorktreeContext: boolean;
   hasUnreviewedCompletion: boolean;

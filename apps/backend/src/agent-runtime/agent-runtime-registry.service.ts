@@ -61,9 +61,6 @@ export class AgentRuntimeRegistryService {
           return {
             ...base,
             ...catalog,
-            reasoningEfforts: catalog.reasoningEfforts.length
-              ? catalog.reasoningEfforts
-              : [...AGENT_REASONING_EFFORTS],
           };
         } catch (error) {
           this.logger.debug(

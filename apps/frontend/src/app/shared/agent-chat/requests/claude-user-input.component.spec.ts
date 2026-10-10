@@ -134,3 +134,46 @@ describe('ClaudeUserInputComponent question requests', () => {
     ]);
   });
 });
+
+describe('OpenCode typed forms', () => {
+  it('preserves defaults and emits typed numbers, booleans, and multiselect values', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeUserInputComponent],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeUserInputComponent);
+    fixture.componentRef.setInput('request', {
+      requestId: 'form',
+      serverName: 'OpenCode',
+      message: 'Choose',
+      createdAt: '',
+      requestedSchema: {
+        type: 'object',
+        properties: {
+          enabled: { type: 'boolean', default: true },
+          count: { type: 'integer', default: 3 },
+          choices: {
+            type: 'array',
+            default: ['a, b'],
+            items: { type: 'string', enum: ['a, b', 'c'] },
+          },
+        },
+      },
+    });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.values()).toEqual({
+      enabled: true,
+      count: 3,
+      choices: ['a, b'],
+    });
+    fixture.componentInstance.toggleOption('choices', 'c', true);
+    let response: unknown;
+    fixture.componentInstance.answer.subscribe((value) => {
+      response = value;
+    });
+    fixture.componentInstance.submit();
+    expect(response).toEqual({
+      action: 'accept',
+      content: { enabled: true, count: 3, choices: ['a, b', 'c'] },
+    });
+  });
+});

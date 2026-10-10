@@ -1,3 +1,4 @@
+import { OpenCodeLoginCardComponent } from './components/opencode-login-card.component';
 import { PlanFeedbackPayload, PlanReviewRequest } from '@/features/plan-annotator';
 import { ClaudeAgentInspectorComponent } from '@/shared/agent-chat/activity/claude-agent-inspector.component';
 import { ClaudeBackgroundActivityComponent } from '@/shared/agent-chat/activity/claude-background-activity.component';
@@ -46,6 +47,7 @@ import {
   lucideFileText,
   lucideGitBranch,
   lucideMessageSquareQuote,
+  lucideTerminal,
   lucideNotebookPen,
   lucideRefreshCw,
   lucideSparkles,
@@ -91,6 +93,7 @@ import { getHttpErrorMessage } from './workspace-error';
     ClaudeInstallCardComponent,
     CodexLoginCardComponent,
     PiLoginCardComponent,
+    OpenCodeLoginCardComponent,
     AgentShowCardComponent,
     TranscriptLoadingSkeletonComponent,
     NgIcon,
@@ -112,6 +115,7 @@ import { getHttpErrorMessage } from './workspace-error';
       lucideArchiveRestore,
       lucideCheck,
       lucideFileText,
+      lucideTerminal,
       lucideNotebookPen,
       lucideSparkles,
       lucideArrowUp,

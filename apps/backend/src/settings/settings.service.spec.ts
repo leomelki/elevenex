@@ -224,7 +224,7 @@ describe('SettingsService', () => {
 
     await expect(
       service.update({
-        defaultAgentProvider: 'opencode',
+        defaultAgentProvider: 'unknown-agent',
       } as Parameters<SettingsService['update']>[0]),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -596,8 +596,24 @@ describe('SettingsService', () => {
   it('keeps cached defaults unchanged when a legacy preference update is rejected', async () => {
     const { db } = createDbMock();
     const service = new SettingsService(db);
-    await service.update({ agentModelPresets: [{ id: 'default', name: 'Default', provider: 'codex', model: 'gpt-5.5', reasoningEffort: 'high', isDefault: true }] });
-    await expect(service.update({ defaultModelByProvider: { codex: 'other' }, maxWorktreesPerRepo: -1 })).rejects.toBeInstanceOf(BadRequestException);
+    await service.update({
+      agentModelPresets: [
+        {
+          id: 'default',
+          name: 'Default',
+          provider: 'codex',
+          model: 'gpt-5.5',
+          reasoningEffort: 'high',
+          isDefault: true,
+        },
+      ],
+    });
+    await expect(
+      service.update({
+        defaultModelByProvider: { codex: 'other' },
+        maxWorktreesPerRepo: -1,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(service.getAgentProviderDefaults('codex').model).toBe('gpt-5.5');
   });
 

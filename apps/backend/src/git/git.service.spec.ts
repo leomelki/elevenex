@@ -455,9 +455,9 @@ describe('GitService', () => {
 
     it('should still reject providers without a commit message generator', async () => {
       await expect(
-        service.suggestCommitMessage(repoPath, 'opencode'),
+        service.suggestCommitMessage(repoPath, 'unknown-agent'),
       ).rejects.toThrow(
-        'Commit message generation is not supported for provider "opencode".',
+        'Commit message generation is not supported for provider "unknown-agent".',
       );
     });
 

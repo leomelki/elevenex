@@ -1,0 +1,32 @@
+<button
+  type="button"
+  class="h-full w-full rounded-lg border border-border bg-background p-5 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+  [class.border-primary]="selected()"
+  [class.bg-accent]="selected()"
+  [attr.aria-pressed]="selected()"
+  (click)="select.emit()"
+>
+  <div class="flex items-center justify-between gap-3">
+    <span class="flex size-10 items-center justify-center rounded-md border border-border bg-card">
+      <ng-icon [name]="provider().icon" size="20" />
+    </span>
+    @if (selected()) {
+      <span class="flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+        <ng-icon name="lucideCheck" size="14" />
+      </span>
+    }
+  </div>
+  <div class="mt-5 text-base font-semibold text-foreground">{{ provider().label }}</div>
+  <p class="mt-2 text-sm leading-6 text-muted-foreground">{{ description() }}</p>
+  <div class="mt-5 rounded-md border border-border bg-card p-3" aria-hidden="true">
+    <div class="flex items-center gap-2 border-b border-border pb-2 text-xs text-muted-foreground">
+      <span class="size-2 rounded-full bg-success"></span>
+      {{ provider().label }} session
+    </div>
+    <div class="mt-3 grid gap-2">
+      <div class="h-2 w-3/4 rounded bg-muted"></div>
+      <div class="h-2 w-1/2 rounded bg-muted"></div>
+      <div class="mt-1 h-8 rounded-md border border-border bg-background"></div>
+    </div>
+  </div>
+</button>

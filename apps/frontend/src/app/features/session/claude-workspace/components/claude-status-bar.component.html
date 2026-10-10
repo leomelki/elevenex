@@ -209,6 +209,20 @@
             aria-label="Conversation actions"
           >
             <h4 class="mb-1 text-xs font-medium text-foreground">Conversation</h4>
+            @if (currentProvider() === 'opencode') {
+              <button
+                type="button"
+                z-button
+                zType="ghost"
+                class="w-full justify-start gap-2 px-2 text-xs"
+                [zDisabled]="
+                  phase() === 'running' || phase() === 'waiting' || phase() === 'initializing'
+                "
+                (click)="settingsPopover.hide(); connectProvider.emit()"
+              >
+                <ng-icon name="lucidePlugZap" size="14" /> Connect model provider
+              </button>
+            }
             @if (currentProviderCapabilities()?.mcp) {
               <button
                 type="button"

@@ -302,6 +302,13 @@
       "when": 1791664245291,
       "tag": "0042_parallel_scourge",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1791665461925,
+      "tag": "0043_clammy_rattler",
+      "breakpoints": true
     }
   ]
 }

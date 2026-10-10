@@ -52,7 +52,7 @@ import {
 } from './review-workspace-state.service';
 
 /** Providers that can fork a conversation; the rest cannot host discussions. */
-const FORKABLE_PROVIDERS: readonly AgentProviderId[] = ['claude', 'codex'];
+const FORKABLE_PROVIDERS: readonly AgentProviderId[] = ['claude', 'codex', 'opencode'];
 
 @Component({
   selector: 'app-review-workspace',

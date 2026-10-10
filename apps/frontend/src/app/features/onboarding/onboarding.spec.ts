@@ -128,7 +128,7 @@ describe('Onboarding', () => {
 
     const text = fixture.nativeElement.textContent;
     expect(text).toContain('Your default agent is Codex.');
-    expect(text).toContain('Codex and Pi do not have a separate UI/TUI setting');
+    expect(text).toContain('Codex uses the chat workspace');
     expect(text).toContain('Claude TUI uses your plan quota');
     expect(text).not.toContain('Choose how Claude opens.');
   });
@@ -161,4 +161,15 @@ describe('Onboarding', () => {
       defaultClaudeSessionSurface: undefined,
     });
   });
+  it('offers OpenCode and saves it as the backend default', async () => {
+    const fixture = TestBed.createComponent(Onboarding);
+    fixture.detectChanges(); await settleOnboarding(fixture);
+    expect(fixture.nativeElement.textContent).toContain('OpenCode');
+    fixture.componentInstance.selectAgent('opencode');
+    fixture.componentInstance.continueFromAgent(); fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Your default agent is OpenCode.');
+    await fixture.componentInstance.finishOnboarding();
+    expect(appSettingsMock.completeOnboarding).toHaveBeenCalledWith({ defaultAgentProvider: 'opencode', defaultClaudeSessionSurface: undefined });
+  });
+
 });

@@ -1,5 +1,6 @@
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
+import { ZardCheckboxComponent } from '@/shared/components/checkbox';
 import { AskUserQuestionFlowComponent } from '@/shared/agent-chat/requests/ask-user-question-flow.component';
 import { AgentJsonSchema, AgentUserInputRequest } from '@/shared/models/agent-runtime.model';
 import { CommonModule } from '@angular/common';
@@ -21,8 +22,9 @@ interface Field {
   label: string;
   description?: string;
   required: boolean;
-  type: 'string' | 'textarea' | 'number' | 'boolean' | 'enum';
+  type: 'string' | 'textarea' | 'number' | 'boolean' | 'enum' | 'multiselect';
   options: string[];
+  defaultValue?: unknown;
 }
 
 @Component({
@@ -31,6 +33,7 @@ interface Field {
   imports: [
     ZardButtonComponent,
     ZardInputDirective,
+    ZardCheckboxComponent,
     CommonModule,
     FormsModule,
     NgIcon,
@@ -64,7 +67,8 @@ export class ClaudeUserInputComponent {
       this.lastRequestId = r.requestId;
       const initial: Record<string, unknown> = {};
       for (const f of buildFields(r.requestedSchema)) {
-        initial[f.key] = f.type === 'boolean' ? false : '';
+        initial[f.key] =
+          f.defaultValue ?? (f.type === 'boolean' ? false : f.type === 'multiselect' ? [] : '');
       }
       this.values.set(initial);
       this.jsonText.set(JSON.stringify(initial, null, 2));
@@ -76,6 +80,17 @@ export class ClaudeUserInputComponent {
     this.values.update((v) => ({ ...v, [key]: value }));
     this.jsonText.set(JSON.stringify(this.values(), null, 2));
     this.jsonError.set(null);
+  }
+
+  isSelected(key: string, option: string): boolean {
+    const value = this.values()[key];
+    return Array.isArray(value) && value.includes(option);
+  }
+
+  toggleOption(key: string, option: string, checked: boolean): void {
+    const value = this.values()[key];
+    const selected = Array.isArray(value) ? value.filter((item) => item !== option) : [];
+    this.set(key, checked ? [...selected, option] : selected);
   }
 
   onJsonInput(text: string): void {
@@ -96,7 +111,7 @@ export class ClaudeUserInputComponent {
     }
   }
 
-  submitQuestionAnswers(answers: Record<string, string>): void {
+  submitQuestionAnswers(answers: Record<string, string | string[]>): void {
     this.answer.emit({ action: 'accept', content: answers });
   }
 }
@@ -110,6 +125,18 @@ function buildFields(schema: AgentJsonSchema | undefined): Field[] {
     const label = prop.title || key;
     const description = prop.description;
     const isReq = required.includes(key);
+    if (rawType === 'array' && prop.items?.enum) {
+      out.push({
+        key,
+        label,
+        description,
+        required: isReq,
+        type: 'multiselect',
+        options: prop.items.enum.map(String),
+        defaultValue: prop.default,
+      });
+      continue;
+    }
     if (prop.enum && prop.enum.length) {
       out.push({
         key,
@@ -118,15 +145,32 @@ function buildFields(schema: AgentJsonSchema | undefined): Field[] {
         required: isReq,
         type: 'enum',
         options: prop.enum.map(String),
+        defaultValue: prop.default,
       });
       continue;
     }
     if (rawType === 'boolean') {
-      out.push({ key, label, description, required: isReq, type: 'boolean', options: [] });
+      out.push({
+        key,
+        label,
+        description,
+        required: isReq,
+        type: 'boolean',
+        options: [],
+        defaultValue: prop.default,
+      });
       continue;
     }
     if (rawType === 'number' || rawType === 'integer') {
-      out.push({ key, label, description, required: isReq, type: 'number', options: [] });
+      out.push({
+        key,
+        label,
+        description,
+        required: isReq,
+        type: 'number',
+        options: [],
+        defaultValue: prop.default,
+      });
       continue;
     }
     if (!rawType || rawType === 'string') {
@@ -137,6 +181,7 @@ function buildFields(schema: AgentJsonSchema | undefined): Field[] {
         required: isReq,
         type: prop.format === 'multiline' ? 'textarea' : 'string',
         options: [],
+        defaultValue: prop.default,
       });
     }
   }

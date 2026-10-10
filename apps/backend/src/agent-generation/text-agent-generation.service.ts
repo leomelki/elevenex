@@ -1,3 +1,5 @@
+import { OpenCodeServer } from '../opencode-runtime/opencode-server.js';
+import { openCodeModel } from '../opencode-runtime/opencode-transcript.js';
 import { Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -15,7 +17,7 @@ import { resolveCodexBinary } from '../codex-runtime/codex-binary.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
 import { SettingsService } from '../settings/settings.service.js';
 
-export type TextAgentProvider = 'claude' | 'codex' | 'pi';
+export type TextAgentProvider = 'claude' | 'codex' | 'pi' | 'opencode';
 
 export function readCodexExecAgentMessage(line: string): string | null {
   try {
@@ -79,6 +81,7 @@ export interface GenerateTextWithAgentRequest {
   codex?: {
     model?: string;
   };
+  opencode?: { model?: string; timeoutMs?: number };
   pi?: {
     model?: string;
     timeoutMs?: number;
@@ -105,8 +108,70 @@ export class TextAgentGenerationService {
         return this.generateWithClaude(request);
       case 'codex':
         return this.generateWithCodex(request);
+      case 'opencode':
+        return this.generateWithOpenCode(request);
       case 'pi':
         return this.generateWithPi(request);
+    }
+  }
+
+  private async generateWithOpenCode(
+    request: GenerateTextWithAgentRequest,
+  ): Promise<GenerateTextWithAgentResult | null> {
+    if (typeof request.prompt !== 'string') return null;
+    const model = this.resolveModel('opencode', request.opencode?.model);
+    const server = new OpenCodeServer({
+      cwd: request.worktreePath,
+      config: { permission: { '*': 'deny' } },
+    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+      server.close();
+    }, request.opencode?.timeoutMs ?? 60_000);
+    let sessionID: string | undefined;
+    try {
+      const client = await server.start();
+      sessionID = (
+        await client.session.create({
+          title: `Elevenex ${request.taskName}`,
+          permission: [{ permission: '*', pattern: '*', action: 'deny' }],
+        })
+      ).data!.id;
+      const result = (
+        await client.session.prompt(
+          {
+            sessionID,
+            model: openCodeModel(model),
+            parts: [{ type: 'text', text: request.prompt }],
+            system:
+              'Return only the requested text. Do not use tools or modify files.',
+          },
+          { signal: controller.signal },
+        )
+      ).data;
+      if (!result || result.info.error) return null;
+      const text = result.parts
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n')
+        .trim();
+      return text ? { provider: 'opencode', model, text } : null;
+    } catch (error) {
+      this.logger.warn(
+        `[${request.taskName}] OpenCode generation failed: ${String(error)}`,
+      );
+      return null;
+    } finally {
+      clearTimeout(timer);
+      if (sessionID && !controller.signal.aborted) {
+        try {
+          await (await server.start()).session.delete({ sessionID });
+        } catch {
+          /* Cleanup cannot fail the caller. */
+        }
+      }
+      server.close();
     }
   }
 

@@ -21,6 +21,7 @@ export interface AgentProviderPresentation {
 export const AGENT_PROVIDER_PRESENTATIONS: readonly AgentProviderPresentation[] = [
   { id: 'claude', label: 'Claude', icon: 'lucideSparkles' },
   { id: 'codex', label: 'Codex', icon: 'lucideFileText' },
+  { id: 'opencode', label: 'OpenCode', icon: 'lucideTerminal' },
   { id: 'pi', label: 'Pi', icon: 'lucideNotebookPen' },
 ] as const;
 

@@ -51,6 +51,14 @@
             (authenticated)="runtime.onProviderAuthenticated()"
           />
         }
+        @case ('opencode') {
+          <cw-opencode-login-card
+            [status]="runtime.providerAuthStatus()"
+            [dismissible]="runtime.providerLoginRequested()"
+            (closed)="runtime.providerLoginRequested.set(false)"
+            (authenticated)="runtime.onProviderAuthenticated()"
+          />
+        }
         @case ('pi') {
           <cw-pi-login-card
             [status]="runtime.providerAuthStatus()"
@@ -623,6 +631,7 @@
                 (openTerminal)="runtime.openTerminal()"
                 (openTasks)="tasksDrawerOpen.set(true)"
                 (openMcp)="openMcpDrawer()"
+                (connectProvider)="runtime.requestProviderLogin()"
                 (export)="openExportDialog()"
               />
             </cw-composer>

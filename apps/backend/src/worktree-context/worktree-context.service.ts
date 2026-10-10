@@ -34,7 +34,7 @@ const VALID_GENERATION_STATUSES = [
 ] as const;
 
 type GenerationStatus = (typeof VALID_GENERATION_STATUSES)[number];
-type ContextGenerationProvider = 'claude' | 'codex' | 'pi';
+type ContextGenerationProvider = 'claude' | 'codex' | 'pi' | 'opencode';
 
 export interface WorktreeContextSnapshot {
   repoId: number;
@@ -144,7 +144,10 @@ export class WorktreeContextService {
     const knownRootRef =
       existing?.rootRef ?? repo.preferredContextRootRef ?? null;
     const currentBranch = await this.readCurrentBranch(worktreePath);
-    if (knownRootRef && this.isCurrentBranchTheRootRef(currentBranch, knownRootRef)) {
+    if (
+      knownRootRef &&
+      this.isCurrentBranchTheRootRef(currentBranch, knownRootRef)
+    ) {
       if (existing) {
         this.logger.log(
           `[worktree-context] snapshot fast-path (main branch, stored rootRef) for ${worktreePath}`,
@@ -211,7 +214,11 @@ export class WorktreeContextService {
 
     // On first detection of a main-branch worktree, persist a stub with the
     // resolved rootRef so future calls can use fast path 2 without git ops.
-    if (branchContext.isOnRootBranch && !existing && branchContext.resolvedRootRef) {
+    if (
+      branchContext.isOnRootBranch &&
+      !existing &&
+      branchContext.resolvedRootRef
+    ) {
       const now = new Date().toISOString();
       await this.upsertRecord(repoId, worktreePath, {
         rootRef: branchContext.rootRef ?? branchContext.resolvedRootRef,
@@ -310,7 +317,9 @@ export class WorktreeContextService {
     await this.upsertRecord(repoId, worktreePath, {
       rootRef: existing?.rootRef ?? null,
       contextSentence: existing?.contextSentence ?? null,
-      generationStatus: this.normalizeGenerationStatus(existing?.generationStatus),
+      generationStatus: this.normalizeGenerationStatus(
+        existing?.generationStatus,
+      ),
       generatedAt: existing?.generatedAt ?? null,
       lastUsedAt: existing?.lastUsedAt ?? null,
       updatedAt: now,
@@ -687,7 +696,10 @@ export class WorktreeContextService {
       };
     }
 
-    const isOnRootBranch = this.isCurrentBranchTheRootRef(branch, resolvedRootRef);
+    const isOnRootBranch = this.isCurrentBranchTheRootRef(
+      branch,
+      resolvedRootRef,
+    );
 
     const mergeBase = (
       await git.raw(['merge-base', 'HEAD', resolvedRootRef])
@@ -799,14 +811,18 @@ export class WorktreeContextService {
     try {
       // .git is a file for linked worktrees ("gitdir: <path>"), a directory for the main worktree
       const gitFilePath = join(worktreePath, '.git');
-      const gitFileContent = await readFile(gitFilePath, 'utf-8').catch(() => null);
+      const gitFileContent = await readFile(gitFilePath, 'utf-8').catch(
+        () => null,
+      );
 
       let headPath: string;
       if (gitFileContent !== null) {
         const match = gitFileContent.match(/^gitdir:\s*(.+)$/m);
         if (!match) return '';
         const gitDir = match[1].trim();
-        const absGitDir = gitDir.startsWith('/') ? gitDir : resolve(worktreePath, gitDir);
+        const absGitDir = gitDir.startsWith('/')
+          ? gitDir
+          : resolve(worktreePath, gitDir);
         headPath = join(absGitDir, 'HEAD');
       } else {
         headPath = join(gitFilePath, 'HEAD');
@@ -1120,7 +1136,8 @@ export class WorktreeContextService {
     if (
       provider === 'claude' ||
       provider === 'codex' ||
-      provider === 'pi'
+      provider === 'pi' ||
+      provider === 'opencode'
     ) {
       return provider;
     }

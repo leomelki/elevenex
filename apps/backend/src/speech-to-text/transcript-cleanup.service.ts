@@ -157,7 +157,8 @@ export class TranscriptCleanupService {
   ): TextAgentProvider | null {
     return provider === 'claude' ||
       provider === 'codex' ||
-      provider === 'pi'
+      provider === 'pi' ||
+      provider === 'opencode'
       ? provider
       : null;
   }

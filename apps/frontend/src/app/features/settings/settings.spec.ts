@@ -207,17 +207,15 @@ describe('Settings', () => {
     httpMock
       .expectOne('/api/settings')
       .flush({ ...APP_SETTINGS_RESPONSE, agentModelPresets: presets });
-    httpMock
-      .expectOne('/api/agent-providers/models')
-      .flush([
-        {
-          ...MODEL_CATALOG_RESPONSE[0],
-          models: MODEL_CATALOG_RESPONSE[0].models.map((model) => ({
-            ...model,
-            supportsFastMode: model.id === 'opus',
-          })),
-        },
-      ]);
+    httpMock.expectOne('/api/agent-providers/models').flush([
+      {
+        ...MODEL_CATALOG_RESPONSE[0],
+        models: MODEL_CATALOG_RESPONSE[0].models.map((model) => ({
+          ...model,
+          supportsFastMode: model.id === 'opus',
+        })),
+      },
+    ]);
     httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
     await Promise.resolve();
     fixture.detectChanges();
@@ -227,6 +225,43 @@ describe('Settings', () => {
         .componentInstance as AgentDefaults,
     };
   }
+
+  it('uses the native OpenCode default model and its advertised variants', async () => {
+    const { editor } = await setupPresets();
+    editor.catalog.catalogs.set([
+      {
+        provider: 'opencode',
+        displayName: 'OpenCode',
+        supportsModelSelection: true,
+        providerDefaultModelId: 'local/fixed',
+        reasoningEfforts: ['deep'],
+        models: [
+          {
+            id: 'local/fixed',
+            displayName: 'Fixed',
+            description: '',
+            supportsEffort: false,
+            supportsFastMode: false,
+          },
+          {
+            id: 'local/custom',
+            displayName: 'Custom',
+            description: '',
+            supportsEffort: true,
+            reasoningEfforts: ['deep'],
+            supportsFastMode: false,
+          },
+        ],
+      },
+    ]);
+    editor.openNewPreset();
+    editor.onPresetProviderChange('opencode');
+    expect(editor.presetCanChooseEffort()).toBe(false);
+    expect(editor.presetEffortOptions().map((option) => option.value)).toEqual(['']);
+    editor.onPresetModelChange('local/custom');
+    expect(editor.presetEffortOptions().map((option) => option.value)).toEqual(['', 'deep']);
+    expect(editor.presetSupportsFastMode()).toBe(false);
+  });
 
   it('creates a named default preset with fast mode in one save', async () => {
     const { fixture, editor } = await setupPresets();

@@ -1,0 +1,99 @@
+<section class="space-y-4 rounded-xl border border-border bg-card p-6 text-card-foreground">
+  <h2 class="text-lg font-semibold">Connect OpenCode</h2>
+  @if (status()?.['installed'] === false) {
+    <p class="text-sm text-muted-foreground">
+      Install the OpenCode CLI on the machine running Elevenex, then check again.
+    </p>
+    <code class="block rounded-md bg-muted p-3 text-sm">npm install -g opencode-ai</code>
+  } @else {
+    <p class="text-sm text-muted-foreground">
+      Use your existing OpenCode accounts or connect a provider below. Project models, commands,
+      plugins, and MCP servers are loaded automatically.
+    </p>
+    @if (!authorization()) {
+      <app-option-select
+        [options]="providers()"
+        [value]="provider()"
+        (valueChange)="provider.set($event)"
+        ariaLabel="OpenCode provider"
+        placeholder="Choose a provider"
+        [disabled]="busy()"
+      />
+      @if (provider()) {
+        @if (supportsOAuth()) {
+          <button z-button class="w-full" [zDisabled]="busy()" (click)="login('oauth')">
+            Sign in with {{ provider() }}
+          </button>
+        }
+        @if (supportsApiKey()) {
+          <label for="opencode-api-key" class="block text-sm font-medium">API key</label>
+          <input
+            z-input
+            id="opencode-api-key"
+            type="password"
+            autocomplete="off"
+            placeholder="Provider API key"
+            [value]="apiKey()"
+            (input)="apiKey.set($any($event.target).value)"
+            [disabled]="busy()"
+          />
+          <button
+            z-button
+            zType="outline"
+            class="w-full"
+            [zDisabled]="busy() || !apiKey().trim()"
+            (click)="login('api_key')"
+          >
+            Save API key
+          </button>
+        }
+        @if (needsCliSetup()) {
+          <p class="text-sm text-muted-foreground">
+            Additional provider setup is available with <code>opencode auth login</code>.
+          </p>
+        }
+      }
+    } @else {
+      <p class="text-sm text-muted-foreground">{{ authorization()?.message }}</p>
+      @if (authorization()?.authUrl) {
+        <a
+          class="text-sm text-primary underline underline-offset-4"
+          [href]="authorization()?.authUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Open authorization page</a
+        >
+      }
+      @if (authorization()?.supportsManualCode) {
+        <label for="opencode-code" class="block text-sm font-medium">Authorization code</label>
+        <input
+          z-input
+          id="opencode-code"
+          [value]="code()"
+          (input)="code.set($any($event.target).value)"
+          [disabled]="busy()"
+        />
+        <button z-button [zDisabled]="busy() || !code().trim()" (click)="continueLogin()">
+          Complete login
+        </button>
+      }
+      <button z-button zType="ghost" [zDisabled]="busy()" (click)="cancel()">Cancel login</button>
+    }
+    <p class="text-sm text-muted-foreground">
+      You can also run <code>opencode auth login</code> in a terminal and check again.
+    </p>
+  }
+  @if (error() || status()?.error) {
+    <p class="break-words text-sm text-destructive" role="alert">
+      {{ error() || status()?.error }}
+    </p>
+  }
+  <button z-button zType="outline" [zDisabled]="busy()" (click)="authenticated.emit()">
+    Check connection
+  </button>
+  @if (dismissible()) {
+    <button z-button zType="ghost" [zDisabled]="busy()" (click)="dismiss()">
+      Back to conversation
+    </button>
+  }
+</section>
