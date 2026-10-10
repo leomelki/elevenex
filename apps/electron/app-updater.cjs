@@ -55,7 +55,9 @@ const execFileAsync = promisify(execFile);
 const UPDATE_REPO = process.env.ELEVENEX_UPDATE_REPO || 'leomelki/elevenex';
 const GITHUB_API_BASE = process.env.ELEVENEX_UPDATE_API_BASE || 'https://api.github.com';
 const RELEASE_TAG_PATTERN = /^runtime-([0-9a-f]{7,40})$/i;
-const RELEASE_PAGE_SIZE = 100;
+// Release bodies and asset metadata can make 100 releases exceed the HTTP
+// helper's response limit. Most checks only need the first few releases.
+const RELEASE_PAGE_SIZE = 10;
 // A manual check should feel live; the cache only exists so opening Settings
 // repeatedly doesn't burn the 60/hour unauthenticated GitHub rate limit.
 const CHECK_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -332,15 +334,23 @@ function createAppUpdater({ app, shell, getCurrentVersion, onStateChanged, reque
   }
 
   async function listReleases() {
+    let pageSize = RELEASE_PAGE_SIZE;
     // A page can contain only PR previews. Keep looking so frequent preview
     // requests cannot hide regular updates from installed desktop apps.
     for (let page = 1; ; page += 1) {
-      const url = `${GITHUB_API_BASE}/repos/${UPDATE_REPO}/releases?per_page=${RELEASE_PAGE_SIZE}&page=${page}`;
+      const url = `${GITHUB_API_BASE}/repos/${UPDATE_REPO}/releases?per_page=${pageSize}&page=${page}`;
       let releases;
 
       try {
         releases = await fetchJson(url, { headers: githubHeaders() });
       } catch (error) {
+        if (error?.code === 'ERR_RESPONSE_TOO_LARGE' && pageSize > 1) {
+          pageSize = Math.max(1, Math.floor(pageSize / 2));
+          // Changing per_page changes page offsets. Restart to avoid skipping
+          // releases, including when a later page was the oversized one.
+          page = 0;
+          continue;
+        }
         // Unauthenticated GitHub API calls are capped at 60/hour per IP, which is
         // easy to hit behind shared egress. Say so instead of "HTTP 403".
         if (error?.statusCode === 403 || error?.statusCode === 429) {
@@ -358,7 +368,7 @@ function createAppUpdater({ app, shell, getCurrentVersion, onStateChanged, reque
         .map(toReleaseSummary)
         .filter(Boolean)
         .sort((a, b) => Date.parse(b.publishedAt || 0) - Date.parse(a.publishedAt || 0));
-      if (summaries.some((release) => findAsset(release, target.assetName)) || releases.length < RELEASE_PAGE_SIZE) {
+      if (summaries.some((release) => findAsset(release, target.assetName)) || releases.length < pageSize) {
         return summaries;
       }
     }

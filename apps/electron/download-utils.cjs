@@ -167,7 +167,9 @@ function fetchText(url, options = {}, _redirectCount = 0) {
         size += chunk.length;
         if (size > MAX_TEXT_RESPONSE_BYTES) {
           response.destroy();
-          reject(new Error(`Response too large: ${url}`));
+          reject(Object.assign(new Error(`Response too large: ${url}`), {
+            code: 'ERR_RESPONSE_TOO_LARGE',
+          }));
           return;
         }
         chunks.push(chunk);
