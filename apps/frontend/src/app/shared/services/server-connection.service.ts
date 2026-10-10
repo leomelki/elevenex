@@ -111,9 +111,12 @@ export class ServerConnectionService implements OnDestroy {
    * Switching environments does not reload the app, so nothing else notices.
    */
   private repointIfBackendChanged(): void {
-    if (!this.connectedOrigin || this.connectedOrigin === getBackendOrigin()) {
+    if (this.connectedOrigin === getBackendOrigin()) {
       return;
     }
+
+    // A restored paired window can suspend transport before its first socket.
+    // Once the link is ready, a null origin must open that first socket too.
 
     const previous = this.ws;
     this.ws = null;

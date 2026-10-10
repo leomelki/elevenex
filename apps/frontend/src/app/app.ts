@@ -132,6 +132,10 @@ export class App implements OnInit, OnDestroy {
   readonly connectingPhases = CONNECTING_PHASES;
   readonly serverConnectionState = this.serverConnection.state;
   readonly showServerConnectionOverlay = this.serverConnection.showOverlay;
+  readonly pairedDevice = computed(() => {
+    const snapshot = this.connectionManager.snapshot();
+    return snapshot.mode === 'paired' ? snapshot.paired : null;
+  });
   readonly showServerBlockOverlay = computed(
     () =>
       this.serverConnection.showOverlay() &&
@@ -379,6 +383,13 @@ export class App implements OnInit, OnDestroy {
       return;
     }
     this.clearRemoteReconnectCredentials();
+  }
+
+  async retryPairedConnection() {
+    const paired = this.pairedDevice();
+    if (!paired || this.switchingEnvironment()) return;
+    const result = await this.connectionManager.switchToPaired(paired.id, paired.name);
+    if (!result.ok && result.error) toast.error(result.error);
   }
 
   private clearRemoteReconnectCredentials() {

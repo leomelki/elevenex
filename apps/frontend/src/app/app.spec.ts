@@ -54,6 +54,7 @@ describe('App', () => {
   const connectionManagerMock = {
     switching: switching.asReadonly(),
     switchToLocal: vi.fn(() => Promise.resolve({ ok: true })),
+    switchToPaired: vi.fn(() => Promise.resolve({ ok: true })),
     snapshot: signal({
       mode: 'local',
       currentStep: 'project',
@@ -62,7 +63,8 @@ describe('App', () => {
       projectHandoffAcknowledged: true,
       servers: [],
       lastSshDefaults: null,
-    }).asReadonly(),
+      paired: null as { id: number; name: string; localPort: number } | null,
+    }),
     activeServer: signal(null).asReadonly(),
     savedServers: signal([]).asReadonly(),
     switchError: signal('').asReadonly(),
@@ -137,6 +139,11 @@ describe('App', () => {
     retryInSeconds.set(null);
     automaticRetryPaused.set(false);
     switching.set(false);
+    connectionManagerMock.snapshot.set({
+      mode: 'local', currentStep: 'project', activeServerId: null,
+      remoteConnectionReady: true, projectHandoffAcknowledged: true,
+      servers: [], lastSshDefaults: null, paired: null,
+    });
     serverConnectionState.set({
       phase: 'connected',
       lastConnectedAt: 1,
@@ -451,6 +458,34 @@ describe('App', () => {
     expect(overlay).toBeTruthy();
     expect(compiled.textContent).toContain('Disconnected from server');
     expect(compiled.textContent).toContain('Elevenex is trying to reconnect');
+  });
+
+  it('offers retry and a local workspace when a paired desktop is disconnected', async () => {
+    connectionManagerMock.snapshot.update(snapshot => ({
+      ...snapshot, mode: 'paired', remoteConnectionReady: false,
+      paired: { id: 3, name: 'Studio', localPort: 51234 },
+    }));
+    showServerConnectionOverlay.set(true);
+    serverConnectionState.update(state => ({ ...state, phase: 'disconnected' }));
+
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const overlay = (fixture.nativeElement as HTMLElement).querySelector('.server-connection-overlay')!;
+    const buttons = Array.from(overlay.querySelectorAll('button'));
+    const retry = buttons.find(button => button.textContent?.includes('Retry connection'))!;
+    const local = buttons.find(button => button.textContent?.includes('Use local workspace'))!;
+
+    retry.click();
+    expect(connectionManagerMock.switchToPaired).toHaveBeenCalledWith(3, 'Studio');
+    local.click();
+    expect(connectionManagerMock.switchToLocal).toHaveBeenCalled();
+
+    switching.set(true);
+    fixture.detectChanges();
+    expect(retry.disabled).toBe(true);
+    expect(local.disabled).toBe(true);
+    expect(retry.textContent).toContain('Connecting…');
   });
 
   it('should render the server restored state before dismissing the overlay', async () => {

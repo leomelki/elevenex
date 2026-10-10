@@ -345,6 +345,17 @@
               : 'Elevenex is trying to reconnect. Workspace actions will resume when the server is available.'
           }}
         </p>
+        @if (connection.phase !== 'restored' && pairedDevice()) {
+          <div class="mt-6 flex flex-wrap justify-center gap-3">
+            <button z-button zSize="lg" [disabled]="switchingEnvironment()" (click)="retryPairedConnection()">
+              <ng-icon name="lucideRefreshCw" size="16" />
+              {{ switchingEnvironment() ? 'Connecting…' : 'Retry connection' }}
+            </button>
+            <button z-button zType="outline" zSize="lg" [disabled]="switchingEnvironment()" (click)="switchToLocalFromOverlay()">
+              Use local workspace
+            </button>
+          </div>
+        }
       </div>
     </section>
   }

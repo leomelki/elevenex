@@ -49,8 +49,10 @@ class MockWebSocket {
 describe('ServerConnectionService', () => {
   const originalWebSocket = globalThis.WebSocket;
   let service: ServerConnectionService;
+  let originalRuntime: typeof window.__ELEVENEX_RUNTIME__;
 
   beforeEach(() => {
+    originalRuntime = window.__ELEVENEX_RUNTIME__;
     MockWebSocket.instances = [];
     vi.useFakeTimers();
     (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket = MockWebSocket as unknown as typeof WebSocket;
@@ -61,6 +63,7 @@ describe('ServerConnectionService', () => {
 
   afterEach(() => {
     service.ngOnDestroy();
+    window.__ELEVENEX_RUNTIME__ = originalRuntime;
     vi.useRealTimers();
     (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket = originalWebSocket;
   });
@@ -258,6 +261,31 @@ describe('ServerConnectionService', () => {
     const count = MockWebSocket.instances.length;
     service.setTransportAvailable(true);
     expect(MockWebSocket.instances.length).toBe(count);
+  });
+
+  it.each([false, true])('opens the first socket when a paired transport returns after startup (new port: %s)', async (newPort) => {
+    // Restored paired windows suspend the transport before start() can dial
+    // the previous run's loopback port.
+    window.__ELEVENEX_RUNTIME__ = { backendOrigin: 'http://127.0.0.1:51234' };
+    service.setTransportAvailable(false);
+    service.start();
+    const pending = service.waitUntilInteractive();
+    void pending.catch(() => {});
+    expect(MockWebSocket.instances).toHaveLength(0);
+    vi.advanceTimersByTime(30000);
+    expect(MockWebSocket.instances).toHaveLength(0);
+
+    if (newPort) window.__ELEVENEX_RUNTIME__ = { backendOrigin: 'http://127.0.0.1:51999' };
+    service.setTransportAvailable(true);
+    expect(MockWebSocket.instances).toHaveLength(1);
+    const socket = MockWebSocket.instances[0];
+    expect(socket.url).toBe(`ws://127.0.0.1:${newPort ? 51999 : 51234}/server-connection`);
+    socket.emitOpen();
+    socket.emitMessage(JSON.stringify({ type: 'ready', serverTime: '2026-10-10' }));
+    await pending;
+
+    expect(service.isInteractive()).toBe(true);
+    expect(service.showOverlay()).toBe(false);
   });
 
 });
