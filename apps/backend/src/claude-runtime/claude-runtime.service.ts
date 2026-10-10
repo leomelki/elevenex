@@ -1,3 +1,4 @@
+import { contextPercentage } from '../agent-runtime/context-usage.js';
 import {
   BadRequestException,
   ConflictException,
@@ -359,7 +360,10 @@ interface RuntimeState {
   latestPromptSuggestion: ClaudePromptSuggestion | null;
   latestCompactBoundary: ClaudeCompactBoundary | null;
   latestMirrorError: ClaudeMirrorError | null;
+  metadataRefreshRuntime: ClaudeSessionRuntime | null;
   metadataRefreshPromise: Promise<void> | null;
+  modelsRefreshPromise: Promise<void> | null;
+  metadataRefreshPending: boolean;
   metadataRefreshStartedAtMs: number | null;
   metadataRefreshCompletedAtMs: number | null;
   lastHistoryItemCount: number | null;
@@ -1113,7 +1117,10 @@ export class ClaudeRuntimeService
     if (runtime) {
       await runtime.setModel(selectedModel ?? undefined);
       this.restartIdleRuntimeForOptionChange(sessionId);
-      await this.refreshRuntimeMetadata(sessionId);
+      await this.refreshRuntimeMetadata(sessionId, {
+        force: true,
+        reason: 'model_change',
+      });
       // Keep the user's explicit model selection even if runtime metadata reports a
       // different value during a pre/post-change refresh cycle.
       state.selectedModel = selectedModel;
@@ -3206,6 +3213,26 @@ export class ClaudeRuntimeService
 
     this.logSdkMessageDiagnostics(sessionId, message);
 
+    // Metadata requests must never hold up the SDK message pump. Refresh on
+    // activity (throttled/coalesced), with a fresh read at context boundaries.
+    const forceContextRefresh =
+      message.type === 'assistant' ||
+      (message.type === 'system' &&
+        (message.subtype === 'init' || message.subtype === 'compact_boundary'));
+    const streamEventType =
+      message.type === 'stream_event' ? message.event.type : null;
+    if (
+      message.type !== 'stream_event' ||
+      streamEventType === 'message_start' ||
+      streamEventType === 'message_delta' ||
+      streamEventType === 'content_block_delta'
+    ) {
+      void this.refreshRuntimeMetadata(sessionId, {
+        force: forceContextRefresh,
+        reason: 'sdk_activity',
+      }).catch(() => undefined);
+    }
+
     if (message.type === 'stream_event') {
       this.handlePartialAssistantMessage(sessionId, message);
       return;
@@ -4766,6 +4793,7 @@ export class ClaudeRuntimeService
     this.emitEvent({ type: 'complete', payload: { sessionId } });
     void this.claudeHooksService.updateStatus(sessionId, 'idle');
     void this.refreshRuntimeMetadata(sessionId, {
+      force: true,
       reason: 'finish_run',
       runId: run?.runId,
       startedAtMs: run?.startedAtMs,
@@ -4929,7 +4957,10 @@ export class ClaudeRuntimeService
       latestPromptSuggestion: null,
       latestCompactBoundary: null,
       latestMirrorError: null,
+      metadataRefreshRuntime: null,
       metadataRefreshPromise: null,
+      modelsRefreshPromise: null,
+      metadataRefreshPending: false,
       metadataRefreshStartedAtMs: null,
       metadataRefreshCompletedAtMs: null,
       lastHistoryItemCount: null,
@@ -5804,10 +5835,19 @@ export class ClaudeRuntimeService
     }
 
     const state = this.ensureRuntimeState(sessionId);
+    if (state.metadataRefreshRuntime !== runtime) {
+      state.metadataRefreshRuntime = runtime;
+      state.metadataRefreshPromise = null;
+      state.modelsRefreshPromise = null;
+      state.metadataRefreshPending = false;
+      state.metadataRefreshCompletedAtMs = null;
+    }
     if (state.metadataRefreshPromise) {
-      this.logger.debug(
-        `Claude runtime metadata refresh coalesced session=${sessionId} reason=${options.reason ?? 'unspecified'}`,
-      );
+      if (options.force) state.metadataRefreshPending = true;
+      if (options.reason !== 'sdk_activity')
+        this.logger.debug(
+          `Claude runtime metadata refresh coalesced session=${sessionId} reason=${options.reason ?? 'unspecified'}`,
+        );
       return state.metadataRefreshPromise;
     }
 
@@ -5817,12 +5857,14 @@ export class ClaudeRuntimeService
       state.metadataRefreshCompletedAtMs != null &&
       now - state.metadataRefreshCompletedAtMs < 1500
     ) {
-      this.logger.debug(
-        `Claude runtime metadata refresh skipped session=${sessionId} reason=${options.reason ?? 'unspecified'} ageMs=${now - state.metadataRefreshCompletedAtMs}`,
-      );
+      if (options.reason !== 'sdk_activity')
+        this.logger.debug(
+          `Claude runtime metadata refresh skipped session=${sessionId} reason=${options.reason ?? 'unspecified'} ageMs=${now - state.metadataRefreshCompletedAtMs}`,
+        );
       return;
     }
 
+    const selectedModelAtStart = state.selectedModel;
     const startedAtMs = now;
     state.metadataRefreshStartedAtMs = startedAtMs;
     if (options.runId && options.startedAtMs != null) {
@@ -5835,21 +5877,45 @@ export class ClaudeRuntimeService
       );
     }
 
+    const isCurrent = (): boolean =>
+      !this.invalidatedSessions.has(sessionId) &&
+      this.runtimeStates.get(sessionId) === state &&
+      state.metadataRefreshRuntime === runtime &&
+      (this.activeRuns.get(sessionId)?.query ??
+        this.sessionRuntimes.get(sessionId)) === runtime;
+    // Model discovery is independent: a slow/failed catalog must not delay
+    // context publication or keep subsequent live context reads coalesced.
+    const modelsPromise =
+      state.modelsRefreshPromise ??
+      runtime
+        .supportedModels(false)
+        .then((models) => {
+          if (!isCurrent()) return;
+          const mappedModels = models.map((model) => this.toModelOption(model));
+          state.availableModels = mappedModels;
+          if (mappedModels.length) {
+            this.modelsCache = mappedModels;
+            this.modelsCacheAt = Date.now();
+          }
+          this.emitRunState(sessionId);
+        })
+        .catch(() => {
+          if (isCurrent() && !state.availableModels.length) {
+            state.availableModels = [...FALLBACK_MODELS];
+            this.emitRunState(sessionId);
+          }
+        })
+        .finally(() => {
+          if (state.modelsRefreshPromise === modelsPromise)
+            state.modelsRefreshPromise = null;
+        });
+    state.modelsRefreshPromise = modelsPromise;
+
     const refreshPromise = (async () => {
       try {
-        const [models, contextUsage] = await Promise.all([
-          runtime.supportedModels(),
-          runtime.getContextUsage(),
-        ]);
-        const mappedModels = models.map((model) => this.toModelOption(model));
-        state.availableModels = mappedModels;
-        // A running Claude Code process is the freshest source of truth for
-        // the current account's models, so opportunistically update the
-        // global cache other sessions/pickers read from.
-        if (mappedModels.length) {
-          this.modelsCache = mappedModels;
-          this.modelsCacheAt = Date.now();
-        }
+        const contextUsage = await runtime.getContextUsage(false);
+        if (!isCurrent() || state.selectedModel !== selectedModelAtStart)
+          return;
         state.contextUsage = this.toContextUsage(contextUsage);
         state.selectedModel = contextUsage.model || state.selectedModel;
         if (state.sessionMetadata && contextUsage.model) {
@@ -5859,10 +5925,12 @@ export class ClaudeRuntimeService
           };
         }
         state.metadataRefreshCompletedAtMs = Date.now();
+        this.emitRunState(sessionId);
         this.logger.debug(
-          `Claude runtime metadata refresh session=${sessionId} elapsedMs=${Date.now() - startedAtMs} models=${models.length} reason=${options.reason ?? 'unspecified'}`,
+          `Claude runtime metadata refresh session=${sessionId} elapsedMs=${Date.now() - startedAtMs} reason=${options.reason ?? 'unspecified'}`,
         );
       } catch (error) {
+        if (!isCurrent()) return;
         state.metadataRefreshCompletedAtMs = Date.now();
         this.logger.debug(
           `Failed to refresh Claude runtime metadata for session ${sessionId} elapsedMs=${Date.now() - startedAtMs} reason=${options.reason ?? 'unspecified'}: ${String(error)}`,
@@ -5872,12 +5940,20 @@ export class ClaudeRuntimeService
         }
         throw error;
       } finally {
-        state.metadataRefreshPromise = null;
+        if (state.metadataRefreshRuntime === runtime)
+          state.metadataRefreshPromise = null;
+        if (state.metadataRefreshPending && isCurrent()) {
+          state.metadataRefreshPending = false;
+          void this.refreshRuntimeMetadata(sessionId, {
+            force: true,
+            reason: 'context_boundary',
+          }).catch(() => undefined);
+        }
       }
     })();
 
     state.metadataRefreshPromise = refreshPromise;
-    return refreshPromise;
+    await Promise.all([refreshPromise, modelsPromise]);
   }
 
   private toModelOption(model: ModelInfo): ClaudeModelOption {
@@ -5987,13 +6063,19 @@ export class ClaudeRuntimeService
 
   private toContextUsage(
     usage: SDKControlGetContextUsageResponse,
-  ): ClaudeContextUsage {
+  ): ClaudeContextUsage | null {
+    const percentage = contextPercentage(usage.totalTokens, usage.maxTokens);
+    if (percentage === null) return null;
     return {
       model: usage.model,
       totalTokens: usage.totalTokens,
       maxTokens: usage.maxTokens,
-      percentage: usage.percentage,
-      inputTokens: usage.apiUsage?.input_tokens ?? 0,
+      percentage,
+      inputTokens:
+        (usage.apiUsage?.input_tokens ?? 0) +
+        (usage.apiUsage?.cache_creation_input_tokens ?? 0) +
+        (usage.apiUsage?.cache_read_input_tokens ?? 0),
+      tokenBreakdownAvailable: usage.apiUsage != null,
       outputTokens: usage.apiUsage?.output_tokens ?? 0,
       cacheCreationInputTokens:
         usage.apiUsage?.cache_creation_input_tokens ?? 0,

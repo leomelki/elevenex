@@ -256,6 +256,71 @@ describe('PiRuntimeService lifecycle', () => {
     await service.onModuleDestroy();
   });
 
+  it('publishes first-run native context records before a run is registered and clears unknown post-compaction usage', async () => {
+    const { service } = createService();
+    const child = createPiProcess('/tmp/pi-session.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    await (service as any).ensureRuntime(1);
+    const states: any[] = [];
+    service.on('event', (event: any) => {
+      if (event.type === 'run_state') states.push(event.payload);
+    });
+    const sendContext = (
+      tokens: number | null,
+      contextWindow = 200_000,
+      apiUsage?: {
+        input: number;
+        output: number;
+        cacheRead: number;
+        cacheWrite: number;
+      },
+    ) =>
+      child.stdout.emit(
+        'data',
+        Buffer.from(
+          JSON.stringify({
+            type: 'extension_ui_request',
+            id: 'ctx',
+            method: 'setStatus',
+            statusKey: 'elevenex_context_usage',
+            statusText: JSON.stringify({
+              model: 'anthropic/sonnet',
+              usage: { tokens, contextWindow, percent: 99 },
+              apiUsage,
+            }),
+          }) + '\n',
+        ),
+      );
+    sendContext(50_000);
+    expect(states.at(-1).contextUsage).toMatchObject({
+      percentage: 25,
+      totalTokens: 50_000,
+      maxTokens: 200_000,
+    });
+    expect(states.at(-1).contextUsage.tokenBreakdownAvailable).toBe(false);
+    sendContext(100_000, 1_000_000, {
+      input: 10_000,
+      output: 5_000,
+      cacheRead: 80_000,
+      cacheWrite: 5_000,
+    });
+    expect(states.at(-1).contextUsage).toMatchObject({
+      percentage: 10,
+      inputTokens: 95_000,
+      outputTokens: 5_000,
+      cacheReadInputTokens: 80_000,
+      cacheCreationInputTokens: 5_000,
+      tokenBreakdownAvailable: true,
+    });
+    sendContext(null);
+    expect(states.at(-1).contextUsage).toBeNull();
+    await service.cleanupSession(1);
+    const count = states.length;
+    sendContext(150_000);
+    expect(states).toHaveLength(count);
+    await service.onModuleDestroy();
+  });
+
   it('clones and slices Pi JSONL history for assistant anchors', async () => {
     const root = await mkdtemp(join(tmpdir(), 'pi-fork-'));
     try {
@@ -544,13 +609,15 @@ describe('PiRuntimeService lifecycle', () => {
     const child = createPiProcess('/tmp/pi-session-1.jsonl');
     mockSpawn.mockReturnValue(child as never);
     const env = createDeferred<NodeJS.ProcessEnv>();
-    mockBuildAugmentedEnv.mockReturnValueOnce(env.promise);
+    const envStarted = createDeferred<void>();
+    mockBuildAugmentedEnv.mockImplementationOnce(() => {
+      envStarted.resolve();
+      return env.promise;
+    });
     const { service } = createService({ idleMs: '60000' });
 
     const firstPrompt = service.submitPrompt(1, 'first');
-    while (mockBuildAugmentedEnv.mock.calls.length === 0) {
-      await Promise.resolve();
-    }
+    await envStarted.promise;
 
     await service.submitPrompt(1, 'second');
     expect((service as any).ensureRuntimeState(1).pendingPrompts).toEqual([

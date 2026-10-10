@@ -325,20 +325,7 @@
         aria-label="Context and plan usage"
       >
         @if (contextUsage(); as u) {
-          <span
-            class="cw-sb__ctx inline-flex items-center gap-1.5 whitespace-nowrap data-[warning=true]:text-warning"
-            [attr.data-warning]="u.percentage >= 80"
-            [attr.aria-label]="'Conversation context: ' + u.percentage + '% used'"
-            [title]="'Conversation context: ' + u.percentage + '% used'"
-          >
-            <span class="h-1 w-6 overflow-hidden rounded-full bg-border" aria-hidden="true">
-              <span
-                class="block h-full rounded-full bg-current"
-                [style.width.%]="u.percentage"
-              ></span>
-            </span>
-            Context {{ u.percentage }}%
-          </span>
+          <cw-context-usage [usage]="u" [provider]="currentProvider()" />
         }
         @if (visiblePlanUsage(); as usage) {
           <div class="cw-sb__model shrink-0">

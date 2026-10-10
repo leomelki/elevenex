@@ -39,6 +39,7 @@ export class PiSessionRuntime extends EventEmitter {
       sessionPath?: string | null;
       timeoutMs?: number;
       extensionPath?: string;
+      waitForAgentReady?: boolean;
       env?: NodeJS.ProcessEnv;
     },
   ) {
@@ -82,15 +83,16 @@ export class PiSessionRuntime extends EventEmitter {
     // CVE-2024-27980 mitigation) can launch the batch file. Spawning the bare
     // 'pi' here yields `spawn pi ENOENT` on Windows.
     const { command, shell } = buildSpawnCommand(findBinary('pi') ?? 'pi');
-    const ready = this.options.extensionPath
-      ? new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(() => {
-            this.agentReady = null;
-            reject(new Error('Pi could not connect to the Elevenex tools.'));
-          }, this.options.timeoutMs ?? 30_000);
-          this.agentReady = { resolve, reject, timer };
-        })
-      : null;
+    const ready =
+      this.options.extensionPath && this.options.waitForAgentReady !== false
+        ? new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => {
+              this.agentReady = null;
+              reject(new Error('Pi could not connect to the Elevenex tools.'));
+            }, this.options.timeoutMs ?? 30_000);
+            this.agentReady = { resolve, reject, timer };
+          })
+        : null;
     this.child = spawn(command, args, {
       cwd: this.options.cwd,
       env,

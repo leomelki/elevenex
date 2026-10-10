@@ -163,13 +163,18 @@ export class ClaudeSessionRuntime {
     await this.queryInstance?.applyFlagSettings?.(settings);
   }
 
-  async supportedModels(): Promise<ModelInfo[]> {
-    await this.ensureStarted('prewarm');
+  async supportedModels(startIfNeeded = true): Promise<ModelInfo[]> {
+    if (startIfNeeded) await this.ensureStarted('prewarm');
+    else await this.startPromise;
     return this.queryInstance?.supportedModels?.() ?? [];
   }
 
-  async getContextUsage(): Promise<SDKControlGetContextUsageResponse> {
-    await this.ensureStarted('prewarm');
+  async getContextUsage(
+    startIfNeeded = true,
+  ): Promise<SDKControlGetContextUsageResponse> {
+    // Live telemetry must not resurrect an exited process during finalization.
+    if (startIfNeeded) await this.ensureStarted('prewarm');
+    else await this.startPromise;
     if (!this.queryInstance?.getContextUsage) {
       throw new Error('Claude runtime is not available.');
     }

@@ -1959,6 +1959,249 @@ describe('ClaudeRuntimeService', () => {
     await Promise.all([first, second]);
   });
 
+  it('updates context from streaming SDK activity during a first run', async () => {
+    const runtimeService = service as any;
+    const usage = {
+      model: 'sonnet',
+      totalTokens: 40_000,
+      maxTokens: 200_000,
+      percentage: 99,
+      memoryFiles: [],
+      mcpTools: [],
+    };
+    const runtime = {
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest.fn().mockResolvedValue(usage),
+    };
+    runtimeService.activeRuns.set(7, {
+      query: runtime,
+      interruptRequested: false,
+      sawFirstSdkMessage: true,
+      sawFirstVisibleItem: true,
+    });
+    const states: any[] = [];
+    service.on('event', (event: any) => {
+      if (event.type === 'run_state') states.push(event.payload);
+    });
+    const stream = {
+      type: 'stream_event',
+      uuid: 'stream-usage',
+      session_id: 'claude-session-1',
+      event: {
+        type: 'message_delta',
+        delta: {},
+        usage: { output_tokens: 100 },
+      },
+    };
+    await runtimeService.handleSdkMessage(7, stream);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(states.at(-1).contextUsage).toMatchObject({
+      totalTokens: 40_000,
+      maxTokens: 200_000,
+      percentage: 20,
+    });
+    runtimeService.ensureRuntimeState(7).metadataRefreshCompletedAtMs =
+      Date.now() - 1600;
+    runtime.getContextUsage.mockResolvedValue({
+      ...usage,
+      totalTokens: 60_000,
+    });
+    await runtimeService.handleSdkMessage(7, stream);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(states.at(-1).contextUsage.percentage).toBe(30);
+  });
+
+  it('publishes context without waiting for model discovery and discards replaced-runtime responses', async () => {
+    let resolveModels!: (models: unknown[]) => void;
+    let resolveUsage!: (usage: unknown) => void;
+    const runtimeService = service as any;
+    const usage = {
+      model: 'sonnet',
+      totalTokens: 40_000,
+      maxTokens: 200_000,
+      percentage: 99,
+      memoryFiles: [],
+      mcpTools: [],
+    };
+    const runtime = {
+      supportedModels: jest.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveModels = resolve;
+          }),
+      ),
+      getContextUsage: jest.fn().mockResolvedValue(usage),
+    };
+    runtimeService.sessionRuntimes.set(7, runtime);
+    const refresh = runtimeService.refreshRuntimeMetadata(7);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(runtimeService.ensureRuntimeState(7).contextUsage.percentage).toBe(
+      20,
+    );
+    resolveModels([]);
+    await refresh;
+    runtime.getContextUsage.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUsage = resolve;
+        }),
+    );
+    runtime.supportedModels.mockResolvedValue([] as never);
+    const stale = runtimeService.refreshRuntimeMetadata(7, { force: true });
+    const replacement = {
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest
+        .fn()
+        .mockResolvedValue({ ...usage, totalTokens: 140_000 }),
+    };
+    runtimeService.sessionRuntimes.set(7, replacement);
+    await runtimeService.refreshRuntimeMetadata(7);
+    resolveUsage({ ...usage, totalTokens: 100_000 });
+    await stale;
+    expect(runtimeService.ensureRuntimeState(7).contextUsage.percentage).toBe(
+      70,
+    );
+    expect(
+      runtimeService.ensureRuntimeState(7).metadataRefreshPromise,
+    ).toBeNull();
+  });
+
+  it('queues a fresh boundary read after an in-flight context refresh', async () => {
+    const runtimeService = service as any;
+    let resolveUsage!: (usage: unknown) => void;
+    const usage = {
+      model: 'sonnet',
+      totalTokens: 10_000,
+      maxTokens: 200_000,
+      percentage: 5,
+      memoryFiles: [],
+      mcpTools: [],
+    };
+    const runtime = {
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveUsage = resolve;
+            }),
+        )
+        .mockResolvedValue({ ...usage, totalTokens: 140_000 }),
+    };
+    runtimeService.sessionRuntimes.set(7, runtime);
+    const first = runtimeService.refreshRuntimeMetadata(7);
+    const boundary = runtimeService.refreshRuntimeMetadata(7, { force: true });
+    expect(runtime.getContextUsage).toHaveBeenCalledTimes(1);
+    resolveUsage(usage);
+    await Promise.all([first, boundary]);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(runtime.getContextUsage).toHaveBeenCalledTimes(2);
+    expect(runtimeService.ensureRuntimeState(7).contextUsage.percentage).toBe(
+      70,
+    );
+  });
+
+  it('does not apply old-model context after a model change during a refresh', async () => {
+    const runtimeService = service as any;
+    let resolveUsage!: (usage: unknown) => void;
+    const usage = {
+      model: 'old-model',
+      totalTokens: 10_000,
+      maxTokens: 200_000,
+      percentage: 5,
+      memoryFiles: [],
+      mcpTools: [],
+    };
+    const runtime = {
+      isIdle: false,
+      setModel: jest.fn().mockResolvedValue(undefined),
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveUsage = resolve;
+            }),
+        )
+        .mockResolvedValue({
+          ...usage,
+          model: 'new-model',
+          maxTokens: 1_000_000,
+        }),
+    };
+    runtimeService.sessionRuntimes.set(7, runtime);
+    runtimeService.ensureRuntimeState(7).selectedModel = 'old-model';
+    const contexts: any[] = [];
+    service.on('event', (event: any) => {
+      if (event.type === 'run_state' && event.payload.contextUsage)
+        contexts.push(event.payload.contextUsage);
+    });
+    const first = runtimeService.refreshRuntimeMetadata(7);
+    const change = service.setSelectedModel(7, 'new-model');
+    await new Promise((resolve) => setImmediate(resolve));
+    resolveUsage(usage);
+    await Promise.all([first, change]);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(runtimeService.ensureRuntimeState(7).contextUsage).toMatchObject({
+      model: 'new-model',
+      maxTokens: 1_000_000,
+      percentage: 1,
+    });
+    expect(contexts.every((context) => context.model === 'new-model')).toBe(
+      true,
+    );
+  });
+
+  it('includes cache reads and writes once in the response input breakdown', () => {
+    const usage = {
+      model: 'sonnet',
+      totalTokens: 30_000,
+      maxTokens: 200_000,
+      memoryFiles: [],
+      mcpTools: [],
+      apiUsage: {
+        input_tokens: 1_000,
+        output_tokens: 500,
+        cache_read_input_tokens: 20_000,
+        cache_creation_input_tokens: 3_000,
+      },
+    };
+    expect((service as any).toContextUsage(usage)).toMatchObject({
+      inputTokens: 24_000,
+      outputTokens: 500,
+      cacheReadInputTokens: 20_000,
+      cacheCreationInputTokens: 3_000,
+      tokenBreakdownAvailable: true,
+    });
+    expect(
+      (service as any).toContextUsage({ ...usage, apiUsage: null })
+        .tokenBreakdownAvailable,
+    ).toBe(false);
+  });
+
+  it('keeps native context available when model discovery fails', async () => {
+    const runtimeService = service as any;
+    runtimeService.sessionRuntimes.set(7, {
+      supportedModels: jest
+        .fn()
+        .mockRejectedValue(new Error('catalog unavailable')),
+      getContextUsage: jest.fn().mockResolvedValue({
+        model: 'sonnet',
+        totalTokens: 10_000,
+        maxTokens: 200_000,
+        percentage: 5,
+        memoryFiles: [],
+        mcpTools: [],
+      }),
+    });
+    await runtimeService.refreshRuntimeMetadata(7);
+    expect(runtimeService.ensureRuntimeState(7).contextUsage.percentage).toBe(
+      5,
+    );
+  });
+
   it('preserves Claude-reported effort levels when refreshing the live model catalog', async () => {
     const runtime = {
       supportedModels: jest.fn().mockResolvedValue([

@@ -327,10 +327,13 @@ export interface AgentContextUsage {
   totalTokens: number;
   maxTokens: number;
   percentage: number;
+  /** Latest response input, including cache reads and writes. */
   inputTokens: number;
   outputTokens: number;
   cacheCreationInputTokens: number;
   cacheReadInputTokens: number;
+  /** False when the harness has not reported response-level usage. */
+  tokenBreakdownAvailable?: boolean;
   autoCompactThreshold?: number;
   isAutoCompactEnabled?: boolean;
   memoryFiles: {

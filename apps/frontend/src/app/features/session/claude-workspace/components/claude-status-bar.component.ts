@@ -41,6 +41,7 @@ import {
 } from '@ng-icons/lucide';
 import { AgentSettingOptionComponent } from './agent-setting-option.component';
 import { ComposerSettingsComponent } from './composer-settings.component';
+import { ContextUsageComponent } from './context-usage.component';
 
 interface PermissionModeOption {
   id: ClaudePermissionMode;
@@ -87,6 +88,7 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
     CdkTrapFocus,
     AgentSettingOptionComponent,
     ComposerSettingsComponent,
+    ContextUsageComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {

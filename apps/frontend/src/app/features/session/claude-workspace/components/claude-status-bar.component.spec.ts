@@ -123,6 +123,83 @@ describe('ClaudeStatusBarComponent', () => {
     expect(overlay.textContent).toContain('Plus');
   });
 
+  it('opens context details and updates the open popover with live token usage', async () => {
+    const fixture = await render();
+    const usage = {
+      model: 'claude-sonnet-4-6',
+      totalTokens: 42_000,
+      maxTokens: 200_000,
+      percentage: 21,
+      inputTokens: 40_000,
+      outputTokens: 2_000,
+      cacheReadInputTokens: 30_000,
+      cacheCreationInputTokens: 5_000,
+      tokenBreakdownAvailable: true,
+      memoryFiles: [],
+      mcpTools: [],
+    };
+    fixture.componentRef.setInput('contextUsage', usage);
+    fixture.detectChanges();
+    const trigger = fixture.nativeElement.querySelector('.cw-sb__ctx') as HTMLButtonElement;
+    expect(trigger.tagName).toBe('BUTTON');
+    trigger.click();
+    fixture.detectChanges();
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    const dialog = () =>
+      overlay.querySelector('[aria-label="Context usage details"]') as HTMLElement;
+    expect(dialog().textContent).toContain('42,000 / 200,000');
+    expect(dialog().textContent).toContain('Input tokens');
+    expect(dialog().textContent).toContain('40,000');
+    expect(dialog().textContent).toContain('Output tokens');
+    expect(dialog().textContent).toContain('2,000');
+    expect(dialog().textContent).toContain('Cache read');
+    expect(dialog().textContent).toContain('30,000');
+    expect(dialog().textContent).toContain('Cache write');
+    expect(dialog().textContent).toContain('5,000');
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    fixture.componentRef.setInput('contextUsage', {
+      ...usage,
+      totalTokens: 60_000,
+      inputTokens: 58_000,
+      percentage: 30,
+    });
+    fixture.detectChanges();
+    expect(dialog().textContent).toContain('60,000 / 200,000');
+    expect(dialog().textContent).toContain('58,000');
+    expect(dialog().textContent).toContain('30% used');
+    fixture.componentRef.setInput('contextUsage', null);
+    fixture.detectChanges();
+    expect(dialog()).toBeNull();
+  });
+
+  it('distinguishes an unavailable token breakdown from reported zero usage', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('currentProvider', 'pi');
+    const usage = {
+      model: 'pi/model',
+      totalTokens: 4_000,
+      maxTokens: 200_000,
+      percentage: 2,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      tokenBreakdownAvailable: false,
+      memoryFiles: [],
+      mcpTools: [],
+    };
+    fixture.componentRef.setInput('contextUsage', usage);
+    fixture.detectChanges();
+    fixture.nativeElement.querySelector('.cw-sb__ctx').click();
+    fixture.detectChanges();
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    expect(overlay.textContent).toContain('4,000 / 200,000');
+    expect(overlay.querySelectorAll('dd')[0].textContent).toContain('Not reported');
+    fixture.componentRef.setInput('contextUsage', { ...usage, tokenBreakdownAvailable: true });
+    fixture.detectChanges();
+    expect(overlay.querySelectorAll('dd')[0].textContent?.trim()).toBe('0');
+  });
+
   it('navigates model choices with the keyboard, selects once and restores trigger focus', async () => {
     const fixture = await render();
     fixture.componentRef.setInput('providerLocked', true);

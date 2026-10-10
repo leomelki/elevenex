@@ -1,3 +1,4 @@
+import { contextPercentage } from '../agent-runtime/context-usage.js';
 import {
   BadRequestException,
   ConflictException,
@@ -839,13 +840,13 @@ export class PiRuntimeService
     const runtime = new PiSessionRuntime({
       cwd: session.worktreePath,
       sessionPath: state.piSessionPath,
-      ...(agentEnv
-        ? {
-            // Development uses Nest's compiled sibling; Electron ships a standalone bundle.
-            extensionPath: await this.agentExtensionPath(),
-            env: agentEnv,
-          }
-        : {}),
+      // The extension reports native context usage for both coding and mission sessions.
+      extensionPath: await this.agentExtensionPath(),
+      waitForAgentReady: Boolean(agentEnv),
+      env: {
+        ...agentEnv,
+        ELEVENEX_AGENT_TOKEN: agentEnv?.ELEVENEX_AGENT_TOKEN ?? '',
+      },
     });
     const entry: PiRuntimeEntry = {
       runtime,
@@ -859,9 +860,11 @@ export class PiRuntimeService
     this.runtimes.set(sessionId, entry);
 
     runtime.on('event', (event: PiSessionRuntimeEvent) => {
+      if (this.runtimes.get(sessionId) !== entry) return;
       this.handlePiEvent(sessionId, event);
     });
     runtime.on('extension_ui_request', (request: PiRpcExtensionUiRequest) => {
+      if (this.runtimes.get(sessionId) !== entry) return;
       this.handleExtensionUiRequest(sessionId, request);
     });
     runtime.on('exit', (details: { message?: string; stderr?: string }) => {
@@ -1281,6 +1284,64 @@ export class PiRuntimeService
     sessionId: number,
     request: PiRpcExtensionUiRequest,
   ): void {
+    if (
+      request.method === 'setStatus' &&
+      request.statusKey === 'elevenex_context_usage'
+    ) {
+      try {
+        const payload = JSON.parse(String(request.statusText)) as {
+          model: string | null;
+          usage: { tokens: number | null; contextWindow: number } | null;
+          apiUsage?: {
+            input: number;
+            output: number;
+            cacheRead: number;
+            cacheWrite: number;
+          } | null;
+        };
+        const state = this.ensureRuntimeState(sessionId);
+        const reported = payload.apiUsage;
+        const apiUsage =
+          reported &&
+          [
+            reported.input,
+            reported.output,
+            reported.cacheRead,
+            reported.cacheWrite,
+          ].every((value) => Number.isFinite(value) && value >= 0)
+            ? reported
+            : null;
+        const totalTokens = payload.usage?.tokens;
+        const maxTokens = payload.usage?.contextWindow;
+        const percentage =
+          typeof totalTokens === 'number' && typeof maxTokens === 'number'
+            ? contextPercentage(totalTokens, maxTokens)
+            : null;
+        state.contextUsage =
+          percentage === null
+            ? null
+            : {
+                model: payload.model,
+                totalTokens: totalTokens!,
+                maxTokens: maxTokens!,
+                percentage,
+                inputTokens:
+                  (apiUsage?.input ?? 0) +
+                  (apiUsage?.cacheRead ?? 0) +
+                  (apiUsage?.cacheWrite ?? 0),
+                outputTokens: apiUsage?.output ?? 0,
+                cacheCreationInputTokens: apiUsage?.cacheWrite ?? 0,
+                cacheReadInputTokens: apiUsage?.cacheRead ?? 0,
+                tokenBreakdownAvailable: apiUsage !== null,
+                memoryFiles: [],
+                mcpTools: [],
+              };
+        this.emitRunState(sessionId);
+      } catch {
+        this.logger.debug(`Invalid Pi context usage session=${sessionId}`);
+      }
+      return;
+    }
     const run = this.activeRuns.get(sessionId);
     if (!run) return;
     if (request.method === 'notify') {

@@ -1479,6 +1479,110 @@ describe('CodexRuntimeService', () => {
     },
   );
 
+  it('publishes native context usage during the first run, without double counting subsets', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const iterator = await startAppServerTurn(service, 'default');
+    const states: any[] = [];
+    service.on('event', (event: any) => {
+      if (event.type === 'run_state') states.push(event.payload);
+    });
+    const notify = (
+      threadId: string,
+      totalTokens: number,
+      modelContextWindow: number | null = 200_000,
+    ) =>
+      wire.notificationHandler({
+        method: 'thread/tokenUsage/updated',
+        params: {
+          threadId,
+          tokenUsage: {
+            last: {
+              inputTokens: 90_000,
+              cachedInputTokens: 80_000,
+              outputTokens: 10_000,
+              reasoningOutputTokens: 8_000,
+              totalTokens,
+            },
+            total: { totalTokens: 9_000_000 },
+            modelContextWindow,
+          },
+        },
+      });
+    notify('other-thread', 100_000);
+    expect(states).toHaveLength(0);
+    notify('thread-1', 100_000);
+    expect(states.at(-1).contextUsage).toMatchObject({
+      totalTokens: 100_000,
+      maxTokens: 200_000,
+      percentage: 47,
+      inputTokens: 90_000,
+      outputTokens: 10_000,
+      cacheReadInputTokens: 80_000,
+    });
+    // Compaction can reduce the latest count; cumulative billing totals are irrelevant.
+    notify('thread-1', 20_000);
+    expect(states.at(-1).contextUsage.percentage).toBe(4);
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { status: 'completed' } },
+    });
+    const completed = await iterator.next();
+    (service as any).handleCodexEvent(
+      7,
+      (service as any).ensureRuntimeState(7),
+      completed.value,
+      '/tmp/project',
+    );
+    expect(states.at(-1).contextUsage.percentage).toBe(4);
+    notify('thread-1', 180_000);
+    expect(states.at(-1).contextUsage.percentage).toBe(4);
+    await iterator.next();
+  });
+
+  it.each([
+    [10_000, 200_000, 0],
+    [100_000, 200_000, 47],
+    [13_000, 212_000, 0],
+    [200_000, 200_000, 100],
+    [210_000, 200_000, 100],
+    [1_000, 10_000, 100],
+  ])(
+    'matches Codex native occupancy for %s tokens in %s capacity',
+    (totalTokens, window, percentage) => {
+      const { service } = createService();
+      expect(
+        (service as any).toContextUsage(
+          'custom-model',
+          {
+            input_tokens: totalTokens,
+            output_tokens: 0,
+            cached_input_tokens: 0,
+            reasoning_output_tokens: 0,
+          },
+          window,
+          totalTokens,
+        ).percentage,
+      ).toBe(percentage);
+    },
+  );
+
+  it('does not guess a context limit for unknown or configured Codex models', () => {
+    const { service } = createService();
+    expect(
+      (service as any).toContextUsage(
+        'custom-model',
+        {
+          input_tokens: 10_000,
+          output_tokens: 1_000,
+          cached_input_tokens: 8_000,
+          reasoning_output_tokens: 500,
+        },
+        null,
+      ),
+    ).toBeNull();
+  });
+
   it('applies fast mode changes on each turn of an already-loaded thread', async () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);

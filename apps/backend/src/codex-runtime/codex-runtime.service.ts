@@ -15,6 +15,7 @@ import type {
   Usage,
 } from '@openai/codex-sdk';
 import { EventEmitter } from 'events';
+import { contextPercentage } from '../agent-runtime/context-usage.js';
 import { codexWebSearchInput } from './codex-web-search.js';
 import { randomUUID } from 'crypto';
 import { and, eq } from 'drizzle-orm';
@@ -75,20 +76,16 @@ import type {
 } from './codex-runtime.types.js';
 
 const DEFAULT_CODEX_MODEL = 'gpt-5.5';
-const DEFAULT_CODEX_CONTEXT_WINDOW = 1_050_000;
+// Codex's native percent_of_context_window_remaining excludes fixed prompt/tool
+// overhead from both counts. Keep its reserve policy, not a guessed model limit.
+// https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs
+const CODEX_CONTEXT_BASELINE_TOKENS = 12_000;
 const CODEX_MODEL_REFRESH_TTL_MS = 10 * 60 * 1000;
 const CODEX_MODEL_REFRESH_RETRY_MS = 30_000;
 const CODEX_MODEL_LIST_TIMEOUT_MS = 8_000;
 const CODEX_MODEL_REFRESH_IDLE_DELAY_MS = 10_000;
 const CODEX_PREWARM_COOLDOWN_MS = 30_000;
 const CODEX_PLAN_USAGE_TTL_MS = 60_000;
-const CODEX_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-  'gpt-5.5': 1_050_000,
-  'gpt-5.4': 1_050_000,
-  'gpt-5.4-mini': 1_050_000,
-  'gpt-5.3-codex': 400_000,
-  'gpt-5.2': 400_000,
-};
 const CODEX_MODELS: ClaudeModelOption[] = [
   {
     id: 'gpt-5.5',
@@ -1349,10 +1346,8 @@ export class CodexRuntimeService
       return;
     }
     if (event.type === 'turn.completed') {
-      state.contextUsage = this.toContextUsage(
-        state.selectedModel ?? this.codexDefaultModel,
-        event.usage,
-      );
+      // Context is published by thread/tokenUsage/updated while the turn runs.
+      // Completion has no independent context/window data and must not reset it.
       this.emitRunState(sessionId);
       if (state.authStatus?.authMethod === 'oauth') {
         void this.refreshCodexPlanUsage(true);
@@ -2378,6 +2373,7 @@ export class CodexRuntimeService
     const messageText = new Map<string, string>();
     const reasoningText = new Map<string, string>();
     const planText = new Map<string, string>();
+    let contextModel = state.selectedModel ?? this.codexDefaultModel;
     let lastUsage: Usage = {
       input_tokens: 0,
       cached_input_tokens: 0,
@@ -2437,7 +2433,14 @@ export class CodexRuntimeService
           return;
         }
         case 'thread/tokenUsage/updated': {
-          if (!matchesThread(params)) return;
+          if (
+            !matchesThread(params) ||
+            signal.aborted ||
+            endStream ||
+            this.invalidatedSessions.has(sessionId) ||
+            this.runtimeStates.get(sessionId) !== state
+          )
+            return;
           const last = params?.tokenUsage?.last;
           if (last) {
             lastUsage = {
@@ -2446,6 +2449,13 @@ export class CodexRuntimeService
               output_tokens: Number(last.outputTokens ?? 0),
               reasoning_output_tokens: Number(last.reasoningOutputTokens ?? 0),
             };
+            state.contextUsage = this.toContextUsage(
+              contextModel,
+              lastUsage,
+              params.tokenUsage.modelContextWindow,
+              last.totalTokens,
+            );
+            this.emitRunState(sessionId);
           }
           return;
         }
@@ -2750,6 +2760,7 @@ export class CodexRuntimeService
       // checkout switch. Revalidate ownership immediately before execution.
       await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
       if (signal.aborted || activeRun?.interruptRequested) return;
+      contextModel = state.selectedModel ?? this.codexDefaultModel;
       const turnStart = await this.appServer.request<CodexTurnStartResult>(
         'turn/start',
         {
@@ -3417,21 +3428,36 @@ export class CodexRuntimeService
     };
   }
 
-  private toContextUsage(model: string, usage: Usage): ClaudeContextUsage {
-    const inputTokens = usage.input_tokens + usage.cached_input_tokens;
-    const outputTokens = usage.output_tokens + usage.reasoning_output_tokens;
-    const totalTokens = inputTokens + outputTokens;
-    const maxTokens =
-      CODEX_MODEL_CONTEXT_WINDOWS[model] ?? DEFAULT_CODEX_CONTEXT_WINDOW;
+  private toContextUsage(
+    model: string,
+    usage: Usage,
+    maxTokens: number,
+    reportedTotal?: number,
+  ): ClaudeContextUsage | null {
+    // Cached input and reasoning output are subsets, already included in these totals.
+    const inputTokens = usage.input_tokens;
+    const outputTokens = usage.output_tokens;
+    const totalTokens = reportedTotal ?? inputTokens + outputTokens;
+    if (contextPercentage(totalTokens, maxTokens) === null) return null;
+    const effectiveWindow = maxTokens - CODEX_CONTEXT_BASELINE_TOKENS;
+    const used = Math.max(0, totalTokens - CODEX_CONTEXT_BASELINE_TOKENS);
+    const remaining = Math.max(0, effectiveWindow - used);
+    // Invert Codex's rounded remaining percentage, including its rounding at
+    // half-percent boundaries, so Elevenex and the CLI show the same occupancy.
+    const percentage =
+      effectiveWindow <= 0
+        ? 100
+        : 100 - Math.round((remaining / effectiveWindow) * 100);
     return {
       model,
       totalTokens,
       maxTokens,
-      percentage: Math.min(100, Math.round((totalTokens / maxTokens) * 100)),
+      percentage,
       inputTokens,
       outputTokens,
       cacheCreationInputTokens: 0,
       cacheReadInputTokens: usage.cached_input_tokens,
+      tokenBreakdownAvailable: true,
       memoryFiles: [],
       mcpTools: [],
     };

@@ -99,4 +99,93 @@ describe('Pi mission extension', () => {
     ]);
     expect(status.mock.calls[0][1]).toContain('offline');
   });
+  it('reports native context during coding sessions without enabling mission tools', async () => {
+    delete process.env.ELEVENEX_AGENT_TOKEN;
+    pi.registerTool.mockClear();
+    handlers.clear();
+    elevenexAgentExtension(pi);
+    const getContextUsage: jest.Mock = jest.fn().mockReturnValue({
+      tokens: 25_000,
+      contextWindow: 200_000,
+      percent: 12.5,
+    });
+    const ctx = {
+      ui: { setStatus: status },
+      model: { provider: 'anthropic', id: 'sonnet' },
+      getContextUsage,
+    };
+    await handlers.get('session_start')!({}, ctx);
+    expect(pi.registerTool).not.toHaveBeenCalled();
+    expect(pi.setActiveTools).not.toHaveBeenCalled();
+    expect(status).toHaveBeenLastCalledWith(
+      'elevenex_context_usage',
+      JSON.stringify({
+        model: 'anthropic/sonnet',
+        usage: { tokens: 25_000, contextWindow: 200_000, percent: 12.5 },
+        apiUsage: null,
+      }),
+    );
+    getContextUsage.mockReturnValue({
+      tokens: 60_000,
+      contextWindow: 200_000,
+      percent: 30,
+    });
+    await handlers.get('message_end')!({}, ctx);
+    expect(JSON.parse(status.mock.calls.at(-1)![1]).usage.tokens).toBe(60_000);
+    getContextUsage.mockReturnValue({
+      tokens: null,
+      contextWindow: 200_000,
+      percent: null,
+    });
+    await handlers.get('session_compact')!({}, ctx);
+    expect(JSON.parse(status.mock.calls.at(-1)![1]).usage.tokens).toBeNull();
+  });
+  it('throttles streamed reads and deduplicates unchanged context records', async () => {
+    const getContextUsage = jest.fn().mockReturnValue({
+      tokens: 25_000,
+      contextWindow: 200_000,
+      percent: 12.5,
+    });
+    const ctx = { ui: { setStatus: status }, getContextUsage };
+    await handlers.get('message_end')!({}, ctx);
+    await handlers.get('message_update')!({}, ctx);
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    await handlers.get('message_end')!({}, ctx);
+    expect(getContextUsage).toHaveBeenCalledTimes(2);
+    expect(status).toHaveBeenCalledTimes(1);
+  });
+  it('hydrates branch usage and publishes input/output/cache breakdowns from final responses', async () => {
+    delete process.env.ELEVENEX_AGENT_TOKEN;
+    handlers.clear();
+    elevenexAgentExtension(pi);
+    const oldUsage = {
+      input: 1_000,
+      output: 500,
+      cacheRead: 20_000,
+      cacheWrite: 3_000,
+    };
+    const ctx = {
+      ui: { setStatus: status },
+      getContextUsage: () => ({
+        tokens: 24_500,
+        contextWindow: 200_000,
+        percent: 12.25,
+      }),
+      sessionManager: {
+        getBranch: () => [
+          { type: 'message', message: { role: 'assistant', usage: oldUsage } },
+        ],
+      },
+    };
+    await handlers.get('session_start')!({}, ctx);
+    expect(JSON.parse(status.mock.calls.at(-1)![1]).apiUsage).toEqual(oldUsage);
+    const newUsage = { ...oldUsage, input: 2_000, output: 1_000 };
+    await handlers.get('message_end')!(
+      { message: { role: 'assistant', usage: newUsage } },
+      ctx,
+    );
+    expect(JSON.parse(status.mock.calls.at(-1)![1]).apiUsage).toEqual(newUsage);
+    await handlers.get('session_compact')!({}, ctx);
+    expect(JSON.parse(status.mock.calls.at(-1)![1]).apiUsage).toBeNull();
+  });
 });

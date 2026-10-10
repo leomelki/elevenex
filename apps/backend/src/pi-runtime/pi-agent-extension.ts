@@ -2,14 +2,46 @@ import { readFile } from 'fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
+interface PiUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+function responseUsage(message: unknown): PiUsage | null {
+  const record = message as { role?: string; usage?: PiUsage } | undefined;
+  const usage = record?.usage;
+  if (
+    record?.role !== 'assistant' ||
+    !usage ||
+    ![usage.input, usage.output, usage.cacheRead, usage.cacheWrite].every(
+      (value) => Number.isFinite(value) && value >= 0,
+    )
+  )
+    return null;
+  return {
+    input: usage.input,
+    output: usage.output,
+    cacheRead: usage.cacheRead,
+    cacheWrite: usage.cacheWrite,
+  };
+}
+
+interface PiContext {
+  ui: { setStatus(key: string, text: string): void };
+  model?: { provider: string; id: string };
+  sessionManager?: { getBranch(): { type: string; message?: unknown }[] };
+  getContextUsage?():
+    | { tokens: number | null; contextWindow: number; percent: number | null }
+    | undefined;
+}
+
 /** Minimal Pi extension contract, keeping the backend independent of Pi's npm package. */
 interface PiExtensionApi {
   on(
     event: string,
-    handler: (
-      event: unknown,
-      ctx: { ui: { setStatus(key: string, text: string): void } },
-    ) => Promise<unknown>,
+    handler: (event: unknown, ctx: PiContext) => Promise<unknown>,
   ): void;
   registerTool(tool: {
     name: string;
@@ -25,8 +57,58 @@ interface PiExtensionApi {
   setActiveTools(names: string[]): void;
 }
 
-/** Loaded only for Elevenex missions via --extension, never for coding sessions. */
+/** Native context telemetry for every session; mission tools only when explicitly configured. */
 export default function elevenexAgentExtension(pi: PiExtensionApi): void {
+  let lastSent: string | null = null;
+  let lastReadAt = 0;
+  let apiUsage: PiUsage | null = null;
+  for (const name of [
+    'session_start',
+    'session_switch',
+    'session_compact',
+    'model_select',
+    'agent_start',
+    'turn_start',
+    'tool_execution_start',
+    'message_start',
+    'message_update',
+    'message_end',
+    'tool_execution_end',
+    'agent_end',
+  ]) {
+    pi.on(name, async (event, ctx) => {
+      if (name === 'session_start' || name === 'session_switch') {
+        apiUsage = null;
+        // Hydrate only from the current branch, stopping at compaction.
+        const branch = ctx.sessionManager?.getBranch() ?? [];
+        for (let index = branch.length - 1; index >= 0; index--) {
+          if (branch[index].type === 'compaction') break;
+          apiUsage = responseUsage(branch[index].message);
+          if (apiUsage) break;
+        }
+      } else if (name === 'session_compact' || name === 'model_select') {
+        apiUsage = null;
+      } else if (name === 'message_end') {
+        apiUsage =
+          responseUsage((event as { message?: unknown }).message) ?? apiUsage;
+      }
+      // Stream updates can arrive for each character. Read at most once per
+      // 1.5s there; boundaries always publish, including the very first run.
+      const now = Date.now();
+      if (name === 'message_update' && now - lastReadAt < 1500) return;
+      lastReadAt = now;
+      const payload = JSON.stringify({
+        model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null,
+        usage: ctx.getContextUsage?.() ?? null,
+        apiUsage,
+      });
+      if (payload === lastSent) return;
+      lastSent = payload;
+      // RPC forwards status records on stdout (extension stdout itself is redirected).
+      ctx.ui.setStatus('elevenex_context_usage', payload);
+    });
+  }
+  if (!process.env.ELEVENEX_AGENT_TOKEN) return;
   let client: Client | null = null;
   let toolNames: string[] = [];
 

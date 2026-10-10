@@ -288,6 +288,25 @@ describe('ClaudeSessionRuntime', () => {
     await runtime.close();
   });
 
+  it('never starts a cold or exited query for live context telemetry', async () => {
+    const { runtime, queries } = createRuntime();
+    await expect(runtime.getContextUsage(false)).rejects.toThrow(
+      'not available',
+    );
+    await expect(runtime.supportedModels(false)).resolves.toEqual([]);
+    expect(query).not.toHaveBeenCalled();
+    await runtime.ensureStarted('prewarm');
+    await runtime.getContextUsage(false);
+    expect(queries).toHaveLength(1);
+    queries[0].close();
+    await flushAsync();
+    await expect(runtime.getContextUsage(false)).rejects.toThrow(
+      'not available',
+    );
+    expect(queries).toHaveLength(1);
+    await runtime.close();
+  });
+
   it('prewarms without submitting a prompt', async () => {
     const { runtime, queries, warmStates } = createRuntime();
 
