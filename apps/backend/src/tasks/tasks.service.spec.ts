@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { ConflictException, ValidationPipe } from '@nestjs/common';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { eq } from 'drizzle-orm';
@@ -27,6 +28,7 @@ import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { UserPtyManager } from '../user-terminal/user-pty-manager.service.js';
 import { ActionsService } from '../actions/actions.service.js';
 import { TasksService } from './tasks.service.js';
+import { TasksController } from './tasks.controller.js';
 import { TaskGitService, taskBranchSlug } from './task-git.service.js';
 import { TaskWorktreeAllocator } from './task-worktree-allocator.service.js';
 import { TaskSetup } from './task.types.js';
@@ -56,6 +58,7 @@ describe('Task lifecycle with real Git and migrations', () => {
   };
   let stopSession: jest.Mock;
   let reactivateRuntime: jest.Mock;
+  let assertWithinWorktreeLimit: jest.Mock;
 
   beforeEach(async () => {
     root = await realpath(await mkdtemp(join(tmpdir(), 'elevenex-tasks-')));
@@ -128,12 +131,13 @@ describe('Task lifecycle with real Git and migrations', () => {
     };
     stopSession = sessions.archiveAndStop;
     reactivateRuntime = sessions.reactivateRuntime;
+    assertWithinWorktreeLimit = jest.fn();
     const allocator = new TaskWorktreeAllocator(
       db,
       gitService,
       new WorktreesService(),
       {
-        assertWithinWorktreeLimit: jest.fn(),
+        assertWithinWorktreeLimit,
       } as unknown as WorktreePoolService,
       hooks as unknown as ClaudeHooksService,
       terminals as unknown as UserPtyManager,
@@ -180,6 +184,71 @@ describe('Task lifecycle with real Git and migrations', () => {
     });
     return settled(task.id);
   }
+
+  it.each([undefined, null])(
+    'preserves saved setup when a validated confirmation retry contains absent fields (%s)',
+    async (absent) => {
+      assertWithinWorktreeLimit.mockImplementation(async (_repo, confirmed) => {
+        if (!confirmed)
+          throw new ConflictException({
+            code: 'worktree_limit_reached',
+            message: 'Confirm to create another worktree.',
+          });
+      });
+      const task = await create('confirmed-task', {
+        environment: 'new',
+        useSavedRef: true,
+      });
+      expect(task.error).toMatchObject({ code: 'worktree_limit_reached' });
+      const saved = JSON.parse(task.taskConfig!);
+      expect(saved.resolvedCommit).toBeTruthy();
+      expect(await gitService.hasLocalBranch(repoPath, 'confirmed-task')).toBe(
+        false,
+      );
+
+      // Use the route's DTO and production validation settings: optional class
+      // fields become own properties even when the JSON body omits them.
+      const [, metatype] = Reflect.getMetadata(
+        'design:paramtypes',
+        TasksController.prototype,
+        'retry',
+      );
+      const patch = await new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }).transform(
+        {
+          confirmOverLimit: true,
+          useSavedRef: false,
+          branchName: absent,
+          mode: absent,
+        },
+        { type: 'body', metatype },
+      );
+      await new TasksController(service).retry(String(task.id), patch);
+      const ready = await settled(task.id);
+      expect(ready).toMatchObject({
+        taskState: 'ready',
+        taskBranch: 'confirmed-task',
+        startingCommit: saved.resolvedCommit,
+        error: null,
+      });
+      expect(JSON.parse(ready.taskConfig!)).toMatchObject({
+        branchName: saved.branchName,
+        mode: saved.mode,
+        baseRef: saved.baseRef,
+        environment: saved.environment,
+        confirmOverLimit: true,
+        useSavedRef: false,
+      });
+      expect(await gitService.status(ready.path)).toMatchObject({
+        branch: 'confirmed-task',
+        head: saved.resolvedCommit,
+      });
+      expect(ready.sessions).toHaveLength(1);
+    },
+  );
 
   it('persists manual task order, retains concurrent tasks, and appends new tasks after reordering', async () => {
     const [first, second, concurrent] = await db

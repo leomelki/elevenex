@@ -387,6 +387,11 @@ export class TasksService implements OnApplicationBootstrap {
   }
 
   async retry(id: number, patch: Partial<TaskSetup> = {}) {
+    // Validation creates own undefined DTO fields; @IsOptional also accepts
+    // null. Neither represents a setup change, so preserve the saved values.
+    patch = Object.fromEntries(
+      Object.entries(patch).filter(([, value]) => value != null),
+    );
     const task = await this.record(id);
     if (task.archivedAt)
       throw new ConflictException(
