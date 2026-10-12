@@ -325,10 +325,21 @@ export class TaskCreateComponent {
       })
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: (task) => {
+        next: async (task) => {
           this.operations.track(task);
-          void this.router.navigate(['/tasks', task.id]);
-          this.dialog.close();
+          // Keep the destination covered until Angular has activated it.
+          // Closing first reveals the previous session during lazy loading.
+          const session = task.taskState === 'ready'
+            ? [...task.sessions].reverse().find((item) => item.status !== 'archived')
+            : null;
+          const destination = session ? ['/sessions', session.id] : ['/tasks', task.id];
+          try {
+            if (await this.router.navigate(destination)) this.dialog.close();
+            else this.busy.set(false);
+          } catch (error) {
+            this.busy.set(false);
+            this.error.set(taskError(error));
+          }
         },
         error: (error) => {
           this.busy.set(false);

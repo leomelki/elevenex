@@ -1,5 +1,5 @@
 <div
-  class="cw-comp relative data-[disconnected=true]:pointer-events-none data-[disconnected=true]:opacity-60"
+  class="cw-comp relative"
   [attr.data-disconnected]="disconnected()"
 >
   @if (autocompleteOpen() && filtered().length) {
@@ -265,7 +265,7 @@
             size="12"
             class="animate-spin cw-comp__hint-icon mr-1 inline-block align-middle"
           />
-          Reconnecting…
+          {{ connectionLabel() }} You can keep writing.
         } @else if (autocompleteOpen() && filtered().length) {
           ↑↓ navigate · ↵ insert
         } @else if (blockedByPermission()) {
@@ -293,7 +293,6 @@
         aria-label="Message to agent"
         [placeholder]="placeholder()"
         [ngModel]="value()"
-        [disabled]="disconnected()"
         (input)="onInput($event)"
         (click)="refreshAc($any($event.target))"
         (keydown)="onKeydown($event)"
@@ -361,13 +360,12 @@
               class="cw-comp__btn rounded-lg cw-comp__btn--ghost"
               title="Attach image"
               aria-label="Attach image"
-              [zDisabled]="disconnected()"
               (click)="openFilePicker()"
             >
               <ng-icon name="lucidePaperclip" size="15" />
             </button>
           }
-          <app-dictation-button [target]="dictate" [disabled]="disconnected()" />
+          <app-dictation-button [target]="dictate" />
         </div>
         <div
           #actions

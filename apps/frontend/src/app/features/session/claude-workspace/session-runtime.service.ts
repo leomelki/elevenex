@@ -243,8 +243,11 @@ export class SessionRuntime {
   });
 
   readonly wsConnected = signal(false);
+  readonly hadConnection = signal(false);
+  private initialRuntimeRequest: Subscription | null = null;
 
-  private wsAutoReconnecting = false;
+  private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private wsReconnectAttempts = 0;
 
   private wsStateSub: Subscription | null = null;
   private transcriptEventsSub: Subscription | null = null;
@@ -339,15 +342,17 @@ export class SessionRuntime {
 
     // Re-hydrate the runtime WS after server reconnection to catch any missed events.
     // Guarded by hydrated() to skip the initial bootstrap — only fires on subsequent reconnects.
+    let lastReconnectCount = this.claudeStatusService.onReconnect();
     effect(() => {
       const reconnectCount = this.claudeStatusService.onReconnect();
-      if (reconnectCount > 0) {
+      if (reconnectCount > lastReconnectCount) {
         untracked(() => {
           if (this.hydrated()) {
             this.rehydrate();
           }
         });
       }
+      lastReconnectCount = reconnectCount;
     });
 
     // While a login card is on screen, poll the auth-status endpoint as a
@@ -478,9 +483,10 @@ export class SessionRuntime {
 
     this.bootstrapVersion += 1;
 
-    this.wsAutoReconnecting = false;
+    this.wsReconnectAttempts = 0;
 
     this.wsConnected.set(false);
+    this.hadConnection.set(false);
 
     if (this.flushRafId !== null) {
       cancelAnimationFrame(this.flushRafId);
@@ -721,6 +727,7 @@ export class SessionRuntime {
         this.notify({ type: 'restore-draft' });
       }
 
+      this.cancelInitialRuntimeLoad();
       const modelState = await firstValueFrom(
         this.agentApi.setSelectedModel(sessionId, preset.model, preset.provider),
       );
@@ -799,6 +806,7 @@ export class SessionRuntime {
   private async updateRuntimeSetting(request: () => Observable<ClaudeRuntimeState>): Promise<void> {
     if (this.isTranscriptReadOnly()) return;
     const version = this.bootstrapVersion;
+    this.cancelInitialRuntimeLoad();
     try {
       const state = await firstValueFrom(request());
       if (this.isCurrentConversation(version)) this.applyRuntimeState(state);
@@ -891,8 +899,18 @@ export class SessionRuntime {
     return this.terminalTranscriptMirror ? this.terminalTranscriptWs : this.ws;
   }
 
-  private disconnectTranscriptSocket(sessionId: number): void {
-    this.cancelInitialHistoryLoad();
+  private cancelInitialRuntimeLoad(): void {
+    this.initialRuntimeRequest?.unsubscribe();
+    this.initialRuntimeRequest = null;
+  }
+
+  private disconnectTranscriptSocket(sessionId: number, cancelInitialLoads = true): void {
+    if (this.wsReconnectTimer !== null) clearTimeout(this.wsReconnectTimer);
+    this.wsReconnectTimer = null;
+    if (cancelInitialLoads) {
+      this.cancelInitialHistoryLoad();
+      this.cancelInitialRuntimeLoad();
+    }
     this.transcriptEventsSub?.unsubscribe();
     this.transcriptEventsSub = null;
     this.wsStateSub?.unsubscribe();
@@ -909,7 +927,8 @@ export class SessionRuntime {
 
   private rehydrate(): void {
     const version = this.bootstrapVersion;
-    this.disconnectTranscriptSocket(this.sessionId);
+    // A socket retry must not cancel independent HTTP bootstrap requests.
+    this.disconnectTranscriptSocket(this.sessionId, false);
     this.transcriptEventsSub = this.activeTranscriptSocket()
       .connect(this.sessionId)
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -938,11 +957,24 @@ export class SessionRuntime {
       .subscribe((phase) => {
         if (phase === 'connected') {
           this.wsConnected.set(true);
-          this.wsAutoReconnecting = false;
-        } else if (phase === 'disconnected' && this.hydrated() && !this.wsAutoReconnecting) {
+          this.hadConnection.set(true);
+          this.wsReconnectAttempts = 0;
+          if (this.wsReconnectTimer !== null) clearTimeout(this.wsReconnectTimer);
+          this.wsReconnectTimer = null;
+        } else if (phase === 'disconnected') {
           this.wsConnected.set(false);
-          this.wsAutoReconnecting = true;
-          this.rehydrate();
+          if (this.wsReconnectTimer === null) {
+            // A failed handshake must not leave a new session stuck forever.
+            // Bound repeated attempts while the backend/tunnel is unavailable.
+            // Schedule even the first retry to avoid re-entering a synchronous
+            // connection-state subscription before it has been assigned.
+            const delay = 250 * 2 ** this.wsReconnectAttempts;
+            this.wsReconnectAttempts = Math.min(this.wsReconnectAttempts + 1, 4);
+            this.wsReconnectTimer = setTimeout(() => {
+              this.wsReconnectTimer = null;
+              if (!this.destroyRef.destroyed) this.rehydrate();
+            }, delay);
+          }
         } else if (phase === 'connecting') {
           this.wsConnected.set(false);
         }
@@ -971,6 +1003,17 @@ export class SessionRuntime {
     // Persisted messages do not need a live runtime or a WebSocket handshake.
     // Start this before optional context, provider and autocomplete requests.
     if (!this.readOnlyTranscript) {
+      // Settings do not need to wait for the WebSocket handshake. The socket
+      // remains authoritative once a snapshot/event arrives.
+      this.initialRuntimeRequest = this.api
+        .getRuntimeState(this.sessionId)
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: (state) => {
+            if (this.isCurrentConversation(version)) this.applyRuntimeState(state);
+          },
+          error: () => undefined, // Socket hydration remains the fallback.
+        });
       this.loadInitialHistory(version);
       this.notify({ type: 'load-context' });
       void this.loadProviders();
@@ -1096,6 +1139,7 @@ export class SessionRuntime {
     if (event.type !== 'message_delta' && event.type !== 'thinking_delta') this.flushDeltas();
     switch (event.type) {
       case 'session_snapshot':
+        this.cancelInitialRuntimeLoad();
         this.cancelInitialHistoryLoad();
         this.conversation.applyHistoryRefresh(event.payload.history);
         this.applyRuntimeState(event.payload);
@@ -1103,6 +1147,7 @@ export class SessionRuntime {
         this.loading.set(false);
         return;
       case 'runtime_snapshot':
+        this.cancelInitialRuntimeLoad();
         this.applyRuntimeState(event.payload);
         return;
       case 'history_snapshot':
@@ -1127,6 +1172,7 @@ export class SessionRuntime {
         void this.refreshAutocomplete().catch(() => undefined);
         return;
       case 'run_state':
+        this.cancelInitialRuntimeLoad();
         this.updatePendingPrompts(event.payload.pendingPrompts ?? []);
         this.conversation.apply(event);
         this.sessionState.set(event.payload.sessionState);

@@ -49,6 +49,24 @@ describe('TabService', () => {
   });
 
   describe('openTab', () => {
+    it('restores a background tab without changing the active or last opened session', () => {
+      service.openTab(mockSession(86));
+      service.openTab(mockSession(42), false);
+      expect(service.activeSessionId()).toBe(86);
+      expect(readLastOpenedSessionId()).toBe(86);
+      service.openTab(mockSession(42, 'Updated background tab'), false);
+      expect(service.activeSessionId()).toBe(86);
+      expect(readLastOpenedSessionId()).toBe(86);
+    });
+
+    it('preserves saved tab order when background requests finish out of order', () => {
+      service.openTab(mockSession(86));
+      service.openTab(mockSession(2), false, [1, 2]);
+      service.openTab(mockSession(1), false, [1, 2]);
+      expect(service.tabs().map(tab => tab.sessionId)).toEqual([1, 2, 86]);
+      expect(service.activeSessionId()).toBe(86);
+    });
+
     it('should open a tab with session data', () => {
       const session = mockSession(1, 'Test Session');
       service.openTab(session);

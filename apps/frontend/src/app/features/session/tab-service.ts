@@ -96,7 +96,7 @@ export class TabService {
   /**
    * Open a tab for a session. If already open, just select it.
    */
-  openTab(session: Session): void {
+  openTab(session: Session, select = true, restoredOrder?: readonly number[]): void {
     const existing = this._tabs().find(t => t.sessionId === session.id);
     if (existing) {
       this._tabs.update(tabs =>
@@ -117,8 +117,10 @@ export class TabService {
             : t,
         ),
       );
-      this._activeSessionId.set(session.id);
-      this.persistLastOpenedSession(session.id);
+      if (select) {
+        this._activeSessionId.set(session.id);
+        this.persistLastOpenedSession(session.id);
+      }
       this.persistState();
       return;
     }
@@ -144,9 +146,19 @@ export class TabService {
       isTemporary: session.isTemporary,
     };
 
-    this._tabs.update(tabs => [...tabs, newTab]);
-    this._activeSessionId.set(session.id);
-    this.persistLastOpenedSession(session.id);
+    this._tabs.update(tabs => {
+      const next = [...tabs, newTab];
+      if (!restoredOrder) return next;
+      const positions = new Map(restoredOrder.map((id, index) => [id, index]));
+      return next.sort((a, b) =>
+        (positions.get(a.sessionId) ?? restoredOrder.length) -
+        (positions.get(b.sessionId) ?? restoredOrder.length),
+      );
+    });
+    if (select) {
+      this._activeSessionId.set(session.id);
+      this.persistLastOpenedSession(session.id);
+    }
     this.persistState();
   }
 

@@ -144,6 +144,7 @@ export class ClaudeComposerComponent {
   readonly pendingPrompts = input<AgentPendingPrompt[]>([]);
   readonly queuePaused = input<boolean>(false);
   readonly disconnected = input<boolean>(false);
+  readonly connectionLabel = input<string>('Reconnecting…');
   readonly diffMentions = input<DiffSelectionMention[]>([]);
   readonly imageAttachments = model<ComposerImageAttachment[]>([]);
   // Count of backgrounded subagents/tasks still executing for this session.

@@ -7,16 +7,28 @@ import {
   SessionFork,
 } from '../models/session.model';
 import type { AgentProviderId } from '../models/agent-runtime.model';
+import { of, tap } from 'rxjs';
+import { getBackendOrigin } from '../runtime/runtime-config';
 
 @Injectable({ providedIn: 'root' })
 export class SessionsService {
   private http = inject(HttpClient);
+  private readonly createdSessions = new Map<number, {
+    session: Session;
+    createdAt: number;
+    origin: string;
+  }>();
 
   getByRepo(repoId: number) {
     return this.http.get<Session[]>(`/api/sessions/repo/${repoId}`);
   }
 
   getOne(id: number) {
+    const created = this.createdSessions.get(id);
+    this.createdSessions.delete(id);
+    // Consume once, only for the immediate creation-to-navigation handoff.
+    if (created && created.origin === getBackendOrigin() && Date.now() - created.createdAt < 10_000)
+      return of(created.session);
     return this.http.get<Session>(`/api/sessions/${id}`);
   }
 
@@ -33,7 +45,14 @@ export class SessionsService {
     name?: string;
     isTemporary?: boolean;
   }) {
-    return this.http.post<Session>('/api/sessions', data);
+    const origin = getBackendOrigin();
+    return this.http.post<Session>('/api/sessions', data).pipe(
+      tap((session) => {
+        if (this.createdSessions.size >= 20)
+          this.createdSessions.delete(this.createdSessions.keys().next().value!);
+        this.createdSessions.set(session.id, { session, createdAt: Date.now(), origin });
+      }),
+    );
   }
 
   update(id: number, data: { name?: string }) {

@@ -27,6 +27,7 @@ import { ClaudeRuntimeApiService } from '@/shared/services/claude-runtime-api.se
 import { NavigationService } from '@/shared/services/navigation.service';
 import { CommonModule } from '@angular/common';
 import {
+  afterRenderEffect,
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
@@ -207,10 +208,16 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
       readOnlyTranscript: this.readOnlyTranscript,
       terminalTranscriptMirror: this.terminalTranscriptMirror,
     });
+    afterRenderEffect(() => {
+      if (this.isVisible() && !this.hasStartedAgentRuntime() && !this.runtime.isTranscriptReadOnly())
+        this.composer()?.focusAtEnd();
+    });
     for (const source of [this.draft.focusRequested, this.actions.focusRequested])
       source
         .pipe(takeUntilDestroyed())
-        .subscribe(() => queueMicrotask(() => this.composer()?.focusAtEnd()));
+        .subscribe(() => queueMicrotask(() => {
+          if (this.isVisible()) this.composer()?.focusAtEnd();
+        }));
     this.runtime.events.pipe(takeUntilDestroyed()).subscribe((event) => {
       if (event.type === 'focus-composer') queueMicrotask(() => this.composer()?.focusAtEnd());
       if (event.type === 'complete' && this.mcpDrawerOpen()) void this.loadMcpSnapshot(true);

@@ -15,7 +15,7 @@ import { WorktreeContextService } from '@/shared/services/worktree-context.servi
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
 import { toast } from 'ngx-sonner';
-import { of, Subject } from 'rxjs';
+import { BehaviorSubject, of, Subject } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeWorkspaceComponent } from './claude-workspace.component';
 
@@ -304,7 +304,7 @@ describe('ClaudeWorkspaceComponent', () => {
           },
         ]),
       ),
-      getRuntimeState: vi.fn(() => of(runtimeState())),
+      getRuntimeState: vi.fn(() => of({ ...runtimeState(), claudeSessionId: null })),
       setSelectedModel: vi.fn(() => of(runtimeState())),
       setPermissionMode: vi.fn(() => of(runtimeState())),
       setPlanMode: vi.fn(() => of(runtimeState())),
@@ -541,16 +541,72 @@ describe('ClaudeWorkspaceComponent', () => {
   });
 
   it('keeps reconnect monitoring attached after consecutive reconnects', () => {
-    const connection = new Subject<'connected' | 'disconnected' | 'connecting'>();
-    wsMock.connectionState$.mockReturnValue(connection);
-    const fixture = createWorkspace();
-    fixture.detectChanges();
-    fixture.componentInstance.runtime.hydrated.set(true);
-    connection.next('disconnected');
-    expect(wsMock.connect).toHaveBeenCalledTimes(2);
-    connection.next('connected');
-    connection.next('disconnected');
-    expect(wsMock.connect).toHaveBeenCalledTimes(3);
+    vi.useFakeTimers();
+    try {
+      const connection = new Subject<'connected' | 'disconnected' | 'connecting'>();
+      wsMock.connectionState$.mockReturnValue(connection);
+      const fixture = createWorkspace();
+      fixture.detectChanges();
+      fixture.componentInstance.runtime.hydrated.set(true);
+      connection.next('disconnected');
+      vi.advanceTimersByTime(250);
+      expect(wsMock.connect).toHaveBeenCalledTimes(2);
+      connection.next('connected');
+      connection.next('disconnected');
+      vi.advanceTimersByTime(250);
+      expect(wsMock.connect).toHaveBeenCalledTimes(3);
+      fixture.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries failed startup handshakes and cancels retries when the workspace closes', () => {
+    vi.useFakeTimers();
+    try {
+      const connection = new Subject<'connected' | 'disconnected' | 'connecting'>();
+      wsMock.connectionState$.mockReturnValue(connection);
+      const fixture = createWorkspace();
+      fixture.detectChanges();
+      connection.next('disconnected');
+      vi.advanceTimersByTime(250);
+      expect(wsMock.connect).toHaveBeenCalledTimes(2);
+      connection.next('disconnected');
+      vi.advanceTimersByTime(500);
+      expect(wsMock.connect).toHaveBeenCalledTimes(3);
+      connection.next('disconnected');
+      fixture.destroy();
+      vi.advanceTimersByTime(4_000);
+      expect(wsMock.connect).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds retries from synchronous connection state and releases every subscription', () => {
+    vi.useFakeTimers();
+    try {
+      const connection = new BehaviorSubject<'connected' | 'disconnected' | 'connecting'>('disconnected');
+      wsMock.connectionState$.mockReturnValue(connection);
+      const fixture = createWorkspace();
+      fixture.detectChanges();
+      expect(wsMock.connect).toHaveBeenCalledTimes(1);
+      for (const delay of [250, 500, 1_000, 2_000, 4_000, 4_000]) {
+        const attempts = wsMock.connect.mock.calls.length;
+        connection.next('disconnected');
+        vi.advanceTimersByTime(delay - 1);
+        expect(wsMock.connect).toHaveBeenCalledTimes(attempts);
+        vi.advanceTimersByTime(1);
+        expect(wsMock.connect).toHaveBeenCalledTimes(attempts + 1);
+      }
+      connection.next('connected');
+      vi.advanceTimersByTime(4_000);
+      expect(wsMock.connect).toHaveBeenCalledTimes(7);
+      fixture.destroy();
+      expect(connection.observed).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('ignores a settings response from a previous conversation', async () => {
@@ -675,6 +731,66 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(fixture.componentInstance.runtime.wsConnected()).toBe(false);
     expect(fixture.nativeElement.querySelector('cw-transcript-loading-skeleton')).toBeNull();
     expect(fixture.nativeElement.textContent).toContain('Loaded without the socket');
+    expect(fixture.nativeElement.querySelector('.cw-comp__ta').disabled).toBe(false);
+    expect(fixture.nativeElement.textContent).toContain('Connecting… You can keep writing.');
+  });
+
+  it('loads model settings before the socket connects and cancels stale HTTP settings', () => {
+    const state$ = new Subject<ClaudeRuntimeState>();
+    const events$ = new Subject<ClaudeRuntimeEvent>();
+    apiMock.getRuntimeState.mockReturnValue(state$);
+    wsMock.connect.mockReturnValue(events$);
+    wsMock.connectionState$.mockReturnValue(of('connecting'));
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    state$.next({ ...runtimeState(), selectedModel: 'sonnet' });
+    expect(fixture.componentInstance.runtime.selectedModel()).toBe('sonnet');
+    expect(fixture.componentInstance.runtime.wsConnected()).toBe(false);
+    events$.next({ type: 'runtime_snapshot', payload: { ...runtimeState(), selectedModel: 'opus' } });
+    expect(state$.observed).toBe(false);
+    state$.next({ ...runtimeState(), selectedModel: 'sonnet' });
+    expect(fixture.componentInstance.runtime.selectedModel()).toBe('opus');
+  });
+
+  it('keeps HTTP history and settings loading through failed startup handshakes', () => {
+    vi.useFakeTimers();
+    try {
+      const history$ = new Subject<ClaudeTranscriptItem[]>();
+      const state$ = new Subject<ClaudeRuntimeState>();
+      const connection = new Subject<'connected' | 'disconnected' | 'connecting'>();
+      vi.spyOn(TestBed.inject(AgentRuntimeApiService), 'getHistory').mockReturnValue(history$);
+      apiMock.getRuntimeState.mockReturnValue(state$);
+      wsMock.connectionState$.mockReturnValue(connection);
+      const fixture = createWorkspace();
+      fixture.detectChanges();
+      connection.next('disconnected');
+      vi.advanceTimersByTime(250);
+      expect(history$.observed).toBe(true);
+      expect(state$.observed).toBe(true);
+      state$.next({ ...runtimeState(), selectedModel: 'sonnet' });
+      history$.next([]);
+      expect(fixture.componentInstance.runtime.selectedModel()).toBe('sonnet');
+      expect(fixture.componentInstance.runtime.hydrated()).toBe(true);
+      fixture.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels stale startup settings before applying a model preset', async () => {
+    const state$ = new Subject<ClaudeRuntimeState>();
+    apiMock.getRuntimeState.mockReturnValue(state$);
+    const api = TestBed.inject(AgentRuntimeApiService);
+    vi.spyOn(api, 'setSelectedModel').mockReturnValue(of({ ...runtimeState(), selectedModel: 'sonnet' }));
+    vi.spyOn(api, 'setReasoningEffort').mockReturnValue(of({ ...runtimeState(), selectedModel: 'sonnet', reasoningEffort: 'high' }));
+    const fixture = createWorkspace();
+    fixture.detectChanges();
+    await fixture.componentInstance.runtime.applyModelPreset({
+      id: 'test', name: 'Test', provider: 'claude', model: 'sonnet', reasoningEffort: 'high',
+    });
+    state$.next({ ...runtimeState(), selectedModel: 'opus' });
+    expect(fixture.componentInstance.runtime.selectedModel()).toBe('sonnet');
+    expect(state$.observed).toBe(false);
   });
 
   it('cancels an initial HTTP history read when a socket snapshot wins the race', () => {

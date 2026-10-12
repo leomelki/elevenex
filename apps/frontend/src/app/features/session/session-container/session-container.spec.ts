@@ -1,9 +1,9 @@
 import { windowScopedKey } from '@/shared/services/scoped-storage';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { provideRouter, Router } from '@angular/router';
 import { Component, signal } from '@angular/core';
-import { Subject, of } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { SessionContainer } from './session-container';
 import { TabService, type Tab } from '../tab-service';
 import { SessionsService } from '../../../shared/services/sessions.service';
@@ -73,7 +73,7 @@ describe('SessionContainer modal browser gating', () => {
     activeSessionId: activeSessionIdSignal.asReadonly(),
     hasTabs: () => tabsSignal().length > 0,
     activeTab: () => tabsSignal().find(tab => tab.sessionId === activeSessionIdSignal()) ?? null,
-    openTab: vi.fn((session: Session) => {
+    openTab: vi.fn((session: Session, select = true) => {
       const tab: Tab = {
         sessionId: session.id,
         sessionName: session.name ?? `Session ${session.id}`,
@@ -95,7 +95,7 @@ describe('SessionContainer modal browser gating', () => {
         isTemporary: session.isTemporary,
       };
       tabsSignal.set([...tabsSignal().filter(current => current.sessionId !== session.id), tab]);
-      activeSessionIdSignal.set(session.id);
+      if (select) activeSessionIdSignal.set(session.id);
     }),
     updateTabStatus: vi.fn(),
     updateTabCompletion: vi.fn(),
@@ -112,7 +112,7 @@ describe('SessionContainer modal browser gating', () => {
   };
 
   const sessionsServiceMock = {
-    getOne: vi.fn(() => of(null)),
+    getOne: vi.fn((_id: number) => of(null)),
     markReviewed: vi.fn(() => of(null)),
     delete: vi.fn(() => of({})),
   };
@@ -642,6 +642,86 @@ describe('SessionContainer modal browser gating', () => {
     });
   });
 
+  it('opens the requested session without waiting for settings or a slow saved tab', () => {
+    appSettingsServiceMock.load.mockReturnValue(new Promise(() => undefined));
+    const slow = new Subject<Session>();
+    const requested = new Subject<Session>();
+    sessionsServiceMock.getOne.mockImplementation((id: number) => (id === 43 ? requested : slow) as any);
+    tabServiceMock.getSavedState.mockReturnValue({ sessionIds: [42, 43], activeSessionId: 43 } as any);
+    tabsSignal.set([]);
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.openingSessionId()).toBe(43);
+    requested.next(makeSession({ id: 43 }));
+    expect(activeSessionIdSignal()).toBe(43);
+    expect(fixture.componentInstance.openingSessionId()).toBeNull();
+    slow.next(makeSession());
+    expect(tabServiceMock.openTab).toHaveBeenLastCalledWith(makeSession(), false, [42, 43]);
+    expect(activeSessionIdSignal()).toBe(43);
+  });
+
+  it('ignores a session response after a newer session was requested', () => {
+    const first = new Subject<Session>();
+    const second = new Subject<Session>();
+    sessionsServiceMock.getOne.mockImplementation((id: number) => (id === 43 ? first : second) as any);
+    const component = TestBed.createComponent(SessionContainer).componentInstance;
+    (component as any).loadAndOpenSession(43);
+    (component as any).loadAndOpenSession(44);
+    expect(first.observed).toBe(false);
+    second.next(makeSession({ id: 44 }));
+    first.next(makeSession({ id: 43 }));
+    expect(activeSessionIdSignal()).toBe(44);
+  });
+
+  it('cancels an older request when rapidly returning to the same session', () => {
+    const first = new Subject<Session>();
+    const second = new Subject<Session>();
+    const latest = new Subject<Session>();
+    sessionsServiceMock.getOne
+      .mockReturnValueOnce(first as any)
+      .mockReturnValueOnce(second as any)
+      .mockReturnValueOnce(latest as any);
+    const component = TestBed.createComponent(SessionContainer).componentInstance;
+    (component as any).loadAndOpenSession(43);
+    (component as any).loadAndOpenSession(44);
+    (component as any).loadAndOpenSession(43);
+    expect(first.observed).toBe(false);
+    expect(second.observed).toBe(false);
+    first.next(makeSession({ id: 43, name: 'Stale name' }));
+    expect(component.openingSessionId()).toBe(43);
+    latest.next(makeSession({ id: 43, name: 'Current name' }));
+    expect(tabServiceMock.openTab).toHaveBeenCalledWith(makeSession({ id: 43, name: 'Current name' }), true);
+  });
+
+  it('preserves saved tab order and restores the selected session route when its response is last', () => {
+    const requested = new Subject<Session>();
+    const background = new Subject<Session>();
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+    sessionsServiceMock.getOne.mockImplementation((id) => (id === 43 ? requested : background) as any);
+    tabServiceMock.getSavedState.mockReturnValue({ sessionIds: [43, 42], activeSessionId: 43 } as any);
+    tabsSignal.set([]);
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+    background.next(makeSession());
+    requested.next(makeSession({ id: 43 }));
+    expect(tabServiceMock.openTab).toHaveBeenLastCalledWith(makeSession({ id: 43 }), true, [43, 42]);
+    expect(navigate).toHaveBeenCalledWith(['/sessions', 43], { replaceUrl: true });
+  });
+
+  it('restores another saved tab when the saved selection was deleted', () => {
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+    sessionsServiceMock.getOne.mockImplementation((id) => (
+      id === 43 ? throwError(() => ({ status: 404 })) : of(makeSession())
+    ) as any);
+    tabServiceMock.getSavedState.mockReturnValue({ sessionIds: [43, 42], activeSessionId: 43 } as any);
+    tabsSignal.set([]);
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+    expect(activeSessionIdSignal()).toBe(42);
+    expect(navigate).toHaveBeenCalledWith(['/sessions', 42], { replaceUrl: true });
+    expect(navigate).not.toHaveBeenCalledWith(['/projects']);
+  });
+
   it('clears an unreviewed completion after restoring saved tabs', async () => {
     const completedSession = makeSession({
       hasUnreviewedCompletion: true,
@@ -660,8 +740,7 @@ describe('SessionContainer modal browser gating', () => {
     await Promise.resolve();
     fixture.detectChanges();
 
-    expect(tabServiceMock.openTab).toHaveBeenCalledWith(completedSession);
-    expect(tabServiceMock.selectTab).toHaveBeenCalledWith(42);
+    expect(tabServiceMock.openTab).toHaveBeenCalledWith(completedSession, true, [42]);
     expect(sessionsServiceMock.markReviewed).toHaveBeenCalledWith(42);
     expect(tabServiceMock.updateTabCompletion).toHaveBeenCalledWith(42, {
       hasUnreviewedCompletion: false,

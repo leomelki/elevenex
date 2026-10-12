@@ -115,6 +115,14 @@ describe('SessionsService', () => {
     sqliteConn.close();
   });
 
+  it('returns complete opening metadata when creating a session', async () => {
+    const session = await service.create({
+      repoId, branchName: 'feature', worktreePath: '/tmp/test-repo',
+    });
+    expect(session.projectId).toBe(projectId);
+    expect(session).toEqual(await service.findOne(session.id));
+  });
+
   it('reactivates the provider when restarting an ordinarily stopped session', async () => {
     const session = await service.create({
       repoId,

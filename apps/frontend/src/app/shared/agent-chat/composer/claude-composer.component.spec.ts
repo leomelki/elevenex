@@ -119,6 +119,30 @@ describe('ClaudeComposerComponent', () => {
     expect(selected).toHaveBeenCalledExactlyOnceWith('correction');
   });
 
+  it('keeps drafting and attachments available while connecting without sending', async () => {
+    await TestBed.configureTestingModule({ imports: [ClaudeComposerComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('disconnected', true);
+    fixture.componentRef.setInput('connectionLabel', 'Connecting…');
+    fixture.detectChanges();
+    const textarea = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.disabled).toBe(false);
+    textarea.value = 'Start with the API';
+    textarea.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(fixture.componentInstance.value()).toBe('Start with the API');
+    expect(fixture.nativeElement.textContent).toContain('Connecting… You can keep writing.');
+    expect(fixture.nativeElement.querySelector('[aria-label="Attach image"]').disabled).toBe(false);
+    const send = vi.fn();
+    fixture.componentInstance.send.subscribe(send);
+    fixture.componentInstance.submit();
+    expect(send).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('disconnected', false);
+    fixture.detectChanges();
+    fixture.componentInstance.submit();
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it('resizes wrapped drafts when the pane width changes and stops observing on destroy', async () => {
     let notifyResize!: ResizeObserverCallback;
     const observe = vi.fn();

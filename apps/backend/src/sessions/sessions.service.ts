@@ -139,7 +139,9 @@ export class SessionsService extends EventEmitter {
       })
       .returning();
 
-    return this.withInferredActiveAgentProvider(rows[0]);
+    // Return the same navigation metadata as GET /sessions/:id so the client
+    // can open this newly created session without another round trip.
+    return this.findOne(rows[0].id);
   }
 
   private async resolveSessionWorkspace(dto: {
