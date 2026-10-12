@@ -1,5 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { signal, WritableSignal } from '@angular/core';
+import { CdkVirtualScrollViewport } from '@angular/cdk/scrolling';
+import { By } from '@angular/platform-browser';
 import { of, Subject } from 'rxjs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -535,6 +537,39 @@ describe('ChangeReviewPanelComponent', () => {
     expect(windowCalls.some((call) => call.path === 'src/first.ts')).toBe(true);
     expect(windowCalls.some((call) => call.path === 'src/second.ts')).toBe(false);
   });
+
+  it.each([
+    { sidebar: 'expanded' as const, itemSize: 58 },
+    { sidebar: 'collapsed' as const, itemSize: 22 },
+  ])(
+    'prepares offscreen files for fast scrolling in the $sidebar sidebar',
+    async ({ sidebar, itemSize }) => {
+      fixture.componentInstance.sidebarPref.set(sidebar);
+      await flushSummary(
+        summary(Array.from({ length: 5_000 }, (_, index) => file(`src/file-${index}.ts`))),
+      );
+      const viewport = fixture.debugElement.query(By.directive(CdkVirtualScrollViewport))
+        .componentInstance as CdkVirtualScrollViewport;
+      const element = viewport.elementRef.nativeElement;
+      setViewport(element, 600);
+      viewport.checkViewportSize();
+      await flush();
+      fixture.detectChanges();
+
+      // A full-screen scroll is already covered before the next render runs.
+      expect(viewport.getRenderedRange().end * itemSize).toBeGreaterThanOrEqual(1_200);
+
+      setViewport(element, 600, 20_000);
+      viewport.checkViewportSize();
+      await flush();
+      fixture.detectChanges();
+      const range = viewport.getRenderedRange();
+      expect(range.start * itemSize).toBeLessThanOrEqual(20_000 - 600);
+      expect(range.end * itemSize).toBeGreaterThanOrEqual(20_000 + 600 + 600);
+      expect(element.querySelectorAll('button').length).toBe(range.end - range.start);
+      expect(range.end - range.start).toBeLessThan(300);
+    },
+  );
 
   it('refreshes both virtual scrollers when the panel container resizes', async () => {
     const files = [file('src/a.ts'), file('src/b.ts')];
