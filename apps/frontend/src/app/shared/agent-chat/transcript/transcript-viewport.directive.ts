@@ -5,6 +5,7 @@ import { parseTaskNotifications } from '@/shared/utils/task-notification';
 import {
   Directive,
   ElementRef,
+  DestroyRef,
   afterRenderEffect,
   computed,
   effect,
@@ -25,6 +26,14 @@ export class TranscriptViewportDirective {
   readonly sessionKey = input<number | string | null>(null);
   readonly pendingReply = input(false);
   readonly runPhase = input<string>('idle');
+  readonly scrollMemory = input<Map<string, { top: number; pinned: boolean }> | null>(null);
+  readonly restoreReady = input(true);
+  readonly hasNewActivity = signal(false);
+  private currentKey: string | null = null;
+  private pendingRestore: { top: number; pinned: boolean } | null = null;
+  private lastTail = '';
+  private lastFirst = '';
+  private lastHeight = 0;
 
   private shouldAutoScrollTranscript = true;
 
@@ -73,26 +82,69 @@ export class TranscriptViewportDirective {
 
   private userPromptElements: HTMLElement[] = [];
   constructor() {
+    inject(DestroyRef).onDestroy(() => this.saveScroll());
     afterRenderEffect(() => {
-      this.items();
+      const items = this.items();
       this.runPhase();
       this.pendingReply();
+      const el = this.element.nativeElement;
+      const tail = items.length ? `${items.at(-1)!.id}:${items.at(-1)!.content?.length ?? 0}` : '';
+      const first = items[0]?.id ?? '';
+      if (this.restoreReady() && this.pendingRestore) {
+        el.scrollTop = this.pendingRestore.top;
+        this.shouldAutoScrollTranscript = this.pendingRestore.pinned;
+        this.pendingRestore = null;
+      } else if (
+        !this.shouldAutoScrollTranscript &&
+        this.lastFirst &&
+        first !== this.lastFirst &&
+        tail === this.lastTail
+      ) {
+        el.scrollTop += Math.max(0, el.scrollHeight - this.lastHeight);
+      }
+      if (!this.shouldAutoScrollTranscript && this.lastTail && tail !== this.lastTail)
+        this.hasNewActivity.set(true);
       this.scrollTranscriptToBottomIfPinned();
       this.refreshUserPromptElements();
       this.updateContextualPrompt();
+      this.lastTail = tail;
+      this.lastFirst = first;
+      this.lastHeight = el.scrollHeight;
     });
     effect(() => {
-      this.sessionKey();
-      untracked(() => this.reset());
+      const key = this.sessionKey();
+      const memory = this.scrollMemory();
+      untracked(() => {
+        this.saveScroll();
+        this.currentKey = key === null ? null : String(key);
+        this.reset();
+        this.pendingRestore = this.currentKey ? (memory?.get(this.currentKey) ?? null) : null;
+        if (this.pendingRestore) this.shouldAutoScrollTranscript = this.pendingRestore.pinned;
+      });
     });
+  }
+  private saveScroll(): void {
+    const memory = this.scrollMemory();
+    if (!memory || !this.currentKey) return;
+    memory.delete(this.currentKey);
+    memory.set(this.currentKey, {
+      top: this.element.nativeElement.scrollTop,
+      pinned: this.shouldAutoScrollTranscript,
+    });
+    while (memory.size > 32) memory.delete(memory.keys().next().value!);
   }
   pinToBottom(): void {
     this.shouldAutoScrollTranscript = true;
+    this.hasNewActivity.set(false);
     this.scrollToBottom();
   }
 
   reset(): void {
     this.shouldAutoScrollTranscript = true;
+    this.hasNewActivity.set(false);
+    this.lastTail = '';
+    this.lastFirst = '';
+    this.lastHeight = 0;
 
     this.userPromptElements = [];
 
@@ -105,6 +157,7 @@ export class TranscriptViewportDirective {
     const el = this.element.nativeElement;
     if (!el) return;
     this.shouldAutoScrollTranscript = this.isTranscriptScrolledToBottom(el);
+    if (this.shouldAutoScrollTranscript) this.hasNewActivity.set(false);
     this.updateContextualPrompt();
   }
 

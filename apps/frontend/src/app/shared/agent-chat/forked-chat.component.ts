@@ -1,3 +1,4 @@
+import { mergeAgentHistory, boundAgentHistories } from './activity/agent-history-cache';
 import {
   ClaudeAgentInspectorComponent,
   type ClaudeSubagentHistoryState,
@@ -374,8 +375,11 @@ export class ForkedChatComponent {
         ...state,
         [agentId]: {
           loading: false,
-          data,
-          error: data.transcriptAvailable ? null : data.transcriptError || null,
+          data: mergeAgentHistory(current?.data ?? null, data),
+          error:
+            data.transcriptAvailable || data.transcriptState === 'starting'
+              ? null
+              : data.transcriptError || null,
         },
       }));
     } catch (error) {

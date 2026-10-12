@@ -15,6 +15,7 @@ import { randomUUID } from 'crypto';
 import {
   access,
   copyFile,
+  cp,
   mkdir,
   readdir,
   readFile,
@@ -30,6 +31,8 @@ import { basename, dirname, join, relative, resolve } from 'path';
 import { eq } from 'drizzle-orm';
 import {
   getSubagentMessages,
+  listSubagents,
+  type SDKBackgroundTasksChangedMessage,
   getSessionMessages,
   forkSession,
   query,
@@ -150,6 +153,15 @@ import {
   ClaudeToolInteractionKind,
   ClaudeToolInteractionSummary,
 } from './claude-runtime.types.js';
+import { ClaudeChildTranscriptStore } from './claude-subagent-history.js';
+import {
+  claudeVersionAtLeast,
+  isLiveClaudeTask,
+  mergeClaudeTask,
+  mergeClaudeSubagent,
+  retainClaudeTasks,
+  taskSubagent,
+} from './claude-subagents.js';
 import { ClaudeSessionRuntime } from './claude-session-runtime.js';
 import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
 import { resolveAgentStartupSelection } from '../agent-runtime/agent-model-defaults.js';
@@ -181,6 +193,7 @@ type HistoryMessage = {
   message: SessionMessage['message'];
   timestamp?: string;
   parent_tool_use_id?: string | null;
+  tool_use_result?: unknown;
 };
 
 interface ActivePermissionRequest {
@@ -194,6 +207,14 @@ interface ActivePermissionBatch {
   decision?: PermissionDecision;
   primaryRequestId?: string;
 }
+
+type PermissionOwner = Pick<
+  ActiveRunState,
+  | 'permissionRequests'
+  | 'permissionRequestOrder'
+  | 'permissionBatchesByToolUseId'
+  | 'interruptRequested'
+>;
 
 interface ActiveUserInputRequest {
   request: ClaudeUserInputRequest;
@@ -302,8 +323,8 @@ interface RuntimeState {
   sessionState: ClaudeSessionExecutionState;
   canInterrupt: boolean;
   // Work still executing in the background. Single source of truth for "is this
-  // session busy in the background"; swept for staleness on every read so a
-  // dropped SubagentStop hook or a killed runtime can never pin it forever.
+  // session busy in the background". Native membership and process closure
+  // keep this independent of the parent turn and display-history bounds.
   backgroundWork: ClaudeBackgroundWorkItem[];
   // Wall-clock of the last time an item was retired from backgroundWork via
   // clearBackgroundWork (a SubagentStop hook or a terminal task_updated).
@@ -312,11 +333,6 @@ interface RuntimeState {
   // arriving shortly after this timestamp as the matching resume report even
   // though backgroundWork itself is already empty by then.
   lastBackgroundWorkFinishedAtMs: number | null;
-  // Wall-clock of the last SDK message seen while a background run was active.
-  // Drives the stall watchdog that returns the session to idle if the
-  // autonomous resume dies without ever producing a result message.
-  backgroundRunLastActivityMs: number | null;
-  backgroundRunStallTimer: ReturnType<typeof setTimeout> | null;
   // toolUseIds of `Agent` tool calls whose input requested run_in_background,
   // captured when the assistant message that made the call arrives — before
   // the matching task_started fires. The SDK's own is_backgrounded flag only
@@ -325,6 +341,11 @@ interface RuntimeState {
   // set in handleTaskStartedMessage closes that window. Entries are removed
   // as soon as they are consumed.
   pendingBackgroundAgentToolUses: Set<string>;
+  backgroundSetAuthoritative: boolean;
+  agentAssignments: Map<string, Record<string, unknown>>;
+  permissionRequests: Map<string, ActivePermissionRequest>;
+  permissionRequestOrder: string[];
+  userInputRequests: Map<string, ActiveUserInputRequest>;
   // Worktree path of the last runtime built for this session.
   worktreePath: string | null;
   pendingPermissionRequest: ClaudePermissionRequest | null;
@@ -502,10 +523,39 @@ const askOnDestructiveElevenexTool: HookCallback = (input) =>
       : {},
   );
 const MAX_RECENT_NOTIFICATIONS = 25;
+/** Native operator children share the orchestrator's mandate, not a coding role. */
+const constrainOperatorChild: HookCallback = async (input) => {
+  if (input.hook_event_name !== 'PreToolUse' || !input.agent_id) return {};
+  if (
+    ![
+      'Bash',
+      'PowerShell',
+      'Read',
+      'Grep',
+      'Glob',
+      'LSP',
+      'Edit',
+      'MultiEdit',
+      'Write',
+      'NotebookEdit',
+      'EnterWorktree',
+      'ExitWorktree',
+    ].includes(input.tool_name)
+  )
+    return {};
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason:
+        'This is an Elevenex operator. Use Elevenex tools for orchestration and create an Elevenex coding session for application work.',
+    },
+  };
+};
+
 const MAX_RECENT_HOOKS = 50;
 const MAX_RECENT_HOOK_EVENTS = 50;
 const MAX_RECENT_TASK_LIFECYCLE = 50;
-const MAX_RECENT_SUBAGENTS = 25;
 const CLAUDE_PREWARM_IDLE_SHUTDOWN_MS = 90_000;
 const CLAUDE_POST_TURN_IDLE_SHUTDOWN_MS = 5 * 60_000;
 const CLAUDE_PREWARM_COOLDOWN_MS = 30_000;
@@ -519,7 +569,15 @@ export class ClaudeRuntimeService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger('ClaudeRuntimeService');
-  private readonly transcriptHistoryCache = new TranscriptFileCache<ClaudeTranscriptItem[]>();
+  private readonly transcriptHistoryCache = new TranscriptFileCache<
+    ClaudeTranscriptItem[]
+  >();
+  private readonly taskControls = new Map<string, Promise<void>>();
+  private readonly childTranscripts = new ClaudeChildTranscriptStore();
+  private readonly childDiscovery = new Map<
+    number,
+    { session: string; at: number; promise: Promise<void> }
+  >();
   private readonly transcriptPaths = new Map<string, string>();
   private readonly activeRuns = new Map<number, ActiveRunState>();
   private readonly sessionRuntimes = new Map<number, ClaudeSessionRuntime>();
@@ -658,6 +716,8 @@ export class ClaudeRuntimeService
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
 
+    await this.recoverSubagents(sessionId, session, state);
+
     // No live Claude Code process for this session yet (e.g. before the
     // first prompt is sent): fall back to the globally cached model list
     // instead of the static defaults baked into this service.
@@ -755,65 +815,348 @@ export class ClaudeRuntimeService
     };
   }
 
+  private async recoverSubagents(
+    sessionId: number,
+    session: AgentRuntimeSession,
+    state: RuntimeState,
+  ): Promise<void> {
+    const nativeSession = session.claudeSessionId;
+    if (!nativeSession || nativeSession === '-1') return;
+    const previous = this.childDiscovery.get(sessionId);
+    if (previous?.session === nativeSession && Date.now() - previous.at < 5000)
+      return previous.promise;
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
+    const promise = (async () => {
+      const ids = await listSubagents(nativeSession, {
+        dir: session.transcriptWorktreePath ?? session.worktreePath,
+      });
+      if (
+        this.runtimeStates.get(sessionId) !== state ||
+        generation !== (this.sessionGenerations.get(sessionId) ?? 0)
+      )
+        return;
+      if (!ids.length) return;
+      const history = await this.getHistory(sessionId);
+      const calls = new Map(
+        history
+          .filter((item) => item.kind === 'tool_use')
+          .map((item) => [item.toolUseId, item]),
+      );
+      const saved = new Map<
+        string,
+        { call: ClaudeTranscriptItem | undefined; result: ClaudeTranscriptItem }
+      >();
+      for (const result of history) {
+        if (result.kind !== 'tool_result') continue;
+        const match = result.content?.match(/agentId:\s*([\w-]+)/);
+        if (match)
+          saved.set(match[1], { call: calls.get(result.toolUseId), result });
+      }
+      if (
+        this.runtimeStates.get(sessionId) !== state ||
+        generation !== (this.sessionGenerations.get(sessionId) ?? 0)
+      )
+        return;
+      for (const id of ids) {
+        if (
+          !/^[\w-]{1,256}$/.test(id) ||
+          state.subagents.some((agent) => agent.agentId === id)
+        )
+          continue;
+        const entry = saved.get(id);
+        const input = entry?.call?.providerToolInput ?? entry?.call?.toolInput;
+        const data =
+          input && typeof input === 'object'
+            ? (input as Record<string, unknown>)
+            : {};
+        this.publishSubagent(sessionId, {
+          agentId: id,
+          agentType:
+            typeof data.subagent_type === 'string'
+              ? data.subagent_type
+              : 'agent',
+          displayName:
+            typeof data.name === 'string'
+              ? data.name
+              : typeof data.description === 'string'
+                ? data.description
+                : undefined,
+          prompt: typeof data.prompt === 'string' ? data.prompt : undefined,
+          model: typeof data.model === 'string' ? data.model : undefined,
+          parentToolUseId: entry?.call?.toolUseId,
+          status: 'stopped',
+          executionStatus: entry
+            ? entry.result.isError
+              ? 'error'
+              : /async agent|running in (?:the )?background|still running/i.test(
+                    entry.result.content ?? '',
+                  ) ||
+                  (
+                    entry.result.providerToolResult as
+                      | { isAsync?: boolean }
+                      | undefined
+                  )?.isAsync
+                ? 'unavailable'
+                : 'completed'
+            : 'unavailable',
+          startedAt: entry?.call?.timestamp,
+          timestamp: entry?.result.timestamp ?? new Date(0).toISOString(),
+        });
+      }
+    })().catch((error) =>
+      this.logger.debug(
+        `Claude child discovery session=${sessionId}: ${String(error)}`,
+      ),
+    );
+    this.childDiscovery.set(sessionId, {
+      session: nativeSession,
+      at: Date.now(),
+      promise,
+    });
+    while (this.childDiscovery.size > 64)
+      this.childDiscovery.delete(this.childDiscovery.keys().next().value!);
+    return promise;
+  }
+
+  async getSavedSubagents(sessionId: number): Promise<ClaudeSubagentState[]> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    await this.recoverSubagents(sessionId, session, state);
+    return state.subagents.map((agent) => ({
+      ...agent,
+      canStop: false,
+      canBackground: false,
+      canFollowUp: false,
+    }));
+  }
+
   async getSubagentHistory(
     sessionId: number,
     agentId: string,
+    options: { before?: string } = {},
   ): Promise<ClaudeSubagentHistoryPayload> {
-    const trimmedAgentId = agentId.trim();
-    if (!trimmedAgentId) {
-      throw new BadRequestException('An agentId is required.');
-    }
-
+    const id = agentId.trim();
+    if (options.before && !/^[\w:.-]{1,256}$/.test(options.before))
+      throw new BadRequestException('A valid history cursor is required.');
+    if (!/^[\w-]{1,256}$/.test(id))
+      throw new BadRequestException('A valid agentId is required.');
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
-    const subagent = state.subagents.find(
-      (item) => item.agentId === trimmedAgentId,
-    );
-
-    if (!subagent) {
+    if (!state.subagents.some((agent) => agent.agentId === id))
+      await this.recoverSubagents(sessionId, session, state);
+    const agent = state.subagents.find((item) => item.agentId === id);
+    if (!agent)
       throw new NotFoundException('Subagent not found for this session.');
-    }
-
-    if (!session.claudeSessionId || session.claudeSessionId === '-1') {
+    const subagent = this.withSubagentControls(sessionId, agent);
+    if (!session.claudeSessionId || session.claudeSessionId === '-1')
       return {
         subagent,
         history: [],
         transcriptAvailable: false,
         transcriptError: 'Claude session is unavailable for this agent.',
       };
-    }
-
-    if (!subagent.transcriptPath) {
-      return {
-        subagent,
-        history: [],
-        transcriptAvailable: false,
-        transcriptError: 'Transcript unavailable for this agent.',
-      };
-    }
-
     try {
+      const ref = await this.resolveTranscriptFile(sessionId);
+      const path = ref.transcriptPath
+        ? join(
+            dirname(ref.transcriptPath),
+            session.claudeSessionId,
+            'subagents',
+            `agent-${id}.jsonl`,
+          )
+        : null;
+      let messages: HistoryMessage[];
+      let hasEarlier = false;
+      if (path) {
+        try {
+          const page = await this.childTranscripts.read(path, options.before);
+          hasEarlier = page.hasEarlier;
+          messages = page.records.map((record) => ({
+            type: record.type as SessionMessage['type'],
+            uuid: record.uuid!,
+            message: record.message,
+            timestamp: record.timestamp,
+            tool_use_result: record.toolUseResult ?? record.tool_use_result,
+          }));
+          const first = page.records[0];
+          if (typeof first?.parentAgentId === 'string')
+            subagent.parentAgentId = first.parentAgentId;
+          const cwd = page.records.find(
+            (record) => typeof record.cwd === 'string',
+          )?.cwd;
+          if (typeof cwd === 'string') subagent.worktreePath = cwd;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          messages = await getSubagentMessages(session.claudeSessionId, id, {
+            dir: session.transcriptWorktreePath ?? session.worktreePath,
+            limit: 300,
+          });
+        }
+      } else
+        messages = await getSubagentMessages(session.claudeSessionId, id, {
+          dir: session.transcriptWorktreePath ?? session.worktreePath,
+          limit: 300,
+        });
+      const history = this.normalizeHistory(
+        messages,
+        await this.getInteractionSummaryMap(sessionId),
+      ).map((item) => ({
+        ...item,
+        parentToolUseId:
+          item.parentToolUseId === subagent.parentToolUseId
+            ? undefined
+            : item.parentToolUseId,
+      }));
+      if (!subagent.prompt)
+        subagent.prompt = history.find((item) => item.kind === 'user')?.content;
       return {
         subagent,
-        history: this.normalizeHistory(
-          await getSubagentMessages(session.claudeSessionId, trimmedAgentId, {
-            dir: session.transcriptWorktreePath ?? session.worktreePath,
-          }),
-          new Map(),
-        ),
-        transcriptAvailable: true,
+        history,
+        ...(history.length
+          ? {}
+          : {
+              transcriptState:
+                subagent.status === 'started'
+                  ? ('starting' as const)
+                  : ('unavailable' as const),
+            }),
+        ...(hasEarlier ? { hasEarlier: true } : {}),
+        transcriptAvailable: Boolean(history.length),
+        ...(history.length
+          ? {}
+          : {
+              transcriptError:
+                subagent.status === 'started'
+                  ? 'Waiting for the first agent message…'
+                  : 'No retained messages for this agent.',
+            }),
       };
     } catch (error) {
       this.logger.warn(
-        `Failed to load Claude subagent history for session ${sessionId} and agent ${trimmedAgentId}: ${String(error)}`,
+        `Claude child history session=${sessionId} agent=${id}: ${String(error)}`,
       );
       return {
         subagent,
         history: [],
         transcriptAvailable: false,
-        transcriptError: 'Could not read the transcript for this agent.',
+        transcriptState: 'error',
+        transcriptError:
+          'Could not read this agent’s transcript. Retry to reconnect.',
       };
     }
+  }
+
+  private withSubagentControls(
+    sessionId: number,
+    agent: ClaudeSubagentState,
+  ): ClaudeSubagentState {
+    const runtime = this.sessionRuntimes.get(sessionId);
+    const live =
+      agent.status === 'started' && Boolean(runtime) && !agent.stoppedByUser;
+    return {
+      ...agent,
+      canStop: live && Boolean(agent.taskId) && Boolean(runtime?.canStopTask),
+      canBackground:
+        live &&
+        agent.isBackgrounded === false &&
+        Boolean(agent.parentToolUseId) &&
+        Boolean(runtime?.canBackgroundTasks),
+      canFollowUp:
+        Boolean(runtime) &&
+        !agent.stoppedByUser &&
+        !['Explore', 'Plan'].includes(agent.agentType),
+    };
+  }
+
+  async stopSubagent(sessionId: number, agentId: string): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    const agent = state.subagents.find((item) => item.agentId === agentId);
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (
+      !agent ||
+      !runtime ||
+      !this.withSubagentControls(sessionId, agent).canStop
+    )
+      throw new ConflictException('This agent is no longer available to stop.');
+    await this.stopBackgroundTask(sessionId, agent.taskId!);
+  }
+
+  async stopBackgroundTask(sessionId: number, taskId: string): Promise<void> {
+    const key = `${sessionId}:stop:${taskId}`;
+    const pending = this.taskControls.get(key);
+    if (pending) return pending;
+    const state = this.ensureRuntimeState(sessionId);
+    const task = state.tasks.find((item) => item.taskId === taskId);
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (
+      !task ||
+      !runtime?.canStopTask ||
+      !isLiveClaudeTask(task) ||
+      task.taskType === 'task_board'
+    )
+      throw new ConflictException('This task is no longer available to stop.');
+    const control = (async () => {
+      await runtime.stopTask(taskId);
+      if (this.sessionRuntimes.get(sessionId) !== runtime) return;
+      const current = state.subagents.find(
+        (item) => item.taskId === taskId || item.agentId === taskId,
+      );
+      if (current)
+        this.publishSubagent(sessionId, {
+          ...current,
+          stoppedByUser: true,
+          canFollowUp: false,
+          timestamp: new Date().toISOString(),
+        });
+    })();
+    this.taskControls.set(key, control);
+    try {
+      await control;
+    } finally {
+      if (this.taskControls.get(key) === control) this.taskControls.delete(key);
+    }
+  }
+
+  async backgroundSubagent(sessionId: number, agentId: string): Promise<void> {
+    const state = this.ensureRuntimeState(sessionId);
+    const agent = state.subagents.find((item) => item.agentId === agentId);
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (
+      !agent ||
+      !runtime ||
+      !this.withSubagentControls(sessionId, agent).canBackground
+    )
+      throw new ConflictException(
+        'This agent cannot be moved to the background.',
+      );
+    if (!(await runtime.backgroundTasks(agent.parentToolUseId!)))
+      throw new ConflictException('The agent has already finished.');
+  }
+
+  private publishSubagent(
+    sessionId: number,
+    patch: ClaudeSubagentState,
+  ): ClaudeSubagentState {
+    const state = this.ensureRuntimeState(sessionId);
+    const subagent = mergeClaudeSubagent(
+      state.subagents.find((item) => item.agentId === patch.agentId),
+      patch,
+    );
+    state.subagents = retainClaudeTasks(
+      [
+        subagent,
+        ...state.subagents.filter((item) => item.agentId !== patch.agentId),
+      ],
+      (item) => item.status === 'started',
+    );
+    this.emitEvent({
+      type: 'subagent_lifecycle',
+      payload: {
+        sessionId,
+        subagent: this.withSubagentControls(sessionId, subagent),
+      },
+    });
+    return subagent;
   }
 
   async getSnapshot(sessionId: number): Promise<ClaudeSessionSnapshotPayload> {
@@ -898,6 +1241,7 @@ export class ClaudeRuntimeService
     this.sessionRuntimeCreateInFlight.delete(sessionId);
     this.activeRuns.delete(sessionId);
     this.runtimeStates.delete(sessionId);
+    this.childDiscovery.delete(sessionId);
     this.prewarmInFlight.delete(sessionId);
     this.lastPrewarmAt.delete(sessionId);
     this.claudeHooksService.clearStatus(sessionId);
@@ -1288,6 +1632,23 @@ export class ClaudeRuntimeService
         this.collectExternalSkillItems(session.worktreePath),
       ]);
 
+    const runtime = this.sessionRuntimes.get(sessionId);
+    const agents =
+      runtime?.warmState === 'warm'
+        ? await runtime.supportedAgents().catch(() => [])
+        : [];
+    const agentItems: ClaudeAutocompleteItem[] = agents.map((agent) => ({
+      id: `runtime:agent:${agent.name}`,
+      kind: 'agent',
+      trigger: '@',
+      label: agent.name,
+      insertText: `Use the ${agent.name} agent to `,
+      description: agent.description,
+      detail: agent.model
+        ? `Model: ${agent.model}`
+        : 'Inherits the configured model',
+      source: 'runtime',
+    }));
     const runtimeItems = this.collectRuntimeAutocompleteItems(state);
     const baseCommandItems = runtimeItems.some(
       (item) => item.kind === 'command',
@@ -1304,6 +1665,7 @@ export class ClaudeRuntimeService
     const kindRank: Record<ClaudeAutocompleteItem['kind'], number> = {
       command: 0,
       skill: 1,
+      agent: 2,
     };
 
     const seen = new Set<string>();
@@ -1312,6 +1674,7 @@ export class ClaudeRuntimeService
       ...commandItems,
       ...claudeSkillItems,
       ...externalSkillItems,
+      ...agentItems,
     ].filter((item) => {
       const key = `${item.trigger}:${item.label}`;
       if (seen.has(key)) {
@@ -1385,7 +1748,17 @@ export class ClaudeRuntimeService
   }
 
   private createCanUseTool(sessionId: number, state: RuntimeState): CanUseTool {
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
+    const current = () =>
+      !this.invalidatedSessions.has(sessionId) &&
+      this.runtimeStates.get(sessionId) === state &&
+      generation === (this.sessionGenerations.get(sessionId) ?? 0);
     return async (toolName, input, options) => {
+      if (!current() || options.signal?.aborted)
+        return {
+          behavior: 'deny',
+          message: 'This Claude request is no longer active.',
+        };
       // Meta-agent autonomy policy. Runs before the human-approval path so the
       // agent can operate elevenex within its mandate without prompting for every
       // safe call. Guarded to 'agent' sessions so normal sessions are unaffected.
@@ -1434,6 +1807,7 @@ export class ClaudeRuntimeService
         decisionReason: options.decisionReason,
         blockedPath: options.blockedPath,
         suggestions: options.suggestions ?? undefined,
+        suppressAlwaysAllowRule: options.suppressAlwaysAllowRule,
         batch: permissionBatch?.items,
         createdAt: new Date().toISOString(),
       };
@@ -1453,7 +1827,7 @@ export class ClaudeRuntimeService
             // turn that this session's own finishRun already retired from
             // activeRuns moments before this RPC arrived. Attach it to a freshly
             // registered run instead of auto-denying on nobody's behalf.
-            const run = this.ensureActiveRunForCallback(sessionId, state);
+            const run = this.permissionOwner(sessionId, state, options.agentID);
             if (!run) {
               resolve({
                 decision: {
@@ -1464,15 +1838,38 @@ export class ClaudeRuntimeService
               return;
             }
 
+            const settle = (decision: PermissionDecision) => {
+              options.signal?.removeEventListener('abort', abort);
+              resolve({ decision, suggestions: options.suggestions });
+            };
+            const abort = () =>
+              settle({
+                behavior: 'deny',
+                message: 'Permission request cancelled.',
+              });
+            if (options.signal?.aborted) {
+              abort();
+              return;
+            }
+            options.signal?.addEventListener('abort', abort, { once: true });
             run.permissionRequests.set(requestId, {
               request,
-              resolve: (decision) =>
-                resolve({
-                  decision,
-                  suggestions: options.suggestions,
-                }),
+              resolve: settle,
               suggestions: options.suggestions,
             });
+            if (options.agentID) {
+              const agent = state.subagents.find(
+                (item) => item.agentId === options.agentID,
+              );
+              this.publishSubagent(sessionId, {
+                agentId: options.agentID,
+                agentType: agent?.agentType ?? 'agent',
+                ...agent,
+                status: 'started',
+                executionStatus: 'waiting',
+                timestamp: new Date().toISOString(),
+              });
+            }
             // Repeated parallel MCP calls share one visible approval. The
             // remaining callbacks either wait here too (SDKs that dispatch them
             // concurrently) or consume the cached one-shot decision below (SDKs
@@ -1484,12 +1881,22 @@ export class ClaudeRuntimeService
             this.promoteNextPendingPermissionRequest(sessionId, state, run);
           });
 
-      const run = this.activeRuns.get(sessionId);
+      if (!current())
+        return {
+          behavior: 'deny',
+          message: 'This Claude session was replaced.',
+        };
+      const run = this.permissionOwner(sessionId, state, options.agentID);
+      state.permissionRequests.delete(requestId);
       run?.permissionRequests.delete(requestId);
+      state.permissionRequestOrder = state.permissionRequestOrder.filter(
+        (id) => id !== requestId,
+      );
       if (run) {
-        run.permissionRequestOrder = run.permissionRequestOrder.filter(
-          (queuedRequestId) => queuedRequestId !== requestId,
-        );
+        run.permissionRequestOrder = state.permissionRequestOrder =
+          run.permissionRequestOrder.filter(
+            (queuedRequestId) => queuedRequestId !== requestId,
+          );
       }
       this.emitEvent({
         type: 'permission_resolved',
@@ -1510,6 +1917,17 @@ export class ClaudeRuntimeService
           ),
         },
       });
+      if (options.agentID) {
+        const agent = state.subagents.find(
+          (item) => item.agentId === options.agentID,
+        );
+        if (agent?.status === 'started' && agent.executionStatus === 'waiting')
+          this.publishSubagent(sessionId, {
+            ...agent,
+            executionStatus: 'running',
+            timestamp: new Date().toISOString(),
+          });
+      }
       if (run && !run.interruptRequested) {
         this.promoteNextPendingPermissionRequest(sessionId, state, run);
       } else if (state.pendingPermissionRequest) {
@@ -1573,17 +1991,20 @@ export class ClaudeRuntimeService
           return;
         }
 
-        run.userInputRequests.set(requestId, {
+        state.userInputRequests = run.userInputRequests;
+        state.userInputRequests.set(requestId, {
           request: pendingRequest,
           resolve: (decision) => resolve(decision),
         });
-        state.pendingUserInputRequest = pendingRequest;
+        if (!state.pendingUserInputRequest) {
+          state.pendingUserInputRequest = pendingRequest;
+          this.emitEvent({
+            type: 'user_input_request',
+            payload: { sessionId, request: pendingRequest },
+          });
+        }
         state.runPhase = 'waiting';
         state.sessionState = 'requires_action';
-        this.emitEvent({
-          type: 'user_input_request',
-          payload: { sessionId, request: pendingRequest },
-        });
         this.emitRunState(sessionId);
         void this.claudeHooksService.updateStatus(sessionId, 'waiting', {
           markCompletion: false,
@@ -1797,6 +2218,39 @@ export class ClaudeRuntimeService
     // what stops a crashed or evicted runtime from leaving the session pinned
     // as "background busy" forever, silently queueing every later prompt.
     this.clearAllBackgroundWork(sessionId, 'runtime_closed');
+    for (const pending of state.permissionRequests.values())
+      pending.resolve({ behavior: 'deny', message: 'Claude runtime closed.' });
+    for (const pending of state.userInputRequests.values())
+      pending.resolve({ action: 'cancel' });
+    state.permissionRequests.clear();
+    state.permissionRequestOrder = [];
+    state.userInputRequests.clear();
+    state.pendingPermissionRequest = null;
+    state.pendingUserInputRequest = null;
+    for (const task of state.tasks.filter(
+      (task) => isLiveClaudeTask(task) && task.taskType !== 'task_board',
+    )) {
+      const ended = this.upsertTask(sessionId, {
+        taskId: task.taskId,
+        runId: task.runId,
+        status: 'unavailable',
+        updatedAt: new Date().toISOString(),
+      });
+      this.emitEvent({
+        type: 'task_updated',
+        payload: { sessionId, task: ended },
+      });
+    }
+    state.backgroundSetAuthoritative = false;
+    for (const agent of state.subagents.filter(
+      (item) => item.status === 'started',
+    ))
+      this.publishSubagent(sessionId, {
+        ...agent,
+        status: 'stopped',
+        executionStatus: 'unavailable',
+        timestamp: new Date().toISOString(),
+      });
     const backgroundRun = this.activeRuns.get(sessionId);
     if (backgroundRun?.isBackground) {
       this.logger.warn(
@@ -1882,11 +2336,33 @@ export class ClaudeRuntimeService
     void this.prewarmSession(sessionId);
   }
 
+  /** Return when accepted, while the persistent runtime owns turn completion. */
   async submitPrompt(
     sessionId: number,
     prompt: string,
     titlePrompt?: string,
     images?: ClaudeImageInput[],
+    options: { human?: boolean; queue?: boolean } = {},
+  ): Promise<void> {
+    let accepted!: () => void;
+    const receipt = new Promise<void>((resolve) => {
+      accepted = resolve;
+    });
+    const completion = this.runPrompt(sessionId, prompt, titlePrompt, images, {
+      ...options,
+      onAccepted: accepted,
+    });
+    // The completion rejection stays observed after acceptance, and the worker
+    // publishes later failures through its normal error/run-state pipeline.
+    await Promise.race([receipt, completion]);
+  }
+
+  private async runPrompt(
+    sessionId: number,
+    prompt: string,
+    titlePrompt?: string,
+    images?: ClaudeImageInput[],
+    options: { human?: boolean; queue?: boolean; onAccepted?: () => void } = {},
   ): Promise<void> {
     const generation = this.sessionGenerations.get(sessionId) ?? 0;
     const startedAtMs = Date.now();
@@ -1897,13 +2373,38 @@ export class ClaudeRuntimeService
       return;
     }
 
+    const running = this.activeRuns.get(sessionId);
+    if (
+      running &&
+      !running.interruptRequested &&
+      running.query.canSteer &&
+      !options.queue &&
+      !this.runtimeStates.get(sessionId)?.queuePaused
+    ) {
+      await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
+      if (
+        this.activeRuns.get(sessionId) !== running ||
+        running.interruptRequested
+      )
+        return this.runPrompt(sessionId, prompt, titlePrompt, images, options);
+      running.query.steer(
+        this.buildSdkUserMessage(trimmedPrompt, validatedImages, options.human),
+      );
+      options.onAccepted?.();
+      return;
+    }
     if (
       this.activeRuns.has(sessionId) ||
       this.initializingRuns.has(sessionId) ||
-      this.shouldQueueBehindBackground(sessionId) ||
       this.runtimeStates.get(sessionId)?.queuePaused
     ) {
-      await this.queuePendingPrompt(sessionId, trimmedPrompt, validatedImages);
+      await this.queuePendingPrompt(
+        sessionId,
+        trimmedPrompt,
+        validatedImages,
+        options.human,
+      );
+      options.onAccepted?.();
       return;
     }
 
@@ -1969,6 +2470,7 @@ export class ClaudeRuntimeService
       initializationState = state;
       state.liveItems = [];
       state.pendingPermissionRequest = null;
+      this.restorePendingChildPermission(state);
       state.pendingUserInputRequest = null;
       state.lastError = null;
       state.runPhase = 'running';
@@ -2098,9 +2600,9 @@ export class ClaudeRuntimeService
         worktreePath: session.worktreePath,
         interruptRequested: false,
         tornDown: false,
-        permissionRequests: new Map(),
-        permissionRequestOrder: [],
-        userInputRequests: new Map(),
+        permissionRequests: state.permissionRequests,
+        permissionRequestOrder: state.permissionRequestOrder,
+        userInputRequests: state.userInputRequests,
         partialAssistantItems: new Map(),
         partialThinkingItems: new Map(),
         currentStreamMessageId: null,
@@ -2136,7 +2638,12 @@ export class ClaudeRuntimeService
         const run = this.activeRuns.get(sessionId);
         if (run && run.runId === runId && !run.interruptRequested) {
           await runtime.submitTurn(
-            this.buildSdkUserMessage(trimmedPrompt, validatedImages),
+            this.buildSdkUserMessage(
+              trimmedPrompt,
+              validatedImages,
+              options.human,
+            ),
+            options.onAccepted,
           );
         }
       } catch (error) {
@@ -2168,7 +2675,8 @@ export class ClaudeRuntimeService
         const interrupted = Boolean(run?.interruptRequested);
         this.activeRuns.delete(sessionId);
         state.pendingPermissionRequest = null;
-        state.pendingUserInputRequest = null;
+        this.restorePendingChildPermission(state);
+        this.restorePendingUserInput(state);
         state.canInterrupt = false;
         run?.resolveCompletion();
         if (interrupted) {
@@ -2212,6 +2720,7 @@ export class ClaudeRuntimeService
     sessionId: number,
     prompt: string,
     images: ClaudeImageInput[],
+    human = false,
   ): Promise<void> {
     const existingSession = await this.sessionsService.findOne(sessionId);
     const existingState = this.ensureRuntimeState(
@@ -2223,6 +2732,7 @@ export class ClaudeRuntimeService
       {
         id: randomUUID(),
         prompt,
+        human,
         queuedAt: new Date().toISOString(),
         ...(images.length ? { images } : {}),
       },
@@ -2286,6 +2796,7 @@ export class ClaudeRuntimeService
   private buildSdkUserMessage(
     text: string,
     images: ClaudeImageInput[],
+    human = false,
   ): SDKUserMessage {
     const content: Array<
       | { type: 'text'; text: string }
@@ -2312,6 +2823,8 @@ export class ClaudeRuntimeService
         content: images.length ? content : text,
       },
       parent_tool_use_id: null,
+      uuid: randomUUID(),
+      ...(human ? { origin: { kind: 'human' as const } } : {}),
     };
   }
 
@@ -2330,6 +2843,23 @@ export class ClaudeRuntimeService
     const selected = state.pendingPrompts.find((prompt) => prompt.id === id);
     if (!selected) return;
 
+    const run = this.activeRuns.get(sessionId);
+    if (run?.query.canSteer && !run.interruptRequested) {
+      await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
+      run.query.steer(
+        this.buildSdkUserMessage(
+          selected.prompt,
+          selected.images ?? [],
+          selected.human,
+        ),
+      );
+      state.pendingPrompts = state.pendingPrompts.filter(
+        (prompt) => prompt.id !== id,
+      );
+      state.queuePaused = false;
+      this.emitRunState(sessionId);
+      return;
+    }
     state.pendingPrompts = [
       selected,
       ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
@@ -2396,7 +2926,12 @@ export class ClaudeRuntimeService
     remember = false,
     content?: Record<string, unknown>,
   ): Promise<void> {
-    const run = this.activeRuns.get(sessionId);
+    const stateForRequest = this.ensureRuntimeState(sessionId);
+    const run = this.permissionOwner(
+      sessionId,
+      stateForRequest,
+      stateForRequest.permissionRequests.get(requestId)?.request.agentId,
+    );
     const request = run?.permissionRequests.get(requestId);
     if (!run || !request) {
       return;
@@ -2420,7 +2955,7 @@ export class ClaudeRuntimeService
 
     const decision: PermissionDecision = {
       behavior: 'allow',
-      remember,
+      remember: remember && !request.request.suppressAlwaysAllowRule,
       content,
     };
     this.resolvePermissionBatch(run, request, decision);
@@ -2431,7 +2966,12 @@ export class ClaudeRuntimeService
     requestId: string,
     message?: string,
   ): Promise<void> {
-    const run = this.activeRuns.get(sessionId);
+    const stateForRequest = this.ensureRuntimeState(sessionId);
+    const run = this.permissionOwner(
+      sessionId,
+      stateForRequest,
+      stateForRequest.permissionRequests.get(requestId)?.request.agentId,
+    );
     const request = run?.permissionRequests.get(requestId);
     if (!run || !request) {
       return;
@@ -2441,7 +2981,7 @@ export class ClaudeRuntimeService
   }
 
   private resolvePermissionBatch(
-    run: ActiveRunState,
+    run: PermissionOwner,
     request: ActivePermissionRequest,
     decision: PermissionDecision,
   ): void {
@@ -2462,10 +3002,63 @@ export class ClaudeRuntimeService
     }
   }
 
+  private permissionOwner(
+    sessionId: number,
+    state: RuntimeState,
+    agentId?: string,
+  ): PermissionOwner | undefined {
+    const run = this.activeRuns.get(sessionId);
+    if (run) {
+      state.permissionRequests = run.permissionRequests;
+      state.permissionRequestOrder = run.permissionRequestOrder;
+      return run;
+    }
+    if (
+      agentId &&
+      this.sessionRuntimes.has(sessionId) &&
+      !this.invalidatedSessions.has(sessionId)
+    )
+      return {
+        permissionRequests: state.permissionRequests,
+        permissionRequestOrder: state.permissionRequestOrder,
+        interruptRequested: false,
+      };
+    return this.ensureActiveRunForCallback(sessionId, state);
+  }
+
+  private childPermissionIsBackground(
+    state: RuntimeState,
+    request: ClaudePermissionRequest,
+  ): boolean {
+    return Boolean(
+      request.agentId &&
+      state.subagents.find((agent) => agent.agentId === request.agentId)
+        ?.isBackgrounded === true,
+    );
+  }
+
+  private restorePendingUserInput(state: RuntimeState): void {
+    state.pendingUserInputRequest =
+      state.userInputRequests.values().next().value?.request ?? null;
+    if (state.pendingUserInputRequest) {
+      state.runPhase = 'waiting';
+      state.sessionState = 'requires_action';
+    }
+  }
+
+  private restorePendingChildPermission(state: RuntimeState): void {
+    const pending = state.permissionRequestOrder
+      .map((id) => state.permissionRequests.get(id)?.request)
+      .find((request) => request?.agentId);
+    if (!pending) return;
+    state.pendingPermissionRequest = pending;
+    state.sessionState = 'requires_action';
+  }
+
   private promoteNextPendingPermissionRequest(
     sessionId: number,
     state: RuntimeState,
-    run: ActiveRunState,
+    run: PermissionOwner,
   ): void {
     if (run.interruptRequested || this.invalidatedSessions.has(sessionId)) {
       return;
@@ -2473,8 +3066,12 @@ export class ClaudeRuntimeService
     const nextRequestId = run.permissionRequestOrder[0];
     if (!nextRequestId) {
       state.pendingPermissionRequest = null;
-      state.runPhase = 'running';
-      state.sessionState = 'running';
+      state.runPhase = this.activeRuns.has(sessionId) ? 'running' : 'idle';
+      state.sessionState = state.pendingUserInputRequest
+        ? 'requires_action'
+        : state.runPhase === 'running'
+          ? 'running'
+          : 'idle';
       this.emitRunState(sessionId);
       void this.claudeHooksService.updateStatus(sessionId, 'running', {
         markCompletion: false,
@@ -2497,7 +3094,13 @@ export class ClaudeRuntimeService
     }
 
     state.pendingPermissionRequest = nextPermission.request;
-    state.runPhase = 'waiting';
+    state.runPhase =
+      this.childPermissionIsBackground(state, nextPermission.request) ||
+      (nextPermission.request.agentId && !this.activeRuns.has(sessionId))
+        ? this.activeRuns.has(sessionId)
+          ? 'running'
+          : 'idle'
+        : 'waiting';
     state.sessionState = 'requires_action';
     this.emitEvent({
       type: 'permission_request',
@@ -2516,16 +3119,35 @@ export class ClaudeRuntimeService
     content?: UserInputContent,
   ): Promise<void> {
     const run = this.activeRuns.get(sessionId);
-    const request = run?.userInputRequests.get(requestId);
+    const stateForRequest = this.ensureRuntimeState(sessionId);
+    const request =
+      run?.userInputRequests.get(requestId) ??
+      stateForRequest.userInputRequests.get(requestId);
     if (!request) {
       return;
     }
 
     run?.userInputRequests.delete(requestId);
     const state = this.ensureRuntimeState(sessionId);
-    state.pendingUserInputRequest = null;
-    state.runPhase = 'running';
-    state.sessionState = 'running';
+    state.userInputRequests.delete(requestId);
+    state.pendingUserInputRequest =
+      state.userInputRequests.values().next().value?.request ?? null;
+    if (state.pendingUserInputRequest)
+      this.emitEvent({
+        type: 'user_input_request',
+        payload: { sessionId, request: state.pendingUserInputRequest },
+      });
+    state.runPhase = state.pendingUserInputRequest
+      ? 'waiting'
+      : run
+        ? 'running'
+        : 'idle';
+    state.sessionState =
+      state.pendingUserInputRequest || state.pendingPermissionRequest
+        ? 'requires_action'
+        : state.runPhase === 'running'
+          ? 'running'
+          : 'idle';
     this.emitRunState(sessionId);
     request.resolve({ action, content });
   }
@@ -2720,57 +3342,8 @@ export class ClaudeRuntimeService
     }
   }
 
-  // ---------------------------------------------------------------------
-  // Background work registry
-  //
-  // Background work is anything that outlives the turn that launched it: a
-  // `run_in_background` Agent/Task, or a subagent that reported a start but not
-  // yet a stop. `state.backgroundWork` is the single source of truth.
-  //
-  // Two questions are asked of this registry, and they need OPPOSITE biases:
-  //
-  //   1. "May I retire the runtime process?" — answered by isBackgroundWorkLive.
-  //      Getting this wrong kills work mid-flight and loses it, which is what
-  //      produces Claude Code's "No completion record was found for background
-  //      agent ..." warning on the next resume. Biased heavily toward keeping
-  //      the process alive.
-  //
-  //   2. "Must I queue this prompt?" — answered by shouldQueueBehindBackground.
-  //      Getting this wrong silently swallows the user's message. Biased toward
-  //      letting the prompt through.
-  //
-  // Conflating the two is what made the old behaviour bad in both directions at
-  // once: one over-sticky flag both pinned the prompt queue forever and was the
-  // only thing holding the process open.
-  // ---------------------------------------------------------------------
-
-  /**
-   * Hard ceiling on how long an item may stay in flight. Only a backstop
-   * against a truly runaway entry — the runtime-close handler is the normal way
-   * items are retired, so this is deliberately generous.
-   */
-  private static readonly BACKGROUND_WORK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
-
-  /**
-   * How long an item may go without an update before new prompts stop being
-   * queued behind it. This does NOT retire the item and does NOT release the
-   * runtime — a background subagent can legitimately run for a long time
-   * without emitting anything we can correlate back to it (tool_progress and
-   * task_progress carry a task_id, but nothing carries an agent_id). All this
-   * says is "we have no recent evidence, so stop holding the user's messages
-   * hostage to it".
-   */
-  private static readonly BACKGROUND_WORK_QUIET_AFTER_MS = 5 * 60 * 1000;
-
-  /**
-   * How long an autonomous background run may go without any SDK message
-   * before we give up waiting for its result message and return to idle.
-   * Every message re-arms this, so it only elapses on genuine dead air — a
-   * streaming turn never trips it, and the ceiling is short enough that a
-   * resume which dies silently does not look like a hang to the user.
-   */
-  private static readonly BACKGROUND_RUN_STALL_MS = 45 * 1000;
-
+  // Background work owns process lifetime, independently of parent input.
+  // Native membership snapshots are authoritative; older CLIs use task edges.
   /**
    * Grace window, after an item is retired via clearBackgroundWork, during
    * which an inbound assistant/stream_event/user message still counts as
@@ -2785,84 +3358,14 @@ export class ClaudeRuntimeService
    */
   private static readonly BACKGROUND_RESUME_GRACE_MS = 4 * 1000;
 
-  /**
-   * Retires only items past the hard age ceiling. Everything else is kept:
-   * dropping a live entry is what gets a background agent killed mid-flight.
-   */
-  private sweepBackgroundWork(
-    sessionId: number,
-    state: RuntimeState,
-  ): ClaudeBackgroundWorkItem[] {
-    if (!state.backgroundWork.length) {
-      return state.backgroundWork;
-    }
-
-    const now = Date.now();
-    const live = state.backgroundWork.filter((item) => {
-      const startedAtMs = Date.parse(item.startedAt);
-      if (Number.isNaN(startedAtMs)) return true;
-      return (
-        now - startedAtMs < ClaudeRuntimeService.BACKGROUND_WORK_MAX_AGE_MS
-      );
-    });
-
-    if (live.length !== state.backgroundWork.length) {
-      const dropped = state.backgroundWork.filter(
-        (item) => !live.includes(item),
-      );
-      this.logger.warn(
-        `Claude background work exceeded max age session=${sessionId} dropped=${dropped
-          .map((item) => `${item.id}(${item.label})`)
-          .join(',')}`,
-      );
-      state.backgroundWork = live;
-      this.emitBackgroundWork(sessionId, state);
-      // Anything queued behind work that turned out to be dead must not sit
-      // there forever. Deferred so this stays re-entrancy-safe: drain consults
-      // background state, which lands back here.
-      setImmediate(() => this.drainPendingPrompts(sessionId));
-    }
-
-    return state.backgroundWork;
-  }
-
-  /**
-   * Any background work at all, however quiet. Used to decide whether the
-   * runtime process may be retired — see the bias note above.
-   */
   private isBackgroundWorkLive(sessionId: number): boolean {
     const state = this.runtimeStates.get(sessionId);
-    if (!state) {
-      return false;
-    }
-    if (this.activeRuns.get(sessionId)?.isBackground) {
-      return true;
-    }
-    return this.sweepBackgroundWork(sessionId, state).length > 0;
-  }
-
-  /**
-   * Background work we have recent evidence for. Used to decide whether a newly
-   * submitted prompt must be queued rather than raced against the SDK's own
-   * autonomous resume.
-   */
-  private shouldQueueBehindBackground(sessionId: number): boolean {
-    const state = this.runtimeStates.get(sessionId);
-    if (!state) {
-      return false;
-    }
-    if (this.activeRuns.get(sessionId)?.isBackground) {
-      return true;
-    }
-
-    const now = Date.now();
-    return this.sweepBackgroundWork(sessionId, state).some((item) => {
-      const updatedAtMs = Date.parse(item.updatedAt);
-      if (Number.isNaN(updatedAtMs)) return true;
-      return (
-        now - updatedAtMs < ClaudeRuntimeService.BACKGROUND_WORK_QUIET_AFTER_MS
-      );
-    });
+    if (!state) return false;
+    return (
+      Boolean(this.activeRuns.get(sessionId)?.isBackground) ||
+      state.backgroundWork.length > 0 ||
+      state.subagents.some((agent) => agent.status === 'started')
+    );
   }
 
   private upsertBackgroundWork(
@@ -2940,7 +3443,7 @@ export class ClaudeRuntimeService
    * The resumed turn is registered as a real run so it is indistinguishable
    * from a user-submitted one downstream: partial/stream events render, thinking
    * blocks animate, Stop is live, and the normal result -> finishRun path ends
-   * it. A stall watchdog guarantees it ends even if the result never arrives.
+   * it. Native results, idle reports, and process closure retire it.
    */
   private reconcileBackgroundResume(
     sessionId: number,
@@ -2954,6 +3457,8 @@ export class ClaudeRuntimeService
     // leaving the session stuck on "running" until the user hits Stop. When
     // Claude genuinely resumes to report back it emits assistant/stream_event
     // output immediately, so nothing is lost by waiting for that instead.
+    if ('parent_tool_use_id' in message && message.parent_tool_use_id) return;
+    if ('agent_id' in message && message.agent_id) return;
     const isResumeSignal =
       message.type === 'assistant' ||
       message.type === 'stream_event' ||
@@ -2971,13 +3476,28 @@ export class ClaudeRuntimeService
     // clearing hook and this resume message race over independent
     // transports, so the work can already look "gone" by the time the
     // message that reports on it arrives (see BACKGROUND_RESUME_GRACE_MS).
-    const hasLiveBackgroundWork =
-      this.sweepBackgroundWork(sessionId, state).length > 0;
+    const hasLiveBackgroundWork = state.backgroundWork.length > 0;
     const recentlyFinishedBackgroundWork =
       state.lastBackgroundWorkFinishedAtMs !== null &&
       Date.now() - state.lastBackgroundWorkFinishedAtMs <
         ClaudeRuntimeService.BACKGROUND_RESUME_GRACE_MS;
-    if (!hasLiveBackgroundWork && !recentlyFinishedBackgroundWork) {
+    const nativeInput =
+      'user_message_uuid' in message
+        ? message.user_message_uuid
+        : message.type === 'user'
+          ? message.uuid
+          : undefined;
+    const origin = message.type === 'user' ? message.origin?.kind : undefined;
+    const explicitResume =
+      this.sessionRuntimes.get(sessionId)?.ownsInput?.(nativeInput) ||
+      origin === 'task-notification' ||
+      origin === 'peer' ||
+      origin === 'channel';
+    if (
+      !hasLiveBackgroundWork &&
+      !recentlyFinishedBackgroundWork &&
+      !explicitResume
+    ) {
       return;
     }
     state.lastBackgroundWorkFinishedAtMs = null;
@@ -3030,9 +3550,9 @@ export class ClaudeRuntimeService
       isBackground: true,
       interruptRequested: false,
       tornDown: false,
-      permissionRequests: new Map(),
-      permissionRequestOrder: [],
-      userInputRequests: new Map(),
+      permissionRequests: state.permissionRequests,
+      permissionRequestOrder: state.permissionRequestOrder,
+      userInputRequests: state.userInputRequests,
       partialAssistantItems: new Map(),
       partialThinkingItems: new Map(),
       currentStreamMessageId: null,
@@ -3053,7 +3573,6 @@ export class ClaudeRuntimeService
     this.logger.log(
       `Claude background run started session=${sessionId} run=${runId} pendingBackgroundItems=${state.backgroundWork.length}`,
     );
-    this.touchBackgroundRun(sessionId);
     this.emitRunState(sessionId);
     void this.claudeHooksService.updateStatus(sessionId, 'running', {
       markCompletion: false,
@@ -3074,6 +3593,8 @@ export class ClaudeRuntimeService
   ): ActiveRunState | undefined {
     const existing = this.activeRuns.get(sessionId);
     if (existing) {
+      state.permissionRequests = existing.permissionRequests;
+      state.permissionRequestOrder = existing.permissionRequestOrder;
       return existing;
     }
     if (this.invalidatedSessions.has(sessionId)) {
@@ -3084,46 +3605,6 @@ export class ClaudeRuntimeService
       return undefined;
     }
     return this.startBackgroundRun(sessionId, state, runtime);
-  }
-
-  /**
-   * Re-arms the background-run stall watchdog. Called for every SDK message
-   * while an autonomous background run is active: as long as the resumed turn
-   * is producing output it stays alive, and if it goes silent (subprocess died,
-   * result message lost) the session falls back to idle instead of showing a
-   * spinner that never stops.
-   */
-  private touchBackgroundRun(sessionId: number): void {
-    const state = this.ensureRuntimeState(sessionId);
-    const run = this.activeRuns.get(sessionId);
-    if (!run?.isBackground) {
-      this.clearBackgroundRunStallTimer(state);
-      return;
-    }
-
-    state.backgroundRunLastActivityMs = Date.now();
-    this.clearBackgroundRunStallTimer(state);
-    const timer = setTimeout(() => {
-      state.backgroundRunStallTimer = null;
-      const stalled = this.activeRuns.get(sessionId);
-      if (!stalled?.isBackground) {
-        return;
-      }
-      this.logger.warn(
-        `Claude background run stalled session=${sessionId} run=${stalled.runId} silenceMs=${ClaudeRuntimeService.BACKGROUND_RUN_STALL_MS} — returning session to idle`,
-      );
-      this.clearAllBackgroundWork(sessionId, 'background_run_stalled');
-      this.finishRun(sessionId);
-    }, ClaudeRuntimeService.BACKGROUND_RUN_STALL_MS);
-    timer.unref?.();
-    state.backgroundRunStallTimer = timer;
-  }
-
-  private clearBackgroundRunStallTimer(state: RuntimeState): void {
-    if (state.backgroundRunStallTimer) {
-      clearTimeout(state.backgroundRunStallTimer);
-      state.backgroundRunStallTimer = null;
-    }
   }
 
   /**
@@ -3142,8 +3623,7 @@ export class ClaudeRuntimeService
     }
     if (
       this.activeRuns.has(sessionId) ||
-      this.initializingRuns.has(sessionId) ||
-      this.shouldQueueBehindBackground(sessionId)
+      this.initializingRuns.has(sessionId)
     ) {
       return;
     }
@@ -3152,15 +3632,15 @@ export class ClaudeRuntimeService
     state.pendingPrompts = rest;
     this.emitRunState(sessionId);
     setImmediate(() => {
-      this.submitPrompt(sessionId, next.prompt, undefined, next.images).catch(
-        (error) => {
-          this.logger.error(
-            `Pending prompt drain failed session=${sessionId}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        },
-      );
+      this.submitPrompt(sessionId, next.prompt, undefined, next.images, {
+        human: next.human,
+      }).catch((error) => {
+        this.logger.error(
+          `Pending prompt drain failed session=${sessionId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
     });
   }
 
@@ -3172,11 +3652,34 @@ export class ClaudeRuntimeService
       return;
     }
 
+    const agentId = 'agent_id' in message ? message.agent_id : undefined;
+    if ((message.type === 'assistant' || message.type === 'user') && agentId) {
+      const state = this.ensureRuntimeState(sessionId);
+      const agent = state.subagents.find((item) => item.agentId === agentId);
+      message = {
+        ...message,
+        parent_tool_use_id:
+          message.parent_tool_use_id ??
+          agent?.parentToolUseId ??
+          `claude-agent:${agentId}`,
+      };
+      if (agent && message.type === 'assistant' && message.message.model)
+        this.publishSubagent(sessionId, {
+          ...agent,
+          model: message.message.model,
+          timestamp: this.resolveMessageTimestamp(message),
+        });
+    }
     // Always capture the Claude session ID even when interrupted — if the
     // system:init arrives after the user stops, we still need to persist the
     // session ID so that getHistory can load it and the next run can resume.
     this.captureClaudeSessionId(sessionId, message);
-    if (this.activeRuns.get(sessionId)?.interruptRequested) {
+    if (
+      this.activeRuns.get(sessionId)?.interruptRequested &&
+      (message.type === 'assistant' ||
+        message.type === 'stream_event' ||
+        message.type === 'result')
+    ) {
       return;
     }
 
@@ -3188,8 +3691,22 @@ export class ClaudeRuntimeService
     // background run, and everything below must treat it as the active run so
     // the resumed turn streams and renders exactly like a submitted one.
     const run = this.activeRuns.get(sessionId);
-    if (run?.isBackground) {
-      this.touchBackgroundRun(sessionId);
+    const messageIsChild =
+      ('parent_tool_use_id' in message &&
+        Boolean(message.parent_tool_use_id)) ||
+      ('agent_id' in message && Boolean(message.agent_id));
+    if (
+      run &&
+      !messageIsChild &&
+      run.query.pendingInputCount > 0 &&
+      this.ensureRuntimeState(sessionId).runPhase === 'idle' &&
+      ['assistant', 'stream_event'].includes(message.type)
+    ) {
+      const state = this.ensureRuntimeState(sessionId);
+      state.runPhase = 'running';
+      state.sessionState = 'running';
+      state.canInterrupt = true;
+      this.emitRunState(sessionId);
     }
 
     if (!run && message.type === 'result') {
@@ -3218,6 +3735,10 @@ export class ClaudeRuntimeService
 
     // Metadata requests must never hold up the SDK message pump. Refresh on
     // activity (throttled/coalesced), with a fresh read at context boundaries.
+    const childMessage =
+      ('parent_tool_use_id' in message &&
+        Boolean(message.parent_tool_use_id)) ||
+      ('agent_id' in message && Boolean(message.agent_id));
     const forceContextRefresh =
       message.type === 'assistant' ||
       (message.type === 'system' &&
@@ -3225,10 +3746,11 @@ export class ClaudeRuntimeService
     const streamEventType =
       message.type === 'stream_event' ? message.event.type : null;
     if (
-      message.type !== 'stream_event' ||
-      streamEventType === 'message_start' ||
-      streamEventType === 'message_delta' ||
-      streamEventType === 'content_block_delta'
+      !childMessage &&
+      (message.type !== 'stream_event' ||
+        streamEventType === 'message_start' ||
+        streamEventType === 'message_delta' ||
+        streamEventType === 'content_block_delta')
     ) {
       void this.refreshRuntimeMetadata(sessionId, {
         force: forceContextRefresh,
@@ -3435,8 +3957,9 @@ export class ClaudeRuntimeService
           });
         } else {
           const item: ClaudeTranscriptItem = {
-            id: `${message.uuid}:text:${partIndex}`,
+            id: `${streamMessageId}:assistant:${partIndex}`,
             kind: 'assistant',
+            agentId: message.agent_id,
             content: part.text,
             parentToolUseId: message.parent_tool_use_id ?? undefined,
             sourceMessageId: streamMessageId,
@@ -3480,8 +4003,9 @@ export class ClaudeRuntimeService
           });
         } else {
           const item: ClaudeTranscriptItem = {
-            id: `${message.uuid}:thinking:${partIndex}`,
+            id: `${streamMessageId}:thinking:${partIndex}`,
             kind: 'thinking',
+            agentId: message.agent_id,
             content: part.thinking,
             parentToolUseId: message.parent_tool_use_id ?? undefined,
             sourceMessageId: streamMessageId,
@@ -3509,6 +4033,7 @@ export class ClaudeRuntimeService
         const item: ClaudeTranscriptItem = {
           id: `${message.uuid}:tool:${part.id}`,
           kind: 'tool_use',
+          agentId: message.agent_id,
           toolUseId: part.id,
           parentToolUseId: message.parent_tool_use_id ?? undefined,
           toolName: part.name,
@@ -3524,7 +4049,21 @@ export class ClaudeRuntimeService
         };
         this.pushItem(sessionId, item, 'tool_use');
         if (
-          part.name === 'Agent' &&
+          (part.name === 'Agent' || part.name === 'Task') &&
+          typeof part.id === 'string'
+        ) {
+          const state = this.ensureRuntimeState(sessionId);
+          state.agentAssignments.set(part.id, {
+            ...part.input,
+            parentAgentId: message.agent_id,
+          });
+          while (state.agentAssignments.size > 500)
+            state.agentAssignments.delete(
+              state.agentAssignments.keys().next().value!,
+            );
+        }
+        if (
+          (part.name === 'Agent' || part.name === 'Task') &&
           typeof part.id === 'string' &&
           (part.input as { run_in_background?: unknown } | undefined)
             ?.run_in_background === true
@@ -3653,7 +4192,9 @@ export class ClaudeRuntimeService
   private handleUserMessage(sessionId: number, message: SDKUserMessage): void {
     const content = Array.isArray(message.message.content)
       ? message.message.content
-      : [];
+      : typeof message.message.content === 'string'
+        ? [{ type: 'text', text: message.message.content }]
+        : [];
     const authoredAt = this.resolveMessageTimestamp(message);
 
     for (const [partIndex, part] of (
@@ -3668,6 +4209,8 @@ export class ClaudeRuntimeService
         const item: ClaudeTranscriptItem = {
           id: `${message.uuid ?? randomUUID()}:tool_result:${part.tool_use_id ?? partIndex}`,
           kind: 'tool_result',
+          agentId: message.agent_id,
+          providerToolResult: message.tool_use_result,
           toolUseId: part.tool_use_id,
           parentToolUseId: message.parent_tool_use_id ?? undefined,
           content: normalizedResult.content,
@@ -3680,6 +4223,15 @@ export class ClaudeRuntimeService
           authoredAt,
         };
         this.pushItem(sessionId, item, 'tool_result');
+        if (typeof part.tool_use_id === 'string')
+          this.reconcileAgentResult(
+            sessionId,
+            part.tool_use_id,
+            message.tool_use_result,
+            normalizedResult.content ?? '',
+            Boolean(part.is_error),
+            authoredAt,
+          );
       } else if (
         part.type === 'text' &&
         typeof part.text === 'string' &&
@@ -3695,6 +4247,7 @@ export class ClaudeRuntimeService
         const item: ClaudeTranscriptItem = {
           id: `${messageId}:user:${partIndex}`,
           kind: 'user',
+          agentId: message.agent_id,
           content: strippedText,
           parentToolUseId: message.parent_tool_use_id ?? undefined,
           isSynthetic: this.isSyntheticUserMessage(strippedText) || undefined,
@@ -3706,6 +4259,86 @@ export class ClaudeRuntimeService
         this.pushItem(sessionId, item, 'message_start');
       }
     }
+  }
+
+  private reconcileAgentResult(
+    sessionId: number,
+    toolUseId: string,
+    raw: unknown,
+    text: string,
+    failed: boolean,
+    timestamp: string,
+  ): void {
+    const state = this.ensureRuntimeState(sessionId);
+    const assignment = state.agentAssignments.get(toolUseId);
+    if (!assignment) return;
+    const data =
+      raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+    const id =
+      typeof data.agentId === 'string'
+        ? data.agentId
+        : text.match(/agentId:\s*([\w-]+)/)?.[1];
+    if (!id) return;
+    const task = state.tasks.find((item) => item.toolUseId === toolUseId);
+    const asyncLaunch =
+      data.isAsync === true ||
+      data.status === 'async_launched' ||
+      /async agent launched|agent is working in the background/i.test(text);
+    const existing = state.subagents.find((item) => item.agentId === id);
+    if (
+      task &&
+      !asyncLaunch &&
+      !task.isBackgrounded &&
+      isLiveClaudeTask(task)
+    ) {
+      const ended = this.upsertTask(sessionId, {
+        taskId: task.taskId,
+        runId: task.runId,
+        status: failed ? 'failed' : 'completed',
+        summary: text,
+        updatedAt: timestamp,
+      });
+      this.syncTaskBackgroundWork(sessionId, ended);
+      this.emitEvent({
+        type: 'task_updated',
+        payload: { sessionId, task: ended },
+      });
+      return;
+    }
+    const result = task
+      ? taskSubagent(task, existing, assignment)
+      : {
+          agentId: id,
+          agentType:
+            typeof assignment.subagent_type === 'string'
+              ? assignment.subagent_type
+              : (existing?.agentType ?? 'general-purpose'),
+          displayName:
+            typeof assignment.name === 'string'
+              ? assignment.name
+              : typeof assignment.description === 'string'
+                ? assignment.description
+                : undefined,
+          prompt:
+            typeof assignment.prompt === 'string'
+              ? assignment.prompt
+              : undefined,
+          parentToolUseId: toolUseId,
+          status: asyncLaunch ? ('started' as const) : ('stopped' as const),
+          executionStatus: asyncLaunch
+            ? ('running' as const)
+            : failed
+              ? ('error' as const)
+              : ('completed' as const),
+          timestamp,
+        };
+    // An async launch receipt reports no result. A task's terminal event owns its outcome.
+    if (!task && !asyncLaunch)
+      result.lastAssistantMessage = text
+        .replace(/<usage>[\s\S]*?<\/usage>\s*$/i, '')
+        .replace(/\n*agentId:[^\n]*\s*$/i, '')
+        .trim();
+    this.publishSubagent(sessionId, result);
   }
 
   private reconcileResolvedPermissionFromToolResult(
@@ -3831,6 +4464,9 @@ export class ClaudeRuntimeService
       case 'hook_response':
         this.handleHookResponseMessage(sessionId, message);
         return;
+      case 'background_tasks_changed':
+        this.handleBackgroundTasksChanged(sessionId, message);
+        return;
       case 'task_started':
         this.handleTaskStartedMessage(sessionId, message);
         return;
@@ -3901,6 +4537,9 @@ export class ClaudeRuntimeService
     };
 
     state.sessionMetadata = metadata;
+    this.sessionRuntimes
+      .get(sessionId)
+      ?.setCliVersion(metadata.claudeCodeVersion);
     // The SDK only reports plan limits for claude.ai subscription auth. If a
     // session is backed by an API key, never carry a quota card into it.
     if (metadata.apiKeySource !== 'oauth' && state.planUsage) {
@@ -3974,7 +4613,7 @@ export class ClaudeRuntimeService
     // Conversely, 'idle' from the SDK is authoritative that the agent loop
     // concluded. For an autonomous background run that is a second completion
     // path alongside the result message — without it, a resume whose result we
-    // never see would hang until the stall watchdog fires.
+    // never see could otherwise keep an already-idle parent marked running.
     if (run?.isBackground && message.state === 'idle') {
       state.sessionState = 'idle';
       this.logger.log(
@@ -3988,7 +4627,16 @@ export class ClaudeRuntimeService
     if (state.runPhase !== 'error') {
       state.runPhase =
         message.state === 'requires_action'
-          ? 'waiting'
+          ? state.pendingPermissionRequest &&
+            (this.childPermissionIsBackground(
+              state,
+              state.pendingPermissionRequest,
+            ) ||
+              (state.pendingPermissionRequest.agentId && !run))
+            ? run
+              ? 'running'
+              : 'idle'
+            : 'waiting'
           : message.state === 'running'
             ? 'running'
             : 'idle';
@@ -4134,18 +4782,27 @@ export class ClaudeRuntimeService
     const requestedBackground = message.tool_use_id
       ? state.pendingBackgroundAgentToolUses.delete(message.tool_use_id)
       : false;
-    const task = this.upsertTask(sessionId, {
-      taskId: message.task_id,
-      status: 'running',
-      description: message.description,
-      taskType: message.task_type,
-      workflowName: message.workflow_name,
-      toolUseId: message.tool_use_id,
-      prompt: message.prompt,
-      skipTranscript: message.skip_transcript,
-      isBackgrounded: requestedBackground ? true : undefined,
-      updatedAt: new Date().toISOString(),
-    });
+    const task = this.upsertTask(
+      sessionId,
+      {
+        taskId: message.task_id,
+        runId: message.run_id,
+        parentTaskId: message.parent_task_id,
+        subagentType: message.subagent_type,
+        ambient: message.ambient,
+        status: 'running',
+        description: message.description,
+        taskType: message.task_type,
+        workflowName: message.workflow_name,
+        toolUseId: message.tool_use_id,
+        prompt: message.prompt,
+        skipTranscript: message.skip_transcript,
+        isBackgrounded:
+          message.is_backgrounded ?? (requestedBackground ? true : undefined),
+        updatedAt: new Date().toISOString(),
+      },
+      true,
+    );
     this.syncTaskBackgroundWork(sessionId, task);
     this.emitEvent({ type: 'task_started', payload: { sessionId, task } });
   }
@@ -4159,16 +4816,45 @@ export class ClaudeRuntimeService
     sessionId: number,
     task: ClaudeTaskState,
   ): void {
-    const isLive =
-      Boolean(task.isBackgrounded) &&
-      (task.status === 'running' || task.status === 'pending');
-    if (!isLive) {
+    const state = this.ensureRuntimeState(sessionId);
+    const assignment = task.toolUseId
+      ? state.agentAssignments.get(task.toolUseId)
+      : undefined;
+    const agentTask =
+      task.taskType === 'local_agent' ||
+      Boolean(task.subagentType) ||
+      Boolean(assignment) ||
+      state.subagents.some((agent) => agent.agentId === task.taskId);
+    if (agentTask) {
+      const existing = state.subagents.find(
+        (agent) => agent.agentId === task.taskId,
+      );
+      const subagent = taskSubagent(task, existing, assignment);
+      if (
+        subagent.status === 'started' &&
+        [...state.permissionRequests.values()].some(
+          (pending) => pending.request.agentId === subagent.agentId,
+        )
+      )
+        subagent.executionStatus = 'waiting';
+      this.publishSubagent(sessionId, subagent);
+      state.backgroundWork = state.backgroundWork.filter(
+        (item) => item.id !== `subagent:${task.taskId}`,
+      );
+    }
+    if (state.backgroundSetAuthoritative) return;
+    if (
+      !task.isBackgrounded ||
+      !isLiveClaudeTask(task) ||
+      task.ambient ||
+      task.skipTranscript
+    ) {
       this.clearBackgroundWork(sessionId, `task:${task.taskId}`);
       return;
     }
     this.upsertBackgroundWork(sessionId, {
       id: `task:${task.taskId}`,
-      kind: 'task',
+      kind: agentTask ? 'subagent' : 'task',
       label:
         task.description ||
         task.subject ||
@@ -4176,7 +4862,66 @@ export class ClaudeRuntimeService
         task.taskType ||
         'Background task',
       detail: task.summary ?? task.lastToolName,
+      startedAt: task.startedAt,
     });
+  }
+
+  private handleBackgroundTasksChanged(
+    sessionId: number,
+    message: SDKBackgroundTasksChangedMessage,
+  ): void {
+    const state = this.ensureRuntimeState(sessionId);
+    state.backgroundSetAuthoritative = true;
+    const previous = new Map(
+      state.backgroundWork.map((item) => [item.id, item]),
+    );
+    const now = new Date().toISOString();
+    for (const native of message.tasks) {
+      const task = this.upsertTask(sessionId, {
+        taskId: native.task_id,
+        runId: native.run_id,
+        parentTaskId: native.parent_task_id,
+        taskType: native.task_type,
+        subagentType: native.subagent_type,
+        description: native.description,
+        ambient: native.ambient,
+        isBackgrounded: true,
+        status: 'running',
+        updatedAt: now,
+      });
+      this.syncTaskBackgroundWork(sessionId, task);
+    }
+    const liveIds = new Set(message.tasks.map((task) => task.task_id));
+    for (const task of state.tasks.filter(
+      (task) =>
+        task.isBackgrounded &&
+        isLiveClaudeTask(task) &&
+        !liveIds.has(task.taskId),
+    )) {
+      const ended = this.upsertTask(sessionId, {
+        taskId: task.taskId,
+        runId: task.runId,
+        status: 'unavailable',
+        updatedAt: now,
+      });
+      this.syncTaskBackgroundWork(sessionId, ended);
+      this.emitEvent({
+        type: 'task_updated',
+        payload: { sessionId, task: ended },
+      });
+    }
+    state.backgroundWork = message.tasks
+      .filter((task) => !task.ambient)
+      .map((task) => ({
+        id: `task:${task.task_id}`,
+        kind: task.task_type === 'local_agent' ? 'subagent' : 'task',
+        label: task.description,
+        startedAt: previous.get(`task:${task.task_id}`)?.startedAt ?? now,
+        updatedAt: now,
+      }));
+    if (previous.size > state.backgroundWork.length)
+      state.lastBackgroundWorkFinishedAtMs = Date.now();
+    this.emitBackgroundWork(sessionId, state);
   }
 
   private handleTaskUpdatedMessage(
@@ -4185,7 +4930,8 @@ export class ClaudeRuntimeService
   ): void {
     const task = this.upsertTask(sessionId, {
       taskId: message.task_id,
-      status: message.patch.status ?? 'running',
+      status: message.patch.status,
+      runId: message.run_id,
       description: message.patch.description,
       endTime: message.patch.end_time,
       totalPausedMs: message.patch.total_paused_ms,
@@ -4203,6 +4949,7 @@ export class ClaudeRuntimeService
   ): void {
     const task = this.upsertTask(sessionId, {
       taskId: message.task_id,
+      runId: message.run_id,
       status: 'running',
       description: message.description,
       toolUseId: message.tool_use_id,
@@ -4221,6 +4968,7 @@ export class ClaudeRuntimeService
   ): void {
     const task = this.upsertTask(sessionId, {
       taskId: message.task_id,
+      runId: message.run_id,
       status: message.status,
       toolUseId: message.tool_use_id,
       outputFile: message.output_file,
@@ -4609,20 +5357,29 @@ export class ClaudeRuntimeService
               : undefined,
           timestamp,
         };
-        state.subagents = this.upsertRecentSubagent(state.subagents, subagent);
-        this.emitEvent({
-          type: 'subagent_lifecycle',
-          payload: { sessionId, subagent },
+        const existing = state.subagents.find(
+          (item) => item.agentId === agentId,
+        );
+        // A stop hook can block stopping. Task events, when known, own the outcome.
+        this.publishSubagent(sessionId, {
+          ...subagent,
+          status:
+            existing?.taskId || existing?.status === 'stopped'
+              ? existing.status
+              : subagent.status,
+          executionStatus:
+            existing?.taskId || existing?.status === 'stopped'
+              ? existing.executionStatus
+              : hookEventName === 'SubagentStart'
+                ? 'running'
+                : 'unavailable',
+          startedAt:
+            hookEventName === 'SubagentStart'
+              ? (existing?.startedAt ?? timestamp)
+              : existing?.startedAt,
+          worktreePath:
+            typeof payload.cwd === 'string' ? payload.cwd : undefined,
         });
-        if (subagent.status === 'started') {
-          this.upsertBackgroundWork(sessionId, {
-            id: `subagent:${agentId}`,
-            kind: 'subagent',
-            label: agentType,
-          });
-        } else {
-          this.clearBackgroundWork(sessionId, `subagent:${agentId}`);
-        }
       }
     }
 
@@ -4658,7 +5415,8 @@ export class ClaudeRuntimeService
           MAX_RECENT_TASK_LIFECYCLE,
         );
         this.upsertTask(sessionId, {
-          taskId,
+          taskId: `board:${taskId}`,
+          taskType: 'task_board',
           status: hookEventName === 'TaskCreated' ? 'pending' : 'completed',
           subject,
           description: lifecycle.description,
@@ -4744,8 +5502,6 @@ export class ClaudeRuntimeService
 
     const run = this.activeRuns.get(sessionId);
     const state = this.ensureRuntimeState(sessionId);
-    this.clearBackgroundRunStallTimer(state);
-    state.backgroundRunLastActivityMs = null;
     state.runPhase = state.lastError ? 'error' : 'idle';
     state.sessionState = 'idle';
     state.canInterrupt = false;
@@ -4768,10 +5524,12 @@ export class ClaudeRuntimeService
     if (state.lastHistoryItemCount === 0 && state.lastHistorySource === null) {
       state.lastHistoryItemCount = null;
     }
-    run?.permissionRequests.clear();
-    if (run) {
-      run.permissionRequestOrder = [];
-    }
+    state.permissionRequestOrder = state.permissionRequestOrder.filter((id) =>
+      state.permissionRequests.has(id),
+    );
+    if (run) run.permissionRequestOrder = state.permissionRequestOrder;
+    this.restorePendingChildPermission(state);
+    this.restorePendingUserInput(state);
     if (run) {
       this.logStartupTiming(
         sessionId,
@@ -4814,8 +5572,6 @@ export class ClaudeRuntimeService
 
     const run = this.activeRuns.get(sessionId);
     const state = this.ensureRuntimeState(sessionId);
-    this.clearBackgroundRunStallTimer(state);
-    state.backgroundRunLastActivityMs = null;
     state.runPhase = 'idle';
     state.sessionState = 'idle';
     state.canInterrupt = false;
@@ -4827,10 +5583,11 @@ export class ClaudeRuntimeService
     // Stopping the session stops its background work too — the interrupt goes
     // to the whole agent loop, not just the visible turn.
     this.clearAllBackgroundWork(sessionId, 'run_interrupted');
-    run?.permissionRequests.clear();
-    if (run) {
-      run.permissionRequestOrder = [];
-    }
+    state.permissionRequestOrder = state.permissionRequestOrder.filter((id) =>
+      state.permissionRequests.has(id),
+    );
+    if (run) run.permissionRequestOrder = state.permissionRequestOrder;
+    this.restorePendingChildPermission(state);
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
     void this.claudeHooksService.updateStatus(sessionId, 'idle', {
@@ -4918,9 +5675,12 @@ export class ClaudeRuntimeService
       canInterrupt: false,
       backgroundWork: [],
       lastBackgroundWorkFinishedAtMs: null,
-      backgroundRunLastActivityMs: null,
-      backgroundRunStallTimer: null,
       pendingBackgroundAgentToolUses: new Set(),
+      backgroundSetAuthoritative: false,
+      agentAssignments: new Map(),
+      permissionRequests: new Map(),
+      permissionRequestOrder: [],
+      userInputRequests: new Map(),
       worktreePath: null,
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
@@ -4997,6 +5757,7 @@ export class ClaudeRuntimeService
         sessionState: state.sessionState,
         canInterrupt: state.canInterrupt,
         backgroundWork: [...state.backgroundWork],
+        nativeSteering: Boolean(this.sessionRuntimes.get(sessionId)?.canSteer),
         backgroundRunActive: Boolean(
           this.activeRuns.get(sessionId)?.isBackground,
         ),
@@ -5244,7 +6005,7 @@ export class ClaudeRuntimeService
       | 'tool_result' = 'message_start',
   ): void {
     const run = this.activeRuns.get(sessionId);
-    if (run && !run.sawFirstVisibleItem) {
+    if (run && !item.agentId && !run.sawFirstVisibleItem) {
       run.sawFirstVisibleItem = true;
       run.firstVisibleAtMs = Date.now();
       const preVisibleSummary = this.summarizePreVisibleActivity(run);
@@ -5297,7 +6058,7 @@ export class ClaudeRuntimeService
         systemSubtypes: [...run.systemSubtypesBeforeVisible],
       };
     }
-    state.liveItems = [...state.liveItems, item];
+    if (!item.agentId) state.liveItems = [...state.liveItems, item];
 
     if (eventType === 'thinking_start') {
       this.emitEvent({ type: 'thinking_start', payload: { sessionId, item } });
@@ -5439,6 +6200,7 @@ export class ClaudeRuntimeService
           : undefined,
       includeHookEvents: true,
       includePartialMessages: true,
+      extraArgs: { 'replay-user-messages': null },
       promptSuggestions: true,
       agentProgressSummaries: true,
       canUseTool,
@@ -5465,12 +6227,28 @@ export class ClaudeRuntimeService
         type: 'preset' as const,
         preset: 'claude_code' as const,
       },
-      ...(isAgentSession &&
-      normalizeAutonomyMode(agentAutonomyMode) === 'review' &&
-      effectivePermissionMode === 'auto'
+      ...(isAgentSession
         ? {
+            agents: {
+              'elevenex-operator': {
+                description:
+                  'Independent Elevenex lookups and coordination through MCP tools.',
+                prompt:
+                  'You are a delegated Elevenex operator. Follow the assigned task and use the Elevenex MCP tools for workspace and session operations. Application code, builds, tests, and git work belong in separate Elevenex coding sessions. Do not read or change application code directly or use shell commands. Respect the parent mission and autonomy policy; return concise findings to the parent. Do not duplicate another worker’s assignment.',
+              },
+            },
             hooks: {
-              PreToolUse: [{ hooks: [askOnDestructiveElevenexTool] }],
+              PreToolUse: [
+                {
+                  hooks: [
+                    ...(normalizeAutonomyMode(agentAutonomyMode) === 'review' &&
+                    effectivePermissionMode === 'auto'
+                      ? [askOnDestructiveElevenexTool]
+                      : []),
+                    constrainOperatorChild,
+                  ],
+                },
+              ],
             },
           }
         : {}),
@@ -5798,9 +6576,18 @@ export class ClaudeRuntimeService
       notifications: state.notifications,
       hooks: state.hooks,
       recentHookEvents: state.recentHookEvents,
-      tasks: state.tasks,
+      tasks: state.tasks.map((task) => ({
+        ...task,
+        canStop:
+          Boolean(this.sessionRuntimes.get(sessionId)?.canStopTask) &&
+          isLiveClaudeTask(task) &&
+          task.taskType !== 'task_board',
+      })),
       taskLifecycle: state.taskLifecycle,
-      subagents: state.subagents,
+      subagents: state.subagents.map((agent) =>
+        this.withSubagentControls(sessionId, agent),
+      ),
+      nativeSteering: Boolean(this.sessionRuntimes.get(sessionId)?.canSteer),
       latestToolProgress: state.latestToolProgress,
       latestToolSummary: state.latestToolSummary,
       latestApiRetry: state.latestApiRetry,
@@ -6144,52 +6931,25 @@ export class ClaudeRuntimeService
   private upsertTask(
     sessionId: number,
     patch: Partial<ClaudeTaskState> &
-      Pick<ClaudeTaskState, 'taskId' | 'status' | 'updatedAt'>,
+      Pick<ClaudeTaskState, 'taskId' | 'updatedAt'>,
+    started = false,
   ): ClaudeTaskState {
     const state = this.ensureRuntimeState(sessionId);
     const existing = state.tasks.find((task) => task.taskId === patch.taskId);
-    const task: ClaudeTaskState = {
-      taskId: patch.taskId,
-      status: patch.status ?? existing?.status ?? 'pending',
-      description: patch.description ?? existing?.description,
-      taskType: patch.taskType ?? existing?.taskType,
-      workflowName: patch.workflowName ?? existing?.workflowName,
-      toolUseId: patch.toolUseId ?? existing?.toolUseId,
-      prompt: patch.prompt ?? existing?.prompt,
-      outputFile: patch.outputFile ?? existing?.outputFile,
-      summary: patch.summary ?? existing?.summary,
-      lastToolName: patch.lastToolName ?? existing?.lastToolName,
-      usage: patch.usage ?? existing?.usage,
-      skipTranscript: patch.skipTranscript ?? existing?.skipTranscript,
-      error: patch.error ?? existing?.error,
-      endTime: patch.endTime ?? existing?.endTime,
-      totalPausedMs: patch.totalPausedMs ?? existing?.totalPausedMs,
-      isBackgrounded: patch.isBackgrounded ?? existing?.isBackgrounded,
-      subject: patch.subject ?? existing?.subject,
-      teammateName: patch.teammateName ?? existing?.teammateName,
-      teamName: patch.teamName ?? existing?.teamName,
-      updatedAt: patch.updatedAt,
-    };
-
-    state.tasks = [
-      task,
-      ...state.tasks.filter((item) => item.taskId !== patch.taskId),
-    ];
+    const task = mergeClaudeTask(existing, patch, started);
+    task.canStop =
+      Boolean(this.sessionRuntimes.get(sessionId)?.canStopTask) &&
+      isLiveClaudeTask(task) &&
+      task.taskType !== 'task_board';
+    state.tasks = retainClaudeTasks(
+      [task, ...state.tasks.filter((item) => item.taskId !== patch.taskId)],
+      (item) => isLiveClaudeTask(item),
+    );
     return task;
   }
 
   private appendRecent<T>(items: T[], item: T, maxItems: number): T[] {
     return [item, ...items].slice(0, maxItems);
-  }
-
-  private upsertRecentSubagent(
-    items: ClaudeSubagentState[],
-    subagent: ClaudeSubagentState,
-  ): ClaudeSubagentState[] {
-    return [
-      subagent,
-      ...items.filter((item) => item.agentId !== subagent.agentId),
-    ].slice(0, MAX_RECENT_SUBAGENTS);
   }
 
   private normalizeHistory(
@@ -6244,6 +7004,7 @@ export class ClaudeRuntimeService
             normalized.push({
               id: `${message.uuid}:tool_result:${part.tool_use_id ?? index}`,
               kind: 'tool_result',
+              providerToolResult: message.tool_use_result,
               toolUseId: part.tool_use_id,
               parentToolUseId,
               sourceMessageId: message.uuid,
@@ -6351,6 +7112,7 @@ export class ClaudeRuntimeService
             ? record.timestamp
             : new Date().toISOString(),
         message: record.message,
+        tool_use_result: record.toolUseResult ?? record.tool_use_result,
       }));
 
     return this.normalizeHistory(messages, interactionsByToolUseId);
@@ -6564,8 +7326,12 @@ export class ClaudeRuntimeService
     }
 
     try {
-      const normalized = await this.transcriptHistoryCache.read(transcriptPath, async () =>
-        this.normalizeTranscriptRecords(await this.loadTranscriptRecords(transcriptPath)),
+      const normalized = await this.transcriptHistoryCache.read(
+        transcriptPath,
+        async () =>
+          this.normalizeTranscriptRecords(
+            await this.loadTranscriptRecords(transcriptPath),
+          ),
       );
       // Decisions live in SQLite and can change without a transcript append.
       // Attach them after cache retrieval so permission feedback stays fresh.
@@ -7533,6 +8299,19 @@ export class ClaudeRuntimeService
     } finally {
       await rm(temporary, { force: true });
     }
+    const sourceChildren = join(dirname(source), session.claudeSessionId);
+    const destinationChildren = join(
+      dirname(destination),
+      session.claudeSessionId,
+    );
+    try {
+      await cp(sourceChildren, destinationChildren, {
+        recursive: true,
+        force: true,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
     await this.db
       .update(schema.sessions)
       .set({ transcriptWorktreePath: session.worktreePath })
@@ -7577,7 +8356,7 @@ export class ClaudeRuntimeService
     // Prefer the current runtime directory even if an older fallback copy is
     // still present after a transcript migration.
     const cachedPath = this.transcriptPaths.get(key);
-    if (cachedPath && await this.pathExists(cachedPath)) return cachedPath;
+    if (cachedPath && (await this.pathExists(cachedPath))) return cachedPath;
     this.transcriptPaths.delete(key);
 
     const projectsDir = join(homedir(), '.claude', 'projects');
@@ -7591,7 +8370,9 @@ export class ClaudeRuntimeService
         );
         if (await this.pathExists(candidatePath)) {
           if (this.transcriptPaths.size >= 256) {
-            this.transcriptPaths.delete(this.transcriptPaths.keys().next().value!);
+            this.transcriptPaths.delete(
+              this.transcriptPaths.keys().next().value!,
+            );
           }
           this.transcriptPaths.set(key, candidatePath);
           return candidatePath;
@@ -7700,6 +8481,7 @@ export class ClaudeRuntimeService
       queuedPermissionRequestId,
       permission,
     ] of run.permissionRequests.entries()) {
+      if (!options.invalidateSession && permission.request.agentId) continue;
       permission?.resolve({
         behavior: 'deny',
         message: 'Run interrupted by user',
@@ -7707,7 +8489,9 @@ export class ClaudeRuntimeService
       });
       run.permissionRequests.delete(queuedPermissionRequestId);
     }
-    run.permissionRequestOrder = [];
+    run.permissionRequestOrder = state.permissionRequestOrder =
+      run.permissionRequestOrder.filter((id) => run.permissionRequests.has(id));
+    this.restorePendingChildPermission(state);
 
     if (pendingUserInputRequest) {
       const userInput = run.userInputRequests.get(
@@ -7719,6 +8503,12 @@ export class ClaudeRuntimeService
 
     try {
       await run.query.interrupt();
+      // The CLI may already have accepted a later user message. Its receipt
+      // names sends that survive interrupt; do not discard that next response.
+      if (!options.invalidateSession && run.query.pendingInputCount > 0) {
+        run.interruptRequested = false;
+        run.tornDown = false;
+      }
     } catch (error) {
       if (!this.isIgnorableInterruptedRunError(error)) {
         this.logger.debug(

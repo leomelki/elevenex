@@ -25,6 +25,35 @@
                 >{{ task.status }}</span
               >
             </div>
+            @if (agentIds().has(task.taskId) || (!readOnly() && task.canStop)) {
+              <div class="mt-1 flex items-center gap-2">
+                @if (agentIds().has(task.taskId)) {
+                  <button
+                    z-button
+                    zType="link"
+                    zSize="sm"
+                    type="button"
+                    class="h-auto px-0 py-1 text-xs"
+                    (click)="inspectAgent.emit(task.taskId); close.emit()"
+                  >
+                    Open agent ↗
+                  </button>
+                }
+                @if (!readOnly() && task.canStop) {
+                  <button
+                    z-button
+                    zType="ghost"
+                    zSize="sm"
+                    type="button"
+                    class="ml-auto h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
+                    [disabled]="!!busyActions()[task.taskId]"
+                    (click)="stopTask.emit(task.taskId)"
+                  >
+                    {{ busyActions()[task.taskId] ? 'Stopping…' : 'Stop task' }}
+                  </button>
+                }
+              </div>
+            }
             @if (subtitle(task); as s) {
               <p class="mt-1 text-xs text-muted-foreground">{{ s }}</p>
             }

@@ -200,3 +200,19 @@
 
 /* The turn-summary band owns its own gradients and breakpoints — see
    cw-turn-summary, which the review dock renders too. */
+
+@media (max-width: 1100px) {
+  .cw-parent-chat {
+    width: 100% !important;
+  }
+  .cw-agent-resize {
+    display: none;
+  }
+  .cw-agent-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 45;
+    width: 100% !important;
+    background: var(--background);
+  }
+}

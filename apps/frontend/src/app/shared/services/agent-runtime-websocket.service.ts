@@ -20,6 +20,7 @@ interface Connection {
 
 @Injectable({ providedIn: 'root' })
 export class AgentRuntimeWebsocketService {
+  private readonly agentWatches = new Map<string, Map<string, number>>();
   private readonly connections = new Map<string, Connection>();
   private readonly sessionStateSubjects = new Map<string, BehaviorSubject<AgentConnectionPhase>>();
   private readonly providerSelection = inject(AgentRuntimeProviderService);
@@ -112,6 +113,8 @@ export class AgentRuntimeWebsocketService {
     stateSubject.next('connecting');
 
     ws.onopen = () => {
+      for (const agentId of this.agentWatches.get(key)?.keys() ?? [])
+        ws.send(JSON.stringify({ type: 'watch_subagent', agentId }));
       this.ngZone.run(() => stateSubject.next('connected'));
     };
 
@@ -159,6 +162,29 @@ export class AgentRuntimeWebsocketService {
         once: true,
       });
     }
+  }
+
+  watchSubagent(sessionId: number, provider: AgentProviderId, agentId: string): () => void {
+    const key = this.connectionKey(sessionId, provider);
+    const watched = this.agentWatches.get(key) ?? new Map<string, number>();
+    const count = watched.get(agentId) ?? 0;
+    watched.set(agentId, count + 1);
+    this.agentWatches.set(key, watched);
+    if (!count && this.connections.get(key)?.ws.readyState === WebSocket.OPEN)
+      this.send(sessionId, { type: 'watch_subagent', agentId }, provider);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const current = watched.get(agentId) ?? 0;
+      if (current > 1) {
+        watched.set(agentId, current - 1);
+        return;
+      }
+      watched.delete(agentId);
+      this.send(sessionId, { type: 'unwatch_subagent', agentId }, provider);
+      if (!watched.size && this.agentWatches.get(key) === watched) this.agentWatches.delete(key);
+    };
   }
 
   isConnected(

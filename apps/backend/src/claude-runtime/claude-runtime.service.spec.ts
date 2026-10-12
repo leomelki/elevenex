@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   forkSession: jest.fn(),
   getSubagentMessages: jest.fn(),
+  listSubagents: jest.fn(),
   getSessionMessages: jest.fn(),
   query: jest.fn(),
 }));
@@ -15,6 +16,7 @@ import {
   forkSession,
   getSessionMessages,
   getSubagentMessages,
+  listSubagents,
   query,
 } from '@anthropic-ai/claude-agent-sdk';
 import {
@@ -143,8 +145,15 @@ describe('ClaudeRuntimeService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    transcriptFixtureRoot = await mkdtemp(join(tmpdir(), 'claude-history-fixture-'));
-    transcriptFixturePath = join(transcriptFixtureRoot, 'claude-session-1.jsonl');
+    (getSubagentMessages as jest.Mock).mockResolvedValue([]);
+    (listSubagents as jest.Mock).mockResolvedValue([]);
+    transcriptFixtureRoot = await mkdtemp(
+      join(tmpdir(), 'claude-history-fixture-'),
+    );
+    transcriptFixturePath = join(
+      transcriptFixtureRoot,
+      'claude-session-1.jsonl',
+    );
     await writeFile(transcriptFixturePath, 'fixture');
     if (originalClaudeBin === undefined) {
       delete process.env.ELEVENEX_CLAUDE_BIN;
@@ -362,7 +371,32 @@ describe('ClaudeRuntimeService', () => {
     );
 
     expect(options.permissionMode).toBe('bypassPermissions');
-    expect(options.hooks).toBeUndefined();
+    expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
+    const boundary = options.hooks!.PreToolUse![0].hooks[0];
+    await expect(
+      boundary(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Bash',
+          agent_id: 'child',
+        } as any,
+        undefined,
+        {} as any,
+      ),
+    ).resolves.toMatchObject({
+      hookSpecificOutput: { permissionDecision: 'deny' },
+    });
+    await expect(
+      boundary(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'mcp__elevenex__read_session',
+          agent_id: 'child',
+        } as any,
+        undefined,
+        {} as any,
+      ),
+    ).resolves.toEqual({});
   });
 
   it('updates active Claude runtime when plan mode is toggled', async () => {
@@ -908,7 +942,7 @@ describe('ClaudeRuntimeService', () => {
 
     expect(state.tasks[0]).toEqual(
       expect.objectContaining({
-        taskId: 'task-2',
+        taskId: 'board:task-2',
         status: 'pending',
         subject: 'Review changed files',
       }),
@@ -2428,6 +2462,7 @@ describe('ClaudeRuntimeService', () => {
     });
 
     await service.submitPrompt(7, 'Trace this');
+    await (service as any).activeRuns.get(7)?.completionPromise;
 
     const debugMessages = loggerDebugSpy.mock.calls.map(([message]) =>
       String(message),
@@ -2617,9 +2652,7 @@ describe('ClaudeRuntimeService', () => {
     (getSessionMessages as jest.Mock).mockResolvedValue([]);
     jest
       .spyOn(service as never, 'findTranscriptPath' as never)
-      .mockResolvedValue(
-        transcriptFixturePath,
-      );
+      .mockResolvedValue(transcriptFixturePath);
     jest
       .spyOn(service as never, 'loadTranscriptRecords' as never)
       .mockResolvedValue([
@@ -2648,9 +2681,7 @@ describe('ClaudeRuntimeService', () => {
     (getSessionMessages as jest.Mock).mockResolvedValue([]);
     jest
       .spyOn(service as never, 'findTranscriptPath' as never)
-      .mockResolvedValue(
-        transcriptFixturePath,
-      );
+      .mockResolvedValue(transcriptFixturePath);
     jest
       .spyOn(service as never, 'loadTranscriptRecords' as never)
       .mockResolvedValue([
@@ -2693,38 +2724,57 @@ describe('ClaudeRuntimeService', () => {
   const mockTranscript = (records: unknown[]) => {
     jest
       .spyOn(service as never, 'findTranscriptPath' as never)
-      .mockResolvedValue(
-        transcriptFixturePath,
-      );
+      .mockResolvedValue(transcriptFixturePath);
     jest
       .spyOn(service as never, 'loadTranscriptRecords' as never)
       .mockResolvedValue(records as never);
   };
 
   it('reuses parsed history while refreshing SQLite permission decisions', async () => {
-    mockTranscript([{
-      type: 'assistant', uuid: 'assistant-cached',
-      timestamp: '2026-04-24T09:00:00.000Z',
-      message: { content: [{ type: 'tool_use', id: 'tool-cached', name: 'Read', input: {} }] },
-    }]);
+    mockTranscript([
+      {
+        type: 'assistant',
+        uuid: 'assistant-cached',
+        timestamp: '2026-04-24T09:00:00.000Z',
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tool-cached', name: 'Read', input: {} },
+          ],
+        },
+      },
+    ]);
     const read = (service as any).loadTranscriptRecords;
     expect((await service.getHistory(7))[0].interaction).toBeUndefined();
     interactionRows.push({
-      id: 1, sessionId: 7, toolUseId: 'tool-cached', toolName: 'Read',
-      interactionKind: 'permission', decision: 'denied', remember: false,
-      responseContent: null, requestSnapshot: '{}',
-      createdAt: '2026-04-24T09:00:00.000Z', resolvedAt: '2026-04-24T09:00:01.000Z',
+      id: 1,
+      sessionId: 7,
+      toolUseId: 'tool-cached',
+      toolName: 'Read',
+      interactionKind: 'permission',
+      decision: 'denied',
+      remember: false,
+      responseContent: null,
+      requestSnapshot: '{}',
+      createdAt: '2026-04-24T09:00:00.000Z',
+      resolvedAt: '2026-04-24T09:00:01.000Z',
     });
-    expect((await service.getHistory(7))[0].interaction?.decision).toBe('denied');
+    expect((await service.getHistory(7))[0].interaction?.decision).toBe(
+      'denied',
+    );
     expect(read).toHaveBeenCalledTimes(1);
   });
 
   it('prefers the current transcript over an older cached fallback copy', async () => {
     const runtime = service as any;
-    runtime.transcriptPaths.set(JSON.stringify(['/worktree', 'claude-session-1']), '/old-copy');
+    runtime.transcriptPaths.set(
+      JSON.stringify(['/worktree', 'claude-session-1']),
+      '/old-copy',
+    );
     jest.spyOn(runtime, 'getTranscriptPath').mockReturnValue('/current-copy');
     jest.spyOn(runtime, 'pathExists').mockResolvedValue(true);
-    expect(await runtime.findTranscriptPath('/worktree', 'claude-session-1')).toBe('/current-copy');
+    expect(
+      await runtime.findTranscriptPath('/worktree', 'claude-session-1'),
+    ).toBe('/current-copy');
   });
 
   it('keeps an answered turn that a retry storm pushed off the parent chain', async () => {
@@ -3727,7 +3777,8 @@ describe('ClaudeRuntimeService', () => {
       subagent: expect.objectContaining({ agentId: 'agent-1' }),
       history: [],
       transcriptAvailable: false,
-      transcriptError: 'Transcript unavailable for this agent.',
+      transcriptState: 'starting',
+      transcriptError: 'Waiting for the first agent message…',
     });
   });
 
@@ -4200,9 +4251,6 @@ describe('ClaudeRuntimeService', () => {
       startSubagent('agent-1');
 
       expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(true);
-      expect((service as any).shouldQueueBehindBackground(SESSION_ID)).toBe(
-        true,
-      );
       expect(backgroundIds()).toEqual(['subagent:agent-1']);
     });
 
@@ -4217,13 +4265,17 @@ describe('ClaudeRuntimeService', () => {
     // Regression: a dropped SubagentStop hook used to pin the session as
     // "background busy" forever, which silently queued every later prompt.
     // Quiet work must stop blocking the queue...
-    it('stops queueing prompts behind background work that has gone quiet', () => {
+    it('accepts a parent prompt while background work remains live', async () => {
       startSubagent('agent-1');
-      ageItem('subagent:agent-1', 10 * 60 * 1000);
-
-      expect((service as any).shouldQueueBehindBackground(SESSION_ID)).toBe(
-        false,
-      );
+      (query as jest.Mock).mockImplementation(() => ({
+        [Symbol.asyncIterator]: () => successfulResultIterator(),
+        close: jest.fn(),
+      }));
+      await service.submitPrompt(SESSION_ID, 'Keep working with the parent');
+      expect(
+        (service as any).ensureRuntimeState(SESSION_ID).pendingPrompts,
+      ).toEqual([]);
+      expect(query).toHaveBeenCalled();
     });
 
     // ...but must NOT release the runtime. Nothing the SDK emits carries an
@@ -4238,12 +4290,12 @@ describe('ClaudeRuntimeService', () => {
       expect(backgroundIds()).toEqual(['subagent:agent-1']);
     });
 
-    it('retires background work only past the hard age ceiling', () => {
+    it('never treats elapsed time as proof that a worker has finished', () => {
       startSubagent('agent-1');
       ageItem('subagent:agent-1', 7 * 60 * 60 * 1000);
 
-      expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(false);
-      expect(backgroundIds()).toEqual([]);
+      expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(true);
+      expect(backgroundIds()).toEqual(['subagent:agent-1']);
     });
 
     // Regression: background work runs inside the runtime subprocess, so when
@@ -4415,6 +4467,7 @@ describe('ClaudeRuntimeService', () => {
         'queued while busy',
         undefined,
         undefined,
+        { human: undefined },
       );
       expect(state.pendingPrompts).toEqual([]);
     });
@@ -4752,6 +4805,223 @@ describe('ClaudeRuntimeService', () => {
 
       expect(result).toEqual({ action: 'decline' });
       expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
+    });
+  });
+  describe('native Claude worker integration', () => {
+    function liveRuntime() {
+      const runtime = {
+        canStopTask: true,
+        canSteer: true,
+        canBackgroundTasks: true,
+        pendingInputCount: 0,
+        stopTask: jest.fn().mockResolvedValue(undefined),
+        backgroundTasks: jest.fn().mockResolvedValue(true),
+        ownsInput: jest.fn().mockReturnValue(false),
+        close: jest.fn().mockResolvedValue(undefined),
+        supportedModels: jest.fn().mockResolvedValue([]),
+        getContextUsage: jest
+          .fn()
+          .mockRejectedValue(new Error('No fixture telemetry')),
+      };
+      (service as any).sessionRuntimes.set(7, runtime);
+      return runtime;
+    }
+    function startWorker(id = 'worker') {
+      (service as any).handleTaskStartedMessage(7, {
+        task_id: id,
+        run_id: '001',
+        task_type: 'local_agent',
+        description: id,
+        is_backgrounded: true,
+        tool_use_id: `dispatch-${id}`,
+      });
+      return (service as any).ensureRuntimeState(7);
+    }
+    it('recovers saved native IDs on a cold backend without inventing completion', async () => {
+      (listSubagents as jest.Mock).mockResolvedValue(['saved-worker']);
+      const state = await service.getRuntimeState(7);
+      expect(state.subagents).toEqual([
+        expect.objectContaining({
+          agentId: 'saved-worker',
+          status: 'stopped',
+          executionStatus: 'unavailable',
+          canStop: false,
+        }),
+      ]);
+      expect(query).not.toHaveBeenCalled();
+    });
+    it('reads a live transcript without requiring the stop-hook path', async () => {
+      liveRuntime();
+      startWorker();
+      (getSubagentMessages as jest.Mock).mockResolvedValue([
+        {
+          type: 'assistant',
+          uuid: 'reply',
+          timestamp: '2026-10-12T10:00:00Z',
+          message: { content: [{ type: 'text', text: 'Checking caches.' }] },
+        },
+      ]);
+      const history = await service.getSubagentHistory(7, 'worker');
+      expect(history.transcriptAvailable).toBe(true);
+      expect(history.history[0].content).toBe('Checking caches.');
+    });
+    it('coalesces a targeted stop and never closes the shared query', async () => {
+      const runtime = liveRuntime();
+      startWorker();
+      let acknowledge!: () => void;
+      runtime.stopTask.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            acknowledge = resolve;
+          }),
+      );
+      const first = service.stopSubagent(7, 'worker');
+      const repeated = service.stopSubagent(7, 'worker');
+      expect(runtime.stopTask).toHaveBeenCalledTimes(1);
+      acknowledge();
+      await Promise.all([first, repeated]);
+      expect(runtime.close).not.toHaveBeenCalled();
+      expect((await service.getRuntimeState(7)).subagents[0]).toMatchObject({
+        stoppedByUser: true,
+        canStop: false,
+        canFollowUp: false,
+      });
+    });
+    it('uses native background membership as a level and retires a missed terminal edge', async () => {
+      liveRuntime();
+      const state = startWorker();
+      (service as any).handleBackgroundTasksChanged(7, {
+        tasks: [
+          {
+            task_id: 'worker',
+            run_id: '001',
+            task_type: 'local_agent',
+            description: 'Worker',
+          },
+        ],
+      });
+      expect(state.backgroundWork).toHaveLength(1);
+      (service as any).handleBackgroundTasksChanged(7, { tasks: [] });
+      expect(state.backgroundWork).toEqual([]);
+      expect(state.subagents[0]).toMatchObject({
+        status: 'stopped',
+        executionStatus: 'unavailable',
+      });
+    });
+    it('does not register a parent turn or retain its worker logs for child messages', async () => {
+      liveRuntime();
+      const state = startWorker();
+      const events: any[] = [];
+      service.on('event', (event) => events.push(event));
+      await (service as any).handleSdkMessage(7, {
+        type: 'assistant',
+        uuid: 'child-reply',
+        agent_id: 'worker',
+        parent_tool_use_id: null,
+        session_id: 'claude-session-1',
+        message: {
+          id: 'api-reply',
+          model: 'sonnet',
+          content: [{ type: 'text', text: 'Child output' }],
+        },
+      });
+      expect((service as any).activeRuns.has(7)).toBe(false);
+      expect(state.liveItems).toEqual([]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'message_start',
+          payload: expect.objectContaining({
+            item: expect.objectContaining({
+              agentId: 'worker',
+              parentToolUseId: 'dispatch-worker',
+              content: 'Child output',
+            }),
+          }),
+        }),
+      );
+    });
+    it('keeps a background approval reachable after the parent completes', async () => {
+      liveRuntime();
+      const state = startWorker();
+      const callback = (service as any).createCanUseTool(7, state);
+      const pending = callback(
+        'Bash',
+        { command: 'test' },
+        {
+          toolUseID: 'child-action',
+          agentID: 'worker',
+          signal: new AbortController().signal,
+        },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      const requestId = state.pendingPermissionRequest.requestId;
+      expect(state.runPhase).toBe('idle');
+      expect((service as any).activeRuns.has(7)).toBe(false);
+      (service as any).finishRun(7);
+      expect(state.pendingPermissionRequest.requestId).toBe(requestId);
+      await service.approvePermission(7, requestId);
+      await expect(pending).resolves.toMatchObject({ behavior: 'allow' });
+      expect(state.pendingPermissionRequest).toBeNull();
+    });
+    it('cancels only the aborted child request and promotes the next approval', async () => {
+      liveRuntime();
+      const state = startWorker('first');
+      startWorker('second');
+      const callback = (service as any).createCanUseTool(7, state);
+      const abort = new AbortController();
+      const first = callback(
+        'Bash',
+        {},
+        { toolUseID: 'first-action', agentID: 'first', signal: abort.signal },
+      );
+      const second = callback(
+        'Bash',
+        {},
+        {
+          toolUseID: 'second-action',
+          agentID: 'second',
+          signal: new AbortController().signal,
+        },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      abort.abort();
+      await expect(first).resolves.toMatchObject({ behavior: 'deny' });
+      expect(state.pendingPermissionRequest.agentId).toBe('second');
+      await service.denyPermission(7, state.pendingPermissionRequest.requestId);
+      await expect(second).resolves.toMatchObject({ behavior: 'deny' });
+    });
+    it('honors a provider prohibition on persistent permission rules', async () => {
+      liveRuntime();
+      const state = startWorker();
+      const callback = (service as any).createCanUseTool(7, state);
+      const pending = callback(
+        'Bash',
+        {},
+        {
+          toolUseID: 'one-shot',
+          agentID: 'worker',
+          signal: new AbortController().signal,
+          suppressAlwaysAllowRule: true,
+          suggestions: [
+            {
+              type: 'addRules',
+              rules: [{ toolName: 'Bash' }],
+              behavior: 'allow',
+              destination: 'session',
+            },
+          ],
+        },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      await service.approvePermission(
+        7,
+        state.pendingPermissionRequest.requestId,
+        true,
+      );
+      await expect(pending).resolves.toMatchObject({
+        behavior: 'allow',
+        updatedPermissions: undefined,
+      });
     });
   });
 });

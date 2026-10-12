@@ -1,16 +1,12 @@
 @if (open()) {
   @if (turn(); as currentTurn) {
-    <div
-      class="cw-agent-dive__backdrop fixed inset-0 z-[44] bg-[color-mix(in_oklab,var(--surface-shade)_45%,transparent)]"
-      (click)="close.emit()"
-    ></div>
     <aside
-      class="cw-agent-dive fixed inset-y-0 right-0 z-[45] flex w-[min(78rem,100vw)] flex-col border-l border-border bg-background shadow-xl"
+      class="cw-agent-dive relative flex h-full w-full flex-col border-l border-border bg-background shadow-xl"
       role="dialog"
-      aria-modal="true"
+      [attr.aria-modal]="!wide().matches ? true : null"
       aria-labelledby="agent-inspector-title"
-      cdkTrapFocus
-      [cdkTrapFocusAutoCapture]="true"
+      [cdkTrapFocus]="!wide().matches"
+      [cdkTrapFocusAutoCapture]="!wide().matches"
       (keydown.escape)="close.emit(); $event.stopPropagation()"
     >
       <header
@@ -34,8 +30,19 @@
           <ng-icon name="lucideX" size="16" />
         </button>
       </header>
+      @if (pendingPermission(); as permission) {
+        <div
+          class="flex items-center justify-between gap-3 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs"
+          role="status"
+        >
+          <span>A delegated action needs your approval.</span>
+          <button z-button zType="ghost" zSize="sm" type="button" (click)="close.emit()">
+            Review in main chat
+          </button>
+        </div>
+      }
       <div
-        class="cw-agent-dive__body grid min-h-0 flex-1 grid-cols-[minmax(15rem,17rem)_minmax(0,1fr)]"
+        class="cw-agent-dive__body grid min-h-0 flex-1 grid-cols-[minmax(10rem,12rem)_minmax(0,1fr)]"
       >
         <nav
           class="cw-agent-dive__rail flex min-h-0 flex-col gap-3 overflow-auto border-r border-border bg-muted/20 p-3"
@@ -154,6 +161,50 @@
                   }
                 </div>
               </div>
+              @if (!readOnly()) {
+                <div class="flex flex-wrap items-center gap-1" aria-label="Agent controls">
+                  @if (agent.canFollowUp) {
+                    <button
+                      z-button
+                      zType="outline"
+                      zSize="sm"
+                      type="button"
+                      class="h-7 px-2 text-xs"
+                      (click)="followUpAgent.emit(agent.agentId)"
+                      title="Prepare a message to Claude about this agent"
+                    >
+                      Follow up
+                    </button>
+                  }
+                  @if (agent.canBackground) {
+                    <button
+                      z-button
+                      zType="ghost"
+                      zSize="sm"
+                      type="button"
+                      class="h-7 px-2 text-xs"
+                      [disabled]="!!busyActions()[agent.agentId]"
+                      (click)="backgroundAgent.emit(agent.agentId)"
+                    >
+                      Run in background
+                    </button>
+                  }
+                  @if (agent.canStop) {
+                    <button
+                      z-button
+                      zType="ghost"
+                      zSize="sm"
+                      type="button"
+                      class="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
+                      [disabled]="!!busyActions()[agent.agentId]"
+                      (click)="stopAgent.emit(agent.agentId)"
+                      title="Stop this agent; other workers keep running"
+                    >
+                      {{ busyActions()[agent.agentId] === 'stopping' ? 'Stopping…' : 'Stop agent' }}
+                    </button>
+                  }
+                </div>
+              }
               <div class="flex items-center gap-1">
                 <div class="flex items-center gap-0.5" aria-label="Agent detail views">
                   <button
@@ -244,15 +295,32 @@
               <div
                 class="cw-agent-dive__chat min-h-0 flex-1 overflow-auto px-[clamp(0.75rem,4vw,2rem)] py-5"
                 cwTranscriptViewport
+                #agentViewport="cwTranscriptViewport"
+                [scrollMemory]="scrollMemory"
+                [restoreReady]="!!selectedHistoryState()?.data"
                 [items]="chatHistory()"
                 [runPhase]="agent.status === 'started' ? 'running' : 'idle'"
                 [sessionKey]="agent.agentId"
                 aria-label="Agent conversation"
               >
+                @if (selectedHistoryState()?.data?.hasEarlier) {
+                  <div class="mb-4 flex justify-center">
+                    <button
+                      z-button
+                      zType="ghost"
+                      zSize="sm"
+                      type="button"
+                      [disabled]="selectedHistoryState()?.loading"
+                      (click)="loadEarlier.emit(agent.agentId)"
+                    >
+                      Load earlier messages
+                    </button>
+                  </div>
+                }
                 @if (chatItems().length) {
                   <cw-transcript
                     [items]="chatItems()"
-                    [worktreePath]="worktreePath()"
+                    [worktreePath]="agent.worktreePath || worktreePath()"
                     [toolState]="chatTools()"
                     [turnExpansion]="turnExpansion()"
                     [canInspectAgents]="true"
@@ -269,6 +337,20 @@
                   <p class="mx-auto max-w-[52rem] text-sm text-muted-foreground">
                     {{ selectedHistoryState()?.data?.transcriptError || 'No messages yet.' }}
                   </p>
+                }
+                @if (agentViewport.hasNewActivity()) {
+                  <div class="sticky bottom-2 mt-3 flex justify-end">
+                    <button
+                      z-button
+                      zType="secondary"
+                      zSize="sm"
+                      type="button"
+                      class="shadow-sm"
+                      (click)="agentViewport.pinToBottom()"
+                    >
+                      New activity ↓
+                    </button>
+                  </div>
                 }
               </div>
             } @else if (tab() === 'timeline') {
@@ -287,7 +369,7 @@
                         <agent-markdown
                           class="cw-agent-dive__note-copy block [overflow-wrap:anywhere]"
                           [content]="entry.content"
-                          [worktreePath]="worktreePath()"
+                          [worktreePath]="agent.worktreePath || worktreePath()"
                           (openLocalFile)="openLocalFile.emit($event)"
                         />
                       </article>
@@ -298,7 +380,7 @@
                         [result]="entry.result"
                         [agents]="agentIndex()"
                         [canInspectAgents]="true"
-                        [worktreePath]="worktreePath()"
+                        [worktreePath]="agent.worktreePath || worktreePath()"
                         [isLive]="agent.status === 'started' && !entry.result"
                         (inspectAgent)="selectAgent.emit($event)"
                         (openLocalFile)="openLocalFile.emit($event)"
@@ -341,12 +423,29 @@
                 }
               </div>
             }
+            @if (!readOnly() && pendingPermission()?.agentId === agent.agentId) {
+              <cw-permission-inline
+                class="block shrink-0 border-t border-border"
+                [request]="pendingPermission()!"
+                [requestingAgentName]="agentLabel(agent)"
+                (inspectAgent)="selectAgent.emit($event)"
+                [appearance]="'dock'"
+                (approve)="approve.emit($event)"
+                (deny)="deny.emit($event)"
+              />
+            }
             <footer
               class="cw-agent-dive__status flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-border px-5 py-2 text-[11px] text-muted-foreground"
               aria-label="Agent status"
             >
               <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
                 <cw-subagent-status [agent]="agent" />
+                @if (agent.isBackgrounded) {
+                  <span>Background</span>
+                }
+                @if (agent.lastToolName) {
+                  <span class="truncate">{{ agent.lastToolName }}</span>
+                }
                 @if (agent.model) {
                   <span class="truncate"
                     >{{ agent.model
@@ -354,6 +453,25 @@
                   >
                 }
               </div>
+              @if (agent.usage; as usage) {
+                <details class="relative">
+                  <summary
+                    class="cursor-pointer rounded px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Usage
+                  </summary>
+                  <div
+                    class="absolute bottom-6 right-0 w-56 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-lg"
+                  >
+                    <div>{{ usage.toolUses }} tool calls</div>
+                    <div>{{ usage.totalTokens | number }} total tokens</div>
+                    <div>{{ usage.durationMs / 1000 | number: '1.0-0' }} seconds</div>
+                    <p class="mt-2 text-muted-foreground">
+                      Total work reported by Claude. Context occupancy is not reported.
+                    </p>
+                  </div>
+                </details>
+              }
               @if (agent.contextUsage; as usage) {
                 <cw-context-usage
                   [usage]="usage"

@@ -1,0 +1,100 @@
+@let vm = view();
+<article
+  class="overflow-hidden rounded-xl border border-border bg-card text-xs"
+  [attr.aria-label]="vm.title"
+>
+  <header class="flex min-w-0 items-center gap-2 px-3 py-2.5">
+    <ng-icon [name]="vm.icon" size="15" class="shrink-0 text-muted-foreground" />
+    <span class="min-w-0 flex-1 truncate font-medium">{{ vm.title }}</span>
+    @if (vm.error) {
+      <span class="text-destructive">Failed</span>
+    } @else if (vm.agent; as agent) {
+      <cw-subagent-status [agent]="agent" />
+    } @else {
+      <span class="text-muted-foreground">{{
+        result() ? 'Done' : isLive() ? 'Working' : 'Recorded'
+      }}</span>
+    }
+  </header>
+  <div
+    class="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 bg-muted/20 px-3 py-1.5 text-muted-foreground"
+  >
+    @if (vm.agent && canInspect()) {
+      <button
+        z-button
+        zType="link"
+        zSize="sm"
+        type="button"
+        class="h-auto max-w-full truncate px-0 py-0 text-xs"
+        (click)="inspectAgent.emit(vm.agent.agentId)"
+      >
+        {{ vm.label }} ↗
+      </button>
+    } @else {
+      <span class="max-w-full truncate">{{ vm.label }}</span>
+    }
+    @if (vm.background) {
+      <span>Background</span>
+    }
+    @if (vm.model) {
+      <span>{{ vm.model }}</span>
+    }
+    @if (vm.agent?.lastToolName) {
+      <span>{{ vm.agent?.lastToolName }}</span>
+    }
+  </div>
+  @if (vm.message) {
+    <agent-markdown
+      class="block px-3 py-3 [overflow-wrap:anywhere]"
+      [content]="vm.message"
+      [worktreePath]="worktreePath()"
+      (openLocalFile)="openLocalFile.emit($event)"
+    />
+  }
+  @if (vm.prompt) {
+    <details class="border-t border-border/60 px-3 py-2">
+      <summary
+        class="cursor-pointer text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        Assignment
+      </summary>
+      <agent-markdown
+        class="mt-2 block [overflow-wrap:anywhere]"
+        [content]="vm.prompt"
+        [worktreePath]="worktreePath()"
+        (openLocalFile)="openLocalFile.emit($event)"
+      />
+    </details>
+  }
+  @if (vm.report) {
+    <details class="border-t border-border/60 px-3 py-2" [open]="vm.error">
+      <summary
+        class="cursor-pointer text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {{ vm.tool === 'SendMessage' ? 'Delivery' : 'Result' }}
+      </summary>
+      <agent-markdown
+        class="mt-2 block [overflow-wrap:anywhere]"
+        [content]="vm.report"
+        [worktreePath]="worktreePath()"
+        (openLocalFile)="openLocalFile.emit($event)"
+      />
+    </details>
+  }
+  <details class="border-t border-border/60 px-3 py-2">
+    <summary
+      class="cursor-pointer text-[11px] text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      Details
+    </summary>
+    <pre
+      class="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words text-[11px] text-muted-foreground"
+      >{{
+        {
+          input: call().providerToolInput || call().toolInput,
+          output: result()?.providerToolResult || result()?.content,
+        } | json
+      }}</pre
+    >
+  </details>
+</article>

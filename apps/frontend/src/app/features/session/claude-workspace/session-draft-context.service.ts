@@ -427,6 +427,7 @@ export class SessionDraftContext {
     const prepared = this.prepareRuntimePrompt(promptWithMentions);
     this.runtime.sendRuntimeAction({
       type: 'submit_prompt',
+      ...(normalized.queue ? { queue: true } : {}),
       prompt: prepared.prompt,
       titlePrompt: visiblePrompt,
       ...(images.length ? { images: images.map((i) => this.toRuntimeImage(i)) } : {}),

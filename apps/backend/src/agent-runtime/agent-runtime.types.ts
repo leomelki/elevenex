@@ -176,6 +176,7 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options?: { human?: boolean; queue?: boolean },
   ): Promise<void>;
   interrupt(sessionId: number): Promise<void>;
   cancelPendingPrompt(sessionId: number, id: string): Promise<void>;
@@ -216,9 +217,13 @@ export interface AgentRuntimeProviderFeatures {
   }): Promise<AgentLoginStartResult>;
   cancelLogin(): Promise<AgentAuthStatus>;
   continueLogin(options: { code: string }): Promise<AgentAuthStatus>;
+  stopBackgroundTask(sessionId: number, taskId: string): Promise<void>;
+  stopSubagent(sessionId: number, agentId: string): Promise<void>;
+  backgroundSubagent(sessionId: number, agentId: string): Promise<void>;
   getSubagentHistory(
     sessionId: number,
     agentId: string,
+    options?: { before?: string },
   ): Promise<AgentSubagentHistoryPayload>;
   getMcpSnapshot(
     sessionId: number,

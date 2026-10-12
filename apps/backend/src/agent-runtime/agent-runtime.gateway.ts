@@ -19,6 +19,7 @@ type AgentRuntimeClientAction =
       type: 'submit_prompt';
       prompt: string;
       titlePrompt?: string;
+      queue?: boolean;
       images?: {
         mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
         data: string;
@@ -30,6 +31,8 @@ type AgentRuntimeClientAction =
        */
       focusedSessionId?: number | null;
     }
+  | { type: 'watch_subagent'; agentId: string }
+  | { type: 'unwatch_subagent'; agentId: string }
   | { type: 'interrupt' }
   | {
       type: 'approve_permission';
@@ -54,6 +57,7 @@ type AgentRuntimeClientAction =
 export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   private wss: WebSocketServer | null = null;
   private readonly clients = new Map<string, Set<WebSocket>>();
+  private readonly watchedAgents = new WeakMap<WebSocket, Set<string>>();
   private readonly hydrationInFlight = new WeakMap<
     WebSocket,
     {
@@ -207,6 +211,22 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           });
           return;
         }
+        case 'watch_subagent': {
+          if (
+            typeof action.agentId !== 'string' ||
+            !/^[\w-]{1,256}$/.test(action.agentId)
+          )
+            throw new BadRequestException('Invalid agent ID.');
+          const watched = this.watchedAgents.get(ws) ?? new Set<string>();
+          if (watched.size >= 32 && !watched.has(action.agentId))
+            throw new BadRequestException('Too many watched agents.');
+          watched.add(action.agentId);
+          this.watchedAgents.set(ws, watched);
+          return;
+        }
+        case 'unwatch_subagent':
+          this.watchedAgents.get(ws)?.delete(action.agentId);
+          return;
         case 'submit_prompt':
           await this.assertSessionMutable(sessionId);
           if (
@@ -222,6 +242,7 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
             action.prompt,
             action.titlePrompt,
             action.images,
+            { human: true, queue: action.queue === true },
           );
           return;
         case 'interrupt':
@@ -308,8 +329,16 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    const childId = (event.payload as { item?: { agentId?: string } }).item
+      ?.agentId;
+    const targets = childId
+      ? [...bucket].filter((client) =>
+          this.watchedAgents.get(client)?.has(childId),
+        )
+      : [...bucket];
+    if (!targets.length) return;
     const serialized = JSON.stringify(event);
-    for (const client of bucket) {
+    for (const client of targets) {
       if (client.readyState === WebSocket.OPEN) {
         client.send(serialized);
       }

@@ -91,9 +91,36 @@ export class AgentRuntimeApiService {
     return this.http.get<AgentRuntimeState>(`${this.basePath(sessionId, provider)}/runtime-state`);
   }
 
-  getSubagentHistory(sessionId: number, agentId: string, provider = this.currentProvider()) {
+  getSubagentHistory(
+    sessionId: number,
+    agentId: string,
+    provider = this.currentProvider(),
+    before?: string,
+  ) {
     return this.http.get<AgentSubagentHistoryPayload>(
       `${this.basePath(sessionId, provider)}/subagents/${encodeURIComponent(agentId)}/history`,
+      { params: before ? { before } : {} },
+    );
+  }
+
+  stopBackgroundTask(sessionId: number, taskId: string, provider = this.currentProvider()) {
+    return this.http.post<void>(
+      `${this.basePath(sessionId, provider)}/tasks/${encodeURIComponent(taskId)}/stop`,
+      {},
+    );
+  }
+
+  stopSubagent(sessionId: number, agentId: string, provider = this.currentProvider()) {
+    return this.http.post<void>(
+      `${this.basePath(sessionId, provider)}/subagents/${encodeURIComponent(agentId)}/stop`,
+      {},
+    );
+  }
+
+  backgroundSubagent(sessionId: number, agentId: string, provider = this.currentProvider()) {
+    return this.http.post<void>(
+      `${this.basePath(sessionId, provider)}/subagents/${encodeURIComponent(agentId)}/background`,
+      {},
     );
   }
 

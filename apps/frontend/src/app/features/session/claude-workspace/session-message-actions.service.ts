@@ -1,4 +1,8 @@
 import {
+  mergeAgentHistory,
+  boundAgentHistories,
+} from '@/shared/agent-chat/activity/agent-history-cache';
+import {
   PlanFeedbackPayload,
   PlanReviewRequest,
   isSamePlanReview,
@@ -34,6 +38,8 @@ const EMPTY_FORKS: readonly SessionFork[] = [];
 
 @Injectable()
 export class SessionMessageActions {
+  private releaseAgentWatch: (() => void) | null = null;
+  private watchedAgentId: string | null = null;
   private readonly api = inject(ClaudeRuntimeApiService);
   private readonly sessionsService = inject(SessionsService);
   private readonly destroyRef = inject(DestroyRef);
@@ -76,6 +82,7 @@ export class SessionMessageActions {
 
   readonly agentInspectorSelectedAgentId = signal<string | null>(null);
 
+  readonly agentActionBusy = signal<Record<string, 'stopping' | 'backgrounding'>>({});
   readonly agentHistoryById = signal<Record<string, ClaudeSubagentHistoryState>>({});
 
   readonly messageActionsDisabled = computed(
@@ -179,6 +186,7 @@ export class SessionMessageActions {
 
   readonly copyMessage = copyChatMessage;
   constructor() {
+    this.destroyRef.onDestroy(() => this.releaseAgentWatch?.());
     this.runtime.events.pipe(takeUntilDestroyed()).subscribe((event) => {
       switch (event.type) {
         case 'reset':
@@ -214,7 +222,11 @@ export class SessionMessageActions {
 
     this.closeAgentInspector();
 
+    this.releaseAgentWatch?.();
+    this.releaseAgentWatch = null;
+    this.watchedAgentId = null;
     this.agentHistoryById.set({});
+    this.agentActionBusy.set({});
   }
 
   private parsedPlanReview(item: ClaudeTranscriptItem): PlanReviewRequest | null {
@@ -393,12 +405,17 @@ export class SessionMessageActions {
       null;
     this.agentInspectorTurnId.set(turnId);
     this.agentInspectorSelectedAgentId.set(firstAgentId);
+    if (firstAgentId) this.setAgentWatch(firstAgentId);
     if (firstAgentId) {
       void this.ensureAgentHistory(firstAgentId);
     }
   }
 
   closeAgentInspector(): void {
+    this.releaseAgentWatch?.();
+    this.releaseAgentWatch = null;
+    if (this.watchedAgentId) this.runtime.clearSubagentLiveItems(this.watchedAgentId);
+    this.watchedAgentId = null;
     this.agentInspectorTurnId.set(null);
     this.agentInspectorSelectedAgentId.set(null);
   }
@@ -409,13 +426,82 @@ export class SessionMessageActions {
     this.selectAgentInspectorAgent(agentId);
   }
 
+  private setAgentWatch(agentId: string): void {
+    this.releaseAgentWatch?.();
+    if (this.watchedAgentId && this.watchedAgentId !== agentId)
+      this.runtime.clearSubagentLiveItems(this.watchedAgentId);
+    this.watchedAgentId = agentId;
+    this.releaseAgentWatch = this.runtime.watchSubagent(agentId);
+  }
+
   refreshAgentHistory(agentId: string): void {
     void this.ensureAgentHistory(agentId, true);
   }
 
   selectAgentInspectorAgent(agentId: string): void {
+    this.setAgentWatch(agentId);
     this.agentInspectorSelectedAgentId.set(agentId);
     void this.ensureAgentHistory(agentId);
+  }
+
+  loadEarlierAgentHistory(agentId: string): void {
+    const before = this.agentHistoryById()[agentId]?.data?.history[0]?.transcriptMessageId;
+    if (before) void this.ensureAgentHistory(agentId, true, before);
+  }
+
+  prepareAgentFollowUp(agentId: string): void {
+    if (this.runtime.isTranscriptReadOnly()) return;
+    const agent = this.runtime.subagents().find((item) => item.agentId === agentId);
+    if (!agent?.canFollowUp) return;
+    const existing = this.draft.prompt().trim();
+    this.draft.onPromptChange(`Follow up with agent ${agentId}:\n${existing}`);
+    this.closeAgentInspector();
+    this.focusRequested.next();
+  }
+
+  async stopTask(taskId: string): Promise<void> {
+    if (this.runtime.isTranscriptReadOnly() || this.agentActionBusy()[taskId]) return;
+    const version = this.runtime.bootstrapVersion;
+    this.agentActionBusy.update((state) => ({ ...state, [taskId]: 'stopping' }));
+    try {
+      await firstValueFrom(this.api.stopBackgroundTask(this.runtime.sessionId, taskId));
+    } catch (error) {
+      if (this.runtime.isCurrentConversation(version))
+        toast.error(getHttpErrorMessage(error, 'The task is no longer available.'));
+    } finally {
+      if (this.runtime.isCurrentConversation(version))
+        this.agentActionBusy.update((state) => {
+          const next = { ...state };
+          delete next[taskId];
+          return next;
+        });
+    }
+  }
+
+  async controlAgent(agentId: string, action: 'stop' | 'background'): Promise<void> {
+    if (this.runtime.isTranscriptReadOnly() || this.agentActionBusy()[agentId]) return;
+    const version = this.runtime.bootstrapVersion;
+    this.agentActionBusy.update((state) => ({
+      ...state,
+      [agentId]: action === 'stop' ? 'stopping' : 'backgrounding',
+    }));
+    try {
+      await firstValueFrom(
+        action === 'stop'
+          ? this.api.stopSubagent(this.runtime.sessionId, agentId)
+          : this.api.backgroundSubagent(this.runtime.sessionId, agentId),
+      );
+    } catch (error) {
+      if (this.runtime.isCurrentConversation(version))
+        toast.error(getHttpErrorMessage(error, 'The agent is no longer available.'));
+    } finally {
+      if (this.runtime.isCurrentConversation(version))
+        this.agentActionBusy.update((state) => {
+          const next = { ...state };
+          delete next[agentId];
+          return next;
+        });
+    }
   }
 
   canCopyMessage(item: ClaudeTranscriptItem): boolean {
@@ -617,7 +703,11 @@ export class SessionMessageActions {
     }
   }
 
-  private async ensureAgentHistory(agentId: string, refresh = false): Promise<void> {
+  private async ensureAgentHistory(
+    agentId: string,
+    refresh = false,
+    before?: string,
+  ): Promise<void> {
     const version = this.runtime.bootstrapVersion;
     const current = this.agentHistoryById()[agentId];
     if (current?.loading || (!refresh && current?.data)) return;
@@ -629,17 +719,25 @@ export class SessionMessageActions {
 
     try {
       const data = await firstValueFrom(
-        this.api.getSubagentHistory(this.runtime.sessionId, agentId),
+        this.api.getSubagentHistory(this.runtime.sessionId, agentId, before),
       );
       if (version !== this.runtime.bootstrapVersion || this.destroyRef.destroyed) return;
-      this.agentHistoryById.update((state) => ({
-        ...state,
-        [agentId]: {
-          loading: false,
-          data,
-          error: data.transcriptAvailable ? null : data.transcriptError || null,
-        },
-      }));
+      this.agentHistoryById.update((state) =>
+        boundAgentHistories(
+          {
+            ...state,
+            [agentId]: {
+              loading: false,
+              data: mergeAgentHistory(current?.data ?? null, data, Boolean(before)),
+              error:
+                data.transcriptAvailable || data.transcriptState === 'starting'
+                  ? null
+                  : data.transcriptError || null,
+            },
+          },
+          agentId,
+        ),
+      );
     } catch (error) {
       if (version !== this.runtime.bootstrapVersion || this.destroyRef.destroyed) return;
       const message =

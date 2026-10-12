@@ -2,6 +2,11 @@
   display: contents;
 }
 
+.cw-agent-dive {
+  container-type: inline-size;
+  container-name: agent-inspector;
+}
+
 // Activity remains a secondary chronological view; chat uses the shared renderer.
 .cw-agent-dive__timeline {
   flex: 1;
@@ -59,7 +64,7 @@
   color: var(--muted-foreground);
   font-size: 0.875rem;
 }
-@media (max-width: 900px) {
+@container agent-inspector (max-width: 700px) {
   .cw-agent-dive__body {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);

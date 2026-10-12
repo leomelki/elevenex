@@ -120,3 +120,36 @@ describe('AgentRuntimeGateway hydration', () => {
     expect(test.ws.send).not.toHaveBeenCalled();
   });
 });
+
+it('sends worker logs only to subscribed clients and avoids serializing unobserved output', async () => {
+  const provider = {};
+  const gateway = new AgentRuntimeGateway(
+    { getProvider: () => provider } as any,
+    {} as any,
+    {} as any,
+  );
+  const watched = { readyState: WebSocket.OPEN, send: jest.fn() };
+  const other = { readyState: WebSocket.OPEN, send: jest.fn() };
+  (gateway as any).clients.set('claude:7', new Set([watched, other]));
+  let serializations = 0;
+  const item = {
+    agentId: 'worker',
+    get content() {
+      serializations++;
+      return 'Worker output';
+    },
+  };
+  const event = { type: 'message_start', payload: { sessionId: 7, item } };
+  (gateway as any).broadcast('claude', 7, event);
+  expect(serializations).toBe(0);
+  await (gateway as any).handleMessage(
+    'claude',
+    7,
+    watched,
+    JSON.stringify({ type: 'watch_subagent', agentId: 'worker' }),
+  );
+  (gateway as any).broadcast('claude', 7, event);
+  expect(serializations).toBe(1);
+  expect(watched.send).toHaveBeenCalledTimes(1);
+  expect(other.send).not.toHaveBeenCalled();
+});

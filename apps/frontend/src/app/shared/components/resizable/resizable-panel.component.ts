@@ -6,6 +6,7 @@ import {
   ElementRef,
   inject,
   input,
+  signal,
   ViewEncapsulation,
 } from '@angular/core';
 
@@ -17,9 +18,7 @@ import { mergeClasses } from '@/shared/utils/merge-classes';
 @Component({
   selector: 'z-resizable-panel',
   standalone: true,
-  template: `
-    <ng-content />
-  `,
+  template: ` <ng-content /> `,
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   host: {
@@ -37,8 +36,11 @@ export class ZardResizablePanelComponent {
   readonly zCollapsible = input(false, { transform: booleanAttribute });
   readonly zResizable = input(true, { transform: booleanAttribute });
   readonly class = input<ClassValue>('');
+  readonly renderedSize = signal<number | null>(null);
 
   protected readonly isCollapsed = computed(() => {
+    const size = this.renderedSize();
+    if (size !== null) return size === 0;
     const element = this.elementRef.nativeElement as HTMLElement;
     const styleWidth = element.style.width;
     const styleHeight = element.style.height;

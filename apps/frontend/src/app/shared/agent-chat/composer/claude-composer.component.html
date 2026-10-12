@@ -305,6 +305,53 @@
           #tools
           class="col-start-1 row-start-1 flex shrink-0 items-center gap-0.5 text-muted-foreground group-data-[expanded=true]/editor:row-start-2"
         >
+          @if (availableAgents().length) {
+            <button
+              z-button
+              zType="ghost"
+              zSize="sm"
+              type="button"
+              class="h-7 rounded-lg px-2 text-xs"
+              zPopover
+              [zContent]="agentPicker"
+              zPlacement="top"
+              zAlign="start"
+              [zVisible]="agentPickerOpen()"
+              (zVisibleChange)="agentPickerOpen.set($event)"
+              title="Choose a Claude agent"
+              [zDisabled]="disconnected()"
+            >
+              Delegate
+            </button>
+            <ng-template #agentPicker>
+              <z-popover class="w-80 max-w-[90vw] p-2">
+                <div class="px-2 py-1 text-xs font-semibold">Available agents</div>
+                <p class="px-2 pb-2 text-[11px] text-muted-foreground">
+                  Choose an agent, then describe its task.
+                </p>
+                <div class="max-h-72 overflow-auto">
+                  @for (agent of availableAgents(); track agent.id) {
+                    <button
+                      z-button
+                      zType="ghost"
+                      type="button"
+                      class="h-auto w-full flex-col items-start gap-1 rounded-md p-2 text-left"
+                      (click)="chooseAgent(agent)"
+                    >
+                      <span class="text-xs font-medium">{{ agent.label }}</span>
+                      <span
+                        class="line-clamp-2 whitespace-normal text-[11px] font-normal text-muted-foreground"
+                        >{{ agent.description }}</span
+                      >
+                      <span class="text-[10px] font-normal text-muted-foreground">{{
+                        agent.detail
+                      }}</span>
+                    </button>
+                  }
+                </div>
+              </z-popover>
+            </ng-template>
+          }
           @if (allowImages()) {
             <button
               type="button"
@@ -326,6 +373,22 @@
           #actions
           class="cw-comp__btns col-start-3 row-start-1 inline-flex shrink-0 items-center gap-1 group-data-[expanded=true]/editor:row-start-2"
         >
+          @if (liveInput() && running()) {
+            <button
+              z-button
+              zType="ghost"
+              zSize="sm"
+              type="button"
+              class="h-8 rounded-lg px-2 text-xs"
+              [attr.aria-pressed]="queueInstead()"
+              [title]="
+                queueInstead() ? 'Send in a later turn' : 'Send guidance while Claude keeps working'
+              "
+              (click)="queueInstead.set(!queueInstead())"
+            >
+              {{ queueInstead() ? 'Queue' : 'Send now' }}
+            </button>
+          }
           @if (running()) {
             <button
               type="button"
@@ -359,14 +422,14 @@
                 !diffMentions().length &&
                 !sessionMentions().length) ||
               loadingSessionMention() ||
-              (submitting() && !queueing()) ||
+              (sending() && !queueing()) ||
               blockedByPermission() ||
               disconnected()
             "
             (click)="submit()"
             [title]="queueing() ? 'Queue message (Enter)' : 'Send message (Enter)'"
           >
-            @if (submitting() && !queueing()) {
+            @if (sending() && !queueing()) {
               <ng-icon name="lucideLoaderCircle" size="16" class="animate-spin" />
             } @else {
               <ng-icon name="lucideArrowUp" size="15" />

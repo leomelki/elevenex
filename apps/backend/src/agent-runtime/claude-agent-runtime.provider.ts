@@ -64,8 +64,24 @@ export class ClaudeAgentRuntimeProvider
     return this.runtimeService.getCliStatus();
   }
 
-  getSubagentHistory(sessionId: number, agentId: string) {
-    return this.runtimeService.getSubagentHistory(sessionId, agentId);
+  getSubagentHistory(
+    sessionId: number,
+    agentId: string,
+    options?: { before?: string },
+  ) {
+    return this.runtimeService.getSubagentHistory(sessionId, agentId, options);
+  }
+
+  stopBackgroundTask(sessionId: number, taskId: string) {
+    return this.runtimeService.stopBackgroundTask(sessionId, taskId);
+  }
+
+  stopSubagent(sessionId: number, agentId: string) {
+    return this.runtimeService.stopSubagent(sessionId, agentId);
+  }
+
+  backgroundSubagent(sessionId: number, agentId: string) {
+    return this.runtimeService.backgroundSubagent(sessionId, agentId);
   }
 
   getSnapshot(sessionId: number) {
@@ -136,12 +152,14 @@ export class ClaudeAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options?: { human?: boolean; queue?: boolean },
   ) {
     return this.runtimeService.submitPrompt(
       sessionId,
       prompt,
       titlePrompt,
       images,
+      options,
     );
   }
 

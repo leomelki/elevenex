@@ -10,8 +10,10 @@ import {
   type Settings,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ClaudeRuntimeWarmState } from './claude-runtime.types.js';
+import { claudeVersionAtLeast } from './claude-subagents.js';
 
 interface ActiveTurn {
+  messageIds: Set<string>;
   resolve: () => void;
   reject: (error: unknown) => void;
   settled: boolean;
@@ -51,6 +53,66 @@ export class ClaudeSessionRuntime {
   private lastUsedAtMsValue: number | null = null;
   private lastWarmedAtMsValue: number | null = null;
   private hasSubmittedTurnValue = false;
+  private cliVersion: string | undefined;
+  private readonly independentInputs = new Set<string>();
+
+  setCliVersion(version: string | undefined): void {
+    this.cliVersion = version;
+  }
+  get canSteer(): boolean {
+    return (
+      Boolean(this.queryInstance) &&
+      claudeVersionAtLeast(this.cliVersion, 1, 286)
+    );
+  }
+  get canStopTask(): boolean {
+    return (
+      Boolean(this.queryInstance?.stopTask) &&
+      claudeVersionAtLeast(this.cliVersion, 1, 131)
+    );
+  }
+  get canBackgroundTasks(): boolean {
+    return (
+      Boolean(this.queryInstance?.backgroundTasks) &&
+      claudeVersionAtLeast(this.cliVersion, 1, 286)
+    );
+  }
+  get pendingInputCount(): number {
+    return (
+      (this.activeTurn?.messageIds.size ?? 0) + this.independentInputs.size
+    );
+  }
+  ownsInput(id: string | undefined): boolean {
+    return Boolean(
+      id &&
+      (this.activeTurn?.messageIds.has(id) || this.independentInputs.has(id)),
+    );
+  }
+
+  /** Native priority input joins the running turn; it does not interrupt it. */
+  steer(input: SDKUserMessage): void {
+    if (!this.canSteer || this.closed)
+      throw new Error('Live input is unavailable for this Claude session.');
+    this.clearIdleTimer();
+    if (input.uuid)
+      (this.activeTurn?.messageIds ?? this.independentInputs).add(input.uuid);
+    this.inputQueue.push({ ...input, priority: 'now' });
+    this.wakeInput();
+  }
+
+  async stopTask(taskId: string): Promise<void> {
+    if (!this.canStopTask || this.closed)
+      throw new Error('Task stopping is unavailable for this Claude session.');
+    await this.queryInstance!.stopTask(taskId);
+  }
+
+  async backgroundTasks(toolUseId: string): Promise<boolean> {
+    if (!this.canBackgroundTasks || this.closed)
+      throw new Error(
+        'Task backgrounding is unavailable for this Claude session.',
+      );
+    return this.queryInstance!.backgroundTasks(toolUseId);
+  }
 
   constructor(private readonly deps: ClaudeSessionRuntimeDeps) {}
 
@@ -111,11 +173,13 @@ export class ClaudeSessionRuntime {
         ? runtimeQuery.initializationResult()
         : Promise.resolve();
     this.startPromise = initialization
-      .then(() => {
+      .then((result) => {
         if (this.closed || this.queryInstance !== runtimeQuery) {
           return;
         }
         this.lastWarmedAtMsValue = Date.now();
+        if (result?.claude_code_version)
+          this.cliVersion = result.claude_code_version;
         this.lastUsedAtMsValue = this.lastWarmedAtMsValue;
         this.setWarmState('warm');
         if (!this.hasSubmittedTurnValue) {
@@ -130,10 +194,10 @@ export class ClaudeSessionRuntime {
     await this.startPromise;
   }
 
-  submitTurn(input: SDKUserMessage): Promise<void> {
+  submitTurn(input: SDKUserMessage, onAccepted?: () => void): Promise<void> {
     const turn = this.turnChain
       .catch(() => undefined)
-      .then(() => this.runTurn(input));
+      .then(() => this.runTurn(input, onAccepted));
     this.turnChain = turn.catch(() => undefined);
     return turn;
   }
@@ -141,9 +205,14 @@ export class ClaudeSessionRuntime {
   async interrupt(): Promise<void> {
     const runtimeQuery = this.queryInstance;
     try {
-      await runtimeQuery?.interrupt?.();
+      const receipt = await runtimeQuery?.interrupt?.();
+      const remaining = receipt?.still_queued ?? [];
+      if (remaining.length && this.activeTurn)
+        this.activeTurn.messageIds = new Set(remaining);
+      else this.resolveActiveTurn();
+      for (const id of this.independentInputs)
+        if (!remaining.includes(id)) this.independentInputs.delete(id);
     } finally {
-      this.resolveActiveTurn();
       this.lastUsedAtMsValue = Date.now();
       if (!this.closed) {
         this.scheduleIdleShutdown();
@@ -159,7 +228,9 @@ export class ClaudeSessionRuntime {
     await this.queryInstance?.setPermissionMode?.(mode);
   }
 
-  async applyFlagSettings(settings: Settings): Promise<void> {
+  async applyFlagSettings(
+    settings: Parameters<Query['applyFlagSettings']>[0],
+  ): Promise<void> {
     await this.queryInstance?.applyFlagSettings?.(settings);
   }
 
@@ -167,6 +238,11 @@ export class ClaudeSessionRuntime {
     if (startIfNeeded) await this.ensureStarted('prewarm');
     else await this.startPromise;
     return this.queryInstance?.supportedModels?.() ?? [];
+  }
+
+  async supportedAgents() {
+    await this.startPromise;
+    return this.queryInstance?.supportedAgents?.() ?? [];
   }
 
   async getContextUsage(
@@ -178,7 +254,7 @@ export class ClaudeSessionRuntime {
     if (!this.queryInstance?.getContextUsage) {
       throw new Error('Claude runtime is not available.');
     }
-    return this.queryInstance.getContextUsage();
+    return this.queryInstance.getContextUsage({ detail: 'summary' });
   }
 
   async close(): Promise<void> {
@@ -187,6 +263,7 @@ export class ClaudeSessionRuntime {
     }
 
     this.closed = true;
+    this.independentInputs.clear();
     this.setWarmState('closing');
     this.clearIdleTimer();
     this.resolveActiveTurn();
@@ -202,7 +279,10 @@ export class ClaudeSessionRuntime {
     await this.outputPump?.catch(() => undefined);
   }
 
-  private async runTurn(input: SDKUserMessage): Promise<void> {
+  private async runTurn(
+    input: SDKUserMessage,
+    onAccepted?: () => void,
+  ): Promise<void> {
     if (this.closed) {
       throw new Error('Claude runtime is closed.');
     }
@@ -212,13 +292,19 @@ export class ClaudeSessionRuntime {
     this.lastUsedAtMsValue = Date.now();
 
     const turnPromise = new Promise<void>((resolve, reject) => {
-      this.activeTurn = { resolve, reject, settled: false };
+      this.activeTurn = {
+        resolve,
+        reject,
+        settled: false,
+        messageIds: new Set(input.uuid ? [input.uuid] : []),
+      };
       this.inputQueue.push(input);
       this.wakeInput();
     });
 
     try {
       await this.ensureStarted('turn');
+      onAccepted?.();
       await turnPromise;
     } catch (error) {
       this.rejectActiveTurn(error);
@@ -248,8 +334,25 @@ export class ClaudeSessionRuntime {
   private async pumpMessages(runtimeQuery: Query): Promise<void> {
     try {
       for await (const message of runtimeQuery) {
+        if (message.type === 'result')
+          for (const id of message.user_message_uuids ??
+            (message.user_message_uuid ? [message.user_message_uuid] : []))
+            this.independentInputs.delete(id);
+        if (message.type === 'result' && this.activeTurn?.messageIds.size) {
+          const ids =
+            message.user_message_uuids ??
+            (message.user_message_uuid ? [message.user_message_uuid] : []);
+          if (
+            ids.length &&
+            !ids.some((id) => this.activeTurn!.messageIds.has(id))
+          )
+            continue;
+          if (ids.length)
+            for (const id of ids) this.activeTurn.messageIds.delete(id);
+          else this.activeTurn.messageIds.clear();
+        }
         await this.deps.onMessage(message);
-        if (message.type === 'result') {
+        if (message.type === 'result' && !this.activeTurn?.messageIds.size) {
           this.resolveActiveTurn();
         }
       }

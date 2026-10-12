@@ -685,9 +685,7 @@ export function shouldHideToolCall(
     n === 'taskcreate' ||
     n === 'taskupdate' ||
     n === 'tasklist' ||
-    n === 'taskget' ||
-    n === 'taskstop' ||
-    n === 'taskoutput'
+    n === 'taskget'
   ) {
     return true;
   }
@@ -708,13 +706,6 @@ export function shouldHideToolCall(
     isPlanArtifactPath(data['file_path'] as string | undefined)
   ) {
     return true;
-  }
-
-  if (n === 'sendmessage') {
-    const message = data['message'];
-    if (!message || typeof message !== 'object') return true;
-    const messageType = (message as Record<string, unknown>)['type'];
-    return messageType !== 'plan_approval_response';
   }
 
   return false;

@@ -1,14 +1,16 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import type { AgentSubagentState } from '@/shared/models/agent-runtime.model';
 
-type Status = Pick<AgentSubagentState, 'status' | 'executionStatus'>;
+type Status = Pick<AgentSubagentState, 'status' | 'executionStatus' | 'stoppedByUser'>;
 export function agentStatusLabel(agent: Status): string {
+  if (agent.stoppedByUser && agent.status === 'started') return 'Stopping';
   const labels = {
     pending: 'Starting',
     running: 'Running',
-    waiting: 'Needs input',
+    waiting: 'Needs approval',
+    paused: 'Paused',
     completed: 'Completed',
-    interrupted: 'Interrupted',
+    interrupted: 'Stopped',
     error: 'Failed',
     closed: 'Closed',
     unavailable: 'Unavailable',
@@ -16,7 +18,7 @@ export function agentStatusLabel(agent: Status): string {
   return agent.executionStatus
     ? labels[agent.executionStatus]
     : agent.status === 'stopped'
-      ? 'Completed'
+      ? 'Status unavailable'
       : 'Running';
 }
 export function agentLabel(agent: Pick<AgentSubagentState, 'agentType' | 'displayName'>): string {
@@ -35,8 +37,11 @@ export function agentLabel(agent: Pick<AgentSubagentState, 'agentType' | 'displa
     [class]="tone()"
   >
     <span
-      class="size-1.5 rounded-full bg-current"
-      [class.animate-pulse]="agent().status === 'started'"
+      class="size-1.5 rounded-full bg-current motion-reduce:animate-none"
+      [class.animate-pulse]="
+        agent().status === 'started' &&
+        (!agent().executionStatus || agent().executionStatus === 'running')
+      "
     ></span
     >{{ label() }}
   </span>`,
@@ -47,9 +52,14 @@ export class SubagentStatusComponent {
   readonly tone = computed(() => {
     const state = this.agent().executionStatus;
     if (state === 'error') return 'text-destructive';
-    if (state === 'waiting' || state === 'interrupted' || state === 'pending')
+    if (state === 'waiting' || state === 'paused' || state === 'interrupted' || state === 'pending')
       return 'text-warning';
-    if (state === 'closed' || state === 'unavailable') return 'text-muted-foreground';
+    if (
+      state === 'closed' ||
+      state === 'unavailable' ||
+      (!state && this.agent().status === 'stopped')
+    )
+      return 'text-muted-foreground';
     return 'text-success';
   });
 }

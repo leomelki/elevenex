@@ -16,6 +16,7 @@ import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { CLAUDE_RUNTIME_SERVICE } from './claude-runtime.tokens.js';
 import type {
   ClaudeRunPhase,
+  ClaudeSubagentState,
   ClaudeRuntimeEvent,
   ClaudeRuntimeStatePayload,
   ClaudeSessionExecutionState,
@@ -26,13 +27,15 @@ type MirrorSend = (event: ClaudeRuntimeEvent) => void;
 type TranscriptMirrorRuntime = Pick<
   ClaudeRuntimeService,
   'resolveTranscriptFile' | 'normalizeTranscriptRecordsForSession'
->;
+> &
+  Partial<Pick<ClaudeRuntimeService, 'getSavedSubagents'>>;
 
 interface MirrorState {
   clients: Set<MirrorSend>;
   claudeSessionId: string | null;
   transcriptPath: string | null;
   history: ClaudeTranscriptItem[];
+  subagents: ClaudeSubagentState[];
   fileOffset: number;
   fileDev: number | null;
   fileIno: number | null;
@@ -113,6 +116,9 @@ export class ClaudeTerminalTranscriptMirrorService
     const state = this.ensureState(sessionId);
     try {
       await this.reloadTranscript(sessionId, state);
+      state.subagents =
+        (await this.claudeRuntime.getSavedSubagents?.(sessionId)) ?? [];
+      if (this.states.get(sessionId) !== state) return;
       this.emitSnapshot(sessionId, state, target);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -143,6 +149,19 @@ export class ClaudeTerminalTranscriptMirrorService
       return;
     }
 
+    if (
+      payload.hook_event_name === 'SubagentStart' ||
+      payload.hook_event_name === 'SubagentStop'
+    ) {
+      void this.claudeRuntime
+        .getSavedSubagents?.(sessionId)
+        .then((agents) => {
+          if (this.states.get(sessionId) !== state) return;
+          state.subagents = agents;
+          this.emitRuntimeSnapshot(sessionId, state);
+        })
+        .catch((error) => this.logger.debug(String(error)));
+    }
     this.scheduleRead(sessionId, state);
   }
 
@@ -642,7 +661,7 @@ export class ClaudeTerminalTranscriptMirrorService
       recentHookEvents: [],
       tasks: [],
       taskLifecycle: [],
-      subagents: [],
+      subagents: state.subagents,
       latestToolProgress: null,
       latestToolSummary: null,
       latestApiRetry: null,
@@ -684,6 +703,7 @@ export class ClaudeTerminalTranscriptMirrorService
       claudeSessionId: null,
       transcriptPath: null,
       history: [],
+      subagents: [],
       fileOffset: 0,
       fileDev: null,
       fileIno: null,

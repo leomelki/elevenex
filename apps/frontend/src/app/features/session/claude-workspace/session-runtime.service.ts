@@ -172,6 +172,12 @@ export class SessionRuntime {
 
   readonly pendingPermissionRequest = this.conversation.pendingPermissionRequest.asReadonly();
 
+  readonly requestingAgentName = computed(() => {
+    const id = this.pendingPermissionRequest()?.agentId;
+    const agent = this.subagents().find((item) => item.agentId === id);
+    return agent?.displayName ?? agent?.agentType ?? null;
+  });
+
   readonly pendingUserInputRequest = this.conversation.pendingUserInputRequest.asReadonly();
 
   readonly pendingPrompts = this.conversation.pendingPrompts.asReadonly();
@@ -200,7 +206,10 @@ export class SessionRuntime {
   // leave this stuck non-empty, which silently queued every later message.
   readonly backgroundWork = this.conversation.backgroundWork.asReadonly();
   /** Codex starts/queues input according to the parent turn, independently of child threads. */
-  readonly queueBehindBackgroundWork = computed(() => this.currentProvider() !== 'codex');
+  readonly queueBehindBackgroundWork = computed(
+    () => !['claude', 'codex'].includes(this.currentProvider()),
+  );
+  readonly nativeSteering = signal(false);
 
   // True while the current run was started by background work reporting back
   // rather than by a user prompt. The turn itself behaves identically; this is
@@ -313,11 +322,18 @@ export class SessionRuntime {
 
   readonly hasPendingUserInput = computed(() => !!this.pendingUserInputRequest());
 
-  readonly composerPermissionDisabledReason = computed(() =>
-    this.pendingPermissionRequest()
-      ? 'Approve or deny the pending request to resume the conversation.'
-      : '',
-  );
+  readonly composerPermissionDisabledReason = computed(() => {
+    const request = this.pendingPermissionRequest();
+    if (!request) return '';
+    const agent = this.subagents().find((item) => item.agentId === request.agentId);
+    if (
+      this.nativeSteering() &&
+      request.agentId &&
+      (agent?.isBackgrounded || this.runPhase() === 'idle')
+    )
+      return '';
+    return 'Approve or deny the pending request to resume the conversation.';
+  });
   constructor() {
     void this.appSettings.load().catch(() => undefined);
 
@@ -630,13 +646,30 @@ export class SessionRuntime {
     });
   }
 
+  watchSubagent(agentId: string): () => void {
+    if (this.currentProvider() !== 'claude' || this.isTranscriptReadOnly()) return () => undefined;
+    return this.ws.watchSubagent(this.sessionId, agentId);
+  }
+
+  clearSubagentLiveItems(agentId: string): void {
+    this.conversation.live.update((items) => items.filter((item) => item.agentId !== agentId));
+  }
+
   acceptPrompt(content: string): boolean {
     const startsImmediately =
-      this.runPhase() === 'idle' &&
+      (this.runPhase() === 'idle' ||
+        (this.currentProvider() === 'claude' &&
+          this.nativeSteering() &&
+          this.runPhase() === 'running')) &&
       (!this.queueBehindBackgroundWork() || !this.backgroundWork().length) &&
       !this.pendingPrompts().length &&
       !this.queuePaused();
-    if (startsImmediately && this.submitting()) return false;
+    if (
+      startsImmediately &&
+      this.submitting() &&
+      !(this.currentProvider() === 'claude' && this.nativeSteering())
+    )
+      return false;
     if (startsImmediately) {
       this.submitting.set(true);
       this.conversation.addOptimisticPrompt(content);
@@ -1080,6 +1113,8 @@ export class SessionRuntime {
         return;
       case 'runtime_warm_state':
         this.warmState.set(event.payload.warmState);
+        if (event.payload.warmState === 'warm')
+          void this.refreshAutocomplete().catch(() => undefined);
         return;
       case 'session_created':
         this.claudeSessionId.set(event.payload.claudeSessionId);
@@ -1096,6 +1131,7 @@ export class SessionRuntime {
         this.conversation.apply(event);
         this.sessionState.set(event.payload.sessionState);
         this.backgroundRunActive.set(event.payload.backgroundRunActive ?? false);
+        this.nativeSteering.set(event.payload.nativeSteering ?? false);
         this.selectedModel.set(event.payload.selectedModel);
         this.reasoningEffort.set(event.payload.reasoningEffort ?? null);
         this.fastMode.set(event.payload.fastMode ?? false);
@@ -1219,6 +1255,7 @@ export class SessionRuntime {
     this.warmState.set(state.warmState);
     this.sessionState.set(state.sessionState);
     this.backgroundRunActive.set(state.backgroundRunActive ?? false);
+    this.nativeSteering.set(state.nativeSteering ?? false);
     this.claudeSessionId.set(state.claudeSessionId);
     if (state.claudeSessionId && state.claudeSessionId !== '-1') {
       this.runtimeStarted.set(true);

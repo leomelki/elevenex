@@ -28,6 +28,8 @@ Options:
   --prompt <text>      Pin the prompt containing this text.
   --prompt-index <n>   Pin a zero-based prompt index; negative counts from end.
   --actions <json>     Run ordered browser actions before capture (JSON array).
+  --session-fixture <path>
+                       Render a recorded session fixture; session/provider mutations are blocked.
   --verify-selector <css>
                        Fail unless this element is visible before capture.
   --selector <css>     Capture one element instead of the full viewport.
@@ -407,6 +409,13 @@ async function main() {
     const executablePath = await chooseExecutable(chromium);
     browser = await chromium.launch({ headless: true, executablePath });
     const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
+    if (args['session-fixture']) {
+      const fixturePath = path.resolve(repoRoot, args['session-fixture']);
+      const contents = await readFile(fixturePath, 'utf8');
+      if (contents.length > 4 * 1024 * 1024) throw new Error('Session fixture exceeds 4 MiB');
+      const { installSessionFixture } = await import(path.join(repoRoot, 'scripts/ui-session-fixture.mjs'));
+      await installSessionFixture(page, JSON.parse(contents));
+    }
     const loadEvents = [];
     const profileStart = performance.now();
     if (args['profile-load']) {
@@ -508,6 +517,7 @@ async function main() {
       route,
       frontendUrl,
       backendUrl,
+      ...(args['session-fixture'] ? { fixture: args['session-fixture'] } : {}),
       state,
       theme: args.theme || 'light',
       contextualPrompt,

@@ -138,4 +138,20 @@ describe('AgentRuntimeWebsocketService', () => {
 
     expect(FakeWebSocket.instances).toHaveLength(2);
   });
+  it('shares a worker subscription across surfaces and releases it only once', () => {
+    service.connect(7, 'claude');
+    const one = service.watchSubagent(7, 'claude', 'worker');
+    const two = service.watchSubagent(7, 'claude', 'worker');
+    const socket = FakeWebSocket.instances[0];
+    expect(socket.sent.map((value) => JSON.parse(value).type)).toEqual(['watch_subagent']);
+    one();
+    one();
+    expect(socket.sent).toHaveLength(1);
+    two();
+    expect(socket.sent.map((value) => JSON.parse(value).type)).toEqual([
+      'watch_subagent',
+      'unwatch_subagent',
+    ]);
+    expect(socket.closeCount).toBe(0);
+  });
 });

@@ -19,7 +19,9 @@ export class SubagentOverviewComponent {
   readonly attention = computed(
     () =>
       this.agents().filter((agent) =>
-        ['error', 'interrupted', 'waiting', 'unavailable'].includes(agent.executionStatus ?? ''),
+        ['error', 'interrupted', 'waiting', 'paused', 'unavailable'].includes(
+          agent.executionStatus ?? '',
+        ),
       ).length,
   );
   readonly featured = computed(() =>

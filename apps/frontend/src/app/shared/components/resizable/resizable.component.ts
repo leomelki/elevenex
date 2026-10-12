@@ -20,7 +20,10 @@ import {
 import type { ClassValue } from 'clsx';
 
 import { ZardResizablePanelComponent } from '@/shared/components/resizable/resizable-panel.component';
-import { resizableVariants, type ZardResizableLayoutVariants } from '@/shared/components/resizable/resizable.variants';
+import {
+  resizableVariants,
+  type ZardResizableLayoutVariants,
+} from '@/shared/components/resizable/resizable.variants';
 import { mergeClasses } from '@/shared/utils/merge-classes';
 
 export interface ZardResizeEvent {
@@ -30,9 +33,7 @@ export interface ZardResizeEvent {
 
 @Component({
   selector: 'z-resizable, [z-resizable]',
-  template: `
-    <ng-content />
-  `,
+  template: ` <ng-content /> `,
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   host: {
@@ -67,11 +68,12 @@ export class ZardResizableComponent implements AfterContentInit, OnDestroy {
   );
 
   constructor() {
-    let prevCount = 0;
+    let previousDefaults = '';
     effect(() => {
-      const count = this.panels().length;
-      if (this.initialized && count > 0 && count !== prevCount) {
-        prevCount = count;
+      const panels = this.panels();
+      const defaults = JSON.stringify(panels.map((panel) => panel.zDefaultSize()));
+      if (this.initialized && panels.length && defaults !== previousDefaults) {
+        previousDefaults = defaults;
         this.initializePanelSizes();
       }
     });
@@ -117,7 +119,7 @@ export class ZardResizableComponent implements AfterContentInit, OnDestroy {
     }
 
     const containerSize = this.getContainerSize();
-    const sizes = panels.map(panel => {
+    const sizes = panels.map((panel) => {
       const defaultSize = panel.zDefaultSize();
       if (defaultSize !== undefined) {
         return this.convertToPercentage(defaultSize, containerSize);
@@ -246,6 +248,7 @@ export class ZardResizableComponent implements AfterContentInit, OnDestroy {
     for (let index = 0; index < panels.length; index++) {
       const size = sizes[index];
       if (size !== undefined && size !== null) {
+        panels[index].renderedSize.set(size);
         const element = panels[index].elementRef.nativeElement as HTMLElement;
         if (layout === 'vertical') {
           element.style.height = `${size}%`;
@@ -296,7 +299,10 @@ export class ZardResizableComponent implements AfterContentInit, OnDestroy {
 
     if (isCollapsed) {
       const containerSize = this.getContainerSize();
-      const defaultSize = this.convertToPercentage(panel.zDefaultSize() ?? 100 / panels.length, containerSize);
+      const defaultSize = this.convertToPercentage(
+        panel.zDefaultSize() ?? 100 / panels.length,
+        containerSize,
+      );
 
       sizes[index] = defaultSize;
 

@@ -1,3 +1,5 @@
+import { ZardButtonComponent } from '@/shared/components/button';
+import type { AgentSubagentState } from '@/shared/models/agent-runtime.model';
 import { ClaudeTaskState } from '@/shared/models/claude-runtime.model';
 import { ZardSheetService, ZardSheetRef } from '@/shared/components/sheet';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -23,6 +25,7 @@ interface Section {
 @Component({
   selector: 'cw-tasks-drawer',
   standalone: true,
+  imports: [ZardButtonComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './claude-tasks-drawer.component.html',
   host: { class: 'contents' },
@@ -30,7 +33,15 @@ interface Section {
 export class ClaudeTasksDrawerComponent {
   readonly open = input<boolean>(false);
   readonly tasks = input<readonly ClaudeTaskState[]>([]);
+  readonly agents = input<readonly AgentSubagentState[]>([]);
+  readonly readOnly = input(false);
+  readonly busyActions = input<Record<string, string>>({});
+  readonly inspectAgent = output<string>();
+  readonly stopTask = output<string>();
   readonly close = output<void>();
+  readonly agentIds = computed(
+    () => new Set(this.agents().map((agent) => agent.taskId ?? agent.agentId)),
+  );
 
   private readonly sheets = inject(ZardSheetService);
   private readonly destroyRef = inject(DestroyRef);
@@ -45,9 +56,9 @@ export class ClaudeTasksDrawerComponent {
         const sheet = this.sheets.create<unknown, undefined>({
           zContent: content,
           zViewContainerRef: this.viewContainer,
-          zTitle: 'Agent steps',
-          zAriaLabel: 'Agent steps',
-          zCloseLabel: 'Close agent steps',
+          zTitle: 'Session tasks',
+          zAriaLabel: 'Session tasks',
+          zCloseLabel: 'Close session tasks',
           zSide: 'right',
           zSize: 'custom',
           zHideFooter: true,
@@ -75,9 +86,11 @@ export class ClaudeTasksDrawerComponent {
   }
 
   readonly sections = computed<Section[]>(() => {
-    const tasks = [...this.tasks()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const tasks = this.tasks()
+      .filter((task) => !task.ambient && !task.skipTranscript)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const active = tasks.filter((t) => t.status === 'running' || t.status === 'pending');
-    const waiting = tasks.filter((t) => t.status === 'stopped');
+    const waiting = tasks.filter((t) => t.status === 'paused');
     const done = tasks.filter((t) => !active.includes(t) && !waiting.includes(t)).slice(0, 10);
     return [
       { title: 'Active', items: active },
@@ -88,8 +101,9 @@ export class ClaudeTasksDrawerComponent {
 
   statusTone(status: ClaudeTaskState['status']): string {
     if (status === 'running') return 'running';
-    if (status === 'failed' || status === 'killed') return 'error';
+    if (status === 'failed') return 'error';
     if (status === 'completed') return 'success';
+    if (status === 'stopped' || status === 'killed' || status === 'unavailable') return 'muted';
     return 'waiting';
   }
 

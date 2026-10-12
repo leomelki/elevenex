@@ -31,9 +31,9 @@ describe('ClaudeTasksDrawerComponent', () => {
 
   it('opens a named modal with focus trapping and restores focus on dismissal', async () => {
     const { fixture, dialog, trigger } = await openDrawer();
-    expect(dialog.getAttribute('aria-label')).toBe('Agent steps');
+    expect(dialog.getAttribute('aria-label')).toBe('Session tasks');
     expect(dialog.getAttribute('aria-modal')).toBe('true');
-    const button = dialog.querySelector<HTMLButtonElement>('[aria-label="Close agent steps"]')!;
+    const button = dialog.querySelector<HTMLButtonElement>('[aria-label="Close session tasks"]')!;
     expect(button).not.toBeNull();
     expect(document.activeElement).toBe(button);
     // Assert the real CDK focus trap is attached and enabled, rather than a CSS marker.

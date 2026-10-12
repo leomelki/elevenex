@@ -1,3 +1,4 @@
+import { ZardPopoverDirective, ZardPopoverComponent } from '@/shared/components/popover';
 import { MediaPreviewDirective } from '../media/media-preview.directive';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { AgentAutocompleteItem, AgentPendingPrompt } from '@/shared/models/agent-runtime.model';
@@ -63,6 +64,7 @@ export interface ComposerImageAttachment {
 }
 
 export interface ComposerSendPayload {
+  queue?: boolean;
   text: string;
   images: ComposerImageAttachment[];
   diffMentions?: DiffSelectionMention[];
@@ -93,6 +95,8 @@ const COMPOSER_IMAGE_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
     DictateTargetDirective,
     DictationButtonComponent,
     ZardButtonComponent,
+    ZardPopoverDirective,
+    ZardPopoverComponent,
     ComposerMentionComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -147,9 +151,17 @@ export class ClaudeComposerComponent {
   readonly backgroundAgentCount = input<number>(0);
   readonly queueBehindBackgroundWork = input<boolean>(true);
   readonly nativeSteering = input<boolean>(false);
+  readonly liveInput = input(false);
+  readonly agentPickerOpen = signal(false);
+  readonly availableAgents = computed(() =>
+    this.autocompleteItems().filter((item) => item.kind === 'agent'),
+  );
+  readonly providerName = input('Codex');
+  readonly queueInstead = signal(false);
+  readonly sending = computed(() => this.submitting() && !(this.liveInput() && this.running()));
   readonly steerActionLabel = computed(() =>
     this.nativeSteering()
-      ? 'Guide Codex with this message without stopping its current work'
+      ? 'Guide ' + this.providerName() + ' with this message without stopping its current work'
       : 'Stop the current response and send this queued message next',
   );
   /** Dictation context: biases transcription towards this repo's vocabulary. */
@@ -158,9 +170,9 @@ export class ClaudeComposerComponent {
 
   readonly queueing = computed(
     () =>
-      this.running() ||
+      (this.running() && (!this.liveInput() || this.queueInstead())) ||
       (this.queueBehindBackgroundWork() && this.backgroundAgentCount() > 0) ||
-      this.pendingPrompts().length > 0 ||
+      (this.pendingPrompts().length > 0 && !this.liveInput()) ||
       this.queuePaused(),
   );
 
@@ -348,14 +360,21 @@ export class ClaudeComposerComponent {
     const sessionMentions = this.sessionMentions();
     if (!v && !images.length && !diffMentions.length && !sessionMentions.length) return;
     if (this.disconnected() || this.blockedByPermission() || this.sendDisabledReason()) return;
-    if (this.submitting() && !this.queueing()) return;
+    if (this.sending() && !this.queueing()) return;
     this.send.emit({
       text: v,
+      ...(this.liveInput() && this.running() && this.queueInstead() ? { queue: true } : {}),
       images,
       diffMentions,
       ...(sessionMentions.length ? { sessionMentions } : {}),
     });
     this.setAttachedImages([]);
+  }
+
+  chooseAgent(agent: AgentAutocompleteItem): void {
+    this.value.set(agent.insertText + this.value());
+    this.agentPickerOpen.set(false);
+    queueMicrotask(() => this.ta()?.nativeElement.focus());
   }
 
   mentionLineLabel(mention: DiffSelectionMention): string {

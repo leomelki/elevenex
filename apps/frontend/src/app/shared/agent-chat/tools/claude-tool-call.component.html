@@ -1,4 +1,15 @@
-@if (collaboration()) {
+@if (claudeDelegation()) {
+  <cw-claude-delegation
+    [call]="call()"
+    [result]="result()"
+    [agents]="agents()"
+    [isLive]="isLive()"
+    [canInspect]="canInspectAgents()"
+    [worktreePath]="worktreePath()"
+    (inspectAgent)="inspectAgent.emit($event)"
+    (openLocalFile)="openLocalFile.emit($event)"
+  />
+} @else if (collaboration()) {
   <cw-agent-collaboration
     [call]="call()"
     [result]="result()"

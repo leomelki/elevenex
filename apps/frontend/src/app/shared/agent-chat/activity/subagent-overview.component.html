@@ -15,7 +15,7 @@
         >Agents <span class="ml-1 text-muted-foreground">{{ agents().length }}</span></span
       >
       <span class="ml-auto text-muted-foreground"
-        >{{ running().length ? running().length + ' active' : 'All settled' }}
+        >{{ running().length ? running().length + ' active' : 'Finished' }}
         @if (attention()) {
           <span class="text-warning"> · {{ attention() }} need attention</span>
         }

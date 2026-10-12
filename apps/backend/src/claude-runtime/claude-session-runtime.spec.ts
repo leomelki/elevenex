@@ -37,6 +37,8 @@ function createMockQuery() {
     interrupt: jest.fn().mockResolvedValue(undefined),
     setModel: jest.fn().mockResolvedValue(undefined),
     setPermissionMode: jest.fn().mockResolvedValue(undefined),
+    stopTask: jest.fn().mockResolvedValue(undefined),
+    backgroundTasks: jest.fn().mockResolvedValue(true),
     supportedModels: jest.fn().mockResolvedValue([]),
     getContextUsage: jest.fn().mockResolvedValue({
       model: 'sonnet',
@@ -318,6 +320,82 @@ describe('ClaudeSessionRuntime', () => {
     expect(warmStates).toEqual(['prewarming', 'warm']);
     expect(runtime.hasSubmittedTurn).toBe(false);
 
+    await runtime.close();
+  });
+  it('accepts a prompt before its native result and preserves later live inputs', async () => {
+    const { runtime, queries } = createRuntime();
+    const accepted = jest.fn();
+    const first = runtime.submitTurn(
+      {
+        type: 'user',
+        uuid: 'first',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'First' },
+      },
+      accepted,
+    );
+    let finished = false;
+    void first.then(() => {
+      finished = true;
+    });
+    await flushAsync();
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(finished).toBe(false);
+    runtime.setCliVersion('2.1.296');
+    runtime.steer({
+      type: 'user',
+      uuid: 'guide',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Guidance' },
+    });
+    expect(queries[0].interrupt).not.toHaveBeenCalled();
+    queries[0].emit({ type: 'result', user_message_uuid: 'first' });
+    await flushAsync();
+    expect(finished).toBe(false);
+    queries[0].emit({ type: 'result', user_message_uuid: 'guide' });
+    await first;
+    await runtime.close();
+  });
+  it('does not let an unrelated autonomous result complete a user submission', async () => {
+    const { runtime, queries } = createRuntime();
+    let finished = false;
+    const turn = runtime
+      .submitTurn({
+        type: 'user',
+        uuid: 'user-send',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'Work' },
+      })
+      .then(() => {
+        finished = true;
+      });
+    await flushAsync();
+    queries[0].emit({ type: 'result', user_message_uuid: 'notification' });
+    await flushAsync();
+    expect(finished).toBe(false);
+    queries[0].emit({ type: 'result', user_message_uuid: 'user-send' });
+    await turn;
+    await runtime.close();
+  });
+  it('targets one native task and tracks independent input outside a submitted turn', async () => {
+    const { runtime, queries } = createRuntime();
+    await runtime.ensureStarted();
+    runtime.setCliVersion('2.1.296');
+    runtime.steer({
+      type: 'user',
+      uuid: 'followup',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: 'Follow up' },
+    });
+    expect(runtime.ownsInput('followup')).toBe(true);
+    await runtime.stopTask('child');
+    await runtime.backgroundTasks('dispatch');
+    expect(queries[0].stopTask).toHaveBeenCalledWith('child');
+    expect(queries[0].backgroundTasks).toHaveBeenCalledWith('dispatch');
+    expect(queries[0].close).not.toHaveBeenCalled();
+    queries[0].emit({ type: 'result', user_message_uuid: 'followup' });
+    await flushAsync();
+    expect(runtime.pendingInputCount).toBe(0);
     await runtime.close();
   });
 });

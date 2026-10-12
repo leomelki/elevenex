@@ -173,6 +173,7 @@ export interface AgentToolInteractionSummary {
 }
 
 export interface AgentTranscriptItem {
+  agentId?: string;
   id: string;
   kind: AgentTranscriptItemKind;
   contentType?: 'message' | 'plan';
@@ -186,6 +187,7 @@ export interface AgentTranscriptItem {
   toolDisplayName?: string;
   toolInput?: unknown;
   providerToolInput?: unknown;
+  providerToolResult?: unknown;
   interaction?: AgentToolInteractionSummary;
   isError?: boolean;
   isSynthetic?: boolean;
@@ -239,6 +241,7 @@ export interface AgentPermissionRequest {
   description?: string;
   decisionReason?: string;
   blockedPath?: string;
+  suppressAlwaysAllowRule?: boolean;
   suggestions?: AgentPermissionUpdate[];
   batch?: AgentPermissionBatchItem[];
   createdAt: string;
@@ -298,12 +301,12 @@ export interface AgentUserInputRequest {
   createdAt: string;
 }
 
-export type AgentAutocompleteItemKind = 'command' | 'skill';
+export type AgentAutocompleteItemKind = 'command' | 'skill' | 'agent';
 
 export interface AgentAutocompleteItem {
   id: string;
   kind: AgentAutocompleteItemKind;
-  trigger: '/' | '$';
+  trigger: '/' | '$' | '@';
   label: string;
   insertText: string;
   description: string;
@@ -471,7 +474,13 @@ export interface AgentRuntimeStatus {
 export interface AgentRateLimit {
   status: 'allowed' | 'allowed_warning' | 'rejected';
   resetsAt?: number;
-  rateLimitType?: 'five_hour' | 'seven_day' | 'seven_day_opus' | 'seven_day_sonnet' | 'overage';
+  rateLimitType?:
+    | 'five_hour'
+    | 'seven_day'
+    | 'seven_day_opus'
+    | 'seven_day_sonnet'
+    | 'seven_day_overage_included'
+    | 'overage';
   utilization?: number;
   overageStatus?: 'allowed' | 'allowed_warning' | 'rejected';
   overageResetsAt?: number;
@@ -537,7 +546,21 @@ export interface AgentTaskUsage {
 
 export interface AgentTaskState {
   taskId: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'stopped';
+  canStop?: boolean;
+  runId?: string;
+  parentTaskId?: string;
+  subagentType?: string;
+  ambient?: boolean;
+  startedAt?: string;
+  status:
+    | 'pending'
+    | 'running'
+    | 'paused'
+    | 'completed'
+    | 'failed'
+    | 'killed'
+    | 'stopped'
+    | 'unavailable';
   description?: string;
   taskType?: string;
   workflowName?: string;
@@ -570,6 +593,16 @@ export interface AgentTaskLifecycle {
 
 export interface AgentSubagentState {
   agentId: string;
+  taskId?: string;
+  runId?: string;
+  isBackgrounded?: boolean;
+  lastToolName?: string;
+  usage?: AgentTaskUsage;
+  worktreePath?: string;
+  stoppedByUser?: boolean;
+  canStop?: boolean;
+  canBackground?: boolean;
+  canFollowUp?: boolean;
   agentPath?: string;
   agentType: string;
   status: 'started' | 'stopped';
@@ -592,6 +625,7 @@ export interface AgentSubagentState {
     | 'pending'
     | 'running'
     | 'waiting'
+    | 'paused'
     | 'completed'
     | 'interrupted'
     | 'error'
@@ -619,6 +653,8 @@ export interface AgentSubagentHistoryPayload {
   subagent: AgentSubagentState;
   history: AgentTranscriptItem[];
   transcriptAvailable: boolean;
+  transcriptState?: 'starting' | 'available' | 'unavailable' | 'error';
+  hasEarlier?: boolean;
   transcriptError?: string;
 }
 
@@ -641,7 +677,7 @@ export interface AgentMemoryRecall {
   mode: 'select' | 'synthesize';
   memories: {
     path: string;
-    scope: 'personal' | 'team';
+    scope: 'personal' | 'team' | 'organization';
     content?: string;
   }[];
   timestamp: string;
@@ -718,6 +754,7 @@ export interface AgentRuntimeState {
   canInterrupt: boolean;
   backgroundWork?: AgentBackgroundWorkItem[];
   backgroundRunActive?: boolean;
+  nativeSteering?: boolean;
   pendingPermissionRequest: AgentPermissionRequest | null;
   pendingUserInputRequest: AgentUserInputRequest | null;
   pendingPrompts: AgentPendingPrompt[];
@@ -783,6 +820,7 @@ export type AgentRuntimeEvent =
         canInterrupt: boolean;
         backgroundWork?: AgentBackgroundWorkItem[];
         backgroundRunActive?: boolean;
+        nativeSteering?: boolean;
         lastError: string | null;
         selectedModel: string | null;
         reasoningEffort: AgentReasoningEffort | null;

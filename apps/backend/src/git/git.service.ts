@@ -826,7 +826,9 @@ export class GitService {
         : null;
     }
 
-    const remotes = await git.getRemotes(true).catch(() => []);
+    const remotes: Array<{ name: string }> = await git
+      .getRemotes(true)
+      .catch(() => []);
     const remote =
       remotes.find((candidate) => candidate.name === 'origin') ?? remotes[0];
     if (!remote) return null;

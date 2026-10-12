@@ -39,12 +39,24 @@ export class ClaudeRuntimeApiService {
     ) as Observable<ClaudeRuntimeState>;
   }
 
-  getSubagentHistory(sessionId: number, agentId: string) {
+  getSubagentHistory(sessionId: number, agentId: string, before?: string) {
     return this.agentRuntimeApi.getSubagentHistory(
       sessionId,
       agentId,
       this.provider(sessionId),
+      before,
     ) as Observable<ClaudeSubagentHistoryPayload>;
+  }
+
+  stopBackgroundTask(sessionId: number, taskId: string) {
+    return this.agentRuntimeApi.stopBackgroundTask(sessionId, taskId, this.provider(sessionId));
+  }
+
+  stopSubagent(sessionId: number, agentId: string) {
+    return this.agentRuntimeApi.stopSubagent(sessionId, agentId, this.provider(sessionId));
+  }
+  backgroundSubagent(sessionId: number, agentId: string) {
+    return this.agentRuntimeApi.backgroundSubagent(sessionId, agentId, this.provider(sessionId));
   }
 
   getAutocompleteItems(sessionId: number) {

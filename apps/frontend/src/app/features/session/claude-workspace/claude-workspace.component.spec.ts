@@ -97,6 +97,7 @@ describe('ClaudeWorkspaceComponent', () => {
     getHistory: ReturnType<typeof vi.fn>;
   };
   let wsMock: {
+    watchSubagent: ReturnType<typeof vi.fn>;
     connect: ReturnType<typeof vi.fn>;
     send: ReturnType<typeof vi.fn>;
     isConnected: ReturnType<typeof vi.fn>;
@@ -313,11 +314,13 @@ describe('ClaudeWorkspaceComponent', () => {
     wsMock = {
       connect: vi.fn(() => new Subject().asObservable()),
       send: vi.fn(),
+      watchSubagent: vi.fn(() => () => undefined),
       isConnected: vi.fn(() => true),
       disconnect: vi.fn(),
       connectionState$: vi.fn(() => new Subject().asObservable()),
     };
     terminalTranscriptWsMock = {
+      watchSubagent: vi.fn(() => () => undefined),
       connect: vi.fn(() => new Subject().asObservable()),
       send: vi.fn(),
       isConnected: vi.fn(() => true),
@@ -401,7 +404,7 @@ describe('ClaudeWorkspaceComponent', () => {
 
   it.each([
     { provider: 'codex', immediate: true },
-    { provider: 'claude', immediate: false },
+    { provider: 'claude', immediate: true },
   ])(
     'matches $provider parent-message optimism to its background-work policy',
     ({ provider, immediate }) => {
@@ -1892,7 +1895,7 @@ describe('ClaudeWorkspaceComponent', () => {
     await Promise.resolve();
     fixture.detectChanges();
 
-    expect(apiMock.getSubagentHistory).toHaveBeenCalledWith(7, 'agent-1');
+    expect(apiMock.getSubagentHistory).toHaveBeenCalledWith(7, 'agent-1', undefined);
     expect(fixture.componentInstance.actions.selectedAgentInspectorTurn()?.agents).toHaveLength(1);
 
     fixture.componentInstance.actions.selectAgentInspectorAgent('agent-1');

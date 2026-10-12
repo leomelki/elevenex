@@ -17,11 +17,15 @@
           >Input needed</span
         >
         @if (request().agentId) {
-          <span
-            class="cw-perm__agent max-w-full truncate rounded-md border border-dashed border-border px-1.5 text-[11px] text-muted-foreground"
-            title="Delegated subagent"
-            >Subagent · {{ request().agentId }}</span
+          <button
+            type="button"
+            class="cw-perm__agent max-w-full truncate rounded-md border border-dashed border-border px-1.5 text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title="Open delegated agent"
+            [disabled]="!requestingAgentName()"
+            (click)="inspectAgent.emit(request().agentId!)"
           >
+            Subagent · {{ requestingAgentName() || 'Agent ' + request().agentId!.slice(0, 8) }}
+          </button>
         }
       </header>
       <h3 class="cw-perm__title mt-0.5 mb-0 text-sm font-semibold leading-snug text-foreground">
@@ -182,11 +186,15 @@
           >{{ requestToolLabel() }}</span
         >
         @if (request().agentId) {
-          <span
-            class="cw-perm__agent max-w-full truncate rounded-md border border-dashed border-border px-1.5 text-[11px] text-muted-foreground"
-            title="Delegated subagent"
-            >Subagent · {{ request().agentId }}</span
+          <button
+            type="button"
+            class="cw-perm__agent max-w-full truncate rounded-md border border-dashed border-border px-1.5 text-[11px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title="Open delegated agent"
+            [disabled]="!requestingAgentName()"
+            (click)="inspectAgent.emit(request().agentId!)"
           >
+            Subagent · {{ requestingAgentName() || 'Agent ' + request().agentId!.slice(0, 8) }}
+          </button>
         }
       </header>
 
@@ -244,54 +252,56 @@ $ {{ permBashCommand() }}</pre
       }
 
       @if (!denying()) {
-        <section
-          class="cw-perm__always mt-1 flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2 data-[has-patterns=false]:border-dashed data-[has-patterns=false]:bg-transparent"
-          [attr.data-has-patterns]="alwaysAllowPatterns().length > 0"
-        >
-          <div class="cw-perm__always-head flex flex-wrap items-center gap-2">
-            <span
-              class="cw-perm__always-kicker text-[11px] font-bold uppercase tracking-wide text-muted-foreground"
-            >
-              {{
-                alwaysAllowPatterns().length
-                  ? 'Always allow saves this pattern'
-                  : 'No always-allow pattern available'
-              }}
-            </span>
-            @if (!alwaysAllowPatterns().length) {
-              <span class="cw-perm__always-empty text-[11px] text-muted-foreground"
-                >No reusable pattern supplied</span
+        @if (alwaysAllowPatterns().length) {
+          <section
+            class="cw-perm__always mt-1 flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2 data-[has-patterns=false]:border-dashed data-[has-patterns=false]:bg-transparent"
+            [attr.data-has-patterns]="alwaysAllowPatterns().length > 0"
+          >
+            <div class="cw-perm__always-head flex flex-wrap items-center gap-2">
+              <span
+                class="cw-perm__always-kicker text-[11px] font-bold uppercase tracking-wide text-muted-foreground"
               >
-            }
-          </div>
-          @if (alwaysAllowPatterns().length) {
-            <div class="cw-perm__patterns flex flex-col gap-1.5">
-              @for (entry of alwaysAllowPatterns(); track entry.pattern + entry.detail) {
-                <div
-                  class="cw-perm__pattern grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 max-[540px]:grid-cols-1 max-[540px]:gap-1"
+                {{
+                  alwaysAllowPatterns().length
+                    ? 'Always allow saves this pattern'
+                    : 'No always-allow pattern available'
+                }}
+              </span>
+              @if (!alwaysAllowPatterns().length) {
+                <span class="cw-perm__always-empty text-[11px] text-muted-foreground"
+                  >No reusable pattern supplied</span
                 >
-                  <span
-                    class="cw-perm__pattern-label text-[11px] whitespace-nowrap text-muted-foreground"
-                    >{{ entry.label }}</span
-                  >
-                  <code
-                    class="cw-perm__pattern-code min-w-0 truncate rounded-md border border-border bg-background px-1.5 py-0.5 font-mono text-xs text-foreground"
-                    >{{ entry.pattern }}</code
-                  >
-                  <span
-                    class="cw-perm__pattern-detail text-[11px] whitespace-nowrap text-muted-foreground max-[540px]:whitespace-normal"
-                    >{{ entry.detail }}</span
-                  >
-                </div>
               }
             </div>
-          } @else {
-            <p class="cw-perm__always-note m-0 text-xs leading-normal text-muted-foreground">
-              Claude did not provide a reusable rule for this tool call, so this request can only be
-              approved once.
-            </p>
-          }
-        </section>
+            @if (alwaysAllowPatterns().length) {
+              <div class="cw-perm__patterns flex flex-col gap-1.5">
+                @for (entry of alwaysAllowPatterns(); track entry.pattern + entry.detail) {
+                  <div
+                    class="cw-perm__pattern grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 max-[540px]:grid-cols-1 max-[540px]:gap-1"
+                  >
+                    <span
+                      class="cw-perm__pattern-label text-[11px] whitespace-nowrap text-muted-foreground"
+                      >{{ entry.label }}</span
+                    >
+                    <code
+                      class="cw-perm__pattern-code min-w-0 truncate rounded-md border border-border bg-background px-1.5 py-0.5 font-mono text-xs text-foreground"
+                      >{{ entry.pattern }}</code
+                    >
+                    <span
+                      class="cw-perm__pattern-detail text-[11px] whitespace-nowrap text-muted-foreground max-[540px]:whitespace-normal"
+                      >{{ entry.detail }}</span
+                    >
+                  </div>
+                }
+              </div>
+            } @else {
+              <p class="cw-perm__always-note m-0 text-xs leading-normal text-muted-foreground">
+                Claude did not provide a reusable rule for this tool call, so this request can only
+                be approved once.
+              </p>
+            }
+          </section>
+        }
 
         <footer class="cw-perm__actions mt-1.5 flex flex-wrap items-center gap-1.5">
           <button

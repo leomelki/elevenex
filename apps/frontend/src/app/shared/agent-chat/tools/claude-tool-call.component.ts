@@ -1,3 +1,5 @@
+import { ClaudeDelegationComponent } from './claude-delegation.component';
+import { claudeDelegationTool } from '@/shared/agent-tools/claude-delegation-format';
 import { MediaPreviewDirective } from '../media/media-preview.directive';
 import { AgentCollaborationComponent } from './agent-collaboration.component';
 import { collaborationAction } from '@/shared/agent-tools/agent-collaboration-format';
@@ -122,6 +124,7 @@ type Todo = ToolTodoItem;
     CommonModule,
     NgIcon,
     AgentCollaborationComponent,
+    ClaudeDelegationComponent,
     AgentMarkdownComponent,
     ClaudeMessageComponent,
     ClaudeThinkingComponent,
@@ -200,6 +203,7 @@ export class ClaudeToolCallComponent {
   readonly worktreePath = input<string | null>(null);
   readonly inspectAgent = output<string>();
   readonly openLocalFile = output<LocalFileTarget>();
+  readonly claudeDelegation = computed(() => claudeDelegationTool(this.call()));
   readonly collaboration = computed(() => collaborationAction(this.call()));
 
   readonly approve = output<AgentPermissionApproval>();

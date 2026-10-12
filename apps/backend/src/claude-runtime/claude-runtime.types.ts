@@ -81,6 +81,7 @@ export interface ClaudeToolInteractionSummary {
 }
 
 export interface ClaudeTranscriptItem {
+  agentId?: string;
   id: string;
   kind: ClaudeTranscriptItemKind;
   contentType?: 'message' | 'plan';
@@ -94,6 +95,7 @@ export interface ClaudeTranscriptItem {
   toolDisplayName?: string;
   toolInput?: unknown;
   providerToolInput?: unknown;
+  providerToolResult?: unknown;
   interaction?: ClaudeToolInteractionSummary;
   isError?: boolean;
   isSynthetic?: boolean;
@@ -124,6 +126,7 @@ export interface ClaudePermissionRequest {
   description?: string;
   decisionReason?: string;
   blockedPath?: string;
+  suppressAlwaysAllowRule?: boolean;
   suggestions?: ClaudePermissionUpdate[];
   /** Repeated MCP calls emitted together. One decision applies to this one-shot batch. */
   batch?: ClaudePermissionBatchItem[];
@@ -203,12 +206,12 @@ export type ClaudePermissionUpdate =
         | 'cliArg';
     };
 
-export type ClaudeAutocompleteItemKind = 'command' | 'skill';
+export type ClaudeAutocompleteItemKind = 'command' | 'skill' | 'agent';
 
 export interface ClaudeAutocompleteItem {
   id: string;
   kind: ClaudeAutocompleteItemKind;
-  trigger: '/' | '$';
+  trigger: '/' | '$' | '@';
   label: string;
   insertText: string;
   description: string;
@@ -395,6 +398,7 @@ export interface ClaudeRateLimit {
     | 'seven_day'
     | 'seven_day_opus'
     | 'seven_day_sonnet'
+    | 'seven_day_overage_included'
     | 'overage';
   utilization?: number;
   overageStatus?: 'allowed' | 'allowed_warning' | 'rejected';
@@ -461,7 +465,21 @@ export interface ClaudeTaskUsage {
 
 export interface ClaudeTaskState {
   taskId: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'stopped';
+  canStop?: boolean;
+  runId?: string;
+  parentTaskId?: string;
+  subagentType?: string;
+  ambient?: boolean;
+  startedAt?: string;
+  status:
+    | 'pending'
+    | 'running'
+    | 'paused'
+    | 'completed'
+    | 'failed'
+    | 'killed'
+    | 'stopped'
+    | 'unavailable';
   description?: string;
   taskType?: string;
   workflowName?: string;
@@ -494,6 +512,16 @@ export interface ClaudeTaskLifecycle {
 
 export interface ClaudeSubagentState {
   agentId: string;
+  taskId?: string;
+  runId?: string;
+  isBackgrounded?: boolean;
+  lastToolName?: string;
+  usage?: ClaudeTaskUsage;
+  worktreePath?: string;
+  stoppedByUser?: boolean;
+  canStop?: boolean;
+  canBackground?: boolean;
+  canFollowUp?: boolean;
   agentPath?: string;
   agentType: string;
   status: 'started' | 'stopped';
@@ -516,6 +544,7 @@ export interface ClaudeSubagentState {
     | 'pending'
     | 'running'
     | 'waiting'
+    | 'paused'
     | 'completed'
     | 'interrupted'
     | 'error'
@@ -550,6 +579,8 @@ export interface ClaudeSubagentHistoryPayload {
   subagent: ClaudeSubagentState;
   history: ClaudeTranscriptItem[];
   transcriptAvailable: boolean;
+  transcriptState?: 'starting' | 'available' | 'unavailable' | 'error';
+  hasEarlier?: boolean;
   transcriptError?: string;
 }
 
@@ -572,7 +603,7 @@ export interface ClaudeMemoryRecall {
   mode: 'select' | 'synthesize';
   memories: {
     path: string;
-    scope: 'personal' | 'team';
+    scope: 'personal' | 'team' | 'organization';
     content?: string;
   }[];
   timestamp: string;
@@ -640,6 +671,7 @@ export interface ClaudePendingPrompt {
   id: string;
   prompt: string;
   queuedAt: string;
+  human?: boolean;
   images?: ClaudeImageInput[];
 }
 
@@ -671,6 +703,7 @@ export interface ClaudeRuntimeStatePayload {
    * result.
    */
   backgroundRunActive?: boolean;
+  nativeSteering?: boolean;
   pendingPermissionRequest: ClaudePermissionRequest | null;
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   pendingPrompts: ClaudePendingPrompt[];
@@ -744,6 +777,7 @@ export type ClaudeRuntimeEvent =
         canInterrupt: boolean;
         backgroundWork?: ClaudeBackgroundWorkItem[];
         backgroundRunActive?: boolean;
+        nativeSteering?: boolean;
         lastError: string | null;
         selectedModel: string | null;
         reasoningEffort: ClaudeReasoningEffort | null;
@@ -930,6 +964,7 @@ export type ClaudeRuntimeClientAction =
       type: 'submit_prompt';
       prompt: string;
       titlePrompt?: string;
+      queue?: boolean;
       images?: ClaudeImageInput[];
     }
   | { type: 'interrupt' }

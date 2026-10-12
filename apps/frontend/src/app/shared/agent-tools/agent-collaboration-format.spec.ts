@@ -108,7 +108,7 @@ describe('agent collaboration presentation', () => {
     });
     expect(shouldHideToolCall(message.toolName, message.toolInput)).toBe(false);
     expect(pairTranscript([message, result({ queued: true })])).toHaveLength(1);
-    expect(shouldHideToolCall('SendMessage', { message: { type: 'message' } })).toBe(true);
+    expect(shouldHideToolCall('SendMessage', { message: { type: 'message' } })).toBe(false);
     expect(collaborationView(message, result({ queued: true }), agents)?.outcome).toBe(
       'Message sent',
     );

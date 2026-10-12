@@ -1,3 +1,8 @@
+import {
+  ZardResizableComponent,
+  ZardResizablePanelComponent,
+  ZardResizableHandleComponent,
+} from '@/shared/components/resizable';
 import { OpenCodeLoginCardComponent } from './components/opencode-login-card.component';
 import { PlanFeedbackPayload, PlanReviewRequest } from '@/features/plan-annotator';
 import { ClaudeAgentInspectorComponent } from '@/shared/agent-chat/activity/claude-agent-inspector.component';
@@ -78,6 +83,9 @@ import { getHttpErrorMessage } from './workspace-error';
   selector: 'app-claude-workspace',
   standalone: true,
   imports: [
+    ZardResizableComponent,
+    ZardResizablePanelComponent,
+    ZardResizableHandleComponent,
     CommonModule,
     TranscriptViewportDirective,
     ClaudePermissionInlineComponent,

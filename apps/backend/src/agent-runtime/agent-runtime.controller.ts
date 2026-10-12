@@ -79,9 +79,7 @@ export class AgentRuntimeController {
   }
 
   @Get('sessions/:sessionId/mention')
-  getConversationMention(
-    @Param('sessionId', ParseIntPipe) sessionId: number,
-  ) {
+  getConversationMention(@Param('sessionId', ParseIntPipe) sessionId: number) {
     return this.exportService.buildMention(sessionId);
   }
 
@@ -120,15 +118,53 @@ export class AgentRuntimeController {
     return this.registry.getProvider(provider).getRuntimeState(sessionId);
   }
 
+  @Post('sessions/:sessionId/agents/:provider/tasks/:taskId/stop')
+  async stopBackgroundTask(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+    @Param('taskId') taskId: string,
+  ) {
+    await this.sessionsService.findOne(sessionId);
+    return this.registry
+      .getProviderFeature(provider, 'stopBackgroundTask')
+      .stopBackgroundTask(sessionId, taskId);
+  }
+
+  @Post('sessions/:sessionId/agents/:provider/subagents/:agentId/stop')
+  async stopSubagent(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+    @Param('agentId') agentId: string,
+  ) {
+    // Stopping remains available if the checkout has drifted.
+    await this.sessionsService.findOne(sessionId);
+    return this.registry
+      .getProviderFeature(provider, 'stopSubagent')
+      .stopSubagent(sessionId, agentId);
+  }
+
+  @Post('sessions/:sessionId/agents/:provider/subagents/:agentId/background')
+  async backgroundSubagent(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+    @Param('agentId') agentId: string,
+  ) {
+    await this.assertSessionMutable(sessionId);
+    return this.registry
+      .getProviderFeature(provider, 'backgroundSubagent')
+      .backgroundSubagent(sessionId, agentId);
+  }
+
   @Get('sessions/:sessionId/agents/:provider/subagents/:agentId/history')
   getSubagentHistory(
     @Param('sessionId', ParseIntPipe) sessionId: number,
     @Param('provider') provider: string,
     @Param('agentId') agentId: string,
+    @Query('before') before?: string,
   ) {
     return this.registry
       .getProviderFeature(provider, 'getSubagentHistory')
-      .getSubagentHistory(sessionId, agentId);
+      .getSubagentHistory(sessionId, agentId, { before });
   }
 
   @Get('sessions/:sessionId/agents/:provider/snapshot')

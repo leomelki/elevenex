@@ -33,6 +33,10 @@ export class ClaudeRuntimeWebsocketService {
     this.agentRuntimeWs.send(sessionId, message, this.provider(sessionId));
   }
 
+  watchSubagent(sessionId: number, agentId: string): () => void {
+    return this.agentRuntimeWs.watchSubagent(sessionId, this.provider(sessionId), agentId);
+  }
+
   isConnected(sessionId: number): boolean {
     return this.agentRuntimeWs.isConnected(sessionId, this.provider(sessionId));
   }

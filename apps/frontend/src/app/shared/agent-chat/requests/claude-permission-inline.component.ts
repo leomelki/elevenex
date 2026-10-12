@@ -73,6 +73,8 @@ interface AlwaysAllowPattern {
 export class ClaudePermissionInlineComponent {
   @ViewChild('denyTa') private denyTa?: ElementRef<HTMLTextAreaElement>;
 
+  readonly requestingAgentName = input<string | null>(null);
+  readonly inspectAgent = output<string>();
   readonly request = input.required<AgentPermissionRequest>();
   readonly appearance = input<'inline' | 'dock'>('inline');
   readonly planReviewAvailable = input(false);
@@ -184,8 +186,8 @@ export class ClaudePermissionInlineComponent {
   );
 
   readonly alwaysAllowPatterns = computed<AlwaysAllowPattern[]>(() =>
-    (this.request().suggestions ?? []).flatMap((suggestion) =>
-      describePermissionSuggestion(suggestion),
+    (this.request().suppressAlwaysAllowRule ? [] : (this.request().suggestions ?? [])).flatMap(
+      (suggestion) => describePermissionSuggestion(suggestion),
     ),
   );
 

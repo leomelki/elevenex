@@ -1,3 +1,10 @@
+import { BreakpointObserver } from '@angular/cdk/layout';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { ClaudePermissionInlineComponent } from '../requests/claude-permission-inline.component';
+import type {
+  AgentPermissionRequest,
+  AgentPermissionApproval,
+} from '@/shared/models/agent-runtime.model';
 import {
   AgentTimelineEntry,
   TurnAgentRun,
@@ -30,6 +37,7 @@ import {
   computed,
   effect,
   input,
+  inject,
   output,
   signal,
 } from '@angular/core';
@@ -55,6 +63,7 @@ export interface ClaudeSubagentHistoryState {
   standalone: true,
   imports: [
     CommonModule,
+    ClaudePermissionInlineComponent,
     NgIcon,
     ClaudeToolCallComponent,
     ClaudeTranscriptComponent,
@@ -84,15 +93,30 @@ export class ClaudeAgentInspectorComponent {
   readonly selectedAgentId = input<string | null>(null);
   readonly historyByAgent = input<Record<string, ClaudeSubagentHistoryState>>({});
   readonly hookEvents = input<AgentHookEvent[]>([]);
+  readonly liveItems = input<readonly AgentTranscriptItem[]>([]);
+  readonly toolProgress = input<TranscriptToolState['progress']>({});
   readonly worktreePath = input<string | null>(null);
   readonly provider = input<AgentProviderId>('claude');
 
+  readonly readOnly = input(false);
+  readonly busyActions = input<Record<string, 'stopping' | 'backgrounding'>>({});
+  readonly pendingPermission = input<AgentPermissionRequest | null>(null);
+  readonly stopAgent = output<string>();
+  readonly backgroundAgent = output<string>();
+  readonly followUpAgent = output<string>();
+  readonly loadEarlier = output<string>();
+  readonly approve = output<AgentPermissionApproval>();
+  readonly deny = output<string | undefined>();
+  readonly wide = toSignal(inject(BreakpointObserver).observe('(min-width: 1100px)'), {
+    initialValue: { matches: true, breakpoints: {} },
+  });
   readonly close = output<void>();
   readonly selectAgent = output<string>();
   readonly refreshAgent = output<string>();
   readonly openLocalFile = output<LocalFileTarget>();
 
   readonly tab = signal<'timeline' | 'transcript' | 'hooks'>('transcript');
+  readonly scrollMemory = new Map<string, { top: number; pinned: boolean }>();
   readonly expandedTurns = signal<Record<string, boolean>>({});
   readonly expandedChanges = signal<Record<string, boolean>>({});
   readonly turnExpansion = computed(() => ({
@@ -109,7 +133,9 @@ export class ClaudeAgentInspectorComponent {
       total: agents.length,
       active: agents.filter((agent) => agent.status === 'started').length,
       attention: agents.filter((agent) =>
-        ['error', 'interrupted', 'waiting', 'unavailable'].includes(agent.executionStatus ?? ''),
+        ['error', 'interrupted', 'waiting', 'paused', 'unavailable'].includes(
+          agent.executionStatus ?? '',
+        ),
       ).length,
     };
   });
@@ -152,7 +178,7 @@ export class ClaudeAgentInspectorComponent {
         (filter === 'all' ||
           (filter === 'active'
             ? agent.status === 'started'
-            : ['error', 'interrupted', 'waiting', 'unavailable'].includes(
+            : ['error', 'interrupted', 'waiting', 'paused', 'unavailable'].includes(
                 agent.executionStatus ?? '',
               ))),
     );
@@ -169,6 +195,15 @@ export class ClaudeAgentInspectorComponent {
     return {
       ...run,
       displayName: data.displayName ?? run.displayName,
+      taskId: run.taskId ?? data.taskId,
+      canStop: run.canStop ?? data.canStop,
+      canBackground: run.canBackground ?? data.canBackground,
+      canFollowUp: run.canFollowUp ?? data.canFollowUp,
+      stoppedByUser: run.stoppedByUser ?? data.stoppedByUser,
+      worktreePath: data.worktreePath ?? run.worktreePath,
+      usage: run.usage ?? data.usage,
+      isBackgrounded: run.isBackgrounded ?? data.isBackgrounded,
+      lastToolName: run.lastToolName ?? data.lastToolName,
       agentType: data.agentType,
       prompt: data.prompt ?? run.prompt,
       model: data.model ?? run.model,
@@ -197,9 +232,35 @@ export class ClaudeAgentInspectorComponent {
     buildAgentTimelineEntries(this.selectedHistoryState()?.data ?? null, this.selectedAgent()),
   );
 
+  private readonly selectedLive = computed(
+    () => {
+      const agent = this.selectedAgent();
+      if (!agent) return [];
+      return this.liveItems().filter(
+        (item) =>
+          item.agentId === agent.agentId ||
+          (!item.agentId &&
+            agent.parentToolUseId &&
+            item.parentToolUseId === agent.parentToolUseId),
+      );
+    },
+    { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) },
+  );
+
   readonly chatHistory = computed<AgentTranscriptItem[]>(() => {
-    const history = this.selectedHistoryState()?.data?.history ?? [];
     const agent = this.selectedAgent();
+    const saved = this.selectedHistoryState()?.data?.history ?? [];
+    const byId = new Map(saved.map((item) => [item.id, item]));
+    for (const item of this.selectedLive())
+      byId.set(item.id, {
+        ...item,
+        parentToolUseId:
+          item.parentToolUseId === agent?.parentToolUseId ||
+          item.parentToolUseId === `claude-agent:${agent?.agentId}`
+            ? undefined
+            : item.parentToolUseId,
+      });
+    const history = [...byId.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     const prompt = agent?.prompt?.trim();
     // A known assignment should use the same user-message presentation as normal chat.
     if (
@@ -245,7 +306,7 @@ export class ClaudeAgentInspectorComponent {
   readonly chatTools = computed<TranscriptToolState>(() => ({
     children: this.chatChildren(),
     agents: this.agentIndex(),
-    progress: {},
+    progress: this.toolProgress(),
     liveIds: new Set(
       this.selectedAgent()?.status === 'started'
         ? this.chatUnits().flatMap((unit) =>
