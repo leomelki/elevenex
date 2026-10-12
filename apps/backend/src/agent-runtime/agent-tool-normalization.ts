@@ -7,6 +7,18 @@ export interface CanonicalAgentTool {
 }
 
 type JsonRecord = Record<string, unknown>;
+const COLLABORATION_LABELS: Record<string, string> = {
+  spawnagent: 'Delegate task',
+  sendmessage: 'Message agent',
+  sendinput: 'Send input',
+  followuptask: 'Assign follow-up',
+  wait: 'Wait for agents',
+  waitagent: 'Wait for agents',
+  listagents: 'Check agents',
+  interruptagent: 'Interrupt agent',
+  resumeagent: 'Resume agent',
+  closeagent: 'Close agent',
+};
 
 export function normalizeToolName(name: string | undefined): string {
   return (name ?? '').toLowerCase().replace(/[_\-\s]/g, '');
@@ -46,6 +58,19 @@ export function canonicalizeAgentTool(
   const data = asRecord(input);
   const rawName = toolName || 'Tool';
   const normalized = normalizeToolName(rawName);
+  const collaborationName = normalizeToolName(rawName.split('.').at(-1));
+  if (
+    Object.hasOwn(COLLABORATION_LABELS, collaborationName) &&
+    !rawName.toLowerCase().startsWith('mcp') &&
+    typeof data['server'] !== 'string' &&
+    rawName !== 'SendMessage' &&
+    !(collaborationName === 'wait' && data['cell_id'] !== undefined)
+  )
+    return {
+      toolKind: 'agent_collaboration',
+      toolDisplayName: COLLABORATION_LABELS[collaborationName],
+      toolInput: data,
+    };
 
   if (
     normalized === 'read' ||

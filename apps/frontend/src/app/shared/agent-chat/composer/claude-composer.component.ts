@@ -143,15 +143,25 @@ export class ClaudeComposerComponent {
   readonly diffMentions = input<DiffSelectionMention[]>([]);
   readonly imageAttachments = model<ComposerImageAttachment[]>([]);
   // Count of backgrounded subagents/tasks still executing for this session.
-  // The main turn can be idle while these run, but a submitted message will
-  // still be queued behind them, so the composer must reflect that.
+  // Providers differ on whether background work delays a new parent turn.
   readonly backgroundAgentCount = input<number>(0);
+  readonly queueBehindBackgroundWork = input<boolean>(true);
+  readonly nativeSteering = input<boolean>(false);
+  readonly steerActionLabel = computed(() =>
+    this.nativeSteering()
+      ? 'Guide Codex with this message without stopping its current work'
+      : 'Stop the current response and send this queued message next',
+  );
   /** Dictation context: biases transcription towards this repo's vocabulary. */
   readonly sessionId = input<number | null>(null);
   readonly worktreePath = input<string | null>(null);
 
   readonly queueing = computed(
-    () => this.running() || this.backgroundAgentCount() > 0 || this.pendingPrompts().length > 0,
+    () =>
+      this.running() ||
+      (this.queueBehindBackgroundWork() && this.backgroundAgentCount() > 0) ||
+      this.pendingPrompts().length > 0 ||
+      this.queuePaused(),
   );
 
   readonly send = output<ComposerSendPayload>();

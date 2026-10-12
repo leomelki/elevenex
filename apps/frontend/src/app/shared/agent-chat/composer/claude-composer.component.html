@@ -149,9 +149,9 @@
         }
       </div>
     }
-    <!-- What is running is shown by cw-background-activity above the
-         composer; this only explains the consequence for sending. -->
-    @if (backgroundAgentCount() > 0) {
+    <!-- The agent overview shows activity; only providers that queue behind
+         background work need this additional sending explanation. -->
+    @if (backgroundAgentCount() > 0 && queueBehindBackgroundWork()) {
       <div
         class="cw-comp__bg-agent border-b border-warning/20 bg-warning/10 px-3.5 py-1.5 text-xs text-warning"
         role="status"
@@ -234,8 +234,8 @@
               zType="outline"
               zSize="xs"
               class="cw-comp__pending-steer shrink-0 text-[10px] text-primary"
-              title="Stop the current response and send this message next"
-              aria-label="Stop the current response and send this queued message next"
+              [title]="steerActionLabel()"
+              [attr.aria-label]="steerActionLabel()"
               (click)="steerPending.emit(p.id)"
             >
               <ng-icon name="lucideSend" size="11" /> Steer

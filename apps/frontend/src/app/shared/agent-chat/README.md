@@ -18,10 +18,20 @@ features own their workflows and compose these pieces.
   for the session, review, and plan chats; DOM updates use `afterRenderEffect`.
 - `tools/`: tool presentation, shared file-change parsing, and highlighted diffs.
   Highlighting happens when the relevant content is expanded.
+  `agent-collaboration.component.*` renders Codex spawn, messaging, follow-up,
+  wait/list, and lifecycle receipts. Its pure formatter lives in
+  `shared/agent-tools/agent-collaboration-format.ts`. Pass the conversation's
+  readonly agent index through `TranscriptToolState` so task paths resolve to
+  owned thread IDs. Enable inspector links only when the host handles `openAgent`.
+  Reported wait/list statuses stay distinct from newer live statuses; raw data
+  remains collapsed. Large lists use a limited initial row count and a bounded
+  receipt cache rather than reparsing every roster on each live status update.
 - `composer/`: prompt editing, attachments, queue controls, and draft storage.
 - `attachments/`: the shared mention card used by the composer and transcript.
 - `requests/`: permission and user-input interactions.
 - `activity/`: background activity and subagent inspection.
+- `context-usage/`: the compact status button and usage popover shared by the
+  main conversation and subagent chat. Keep usage details behind this button.
 - `markdown/`: sanitized Markdown and local-file link handling. Use
   `AgentMarkdownComponent` to keep document styles and navigation consistent.
 - `forked-chat.component.*`: the composed chat used in the review dock, with

@@ -27,7 +27,7 @@ export class CodexAgentRuntimeProvider
     displayName: 'OpenAI Codex',
     capabilities: {
       mcp: true,
-      subagents: false,
+      subagents: true,
       permissions: true,
       userInput: true,
       multimodalPrompts: true,
@@ -63,6 +63,10 @@ export class CodexAgentRuntimeProvider
 
   getSnapshot(sessionId: number) {
     return this.runtimeService.getSnapshot(sessionId);
+  }
+
+  getSubagentHistory(sessionId: number, agentId: string) {
+    return this.runtimeService.getSubagentHistory(sessionId, agentId);
   }
 
   getAutocompleteItems(sessionId: number) {

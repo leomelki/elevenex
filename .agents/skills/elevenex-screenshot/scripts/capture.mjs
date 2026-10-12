@@ -40,12 +40,14 @@ Options:
   --height <px>        Viewport height (default: 1000).
   --wait <ms>          Extra settling time after load (default: 3500).
   --profile-load      Report initial chat timing and browser long tasks.
+  --reuse-only        Use running servers; never start or stop application processes.
+  --keep-servers      Leave any preview servers started by this command running.
   --help               Show this help.
 `;
 
 function parseArgs(argv) {
   const values = {};
-  const boolean = new Set(['help', 'profile-load']);
+  const boolean = new Set(['help', 'profile-load', 'reuse-only', 'keep-servers']);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (!token.startsWith('--')) throw new Error(`Unexpected argument: ${token}`);
@@ -367,6 +369,9 @@ async function main() {
   let browser;
   try {
     if (!await isHealthy(`${backendUrl}/api/info`)) {
+      if (args['reuse-only']) {
+        throw new Error(`Backend is not reachable at ${backendUrl}; --reuse-only leaves application processes untouched`);
+      }
       if (backendUrl !== DEFAULT_BACKEND_URL) {
         throw new Error(`Backend is not reachable at ${backendUrl}; custom backends are not started automatically`);
       }
@@ -385,6 +390,9 @@ async function main() {
     }
 
     if (!await isHealthy(frontendUrl)) {
+      if (args['reuse-only']) {
+        throw new Error(`Frontend is not reachable at ${frontendUrl}; --reuse-only leaves application processes untouched`);
+      }
       if (frontendUrl !== DEFAULT_FRONTEND_URL) {
         throw new Error(`Frontend is not reachable at ${frontendUrl}; custom frontends are not started automatically`);
       }
@@ -531,8 +539,15 @@ async function main() {
     throw error;
   } finally {
     await browser?.close();
-    await stopServer(frontend);
-    await stopServer(backend);
+    if (args['keep-servers']) {
+      for (const child of [frontend, backend]) {
+        child?.unref();
+        await child?.logHandle?.close();
+      }
+    } else {
+      await stopServer(frontend);
+      await stopServer(backend);
+    }
   }
 }
 

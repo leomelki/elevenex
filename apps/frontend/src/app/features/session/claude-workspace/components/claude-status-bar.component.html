@@ -290,7 +290,9 @@
           class="cw-sb__bg inline-flex items-center gap-1.5 whitespace-nowrap text-success"
           [title]="
             backgroundWorkCount() +
-            ' background job(s) still running — new messages are queued behind them'
+            (currentProvider() === 'codex'
+              ? ' agent(s) working in background — you can send follow-ups to Codex'
+              : ' background job(s) still running — new messages are queued behind them')
           "
         >
           <span

@@ -5,7 +5,9 @@
   type="button"
   class="cw-sb__ctx h-5 gap-1.5 whitespace-nowrap px-0.5 text-[11px] font-normal text-muted-foreground data-[warning=true]:text-warning"
   [attr.data-warning]="usage().percentage >= 80"
-  [attr.aria-label]="'Conversation context: ' + usage().percentage + '% used. Show token details'"
+  [attr.aria-label]="
+    contextLabel() + ' context: ' + usage().percentage + '% used. Show token details'
+  "
   title="Show context token details"
   zPopover
   [zContent]="contextContent"
@@ -61,5 +63,13 @@
         Percentage excludes reserved prompt and tool space.
       }
     </p>
+    @if (updatedAt(); as timestamp) {
+      <p class="mt-2 mb-0 text-[11px] text-muted-foreground">
+        Last reported ·
+        <time [attr.datetime]="timestamp" [attr.title]="timestamp">{{
+          timestamp | date: 'mediumTime'
+        }}</time>
+      </p>
+    }
   </div>
 </ng-template>

@@ -57,6 +57,17 @@ describe('ClaudeStatusBarComponent', () => {
     ]);
   });
 
+  it('keeps background agents visible without claiming they block Codex follow-ups', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('currentProvider', 'codex');
+    fixture.componentRef.setInput('backgroundWorkCount', 3);
+    fixture.detectChanges();
+    const indicator = fixture.nativeElement.querySelector('.cw-sb__bg') as HTMLElement;
+    expect(indicator.textContent).toContain('3 in background');
+    expect(indicator.title).toContain('you can send follow-ups');
+    expect(indicator.title).not.toContain('queued behind');
+  });
+
   it('toggles plan mode with Shift+Tab instead of cycling permission style', async () => {
     const fixture = await render();
     const permissionChanges: unknown[] = [];

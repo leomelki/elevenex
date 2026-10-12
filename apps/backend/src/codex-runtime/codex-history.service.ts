@@ -17,6 +17,16 @@ import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.type
 import type { CodexHistorySessionSummary } from './codex-runtime.types.js';
 import type { AgentForkConversationRequest } from '../agent-runtime/agent-runtime.types.js';
 import { TranscriptFileCache } from '../agent-runtime/transcript-file-cache.js';
+import {
+  CodexSubagentTracker,
+  collaborationTool,
+  delegatedTaskNames,
+  record,
+  readableText,
+  textValue,
+} from './codex-subagents.js';
+import type { ClaudeSubagentState } from '../claude-runtime/claude-runtime.types.js';
+import { codexContextUsage } from './codex-context-usage.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -41,12 +51,23 @@ export const CODEX_HISTORY_SESSIONS_ROOT = Symbol(
 export class CodexHistoryService {
   private readonly logger = new Logger('CodexHistoryService');
   private readonly sessionsRoot: string;
-  private readonly historyCache = new TranscriptFileCache<
-    ClaudeTranscriptItem[]
-  >();
   private readonly sessionPaths = new Map<string, string>();
   private readonly pathSearches = new Map<string, Promise<string | null>>();
   private fileScan: Promise<string[]> | null = null;
+  private readonly subagentCache = new TranscriptFileCache<{
+    history: ClaudeTranscriptItem[];
+    records: JsonRecord[];
+    displayName?: string;
+    agentType?: string;
+    agentPath?: string;
+    model?: string;
+    reasoningEffort?: string;
+    contextUsage?: ClaudeSubagentState['contextUsage'];
+    contextUsageUpdatedAt?: string;
+  }>();
+  private childMetadata = new Map<string, Map<string, string>>();
+  private childMetadataAt = 0;
+  private childMetadataScan: Promise<void> | null = null;
 
   constructor(
     @Optional()
@@ -62,13 +83,256 @@ export class CodexHistoryService {
     if (!codexSessionId || codexSessionId === '-1') {
       return [];
     }
-    const path = await this.findSessionFile(codexSessionId);
-    if (!path) {
-      return [];
-    }
-    return this.historyCache.read(path, async () =>
-      this.normalizeRecords(await this.readJsonl(path)),
+    return (await this.getSubagentSnapshot(codexSessionId))?.history ?? [];
+  }
+
+  async getSubagentSnapshot(threadId: string, prompt?: string) {
+    const path = await this.findSessionFile(threadId);
+    if (!path) return null;
+    const snapshot = await this.subagentCache.read(path, async () => {
+      const records = await this.readJsonl(path);
+      const metaRecord = records.find((entry) => entry.type === 'session_meta');
+      const meta = record(metaRecord?.payload);
+      const spawn = record(
+        record(record(meta.source).subagent ?? record(meta.source).subAgent)
+          .thread_spawn,
+      );
+      const normalized = this.normalizeRecords(records);
+      const childStartedAt = textValue(spawn.parent_thread_id)
+        ? textValue(metaRecord?.timestamp)
+        : undefined;
+      const context = record(
+        [...records]
+          .reverse()
+          .find(
+            (entry) =>
+              entry.type === 'turn_context' &&
+              (!childStartedAt ||
+                (textValue(entry.timestamp) ?? '') >= childStartedAt),
+          )?.payload,
+      );
+      const history = childStartedAt
+        ? normalized.filter((item) => item.timestamp >= childStartedAt)
+        : normalized;
+      const ownRecords = childStartedAt
+        ? records.filter(
+            (entry) => (textValue(entry.timestamp) ?? '') >= childStartedAt,
+          )
+        : records;
+      let usageModel: string | null = null;
+      let contextUsage: ClaudeSubagentState['contextUsage'];
+      let contextUsageUpdatedAt: string | undefined;
+      for (const entry of ownRecords) {
+        const payload = record(entry.payload);
+        if (entry.type === 'turn_context')
+          usageModel = textValue(payload.model) ?? usageModel;
+        if (entry.type !== 'event_msg' || payload.type !== 'token_count')
+          continue;
+        const info = record(payload.info);
+        if (!Object.keys(record(info.last_token_usage)).length) continue;
+        contextUsage = codexContextUsage(
+          usageModel,
+          info.last_token_usage,
+          info.model_context_window,
+        );
+        contextUsageUpdatedAt = textValue(entry.timestamp);
+      }
+      return {
+        history,
+        records: ownRecords,
+        displayName: textValue(meta.agent_nickname ?? spawn.agent_nickname),
+        agentType: textValue(meta.agent_role ?? spawn.agent_role),
+        agentPath: textValue(meta.agent_path ?? spawn.agent_path),
+        model: textValue(context.model),
+        reasoningEffort: textValue(context.effort ?? context.reasoning_effort),
+        contextUsage,
+        contextUsageUpdatedAt,
+      };
+    });
+    // A forked child can inherit its parent's conversation. Start at its own assignment.
+    const ownPromptIndex = prompt
+      ? snapshot.history.findIndex(
+          (item) =>
+            item.kind === 'user' && item.content?.trim() === prompt.trim(),
+        )
+      : -1;
+    const history =
+      ownPromptIndex >= 0
+        ? snapshot.history.slice(ownPromptIndex)
+        : snapshot.history;
+    const tracker = new CodexSubagentTracker();
+    const taskNames = delegatedTaskNames(history);
+    if (taskNames.length) await this.indexChildMetadata();
+    tracker.restore(
+      history,
+      threadId,
+      threadId,
+      this.childMetadata.get(threadId),
     );
+    // Some CLI versions persist collaboration as event_msg rather than function calls.
+    for (const entry of snapshot.records) {
+      if (entry.type !== 'event_msg') continue;
+      const raw = record(entry.payload);
+      const timestamp = textValue(entry.timestamp) ?? '';
+      if (ownPromptIndex >= 0 && timestamp < history[0].timestamp) continue;
+      const receiver = textValue(raw.new_thread_id ?? raw.receiver_thread_id);
+      if (raw.type === 'collab_agent_spawn_end' && receiver) {
+        tracker.collaboration(
+          {
+            id: raw.call_id,
+            tool: 'spawnAgent',
+            senderThreadId: threadId,
+            receiverThreadIds: [receiver],
+            prompt: raw.prompt,
+            model: raw.model,
+            agentsStates: { [receiver]: { status: raw.status } },
+          },
+          timestamp,
+          threadId,
+        );
+      } else if (raw.type === 'collab_waiting_end') {
+        for (const [id, status] of Object.entries(record(raw.statuses))) {
+          tracker.collaboration(
+            { tool: 'wait', agentsStates: { [id]: { status } } },
+            timestamp,
+            threadId,
+          );
+        }
+      } else if (raw.type === 'item_completed') {
+        const activity = record(raw.item);
+        const id = textValue(activity.agent_thread_id);
+        if (
+          activity.type === 'SubAgentActivity' &&
+          id &&
+          tracker.agents.has(id)
+        ) {
+          const status =
+            activity.kind === 'completed'
+              ? 'completed'
+              : activity.kind === 'interrupted'
+                ? 'interrupted'
+                : activity.kind === 'started'
+                  ? 'running'
+                  : undefined;
+          if (status)
+            tracker.upsert(id, { executionStatus: status }, timestamp);
+        }
+      }
+    }
+    const lastTurn = [...snapshot.records]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.type === 'event_msg' &&
+          [
+            'task_started',
+            'task_complete',
+            'task_completed',
+            'turn_aborted',
+          ].includes(String(record(entry.payload).type)),
+      );
+    const lastTurnType = record(lastTurn?.payload).type;
+    return {
+      history,
+      subagents: [...tracker.agents.values()],
+      displayName: snapshot.displayName,
+      agentType: snapshot.agentType,
+      agentPath: snapshot.agentPath,
+      model: snapshot.model,
+      reasoningEffort: snapshot.reasoningEffort,
+      contextUsage: snapshot.contextUsage,
+      contextUsageUpdatedAt: snapshot.contextUsageUpdatedAt,
+      path,
+      executionStatus: (lastTurnType === 'task_started'
+        ? 'running'
+        : lastTurnType === 'turn_aborted'
+          ? 'interrupted'
+          : lastTurn
+            ? 'completed'
+            : undefined) as ClaudeSubagentState['executionStatus'],
+      timestamp: textValue(lastTurn?.timestamp),
+      updatedAt: history.at(-1)?.timestamp,
+      lastAssistantMessage: [...history]
+        .reverse()
+        .find((item) => item.kind === 'assistant' && item.content)?.content,
+    };
+  }
+
+  /** Index only the first rollout record, with bounded IO; never parse every session transcript. */
+  private indexChildMetadata(): Promise<void> {
+    if (Date.now() - this.childMetadataAt < 30_000) return Promise.resolve();
+    if (this.childMetadataScan) return this.childMetadataScan;
+    const scan = (async () => {
+      const paths = await (this.fileScan ??
+        this.findJsonlFiles(this.sessionsRoot));
+      const index = new Map<string, Map<string, string>>();
+      for (let cursor = 0; cursor < paths.length; cursor += 8) {
+        await Promise.all(
+          paths.slice(cursor, cursor + 8).map(async (path) => {
+            let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+            try {
+              handle = await fs.open(path, 'r');
+              // session_meta is a small first record. Ignore oversized/unrelated records.
+              let buffer = Buffer.alloc(4096);
+              let { bytesRead } = await handle.read(
+                buffer,
+                0,
+                buffer.length,
+                0,
+              );
+              if (
+                !buffer.subarray(0, bytesRead).includes(10) &&
+                bytesRead === buffer.length
+              ) {
+                buffer = Buffer.alloc(128 * 1024);
+                ({ bytesRead } = await handle.read(
+                  buffer,
+                  0,
+                  buffer.length,
+                  0,
+                ));
+              }
+              const content = buffer.subarray(0, bytesRead).toString('utf8');
+              const newline = content.indexOf('\n');
+              if (newline < 0 && bytesRead === buffer.length) return;
+              const entry = record(
+                JSON.parse(newline < 0 ? content : content.slice(0, newline)),
+              );
+              if (entry.type !== 'session_meta') return;
+              const meta = record(entry.payload);
+              const spawn = record(
+                record(
+                  record(meta.source).subagent ?? record(meta.source).subAgent,
+                ).thread_spawn,
+              );
+              const parent = textValue(spawn.parent_thread_id),
+                id = textValue(meta.id),
+                name = textValue(spawn.agent_path);
+              if (!parent || !id || !name) return;
+              const aliases = index.get(parent) ?? new Map<string, string>();
+              aliases.set(name, id);
+              aliases.set(name.split('/').at(-1)!, id);
+              index.set(parent, aliases);
+              if (this.sessionPaths.size >= 512)
+                this.sessionPaths.delete(
+                  this.sessionPaths.keys().next().value!,
+                );
+              this.sessionPaths.set(id, path);
+            } catch {
+              /* A rollout can be removed or still be receiving its first record. */
+            } finally {
+              await handle?.close();
+            }
+          }),
+        );
+      }
+      this.childMetadata = index;
+      this.childMetadataAt = Date.now();
+    })().finally(() => {
+      if (this.childMetadataScan === scan) this.childMetadataScan = null;
+    });
+    this.childMetadataScan = scan;
+    return scan;
   }
 
   /** Do not publish a fork until its rollout contains the retained turns. */
@@ -259,6 +523,17 @@ export class CodexHistoryService {
 
   private normalizeRecords(records: JsonRecord[]): ClaudeTranscriptItem[] {
     const items: ClaudeTranscriptItem[] = [];
+    const responseMessageIds = new Set(
+      records.flatMap((entry) => {
+        const payload = record(entry.payload);
+        return entry.type === 'response_item' &&
+          payload.type === 'message' &&
+          payload.role === 'assistant' &&
+          readableText(this.contentToText(payload.content))
+          ? [payload.id]
+          : [];
+      }),
+    );
     for (const [index, record] of records.entries()) {
       const timestamp =
         stringValue(record.timestamp) ?? new Date().toISOString();
@@ -278,6 +553,28 @@ export class CodexHistoryService {
         continue;
       }
 
+      if (record.type === 'event_msg') {
+        const payload = asRecord(record.payload);
+        const completed = asRecord(payload?.item);
+        if (
+          payload?.type === 'item_completed' &&
+          completed?.type === 'AgentMessage' &&
+          !responseMessageIds.has(completed.id)
+        ) {
+          const content = readableText(this.contentToText(completed.content));
+          if (content)
+            items.push({
+              id:
+                stringValue(completed.id) ?? `codex-history:${index}:assistant`,
+              kind: 'assistant',
+              content,
+              timestamp,
+              receivedAt: timestamp,
+              sourceMessageId: stringValue(completed.id),
+              transcriptMessageId: this.recordAnchorId(index),
+            });
+        }
+      }
       if (record.type !== 'response_item') {
         continue;
       }
@@ -352,6 +649,25 @@ export class CodexHistoryService {
     const type = stringValue(item.type);
     const id =
       stringValue(item.id) ?? `codex-history:${index}:${type ?? 'item'}`;
+    if (type === 'agent_message') {
+      const content = readableText(this.contentToText(item.content));
+      const author = stringValue(item.author);
+      const routeOnly = content?.match(
+        /^Message Type: (MESSAGE|FINAL_ANSWER)\s+Task name: [^\n]+\s+Sender: [^\n]+\s+Payload\s*$/,
+      );
+      const rendered = routeOnly
+        ? `Received ${routeOnly[1] === 'FINAL_ANSWER' ? 'a final response' : 'a message'} from ${author?.split('/').at(-1)?.replace(/[_-]+/g, ' ') ?? 'another agent'}. The message body was not included in the saved transcript.`
+        : content;
+      return rendered
+        ? {
+            id,
+            kind: 'system',
+            content: rendered,
+            timestamp,
+            receivedAt: timestamp,
+          }
+        : null;
+    }
     if (type === 'message' && item.role === 'assistant') {
       const content = this.contentToText(item.content);
       return content
@@ -406,13 +722,18 @@ export class CodexHistoryService {
         rawToolName,
         item.arguments ?? item.input,
       );
-      const canonicalTool = canonicalizeAgentTool(toolName, providerToolInput);
+      const canonicalTool = canonicalizeAgentTool(
+        collaborationTool(rawToolName) ? rawToolName : toolName,
+        providerToolInput,
+      );
       return {
         id: `${id}:tool_use`,
         kind: 'tool_use',
         toolUseId,
         toolName,
-        providerToolName: toolName,
+        providerToolName: collaborationTool(rawToolName)
+          ? rawToolName
+          : toolName,
         toolKind: canonicalTool.toolKind,
         toolDisplayName: canonicalTool.toolDisplayName,
         toolInput: canonicalTool.toolInput,
@@ -545,6 +866,7 @@ export class CodexHistoryService {
   }
 
   private normalizeToolName(name: string): string {
+    if (name.split('.').at(-1) === 'spawn_agent') return 'Agent';
     if (name === 'shell_command' || name === 'exec_command') {
       return 'Bash';
     }
@@ -568,6 +890,15 @@ export class CodexHistoryService {
   private normalizeToolInput(toolName: string, value: unknown): unknown {
     const parsed = this.parseToolArguments(value);
     const args = asRecord(parsed);
+    if (collaborationTool(toolName) === 'spawn_agent')
+      return {
+        ...args,
+        message: readableText(args?.message ?? args?.prompt),
+        description:
+          readableText(args?.message ?? args?.prompt) ?? args?.task_name,
+        prompt: readableText(args?.message ?? args?.prompt),
+        subagent_type: args?.agent_type ?? args?.subagent_type ?? 'agent',
+      };
     if (toolName === 'shell_command' || toolName === 'exec_command') {
       const commandActions =
         arrayValue(args?.commandActions) ?? arrayValue(args?.command_actions);

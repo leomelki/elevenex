@@ -1,6 +1,7 @@
 import type { TurnAgentSummary } from '@/shared/agent-chat/activity/agent-deep-dive';
 import type { TurnChangeDetails } from '@/shared/agent-chat/tools/turn-change-stats';
 import { CommonModule } from '@angular/common';
+import { SubagentStatusComponent, agentLabel } from '../activity/subagent-status.component';
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 
 /**
@@ -13,7 +14,7 @@ import { ChangeDetectionStrategy, Component, input, output } from '@angular/core
 @Component({
   selector: 'cw-turn-summary',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, SubagentStatusComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './claude-turn-summary.component.html',
   styleUrl: './claude-turn-summary.component.scss',
@@ -30,4 +31,6 @@ export class ClaudeTurnSummaryComponent {
   readonly toggle = output<void>();
   readonly toggleChanges = output<void>();
   readonly inspect = output<void>();
+  readonly inspectAgent = output<string>();
+  protected readonly agentLabel = agentLabel;
 }

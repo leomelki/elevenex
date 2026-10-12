@@ -124,6 +124,8 @@
           [attachedPanelOpen]="!!conversation.pendingPermissionRequest()"
           [pendingPrompts]="conversation.pendingPrompts()"
           [queuePaused]="conversation.queuePaused()"
+          [queueBehindBackgroundWork]="currentChat()?.provider !== 'codex'"
+          [nativeSteering]="currentChat()?.provider === 'codex'"
           [sessionId]="currentChat()?.childSessionId ?? null"
           [worktreePath]="currentChat()?.childSession?.worktreePath ?? null"
           placeholderText="Ask a question about the plan…"

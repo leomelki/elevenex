@@ -4,6 +4,7 @@ import {
   Injectable,
   Inject,
   Logger,
+  NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
@@ -15,7 +16,7 @@ import type {
   Usage,
 } from '@openai/codex-sdk';
 import { EventEmitter } from 'events';
-import { contextPercentage } from '../agent-runtime/context-usage.js';
+import { codexContextUsage } from './codex-context-usage.js';
 import { codexWebSearchInput } from './codex-web-search.js';
 import { randomUUID } from 'crypto';
 import { and, eq } from 'drizzle-orm';
@@ -65,6 +66,18 @@ import {
 } from './codex-app-server.js';
 import { CodexAuthService } from './codex-auth.service.js';
 import { CodexHistoryService } from './codex-history.service.js';
+import {
+  CodexSubagentTracker,
+  collaborationTool,
+  executionStatus,
+  isAgentActive,
+  record,
+  textValue,
+} from './codex-subagents.js';
+import type {
+  ClaudeSubagentState,
+  ClaudeSubagentHistoryPayload,
+} from '../claude-runtime/claude-runtime.types.js';
 import type {
   CodexActiveRunState,
   CodexPermissionMode,
@@ -76,10 +89,6 @@ import type {
 } from './codex-runtime.types.js';
 
 const DEFAULT_CODEX_MODEL = 'gpt-5.5';
-// Codex's native percent_of_context_window_remaining excludes fixed prompt/tool
-// overhead from both counts. Keep its reserve policy, not a guessed model limit.
-// https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs
-const CODEX_CONTEXT_BASELINE_TOKENS = 12_000;
 const CODEX_MODEL_REFRESH_TTL_MS = 10 * 60 * 1000;
 const CODEX_MODEL_REFRESH_RETRY_MS = 30_000;
 const CODEX_MODEL_LIST_TIMEOUT_MS = 8_000;
@@ -197,6 +206,20 @@ export class CodexRuntimeService
   private readonly unconfirmedStops = new Map<number, CodexActiveRunState>();
   private readonly rewindingSessions = new Set<number>();
   private readonly runtimeStates = new Map<number, CodexRuntimeState>();
+  private readonly subagentTrackers = new Map<number, CodexSubagentTracker>();
+  private readonly subagentRestores = new Map<number, Promise<void>>();
+  private readonly subagentHistoryReads = new Map<
+    string,
+    Promise<ClaudeSubagentHistoryPayload>
+  >();
+  private readonly backgroundRefs = new Set<number>();
+  private readonly restoredSubagents = new WeakSet<CodexSubagentTracker>();
+  private readonly delegatedRequests = new Map<
+    number,
+    Pick<CodexActiveRunState, 'permissionRequests' | 'userInputRequests'>
+  >();
+  private unsubscribeSubagentRequests: (() => void) | null = null;
+  private readonly resolvedDelegatedRequests = new Set<string>();
   private readonly invalidatedSessions = new Set<number>();
   private readonly sessionGenerations = new Map<number, number>();
   private codexModels: ClaudeModelOption[] = [...CODEX_MODELS];
@@ -265,6 +288,7 @@ export class CodexRuntimeService
     this.modelCatalogInterval.unref?.();
     this.unsubscribePlanUsageNotifications = this.appServer.onNotification(
       (notification) => {
+        this.handleSubagentNotification(notification);
         const hasOAuthSession = [...this.runtimeStates.values()].some(
           (state) => state.authStatus?.authMethod === 'oauth',
         );
@@ -276,9 +300,58 @@ export class CodexRuntimeService
         }
       },
     );
+    this.unsubscribeSubagentRequests = this.appServer.onRequest(
+      async (request) => {
+        const params = record(request.params);
+        const threadId = textValue(params.threadId);
+        if (!threadId) return false;
+        const owner = [...this.subagentTrackers].find(
+          ([id, tracker]) =>
+            !this.invalidatedSessions.has(id) && tracker.agents.has(threadId),
+        );
+        if (!owner) return false;
+        const [sessionId] = owner;
+        let response: unknown;
+        if (
+          [
+            'item/commandExecution/requestApproval',
+            'item/fileChange/requestApproval',
+            'item/permissions/requestApproval',
+          ].includes(request.method)
+        ) {
+          response = await this.requestCodexPermission(
+            sessionId,
+            request.method,
+            request.id,
+            params,
+          );
+        } else if (request.method === 'item/tool/requestUserInput')
+          response = await this.requestCodexToolUserInput(
+            sessionId,
+            request.id,
+            params,
+          );
+        else if (request.method === 'mcpServer/elicitation/request')
+          response = await this.requestCodexMcpElicitation(
+            sessionId,
+            request.id,
+            params,
+          );
+        else return false;
+        if (!this.resolvedDelegatedRequests.delete(String(request.id)))
+          this.appServer.respondToRequest(request.id, response);
+        return true;
+      },
+    );
   }
 
   onModuleDestroy(): void {
+    this.unsubscribeSubagentRequests?.();
+    for (const requests of this.delegatedRequests.values())
+      this.resolvePendingCodexRequests(requests);
+    this.delegatedRequests.clear();
+    for (const sessionId of this.backgroundRefs) this.appServer.release();
+    this.backgroundRefs.clear();
     this.unsubscribePlanUsageNotifications?.();
     this.unsubscribePlanUsageNotifications = null;
     if (this.modelCatalogInterval) {
@@ -309,6 +382,14 @@ export class CodexRuntimeService
           ),
         ),
     ]);
+    return this.attachToolDenials(history, denials, codexSessionId);
+  }
+
+  private attachToolDenials(
+    history: ClaudeTranscriptItem[],
+    denials: Array<typeof claudeToolInteractions.$inferSelect>,
+    codexSessionId: string,
+  ): ClaudeTranscriptItem[] {
     const callsById = new Map<string, ClaudeTranscriptItem>();
     for (const item of history) {
       if (item.kind !== 'tool_use') continue;
@@ -328,6 +409,11 @@ export class CodexRuntimeService
         createdAt: row.createdAt,
         resolvedAt: row.resolvedAt,
       };
+      if (
+        interaction.requestSnapshot?.['codexSessionId'] &&
+        interaction.requestSnapshot['codexSessionId'] !== codexSessionId
+      )
+        continue;
       const call = callsById.get(row.toolUseId);
       if (call) {
         call.interaction = interaction;
@@ -364,6 +450,7 @@ export class CodexRuntimeService
       persistedPlanMode,
     );
     state.cachedWorktreePath = session.worktreePath;
+    await this.restoreSubagents(sessionId, state);
     await this.refreshAuthStatusFast(state, sessionId);
     if (state.authStatus?.authMethod === 'oauth') {
       void this.refreshCodexPlanUsage();
@@ -407,6 +494,597 @@ export class CodexRuntimeService
       this.getRuntimeState(sessionId),
     ]);
     return { ...runtimeState, history };
+  }
+
+  private tracker(sessionId: number): CodexSubagentTracker {
+    let tracker = this.subagentTrackers.get(sessionId);
+    if (!tracker)
+      this.subagentTrackers.set(
+        sessionId,
+        (tracker = new CodexSubagentTracker()),
+      );
+    return tracker;
+  }
+
+  private requestStore(sessionId: number, threadId?: string) {
+    if (threadId && this.tracker(sessionId).agents.has(threadId)) {
+      let requests = this.delegatedRequests.get(sessionId);
+      if (!requests)
+        this.delegatedRequests.set(
+          sessionId,
+          (requests = {
+            permissionRequests: new Map(),
+            userInputRequests: new Map(),
+          }),
+        );
+      return requests;
+    }
+    return this.activeRuns.get(sessionId);
+  }
+
+  private pushRequestItem(
+    sessionId: number,
+    item: ClaudeTranscriptItem,
+    eventType: 'tool_use' | 'tool_result',
+    threadId?: string,
+  ): void {
+    const tracker = this.tracker(sessionId);
+    if (!threadId || !tracker.agents.has(threadId)) {
+      this.pushItem(sessionId, item, eventType);
+      return;
+    }
+    tracker.storeItem(threadId, item);
+  }
+
+  private storeForRequest(sessionId: number, requestId: string) {
+    const delegated = this.delegatedRequests.get(sessionId);
+    return delegated?.permissionRequests.has(requestId) ||
+      delegated?.userInputRequests.has(requestId)
+      ? delegated
+      : this.activeRuns.get(sessionId);
+  }
+
+  private restoreSubagents(
+    sessionId: number,
+    state: CodexRuntimeState,
+  ): Promise<void> {
+    const pending = this.subagentRestores.get(sessionId);
+    if (pending) return pending;
+    const rootId = state.codexSessionId;
+    if (!rootId || rootId === '-1') return Promise.resolve();
+    const tracker = this.tracker(sessionId);
+    if (this.restoredSubagents.has(tracker)) return Promise.resolve();
+    const restore = (async () => {
+      let rootFound = false;
+      const queue = [{ id: rootId, prompt: undefined as string | undefined }];
+      const seen = new Set<string>();
+      while (queue.length) {
+        const batch = queue.splice(0, 4).filter(({ id }) => !seen.has(id));
+        batch.forEach(({ id }) => seen.add(id));
+        const snapshots = await Promise.all(
+          batch.map(async ({ id, prompt }) => ({
+            id,
+            snapshot: await this.historyService
+              .getSubagentSnapshot(id, prompt)
+              .catch(() => null),
+          })),
+        );
+        if (
+          this.invalidatedSessions.has(sessionId) ||
+          this.runtimeStates.get(sessionId) !== state ||
+          state.codexSessionId !== rootId
+        )
+          return;
+        for (const { id, snapshot } of snapshots) {
+          if (!snapshot) continue;
+          if (id === rootId) rootFound = true;
+          const current = tracker.agents.get(id);
+          if (current) {
+            if (snapshot.displayName)
+              current.displayName = snapshot.displayName;
+            if (snapshot.agentType) current.agentType = snapshot.agentType;
+            if (snapshot.agentPath) current.agentPath = snapshot.agentPath;
+            if (snapshot.model) current.model = snapshot.model;
+            if (snapshot.reasoningEffort)
+              current.reasoningEffort = snapshot.reasoningEffort;
+            this.applySubagentContextUsage(current, snapshot);
+            current.transcriptPath = snapshot.path;
+            if (
+              snapshot.executionStatus &&
+              snapshot.timestamp &&
+              snapshot.timestamp >= current.timestamp
+            )
+              tracker.upsert(
+                id,
+                {
+                  executionStatus: snapshot.executionStatus,
+                  lastAssistantMessage:
+                    snapshot.lastAssistantMessage ??
+                    current.lastAssistantMessage,
+                },
+                snapshot.timestamp,
+              );
+            if (
+              snapshot.updatedAt &&
+              snapshot.updatedAt > tracker.agents.get(id)!.timestamp
+            )
+              tracker.upsert(
+                id,
+                {
+                  lastAssistantMessage:
+                    snapshot.lastAssistantMessage ??
+                    current.lastAssistantMessage,
+                },
+                snapshot.updatedAt,
+              );
+          }
+          for (const agent of snapshot.subagents) {
+            if (agent.agentId === rootId || seen.has(agent.agentId)) continue;
+            const old = tracker.agents.get(agent.agentId);
+            if (!old || old.timestamp <= agent.timestamp)
+              tracker.agents.set(agent.agentId, {
+                ...old,
+                ...agent,
+                parentAgentId: id === rootId ? undefined : id,
+              });
+            queue.push({ id: agent.agentId, prompt: agent.prompt });
+          }
+        }
+      }
+      if (rootFound) this.restoredSubagents.add(tracker);
+    })().finally(() => {
+      if (this.subagentRestores.get(sessionId) === restore)
+        this.subagentRestores.delete(sessionId);
+    });
+    this.subagentRestores.set(sessionId, restore);
+    return restore;
+  }
+
+  async getSubagentHistory(
+    sessionId: number,
+    agentId: string,
+  ): Promise<ClaudeSubagentHistoryPayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const tracker = this.tracker(sessionId);
+    if (!tracker.agents.has(agentId))
+      await this.restoreSubagents(sessionId, state);
+    const agent = tracker.agents.get(agentId);
+    if (!agent)
+      throw new NotFoundException('Codex subagent not found in this session.');
+    const key = `${sessionId}:${state.codexSessionId}:${this.sessionGenerations.get(sessionId) ?? 0}:${agentId}`;
+    const pending = this.subagentHistoryReads.get(key);
+    if (pending) return pending;
+    const read = (async (): Promise<ClaudeSubagentHistoryPayload> => {
+      try {
+        const snapshot = await this.historyService.getSubagentSnapshot(
+          agentId,
+          agent.prompt,
+        );
+        if (
+          this.runtimeStates.get(sessionId) !== state ||
+          state.codexSessionId !== session.codexSessionId
+        )
+          throw new NotFoundException('Codex session changed.');
+        if (snapshot?.displayName) agent.displayName = snapshot.displayName;
+        if (snapshot?.agentType) agent.agentType = snapshot.agentType;
+        if (snapshot?.agentPath) agent.agentPath = snapshot.agentPath;
+        if (snapshot?.model) agent.model = snapshot.model;
+        if (snapshot?.reasoningEffort)
+          agent.reasoningEffort = snapshot.reasoningEffort;
+        if (snapshot && this.applySubagentContextUsage(agent, snapshot))
+          this.publishSubagents(sessionId, [agent]);
+        if (
+          snapshot?.timestamp &&
+          snapshot.executionStatus &&
+          snapshot.timestamp > agent.timestamp
+        ) {
+          Object.assign(
+            agent,
+            tracker.upsert(
+              agentId,
+              {
+                executionStatus: snapshot.executionStatus,
+                lastAssistantMessage:
+                  snapshot.lastAssistantMessage ?? agent.lastAssistantMessage,
+              },
+              snapshot.timestamp,
+            ),
+          );
+          this.publishSubagents(sessionId, [agent]);
+        }
+        if (snapshot?.updatedAt && snapshot.updatedAt > agent.timestamp) {
+          Object.assign(
+            agent,
+            tracker.upsert(
+              agentId,
+              {
+                lastAssistantMessage:
+                  snapshot.lastAssistantMessage ?? agent.lastAssistantMessage,
+              },
+              snapshot.updatedAt,
+            ),
+          );
+          this.publishSubagents(sessionId, [agent]);
+        }
+        for (const child of snapshot?.subagents ?? []) {
+          if (
+            child.agentId === state.codexSessionId ||
+            child.agentId === agentId ||
+            tracker.agents.has(child.agentId)
+          )
+            continue;
+          tracker.agents.set(child.agentId, {
+            ...child,
+            parentAgentId: agentId,
+          });
+          this.publishSubagents(sessionId, [
+            tracker.agents.get(child.agentId)!,
+          ]);
+        }
+        const denials = await this.db
+          .select()
+          .from(claudeToolInteractions)
+          .where(
+            and(
+              eq(claudeToolInteractions.sessionId, sessionId),
+              eq(claudeToolInteractions.decision, 'denied'),
+            ),
+          );
+        const history = this.attachToolDenials(
+          [...(snapshot?.history ?? [])],
+          denials,
+          agentId,
+        );
+        const live = tracker.liveItems.get(agentId);
+        for (const item of live?.values() ?? []) {
+          const existing = history.findIndex(
+            (entry) =>
+              entry.id === item.id ||
+              (entry.kind === item.kind &&
+                entry.toolUseId &&
+                entry.toolUseId === item.toolUseId) ||
+              (entry.kind === item.kind &&
+                (item.kind === 'assistant' || item.kind === 'thinking') &&
+                entry.content === item.content &&
+                Math.abs(
+                  Date.parse(entry.timestamp) - Date.parse(item.timestamp),
+                ) < 60_000),
+          );
+          if (existing >= 0)
+            history[existing] = { ...history[existing], ...item };
+          else history.push(item);
+        }
+        if (!history.some((item) => item.kind === 'user') && agent.prompt)
+          history.unshift({
+            id: `${agentId}:assignment`,
+            kind: 'user',
+            content: agent.prompt,
+            timestamp: agent.startedAt ?? agent.timestamp,
+          });
+        return {
+          subagent: { ...agent },
+          history,
+          transcriptAvailable: !!snapshot || !!live?.size,
+          ...(!snapshot && !live?.size
+            ? {
+                transcriptError:
+                  'The agent transcript has not been saved yet. Try refreshing shortly.',
+              }
+            : {}),
+        };
+      } catch (error) {
+        if (error instanceof NotFoundException) throw error;
+        return {
+          subagent: { ...agent },
+          history: [],
+          transcriptAvailable: false,
+          transcriptError: 'Could not read the saved agent transcript.',
+        };
+      }
+    })().finally(() => {
+      if (this.subagentHistoryReads.get(key) === read)
+        this.subagentHistoryReads.delete(key);
+    });
+    this.subagentHistoryReads.set(key, read);
+    return read;
+  }
+
+  private publishSubagents(
+    sessionId: number,
+    changed: ClaudeSubagentState[],
+  ): void {
+    for (const subagent of changed)
+      this.emitEvent({
+        type: 'subagent_lifecycle',
+        payload: { sessionId, subagent: { ...subagent } },
+      });
+    const backgroundWork = this.subagentBackgroundWork(sessionId);
+    const pendingChildQuestion = [
+      ...(this.runtimeStates.get(sessionId)?.asyncUserInputRequests.values() ??
+        []),
+    ].some((request) => !!request.agentId);
+    // Keep the app-server alive for delegated work that outlives its parent turn.
+    if (
+      (backgroundWork.length || pendingChildQuestion) &&
+      !this.backgroundRefs.has(sessionId)
+    ) {
+      this.backgroundRefs.add(sessionId);
+      this.appServer.addRef();
+    } else if (
+      !backgroundWork.length &&
+      !pendingChildQuestion &&
+      this.backgroundRefs.delete(sessionId)
+    )
+      this.appServer.release();
+    this.emitEvent({
+      type: 'background_work',
+      payload: { sessionId, backgroundWork },
+    });
+    this.emitRunState(sessionId);
+  }
+
+  private subagentBackgroundWork(sessionId: number) {
+    return [...(this.subagentTrackers.get(sessionId)?.agents.values() ?? [])]
+      .filter(isAgentActive)
+      .map((agent) => ({
+        id: `subagent:${agent.agentId}`,
+        kind: 'subagent' as const,
+        label: agent.displayName ?? agent.agentType,
+        detail: agent.lastAssistantMessage ?? agent.prompt,
+        startedAt: agent.startedAt ?? agent.timestamp,
+        updatedAt: agent.timestamp,
+      }));
+  }
+
+  /** Usage has its own revision: transcript polling must not overwrite a newer live count. */
+  private applySubagentContextUsage(
+    agent: ClaudeSubagentState,
+    update: Pick<ClaudeSubagentState, 'contextUsage' | 'contextUsageUpdatedAt'>,
+  ): boolean {
+    if (
+      !update.contextUsageUpdatedAt ||
+      (agent.contextUsageUpdatedAt &&
+        update.contextUsageUpdatedAt <= agent.contextUsageUpdatedAt)
+    )
+      return false;
+    agent.contextUsage = update.contextUsage;
+    agent.contextUsageUpdatedAt = update.contextUsageUpdatedAt;
+    return true;
+  }
+
+  private handleSubagentNotification(
+    notification: CodexAppServerNotification,
+  ): void {
+    const params = record(notification.params);
+    const thread = record(params.thread);
+    const threadId = textValue(params.threadId ?? thread.id);
+    const timestamp = new Date().toISOString();
+    for (const [sessionId, tracker] of this.subagentTrackers) {
+      const state = this.runtimeStates.get(sessionId);
+      if (!state?.codexSessionId || this.invalidatedSessions.has(sessionId))
+        continue;
+      const rootId = state.codexSessionId;
+      if (notification.method === 'elevenex:app-server-down') {
+        const delegated = this.delegatedRequests.get(sessionId);
+        if (delegated) {
+          for (const id of [
+            ...delegated.permissionRequests.keys(),
+            ...delegated.userInputRequests.keys(),
+          ])
+            this.resolvedDelegatedRequests.add(id);
+          this.resolvePendingCodexRequests(delegated);
+          this.refreshPendingUserInput(sessionId);
+        }
+        const changed = [...tracker.agents.values()]
+          .filter(isAgentActive)
+          .map((agent) =>
+            tracker.upsert(
+              agent.agentId,
+              { executionStatus: 'error' },
+              timestamp,
+            ),
+          );
+        if (changed.length) this.publishSubagents(sessionId, changed);
+        continue;
+      }
+      // thread/started often precedes the parent's spawn tool result.
+      const spawn = record(
+        record(record(thread.source).subAgent ?? record(thread.source).subagent)
+          .thread_spawn,
+      );
+      const parent = textValue(spawn.parent_thread_id);
+      if (
+        notification.method === 'thread/started' &&
+        threadId &&
+        parent &&
+        (parent === rootId || tracker.agents.has(parent))
+      ) {
+        const agent = tracker.upsert(
+          threadId,
+          {
+            parentAgentId: parent === rootId ? undefined : parent,
+            agentPath: textValue(thread.agentPath ?? spawn.agent_path),
+            displayName: textValue(
+              thread.agentNickname ?? spawn.agent_nickname,
+            ),
+            agentType:
+              textValue(thread.agentRole ?? spawn.agent_role) ?? 'agent',
+            executionStatus: 'pending',
+          },
+          timestamp,
+        );
+        this.publishSubagents(sessionId, [agent]);
+        return;
+      }
+      if (!threadId || (threadId !== rootId && !tracker.agents.has(threadId)))
+        continue;
+      const raw = record(params.item);
+      if (
+        ['item/started', 'item/completed'].includes(notification.method) &&
+        raw.type === 'subAgentActivity'
+      ) {
+        const id = textValue(raw.agentThreadId);
+        if (id && id !== rootId) {
+          const old = tracker.agents.get(id);
+          const status =
+            raw.kind === 'completed'
+              ? 'completed'
+              : raw.kind === 'interrupted'
+                ? 'interrupted'
+                : raw.kind === 'started'
+                  ? 'running'
+                  : undefined;
+          this.publishSubagents(sessionId, [
+            tracker.upsert(
+              id,
+              {
+                ...(!old
+                  ? {
+                      parentAgentId: threadId === rootId ? undefined : threadId,
+                      agentType: 'agent',
+                    }
+                  : {}),
+                ...(status ? { executionStatus: status } : {}),
+              },
+              timestamp,
+            ),
+          ]);
+        }
+      }
+      if (
+        ['item/started', 'item/completed'].includes(notification.method) &&
+        raw.type === 'collabAgentToolCall'
+      ) {
+        const changed = tracker.collaboration(raw, timestamp, rootId);
+        if (changed.length) this.publishSubagents(sessionId, changed);
+      }
+      const agent = tracker.agents.get(threadId);
+      if (!agent) return;
+      if (notification.method === 'thread/tokenUsage/updated') {
+        const usage = record(params.tokenUsage);
+        if (!Object.keys(record(usage.last)).length) return;
+        // Live notifications are ordered; multiple responses may arrive in the same millisecond.
+        Object.assign(agent, {
+          contextUsage: codexContextUsage(
+            agent.model ?? null,
+            usage.last,
+            usage.modelContextWindow,
+          ),
+          contextUsageUpdatedAt: timestamp,
+        });
+        this.publishSubagents(sessionId, [agent]);
+        return;
+      }
+      if (notification.method === 'item/completed')
+        this.receiveCodexAsyncUserInput(sessionId, raw, threadId);
+      if (notification.method === 'serverRequest/resolved') {
+        const requestId = String(params.requestId);
+        const requests = this.delegatedRequests.get(sessionId);
+        const input = requests?.userInputRequests.get(requestId);
+        const permission = requests?.permissionRequests.get(requestId);
+        this.resolvedDelegatedRequests.add(requestId);
+        while (this.resolvedDelegatedRequests.size > 1000)
+          this.resolvedDelegatedRequests.delete(
+            this.resolvedDelegatedRequests.values().next().value!,
+          );
+        requests?.userInputRequests.delete(requestId);
+        requests?.permissionRequests.delete(requestId);
+        input?.resolve({ action: 'cancel' });
+        permission?.resolve({ approved: false });
+        this.refreshPendingUserInput(sessionId);
+      }
+      let status: ClaudeSubagentState['executionStatus'];
+      if (notification.method === 'turn/started') status = 'running';
+      else if (notification.method === 'turn/completed')
+        status = executionStatus(record(params.turn).status);
+      else if (notification.method === 'thread/status/changed') {
+        const rawStatus = record(params.status);
+        status =
+          rawStatus.type === 'active' &&
+          Array.isArray(rawStatus.activeFlags) &&
+          rawStatus.activeFlags.length
+            ? 'waiting'
+            : executionStatus(rawStatus.type);
+        // notLoaded/idle alone cannot establish whether a restored child completed its assignment.
+        if (rawStatus.type === 'idle') status = undefined;
+      } else if (notification.method === 'error' && !params.willRetry)
+        status = 'error';
+      else if (notification.method === 'thread/closed') status = 'closed';
+      if (status)
+        this.publishSubagents(sessionId, [
+          tracker.upsert(threadId, { executionStatus: status }, timestamp),
+        ]);
+      const items =
+        tracker.liveItems.get(threadId) ??
+        new Map<string, ClaudeTranscriptItem>();
+      tracker.liveItems.set(threadId, items);
+      const storeItem = (item: ClaudeTranscriptItem) =>
+        tracker.storeItem(threadId, item);
+      if (['item/started', 'item/completed'].includes(notification.method)) {
+        const translated = this.translateAppServerItem(
+          raw,
+          new Map(),
+          new Map(),
+          new Map(),
+          { isFinal: notification.method === 'item/completed' },
+        );
+        if (translated) {
+          const tool = this.toToolUseItem(translated, timestamp);
+          if (tool) {
+            storeItem(tool);
+            if (notification.method === 'item/completed') {
+              const result = this.toToolResultItem(translated, timestamp);
+              if (result) storeItem(result);
+            }
+          } else if (
+            translated.type === 'agent_message' ||
+            translated.type === 'reasoning'
+          ) {
+            storeItem({
+              id: translated.id,
+              kind:
+                translated.type === 'agent_message' ? 'assistant' : 'thinking',
+              content: translated.text,
+              timestamp,
+            });
+            if (translated.type === 'agent_message' && translated.text)
+              this.publishSubagents(sessionId, [
+                tracker.upsert(
+                  threadId,
+                  { lastAssistantMessage: translated.text },
+                  timestamp,
+                ),
+              ]);
+          }
+        }
+      } else if (
+        notification.method === 'item/agentMessage/delta' &&
+        typeof params.itemId === 'string' &&
+        typeof params.delta === 'string'
+      ) {
+        storeItem({
+          id: params.itemId,
+          kind: 'assistant',
+          content: (items.get(params.itemId)?.content ?? '') + params.delta,
+          timestamp,
+        });
+      } else if (
+        notification.method === 'item/commandExecution/outputDelta' &&
+        typeof params.itemId === 'string' &&
+        typeof params.delta === 'string'
+      ) {
+        const id = `${params.itemId}:tool_result`;
+        storeItem({
+          id,
+          kind: 'tool_result',
+          toolUseId: params.itemId,
+          content: (items.get(id)?.content ?? '') + params.delta,
+          timestamp,
+        });
+      }
+      return;
+    }
   }
 
   async getAutocompleteItems() {
@@ -965,6 +1643,10 @@ export class CodexRuntimeService
     const run =
       this.activeRuns.get(sessionId) ?? this.unconfirmedStops.get(sessionId);
     if (!run) {
+      const hadBackgroundWork =
+        this.subagentBackgroundWork(sessionId).length > 0;
+      await this.interruptSubagents(sessionId);
+      if (hadBackgroundWork) this.finalizeInterruptedRun(sessionId);
       return;
     }
     run.interruptRequested = true;
@@ -989,6 +1671,7 @@ export class CodexRuntimeService
       }
       await this.confirmTurnStopped(run);
     }
+    await this.interruptSubagents(sessionId);
     await run.completionPromise.catch(() => undefined);
     this.unconfirmedStops.delete(sessionId);
     if (this.activeRuns.get(sessionId) === run) {
@@ -997,7 +1680,9 @@ export class CodexRuntimeService
     }
   }
 
-  private async confirmTurnStopped(run: CodexActiveRunState): Promise<void> {
+  private async confirmTurnStopped(
+    run: Pick<CodexActiveRunState, 'threadId' | 'turnId'>,
+  ): Promise<string> {
     const deadline = Date.now() + 5_000;
     do {
       const response = await this.appServer.request<{
@@ -1007,12 +1692,68 @@ export class CodexRuntimeService
         (turn) => turn.id === run.turnId,
       );
       if (turn && ['completed', 'interrupted', 'failed'].includes(turn.status))
-        return;
+        return turn.status;
       await new Promise<void>((resolve) => setTimeout(resolve, 100));
     } while (Date.now() < deadline);
     throw new ConflictException(
       'Codex has not confirmed that the turn stopped. The task environment remains reserved; retry stopping it.',
     );
+  }
+
+  private async interruptSubagents(sessionId: number): Promise<void> {
+    const tracker = this.subagentTrackers.get(sessionId);
+    if (!tracker) return;
+    const delegated = this.delegatedRequests.get(sessionId);
+    if (delegated) this.resolvePendingCodexRequests(delegated);
+    const active = [...tracker.agents.values()].filter(isAgentActive);
+    for (let index = 0; index < active.length; index += 4) {
+      await Promise.all(
+        active.slice(index, index + 4).map(async (agent) => {
+          const response = await this.appServer.request<{
+            thread?: { turns?: Array<{ id: string; status: string }> };
+          }>(
+            'thread/read',
+            { threadId: agent.agentId, includeTurns: true },
+            5_000,
+          );
+          const turns = response.thread?.turns;
+          if (!turns)
+            throw new ConflictException(
+              'Codex has not confirmed that its delegated work stopped. Retry stopping this session.',
+            );
+          const runningTurns = turns.filter(
+            (turn) => turn.status === 'inProgress',
+          );
+          let finalStatus = executionStatus(turns.at(-1)?.status);
+          for (const turn of runningTurns) {
+            try {
+              await this.appServer.request(
+                'turn/interrupt',
+                { threadId: agent.agentId, turnId: turn.id },
+                5_000,
+              );
+            } catch {
+              // The child may finish between read and interrupt. Confirm its state below.
+            }
+            finalStatus = executionStatus(
+              await this.confirmTurnStopped({
+                threadId: agent.agentId,
+                turnId: turn.id,
+              }),
+            );
+          }
+          this.publishSubagents(sessionId, [
+            tracker.upsert(
+              agent.agentId,
+              {
+                executionStatus: finalStatus ?? 'interrupted',
+              },
+              new Date().toISOString(),
+            ),
+          ]);
+        }),
+      );
+    }
   }
 
   async cancelPendingPrompt(sessionId: number, id: string): Promise<void> {
@@ -1145,7 +1886,7 @@ export class CodexRuntimeService
     remember = false,
     content?: Record<string, unknown>,
   ): Promise<void> {
-    const run = this.activeRuns.get(sessionId);
+    const run = this.storeForRequest(sessionId, requestId);
     const pending = run?.permissionRequests.get(requestId);
     if (!pending) return;
     run?.permissionRequests.delete(requestId);
@@ -1158,7 +1899,7 @@ export class CodexRuntimeService
     requestId: string,
     message?: string,
   ): Promise<void> {
-    const run = this.activeRuns.get(sessionId);
+    const run = this.storeForRequest(sessionId, requestId);
     const pending = run?.permissionRequests.get(requestId);
     if (!pending) return;
     await this.recordToolDenial(sessionId, pending.request, message);
@@ -1182,7 +1923,8 @@ export class CodexRuntimeService
       requestSnapshot: {
         title: request.title,
         input: request.input,
-        codexSessionId: this.ensureRuntimeState(sessionId).codexSessionId,
+        codexSessionId:
+          request.agentId ?? this.ensureRuntimeState(sessionId).codexSessionId,
       },
       createdAt: request.createdAt,
       resolvedAt: new Date().toISOString(),
@@ -1216,7 +1958,7 @@ export class CodexRuntimeService
       (item) =>
         item.kind === 'tool_use' && item.toolUseId === request.toolUseId,
     );
-    this.pushItem(
+    this.pushRequestItem(
       sessionId,
       {
         ...(existing ?? {
@@ -1232,6 +1974,7 @@ export class CodexRuntimeService
         interaction,
       },
       'tool_use',
+      request.agentId,
     );
     this.emitEvent({
       type: 'permission_resolved',
@@ -1256,6 +1999,7 @@ export class CodexRuntimeService
     if (asyncRequest) {
       state.asyncUserInputRequests.delete(requestId);
       this.refreshPendingUserInput(sessionId);
+      if (asyncRequest.agentId) this.publishSubagents(sessionId, []);
       if (action !== 'accept') return;
       const prompt = (asyncRequest.questions ?? [])
         .map((question) => {
@@ -1267,6 +2011,34 @@ export class CodexRuntimeService
         })
         .join('\n\n');
       try {
+        if (asyncRequest.agentId) {
+          const child = await this.appServer.request<{
+            thread?: { turns?: Array<{ id: string; status: string }> };
+          }>(
+            'thread/read',
+            { threadId: asyncRequest.agentId, includeTurns: true },
+            5_000,
+          );
+          const activeTurn = child.thread?.turns?.find(
+            (turn) => turn.status === 'inProgress',
+          );
+          await this.appServer.request(
+            activeTurn ? 'turn/steer' : 'turn/start',
+            {
+              threadId: asyncRequest.agentId,
+              ...(activeTurn ? { expectedTurnId: activeTurn.id } : {}),
+              input: [{ type: 'text', text: prompt }],
+            },
+          );
+          this.publishSubagents(sessionId, [
+            this.tracker(sessionId).upsert(
+              asyncRequest.agentId,
+              { executionStatus: 'running' },
+              new Date().toISOString(),
+            ),
+          ]);
+          return;
+        }
         const activeRun = this.activeRuns.get(sessionId);
         if (activeRun && !activeRun.interruptRequested) {
           await Promise.race([
@@ -1297,7 +2069,7 @@ export class CodexRuntimeService
       }
       return;
     }
-    const run = this.activeRuns.get(sessionId);
+    const run = this.storeForRequest(sessionId, requestId);
     const pending = run?.userInputRequests.get(requestId);
     if (!pending) return;
     run?.userInputRequests.delete(requestId);
@@ -1312,8 +2084,14 @@ export class CodexRuntimeService
       (this.sessionGenerations.get(sessionId) ?? 0) + 1,
     );
     await this.interrupt(sessionId);
+    const delegated = this.delegatedRequests.get(sessionId);
+    if (delegated) this.resolvePendingCodexRequests(delegated);
+    this.delegatedRequests.delete(sessionId);
     this.activeRuns.delete(sessionId);
     this.runtimeStates.delete(sessionId);
+    this.subagentTrackers.delete(sessionId);
+    this.subagentRestores.delete(sessionId);
+    if (this.backgroundRefs.delete(sessionId)) this.appServer.release();
   }
 
   reactivateSession(sessionId: number): void {
@@ -1457,6 +2235,29 @@ export class CodexRuntimeService
     item: ThreadItem,
     timestamp: string,
   ): ClaudeTranscriptItem | null {
+    const collab = record(item);
+    if (collab.type === 'collab_agent_tool_call') {
+      const name = collaborationTool(collab.tool) ?? 'agent';
+      const providerToolInput = {
+        ...collab,
+        description: collab.prompt,
+        prompt: collab.prompt,
+        subagent_type: 'agent',
+        receiverThreadIds: collab.receiverThreadIds,
+      };
+      return {
+        id: `${item.id}:tool_use`,
+        kind: 'tool_use',
+        toolUseId: item.id,
+        toolName: name === 'spawn_agent' ? 'Agent' : name,
+        providerToolName: name,
+        ...canonicalizeAgentTool(name, providerToolInput),
+        providerToolInput,
+        sourceMessageId: item.id,
+        timestamp,
+        receivedAt: timestamp,
+      };
+    }
     if (item.type === 'command_execution') {
       const commandActions = commandActionsFrom(item);
       const providerToolInput = {
@@ -1575,6 +2376,26 @@ export class CodexRuntimeService
     item: ThreadItem,
     timestamp: string,
   ): ClaudeTranscriptItem | null {
+    const collab = record(item);
+    if (collab.type === 'collab_agent_tool_call') {
+      const ids = Array.isArray(collab.receiverThreadIds)
+        ? collab.receiverThreadIds
+        : [];
+      return {
+        id: `${item.id}:tool_result`,
+        kind: 'tool_result',
+        toolUseId: item.id,
+        content: JSON.stringify({
+          ...(collaborationTool(collab.tool) === 'spawn_agent'
+            ? { agent_id: ids[0] }
+            : {}),
+          agentsStates: collab.agentsStates,
+        }),
+        isError: collab.status === 'failed',
+        timestamp,
+        authoredAt: timestamp,
+      };
+    }
     if (item.type === 'web_search') {
       // Codex reports completion without exposing search result content.
       return {
@@ -1713,6 +2534,7 @@ export class CodexRuntimeService
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest =
       state.asyncUserInputRequests.values().next().value ?? null;
+    this.restoreDelegatedRequestsAfterTurn(sessionId, state);
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
   }
@@ -1728,11 +2550,14 @@ export class CodexRuntimeService
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest =
       state.asyncUserInputRequests.values().next().value ?? null;
+    this.restoreDelegatedRequestsAfterTurn(sessionId, state);
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
   }
 
-  private resolvePendingCodexRequests(run: CodexActiveRunState): void {
+  private resolvePendingCodexRequests(
+    run: Pick<CodexActiveRunState, 'permissionRequests' | 'userInputRequests'>,
+  ): void {
     for (const [, pending] of run.permissionRequests) {
       pending.resolve({ approved: false, message: 'Interrupted' });
     }
@@ -1743,6 +2568,26 @@ export class CodexRuntimeService
     run.userInputRequests.clear();
   }
 
+  private restoreDelegatedRequestsAfterTurn(
+    sessionId: number,
+    state: CodexRuntimeState,
+  ): void {
+    const delegated = this.delegatedRequests.get(sessionId);
+    state.pendingPermissionRequest =
+      delegated?.permissionRequests.values().next().value?.request ?? null;
+    state.pendingUserInputRequest =
+      delegated?.userInputRequests.values().next().value?.request ??
+      state.pendingUserInputRequest;
+    if (
+      state.pendingPermissionRequest ||
+      (state.pendingUserInputRequest &&
+        state.pendingUserInputRequest.isBlocking !== false)
+    ) {
+      state.runPhase = 'waiting';
+      state.sessionState = 'requires_action';
+    }
+  }
+
   private ensureRuntimeState(
     sessionId: number,
     codexSessionId?: string | null,
@@ -1751,6 +2596,14 @@ export class CodexRuntimeService
     const existing = this.runtimeStates.get(sessionId);
     if (existing) {
       if (codexSessionId && codexSessionId !== '-1') {
+        if (
+          existing.codexSessionId &&
+          existing.codexSessionId !== codexSessionId
+        ) {
+          this.subagentTrackers.delete(sessionId);
+          this.subagentRestores.delete(sessionId);
+          if (this.backgroundRefs.delete(sessionId)) this.appServer.release();
+        }
         existing.codexSessionId = codexSessionId;
       }
       if (persistedPlanMode !== undefined) {
@@ -1795,6 +2648,7 @@ export class CodexRuntimeService
       planUsage: this.codexPlanUsage,
     };
     this.runtimeStates.set(sessionId, state);
+    this.tracker(sessionId);
     return state;
   }
 
@@ -1802,7 +2656,7 @@ export class CodexRuntimeService
     const state = this.ensureRuntimeState(sessionId);
     this.hooksService.updateRuntimeActivity(
       sessionId,
-      this.toSidebarActivity(state),
+      this.toSidebarActivity(state, sessionId),
     );
     this.emitEvent({
       type: 'run_state',
@@ -1810,7 +2664,9 @@ export class CodexRuntimeService
         sessionId,
         runPhase: state.runPhase,
         sessionState: state.sessionState,
-        canInterrupt: state.canInterrupt,
+        canInterrupt:
+          state.canInterrupt ||
+          this.subagentBackgroundWork(sessionId).length > 0,
         lastError: state.lastError,
         selectedModel: state.selectedModel,
         reasoningEffort: state.reasoningEffort,
@@ -1824,11 +2680,15 @@ export class CodexRuntimeService
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
         queuePaused: state.queuePaused,
+        backgroundWork: this.subagentBackgroundWork(sessionId),
       },
     });
   }
 
-  private toSidebarActivity(state: CodexRuntimeState): ClaudeSessionActivity {
+  private toSidebarActivity(
+    state: CodexRuntimeState,
+    sessionId?: number,
+  ): ClaudeSessionActivity {
     if (state.pendingPermissionRequest) {
       return {
         activityStatus: 'waiting',
@@ -1852,7 +2712,9 @@ export class CodexRuntimeService
           : 'idle',
       actionKind: null,
       actionLabel: null,
-      backgroundActive: false,
+      backgroundActive:
+        sessionId !== undefined &&
+        this.subagentBackgroundWork(sessionId).length > 0,
     };
   }
 
@@ -1895,7 +2757,11 @@ export class CodexRuntimeService
     state.liveItems = state.liveItems.map((live) =>
       live.id === item.id ? { ...live, ...item } : live,
     );
-    if (eventType === 'tool_use' && item.toolKind === 'web_search') {
+    if (
+      eventType === 'tool_use' &&
+      (item.toolKind === 'web_search' ||
+        collaborationTool(item.providerToolName))
+    ) {
       // Search queries/actions can arrive only with the completed item.
       this.emitEvent({ type: 'tool_use', payload: { sessionId, item } });
     }
@@ -2279,7 +3145,8 @@ export class CodexRuntimeService
       claudeSessionId: state.codexSessionId,
       runPhase: state.runPhase,
       sessionState: state.sessionState,
-      canInterrupt: state.canInterrupt,
+      canInterrupt:
+        state.canInterrupt || this.subagentBackgroundWork(sessionId).length > 0,
       pendingPermissionRequest: state.pendingPermissionRequest,
       pendingUserInputRequest: state.pendingUserInputRequest,
       pendingPrompts: state.pendingPrompts,
@@ -2303,7 +3170,10 @@ export class CodexRuntimeService
       recentHookEvents: [],
       tasks: [],
       taskLifecycle: [],
-      subagents: [],
+      subagents: [
+        ...(this.subagentTrackers.get(sessionId)?.agents.values() ?? []),
+      ],
+      backgroundWork: this.subagentBackgroundWork(sessionId),
       latestToolProgress: null,
       latestToolSummary: null,
       latestApiRetry: null,
@@ -2399,6 +3269,9 @@ export class CodexRuntimeService
     };
 
     const handle = (notification: CodexAppServerNotification): void => {
+      // Production keeps a lifetime listener, including between parent turns.
+      if (!this.unsubscribePlanUsageNotifications)
+        this.handleSubagentNotification(notification);
       const params = notification.params as any;
       switch (notification.method) {
         case 'serverRequest/resolved': {
@@ -2582,7 +3455,13 @@ export class CodexRuntimeService
       request: CodexAppServerRequest,
     ): Promise<boolean> => {
       const params = request.params as any;
-      if (!matchesThread(params)) return false;
+      if (this.unsubscribeSubagentRequests && !matchesThread(params))
+        return false;
+      if (
+        !matchesThread(params) &&
+        !this.tracker(sessionId).agents.has(params?.threadId)
+      )
+        return false;
       switch (request.method) {
         case 'item/commandExecution/requestApproval':
         case 'item/fileChange/requestApproval':
@@ -2824,14 +3703,24 @@ export class CodexRuntimeService
   ): Promise<unknown> {
     const uiRequestId = String(requestId);
     const request = this.toCodexPermissionRequest(method, uiRequestId, params);
+    if (this.tracker(sessionId).agents.has(params?.threadId))
+      request.agentId = params.threadId;
     const resolution = await new Promise<{
       approved: boolean;
       remember?: boolean;
       content?: Record<string, unknown>;
       message?: string;
     }>((resolve) => {
-      const run = this.activeRuns.get(sessionId);
+      const run = this.requestStore(sessionId, params?.threadId);
       run?.permissionRequests.set(uiRequestId, { request, resolve });
+      if (request.agentId)
+        this.publishSubagents(sessionId, [
+          this.tracker(sessionId).upsert(
+            request.agentId,
+            { executionStatus: 'waiting' },
+            new Date().toISOString(),
+          ),
+        ]);
       const state = this.ensureRuntimeState(sessionId);
       state.pendingPermissionRequest = request;
       state.runPhase = 'waiting';
@@ -2974,7 +3863,7 @@ export class CodexRuntimeService
       isBlocking: params?.isBlocking !== false,
       serverName: 'Codex',
       mode: 'form',
-      title: 'Codex needs your input',
+      title: `${this.tracker(sessionId).agents.get(params?.threadId)?.displayName ?? 'Codex'} needs your input`,
       message:
         questions.length === 1 && typeof questions[0]?.question === 'string'
           ? questions[0].question
@@ -2986,7 +3875,7 @@ export class CodexRuntimeService
     const canonicalTool = canonicalizeAgentTool('AskUserQuestion', {
       questions,
     });
-    this.pushItem(
+    this.pushRequestItem(
       sessionId,
       {
         id: `${toolUseId}:tool_use`,
@@ -3003,8 +3892,14 @@ export class CodexRuntimeService
         receivedAt: createdAt,
       },
       'tool_use',
+      params?.threadId,
     );
-    const result = await this.waitForUserInput(sessionId, uiRequestId, request);
+    const result = await this.waitForUserInput(
+      sessionId,
+      uiRequestId,
+      request,
+      params?.threadId,
+    );
     const content = result.action === 'accept' ? (result.content ?? {}) : {};
     const answerEntries: Array<[string, { answers: string[] }]> = questions
       .map((question: any) => {
@@ -3024,7 +3919,7 @@ export class CodexRuntimeService
       .filter(([id]: [string, { answers: string[] }]) => Boolean(id));
     const answers = Object.fromEntries(answerEntries);
     const resolvedAt = new Date().toISOString();
-    this.pushItem(
+    this.pushRequestItem(
       sessionId,
       {
         id: `${toolUseId}:tool_result`,
@@ -3036,6 +3931,7 @@ export class CodexRuntimeService
         authoredAt: resolvedAt,
       },
       'tool_result',
+      params?.threadId,
     );
     return { answers };
   }
@@ -3066,7 +3962,12 @@ export class CodexRuntimeService
           : undefined,
       createdAt: new Date().toISOString(),
     };
-    const result = await this.waitForUserInput(sessionId, uiRequestId, request);
+    const result = await this.waitForUserInput(
+      sessionId,
+      uiRequestId,
+      request,
+      params?.threadId,
+    );
     return {
       action: result.action,
       content: result.action === 'accept' ? (result.content ?? {}) : null,
@@ -3078,18 +3979,34 @@ export class CodexRuntimeService
     sessionId: number,
     requestId: string,
     request: ClaudeUserInputRequest,
+    threadId?: string,
   ): Promise<{
     action: 'accept' | 'decline' | 'cancel';
     content?: Record<string, string | number | boolean | string[]>;
   }> {
     return new Promise((resolve) => {
-      const run = this.activeRuns.get(sessionId);
+      const run = this.requestStore(sessionId, threadId);
+      if (threadId && this.tracker(sessionId).agents.has(threadId)) {
+        request.agentId = threadId;
+        if (request.isBlocking !== false)
+          this.publishSubagents(sessionId, [
+            this.tracker(sessionId).upsert(
+              threadId,
+              { executionStatus: 'waiting' },
+              new Date().toISOString(),
+            ),
+          ]);
+      }
       run?.userInputRequests.set(requestId, { request, resolve });
       this.refreshPendingUserInput(sessionId);
     });
   }
 
-  private receiveCodexAsyncUserInput(sessionId: number, item: any): void {
+  private receiveCodexAsyncUserInput(
+    sessionId: number,
+    item: any,
+    agentId?: string,
+  ): void {
     if (
       item?.type !== 'agentMessage' ||
       item.delivery !== 'async' ||
@@ -3112,10 +4029,11 @@ export class CodexRuntimeService
     if (state.asyncUserInputRequests.has(requestId)) return;
     const request: ClaudeUserInputRequest = {
       requestId,
+      ...(agentId ? { agentId } : {}),
       isBlocking: false,
       serverName: 'Codex',
       mode: 'form',
-      title: 'Codex needs your input',
+      title: `${(agentId ? this.tracker(sessionId).agents.get(agentId)?.displayName : undefined) ?? 'Codex'} needs your input`,
       message: typeof item.text === 'string' ? item.text : '',
       questions,
       createdAt: new Date().toISOString(),
@@ -3128,7 +4046,34 @@ export class CodexRuntimeService
     const state = this.ensureRuntimeState(sessionId);
     const run = this.activeRuns.get(sessionId);
     const previousRequestId = state.pendingUserInputRequest?.requestId;
-    const requests = Array.from(run?.userInputRequests.values() ?? []);
+    const delegated = this.delegatedRequests.get(sessionId);
+    state.pendingPermissionRequest =
+      run?.permissionRequests.values().next().value?.request ??
+      delegated?.permissionRequests.values().next().value?.request ??
+      null;
+    const requests = [
+      ...(run?.userInputRequests.values() ?? []),
+      ...(delegated?.userInputRequests.values() ?? []),
+    ];
+    for (const agent of this.tracker(sessionId).agents.values()) {
+      if (agent.executionStatus !== 'waiting') continue;
+      const stillWaiting =
+        [...(delegated?.permissionRequests.values() ?? [])].some(
+          ({ request }) => request.agentId === agent.agentId,
+        ) ||
+        [...(delegated?.userInputRequests.values() ?? [])].some(
+          ({ request }) =>
+            request.agentId === agent.agentId && request.isBlocking !== false,
+        );
+      if (!stillWaiting)
+        this.publishSubagents(sessionId, [
+          this.tracker(sessionId).upsert(
+            agent.agentId,
+            { executionStatus: 'running' },
+            new Date().toISOString(),
+          ),
+        ]);
+    }
     state.pendingUserInputRequest =
       requests.find(({ request }) => request.isBlocking !== false)?.request ??
       requests[0]?.request ??
@@ -3280,6 +4225,11 @@ export class CodexRuntimeService
     const status = normalizeStatus(raw.status);
 
     switch (raw.type) {
+      case 'collabAgentToolCall':
+        return {
+          ...raw,
+          type: 'collab_agent_tool_call',
+        } as unknown as ThreadItem;
       case 'agentMessage': {
         const finalText = typeof raw.text === 'string' ? raw.text : '';
         // On `item/completed` we get the authoritative final text; on
@@ -3435,33 +4385,11 @@ export class CodexRuntimeService
     maxTokens: number,
     reportedTotal?: number,
   ): ClaudeContextUsage | null {
-    // Cached input and reasoning output are subsets, already included in these totals.
-    const inputTokens = usage.input_tokens;
-    const outputTokens = usage.output_tokens;
-    const totalTokens = reportedTotal ?? inputTokens + outputTokens;
-    if (contextPercentage(totalTokens, maxTokens) === null) return null;
-    const effectiveWindow = maxTokens - CODEX_CONTEXT_BASELINE_TOKENS;
-    const used = Math.max(0, totalTokens - CODEX_CONTEXT_BASELINE_TOKENS);
-    const remaining = Math.max(0, effectiveWindow - used);
-    // Invert Codex's rounded remaining percentage, including its rounding at
-    // half-percent boundaries, so Elevenex and the CLI show the same occupancy.
-    const percentage =
-      effectiveWindow <= 0
-        ? 100
-        : 100 - Math.round((remaining / effectiveWindow) * 100);
-    return {
+    return codexContextUsage(
       model,
-      totalTokens,
+      { ...usage, total_tokens: reportedTotal },
       maxTokens,
-      percentage,
-      inputTokens,
-      outputTokens,
-      cacheCreationInputTokens: 0,
-      cacheReadInputTokens: usage.cached_input_tokens,
-      tokenBreakdownAvailable: true,
-      memoryFiles: [],
-      mcpTools: [],
-    };
+    );
   }
 
   private toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {

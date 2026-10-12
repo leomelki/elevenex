@@ -1,6 +1,7 @@
 import { OpenCodeLoginCardComponent } from './components/opencode-login-card.component';
 import { PlanFeedbackPayload, PlanReviewRequest } from '@/features/plan-annotator';
 import { ClaudeAgentInspectorComponent } from '@/shared/agent-chat/activity/claude-agent-inspector.component';
+import { SubagentOverviewComponent } from '@/shared/agent-chat/activity/subagent-overview.component';
 import { ClaudeBackgroundActivityComponent } from '@/shared/agent-chat/activity/claude-background-activity.component';
 import { ClaudeComposerComponent } from '@/shared/agent-chat/composer/claude-composer.component';
 import { ClaudePermissionInlineComponent } from '@/shared/agent-chat/requests/claude-permission-inline.component';
@@ -88,6 +89,7 @@ import { getHttpErrorMessage } from './workspace-error';
     ClaudeTasksDrawerComponent,
     ClaudeMcpDrawerComponent,
     ClaudeAgentInspectorComponent,
+    SubagentOverviewComponent,
     ClaudeTranscriptComponent,
     ClaudeContextNoteComponent,
     ClaudeInstallCardComponent,

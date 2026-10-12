@@ -1,0 +1,272 @@
+@if (view(); as tool) {
+  <article
+    class="cw-collaboration overflow-hidden rounded-xl border border-border bg-card text-[13px]"
+    [attr.data-action]="tool.action"
+    [attr.data-outcome]="tool.tone"
+  >
+    <button
+      z-button
+      zType="ghost"
+      type="button"
+      class="h-auto w-full justify-start gap-2.5 rounded-none px-3 py-2.5 text-left"
+      [attr.aria-expanded]="expanded()"
+      (click)="expanded.set(!expanded())"
+    >
+      <span
+        class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-primary"
+      >
+        <ng-icon [name]="tool.icon" size="15" />
+      </span>
+      <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span class="font-semibold text-foreground">{{ tool.label }}</span>
+        @if (payloadPreview()) {
+          <span class="truncate text-xs font-normal text-muted-foreground">{{
+            payloadPreview()
+          }}</span>
+        } @else if (tool.sender) {
+          <span class="text-xs font-normal text-muted-foreground">From {{ tool.sender }}</span>
+        }
+      </span>
+      <span
+        class="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium"
+        [class]="toneClass()"
+      >
+        @if (isLive() && !result()) {
+          <ng-icon name="lucideLoaderCircle" size="12" class="animate-spin" />
+        }
+        {{ tool.outcome }}
+        @if (tool.action === 'wait' && isLive() && !result() && elapsedSeconds()) {
+          <span class="tabular-nums">· {{ elapsedSeconds() }}s</span>
+        }
+      </span>
+      <ng-icon
+        name="lucideChevronRight"
+        size="13"
+        class="shrink-0 text-muted-foreground transition-transform"
+        [class.rotate-90]="expanded()"
+      />
+    </button>
+
+    @if (tool.rows.length) {
+      <div
+        class="flex max-h-72 flex-col overflow-auto border-t border-border/70"
+        [attr.aria-label]="
+          tool.action === 'list' || tool.action === 'wait'
+            ? 'Agent status at this step'
+            : 'Agents involved'
+        "
+      >
+        @if (tool.action === 'list' || tool.action === 'wait') {
+          <p class="px-3 pt-2 text-[10px] text-muted-foreground">Statuses reported by this step</p>
+        }
+        @for (row of visibleRows(); track row.key) {
+          <div class="flex items-start gap-2 px-3 py-2 hover:bg-muted/30">
+            <span
+              class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground"
+              aria-hidden="true"
+              >{{ row.label.slice(0, 1) }}</span
+            >
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                @if (canInspect() && row.agentId) {
+                  <button
+                    z-button
+                    zType="link"
+                    zSize="xs"
+                    type="button"
+                    class="h-auto min-w-0 gap-1 px-0 py-0 text-xs font-semibold text-foreground"
+                    [attr.aria-label]="'Inspect ' + row.label"
+                    (click)="inspectAgent.emit(row.agentId)"
+                  >
+                    <span class="truncate">{{ row.label }}</span
+                    ><ng-icon
+                      name="lucideArrowUpRight"
+                      size="11"
+                      class="shrink-0 text-muted-foreground"
+                    />
+                  </button>
+                } @else {
+                  <span class="truncate text-xs font-semibold text-foreground">{{
+                    row.label
+                  }}</span>
+                }
+                @if (row.status; as status) {
+                  <cw-subagent-status [agent]="status" />
+                }
+                @if (row.currentStatus; as current) {
+                  <span class="text-[10px] text-muted-foreground">Now</span
+                  ><cw-subagent-status [agent]="current" />
+                }
+              </div>
+              @if (row.role || (expanded() && row.path)) {
+                <div class="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  {{ row.role?.replaceAll('_', ' ')
+                  }}{{ expanded() && row.path ? (row.role ? ' · ' : '') + row.path : '' }}
+                </div>
+              }
+              @if (expanded() && row.model) {
+                <p class="mt-1 text-[11px] text-muted-foreground">
+                  {{ row.model
+                  }}{{ row.reasoningEffort ? ' · ' + row.reasoningEffort + ' reasoning' : '' }}
+                </p>
+              }
+              @if (expanded() && row.response) {
+                <div
+                  class="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground"
+                >
+                  <span>Reported response</span>
+                  <button
+                    z-button
+                    zType="ghost"
+                    zSize="icon-xs"
+                    type="button"
+                    [attr.aria-label]="'Copy response from ' + row.label"
+                    (click)="copy(row.response, 'response:' + row.key)"
+                  >
+                    <ng-icon
+                      [name]="copied() === 'response:' + row.key ? 'lucideCheck' : 'lucideCopy'"
+                      size="12"
+                    />
+                  </button>
+                </div>
+                <agent-markdown
+                  class="mt-2 block text-xs [overflow-wrap:anywhere]"
+                  [content]="row.response"
+                  [worktreePath]="worktreePath()"
+                  (openLocalFile)="openLocalFile.emit($event)"
+                />
+              }
+            </div>
+            @if (expanded()) {
+              <button
+                z-button
+                zType="ghost"
+                zSize="icon-xs"
+                type="button"
+                class="shrink-0 text-muted-foreground"
+                [attr.aria-label]="'Copy identifier for ' + row.label"
+                title="Copy agent identifier"
+                (click)="copy(row.reference, row.key)"
+              >
+                <ng-icon [name]="copied() === row.key ? 'lucideCheck' : 'lucideCopy'" size="12" />
+              </button>
+            }
+          </div>
+        }
+        @if (tool.rows.length > visibleRows().length || showAll()) {
+          <button
+            z-button
+            zType="ghost"
+            zSize="sm"
+            type="button"
+            class="h-auto justify-start rounded-none px-3 py-1.5 text-xs text-muted-foreground"
+            (click)="showAll.set(!showAll())"
+          >
+            {{
+              showAll()
+                ? 'Show fewer agents'
+                : 'Show ' + (tool.rows.length - visibleRows().length) + ' more agents'
+            }}
+          </button>
+        }
+      </div>
+    } @else if (tool.action === 'list' && result() && !tool.error) {
+      <p class="border-t border-border/70 px-3 py-2 text-xs text-muted-foreground">
+        No agents were reported by this check.
+      </p>
+    }
+
+    @if (tool.error) {
+      <div
+        class="border-t border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+        role="status"
+      >
+        {{ tool.error }}
+      </div>
+    }
+    @if (expanded()) {
+      <div class="flex flex-col gap-3 border-t border-border/70 bg-muted/15 px-3 py-3">
+        @if (tool.metadata.length) {
+          <div class="flex flex-wrap gap-1.5">
+            @for (item of tool.metadata; track $index) {
+              <span
+                class="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground"
+                >{{ item }}</span
+              >
+            }
+          </div>
+        }
+        @if (tool.payload) {
+          <section>
+            <div class="mb-1.5 flex items-center justify-between gap-2">
+              <span class="text-xs font-semibold text-muted-foreground">{{
+                tool.payloadLabel
+              }}</span>
+              <button
+                z-button
+                zType="ghost"
+                zSize="icon-xs"
+                type="button"
+                [attr.aria-label]="'Copy ' + tool.payloadLabel.toLowerCase()"
+                (click)="copy(tool.payload, 'payload')"
+              >
+                <ng-icon [name]="copied() === 'payload' ? 'lucideCheck' : 'lucideCopy'" size="12" />
+              </button>
+            </div>
+            <agent-markdown
+              class="block [overflow-wrap:anywhere]"
+              [content]="tool.payload"
+              [worktreePath]="worktreePath()"
+              (openLocalFile)="openLocalFile.emit($event)"
+            />
+          </section>
+        } @else if (tool.payloadUnavailable) {
+          <p class="text-xs text-muted-foreground">
+            {{ tool.payloadLabel }} details were not included in this saved record.
+          </p>
+        }
+        @if (tool.receiptText && !tool.error) {
+          <section>
+            <div
+              class="mb-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground"
+            >
+              <span>Tool response</span>
+              <button
+                z-button
+                zType="ghost"
+                zSize="icon-xs"
+                type="button"
+                aria-label="Copy tool response"
+                (click)="copy(tool.receiptText, 'receipt')"
+              >
+                <ng-icon [name]="copied() === 'receipt' ? 'lucideCheck' : 'lucideCopy'" size="12" />
+              </button>
+            </div>
+            <agent-markdown
+              class="block [overflow-wrap:anywhere]"
+              [content]="tool.receiptText"
+              [worktreePath]="worktreePath()"
+              (openLocalFile)="openLocalFile.emit($event)"
+            />
+          </section>
+        }
+        <details
+          class="text-xs text-muted-foreground"
+          (toggle)="rawOpen.set($any($event.target).open)"
+        >
+          <summary
+            class="w-fit cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Raw tool data
+          </summary>
+          @if (rawOpen()) {
+            <pre
+              class="mt-2 max-h-64 overflow-auto rounded-lg border border-border bg-background p-3 font-mono text-[11px] text-foreground"
+              >{{ rawData() }}</pre
+            >
+          }
+        </details>
+      </div>
+    }
+  </article>
+}

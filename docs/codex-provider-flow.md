@@ -10,9 +10,8 @@ permissions, MCP handling, terminal fallback, and transcript behavior.
 2. `AgentRuntimeGateway` resolves the `codex` provider from
    `AgentRuntimeRegistryService`.
 3. `CodexAgentRuntimeProvider` delegates execution to `CodexRuntimeService`.
-4. `CodexRuntimeService` starts or resumes an `@openai/codex-sdk` thread with:
-   - `workingDirectory` set to the session worktree.
-   - `skipGitRepoCheck: true`.
+4. `CodexRuntimeService` starts or resumes a Codex app-server thread with:
+   - `cwd` set to the session worktree.
    - the selected Codex model.
    - Codex sandbox and approval settings derived from the app permission mode.
 5. The Codex model picker fetches the account's current catalog from Codex
@@ -20,11 +19,65 @@ permissions, MCP handling, terminal fallback, and transcript behavior.
    Elevenex only uses its built-in catalog as a fallback when that RPC is
    unavailable, so prompt submission still works.
 6. Image attachments are staged as temporary local image files and sent through
-   Codex SDK `local_image` inputs.
-7. Codex SDK stream events are converted into the same transcript item shape
+   Codex app-server `localImage` inputs.
+7. Codex app-server stream events are converted into the same transcript item shape
    rendered by the existing workspace UI.
 8. The Codex thread id is stored in `sessions.codex_session_id`; Claude's
    `sessions.claude_session_id` is not reused or modified.
+
+## Subagents
+
+Collaboration tools use dedicated action cards rather than generic JSON output.
+Spawn, message/input, follow-up, wait/list, interrupt, resume, and close operations
+show readable receipts, agent identities, and available model/context metadata.
+Known owned agents link directly to the inspector. Assignment/message text and
+reported responses support Markdown, local-file navigation, and copying. Wait
+timeouts, failures, missing receipts, and unavailable sealed text remain explicit.
+Agent-list statuses describe the recorded check; newer differing statuses are
+marked separately. The original tool data stays available in a collapsed section.
+
+User input is governed by the parent thread's active turn, not the number of
+running children. An active parent accepts queued follow-ups; the queued message's
+Steer action uses native `turn/steer` without interrupting work. An idle parent accepts a new turn
+immediately while its subagents continue. The composer and status tooltip therefore
+show background activity without claiming that all child work must finish first.
+This lets users ask the parent to redirect, stop, or coordinate its agents.
+
+Codex supports the shared agents inspector, both during a turn and after reopening
+the conversation. The composer shows a compact overview with active agents first.
+The inspector groups nested agents under their parent, supports assignment/name
+search and active/attention filters, and distinguishes startup, running, waiting,
+completion, interruption, failure, shutdown, and unavailable states. Only the
+selected active transcript refreshes, every two seconds; closing the inspector
+stops that polling. Refresh failures retain the last transcript and offer retry.
+
+The inspector defaults to the same shared chat renderer as the main conversation:
+messages, thinking, tools, copy actions, and completed-turn summaries. Activity and
+hooks remain secondary views. Context appears only as the normal compact status-row
+button for the selected child, with token details and report time in its popover.
+Live `thread/tokenUsage/updated` notifications and saved `token_count` records
+use the latest response's tokens and reported model window, never cumulative
+billing totals or a guessed capacity. Inherited parent usage is excluded. Usage
+has its own timestamp so transcript polling cannot overwrite a newer live count.
+Usage can decrease after compaction. The compact button is omitted when the
+provider has not reported usable counts and capacity, matching normal chat.
+
+The runtime tracks native `collabAgentToolCall`, `subAgentActivity`, spawned-thread
+metadata, and child thread lifecycle notifications. Child output stays separate
+from the parent transcript. Saved spawn/wait/follow-up receipts restore the graph;
+CLI versions returning `task_name` paths are mapped to child thread IDs through
+the rollout's `session_meta.source.subagent.thread_spawn.agent_path`. Metadata
+indexing reads only bounded first records, limits concurrent IO, and coalesces
+requests. Transcript reads use the existing revision-aware cache. Inherited
+conversation content is trimmed at the child's assignment or creation boundary.
+Sealed message bodies and assignments are shown as unavailable details, while
+readable transcript events and communication receipts remain inspectable.
+
+The history endpoint accepts only agents belonging to the requested session.
+Missing rollouts return an explicit unavailable state with the assignment still
+visible. Background children keep the app-server alive after the parent replies,
+and their approval/input requests use the normal composer dock. Session cleanup
+interrupts and verifies active child turns before releasing the environment.
 
 ## Permission Mapping And Requests
 

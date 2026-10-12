@@ -224,6 +224,8 @@
               (toggleTurnChanges)="actions.toggleTurnChanges($event)"
               (closeTurnChanges)="actions.closeTurnChanges($event)"
               (inspectTurn)="actions.openAgentInspector($event)"
+              (openAgent)="actions.openSessionAgents($event)"
+              (inspectAgent)="actions.openAgentInspector($event.turnId, $event.agentId)"
               (messageCopy)="actions.copyMessage($event.item, $event.text)"
               (fork)="actions.forkMessage($event)"
               (armEdit)="actions.armEditMessage($event)"
@@ -555,8 +557,15 @@
 
         @if (!runtime.isTranscriptReadOnly()) {
           <div class="max-w-[52rem] w-full mx-auto flex flex-col">
-            @if (runtime.backgroundWork().length) {
+            @if (runtime.backgroundWork().length && runtime.currentProvider() !== 'codex') {
               <cw-background-activity class="mb-1.5" [items]="runtime.backgroundWork()" />
+            }
+            @if (runtime.subagents().length) {
+              <cw-subagent-overview
+                class="mb-1.5"
+                [agents]="runtime.subagents()"
+                (inspect)="actions.openSessionAgents($event)"
+              />
             }
             @if (runtime.pendingPermissionRequest(); as req) {
               <cw-permission-inline
@@ -575,6 +584,8 @@
               [submitting]="runtime.submitting()"
               [running]="runtime.runPhase() === 'running'"
               [backgroundAgentCount]="runtime.backgroundWork().length"
+              [queueBehindBackgroundWork]="runtime.queueBehindBackgroundWork()"
+              [nativeSteering]="runtime.currentProvider() === 'codex'"
               [canInterrupt]="runtime.canInterrupt()"
               [blockedByPermission]="!!runtime.pendingPermissionRequest()"
               [sendDisabledReason]="runtime.composerPermissionDisabledReason()"
@@ -662,12 +673,16 @@
   }
 
   <cw-agent-inspector
+    [provider]="runtime.currentProvider()"
     [open]="!!actions.selectedAgentInspectorTurn()"
     [turn]="actions.selectedAgentInspectorTurn()"
     [selectedAgentId]="actions.agentInspectorSelectedAgentId()"
     [historyByAgent]="actions.agentHistoryById()"
+    [worktreePath]="worktreePath()"
     [hookEvents]="runtime.recentHookEvents()"
     (selectAgent)="actions.selectAgentInspectorAgent($event)"
+    (refreshAgent)="actions.refreshAgentHistory($event)"
+    (openLocalFile)="openLocalFile.emit($event)"
     (close)="actions.closeAgentInspector()"
   />
 

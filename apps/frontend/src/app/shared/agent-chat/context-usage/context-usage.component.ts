@@ -2,7 +2,7 @@ import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardPopoverComponent, ZardPopoverDirective } from '@/shared/components/popover';
 import { AgentContextUsage, AgentProviderId } from '@/shared/models/agent-runtime.model';
 import { CdkTrapFocus } from '@angular/cdk/a11y';
-import { DecimalPipe } from '@angular/common';
+import { DatePipe, DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 
 @Component({
@@ -13,6 +13,7 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
     ZardPopoverDirective,
     CdkTrapFocus,
     DecimalPipe,
+    DatePipe,
   ],
   templateUrl: './context-usage.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -21,6 +22,8 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
 export class ContextUsageComponent {
   readonly usage = input.required<AgentContextUsage>();
   readonly provider = input<AgentProviderId>('claude');
+  readonly contextLabel = input('Conversation');
+  readonly updatedAt = input<string | undefined>();
   readonly hasBreakdown = computed(
     () => this.usage().tokenBreakdownAvailable ?? this.provider() !== 'pi',
   );

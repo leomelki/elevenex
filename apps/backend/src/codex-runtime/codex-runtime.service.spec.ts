@@ -7,6 +7,389 @@ jest.mock('../session-title/session-title.service.js', () => ({
 import { CodexRuntimeService } from './codex-runtime.service.js';
 
 describe('CodexRuntimeService', () => {
+  it('publishes live context only for owned children, independently of the idle parent and lifecycle', () => {
+    const { service } = createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'root');
+    const tracker = runtime.tracker(7);
+    tracker.upsert(
+      'child',
+      { model: 'child-model', executionStatus: 'running' },
+      '2026-10-12T10:00:00.000Z',
+    );
+    tracker.upsert(
+      'sibling',
+      { executionStatus: 'completed' },
+      '2026-10-12T10:00:00.000Z',
+    );
+    const events: any[] = [];
+    service.on('event', (event: any) => events.push(event));
+    const notify = (
+      threadId: string,
+      totalTokens: number,
+      window: number | null = 200_000,
+    ) =>
+      runtime.handleSubagentNotification({
+        method: 'thread/tokenUsage/updated',
+        params: {
+          threadId,
+          tokenUsage: {
+            last: {
+              inputTokens: totalTokens - 1000,
+              outputTokens: 1000,
+              cachedInputTokens: 500,
+              totalTokens,
+            },
+            total: { totalTokens: 9_000_000 },
+            modelContextWindow: window,
+          },
+        },
+      });
+    notify('unrelated', 100_000);
+    notify('root', 100_000);
+    expect(events).toHaveLength(0);
+    notify('child', 100_000);
+    expect(tracker.agents.get('child').contextUsage).toMatchObject({
+      model: 'child-model',
+      totalTokens: 100_000,
+      percentage: 47,
+    });
+    expect(
+      events.find((event) => event.type === 'subagent_lifecycle').payload
+        .subagent.contextUsage.percentage,
+    ).toBe(47);
+    notify('child', 20_000);
+    expect(tracker.agents.get('child').contextUsage.percentage).toBe(4);
+    expect(tracker.agents.get('child').executionStatus).toBe('running');
+    expect(tracker.agents.get('sibling').contextUsage).toBeUndefined();
+    expect(state.contextUsage).toBeNull();
+    const child = tracker.agents.get('child');
+    expect(
+      runtime.applySubagentContextUsage(child, {
+        contextUsage: null,
+        contextUsageUpdatedAt: '2026-10-12T10:00:00.000Z',
+      }),
+    ).toBe(false);
+    expect(child.contextUsage.percentage).toBe(4);
+    notify('child', 25_000, null);
+    expect(child.contextUsage).toBeNull();
+  });
+  it('starts an idle parent turn immediately while child agents continue running', async () => {
+    const { service } = createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'root');
+    state.cachedWorktreePath = '/tmp/project';
+    runtime
+      .tracker(7)
+      .upsert(
+        'child',
+        { executionStatus: 'running' },
+        new Date().toISOString(),
+      );
+    const run = jest
+      .spyOn(runtime, 'runTurnOnAppServer')
+      .mockImplementation(async function* () {});
+    await service.submitPrompt(7, 'Stop the child and summarize its findings');
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(state.pendingPrompts).toEqual([]);
+    expect(runtime.tracker(7).agents.get('child').executionStatus).toBe(
+      'running',
+    );
+  });
+
+  it('queues a follow-up only until the active parent turn finishes, independent of children', async () => {
+    const { service } = createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'root');
+    runtime.activeRuns.set(7, { interruptRequested: false });
+    runtime
+      .tracker(7)
+      .upsert(
+        'child',
+        { executionStatus: 'running' },
+        new Date().toISOString(),
+      );
+    const run = jest.spyOn(runtime, 'runTurnOnAppServer');
+    await service.submitPrompt(7, 'Check the tests next');
+    expect(run).not.toHaveBeenCalled();
+    expect(state.pendingPrompts).toEqual([
+      expect.objectContaining({ prompt: 'Check the tests next' }),
+    ]);
+  });
+  it('accepts a child finishing between its status read and interrupt request', async () => {
+    const { service, appServer } = createService();
+    const runtime = service as any;
+    runtime.ensureRuntimeState(7, 'root');
+    runtime
+      .tracker(7)
+      .upsert(
+        'child',
+        { executionStatus: 'running' },
+        new Date().toISOString(),
+      );
+    appServer.request.mockResolvedValueOnce({
+      thread: { turns: [{ id: 'child-turn', status: 'inProgress' }] },
+    });
+    appServer.request.mockRejectedValueOnce(
+      new Error('Turn already completed'),
+    );
+    appServer.request.mockResolvedValueOnce({
+      thread: { turns: [{ id: 'child-turn', status: 'completed' }] },
+    });
+    await service.interrupt(7);
+    expect(runtime.tracker(7).agents.get('child').executionStatus).toBe(
+      'completed',
+    );
+    expect(runtime.subagentBackgroundWork(7)).toHaveLength(0);
+  });
+  it('steers answers to asynchronous child questions into that child rather than the parent', async () => {
+    const { service, appServer } = createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'root');
+    runtime
+      .tracker(7)
+      .upsert(
+        'child',
+        { displayName: 'Ada', executionStatus: 'running' },
+        new Date().toISOString(),
+      );
+    runtime.receiveCodexAsyncUserInput(
+      7,
+      {
+        type: 'agentMessage',
+        id: 'question',
+        delivery: 'async',
+        text: 'Choose an approach',
+        questions: [
+          { title: 'Which approach?', options: ['Small patch', 'Refactor'] },
+        ],
+      },
+      'child',
+    );
+    expect(state.pendingUserInputRequest).toMatchObject({
+      agentId: 'child',
+      title: 'Ada needs your input',
+    });
+    appServer.request.mockResolvedValueOnce({
+      thread: { turns: [{ id: 'child-turn', status: 'inProgress' }] },
+    });
+    await service.answerUserInput(
+      7,
+      'codex-async-user-input:question',
+      'accept',
+      { 'question-1': 'Small patch' },
+    );
+    expect(appServer.request).toHaveBeenCalledWith('turn/steer', {
+      threadId: 'child',
+      expectedTurnId: 'child-turn',
+      input: [{ type: 'text', text: 'Which approach?\nAnswer: Small patch' }],
+    });
+    expect(state.pendingUserInputRequest).toBeNull();
+  });
+  it('keeps child streaming and nested collaboration out of the parent transcript', async () => {
+    const { service, sessionsService } = createService();
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'root',
+    });
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'root');
+    const notify = (method: string, params: unknown) =>
+      runtime.handleSubagentNotification({ method, params });
+    notify('item/completed', {
+      threadId: 'foreign',
+      item: {
+        id: 'foreign-spawn',
+        type: 'collabAgentToolCall',
+        tool: 'spawnAgent',
+        receiverThreadIds: ['foreign-child'],
+      },
+    });
+    expect(runtime.tracker(7).agents.size).toBe(0);
+    notify('item/completed', {
+      threadId: 'root',
+      item: {
+        id: 'spawn',
+        type: 'collabAgentToolCall',
+        tool: 'spawnAgent',
+        receiverThreadIds: ['child'],
+        prompt: 'Inspect the tests',
+        agentsStates: { child: { status: 'running' } },
+      },
+    });
+    notify('item/agentMessage/delta', {
+      threadId: 'child',
+      itemId: 'reply',
+      delta: 'Found ',
+    });
+    notify('item/agentMessage/delta', {
+      threadId: 'child',
+      itemId: 'reply',
+      delta: 'a race',
+    });
+    notify('item/completed', {
+      threadId: 'child',
+      item: {
+        id: 'nested',
+        type: 'collabAgentToolCall',
+        tool: 'spawnAgent',
+        senderThreadId: 'child',
+        receiverThreadIds: ['grandchild'],
+        prompt: 'Verify the race',
+        agentsStates: { grandchild: { status: 'running' } },
+      },
+    });
+    expect(state.liveItems).toEqual([]);
+    expect(runtime.tracker(7).agents.get('grandchild').parentAgentId).toBe(
+      'child',
+    );
+    const history = await service.getSubagentHistory(7, 'child');
+    expect(history.history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'assistant', content: 'Found a race' }),
+      ]),
+    );
+    runtime.finishRun(7);
+    expect(runtime.subagentBackgroundWork(7)).toHaveLength(2);
+    notify('turn/completed', {
+      threadId: 'child',
+      turn: { status: 'completed' },
+    });
+    notify('turn/completed', {
+      threadId: 'grandchild',
+      turn: { status: 'failed' },
+    });
+    expect(runtime.subagentBackgroundWork(7)).toHaveLength(0);
+    expect(runtime.tracker(7).agents.get('grandchild').executionStatus).toBe(
+      'error',
+    );
+  });
+
+  it('rejects history from unowned threads without looking up their rollout', async () => {
+    const { service, sessionsService, historyService } = createService();
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'root',
+    });
+    await expect(
+      service.getSubagentHistory(7, '../../private-thread'),
+    ).rejects.toThrow('not found in this session');
+    expect(historyService.getSubagentSnapshot).not.toHaveBeenCalledWith(
+      '../../private-thread',
+      expect.anything(),
+    );
+  });
+
+  it('routes a child permission after the parent turn ends and keeps its denial in the child transcript', async () => {
+    const { service } = createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'root');
+    runtime
+      .tracker(7)
+      .upsert(
+        'child',
+        { executionStatus: 'running' },
+        new Date().toISOString(),
+      );
+    const permission = runtime.requestCodexPermission(
+      7,
+      'item/commandExecution/requestApproval',
+      'child-approval',
+      { threadId: 'child', itemId: 'child-command', command: 'touch test.txt' },
+    );
+    runtime.finishRun(7);
+    expect(state.pendingPermissionRequest).toMatchObject({
+      agentId: 'child',
+      requestId: 'child-approval',
+    });
+    await service.denyPermission(
+      7,
+      'child-approval',
+      'Use a temporary directory',
+    );
+    expect(await permission).toEqual({ decision: 'decline' });
+    expect(state.pendingPermissionRequest).toBeNull();
+    expect(state.liveItems).toEqual([]);
+    expect(
+      runtime.tracker(7).liveItems.get('child').get('child-command:tool_use')
+        .interaction.content,
+    ).toEqual({ message: 'Use a temporary directory' });
+  });
+
+  it('restores nested agents with a bounded, coalesced history walk and discards stale restores', async () => {
+    const { service, historyService } = createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'root');
+    const timestamp = '2026-10-12T10:00:00.000Z';
+    historyService.getSubagentSnapshot.mockImplementation(
+      async (...args: unknown[]) => ({
+        history: [],
+        path: '/tmp/rollout',
+        contextUsage:
+          args[0] === 'child'
+            ? { totalTokens: 20_000, maxTokens: 200_000, percentage: 4 }
+            : undefined,
+        contextUsageUpdatedAt: args[0] === 'child' ? timestamp : undefined,
+        subagents:
+          args[0] === 'root'
+            ? [
+                {
+                  agentId: 'child',
+                  agentType: 'explorer',
+                  status: 'started',
+                  timestamp,
+                },
+              ]
+            : args[0] === 'child'
+              ? [
+                  {
+                    agentId: 'grandchild',
+                    agentType: 'worker',
+                    status: 'stopped',
+                    timestamp,
+                  },
+                ]
+              : [],
+      }),
+    );
+    await Promise.all([
+      runtime.restoreSubagents(7, state),
+      runtime.restoreSubagents(7, state),
+    ]);
+    expect(historyService.getSubagentSnapshot).toHaveBeenCalledTimes(3);
+    expect(runtime.tracker(7).agents.get('child').contextUsage.percentage).toBe(
+      4,
+    );
+    expect(runtime.tracker(7).agents.get('grandchild').parentAgentId).toBe(
+      'child',
+    );
+    runtime.ensureRuntimeState(7, 'new-root');
+    expect(runtime.tracker(7).agents.size).toBe(0);
+  });
+
+  it('fails cleanup until every active child turn is confirmed stopped', async () => {
+    const { service, appServer } = createService();
+    const runtime = service as any;
+    runtime.ensureRuntimeState(7, 'root');
+    runtime
+      .tracker(7)
+      .upsert(
+        'child',
+        { executionStatus: 'running' },
+        new Date().toISOString(),
+      );
+    appServer.request.mockRejectedValueOnce(new Error('Codex disconnected'));
+    await expect(service.cleanupSession(7)).rejects.toThrow(
+      'Codex disconnected',
+    );
+    expect(runtime.subagentTrackers.has(7)).toBe(true);
+    appServer.request.mockResolvedValue({
+      thread: { turns: [{ id: 'child-turn', status: 'interrupted' }] },
+    });
+    await service.cleanupSession(7);
+    expect(runtime.subagentTrackers.has(7)).toBe(false);
+  });
+
   it('does not dispatch a turn after cleanup cancels initialization', async () => {
     const { service, appServer } = createService();
     wireAppServerTurn(appServer);
@@ -265,6 +648,9 @@ describe('CodexRuntimeService', () => {
       }),
     };
     const historyService = {
+      getSubagentSnapshot: jest
+        .fn<() => Promise<any>>()
+        .mockResolvedValue(null),
       getHistory: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]),
       waitForHistory: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]),
       rewindHistory: jest

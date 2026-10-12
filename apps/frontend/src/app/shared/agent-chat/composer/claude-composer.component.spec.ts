@@ -40,6 +40,85 @@ const image = (overrides: Partial<ComposerImageAttachment> = {}): ComposerImageA
 describe('ClaudeComposerComponent', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('lets an idle Codex parent send follow-ups while subagents run, without a queue warning', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('value', 'Stop the explorers and summarize their findings');
+    fixture.componentRef.setInput('backgroundAgentCount', 3);
+    fixture.componentRef.setInput('queueBehindBackgroundWork', false);
+    fixture.detectChanges();
+    const send = fixture.nativeElement.querySelector(
+      '[aria-label="Send message"]',
+    ) as HTMLButtonElement;
+    expect(send.disabled).toBe(false);
+    expect(fixture.componentInstance.queueing()).toBe(false);
+    expect(fixture.nativeElement.querySelector('.cw-comp__bg-agent')).toBeNull();
+    const received = vi.fn();
+    fixture.componentInstance.send.subscribe(received);
+    send.click();
+    expect(received).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Stop the explorers and summarize their findings' }),
+    );
+  });
+
+  it('queues Codex follow-ups during the parent turn and respects an explicitly paused queue', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('value', 'Check performance next');
+    fixture.componentRef.setInput('backgroundAgentCount', 3);
+    fixture.componentRef.setInput('queueBehindBackgroundWork', false);
+    fixture.componentRef.setInput('running', true);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[aria-label="Queue message"]')).toBeTruthy();
+    fixture.componentRef.setInput('running', false);
+    fixture.componentRef.setInput('queuePaused', true);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.queueing()).toBe(true);
+    expect(fixture.nativeElement.querySelector('[aria-label="Queue message"]')).toBeTruthy();
+  });
+
+  it('preserves background queueing for providers that require it', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('backgroundAgentCount', 1);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.queueing()).toBe(true);
+    expect(fixture.nativeElement.querySelector('.cw-comp__bg-agent').textContent).toContain(
+      'queued until it finishes',
+    );
+  });
+
+  it('describes Codex steering as non-interrupting and forwards the selected queued message', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeComposerComponent],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('nativeSteering', true);
+    fixture.componentRef.setInput('running', true);
+    fixture.componentRef.setInput('pendingPrompts', [
+      {
+        id: 'correction',
+        prompt: 'Focus on the API instead',
+        queuedAt: '2026-10-12T10:00:00.000Z',
+      },
+    ]);
+    fixture.detectChanges();
+    const steer = fixture.nativeElement.querySelector(
+      '.cw-comp__pending-steer',
+    ) as HTMLButtonElement;
+    expect(steer.title).toContain('without stopping');
+    const selected = vi.fn();
+    fixture.componentInstance.steerPending.subscribe(selected);
+    steer.click();
+    expect(selected).toHaveBeenCalledExactlyOnceWith('correction');
+  });
+
   it('resizes wrapped drafts when the pane width changes and stops observing on destroy', async () => {
     let notifyResize!: ResizeObserverCallback;
     const observe = vi.fn();

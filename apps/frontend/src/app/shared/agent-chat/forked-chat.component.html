@@ -55,6 +55,8 @@
         (toggleTurnChanges)="toggleTurnChanges($event)"
         (closeTurnChanges)="closeTurnChanges($event)"
         (inspectTurn)="openAgentInspector($event)"
+        (openAgent)="openSessionAgents($event)"
+        (inspectAgent)="openAgentInspector($event.turnId, $event.agentId)"
         (messageCopy)="copyMessage($event.item, $event.text)"
         (openLocalFile)="openLocalFile.emit($event)"
       />
@@ -62,8 +64,11 @@
   </div>
 
   <div class="fc-footer">
-    @if (chat.backgroundWork().length) {
+    @if (chat.backgroundWork().length && target()?.provider !== 'codex') {
       <cw-background-activity [items]="chat.backgroundWork()" />
+    }
+    @if (chat.subagents().length) {
+      <cw-subagent-overview [agents]="chat.subagents()" (inspect)="openSessionAgents($event)" />
     }
 
     @if (chat.pendingUserInputRequest(); as request) {
@@ -85,6 +90,8 @@
       [running]="chat.runPhase() === 'running'"
       [canInterrupt]="chat.canInterrupt()"
       [backgroundAgentCount]="chat.backgroundWork().length"
+      [queueBehindBackgroundWork]="target()?.provider !== 'codex'"
+      [nativeSteering]="target()?.provider === 'codex'"
       [blockedByPermission]="!!chat.pendingPermissionRequest()"
       [attachedPanelOpen]="!!chat.pendingPermissionRequest()"
       [pendingPrompts]="chat.pendingPrompts()"
@@ -105,12 +112,16 @@
   </div>
 
   <cw-agent-inspector
+    [provider]="target()?.provider ?? 'claude'"
     [open]="!!selectedAgentInspectorTurn()"
     [turn]="selectedAgentInspectorTurn()"
     [selectedAgentId]="agentInspectorSelectedAgentId()"
     [historyByAgent]="agentHistoryById()"
+    [worktreePath]="worktreePath()"
     [hookEvents]="chat.recentHookEvents()"
     (selectAgent)="selectAgentInspectorAgent($event)"
+    (refreshAgent)="refreshAgentHistory($event)"
+    (openLocalFile)="openLocalFile.emit($event)"
     (close)="closeAgentInspector()"
   />
 } @else {

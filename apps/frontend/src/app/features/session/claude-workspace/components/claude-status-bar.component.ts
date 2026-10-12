@@ -41,7 +41,7 @@ import {
 } from '@ng-icons/lucide';
 import { AgentSettingOptionComponent } from './agent-setting-option.component';
 import { ComposerSettingsComponent } from './composer-settings.component';
-import { ContextUsageComponent } from './context-usage.component';
+import { ContextUsageComponent } from '@/shared/agent-chat/context-usage/context-usage.component';
 
 interface PermissionModeOption {
   id: ClaudePermissionMode;

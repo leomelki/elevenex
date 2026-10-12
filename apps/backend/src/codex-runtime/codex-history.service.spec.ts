@@ -4,6 +4,387 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 describe('CodexHistoryService', () => {
+  it('restores the latest child context, ignoring inherited counts, lifetime usage, and rate-limit-only events', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-child-context-'));
+    const path = join(root, 'rollout-child.jsonl');
+    const tokenEvent = (
+      timestamp: string,
+      total: number,
+      window: number | null = 200_000,
+    ) => ({
+      type: 'event_msg',
+      timestamp,
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: { total_tokens: 9_000_000 },
+          last_token_usage: {
+            input_tokens: total - 1000,
+            output_tokens: 1000,
+            cached_input_tokens: 500,
+            total_tokens: total,
+          },
+          model_context_window: window,
+        },
+      },
+    });
+    try {
+      await writeFile(
+        path,
+        jsonl([
+          {
+            type: 'session_meta',
+            timestamp: '2026-10-12T10:01:00.000Z',
+            payload: {
+              id: 'child',
+              source: {
+                subagent: { thread_spawn: { parent_thread_id: 'parent' } },
+              },
+            },
+          },
+          tokenEvent('2026-10-12T10:00:00.000Z', 180_000),
+        ]),
+      );
+      const service = new CodexHistoryService(root);
+      expect(
+        (await service.getSubagentSnapshot('child'))?.contextUsage,
+      ).toBeUndefined();
+      await appendFile(
+        path,
+        jsonl([
+          {
+            type: 'turn_context',
+            timestamp: '2026-10-12T10:02:00.000Z',
+            payload: { model: 'child-model' },
+          },
+          tokenEvent('2026-10-12T10:03:00.000Z', 100_000),
+          tokenEvent('2026-10-12T10:04:00.000Z', 20_000),
+          {
+            type: 'event_msg',
+            timestamp: '2026-10-12T10:05:00.000Z',
+            payload: { type: 'token_count', info: null, rate_limits: {} },
+          },
+        ]),
+      );
+      expect(await service.getSubagentSnapshot('child')).toMatchObject({
+        contextUsage: {
+          model: 'child-model',
+          totalTokens: 20_000,
+          maxTokens: 200_000,
+          percentage: 4,
+          inputTokens: 19_000,
+          outputTokens: 1000,
+        },
+        contextUsageUpdatedAt: '2026-10-12T10:04:00.000Z',
+      });
+      await appendFile(
+        path,
+        jsonl([tokenEvent('2026-10-12T10:06:00.000Z', 25_000, null)]),
+      );
+      expect(
+        (await service.getSubagentSnapshot('child'))?.contextUsage,
+      ).toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it('uses the child’s own model context rather than a copied parent configuration', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-child-model-'));
+    try {
+      await writeFile(
+        join(root, 'rollout-child.jsonl'),
+        jsonl([
+          {
+            type: 'session_meta',
+            timestamp: '2026-10-12T10:01:00.000Z',
+            payload: {
+              id: 'child',
+              source: {
+                subagent: {
+                  thread_spawn: {
+                    parent_thread_id: 'parent',
+                    agent_path: '/root/review',
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'turn_context',
+            timestamp: '2026-10-12T10:00:00.000Z',
+            payload: { model: 'parent-model', effort: 'low' },
+          },
+          {
+            type: 'turn_context',
+            timestamp: '2026-10-12T10:02:00.000Z',
+            payload: { model: 'child-model', effort: 'high' },
+          },
+        ]),
+      );
+      expect(
+        await new CodexHistoryService(root).getSubagentSnapshot('child'),
+      ).toMatchObject({
+        agentPath: '/root/review',
+        model: 'child-model',
+        reasoningEffort: 'high',
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it('hides sealed assignment envelopes and trims inherited history at child creation when no readable prompt is saved', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-sealed-assignment-'));
+    const encrypted = `gAAAAA${'x'.repeat(400)}`;
+    try {
+      await writeFile(
+        join(root, 'rollout-child.jsonl'),
+        jsonl([
+          {
+            type: 'session_meta',
+            timestamp: '2026-10-12T10:01:00.000Z',
+            payload: {
+              id: 'child',
+              source: {
+                subagent: { thread_spawn: { parent_thread_id: 'parent' } },
+              },
+            },
+          },
+          {
+            type: 'event_msg',
+            timestamp: '2026-10-12T10:00:00.000Z',
+            payload: { type: 'user_message', message: 'Inherited question' },
+          },
+          {
+            type: 'event_msg',
+            timestamp: '2026-10-12T10:02:00.000Z',
+            payload: {
+              type: 'item_completed',
+              item: {
+                id: 'reply',
+                type: 'AgentMessage',
+                content: [{ type: 'text', text: 'Checking the cache' }],
+              },
+            },
+          },
+          {
+            type: 'response_item',
+            timestamp: '2026-10-12T10:02:00.100Z',
+            payload: {
+              type: 'function_call',
+              name: 'spawn_agent',
+              call_id: 'spawn',
+              arguments: JSON.stringify({ message: encrypted }),
+            },
+          },
+          {
+            type: 'response_item',
+            timestamp: '2026-10-12T10:02:00.200Z',
+            payload: {
+              type: 'function_call_output',
+              call_id: 'spawn',
+              output: '{"agent_id":"nested"}',
+            },
+          },
+        ]),
+      );
+      const snapshot = await new CodexHistoryService(root).getSubagentSnapshot(
+        'child',
+      );
+      expect(
+        snapshot?.history.some((item) => item.content === 'Inherited question'),
+      ).toBe(false);
+      expect(snapshot?.history[0]).toMatchObject({
+        kind: 'assistant',
+        content: 'Checking the cache',
+      });
+      expect(snapshot?.subagents[0].prompt).toBeUndefined();
+      expect(JSON.stringify(snapshot)).not.toContain(encrypted);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it('resolves task-path spawn receipts to real child thread IDs with a coalesced metadata index', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-task-paths-'));
+    try {
+      await writeFile(
+        join(root, 'rollout-parent.jsonl'),
+        jsonl([
+          { type: 'session_meta', payload: { id: 'parent' } },
+          {
+            type: 'response_item',
+            payload: {
+              type: 'function_call',
+              name: 'spawn_agent',
+              call_id: 'spawn',
+              arguments: '{"task_name":"review","message":"Review the cache"}',
+            },
+          },
+          {
+            type: 'response_item',
+            payload: {
+              type: 'function_call_output',
+              call_id: 'spawn',
+              output: '{"task_name":"/root/review"}',
+            },
+          },
+        ]),
+      );
+      await writeFile(
+        join(root, 'rollout-child.jsonl'),
+        jsonl([
+          {
+            type: 'session_meta',
+            payload: {
+              id: 'child',
+              source: {
+                subagent: {
+                  thread_spawn: {
+                    parent_thread_id: 'parent',
+                    agent_path: '/root/review',
+                    agent_nickname: 'Ada',
+                  },
+                },
+              },
+            },
+          },
+        ]),
+      );
+      const service = new CodexHistoryService(root);
+      const [one, two] = await Promise.all([
+        service.getSubagentSnapshot('parent'),
+        service.getSubagentSnapshot('parent'),
+      ]);
+      expect(one?.subagents).toEqual([
+        expect.objectContaining({
+          agentId: 'child',
+          agentType: 'review',
+          prompt: 'Review the cache',
+          parentToolUseId: 'spawn',
+        }),
+      ]);
+      expect(two?.subagents).toEqual(one?.subagents);
+      expect((await service.getSubagentSnapshot('child'))?.displayName).toBe(
+        'Ada',
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  it('restores child assignments, nicknames, nested agents, and terminal state without inherited parent messages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-subagent-history-'));
+    const timestamp = '2026-10-12T10:00:00.000Z';
+    try {
+      await writeFile(
+        join(root, 'rollout-child.jsonl'),
+        jsonl([
+          {
+            type: 'session_meta',
+            payload: {
+              id: 'child',
+              source: {
+                subagent: {
+                  thread_spawn: {
+                    parent_thread_id: 'parent',
+                    agent_nickname: 'Ada',
+                    agent_role: 'explorer',
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: 'event_msg',
+            timestamp,
+            payload: {
+              type: 'user_message',
+              message: 'Inherited parent question',
+            },
+          },
+          {
+            type: 'event_msg',
+            timestamp,
+            payload: { type: 'user_message', message: 'Inspect tests' },
+          },
+          {
+            type: 'response_item',
+            timestamp,
+            payload: {
+              type: 'function_call',
+              name: 'spawn_agent',
+              call_id: 'nested-spawn',
+              arguments: '{"message":"Verify the race","agent_type":"worker"}',
+            },
+          },
+          {
+            type: 'response_item',
+            timestamp,
+            payload: {
+              type: 'function_call_output',
+              call_id: 'nested-spawn',
+              output: '{"agent_id":"grandchild"}',
+            },
+          },
+          {
+            type: 'response_item',
+            timestamp,
+            payload: {
+              type: 'message',
+              role: 'assistant',
+              content: [{ text: 'Found a race' }],
+            },
+          },
+          { type: 'event_msg', timestamp, payload: { type: 'task_complete' } },
+        ]),
+      );
+      const service = new CodexHistoryService(root);
+      const snapshot = await service.getSubagentSnapshot(
+        'child',
+        'Inspect tests',
+      );
+      expect(snapshot).toMatchObject({
+        displayName: 'Ada',
+        agentType: 'explorer',
+        executionStatus: 'completed',
+        lastAssistantMessage: 'Found a race',
+      });
+      expect(snapshot?.history[0].content).toBe('Inspect tests');
+      expect(
+        snapshot?.history.some(
+          (item) => item.content === 'Inherited parent question',
+        ),
+      ).toBe(false);
+      expect(snapshot?.subagents).toEqual([
+        expect.objectContaining({
+          agentId: 'grandchild',
+          agentType: 'worker',
+          prompt: 'Verify the race',
+        }),
+      ]);
+      const read = jest.spyOn(service as any, 'readJsonl');
+      await Promise.all([
+        service.getHistory('child'),
+        service.getSubagentSnapshot('child', 'Inspect tests'),
+      ]);
+      expect(read).not.toHaveBeenCalled();
+      await appendFile(
+        join(root, 'rollout-child.jsonl'),
+        jsonl([
+          {
+            type: 'event_msg',
+            timestamp: '2026-10-12T10:01:00.000Z',
+            payload: { type: 'task_started' },
+          },
+        ]),
+      );
+      expect(
+        (await service.getSubagentSnapshot('child', 'Inspect tests'))
+          ?.executionStatus,
+      ).toBe('running');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('reuses a resolved rollout and reloads history after appends and replacement', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-history-cache-'));
     try {

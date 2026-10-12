@@ -5,6 +5,45 @@ import {
 
 describe('agent-tool-normalization', () => {
   it.each([
+    'spawn_agent',
+    'collaboration.send_message',
+    'sendInput',
+    'followup_task',
+    'wait',
+    'wait_agent',
+    'list_agents',
+    'interruptAgent',
+    'resume_agent',
+    'closeAgent',
+  ])(
+    'normalizes %s as a collaboration action while keeping its original arguments',
+    (name) => {
+      const input = { ids: ['child'], message: 'Inspect caching' };
+      expect(canonicalizeAgentTool(name, input)).toMatchObject({
+        toolKind: 'agent_collaboration',
+        toolInput: input,
+      });
+    },
+  );
+  it('preserves Claude SendMessage housekeeping and script wait tools', () => {
+    expect(
+      canonicalizeAgentTool('SendMessage', { message: { type: 'message' } })
+        .toolKind,
+    ).toBe('unknown');
+    expect(
+      canonicalizeAgentTool('functions.wait', { cell_id: 'script-1' }).toolKind,
+    ).toBe('unknown');
+  });
+  it('keeps same-named MCP tools and unsupported names in their proper categories', () => {
+    expect(
+      canonicalizeAgentTool('send_message', {
+        server: 'notifications',
+        arguments: {},
+      }).toolKind,
+    ).toBe('mcp');
+    expect(canonicalizeAgentTool('constructor', {}).toolKind).toBe('unknown');
+  });
+  it.each([
     ['Read', { file_path: '/repo/file.ts' }, 'read'],
     ['Write', { file_path: '/repo/file.ts', content: 'hello' }, 'write'],
     [

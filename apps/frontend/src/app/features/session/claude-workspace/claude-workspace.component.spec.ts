@@ -399,6 +399,35 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(second.componentInstance.draft.prompt()).toBe('Second tab');
   });
 
+  it.each([
+    { provider: 'codex', immediate: true },
+    { provider: 'claude', immediate: false },
+  ])(
+    'matches $provider parent-message optimism to its background-work policy',
+    ({ provider, immediate }) => {
+      const fixture = createWorkspace();
+      const runtime = fixture.componentInstance.runtime;
+      runtime.currentProvider.set(provider);
+      runtime.applyRuntimeState({
+        ...runtimeState(),
+        backgroundWork: [
+          {
+            id: 'subagent:child',
+            kind: 'subagent',
+            label: 'Explorer',
+            startedAt: '2026-10-12T10:00:00.000Z',
+            updatedAt: '2026-10-12T10:00:00.000Z',
+          },
+        ],
+      });
+      expect(runtime.acceptPrompt('Redirect the explorer')).toBe(true);
+      expect(runtime.submitting()).toBe(immediate);
+      expect(
+        runtime.transcriptItems().some((item) => item.content === 'Redirect the explorer'),
+      ).toBe(immediate);
+    },
+  );
+
   it('ignores a late mention and keeps the new session mention request intact', async () => {
     const fixture = createWorkspace();
     fixture.detectChanges();
@@ -600,10 +629,17 @@ describe('ClaudeWorkspaceComponent', () => {
     fixture.detectChanges();
     events$.next({
       type: 'history_snapshot',
-      payload: { sessionId: 7, history: [{
-        id: 'saved-reply', kind: 'assistant', content: 'Previously saved reply',
-        timestamp: '2026-01-01T00:00:00.000Z',
-      }] },
+      payload: {
+        sessionId: 7,
+        history: [
+          {
+            id: 'saved-reply',
+            kind: 'assistant',
+            content: 'Previously saved reply',
+            timestamp: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      },
     });
     fixture.detectChanges();
     const element = fixture.nativeElement as HTMLElement;
@@ -624,10 +660,14 @@ describe('ClaudeWorkspaceComponent', () => {
     fixture.detectChanges();
     expect(getHistory).toHaveBeenCalledWith(7, 'claude');
     expect(fixture.nativeElement.querySelector('cw-transcript-loading-skeleton')).not.toBeNull();
-    history$.next([{
-      id: 'saved', kind: 'assistant', content: 'Loaded without the socket',
-      timestamp: '2026-01-01T00:00:00.000Z',
-    }]);
+    history$.next([
+      {
+        id: 'saved',
+        kind: 'assistant',
+        content: 'Loaded without the socket',
+        timestamp: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
     fixture.detectChanges();
     expect(fixture.componentInstance.runtime.wsConnected()).toBe(false);
     expect(fixture.nativeElement.querySelector('cw-transcript-loading-skeleton')).toBeNull();
@@ -651,7 +691,8 @@ describe('ClaudeWorkspaceComponent', () => {
     const old$ = new Subject<ClaudeTranscriptItem[]>();
     const current$ = new Subject<ClaudeTranscriptItem[]>();
     vi.spyOn(TestBed.inject(AgentRuntimeApiService), 'getHistory')
-      .mockReturnValueOnce(old$).mockReturnValueOnce(current$);
+      .mockReturnValueOnce(old$)
+      .mockReturnValueOnce(current$);
     const fixture = createWorkspace();
     fixture.detectChanges();
     fixture.componentRef.setInput('sessionId', 8);
@@ -992,15 +1033,32 @@ describe('ClaudeWorkspaceComponent', () => {
 
   it('applies and clears fast mode when switching presets', async () => {
     const agentApi = TestBed.inject(AgentRuntimeApiService);
-    const selected = { ...runtimeState(), claudeSessionId: null, selectedModel: 'opus', reasoningEffort: 'high', availableModels: [{ id: 'opus', displayName: 'Opus', description: '', supportsFastMode: true }] };
+    const selected = {
+      ...runtimeState(),
+      claudeSessionId: null,
+      selectedModel: 'opus',
+      reasoningEffort: 'high',
+      availableModels: [
+        { id: 'opus', displayName: 'Opus', description: '', supportsFastMode: true },
+      ],
+    };
     vi.spyOn(agentApi, 'setSelectedModel').mockReturnValue(of(selected));
     const effort = vi.spyOn(agentApi, 'setReasoningEffort').mockReturnValue(of(selected));
-    const fast = vi.spyOn(agentApi, 'setFastMode').mockReturnValue(of({ ...selected, fastMode: true }));
+    const fast = vi
+      .spyOn(agentApi, 'setFastMode')
+      .mockReturnValue(of({ ...selected, fastMode: true }));
     const fixture = createWorkspace();
     fixture.componentRef.setInput('hasStartedAgentRuntime', false);
     fixture.detectChanges();
     await flushPromises();
-    const preset = { id: 'fast', name: 'Fast', provider: 'claude', model: 'opus', reasoningEffort: 'high', fastMode: true };
+    const preset = {
+      id: 'fast',
+      name: 'Fast',
+      provider: 'claude',
+      model: 'opus',
+      reasoningEffort: 'high',
+      fastMode: true,
+    };
     await fixture.componentInstance.runtime.applyModelPreset(preset);
     expect(fast).toHaveBeenCalledWith(7, true, 'claude');
     expect(fixture.componentInstance.runtime.isModelPresetSelected(preset)).toBe(true);
@@ -1579,31 +1637,49 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(fixture.componentInstance.actions.armedEditMessageId()).toBeNull();
   });
 
-  it.each(['light', 'dark'])('reads runtime state after the rewind and ignores its completion refresh in %s mode', async (theme) => {
-    document.documentElement.classList.toggle('dark', theme === 'dark');
-    const fixture = createWorkspace();
-    fixture.detectChanges();
-    fixture.componentInstance.runtime.loading.set(false);
-    fixture.componentInstance.runtime.hydrated.set(true);
-    const rewind = new Subject<any[]>();
-    apiMock.rewindConversation.mockReturnValueOnce(rewind);
-    apiMock.getRuntimeState.mockClear();
-    apiMock.getHistory.mockClear();
-    const editing = fixture.componentInstance.actions.confirmEditMessage({
-      id: 'user-2', kind: 'user', content: 'Edit second', sourceMessageId: 'source-user-2',
-      timestamp: '2026-04-24T08:00:01.000Z',
-    });
-    expect(apiMock.getRuntimeState).not.toHaveBeenCalled();
-    (fixture.componentInstance.runtime as any).handleRuntimeEvent({ type: 'complete', payload: { sessionId: 7 } });
-    expect(apiMock.getHistory).not.toHaveBeenCalled();
-    rewind.next([{ id: 'user-1', kind: 'user', content: 'Keep first', timestamp: '2026-04-24T08:00:00.000Z' }]);
-    rewind.complete();
-    await editing;
-    expect(apiMock.getRuntimeState).toHaveBeenCalledWith(7);
-    expect(fixture.componentInstance.runtime.conversation.history().map(item => item.content)).toEqual(['Keep first']);
-    expect(fixture.componentInstance.draft.prompt()).toBe('Edit second');
-    document.documentElement.classList.remove('dark');
-  });
+  it.each(['light', 'dark'])(
+    'reads runtime state after the rewind and ignores its completion refresh in %s mode',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      const fixture = createWorkspace();
+      fixture.detectChanges();
+      fixture.componentInstance.runtime.loading.set(false);
+      fixture.componentInstance.runtime.hydrated.set(true);
+      const rewind = new Subject<any[]>();
+      apiMock.rewindConversation.mockReturnValueOnce(rewind);
+      apiMock.getRuntimeState.mockClear();
+      apiMock.getHistory.mockClear();
+      const editing = fixture.componentInstance.actions.confirmEditMessage({
+        id: 'user-2',
+        kind: 'user',
+        content: 'Edit second',
+        sourceMessageId: 'source-user-2',
+        timestamp: '2026-04-24T08:00:01.000Z',
+      });
+      expect(apiMock.getRuntimeState).not.toHaveBeenCalled();
+      (fixture.componentInstance.runtime as any).handleRuntimeEvent({
+        type: 'complete',
+        payload: { sessionId: 7 },
+      });
+      expect(apiMock.getHistory).not.toHaveBeenCalled();
+      rewind.next([
+        {
+          id: 'user-1',
+          kind: 'user',
+          content: 'Keep first',
+          timestamp: '2026-04-24T08:00:00.000Z',
+        },
+      ]);
+      rewind.complete();
+      await editing;
+      expect(apiMock.getRuntimeState).toHaveBeenCalledWith(7);
+      expect(
+        fixture.componentInstance.runtime.conversation.history().map((item) => item.content),
+      ).toEqual(['Keep first']);
+      expect(fixture.componentInstance.draft.prompt()).toBe('Edit second');
+      document.documentElement.classList.remove('dark');
+    },
+  );
 
   it('discards an old completion history response after an edit', async () => {
     const fixture = createWorkspace();
@@ -1614,7 +1690,10 @@ describe('ClaudeWorkspaceComponent', () => {
     apiMock.getHistory.mockReturnValueOnce(staleHistory);
     const syncing = (fixture.componentInstance.runtime as any).syncHistoryAfterCompletion();
     await fixture.componentInstance.actions.confirmEditMessage({
-      id: 'user-2', kind: 'user', content: 'Edit second', sourceMessageId: 'source-user-2',
+      id: 'user-2',
+      kind: 'user',
+      content: 'Edit second',
+      sourceMessageId: 'source-user-2',
       timestamp: '2026-04-24T08:00:01.000Z',
     });
     const retained = fixture.componentInstance.runtime.conversation.history();
@@ -1630,12 +1709,22 @@ describe('ClaudeWorkspaceComponent', () => {
     fixture.detectChanges();
     fixture.componentInstance.runtime.loading.set(false);
     fixture.componentInstance.runtime.hydrated.set(true);
-    const history = [{ id: 'user-1', kind: 'user' as const, content: 'Keep first', timestamp: '2026-04-24T08:00:00.000Z' }];
+    const history = [
+      {
+        id: 'user-1',
+        kind: 'user' as const,
+        content: 'Keep first',
+        timestamp: '2026-04-24T08:00:00.000Z',
+      },
+    ];
     fixture.componentInstance.runtime.conversation.history.set(history);
     const rewind = new Subject<any[]>();
     apiMock.rewindConversation.mockReturnValueOnce(rewind);
     const editing = fixture.componentInstance.actions.confirmEditMessage({
-      id: 'user-2', kind: 'user', content: 'Edit second', sourceMessageId: 'source-user-2',
+      id: 'user-2',
+      kind: 'user',
+      content: 'Edit second',
+      sourceMessageId: 'source-user-2',
       timestamp: '2026-04-24T08:00:01.000Z',
     });
     rewind.error(new Error('History not ready'));

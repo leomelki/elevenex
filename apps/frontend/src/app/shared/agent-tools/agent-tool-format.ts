@@ -1,4 +1,13 @@
-import type { AgentToolKind, ClaudeToolInteractionSummary, ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
+import type {
+  AgentToolKind,
+  ClaudeToolInteractionSummary,
+  ClaudeTranscriptItem,
+} from '@/shared/models/claude-runtime.model';
+import {
+  collaborationAction,
+  COLLABORATION_LABELS,
+  readableCollaborationText,
+} from './agent-collaboration-format';
 
 // Tool-aware display metadata — mirrors how Claude Code renders tool use/results
 // (see /Users/leo.melki/Documents/claude-code/src/tools/*/UI.tsx).
@@ -42,7 +51,12 @@ export interface ToolDisplay {
 
 export type ToolLike = Pick<
   ClaudeTranscriptItem,
-  'toolName' | 'toolInput' | 'toolKind' | 'toolDisplayName'
+  | 'toolName'
+  | 'providerToolName'
+  | 'providerToolInput'
+  | 'toolInput'
+  | 'toolKind'
+  | 'toolDisplayName'
 >;
 
 function asRecord(input: unknown): Record<string, unknown> {
@@ -93,7 +107,10 @@ function codexReadActionPath(data: Record<string, unknown>): string | null {
   return typeof name === 'string' && name.trim() ? name : null;
 }
 
-function describeElevenexTool(tool: string, data: Record<string, unknown>): { icon: string; verb: string; target: string } {
+function describeElevenexTool(
+  tool: string,
+  data: Record<string, unknown>,
+): { icon: string; verb: string; target: string } {
   const sessionId = data['sessionId'];
   const repoId = data['repoId'];
   const sessionRef = typeof sessionId === 'number' ? `session ${sessionId}` : '';
@@ -122,7 +139,11 @@ function describeElevenexTool(tool: string, data: Record<string, unknown>): { ic
       return { icon: 'lucideCircleCheck', verb: 'Resolve action', target: sessionRef };
     case 'set_model': {
       const model = typeof data['model'] === 'string' ? data['model'] : '';
-      return { icon: 'lucideCpu', verb: 'Set model', target: model ? `${model} · ${sessionRef}` : sessionRef };
+      return {
+        icon: 'lucideCpu',
+        verb: 'Set model',
+        target: model ? `${model} · ${sessionRef}` : sessionRef,
+      };
     }
     case 'set_permission_mode':
       return { icon: 'lucideShield', verb: 'Set permissions', target: sessionRef };
@@ -145,11 +166,19 @@ function describeElevenexTool(tool: string, data: Record<string, unknown>): { ic
       return { icon: 'lucideTimer', verb: 'Await event', target: sessionRef };
     case 'text_search': {
       const query = typeof data['query'] === 'string' ? `"${truncate(data['query'], 40)}"` : '';
-      return { icon: 'lucideSearch', verb: 'Search', target: query && sessionRef ? `${query} in ${sessionRef}` : query || sessionRef };
+      return {
+        icon: 'lucideSearch',
+        verb: 'Search',
+        target: query && sessionRef ? `${query} in ${sessionRef}` : query || sessionRef,
+      };
     }
     case 'file_search': {
       const pattern = typeof data['pattern'] === 'string' ? data['pattern'] : '';
-      return { icon: 'lucideFolderSearch', verb: 'File search', target: pattern && sessionRef ? `${pattern} in ${sessionRef}` : pattern || sessionRef };
+      return {
+        icon: 'lucideFolderSearch',
+        verb: 'File search',
+        target: pattern && sessionRef ? `${pattern} in ${sessionRef}` : pattern || sessionRef,
+      };
     }
     case 'read_file': {
       const path = typeof data['path'] === 'string' ? displayPath(data['path']) : '';
@@ -163,8 +192,17 @@ function describeElevenexTool(tool: string, data: Record<string, unknown>): { ic
       return { icon: 'lucideFocus', verb: 'Focused session', target: '' };
     case 'find_sessions': {
       const status = typeof data['status'] === 'string' ? data['status'] : '';
-      const scope = typeof repoId === 'number' ? `repo ${repoId}` : typeof data['projectId'] === 'number' ? `project ${data['projectId']}` : '';
-      return { icon: 'lucideSearch', verb: 'Find sessions', target: [status, scope].filter(Boolean).join(' · ') };
+      const scope =
+        typeof repoId === 'number'
+          ? `repo ${repoId}`
+          : typeof data['projectId'] === 'number'
+            ? `project ${data['projectId']}`
+            : '';
+      return {
+        icon: 'lucideSearch',
+        verb: 'Find sessions',
+        target: [status, scope].filter(Boolean).join(' · '),
+      };
     }
     case 'project_overview':
       return { icon: 'lucideLayoutDashboard', verb: 'Project overview', target: '' };
@@ -172,7 +210,11 @@ function describeElevenexTool(tool: string, data: Record<string, unknown>): { ic
     case 'create_session': {
       const name = typeof data['name'] === 'string' ? data['name'] : '';
       const branch = typeof data['branchName'] === 'string' ? data['branchName'] : '';
-      return { icon: 'lucidePlusCircle', verb: 'Create session', target: name || branch || (typeof repoId === 'number' ? `repo ${repoId}` : '') };
+      return {
+        icon: 'lucidePlusCircle',
+        verb: 'Create session',
+        target: name || branch || (typeof repoId === 'number' ? `repo ${repoId}` : ''),
+      };
     }
     case 'create_worktree': {
       const branch = typeof data['branchName'] === 'string' ? data['branchName'] : '';
@@ -205,7 +247,11 @@ function describeElevenexTool(tool: string, data: Record<string, unknown>): { ic
       return { icon: 'lucideGitFork', verb: 'Add repo', target: path };
     }
     case 'remove_repo':
-      return { icon: 'lucideTrash2', verb: 'Remove repo', target: typeof repoId === 'number' ? `repo ${repoId}` : '' };
+      return {
+        icon: 'lucideTrash2',
+        verb: 'Remove repo',
+        target: typeof repoId === 'number' ? `repo ${repoId}` : '',
+      };
     case 'delete_project':
       return { icon: 'lucideTrash2', verb: 'Delete project', target: '' };
     case 'set_todo':
@@ -256,23 +302,38 @@ function describeCanonicalTool(
       return {
         kind,
         icon: 'lucideFilePlus',
-        verb: isCreate ? 'Create' : (displayName || 'Write'),
+        verb: isCreate ? 'Create' : displayName || 'Write',
         target: displayPath(p || ''),
       };
     }
     case 'edit': {
       const p = data['file_path'] as string | undefined;
-      return { kind, icon: 'lucideFilePen', verb: displayName || 'Edit', target: displayPath(p || '') };
+      return {
+        kind,
+        icon: 'lucideFilePen',
+        verb: displayName || 'Edit',
+        target: displayPath(p || ''),
+      };
     }
     case 'notebook_edit': {
       const p = data['notebook_path'] as string | undefined;
-      return { kind, icon: 'lucideFilePen', verb: displayName || 'Edit notebook', target: displayPath(p || '') };
+      return {
+        kind,
+        icon: 'lucideFilePen',
+        verb: displayName || 'Edit notebook',
+        target: displayPath(p || ''),
+      };
     }
     case 'bash': {
       const cmd = String(data['command'] ?? '').trim();
       const description = String(data['description'] ?? '').trim();
       const firstLine = cmd.split('\n')[0] || cmd;
-      return { kind, icon: 'lucideTerminal', verb: 'Run', target: truncate(description || firstLine, 120) };
+      return {
+        kind,
+        icon: 'lucideTerminal',
+        verb: 'Run',
+        target: truncate(description || firstLine, 120),
+      };
     }
     case 'grep': {
       const pattern = String(data['pattern'] ?? '');
@@ -281,11 +342,26 @@ function describeCanonicalTool(
       return { kind, icon: 'lucideSearch', verb: 'Search', target: truncate(target, 100) };
     }
     case 'glob':
-      return { kind, icon: 'lucideSearch', verb: 'Find', target: truncate(String(data['pattern'] ?? ''), 100) };
+      return {
+        kind,
+        icon: 'lucideSearch',
+        verb: 'Find',
+        target: truncate(String(data['pattern'] ?? ''), 100),
+      };
     case 'web_fetch':
-      return { kind, icon: 'lucideGlobe', verb: 'Fetch', target: truncate(String(data['url'] ?? ''), 100) };
+      return {
+        kind,
+        icon: 'lucideGlobe',
+        verb: 'Fetch',
+        target: truncate(String(data['url'] ?? ''), 100),
+      };
     case 'web_search':
-      return { kind, icon: 'lucideGlobe', verb: 'Search web', target: truncate(String(data['query'] ?? ''), 100) };
+      return {
+        kind,
+        icon: 'lucideGlobe',
+        verb: 'Search web',
+        target: truncate(String(data['query'] ?? ''), 100),
+      };
     case 'file_changes': {
       const changes = Array.isArray(data['changes']) ? data['changes'] : [];
       const first = asRecord(changes[0]);
@@ -295,7 +371,9 @@ function describeCanonicalTool(
         kind,
         icon: 'lucideFilePen',
         verb: 'Change files',
-        target: path ? `${displayPath(path)}${suffix}` : `${changes.length} file${changes.length === 1 ? '' : 's'}`,
+        target: path
+          ? `${displayPath(path)}${suffix}`
+          : `${changes.length} file${changes.length === 1 ? '' : 's'}`,
       };
     }
     case 'task_agent': {
@@ -307,7 +385,9 @@ function describeCanonicalTool(
     case 'todo_write': {
       const todos = Array.isArray(data['todos']) ? (data['todos'] as unknown[]).length : 0;
       const inProgress = Array.isArray(data['todos'])
-        ? (data['todos'] as Array<Record<string, unknown>>).find((t) => t['status'] === 'in_progress')
+        ? (data['todos'] as Array<Record<string, unknown>>).find(
+            (t) => t['status'] === 'in_progress',
+          )
         : null;
       const current = inProgress?.['content'];
       return {
@@ -326,7 +406,12 @@ function describeCanonicalTool(
     case 'worktree':
       return { kind, icon: 'lucideGitBranch', verb: displayName || 'Worktree', target: '' };
     case 'lsp':
-      return { kind, icon: 'lucideBraces', verb: 'LSP', target: String(data['operation'] ?? data['method'] ?? '') };
+      return {
+        kind,
+        icon: 'lucideBraces',
+        verb: 'LSP',
+        target: String(data['operation'] ?? data['method'] ?? ''),
+      };
     case 'skill':
       return { kind, icon: 'lucideSparkles', verb: 'Skill', target: String(data['skill'] ?? '') };
     case 'mcp': {
@@ -345,6 +430,20 @@ function describeCanonicalTool(
 }
 
 export function describeAgentTool(tool: ToolLike): ToolDisplay {
+  const action = collaborationAction(tool);
+  if (action) {
+    const data = asRecord(tool.providerToolInput ?? tool.toolInput);
+    const metadata = COLLABORATION_LABELS[action];
+    return {
+      kind: 'agent_collaboration',
+      icon: metadata.icon,
+      verb: metadata.label,
+      target: truncate(
+        readableCollaborationText(data['task_name'] ?? data['description'] ?? data['target']) ?? '',
+        120,
+      ),
+    };
+  }
   return describeTool(tool.toolName, tool.toolInput, tool.toolKind, tool.toolDisplayName);
 }
 
@@ -356,6 +455,19 @@ export function describeTool(
 ): ToolDisplay {
   const data = asRecord(input);
   const name = toolName || 'Tool';
+  const collaboration = collaborationAction({ toolName, toolInput: input });
+  if (collaboration) {
+    const metadata = COLLABORATION_LABELS[collaboration];
+    return {
+      kind: 'agent_collaboration',
+      icon: metadata.icon,
+      verb: metadata.label,
+      target: truncate(
+        readableCollaborationText(data['task_name'] ?? data['description'] ?? data['target']) ?? '',
+        120,
+      ),
+    };
+  }
 
   if (toolKind && toolKind !== 'unknown') {
     return describeCanonicalTool(toolKind, toolDisplayName || name, data);
@@ -372,23 +484,15 @@ export function describeTool(
     const questions = Array.isArray(data['questions']) ? data['questions'] : [];
     const firstQuestion = asRecord(questions[0]);
     const questionText =
-      typeof firstQuestion['question'] === 'string'
-        ? firstQuestion['question']
-        : '';
+      typeof firstQuestion['question'] === 'string' ? firstQuestion['question'] : '';
     const extraCount = Math.max(questions.length - 1, 0);
     return {
       kind: 'ask_user_question',
       icon: 'lucideSparkles',
       verb: 'Question',
-      target:
-        questionText
-          ? truncate(
-              extraCount > 0
-                ? `${questionText} +${extraCount} more`
-                : questionText,
-              120,
-            )
-          : '',
+      target: questionText
+        ? truncate(extraCount > 0 ? `${questionText} +${extraCount} more` : questionText, 120)
+        : '',
     };
   }
   // File write
@@ -406,13 +510,23 @@ export function describeTool(
   if (n === 'edit' || n === 'multiedit' || n === 'fileedit' || n === 'fileedittool') {
     const p = data['file_path'] as string | undefined;
     const edits = data['edits'];
-    const verb = Array.isArray(edits) && edits.length > 1 ? 'Edit' : (data['old_string'] === '' ? 'Create' : 'Edit');
+    const verb =
+      Array.isArray(edits) && edits.length > 1
+        ? 'Edit'
+        : data['old_string'] === ''
+          ? 'Create'
+          : 'Edit';
     return { kind: 'edit', icon: 'lucideFilePen', verb, target: displayPath(p || '') };
   }
   // Notebook edit
   if (n === 'notebookedit') {
     const p = data['notebook_path'] as string | undefined;
-    return { kind: 'notebook_edit', icon: 'lucideFilePen', verb: 'Edit notebook', target: displayPath(p || '') };
+    return {
+      kind: 'notebook_edit',
+      icon: 'lucideFilePen',
+      verb: 'Edit notebook',
+      target: displayPath(p || ''),
+    };
   }
   // Bash / PowerShell
   if (n === 'bash' || n === 'powershell' || n === 'execcommand') {
@@ -423,7 +537,12 @@ export function describeTool(
       return { kind: 'read', icon: 'lucideFileText', verb: 'Read', target: displayPath(readPath) };
     }
     const firstLine = cmd.split('\n')[0] || cmd;
-    return { kind: 'bash', icon: 'lucideTerminal', verb: 'Run', target: truncate(description || firstLine, 120) };
+    return {
+      kind: 'bash',
+      icon: 'lucideTerminal',
+      verb: 'Run',
+      target: truncate(description || firstLine, 120),
+    };
   }
   // Grep
   if (n === 'grep') {
@@ -439,11 +558,21 @@ export function describeTool(
   }
   // WebFetch
   if (n === 'webfetch') {
-    return { kind: 'web_fetch', icon: 'lucideGlobe', verb: 'Fetch', target: truncate(String(data['url'] ?? ''), 100) };
+    return {
+      kind: 'web_fetch',
+      icon: 'lucideGlobe',
+      verb: 'Fetch',
+      target: truncate(String(data['url'] ?? ''), 100),
+    };
   }
   // WebSearch
   if (n === 'websearch') {
-    return { kind: 'web_search', icon: 'lucideGlobe', verb: 'Search web', target: truncate(String(data['query'] ?? ''), 100) };
+    return {
+      kind: 'web_search',
+      icon: 'lucideGlobe',
+      verb: 'Search web',
+      target: truncate(String(data['query'] ?? ''), 100),
+    };
   }
   if (n === 'filechanges') {
     const changes = Array.isArray(data['changes']) ? data['changes'] : [];
@@ -454,7 +583,9 @@ export function describeTool(
       kind: 'file_changes',
       icon: 'lucideFilePen',
       verb: 'Change files',
-      target: path ? `${displayPath(path)}${suffix}` : `${changes.length} file${changes.length === 1 ? '' : 's'}`,
+      target: path
+        ? `${displayPath(path)}${suffix}`
+        : `${changes.length} file${changes.length === 1 ? '' : 's'}`,
     };
   }
   // Task / Agent (subagent dispatch)
@@ -492,11 +623,15 @@ export function describeTool(
     };
   }
   // Plan mode
-  if (n === 'enterplanmode') return { kind: 'enter_plan_mode', icon: 'lucideMap', verb: 'Plan mode', target: 'Entered' };
-  if (n === 'exitplanmode') return { kind: 'exit_plan_mode', icon: 'lucideMap', verb: 'Plan review', target: '' };
+  if (n === 'enterplanmode')
+    return { kind: 'enter_plan_mode', icon: 'lucideMap', verb: 'Plan mode', target: 'Entered' };
+  if (n === 'exitplanmode')
+    return { kind: 'exit_plan_mode', icon: 'lucideMap', verb: 'Plan review', target: '' };
   // Worktree
-  if (n === 'enterworktree') return { kind: 'worktree', icon: 'lucideGitBranch', verb: 'Enter worktree', target: '' };
-  if (n === 'exitworktree') return { kind: 'worktree', icon: 'lucideGitBranch', verb: 'Exit worktree', target: '' };
+  if (n === 'enterworktree')
+    return { kind: 'worktree', icon: 'lucideGitBranch', verb: 'Enter worktree', target: '' };
+  if (n === 'exitworktree')
+    return { kind: 'worktree', icon: 'lucideGitBranch', verb: 'Exit worktree', target: '' };
   // LSP
   if (n === 'lsp' || n === 'lsptool') {
     const op = String(data['operation'] ?? data['method'] ?? '');
@@ -542,6 +677,8 @@ export function shouldHideToolCall(
 ): boolean {
   const data = asRecord(input);
   const n = normalizeToolName(toolName || '');
+  if (toolKind === 'agent_collaboration' || collaborationAction({ toolName, toolInput: input }))
+    return false;
 
   if (
     n === 'toolsearch' ||
@@ -555,11 +692,21 @@ export function shouldHideToolCall(
     return true;
   }
 
-  if ((toolKind === 'write' || n === 'write' || n === 'filewrite' || n === 'filewritetool') && isPlanArtifactPath(data['file_path'] as string | undefined)) {
+  if (
+    (toolKind === 'write' || n === 'write' || n === 'filewrite' || n === 'filewritetool') &&
+    isPlanArtifactPath(data['file_path'] as string | undefined)
+  ) {
     return true;
   }
 
-  if ((toolKind === 'edit' || n === 'edit' || n === 'multiedit' || n === 'fileedit' || n === 'fileedittool') && isPlanArtifactPath(data['file_path'] as string | undefined)) {
+  if (
+    (toolKind === 'edit' ||
+      n === 'edit' ||
+      n === 'multiedit' ||
+      n === 'fileedit' ||
+      n === 'fileedittool') &&
+    isPlanArtifactPath(data['file_path'] as string | undefined)
+  ) {
     return true;
   }
 
@@ -611,7 +758,10 @@ export function resultSummary(
   const text = contentToString(result.content).trim();
 
   if (isHardError(result)) {
-    const first = extractToolError(text).split('\n').find((l) => l.trim()) ?? 'Error';
+    const first =
+      extractToolError(text)
+        .split('\n')
+        .find((l) => l.trim()) ?? 'Error';
     return { text: truncate(first || 'Error', 100), tone: 'error' };
   }
 
@@ -669,10 +819,14 @@ export function resultSummary(
       return { text: '', tone: 'neutral' };
     case 'ask_user_question': {
       const parsed = parseJsonRecord(text);
-      const answers = parsed && parsed['answers'] && typeof parsed['answers'] === 'object'
-        ? Object.keys(parsed['answers'] as Record<string, unknown>).length
-        : 0;
-      return { text: `${answers || 'Answered'} question${answers === 1 ? '' : 's'}`, tone: softTone('ok') };
+      const answers =
+        parsed && parsed['answers'] && typeof parsed['answers'] === 'object'
+          ? Object.keys(parsed['answers'] as Record<string, unknown>).length
+          : 0;
+      return {
+        text: `${answers || 'Answered'} question${answers === 1 ? '' : 's'}`,
+        tone: softTone('ok'),
+      };
     }
     case 'plan_mode':
     case 'enter_plan_mode':

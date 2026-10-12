@@ -1,4 +1,8 @@
 import { MediaPreviewDirective } from '../media/media-preview.directive';
+import { AgentCollaborationComponent } from './agent-collaboration.component';
+import { collaborationAction } from '@/shared/agent-tools/agent-collaboration-format';
+import type { AgentSubagentState } from '@/shared/models/agent-runtime.model';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import { AgentMarkdownComponent } from '@/shared/agent-chat/markdown/agent-markdown.component';
 import {
   detectHljsLang,
@@ -117,6 +121,7 @@ type Todo = ToolTodoItem;
     ZardButtonComponent,
     CommonModule,
     NgIcon,
+    AgentCollaborationComponent,
     AgentMarkdownComponent,
     ClaudeMessageComponent,
     ClaudeThinkingComponent,
@@ -190,6 +195,12 @@ export class ClaudeToolCallComponent {
   readonly progress = input<AgentToolProgress | null>(null);
   readonly turnId = input<string | null>(null);
   readonly hasAgentHistory = input<boolean>(false);
+  readonly agents = input<ReadonlyMap<string, AgentSubagentState>>();
+  readonly canInspectAgents = input(false);
+  readonly worktreePath = input<string | null>(null);
+  readonly inspectAgent = output<string>();
+  readonly openLocalFile = output<LocalFileTarget>();
+  readonly collaboration = computed(() => collaborationAction(this.call()));
 
   readonly approve = output<AgentPermissionApproval>();
   readonly deny = output<string | undefined>();
@@ -220,7 +231,11 @@ export class ClaudeToolCallComponent {
     });
 
     effect((onCleanup) => {
-      if (this.display().kind !== 'bash' || this.state() !== 'running') return;
+      if (
+        (this.display().kind !== 'bash' && this.collaboration() !== 'wait') ||
+        this.state() !== 'running'
+      )
+        return;
       this.timerTick.set(Date.now());
       const id = window.setInterval(() => this.timerTick.set(Date.now()), 1000);
       onCleanup(() => window.clearInterval(id));

@@ -6,6 +6,7 @@ import {
   planReviewFromTranscriptItem,
 } from '@/features/plan-annotator';
 import { ClaudeSubagentHistoryState } from '@/shared/agent-chat/activity/claude-agent-inspector.component';
+import { buildSessionAgentSummary } from '@/shared/agent-chat/activity/agent-deep-dive';
 import { type TranscriptMessageAffordances } from '@/shared/agent-chat/transcript/claude-transcript.component';
 import { copyChatMessage } from '@/shared/agent-chat/transcript/message-clipboard';
 import { TranscriptRenderItem } from '@/shared/agent-chat/transcript/transcript-render-items';
@@ -166,6 +167,7 @@ export class SessionMessageActions {
   readonly selectedAgentInspectorTurn = computed(() => {
     const turnId = this.agentInspectorTurnId();
     if (!turnId) return null;
+    if (turnId === 'session-agents') return buildSessionAgentSummary(this.runtime.subagents());
     const item = this.runtime
       .renderItems()
       .find(
@@ -375,7 +377,7 @@ export class SessionMessageActions {
     this.expandedTurnChanges.update((state) => ({ ...state, [turnId]: false }));
   }
 
-  openAgentInspector(turnId: string): void {
+  openAgentInspector(turnId: string, selectedAgentId?: string): void {
     const item = this.runtime
       .renderItems()
       .find(
@@ -385,7 +387,10 @@ export class SessionMessageActions {
     const summary = item?.agentSummary;
     if (!summary?.agents.length) return;
 
-    const firstAgentId = summary.agents[0]?.agentId ?? null;
+    const firstAgentId =
+      summary.agents.find((agent) => agent.agentId === selectedAgentId)?.agentId ??
+      summary.agents[0]?.agentId ??
+      null;
     this.agentInspectorTurnId.set(turnId);
     this.agentInspectorSelectedAgentId.set(firstAgentId);
     if (firstAgentId) {
@@ -396,6 +401,16 @@ export class SessionMessageActions {
   closeAgentInspector(): void {
     this.agentInspectorTurnId.set(null);
     this.agentInspectorSelectedAgentId.set(null);
+  }
+
+  openSessionAgents(agentId: string): void {
+    if (!this.runtime.subagents().some((agent) => agent.agentId === agentId)) return;
+    this.agentInspectorTurnId.set('session-agents');
+    this.selectAgentInspectorAgent(agentId);
+  }
+
+  refreshAgentHistory(agentId: string): void {
+    void this.ensureAgentHistory(agentId, true);
   }
 
   selectAgentInspectorAgent(agentId: string): void {
@@ -602,14 +617,14 @@ export class SessionMessageActions {
     }
   }
 
-  private async ensureAgentHistory(agentId: string): Promise<void> {
+  private async ensureAgentHistory(agentId: string, refresh = false): Promise<void> {
     const version = this.runtime.bootstrapVersion;
     const current = this.agentHistoryById()[agentId];
-    if (current?.loading || current?.data) return;
+    if (current?.loading || (!refresh && current?.data)) return;
 
     this.agentHistoryById.update((state) => ({
       ...state,
-      [agentId]: { loading: true, data: null, error: null },
+      [agentId]: { loading: true, data: current?.data ?? null, error: null },
     }));
 
     try {
@@ -632,7 +647,7 @@ export class SessionMessageActions {
         (error instanceof Error ? error.message : 'Could not load agent history.');
       this.agentHistoryById.update((state) => ({
         ...state,
-        [agentId]: { loading: false, data: null, error: message },
+        [agentId]: { loading: false, data: current?.data ?? null, error: message },
       }));
     }
   }

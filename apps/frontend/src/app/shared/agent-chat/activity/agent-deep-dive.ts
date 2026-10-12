@@ -9,11 +9,10 @@ import {
   AgentTranscriptItem,
 } from '@/shared/models/agent-runtime.model';
 
-export interface TurnAgentRun {
-  agentId: string;
-  agentType: string;
-  status: 'started' | 'stopped';
-  transcriptPath?: string;
+export interface TurnAgentRun extends Omit<
+  AgentSubagentState,
+  'timestamp' | 'lastAssistantMessage'
+> {
   summary?: string;
   stopHookActive?: boolean;
   startedAt?: string;
@@ -28,6 +27,7 @@ export interface TurnAgentSummary {
   durationLabel: string;
   stepCount: number;
   agents: TurnAgentRun[];
+  scope?: 'session' | 'turn';
 }
 
 export interface AgentTimelineMessageEntry {
@@ -43,7 +43,7 @@ export interface AgentTimelineEventEntry {
   id: string;
   label: string;
   detail: string;
-  tone: 'neutral' | 'success' | 'warning';
+  tone: 'neutral' | 'success' | 'warning' | 'destructive';
 }
 
 export interface AgentTimelineToolEntry {
@@ -73,6 +73,8 @@ export function buildTurnAgentSummary(
   stepCount: number,
   subagents: AgentSubagentState[],
   hookEvents: AgentHookEvent[],
+  toolIds: ReadonlySet<string> = new Set(),
+  referencedAgentIds: ReadonlySet<string> = new Set(),
 ): TurnAgentSummary | null {
   const agentById = new Map<string, TurnAgentRun>();
   const subagentById = new Map(subagents.map((item) => [item.agentId, item]));
@@ -109,20 +111,38 @@ export function buildTurnAgentSummary(
     });
   }
 
+  const included = new Set(
+    subagents
+      .filter(
+        (agent) =>
+          isTimestampInRange(agent.startedAt ?? agent.timestamp, startedAt, completedAt) ||
+          (agent.parentToolUseId && toolIds.has(agent.parentToolUseId)) ||
+          referencedAgentIds.has(agent.agentId) ||
+          (agent.agentPath && referencedAgentIds.has(agent.agentPath)),
+      )
+      .map((agent) => agent.agentId),
+  );
+  // Include nested delegations with their ancestor, even if they finish after this turn.
+  for (let previous = -1; previous !== included.size; ) {
+    previous = included.size;
+    for (const agent of subagents)
+      if (agent.parentAgentId && included.has(agent.parentAgentId)) included.add(agent.agentId);
+  }
   for (const subagent of subagents) {
-    if (!isTimestampInRange(subagent.timestamp, startedAt, completedAt)) continue;
+    if (!included.has(subagent.agentId)) continue;
     const current = agentById.get(subagent.agentId);
     agentById.set(subagent.agentId, {
+      ...subagent,
       agentId: subagent.agentId,
       agentType: subagent.agentType,
       status: subagent.status,
       transcriptPath: subagent.transcriptPath,
       summary: subagent.lastAssistantMessage,
       stopHookActive: subagent.stopHookActive,
-      startedAt: current?.startedAt,
+      startedAt: subagent.startedAt ?? current?.startedAt,
       stoppedAt:
         subagent.status === 'stopped'
-          ? maxTimestamp(subagent.timestamp, current?.stoppedAt)
+          ? (subagent.completedAt ?? maxTimestamp(subagent.timestamp, current?.stoppedAt))
           : current?.stoppedAt,
       lastEventAt: maxTimestamp(subagent.timestamp, current?.lastEventAt),
     });
@@ -143,14 +163,37 @@ export function buildTurnAgentSummary(
   };
 }
 
+export function buildSessionAgentSummary(subagents: AgentSubagentState[]): TurnAgentSummary | null {
+  if (!subagents.length) return null;
+  const start = subagents.map((agent) => agent.startedAt ?? agent.timestamp).sort()[0];
+  const end = subagents
+    .map((agent) => agent.timestamp)
+    .sort()
+    .at(-1)!;
+  return {
+    turnId: 'session-agents',
+    scope: 'session',
+    startedAt: start,
+    completedAt: end,
+    durationLabel: formatTurnDuration(start, end),
+    stepCount: 0,
+    agents: subagents.map((agent) => ({
+      ...agent,
+      summary: agent.lastAssistantMessage,
+      stoppedAt: agent.completedAt,
+      lastEventAt: agent.timestamp,
+    })),
+  };
+}
+
 export function buildAgentTimelineEntries(
   payload: AgentSubagentHistoryPayload | null,
   run: TurnAgentRun | null,
 ): AgentTimelineEntry[] {
-  if (!payload || !run) return [];
+  if (!run) return [];
 
   const entries: AgentTimelineEntry[] = [];
-  const history = [...payload.history].sort((left, right) =>
+  const history = [...(payload?.history ?? [])].sort((left, right) =>
     left.timestamp.localeCompare(right.timestamp),
   );
   const units = pairTranscript(history);
@@ -171,12 +214,12 @@ export function buildAgentTimelineEntries(
     tone: 'neutral',
   });
 
-  if (prompt?.content) {
+  if (prompt?.content || run.prompt) {
     entries.push({
       kind: 'message',
-      id: `${prompt.id}:prompt`,
+      id: `${prompt?.id ?? run.agentId}:prompt`,
       label: 'Prompt',
-      content: prompt.content,
+      content: prompt?.content ?? run.prompt!,
       tone: 'accent',
     });
   }
@@ -226,7 +269,7 @@ export function buildAgentTimelineEntries(
     entries.push({
       kind: 'message',
       id: `${finalResponse.id}:final`,
-      label: 'Final response',
+      label: run.status === 'stopped' ? 'Final response' : 'Latest update',
       content: finalResponse.content,
       tone: 'neutral',
     });
@@ -235,12 +278,28 @@ export function buildAgentTimelineEntries(
   entries.push({
     kind: 'event',
     id: `${run.agentId}:finish`,
-    label: run.status === 'stopped' ? 'Agent stopped' : 'Agent still active',
+    label:
+      run.executionStatus === 'error'
+        ? 'Agent failed'
+        : run.executionStatus === 'interrupted'
+          ? 'Agent interrupted'
+          : run.executionStatus === 'closed'
+            ? 'Agent closed'
+            : run.status === 'stopped'
+              ? 'Agent completed'
+              : 'Agent still active',
     detail:
       run.stoppedAt || run.lastEventAt
         ? formatTimestamp(run.stoppedAt || run.lastEventAt)
         : 'No completion timestamp',
-    tone: run.status === 'stopped' ? 'success' : 'warning',
+    tone:
+      run.executionStatus === 'error'
+        ? 'destructive'
+        : run.executionStatus === 'interrupted'
+          ? 'warning'
+          : run.status === 'stopped'
+            ? 'success'
+            : 'neutral',
   });
 
   return entries;

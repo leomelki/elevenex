@@ -1,96 +1,276 @@
 @if (open()) {
   @if (turn(); as currentTurn) {
-    <div class="cw-agent-dive__backdrop" (click)="close.emit()"></div>
-    <aside class="cw-agent-dive">
-      <header class="cw-agent-dive__head">
-        <div>
-          <div class="cw-agent-dive__eyebrow">Agent Deep Dive</div>
-          <h3>
-            Worked for {{ currentTurn.durationLabel }} · {{ currentTurn.stepCount }} steps ·
-            {{ currentTurn.agents.length }} agent{{ currentTurn.agents.length === 1 ? '' : 's' }}
-          </h3>
+    <div
+      class="cw-agent-dive__backdrop fixed inset-0 z-[44] bg-[color-mix(in_oklab,var(--surface-shade)_45%,transparent)]"
+      (click)="close.emit()"
+    ></div>
+    <aside
+      class="cw-agent-dive fixed inset-y-0 right-0 z-[45] flex w-[min(78rem,100vw)] flex-col border-l border-border bg-background shadow-xl"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="agent-inspector-title"
+      cdkTrapFocus
+      [cdkTrapFocusAutoCapture]="true"
+      (keydown.escape)="close.emit(); $event.stopPropagation()"
+    >
+      <header
+        class="cw-agent-dive__head flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3"
+      >
+        <div class="flex min-w-0 items-baseline gap-3">
+          <h3 id="agent-inspector-title" class="m-0 text-sm font-semibold">Agents</h3>
+          <span class="text-xs text-muted-foreground"
+            >{{ counts().active }} active · {{ counts().total }} total</span
+          >
         </div>
-        <button type="button" class="cw-agent-dive__close" (click)="close.emit()">
-          <ng-icon name="lucideX" size="15" />
+        <button
+          z-button
+          zType="ghost"
+          zSize="sm"
+          type="button"
+          aria-label="Close agent inspector"
+          cdkFocusInitial
+          (click)="close.emit()"
+        >
+          <ng-icon name="lucideX" size="16" />
         </button>
       </header>
-
-      <div class="cw-agent-dive__body">
-        <nav class="cw-agent-dive__rail" aria-label="Agents">
-          @for (agent of currentTurn.agents; track agent.agentId) {
-            <button
-              type="button"
-              class="cw-agent-dive__agent"
-              [class.cw-agent-dive__agent--active]="agent.agentId === selectedAgentId()"
-              (click)="selectAgent.emit(agent.agentId)"
-            >
-              <div class="cw-agent-dive__agent-top">
-                <span class="cw-agent-dive__agent-name">{{
-                  humanizeAgentType(agent.agentType)
-                }}</span>
-                <span class="cw-agent-dive__agent-state" [attr.data-state]="agent.status">
-                  {{ agent.status }}
-                </span>
-              </div>
-              @if (agent.summary) {
-                <div class="cw-agent-dive__agent-summary">{{ agent.summary }}</div>
-              } @else {
-                <div class="cw-agent-dive__agent-summary cw-agent-dive__agent-summary--muted">
-                  No assistant summary yet
-                </div>
+      <div
+        class="cw-agent-dive__body grid min-h-0 flex-1 grid-cols-[minmax(15rem,17rem)_minmax(0,1fr)]"
+      >
+        <nav
+          class="cw-agent-dive__rail flex min-h-0 flex-col gap-3 overflow-auto border-r border-border bg-muted/20 p-3"
+          aria-label="Agents"
+        >
+          <div class="flex shrink-0 flex-col gap-2">
+            <div class="relative">
+              <ng-icon
+                name="lucideSearch"
+                size="14"
+                class="pointer-events-none absolute left-2.5 top-2.5 text-muted-foreground"
+              />
+              <input
+                z-input
+                type="search"
+                zSize="sm"
+                class="pl-8"
+                placeholder="Search agents"
+                aria-label="Search agents"
+                [value]="search()"
+                (input)="search.set($any($event.target).value)"
+              />
+            </div>
+            <div class="flex flex-wrap gap-1" aria-label="Filter agents">
+              <button
+                z-button
+                zSize="sm"
+                [zType]="filter() === 'all' ? 'secondary' : 'ghost'"
+                type="button"
+                class="h-7 px-2 text-xs"
+                [attr.aria-pressed]="filter() === 'all'"
+                (click)="filter.set('all')"
+              >
+                All {{ counts().total }}
+              </button>
+              <button
+                z-button
+                zSize="sm"
+                [zType]="filter() === 'active' ? 'secondary' : 'ghost'"
+                type="button"
+                class="h-7 px-2 text-xs"
+                [attr.aria-pressed]="filter() === 'active'"
+                (click)="filter.set('active')"
+              >
+                Active {{ counts().active }}
+              </button>
+              @if (counts().attention) {
+                <button
+                  z-button
+                  zSize="sm"
+                  [zType]="filter() === 'attention' ? 'secondary' : 'ghost'"
+                  type="button"
+                  class="h-7 px-2 text-xs text-warning"
+                  [attr.aria-pressed]="filter() === 'attention'"
+                  (click)="filter.set('attention')"
+                >
+                  Attention {{ counts().attention }}
+                </button>
               }
-              <div class="cw-agent-dive__agent-time">
-                {{ formatTimestamp(agent.startedAt || agent.lastEventAt) }}
-              </div>
-            </button>
-          }
-        </nav>
-
-        <section class="cw-agent-dive__main">
-          @if (selectedAgent(); as agent) {
-            <div class="cw-agent-dive__hero">
-              <div class="cw-agent-dive__hero-copy">
-                <div class="cw-agent-dive__hero-title">
-                  {{ humanizeAgentType(agent.agentType) }}
+            </div>
+          </div>
+          <div class="cw-agent-dive__agent-list flex min-h-0 flex-col gap-1">
+            @for (row of visibleAgents(); track row.agent.agentId) {
+              @let agent = row.agent;
+              <button
+                z-button
+                zType="ghost"
+                type="button"
+                class="cw-agent-dive__agent h-auto w-full flex-col items-start gap-1 rounded-lg px-3 py-2.5 text-left font-normal hover:bg-accent data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+                [attr.data-selected]="agent.agentId === selectedAgentId()"
+                [attr.aria-pressed]="agent.agentId === selectedAgentId()"
+                [style.margin-left.rem]="row.depth > 3 ? 1.5 : row.depth * 0.5"
+                [style.width]="
+                  row.depth
+                    ? 'calc(100% - ' + (row.depth > 3 ? 1.5 : row.depth * 0.5) + 'rem)'
+                    : null
+                "
+                (click)="selectAgent.emit(agent.agentId)"
+              >
+                <div class="flex w-full min-w-0 items-center justify-between gap-2">
+                  <span class="min-w-0 truncate text-xs font-medium">{{ agentLabel(agent) }}</span>
+                  <cw-subagent-status [agent]="agent" />
                 </div>
-                <div class="cw-agent-dive__hero-meta">
-                  <span>{{ agent.status === 'stopped' ? 'Completed' : 'Running' }}</span>
-                  <span>{{ formatTimestamp(agent.lastEventAt) }}</span>
-                  @if (agent.stopHookActive) {
-                    <span>Stop hook active</span>
+                <span
+                  class="line-clamp-2 w-full whitespace-normal text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
+                  >{{ agent.prompt || agent.summary || humanizeAgentType(agent.agentType) }}</span
+                >
+              </button>
+            }
+            @if (!visibleAgents().length) {
+              <p class="p-3 text-xs text-muted-foreground">No agents match this filter.</p>
+            }
+          </div>
+        </nav>
+        <section class="cw-agent-dive__main flex min-w-0 min-h-0 flex-col">
+          @if (selectedAgent(); as agent) {
+            <header
+              class="cw-agent-dive__hero flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3"
+            >
+              <div class="min-w-0">
+                <div class="cw-agent-dive__hero-title truncate text-sm font-semibold">
+                  {{ agentLabel(agent) }}
+                </div>
+                <div
+                  class="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground"
+                >
+                  <span>{{ humanizeAgentType(agent.agentType) }}</span>
+                  @if (parentAgent(); as parent) {
+                    <button
+                      type="button"
+                      class="underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      (click)="selectAgent.emit(parent.agentId)"
+                    >
+                      From {{ agentLabel(parent) }}
+                    </button>
                   }
                 </div>
               </div>
-              <div class="cw-agent-dive__tabs">
+              <div class="flex items-center gap-1">
+                <div class="flex items-center gap-0.5" aria-label="Agent detail views">
+                  <button
+                    z-button
+                    zType="ghost"
+                    zSize="sm"
+                    type="button"
+                    class="h-7 px-2 text-xs data-[active=true]:bg-muted"
+                    [attr.data-active]="tab() === 'transcript'"
+                    [attr.aria-pressed]="tab() === 'transcript'"
+                    (click)="tab.set('transcript')"
+                  >
+                    Chat
+                  </button>
+                  <button
+                    z-button
+                    zType="ghost"
+                    zSize="sm"
+                    type="button"
+                    class="h-7 px-2 text-xs data-[active=true]:bg-muted"
+                    [attr.data-active]="tab() === 'timeline'"
+                    [attr.aria-pressed]="tab() === 'timeline'"
+                    (click)="tab.set('timeline')"
+                  >
+                    Activity
+                  </button>
+                  @if (hookEventsForSelectedAgent().length) {
+                    <button
+                      z-button
+                      zType="ghost"
+                      zSize="sm"
+                      type="button"
+                      class="h-7 px-2 text-xs data-[active=true]:bg-muted"
+                      [attr.data-active]="tab() === 'hooks'"
+                      [attr.aria-pressed]="tab() === 'hooks'"
+                      (click)="tab.set('hooks')"
+                    >
+                      Hooks
+                    </button>
+                  }
+                </div>
                 <button
+                  z-button
+                  zType="ghost"
+                  zSize="sm"
                   type="button"
-                  [class.is-active]="tab() === 'timeline'"
-                  (click)="tab.set('timeline')"
+                  aria-label="Refresh agent transcript"
+                  [disabled]="selectedHistoryState()?.loading"
+                  (click)="refreshAgent.emit(agent.agentId)"
                 >
-                  <ng-icon name="lucideActivity" size="13" />
-                  Timeline
-                </button>
-                <button
-                  type="button"
-                  [class.is-active]="tab() === 'transcript'"
-                  (click)="tab.set('transcript')"
-                >
-                  <ng-icon name="lucideScrollText" size="13" />
-                  Transcript
-                </button>
-                <button
-                  type="button"
-                  [class.is-active]="tab() === 'hooks'"
-                  (click)="tab.set('hooks')"
-                >
-                  <ng-icon name="lucideFileSearch" size="13" />
-                  Hooks
+                  <ng-icon
+                    name="lucideRefreshCw"
+                    size="14"
+                    [class.animate-spin]="selectedHistoryState()?.loading"
+                  />
                 </button>
               </div>
-            </div>
-
-            @if (selectedHistoryState()?.loading) {
-              <div class="cw-agent-dive__empty">Loading agent transcript…</div>
+            </header>
+            @if (selectedHistoryState()?.error) {
+              <div
+                class="mx-5 mt-3 flex shrink-0 items-center gap-3 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs"
+                role="status"
+              >
+                <span class="flex-1">{{ selectedHistoryState()?.error }}</span>
+                <button
+                  z-button
+                  zType="ghost"
+                  zSize="sm"
+                  type="button"
+                  [disabled]="selectedHistoryState()?.loading"
+                  (click)="refreshAgent.emit(agent.agentId)"
+                >
+                  Retry
+                </button>
+              </div>
+            }
+            @if (selectedHistoryState()?.loading && !selectedHistoryState()?.data) {
+              <div
+                class="flex flex-1 flex-col gap-4 p-5"
+                aria-label="Loading agent transcript"
+                aria-busy="true"
+              >
+                <z-skeleton class="h-16 w-full rounded-xl" /><z-skeleton
+                  class="h-32 w-full rounded-xl"
+                /><z-skeleton class="h-20 w-3/4 rounded-xl" />
+              </div>
+            } @else if (tab() === 'transcript') {
+              <div
+                class="cw-agent-dive__chat min-h-0 flex-1 overflow-auto px-[clamp(0.75rem,4vw,2rem)] py-5"
+                cwTranscriptViewport
+                [items]="chatHistory()"
+                [runPhase]="agent.status === 'started' ? 'running' : 'idle'"
+                [sessionKey]="agent.agentId"
+                aria-label="Agent conversation"
+              >
+                @if (chatItems().length) {
+                  <cw-transcript
+                    [items]="chatItems()"
+                    [worktreePath]="worktreePath()"
+                    [toolState]="chatTools()"
+                    [turnExpansion]="turnExpansion()"
+                    [canInspectAgents]="true"
+                    (toggleTurn)="toggleTurn($event)"
+                    (toggleTurnChanges)="toggleChanges($event)"
+                    (closeTurnChanges)="closeChanges($event)"
+                    (openAgent)="selectAgent.emit($event)"
+                    (inspectTurn)="tab.set('timeline')"
+                    (inspectAgent)="selectAgent.emit($event.agentId)"
+                    (messageCopy)="copyMessage($event.item, $event.text)"
+                    (openLocalFile)="openLocalFile.emit($event)"
+                  />
+                } @else {
+                  <p class="mx-auto max-w-[52rem] text-sm text-muted-foreground">
+                    {{ selectedHistoryState()?.data?.transcriptError || 'No messages yet.' }}
+                  </p>
+                }
+              </div>
             } @else if (tab() === 'timeline') {
               <div class="cw-agent-dive__timeline">
                 @for (entry of timelineEntries(); track entry.id) {
@@ -104,11 +284,25 @@
                     @case ('message') {
                       <article class="cw-agent-dive__note" [attr.data-tone]="entry.tone">
                         <div class="cw-agent-dive__note-label">{{ entry.label }}</div>
-                        <div class="cw-agent-dive__note-copy">{{ entry.content }}</div>
+                        <agent-markdown
+                          class="cw-agent-dive__note-copy block [overflow-wrap:anywhere]"
+                          [content]="entry.content"
+                          [worktreePath]="worktreePath()"
+                          (openLocalFile)="openLocalFile.emit($event)"
+                        />
                       </article>
                     }
                     @case ('tool') {
-                      <cw-tool-call [call]="entry.call" [result]="entry.result" />
+                      <cw-tool-call
+                        [call]="entry.call"
+                        [result]="entry.result"
+                        [agents]="agentIndex()"
+                        [canInspectAgents]="true"
+                        [worktreePath]="worktreePath()"
+                        [isLive]="agent.status === 'started' && !entry.result"
+                        (inspectAgent)="selectAgent.emit($event)"
+                        (openLocalFile)="openLocalFile.emit($event)"
+                      />
                     }
                     @case ('cluster') {
                       <details class="cw-agent-dive__cluster">
@@ -132,44 +326,6 @@
                   <div class="cw-agent-dive__empty">No timeline details yet.</div>
                 }
               </div>
-            } @else if (tab() === 'transcript') {
-              @if (selectedHistoryState()?.data?.transcriptAvailable === false) {
-                <div class="cw-agent-dive__empty">
-                  {{
-                    selectedHistoryState()?.data?.transcriptError ||
-                      selectedHistoryState()?.error ||
-                      'Transcript unavailable.'
-                  }}
-                </div>
-              } @else {
-                <div class="cw-agent-dive__timeline">
-                  @for (unit of transcriptUnits(); track unit.id) {
-                    @switch (unit.kind) {
-                      @case ('message') {
-                        <cw-message [item]="unit.item" />
-                      }
-                      @case ('thinking') {
-                        <article class="cw-agent-dive__note">
-                          <div class="cw-agent-dive__note-label">Thinking</div>
-                          <div class="cw-agent-dive__note-copy">{{ unit.item.content }}</div>
-                        </article>
-                      }
-                      @case ('tool') {
-                        <cw-tool-call [call]="unit.call" [result]="unit.result" />
-                      }
-                      @case ('system') {
-                        <article class="cw-agent-dive__note">
-                          <div class="cw-agent-dive__note-label">System</div>
-                          <div class="cw-agent-dive__note-copy">{{ unit.item.content }}</div>
-                        </article>
-                      }
-                    }
-                  }
-                  @if (!transcriptUnits().length) {
-                    <div class="cw-agent-dive__empty">No transcript events available.</div>
-                  }
-                </div>
-              }
             } @else {
               <div class="cw-agent-dive__timeline">
                 @for (
@@ -183,11 +339,32 @@
                     </div>
                   </article>
                 }
-                @if (!hookEventsForSelectedAgent().length) {
-                  <div class="cw-agent-dive__empty">No hook events captured for this agent.</div>
-                }
               </div>
             }
+            <footer
+              class="cw-agent-dive__status flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-border px-5 py-2 text-[11px] text-muted-foreground"
+              aria-label="Agent status"
+            >
+              <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                <cw-subagent-status [agent]="agent" />
+                @if (agent.model) {
+                  <span class="truncate"
+                    >{{ agent.model
+                    }}{{ agent.reasoningEffort ? ' / ' + agent.reasoningEffort : '' }}</span
+                  >
+                }
+              </div>
+              @if (agent.contextUsage; as usage) {
+                <cw-context-usage
+                  [usage]="usage"
+                  [provider]="provider()"
+                  [contextLabel]="agentLabel(agent)"
+                  [updatedAt]="agent.contextUsageUpdatedAt"
+                />
+              }
+            </footer>
+          } @else {
+            <div class="cw-agent-dive__empty">Select an agent to see its conversation.</div>
           }
         </section>
       </div>

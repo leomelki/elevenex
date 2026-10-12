@@ -1,4 +1,8 @@
-import type { AgentToolProgress, AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
+import type {
+  AgentToolProgress,
+  AgentTranscriptItem,
+  AgentSubagentState,
+} from '@/shared/models/agent-runtime.model';
 import type { ReviewChat } from '@/shared/models/review-chat.model';
 import type { AgentConversation } from '../agent-conversation';
 
@@ -6,6 +10,7 @@ export interface TranscriptToolState {
   readonly children: Readonly<Record<string, readonly AgentTranscriptItem[]>>;
   readonly liveIds: ReadonlySet<string>;
   readonly progress: Readonly<Record<string, AgentToolProgress>>;
+  readonly agents?: ReadonlyMap<string, AgentSubagentState>;
 }
 
 export interface TranscriptTurnExpansion {
@@ -33,5 +38,6 @@ export function transcriptToolState(conversation: AgentConversation | null): Tra
     children: conversation.childItemsByParentToolUseId(),
     liveIds: conversation.liveToolUseIds(),
     progress: conversation.toolProgressByToolUseId(),
+    agents: conversation.subagentIndex(),
   };
 }

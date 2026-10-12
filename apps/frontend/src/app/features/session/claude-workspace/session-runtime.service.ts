@@ -199,6 +199,8 @@ export class SessionRuntime {
   // re-derived from the subagent ring buffer here: a missed stop hook used to
   // leave this stuck non-empty, which silently queued every later message.
   readonly backgroundWork = this.conversation.backgroundWork.asReadonly();
+  /** Codex starts/queues input according to the parent turn, independently of child threads. */
+  readonly queueBehindBackgroundWork = computed(() => this.currentProvider() !== 'codex');
 
   // True while the current run was started by background work reporting back
   // rather than by a user prompt. The turn itself behaves identically; this is
@@ -631,7 +633,7 @@ export class SessionRuntime {
   acceptPrompt(content: string): boolean {
     const startsImmediately =
       this.runPhase() === 'idle' &&
-      !this.backgroundWork().length &&
+      (!this.queueBehindBackgroundWork() || !this.backgroundWork().length) &&
       !this.pendingPrompts().length &&
       !this.queuePaused();
     if (startsImmediately && this.submitting()) return false;

@@ -179,6 +179,24 @@ export function buildTranscriptRenderItems(
           collapsibleUnits.length,
           options.subagents,
           options.hookEvents,
+          new Set(
+            collapsibleUnits.flatMap((entry) => (entry.kind === 'tool' ? [entry.toolUseId] : [])),
+          ),
+          new Set(
+            collapsibleUnits.flatMap((entry) => {
+              if (entry.kind !== 'tool') return [];
+              const input = entry.call.providerToolInput ?? entry.call.toolInput;
+              if (!input || typeof input !== 'object') return [];
+              const data = input as Record<string, unknown>;
+              return [
+                data['id'],
+                data['target'],
+                data['agent_id'],
+                ...(Array.isArray(data['ids']) ? data['ids'] : []),
+                ...(Array.isArray(data['receiverThreadIds']) ? data['receiverThreadIds'] : []),
+              ].filter((value): value is string => typeof value === 'string');
+            }),
+          ),
         ),
       });
     } else {

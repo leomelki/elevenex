@@ -50,6 +50,11 @@
         [progress]="progressFor(unit.toolUseId)"
         [turnId]="turn?.turnId ?? null"
         [hasAgentHistory]="canInspectAgents() && !!turn?.agentSummary"
+        [agents]="toolState().agents"
+        [canInspectAgents]="canInspectAgents()"
+        [worktreePath]="worktreePath()"
+        (inspectAgent)="openAgent.emit($event)"
+        (openLocalFile)="openLocalFile.emit($event)"
         (approve)="approve.emit($event)"
         (deny)="deny.emit($event)"
         (inspect)="inspectTurn.emit($event)"
@@ -89,6 +94,7 @@
           (toggle)="toggleTurn.emit(item.turnId)"
           (toggleChanges)="toggleTurnChanges.emit(item.turnId)"
           (inspect)="inspectTurn.emit(item.turnId)"
+          (inspectAgent)="inspectAgent.emit({ turnId: item.turnId, agentId: $event })"
         />
 
         @if (item.changeDetails && isTurnChangesExpanded(item.turnId)) {

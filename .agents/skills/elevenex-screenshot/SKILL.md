@@ -28,6 +28,7 @@ pnpm screenshot:ui --path /settings --name settings-dark --theme dark --state no
 pnpm screenshot:ui --session 213 --name prompt-chat-only --selector .cw-workspace
 pnpm screenshot:ui --session 213 --name remote-session --backend-url http://127.0.0.1:45678
 pnpm screenshot:ui --session 213 --name session-loading --state none --profile-load
+pnpm screenshot:ui --session 213 --name existing-app --state none --reuse-only
 ```
 
 When the requested state needs interaction, pass an ordered JSON action plan. Prefer stable
@@ -60,6 +61,15 @@ saved Elevenex environment settings.
 The command may need one escalated shell approval because it can bind localhost ports and
 launch headless Chrome. Request that approval on the command itself, not through a separate
 preflight command.
+
+When the user asks to leave their running app alone, use `--reuse-only`. This mode
+requires already-running servers and never starts or stops application processes.
+If a server is unavailable, it fails without changing application state.
+
+If a separate frontend preview is needed and the user only prohibits stopping
+their app, pass the existing backend with `--backend-url` and use `--keep-servers`.
+This can start a missing frontend preview and leaves it running after capture.
+Use `--reuse-only` for subsequent captures. Never stop the user's application.
 
 ## Return the image
 

@@ -3,6 +3,8 @@ import {
   type ClaudeSubagentHistoryState,
 } from '@/shared/agent-chat/activity/claude-agent-inspector.component';
 import { ClaudeBackgroundActivityComponent } from '@/shared/agent-chat/activity/claude-background-activity.component';
+import { SubagentOverviewComponent } from '@/shared/agent-chat/activity/subagent-overview.component';
+import { buildSessionAgentSummary } from '@/shared/agent-chat/activity/agent-deep-dive';
 import {
   ClaudeComposerComponent,
   type ComposerSendPayload,
@@ -91,6 +93,7 @@ export interface ForkedChatContextNote {
     ClaudePermissionInlineComponent,
     ClaudeUserInputComponent,
     ClaudeAgentInspectorComponent,
+    SubagentOverviewComponent,
     ClaudeComposerComponent,
     TranscriptLoadingSkeletonComponent,
   ],
@@ -171,6 +174,8 @@ export class ForkedChatComponent {
   readonly selectedAgentInspectorTurn = computed(() => {
     const turnId = this.agentInspectorTurnId();
     if (!turnId) return null;
+    if (turnId === 'session-agents')
+      return buildSessionAgentSummary(this.transcript()?.subagents() ?? []);
     const item = this.transcript()
       ?.renderItems()
       .find(
@@ -230,7 +235,7 @@ export class ForkedChatComponent {
     this.expandedTurnChanges.update((state) => ({ ...state, [turnId]: false }));
   }
 
-  openAgentInspector(turnId: string): void {
+  openAgentInspector(turnId: string, selectedAgentId?: string): void {
     const summary = this.transcript()
       ?.renderItems()
       .find(
@@ -239,7 +244,10 @@ export class ForkedChatComponent {
       )?.agentSummary;
     if (!summary?.agents.length) return;
 
-    const firstAgentId = summary.agents[0]?.agentId ?? null;
+    const firstAgentId =
+      summary.agents.find((agent) => agent.agentId === selectedAgentId)?.agentId ??
+      summary.agents[0]?.agentId ??
+      null;
     this.agentInspectorTurnId.set(turnId);
     this.agentInspectorSelectedAgentId.set(firstAgentId);
     if (firstAgentId) void this.ensureAgentHistory(firstAgentId);
@@ -253,6 +261,15 @@ export class ForkedChatComponent {
   selectAgentInspectorAgent(agentId: string): void {
     this.agentInspectorSelectedAgentId.set(agentId);
     void this.ensureAgentHistory(agentId);
+  }
+
+  openSessionAgents(agentId: string): void {
+    this.agentInspectorTurnId.set('session-agents');
+    this.selectAgentInspectorAgent(agentId);
+  }
+
+  refreshAgentHistory(agentId: string): void {
+    void this.ensureAgentHistory(agentId, true);
   }
 
   send(payload: ComposerSendPayload): void {
@@ -337,15 +354,15 @@ export class ForkedChatComponent {
     this.runtime.send(message);
   }
 
-  private async ensureAgentHistory(agentId: string): Promise<void> {
+  private async ensureAgentHistory(agentId: string, refresh = false): Promise<void> {
     const target = this.connection;
     if (!target) return;
     const current = this.agentHistoryById()[agentId];
-    if (current?.loading || current?.data) return;
+    if (current?.loading || (!refresh && current?.data)) return;
 
     this.agentHistoryById.update((state) => ({
       ...state,
-      [agentId]: { loading: true, data: null, error: null },
+      [agentId]: { loading: true, data: current?.data ?? null, error: null },
     }));
 
     try {
@@ -368,7 +385,7 @@ export class ForkedChatComponent {
         (error instanceof Error ? error.message : 'Could not load agent history.');
       this.agentHistoryById.update((state) => ({
         ...state,
-        [agentId]: { loading: false, data: null, error: message },
+        [agentId]: { loading: false, data: current?.data ?? null, error: message },
       }));
     }
   }

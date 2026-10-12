@@ -2,6 +2,7 @@ import {
   PairedTranscriptUnit,
   pairTranscript,
 } from '@/shared/agent-chat/transcript/paired-transcript';
+import { buildSubagentIndex } from '@/shared/agent-tools/agent-collaboration-format';
 import {
   buildTranscriptRenderItems,
   TranscriptRenderItem,
@@ -66,6 +67,7 @@ export class AgentConversation {
   readonly pendingUserInputRequest = signal<AgentUserInputRequest | null>(null);
   readonly toolProgressByToolUseId = signal<Record<string, AgentToolProgress>>({});
   readonly subagents = signal<AgentSubagentState[]>([]);
+  readonly subagentIndex = computed(() => buildSubagentIndex(this.subagents()));
   readonly recentHookEvents = signal<AgentHookEvent[]>([]);
   private readonly sortedHistory = computed(() => sortByTimestamp(this.history()));
   private readonly sortedLive = computed(() => sortByTimestamp(this.live()));

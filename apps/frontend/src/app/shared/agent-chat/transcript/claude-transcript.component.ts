@@ -137,6 +137,8 @@ export class ClaudeTranscriptComponent {
   readonly toggleTurnChanges = output<string>();
   readonly closeTurnChanges = output<string>();
   readonly inspectTurn = output<string>();
+  readonly openAgent = output<string>();
+  readonly inspectAgent = output<{ turnId: string; agentId: string }>();
 
   readonly messageCopy = output<{ item: AgentTranscriptItem; text: string | null }>();
   readonly fork = output<AgentTranscriptItem>();

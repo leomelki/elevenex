@@ -43,6 +43,7 @@ export type AgentToolKind =
   | 'web_search'
   | 'file_changes'
   | 'task_agent'
+  | 'agent_collaboration'
   | 'todo_write'
   | 'ask_user_question'
   | 'enter_plan_mode'
@@ -138,6 +139,7 @@ export interface ClaudePermissionBatchItem {
 
 export interface ClaudeUserInputRequest {
   requestId: string;
+  agentId?: string;
   /** Defaults to true for providers using blocking elicitations. */
   isBlocking?: boolean;
   serverName: string;
@@ -492,12 +494,33 @@ export interface ClaudeTaskLifecycle {
 
 export interface ClaudeSubagentState {
   agentId: string;
+  agentPath?: string;
   agentType: string;
   status: 'started' | 'stopped';
   transcriptPath?: string;
   stopHookActive?: boolean;
   lastAssistantMessage?: string;
   timestamp: string;
+  displayName?: string;
+  parentAgentId?: string;
+  parentToolUseId?: string;
+  prompt?: string;
+  model?: string;
+  reasoningEffort?: string;
+  startedAt?: string;
+  completedAt?: string;
+  /** Latest reported occupancy of this agent's own context window. */
+  contextUsage?: ClaudeContextUsage | null;
+  contextUsageUpdatedAt?: string;
+  executionStatus?:
+    | 'pending'
+    | 'running'
+    | 'waiting'
+    | 'completed'
+    | 'interrupted'
+    | 'error'
+    | 'closed'
+    | 'unavailable';
 }
 
 /**

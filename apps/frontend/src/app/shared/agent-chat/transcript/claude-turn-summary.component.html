@@ -75,7 +75,7 @@
             class="cw-turn-gap__inspect inline-flex items-center gap-1.5 px-3 py-[0.3rem] rounded-full border border-primary/38 bg-primary/9 text-[color-mix(in_oklab,var(--primary)_80%,var(--foreground))] text-[0.75rem] font-semibold cursor-pointer whitespace-nowrap transition-[background,border-color] duration-[120ms] hover:bg-primary/15 hover:border-primary/55 focus-visible:outline-none"
             (click)="inspect.emit()"
           >
-            Deep Dive →
+            Inspect agents →
           </button>
         }
       </div>
@@ -86,15 +86,12 @@
             class="flex items-center gap-2 min-w-0 w-full rounded-lg border border-border/80 bg-background/70 px-[0.625rem] py-[0.4rem] text-foreground cursor-pointer text-left transition-[background,border-color] duration-100 enabled:hover:bg-primary/6 enabled:hover:border-primary/28 disabled:cursor-default focus-visible:outline-none"
             [attr.data-state]="agent.status"
             [disabled]="!canInspect()"
-            (click)="inspect.emit()"
+            (click)="inspectAgent.emit(agent.agentId)"
           >
-            <span
-              class="w-[0.4375rem] h-[0.4375rem] rounded-full shrink-0 bg-muted-foreground data-[state=started]:bg-primary data-[state=started]:shadow-[0_0_0_2px_color-mix(in_oklab,var(--primary)_25%,transparent)] data-[state=stopped]:bg-[color-mix(in_oklab,var(--success)_88%,var(--foreground))]"
-              [attr.data-state]="agent.status"
-            ></span>
             <span class="text-[0.8125rem] font-semibold capitalize shrink-0">{{
-              agent.agentType
+              agentLabel(agent)
             }}</span>
+            <cw-subagent-status [agent]="agent" />
             @if (agent.summary) {
               <span
                 class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.75rem] text-muted-foreground"
