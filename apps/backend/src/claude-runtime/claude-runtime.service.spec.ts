@@ -3281,6 +3281,7 @@ describe('ClaudeRuntimeService', () => {
         agentType: 'code-reviewer',
       }),
       transcriptAvailable: true,
+      hasEarlier: false,
       history: [
         expect.objectContaining({
           id: 'agent-user-1:user:0',
@@ -3778,6 +3779,7 @@ describe('ClaudeRuntimeService', () => {
       history: [],
       transcriptAvailable: false,
       transcriptState: 'starting',
+      hasEarlier: false,
       transcriptError: 'Waiting for the first agent message…',
     });
   });
@@ -4863,6 +4865,7 @@ describe('ClaudeRuntimeService', () => {
       ]);
       const history = await service.getSubagentHistory(7, 'worker');
       expect(history.transcriptAvailable).toBe(true);
+      expect(history.hasEarlier).toBe(false);
       expect(history.history[0].content).toBe('Checking caches.');
     });
     it('coalesces a targeted stop and never closes the shared query', async () => {
@@ -4908,6 +4911,50 @@ describe('ClaudeRuntimeService', () => {
         executionStatus: 'unavailable',
       });
     });
+    it.each([
+      'pending',
+      'paused',
+      'completed',
+      'failed',
+      'stopped',
+      'unavailable',
+    ])(
+      'preserves %s status across background membership updates and starts a newer run',
+      (status) => {
+        liveRuntime();
+        const state = startWorker();
+        (service as any).upsertTask(7, {
+          taskId: 'worker',
+          runId: '001',
+          status,
+          updatedAt: '2026-10-12T10:00:00Z',
+        });
+        const native = {
+          task_id: 'worker',
+          run_id: '001',
+          task_type: 'local_agent',
+          description: 'Worker',
+        };
+        (service as any).handleBackgroundTasksChanged(7, { tasks: [native] });
+        expect(state.tasks[0].status).toBe(status);
+        (service as any).handleBackgroundTasksChanged(7, {
+          tasks: [{ ...native, run_id: '002' }],
+        });
+        expect(state.tasks[0]).toMatchObject({
+          runId: '002',
+          status: 'running',
+        });
+        expect(state.subagents[0]).toMatchObject({
+          runId: '002',
+          executionStatus: 'running',
+        });
+        (service as any).handleBackgroundTasksChanged(7, { tasks: [native] });
+        expect(state.tasks[0]).toMatchObject({
+          runId: '002',
+          status: 'running',
+        });
+      },
+    );
     it('does not register a parent turn or retain its worker logs for child messages', async () => {
       liveRuntime();
       const state = startWorker();

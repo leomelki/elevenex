@@ -40,6 +40,7 @@ const EMPTY_FORKS: readonly SessionFork[] = [];
 export class SessionMessageActions {
   private releaseAgentWatch: (() => void) | null = null;
   private watchedAgentId: string | null = null;
+  private readonly pendingAgentHistoryRefresh = new Set<string>();
   private readonly api = inject(ClaudeRuntimeApiService);
   private readonly sessionsService = inject(SessionsService);
   private readonly destroyRef = inject(DestroyRef);
@@ -226,6 +227,7 @@ export class SessionMessageActions {
     this.releaseAgentWatch = null;
     this.watchedAgentId = null;
     this.agentHistoryById.set({});
+    this.pendingAgentHistoryRefresh.clear();
     this.agentActionBusy.set({});
   }
 
@@ -405,15 +407,13 @@ export class SessionMessageActions {
       null;
     this.agentInspectorTurnId.set(turnId);
     this.agentInspectorSelectedAgentId.set(firstAgentId);
-    if (firstAgentId) this.setAgentWatch(firstAgentId);
-    if (firstAgentId) {
-      void this.ensureAgentHistory(firstAgentId);
-    }
+    if (firstAgentId) this.selectAgentInspectorAgent(firstAgentId);
   }
 
   closeAgentInspector(): void {
     this.releaseAgentWatch?.();
     this.releaseAgentWatch = null;
+    if (this.watchedAgentId) this.pendingAgentHistoryRefresh.delete(this.watchedAgentId);
     if (this.watchedAgentId) this.runtime.clearSubagentLiveItems(this.watchedAgentId);
     this.watchedAgentId = null;
     this.agentInspectorTurnId.set(null);
@@ -427,9 +427,12 @@ export class SessionMessageActions {
   }
 
   private setAgentWatch(agentId: string): void {
+    if (this.watchedAgentId === agentId && this.releaseAgentWatch) return;
     this.releaseAgentWatch?.();
-    if (this.watchedAgentId && this.watchedAgentId !== agentId)
+    if (this.watchedAgentId && this.watchedAgentId !== agentId) {
       this.runtime.clearSubagentLiveItems(this.watchedAgentId);
+      this.pendingAgentHistoryRefresh.delete(this.watchedAgentId);
+    }
     this.watchedAgentId = agentId;
     this.releaseAgentWatch = this.runtime.watchSubagent(agentId);
   }
@@ -439,9 +442,14 @@ export class SessionMessageActions {
   }
 
   selectAgentInspectorAgent(agentId: string): void {
+    const reopening = this.watchedAgentId !== agentId;
     this.setAgentWatch(agentId);
     this.agentInspectorSelectedAgentId.set(agentId);
-    void this.ensureAgentHistory(agentId);
+    // Live messages are only retained while watched. Resubscribe before fetching
+    // a fresh tail so messages received while switching agents are not lost.
+    const live =
+      this.runtime.subagents().find((agent) => agent.agentId === agentId)?.status === 'started';
+    void this.ensureAgentHistory(agentId, reopening && live);
   }
 
   loadEarlierAgentHistory(agentId: string): void {
@@ -710,7 +718,20 @@ export class SessionMessageActions {
   ): Promise<void> {
     const version = this.runtime.bootstrapVersion;
     const current = this.agentHistoryById()[agentId];
-    if (current?.loading || (!refresh && current?.data)) return;
+    const agent = this.runtime.subagents().find((item) => item.agentId === agentId);
+    const cached = current?.data?.subagent;
+    const stale =
+      !!agent &&
+      !!cached &&
+      (agent.timestamp > cached.timestamp ||
+        agent.status !== cached.status ||
+        agent.runId !== cached.runId);
+    if (current?.loading) {
+      // Coalesce a refresh requested during pagination or an older tail request.
+      if (refresh || stale) this.pendingAgentHistoryRefresh.add(agentId);
+      return;
+    }
+    if (!refresh && !stale && current?.data && !current.error) return;
 
     this.agentHistoryById.update((state) => ({
       ...state,
@@ -735,7 +756,7 @@ export class SessionMessageActions {
                   : data.transcriptError || null,
             },
           },
-          agentId,
+          this.agentInspectorSelectedAgentId() ?? agentId,
         ),
       );
     } catch (error) {
@@ -747,6 +768,14 @@ export class SessionMessageActions {
         ...state,
         [agentId]: { loading: false, data: current?.data ?? null, error: message },
       }));
+    } finally {
+      if (version === this.runtime.bootstrapVersion && !this.destroyRef.destroyed) {
+        const queued = this.pendingAgentHistoryRefresh.delete(agentId);
+        const latest = this.runtime.subagents().find((item) => item.agentId === agentId);
+        const finishedDuringRequest = agent?.status === 'started' && latest?.status === 'stopped';
+        if (this.watchedAgentId === agentId && (queued || finishedDuringRequest))
+          void this.ensureAgentHistory(agentId, true);
+      }
     }
   }
 }

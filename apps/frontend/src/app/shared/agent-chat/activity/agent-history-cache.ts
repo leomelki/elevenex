@@ -13,7 +13,7 @@ export function mergeAgentHistory(
     ...next,
     history: [...items.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp)),
     transcriptAvailable: next.transcriptAvailable || previous.transcriptAvailable,
-    hasEarlier: earlier ? next.hasEarlier : (previous.hasEarlier ?? next.hasEarlier),
+    hasEarlier: earlier ? (next.hasEarlier ?? false) : (previous.hasEarlier ?? next.hasEarlier),
   };
 }
 

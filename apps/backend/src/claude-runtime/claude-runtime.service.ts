@@ -1020,7 +1020,7 @@ export class ClaudeRuntimeService
                   ? ('starting' as const)
                   : ('unavailable' as const),
             }),
-        ...(hasEarlier ? { hasEarlier: true } : {}),
+        hasEarlier,
         transcriptAvailable: Boolean(history.length),
         ...(history.length
           ? {}
@@ -4876,7 +4876,11 @@ export class ClaudeRuntimeService
       state.backgroundWork.map((item) => [item.id, item]),
     );
     const now = new Date().toISOString();
+    const existingTasks = new Map(
+      state.tasks.map((task) => [task.taskId, task]),
+    );
     for (const native of message.tasks) {
+      const existing = existingTasks.get(native.task_id);
       const task = this.upsertTask(sessionId, {
         taskId: native.task_id,
         runId: native.run_id,
@@ -4886,7 +4890,12 @@ export class ClaudeRuntimeService
         description: native.description,
         ambient: native.ambient,
         isBackgrounded: true,
-        status: 'running',
+        // Membership describes liveness, not execution status. Only a new run
+        // starts running here; task edges own pauses and terminal outcomes.
+        status:
+          !existing || (native.run_id && native.run_id !== existing.runId)
+            ? 'running'
+            : undefined,
         updatedAt: now,
       });
       this.syncTaskBackgroundWork(sessionId, task);
