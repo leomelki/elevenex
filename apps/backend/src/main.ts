@@ -26,7 +26,6 @@ import { ClaudeRuntimeService } from './claude-runtime/claude-runtime.service.js
 import { RuntimeControlService } from './runtime-control/runtime-control.service.js';
 import { ElevenexMcpHttpTransport } from './mcp/transport/elevenex-mcp-http.transport.js';
 import { AgentChannelGateway } from './mcp/human-channel/agent-channel.gateway.js';
-import { LocalComputerChannelGateway } from './mcp/local-computer/local-computer-channel.gateway.js';
 import { CookieProxyService } from './plannotator/cookie-proxy.service.js';
 import { join } from 'path';
 import * as http from 'http';
@@ -364,8 +363,6 @@ async function bootstrap() {
 
   const agentChannelGateway = app.get(AgentChannelGateway);
   agentChannelGateway.attachToServer(httpServer);
-  const localComputerChannelGateway = app.get(LocalComputerChannelGateway);
-  localComputerChannelGateway.attachToServer(httpServer);
 
   await app.init();
 

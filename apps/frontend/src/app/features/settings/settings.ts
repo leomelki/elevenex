@@ -24,7 +24,6 @@ import {
   lucideSettings,
   lucideSparkles,
   lucideSquareTerminal,
-  lucideTerminal,
   lucideTriangleAlert,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
@@ -42,7 +41,6 @@ import { AppUpdateComponent } from './components/app-update.component';
 import { SpeechToTextSettingsComponent } from './components/speech-to-text.component';
 import { getElectronExternalLinksApi } from '@/shared/runtime/electron-external-links';
 import { FRONTEND_GIT_SHA } from '../../../build-info';
-import { LocalComputerBashService } from '@/shared/services/local-computer-bash.service';
 import {
   SESSION_TOOLBAR_BUTTON_DEFINITION_MAP,
   SessionToolbarButtonPreference,
@@ -86,7 +84,6 @@ import {
       lucideSettings,
       lucideSparkles,
       lucideSquareTerminal,
-      lucideTerminal,
       lucideTriangleAlert,
     }),
   ],
@@ -95,7 +92,6 @@ export class Settings {
   private readonly http = inject(HttpClient);
   private readonly externalLinks = getElectronExternalLinksApi();
   readonly appSettings = inject(AppSettingsService);
-  readonly localComputerBash = inject(LocalComputerBashService);
 
   readonly frontendSha = FRONTEND_GIT_SHA.slice(0, 7);
   readonly backendSha = signal('...');
@@ -130,12 +126,6 @@ export class Settings {
     void this.appSettings
       .saveDefaultClaudeSessionSurface(surface)
       .catch(() => toast.error('Could not save settings.'));
-  }
-
-  setLocalBashEnabled(enabled: boolean): void {
-    void this.localComputerBash
-      .setEnabled(enabled)
-      .catch(() => toast.error('Could not update local computer Bash access.'));
   }
 
   stepMaxWorktrees(delta: -1 | 1): void {

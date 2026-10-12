@@ -42,7 +42,6 @@ import { AgentCommandBarComponent } from './features/agent-control/agent-command
 import { ZardButtonComponent } from './shared/components/button';
 import { ZardInputDirective } from './shared/components/input';
 import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
-import { LocalComputerBashService } from '@/shared/services/local-computer-bash.service';
 
 const SIDEBAR_MIN = 250;
 const SIDEBAR_MAX = 420;
@@ -107,7 +106,6 @@ export class App implements OnInit, OnDestroy {
   private readonly serverConnection = inject(ServerConnectionService);
   private readonly onboardingState = inject(OnboardingStateService);
   private readonly theme = inject(ThemeService);
-  private readonly localComputerBash = inject(LocalComputerBashService);
   private readonly windowControls = getElectronWindowControlsApi();
   private readonly runtimeMode = getRuntimeConfig().mode;
 

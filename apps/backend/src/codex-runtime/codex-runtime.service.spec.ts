@@ -1675,20 +1675,13 @@ describe('CodexRuntimeService', () => {
       expect.objectContaining({
         sandbox: 'workspace-write',
         approvalPolicy: 'on-request',
-        config: {
-          mcp_servers: {
-            elevenex_local_computer: expect.objectContaining({
-              http_headers: {
-                Authorization: 'Bearer evx_codex_test',
-              },
-              enabled_tools: ['run_local_bash'],
-              tool_timeout_sec: 125,
-            }),
-          },
-        },
       }),
     );
-    expect(mcpAgentTokens.ensureToken).toHaveBeenCalledWith(7);
+    expect(mcpAgentTokens.ensureToken).not.toHaveBeenCalled();
+    const threadStartParams = appServer.request.mock.calls.find(
+      ([method]) => method === 'thread/start',
+    )?.[1];
+    expect(threadStartParams).not.toHaveProperty('config');
     expect(wire.turnStartParams).toEqual({
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'Plan this change' }],
@@ -1741,9 +1734,7 @@ describe('CodexRuntimeService', () => {
     expect(
       threadParams.config.mcp_servers.elevenex.enabled_tools,
     ).toBeUndefined();
-    expect(
-      threadParams.config.mcp_servers.elevenex_local_computer,
-    ).toBeUndefined();
+    expect(Object.keys(threadParams.config.mcp_servers)).toEqual(['elevenex']);
     expect(
       (wire.turnStartParams as any).collaborationMode.settings
         .developer_instructions,

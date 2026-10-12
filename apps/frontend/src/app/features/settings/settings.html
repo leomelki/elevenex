@@ -12,54 +12,6 @@
       </div>
     </header>
 
-    @if (localComputerBash.state().supported) {
-      <section class="rounded-lg border border-border bg-card">
-        <div class="border-b border-border px-5 py-4">
-          <h2 class="text-sm font-semibold text-foreground">Local computer access</h2>
-          <p class="mt-1 text-sm text-muted-foreground">
-            Let the Elevenex agent reach this computer while its backend runs remotely.
-          </p>
-        </div>
-
-        <div class="grid gap-4 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
-          <div class="min-w-0">
-            <div class="flex items-center gap-2 text-sm font-medium text-foreground">
-              <ng-icon name="lucideTerminal" size="15" />
-              Local computer Bash
-            </div>
-            <div class="mt-1 text-sm text-muted-foreground">
-              Adds a
-              <code class="rounded bg-muted px-1 py-0.5 text-xs text-foreground"
-                >run_local_bash</code
-              >
-              tool while this desktop is connected to SSH, WSL, or a paired desktop. Commands run on
-              <span class="font-medium text-foreground">{{ localComputerBash.state().label }}</span
-              >, outside the remote environment. Disabled by default.
-            </div>
-            @if (localComputerBash.state().enabled) {
-              <div class="mt-2 flex items-center gap-1.5 text-sm text-warning">
-                <ng-icon name="lucideTriangleAlert" size="14" />
-                <span>The remote agent can run commands with your local user permissions.</span>
-              </div>
-            }
-            @if (localComputerBash.error()) {
-              <div class="mt-2 text-sm text-destructive" role="alert">
-                {{ localComputerBash.error() }}
-              </div>
-            }
-          </div>
-
-          <z-checkbox
-            [zDisabled]="localComputerBash.saving()"
-            [ngModel]="localComputerBash.state().enabled"
-            (ngModelChange)="setLocalBashEnabled($event)"
-          >
-            Enable
-          </z-checkbox>
-        </div>
-      </section>
-    }
-
     <section class="rounded-lg border border-border bg-card">
       <div class="border-b border-border px-5 py-4">
         <h2 class="text-sm font-semibold text-foreground">Agent presets</h2>
