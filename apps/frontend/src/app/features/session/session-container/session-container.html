@@ -1,4 +1,9 @@
-<div class="session-container h-full flex flex-col">
+<div class="session-container relative h-full flex flex-col">
+  @if (openingSessionId()) {
+    <div class="absolute inset-0 z-10 flex items-center justify-center bg-background text-sm text-muted-foreground" role="status">
+      Opening session…
+    </div>
+  }
   @if (hasTabs()) {
     <app-task-header [taskId]="activeTab()?.workspaceId" />
     <!-- Tab Bar -->

@@ -364,7 +364,7 @@ interface RuntimeState {
   metadataRefreshRuntime: ClaudeSessionRuntime | null;
   metadataRefreshPromise: Promise<void> | null;
   modelsRefreshPromise: Promise<void> | null;
-  metadataRefreshPending: boolean;
+  metadataRefreshPendingReason: string | null;
   metadataRefreshStartedAtMs: number | null;
   metadataRefreshCompletedAtMs: number | null;
   lastHistoryItemCount: number | null;
@@ -1120,13 +1120,14 @@ export class ClaudeRuntimeService
     if (runtime) {
       await runtime.setModel(selectedModel ?? undefined);
       this.restartIdleRuntimeForOptionChange(sessionId);
-      await this.refreshRuntimeMetadata(sessionId, {
+      // Context/model discovery is optional UI metadata. Publish the accepted
+      // selection immediately rather than holding the picker on a CLI probe.
+      void this.refreshRuntimeMetadata(sessionId, {
         force: true,
         reason: 'model_change',
+      }).catch((error) => {
+        this.logger.debug(`Model metadata refresh failed session=${sessionId}: ${String(error)}`);
       });
-      // Keep the user's explicit model selection even if runtime metadata reports a
-      // different value during a pre/post-change refresh cycle.
-      state.selectedModel = selectedModel;
       this.emitRunState(sessionId);
     }
 
@@ -4963,7 +4964,7 @@ export class ClaudeRuntimeService
       metadataRefreshRuntime: null,
       metadataRefreshPromise: null,
       modelsRefreshPromise: null,
-      metadataRefreshPending: false,
+      metadataRefreshPendingReason: null,
       metadataRefreshStartedAtMs: null,
       metadataRefreshCompletedAtMs: null,
       lastHistoryItemCount: null,
@@ -5842,11 +5843,14 @@ export class ClaudeRuntimeService
       state.metadataRefreshRuntime = runtime;
       state.metadataRefreshPromise = null;
       state.modelsRefreshPromise = null;
-      state.metadataRefreshPending = false;
+      state.metadataRefreshPendingReason = null;
       state.metadataRefreshCompletedAtMs = null;
     }
     if (state.metadataRefreshPromise) {
-      if (options.force) state.metadataRefreshPending = true;
+      // Preserve a coalesced model change so discovery cannot replace the
+      // user's selection with a resolved model name in the queued refresh.
+      if (options.force && state.metadataRefreshPendingReason !== 'model_change')
+        state.metadataRefreshPendingReason = options.reason ?? 'context_boundary';
       if (options.reason !== 'sdk_activity')
         this.logger.debug(
           `Claude runtime metadata refresh coalesced session=${sessionId} reason=${options.reason ?? 'unspecified'}`,
@@ -5920,7 +5924,8 @@ export class ClaudeRuntimeService
         if (!isCurrent() || state.selectedModel !== selectedModelAtStart)
           return;
         state.contextUsage = this.toContextUsage(contextUsage);
-        state.selectedModel = contextUsage.model || state.selectedModel;
+        if (options.reason !== 'model_change')
+          state.selectedModel = contextUsage.model || state.selectedModel;
         if (state.sessionMetadata && contextUsage.model) {
           state.sessionMetadata = {
             ...state.sessionMetadata,
@@ -5945,11 +5950,12 @@ export class ClaudeRuntimeService
       } finally {
         if (state.metadataRefreshRuntime === runtime)
           state.metadataRefreshPromise = null;
-        if (state.metadataRefreshPending && isCurrent()) {
-          state.metadataRefreshPending = false;
+        if (state.metadataRefreshPendingReason && isCurrent()) {
+          const reason = state.metadataRefreshPendingReason;
+          state.metadataRefreshPendingReason = null;
           void this.refreshRuntimeMetadata(sessionId, {
             force: true,
-            reason: 'context_boundary',
+            reason,
           }).catch(() => undefined);
         }
       }

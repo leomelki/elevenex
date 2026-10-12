@@ -38,6 +38,32 @@ describe('Task creation', () => {
       ],
     });
   });
+  it('keeps the creation dialog open until the destination route is activated', async () => {
+    let finishNavigation!: (value: boolean) => void;
+    const router = TestBed.inject(Router);
+    vi.mocked(router.navigate).mockReturnValue(new Promise((resolve) => finishNavigation = resolve));
+    api.create.mockReturnValue(of({ id: 86 }));
+    const component = TestBed.createComponent(TaskCreateComponent).componentInstance;
+    component.create();
+    expect(router.navigate).toHaveBeenCalledWith(['/tasks', 86]);
+    expect(close).not.toHaveBeenCalled();
+    finishNavigation(true);
+    await Promise.resolve();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('opens a ready task directly in its new session', async () => {
+    const router = TestBed.inject(Router);
+    vi.mocked(router.navigate).mockResolvedValue(true);
+    api.create.mockReturnValue(of({
+      id: 86, taskState: 'ready', sessions: [{ id: 120, status: 'created' }],
+    }));
+    TestBed.createComponent(TaskCreateComponent).componentInstance.create();
+    expect(router.navigate).toHaveBeenCalledWith(['/sessions', 120]);
+    await Promise.resolve();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it('generates a readable branch, while a manual branch survives later name edits', () => {
     const component = TestBed.createComponent(TaskCreateComponent).componentInstance;
     component.setName('Investigate café latency');

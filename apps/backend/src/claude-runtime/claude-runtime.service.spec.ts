@@ -2108,6 +2108,25 @@ describe('ClaudeRuntimeService', () => {
     );
   });
 
+  it('returns an accepted model change without waiting for optional context discovery', async () => {
+    const runtimeService = service as any;
+    let resolveUsage!: (usage: unknown) => void;
+    runtimeService.sessionRuntimes.set(7, {
+      isIdle: false,
+      setModel: jest.fn().mockResolvedValue(undefined),
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest.fn(() => new Promise((resolve) => resolveUsage = resolve)),
+    });
+    const result = await service.setSelectedModel(7, 'sonnet');
+    expect(result.selectedModel).toBe('sonnet');
+    resolveUsage({
+      model: 'claude-sonnet-resolved', totalTokens: 0, maxTokens: 200_000,
+      percentage: 0, memoryFiles: [], mcpTools: [],
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(runtimeService.ensureRuntimeState(7).selectedModel).toBe('sonnet');
+  });
+
   it('does not apply old-model context after a model change during a refresh', async () => {
     const runtimeService = service as any;
     let resolveUsage!: (usage: unknown) => void;
@@ -2158,6 +2177,29 @@ describe('ClaudeRuntimeService', () => {
     expect(contexts.every((context) => context.model === 'new-model')).toBe(
       true,
     );
+  });
+
+  it('preserves an explicit model alias when its metadata refresh is coalesced', async () => {
+    const runtimeService = service as any;
+    let resolveUsage!: (usage: unknown) => void;
+    const usage = {
+      model: 'claude-sonnet-resolved', totalTokens: 0, maxTokens: 200_000,
+      percentage: 0, memoryFiles: [], mcpTools: [],
+    };
+    runtimeService.sessionRuntimes.set(7, {
+      isIdle: false,
+      setModel: jest.fn().mockResolvedValue(undefined),
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest.fn()
+        .mockImplementationOnce(() => new Promise((resolve) => resolveUsage = resolve))
+        .mockResolvedValue(usage),
+    });
+    const refresh = runtimeService.refreshRuntimeMetadata(7);
+    await service.setSelectedModel(7, 'sonnet');
+    resolveUsage(usage);
+    await refresh;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(runtimeService.ensureRuntimeState(7).selectedModel).toBe('sonnet');
   });
 
   it('includes cache reads and writes once in the response input breakdown', () => {

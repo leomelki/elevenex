@@ -48,7 +48,7 @@ export class TasksService implements OnApplicationBootstrap {
   private readonly operations = new Map<number, Promise<void>>();
   private readonly conversations = new Map<
     number,
-    Promise<Awaited<ReturnType<SessionsService['create']>>>
+    Promise<typeof schema.sessions.$inferSelect>
   >();
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,

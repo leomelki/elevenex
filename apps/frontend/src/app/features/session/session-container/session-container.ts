@@ -1,6 +1,7 @@
 import { TaskHeaderComponent } from '@/features/tasks/task-header.component';
 import {
   Component,
+  DestroyRef,
   inject,
   Injector,
   OnInit,
@@ -16,8 +17,8 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, NavigationEnd } from '@angular/router';
-import { filter, takeUntil, switchMap, catchError } from 'rxjs/operators';
-import { Subject, interval, from, forkJoin, of } from 'rxjs';
+import { filter, takeUntil, switchMap, catchError, mergeMap } from 'rxjs/operators';
+import { Subject, interval, from, of } from 'rxjs';
 import { TabBar } from '../tab-bar/tab-bar';
 import { Tab, TabCloseResult, TabService } from '../tab-service';
 import { SessionsService } from '../../../shared/services/sessions.service';
@@ -192,6 +193,8 @@ export class SessionContainer implements OnInit, OnDestroy {
   private modalOverlayState = inject(ModalOverlayStateService);
   private injector = inject(Injector);
   private destroy$ = new Subject<void>();
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly sessionOpenCancelled$ = new Subject<void>();
 
   private isolationConfigCache = new Map<number, BrowserIsolationConfig>();
   browserIsolationConfig = signal<BrowserIsolationConfig | null>(null);
@@ -208,7 +211,8 @@ export class SessionContainer implements OnInit, OnDestroy {
   protected readonly editorStartupSessionId = signal<number | null>(null);
 
   tabs = this.tabService.tabs;
-  activeSessionId = this.tabService.activeSessionId;
+  readonly openingSessionId = signal<number | null>(null);
+  activeSessionId = computed(() => this.openingSessionId() ?? this.tabService.activeSessionId());
   hasTabs = this.tabService.hasTabs;
   activeTab = this.tabService.activeTab;
   sessionToolbarButtons = this.appSettings.normalizedSessionToolbarButtons;
@@ -982,18 +986,23 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.runWhenConnected(() => {
-      void this.appSettings.load()
-        .catch(() => undefined)
-        .finally(() => {
-          const urlSessionId = this.getSessionIdFromUrl();
-          const saved = this.tabService.getSavedState();
-
-          if (saved && saved.sessionIds.length > 0) {
-            this.restoreSavedTabs(saved, urlSessionId);
-          } else if (urlSessionId) {
-            this.loadAndOpenSession(urlSessionId);
-          }
-        });
+      void this.appSettings.load().catch(() => undefined).then(() => {
+        if (this.destroyRef.destroyed) return;
+        for (const tab of this.tabs()) this.applyDefaultClaudeSurface(tab.sessionId);
+      });
+      const urlSessionId = this.getSessionIdFromUrl();
+      const saved = this.tabService.getSavedState();
+      const targetId = urlSessionId ?? saved?.activeSessionId ?? saved?.sessionIds[0];
+      if (targetId) {
+        if (this.tabService.getOpenSessionIds().includes(targetId)) {
+          this.switchToSessionProvider(this.tabs().find(tab => tab.sessionId === targetId)?.activeAgentProvider);
+          this.tabService.selectTab(targetId);
+          if (!urlSessionId) void this.router.navigate(['/sessions', targetId], { replaceUrl: true });
+        } else {
+          this.loadAndOpenSession(targetId, !urlSessionId, saved?.sessionIds);
+        }
+      }
+      if (saved?.sessionIds.length) this.restoreSavedTabs(saved, targetId ?? null);
     });
 
     // Listen for navigation to new sessions
@@ -1013,6 +1022,8 @@ export class SessionContainer implements OnInit, OnDestroy {
             this.loadAndOpenSession(newSessionId);
           } else {
             // Session already open - just select it
+            this.sessionOpenCancelled$.next();
+            this.openingSessionId.set(null);
             this.tabService.selectTab(newSessionId);
             const existingTab = this.tabs().find((tab) => tab.sessionId === newSessionId);
             if (existingTab) {
@@ -1114,6 +1125,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
+    this.sessionOpenCancelled$.complete();
   }
 
   @HostListener('document:keydown', ['$event'])
@@ -1234,55 +1246,37 @@ export class SessionContainer implements OnInit, OnDestroy {
     saved: { sessionIds: number[]; activeSessionId: number | null },
     urlSessionId: number | null,
   ): void {
-    const idsToLoad = [...saved.sessionIds];
-    if (urlSessionId && !idsToLoad.includes(urlSessionId)) {
-      idsToLoad.push(urlSessionId);
-    }
-    forkJoin(
-      idsToLoad.map((id) =>
-        this.sessionsService.getOne(id).pipe(catchError(() => of(null))),
-      ),
-    ).subscribe((sessions) => {
-      for (const session of sessions) {
-        if (session) {
-          this.openTabWithDefaultClaudeSurface(session);
-        }
-      }
-
-      // URL takes precedence over saved active tab
-      const activeId = urlSessionId ?? saved.activeSessionId;
-      const openIds = this.tabService.getOpenSessionIds();
-
-      if (activeId && openIds.includes(activeId)) {
-        this.switchToSessionProvider(
-          this.tabs().find((tab) => tab.sessionId === activeId)?.activeAgentProvider,
-        );
-        this.tabService.selectTab(activeId);
-        this.router.navigate(['/sessions', activeId], { replaceUrl: true });
-      } else if (openIds.length > 0) {
-        this.switchToSessionProvider(
-          this.tabs().find((tab) => tab.sessionId === openIds[0])?.activeAgentProvider,
-        );
-        this.tabService.selectTab(openIds[0]);
-        this.router.navigate(['/sessions', openIds[0]], { replaceUrl: true });
-      }
-
-      const selectedTab = this.activeTab();
-      if (selectedTab && selectedTab.status !== 'archived') {
-        this.clearCompletionMarkerForOpenSession(selectedTab.sessionId, selectedTab);
-      }
-
-      // Register worktrees now that tabs are loaded, then catch up on active panels
-      this.registerOpenWorktrees();
-      this.plannotatorService.requestActivePanels();
-    });
+    // The requested tab loads independently; a slow saved tab must never
+    // delay it or take focus when its response eventually arrives.
+    const openIds = this.tabService.getOpenSessionIds();
+    from(saved.sessionIds.filter((id) => id !== urlSessionId && !openIds.includes(id)))
+      .pipe(
+        mergeMap((id) => this.sessionsService.getOne(id).pipe(catchError(() => of(null))), 4),
+        takeUntil(this.destroy$),
+      )
+      .subscribe((session) => {
+        if (!session || this.tabService.getOpenSessionIds().includes(session.id)) return;
+        this.openTabWithDefaultClaudeSurface(session, false, saved.sessionIds);
+        if (session.worktreePath && session.status !== 'archived')
+          this.plannotatorService.registerWorktree(session.worktreePath, session.id);
+      });
   }
 
-  private loadAndOpenSession(id: number): void {
-    this.sessionsService.getOne(id).subscribe({
+  private loadAndOpenSession(id: number, restoreRoute = false, restoredOrder?: readonly number[]): void {
+    if (this.openingSessionId() === id) return;
+    this.sessionOpenCancelled$.next();
+    this.openingSessionId.set(id);
+    this.sessionsService.getOne(id).pipe(
+      takeUntil(this.sessionOpenCancelled$),
+      takeUntil(this.destroy$),
+    ).subscribe({
       next: (session) => {
+        if (this.openingSessionId() !== id) return;
+        this.openingSessionId.set(null);
+        if (!session) return;
         this.switchToSessionProvider(session.activeAgentProvider);
-        this.openTabWithDefaultClaudeSurface(session);
+        this.openTabWithDefaultClaudeSurface(session, true, restoredOrder);
+        if (restoreRoute) void this.router.navigate(['/sessions', id], { replaceUrl: true });
         if (session.status !== 'archived') {
           this.clearCompletionMarkerForOpenSession(session.id, session);
         }
@@ -1292,7 +1286,16 @@ export class SessionContainer implements OnInit, OnDestroy {
         this.plannotatorService.requestActivePanels();
       },
       error: (err) => {
+        if (this.openingSessionId() !== id) return;
+        this.openingSessionId.set(null);
         if (err?.status === 404) {
+          // A deleted saved selection should fall back to another saved tab.
+          // An explicitly requested URL still reports the missing session.
+          const remainingIds = restoredOrder?.filter(sessionId => sessionId !== id);
+          if (restoreRoute && remainingIds?.length) {
+            this.loadAndOpenSession(remainingIds[0], true, remainingIds);
+            return;
+          }
           toast.error('Session no longer exists');
           this.router.navigate(['/projects']);
         } else {
@@ -1302,9 +1305,14 @@ export class SessionContainer implements OnInit, OnDestroy {
     });
   }
 
-  private openTabWithDefaultClaudeSurface(session: Session): void {
+  private openTabWithDefaultClaudeSurface(
+    session: Session,
+    select = true,
+    restoredOrder?: readonly number[],
+  ): void {
     const wasOpen = this.tabService.getOpenSessionIds().includes(session.id);
-    this.tabService.openTab(session);
+    if (restoredOrder) this.tabService.openTab(session, select, restoredOrder);
+    else this.tabService.openTab(session, select);
 
     if (!wasOpen) {
       this.applyDefaultClaudeSurface(session.id);
@@ -1470,6 +1478,8 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   onTabSelect(sessionId: number): void {
+    this.sessionOpenCancelled$.next();
+    this.openingSessionId.set(null);
     const tab = this.tabs().find((currentTab) => currentTab.sessionId === sessionId);
     this.switchToSessionProvider(tab?.activeAgentProvider);
     this.tabService.selectTab(sessionId);
