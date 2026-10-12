@@ -274,7 +274,13 @@
           } @else if (filteredFiles().length === 0) {
             <div class="flex-1"></div>
           } @else {
-            <cdk-virtual-scroll-viewport #railViewport itemSize="22" class="cr-rail-viewport">
+            <cdk-virtual-scroll-viewport
+              #railViewport
+              itemSize="22"
+              [minBufferPx]="fileListMinBufferPx"
+              [maxBufferPx]="fileListMaxBufferPx"
+              class="cr-rail-viewport"
+            >
               <button
                 *cdkVirtualFor="let file of filteredFiles(); trackBy: fileTrack"
                 type="button"
@@ -376,7 +382,13 @@
               <span>No files in this scope</span>
             </div>
           } @else {
-            <cdk-virtual-scroll-viewport #fileViewport itemSize="58" class="cr-file-viewport">
+            <cdk-virtual-scroll-viewport
+              #fileViewport
+              itemSize="58"
+              [minBufferPx]="fileListMinBufferPx"
+              [maxBufferPx]="fileListMaxBufferPx"
+              class="cr-file-viewport"
+            >
               <button
                 *cdkVirtualFor="let file of filteredFiles(); trackBy: fileTrack"
                 type="button"

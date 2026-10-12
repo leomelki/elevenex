@@ -357,6 +357,10 @@ export class ChangeReviewPanelComponent implements AfterViewInit, OnDestroy {
   readonly diffScrollLeftPx = signal(0);
   readonly diffViewportWidthPx = signal<number | null>(null);
   readonly sidebarPref = signal<SidebarPref>(this.readSidebarPref());
+  // Prepare several screens of file rows before they enter view during fast
+  // scrolling, while keeping the DOM bounded for repositories with thousands of files.
+  readonly fileListMinBufferPx = 1_200;
+  readonly fileListMaxBufferPx = 2_400;
   readonly containerWidthPx = signal<number | null>(null);
   readonly sidebarCollapsed = computed(() => {
     const pref = this.sidebarPref();
