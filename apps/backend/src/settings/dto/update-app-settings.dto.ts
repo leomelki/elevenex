@@ -42,6 +42,14 @@ class AgentModelPresetDto implements AgentModelPreset {
   @IsOptional()
   @IsString()
   reasoningEffort!: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  fastMode?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isDefault?: boolean;
 }
 
 class SessionToolbarButtonDto implements SessionToolbarButtonSetting {

@@ -1,5 +1,6 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import type { DrizzleDB } from '../database/database.provider.js';
+import { UpdateAppSettingsDto } from './dto/update-app-settings.dto.js';
 import { SettingsService } from './settings.service.js';
 import {
   DEFAULT_MAX_WORKTREES_PER_REPO,
@@ -592,6 +593,95 @@ describe('SettingsService', () => {
       reasoningEffort: null,
     });
   });
+
+  it('accepts deleting a default through request validation while other defaults remain', async () => {
+    const { db } = createDbMock();
+    const service = new SettingsService(db);
+    const current = await service.update({
+      defaultModelByProvider: { claude: 'opus', codex: 'gpt-5.5' },
+    });
+    const remaining = current.agentModelPresets.filter(
+      (preset) => preset.provider !== 'claude',
+    );
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).toMatchObject({ isDefault: true, fastMode: false });
+
+    const patch = await new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }).transform(
+      { agentModelPresets: remaining },
+      { type: 'body', metatype: UpdateAppSettingsDto },
+    );
+    const settings = await service.update(patch);
+
+    expect(settings.agentModelPresets).toEqual(remaining);
+    expect(settings.defaultModelByProvider).toEqual({});
+    expect(service.getAgentProviderDefaults('claude')).toEqual({
+      model: null,
+      reasoningEffort: null,
+    });
+    expect(service.getAgentProviderDefaults('codex')).toEqual({
+      model: 'gpt-5.5',
+      reasoningEffort: null,
+      fastMode: false,
+    });
+    expect((await service.findOne()).agentModelPresets).toEqual(remaining);
+  });
+
+  it.each([true, false, undefined])(
+    'accepts preset flags set to %s through request validation',
+    async (flag) => {
+      const { db } = createDbMock();
+      const service = new SettingsService(db);
+      const preset = {
+        id: 'fast',
+        name: 'Fast',
+        provider: 'codex',
+        model: null,
+        reasoningEffort: null,
+        ...(flag === undefined ? {} : { fastMode: flag, isDefault: flag }),
+      };
+      const patch = await new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }).transform(
+        { agentModelPresets: [preset] },
+        { type: 'body', metatype: UpdateAppSettingsDto },
+      );
+
+      expect((await service.update(patch)).agentModelPresets).toEqual([preset]);
+    },
+  );
+
+  it.each(['fastMode', 'isDefault', 'unknownFlag'])(
+    'rejects invalid preset field %s through request validation',
+    async (field) => {
+      await expect(
+        new ValidationPipe({
+          whitelist: true,
+          forbidNonWhitelisted: true,
+          transform: true,
+        }).transform(
+          {
+            agentModelPresets: [
+              {
+                id: 'fast',
+                name: 'Fast',
+                provider: 'codex',
+                model: null,
+                reasoningEffort: null,
+                [field]: 'true',
+              },
+            ],
+          },
+          { type: 'body', metatype: UpdateAppSettingsDto },
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    },
+  );
 
   it('keeps cached defaults unchanged when a legacy preference update is rejected', async () => {
     const { db } = createDbMock();
