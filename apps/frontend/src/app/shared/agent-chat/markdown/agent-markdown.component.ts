@@ -3,6 +3,7 @@ import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   ElementRef,
   ViewEncapsulation,
   inject,
@@ -10,16 +11,17 @@ import {
   output,
 } from '@angular/core';
 import { MarkdownPipe, resolveLocalFileTarget } from './markdown.pipe';
+import { splitMarkdownVisualizations } from './markdown-visualization';
+import { AgentVisualizationComponent } from './agent-visualization.component';
 
 /** Sanitized agent Markdown with consistent document styling and local-file navigation. */
 @Component({
   selector: 'agent-markdown',
-  imports: [MarkdownPipe, MediaPreviewDirective],
+  imports: [MarkdownPipe, MediaPreviewDirective, AgentVisualizationComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   host: { '(click)': 'openLink($event)', '(auxclick)': 'openLink($event)' },
-  template:
-    '<div class="agent-markdown__content" mediaPreview [innerHTML]="content() | cwMarkdown: worktreePath(): sourcePath(): mediaRevision"></div>',
+  templateUrl: './agent-markdown.component.html',
   styleUrl: './agent-markdown.component.scss',
 })
 export class AgentMarkdownComponent {
@@ -28,6 +30,7 @@ export class AgentMarkdownComponent {
   readonly content = input<string | null | undefined>('');
   readonly worktreePath = input<string | null>(null);
   readonly sourcePath = input<string | null>(null);
+  protected readonly parts = computed(() => splitMarkdownVisualizations(this.content() || ''));
   readonly openLocalFile = output<LocalFileTarget>();
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 

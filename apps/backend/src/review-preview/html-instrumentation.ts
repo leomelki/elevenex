@@ -43,6 +43,7 @@ export interface InstrumentPreviewHtmlOptions {
   previewId: string;
   /** URL of the bridge script to inject. */
   bridgeUrl: string;
+  visualization?: boolean;
 }
 
 export interface InstrumentPreviewHtmlResult {
@@ -64,7 +65,10 @@ export function transformPreviewHtml(
   }
 
   try {
-    const document = parse5.parse(source, { sourceCodeLocationInfo: true });
+    // Visualizations need URL rewriting, but no selection-to-source mapping.
+    const document = parse5.parse(source, {
+      sourceCodeLocationInfo: !options.visualization,
+    });
     annotate(document, options.previewPrefix);
     injectBridgeNode(document, options);
     const html = parse5.serialize(document);
@@ -72,10 +76,13 @@ export function transformPreviewHtml(
     // A serializer that lost most of the document is worse than no
     // instrumentation at all, so treat a large shrink as a failed parse.
     if (html.length < source.length * 0.5) {
-      return { html: injectBridgeByConcat(source, options), instrumented: false };
+      return {
+        html: injectBridgeByConcat(source, options),
+        instrumented: false,
+      };
     }
 
-    return { html, instrumented: true };
+    return { html, instrumented: !options.visualization };
   } catch {
     return { html: injectBridgeByConcat(source, options), instrumented: false };
   }
@@ -198,12 +205,16 @@ function rewriteSrcset(value: string, previewPrefix: string): string {
  * every repo page that has an inline script. An external script under the
  * preview prefix sidesteps the conflict entirely.
  */
-function bridgeTag(options: InstrumentPreviewHtmlOptions, instrumented: boolean): string {
+function bridgeTag(
+  options: InstrumentPreviewHtmlOptions,
+  instrumented: boolean,
+): string {
   return (
     `<script src="${escapeAttr(options.bridgeUrl)}"` +
     ` data-ex-preview-id="${escapeAttr(options.previewId)}"` +
     ` data-ex-path="${escapeAttr(options.filePath)}"` +
     ` data-ex-prefix="${escapeAttr(options.previewPrefix)}"` +
+    (options.visualization ? ' data-ex-visualization="1"' : '') +
     ` data-ex-instrumented="${instrumented ? '1' : '0'}"></script>`
   );
 }
@@ -219,13 +230,15 @@ function injectBridgeNode(
   options: InstrumentPreviewHtmlOptions,
 ): void {
   const head = findElement(document as ElementLike, 'head');
-  const fragment = parse5.parseFragment(bridgeTag(options, true)) as ElementLike;
+  const fragment = parse5.parseFragment(
+    bridgeTag(options, !options.visualization),
+  ) as ElementLike;
   const scriptNode = fragment.childNodes?.[0];
   if (!scriptNode) return;
 
   // parse5 always synthesises <head> for a full document parse, so this is
   // only defensive.
-  const parent = head ?? (findElement(document as ElementLike, 'html') as ElementLike);
+  const parent = head ?? findElement(document as ElementLike, 'html');
   if (!parent) return;
   parent.childNodes = [scriptNode, ...(parent.childNodes ?? [])];
 }

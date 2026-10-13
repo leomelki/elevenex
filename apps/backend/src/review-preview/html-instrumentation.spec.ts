@@ -12,6 +12,17 @@ function transform(source: string) {
 }
 
 describe('transformPreviewHtml', () => {
+  it('rewrites visualization asset URLs without paying for review annotations', () => {
+    const result = transformPreviewHtml({
+      ...BASE,
+      visualization: true,
+      source: '<img src="/plot.png">',
+    });
+    expect(result.instrumented).toBe(false);
+    expect(result.html).toContain('data-ex-visualization="1"');
+    expect(result.html).toContain(`${BASE.previewPrefix}plot.png`);
+    expect(result.html).not.toContain('data-ex-line');
+  });
   it('annotates elements with the source lines they span', () => {
     const { html, instrumented } = transform(
       ['<html>', '<body>', '<p>hello</p>', '</body>', '</html>'].join('\n'),
@@ -25,7 +36,13 @@ describe('transformPreviewHtml', () => {
 
   it('records the full span of a multi-line element', () => {
     const { html } = transform(
-      ['<html><body>', '<div>', '  <span>a</span>', '</div>', '</body></html>'].join('\n'),
+      [
+        '<html><body>',
+        '<div>',
+        '  <span>a</span>',
+        '</div>',
+        '</body></html>',
+      ].join('\n'),
     );
 
     const div = /<div([^>]*)>/.exec(html)?.[1] ?? '';
@@ -35,7 +52,9 @@ describe('transformPreviewHtml', () => {
 
   it('gives every annotated element a distinct id', () => {
     const { html } = transform('<html><body><p>a</p><p>b</p></body></html>');
-    const ids = [...html.matchAll(/data-ex-id="(\d+)"/g)].map((match) => match[1]);
+    const ids = [...html.matchAll(/data-ex-id="(\d+)"/g)].map(
+      (match) => match[1],
+    );
 
     expect(ids.length).toBeGreaterThan(1);
     expect(new Set(ids).size).toBe(ids.length);
@@ -60,7 +79,9 @@ describe('transformPreviewHtml', () => {
   });
 
   it('keeps the doctype through the round trip', () => {
-    const { html } = transform('<!DOCTYPE html>\n<html><body><p>x</p></body></html>');
+    const { html } = transform(
+      '<!DOCTYPE html>\n<html><body><p>x</p></body></html>',
+    );
     expect(html.toLowerCase()).toContain('<!doctype html>');
   });
 
@@ -125,7 +146,9 @@ describe('transformPreviewHtml', () => {
 
   it('falls back to plain injection for a document too large to annotate', () => {
     const filler = '<p>x</p>'.repeat(300_000);
-    const { html, instrumented } = transform(`<html><head></head><body>${filler}</body></html>`);
+    const { html, instrumented } = transform(
+      `<html><head></head><body>${filler}</body></html>`,
+    );
 
     expect(instrumented).toBe(false);
     expect(html).toContain('data-ex-instrumented="0"');

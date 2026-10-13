@@ -35,11 +35,13 @@ agent-markdown {
     }
   }
 
-  > :first-child {
+  > :first-child,
+  > .agent-markdown__section:first-child > :first-child {
     margin-top: 0;
   }
 
-  > :last-child {
+  > :last-child,
+  > .agent-markdown__section:last-child > :last-child {
     margin-bottom: 0;
   }
 
