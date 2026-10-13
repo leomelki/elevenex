@@ -1,3 +1,4 @@
+import { SessionArchiveUiService } from '@/shared/services/session-archive-ui.service';
 import { TaskHeaderComponent } from '@/features/tasks/task-header.component';
 import {
   Component,
@@ -17,7 +18,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, NavigationEnd } from '@angular/router';
-import { filter, takeUntil, switchMap, catchError, mergeMap } from 'rxjs/operators';
+import { filter, takeUntil, switchMap, catchError, mergeMap, finalize } from 'rxjs/operators';
 import { Subject, interval, from, of } from 'rxjs';
 import { TabBar } from '../tab-bar/tab-bar';
 import { Tab, TabCloseResult, TabService } from '../tab-service';
@@ -172,6 +173,10 @@ export class SessionContainer implements OnInit, OnDestroy {
   private router = inject(Router);
   private tabService = inject(TabService);
   private sessionsService = inject(SessionsService);
+  private readonly sessionArchiveUi = inject(SessionArchiveUiService);
+  private readonly archivingSessionIds = new Set<number>();
+  readonly archiveConfirmationSessionId = computed(() => this.sessionArchiveUi.pendingSessionId(this.destroyRef));
+  readonly archiveConfirmationReady = this.sessionArchiveUi.confirmReady;
   private forkDrafts = inject(ConversationForkDraftService);
   readonly reviewWorkspaceState = inject(ReviewWorkspaceStateService);
   private providerSelection = inject(AgentRuntimeProviderService);
@@ -1596,7 +1601,25 @@ export class SessionContainer implements OnInit, OnDestroy {
   }
 
   onTabArchiveRequest(sessionId: number): void {
-    this.sessionsService.archive(sessionId).subscribe({
+    if (this.archivingSessionIds.has(sessionId)) return;
+    this.sessionArchiveUi.request(sessionId, () => this.performArchiveSession(sessionId), this.destroyRef);
+  }
+
+  onTabArchiveConfirm(): void {
+    this.sessionArchiveUi.confirm(this.destroyRef);
+  }
+
+  onTabArchiveCancel(): void {
+    this.sessionArchiveUi.cancel(this.destroyRef);
+  }
+
+  private performArchiveSession(sessionId: number): void {
+    if (this.archivingSessionIds.has(sessionId)) return;
+    this.archivingSessionIds.add(sessionId);
+    this.sessionsService.archive(sessionId).pipe(
+      takeUntil(this.destroy$),
+      finalize(() => this.archivingSessionIds.delete(sessionId)),
+    ).subscribe({
       next: (session) => {
         this.tabService.updateTabStatus(sessionId, session.status);
         this.clearClaudeSurfaceMode(sessionId);

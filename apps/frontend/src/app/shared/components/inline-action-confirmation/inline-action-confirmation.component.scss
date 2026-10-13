@@ -1,0 +1,33 @@
+.confirm-button {
+  border-color: color-mix(in oklch, var(--destructive) 20%, var(--border));
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--background) 84%, var(--surface-tint) 16%),
+    color-mix(in oklch, var(--destructive) 7%, transparent)
+  );
+  color: color-mix(in oklch, var(--destructive) 72%, var(--foreground));
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, var(--surface-tint) 28%, transparent),
+    0 8px 18px color-mix(in oklch, var(--surface-shade) 8%, transparent);
+
+  &:hover:not(:disabled),
+  &:focus-visible {
+    border-color: color-mix(in oklch, var(--destructive) 38%, var(--border));
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--background) 72%, var(--surface-tint) 18%),
+      color-mix(in oklch, var(--destructive) 14%, transparent)
+    );
+    color: color-mix(in oklch, var(--destructive) 82%, var(--foreground));
+  }
+
+  &.confirm-ready {
+    border-color: color-mix(in oklch, var(--destructive) 42%, var(--border));
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--destructive) 12%, var(--surface-tint) 10%),
+      color-mix(in oklch, var(--destructive) 18%, transparent)
+    );
+    color: color-mix(in oklch, var(--destructive) 86%, var(--foreground));
+  }
+}

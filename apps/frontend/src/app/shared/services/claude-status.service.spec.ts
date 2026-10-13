@@ -170,6 +170,54 @@ describe('ClaudeStatusService', () => {
     service.ngOnDestroy();
   });
 
+  it('only exposes known activity from a hydrated socket on the selected backend', () => {
+    vi.useFakeTimers();
+    window.__ELEVENEX_RUNTIME__ = { backendOrigin: 'http://first-backend.test' };
+    globalThis.WebSocket = vi.fn(function (this: unknown, url: string) {
+      socket = new FakeWebSocket(url);
+      return socket;
+    }) as unknown as typeof WebSocket;
+    const service = new ClaudeStatusService({ run: (fn: () => void) => fn() } as NgZone);
+    try {
+      expect(service.getKnownActivity(7)).toBeNull();
+      socket?.onmessage?.({ data: JSON.stringify({ type: 'init', statuses: { 7: 'idle' } }) });
+      expect(service.getKnownActivity(7)?.activityStatus).toBe('idle');
+      // Sessions absent from the full snapshot have no runtime activity.
+      expect(service.getKnownActivity(8)?.activityStatus).toBe('idle');
+      socket?.onclose?.();
+      expect(service.getKnownActivity(7)).toBeNull();
+      vi.advanceTimersByTime(1000);
+      expect(service.getKnownActivity(7)).toBeNull();
+      socket?.onmessage?.({ data: JSON.stringify({ type: 'init', statuses: { 7: 'running' } }) });
+      expect(service.getKnownActivity(7)?.activityStatus).toBe('running');
+      window.__ELEVENEX_RUNTIME__ = { backendOrigin: 'http://second-backend.test' };
+      expect(service.getKnownActivity(7)).toBeNull();
+    } finally {
+      service.ngOnDestroy();
+      delete window.__ELEVENEX_RUNTIME__;
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['error', 'silence'])('invalidates known activity immediately on socket %s', (reason) => {
+    vi.useFakeTimers();
+    globalThis.WebSocket = vi.fn(function (this: unknown, url: string) {
+      socket = new FakeWebSocket(url);
+      return socket;
+    }) as unknown as typeof WebSocket;
+    const service = new ClaudeStatusService({ run: (fn: () => void) => fn() } as NgZone);
+    try {
+      socket?.onmessage?.({ data: JSON.stringify({ type: 'init', statuses: { 7: 'idle' } }) });
+      expect(service.getKnownActivity(7)?.activityStatus).toBe('idle');
+      if (reason === 'error') socket?.onerror?.();
+      else vi.advanceTimersByTime(75_000);
+      expect(service.getKnownActivity(7)).toBeNull();
+    } finally {
+      service.ngOnDestroy();
+      vi.useRealTimers();
+    }
+  });
+
   it('accepts legacy status-changed messages without activity fields', () => {
     globalThis.WebSocket = vi.fn(function (this: unknown, url: string) {
       socket = new FakeWebSocket(url);

@@ -1,3 +1,5 @@
+import { SessionArchiveUiService } from '@/shared/services/session-archive-ui.service';
+import { InlineActionConfirmationComponent } from '@/shared/components/inline-action-confirmation/inline-action-confirmation.component';
 import { TaskUiService } from '@/features/tasks/task-ui.service';
 import { TasksApiService } from '@/features/tasks/tasks-api.service';
 import { TaskOperationsService } from '@/features/tasks/task-operations.service';
@@ -27,7 +29,7 @@ import { Project } from '@/shared/models/project.model';
 import type { ReviewChat } from '@/shared/models/review-chat.model';
 import { SshForward } from '@/shared/models/ssh-forward.model';
 import { getElectronWindowControlsApi } from '@/shared/runtime/electron-window-controls';
-import { getBackendOrigin } from '@/shared/runtime/runtime-config';
+import { getBackendOrigin, getBackendServerId } from '@/shared/runtime/runtime-config';
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
 import { ClaudeStatusService } from '@/shared/services/claude-status.service';
 import { CursorService } from '@/shared/services/cursor.service';
@@ -47,6 +49,7 @@ import {
   Component,
   ElementRef,
   HostListener,
+  DestroyRef,
   OnDestroy,
   OnInit,
   ViewChild,
@@ -58,6 +61,7 @@ import {
   untracked,
 } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideAlertCircle,
@@ -91,7 +95,7 @@ import {
   lucideTrash2,
 } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
-import { firstValueFrom } from 'rxjs';
+import { filter, finalize, firstValueFrom } from 'rxjs';
 import { BranchInfo } from '../../../shared/models/branch.model';
 import {
   NavigationBranch,
@@ -130,6 +134,7 @@ import { TaskNavigationLabelComponent } from './task-navigation-label.component'
     PathAutocompleteInputComponent,
     TrackNativeModalDirective,
     EnvironmentSwitcherComponent,
+    InlineActionConfirmationComponent,
   ],
   providers: [ZardDropdownService],
   templateUrl: './sidebar.html',
@@ -188,6 +193,8 @@ export class Sidebar implements OnInit, OnDestroy {
   private router = inject(Router);
   private workspacesService = inject(WorkspacesService);
   private sessionsService = inject(SessionsService);
+  private readonly sessionArchiveUi = inject(SessionArchiveUiService);
+  private readonly destroyRef = inject(DestroyRef);
   private sessionFoldersService = inject(SessionFoldersService);
   private agentRuntimeApi = inject(AgentRuntimeApiService);
   private composerDrafts = inject(ComposerDraftService);
@@ -1275,15 +1282,30 @@ export class Sidebar implements OnInit, OnDestroy {
 
   archiveFolder(folder: SessionFolder, event: Event) {
     event.stopPropagation();
-    if (this.folderBusyId() !== null) return;
+    if (this.folderBusyId() !== null || folder.archivedAt) return;
+    this.clearDeleteSessionConfirmation();
+    this.sessionArchiveUi.requestFolder(folder, () => this.performArchiveFolder(folder), this.destroyRef);
+  }
+
+  private performArchiveFolder(folder: SessionFolder): void {
+    if (this.folderBusyId() !== null || folder.archivedAt) return;
+    const origin = getBackendOrigin();
+    const serverId = getBackendServerId();
+    const isCurrentBackend = () => origin === getBackendOrigin() && serverId === getBackendServerId();
     this.folderBusyId.set(folder.id);
-    this.sessionFoldersService.archive(folder.id).subscribe({
+    this.sessionFoldersService.archive(folder.id).pipe(
+      takeUntilDestroyed(this.destroyRef),
+      filter(isCurrentBackend),
+      finalize(() => this.folderBusyId.set(null)),
+    ).subscribe({
       next: () => {
         for (const session of folder.sessions)
           this.tabService.updateTabStatus(session.id, 'archived');
         this.finishFolderAction('Folder and sessions archived');
       },
-      error: (err) => this.failFolderAction(err, 'Could not archive folder'),
+      error: (err) => {
+        if (isCurrentBackend()) this.failFolderAction(err, 'Could not archive folder');
+      },
     });
   }
 
@@ -1529,6 +1551,7 @@ export class Sidebar implements OnInit, OnDestroy {
 
   armDeleteSession(session: SessionInTree, event: Event) {
     event.stopPropagation();
+    this.sessionArchiveUi.cancel();
     if (this.deletingSessionId() !== null || this.armedDeleteSessionId() === session.id) {
       return;
     }
@@ -1579,6 +1602,26 @@ export class Sidebar implements OnInit, OnDestroy {
     return this.archivingSessionId() === sessionId;
   }
 
+  isSessionArchiveArmed(sessionId: number): boolean {
+    return this.sessionArchiveUi.isPending('session', sessionId, this.destroyRef);
+  }
+
+  isFolderArchiveArmed(folderId: number): boolean {
+    return this.sessionArchiveUi.isPending('folder', folderId, this.destroyRef);
+  }
+
+  readonly archiveConfirmReady = this.sessionArchiveUi.confirmReady;
+
+  confirmArchive(event: Event): void {
+    event.stopPropagation();
+    this.sessionArchiveUi.confirm(this.destroyRef);
+  }
+
+  cancelArchive(event?: Event): void {
+    event?.stopPropagation();
+    this.sessionArchiveUi.cancel(this.destroyRef);
+  }
+
   isUnarchivingSession(sessionId: number): boolean {
     return this.unarchivingSessionId() === sessionId;
   }
@@ -1590,18 +1633,29 @@ export class Sidebar implements OnInit, OnDestroy {
     }
 
     this.clearDeleteSessionConfirmation();
+    this.sessionArchiveUi.request(session.id, () => this.performArchiveSession(session), this.destroyRef);
+  }
+
+  private performArchiveSession(session: SessionInTree): void {
+    if (this.archivingSessionId() !== null) return;
+    const origin = getBackendOrigin();
+    const serverId = getBackendServerId();
+    const isCurrentBackend = () => origin === getBackendOrigin() && serverId === getBackendServerId();
     this.archivingSessionId.set(session.id);
-    this.sessionsService.archive(session.id).subscribe({
+    this.sessionsService.archive(session.id).pipe(
+      takeUntilDestroyed(this.destroyRef),
+      filter(isCurrentBackend),
+      finalize(() => this.archivingSessionId.set(null)),
+    ).subscribe({
       next: (updated) => {
         toast.success('Session archived');
-        this.archivingSessionId.set(null);
         this.tabService.updateTabStatus(session.id, updated.status);
         this.navService.refreshTree();
       },
       error: (err) => {
+        if (!isCurrentBackend()) return;
         const msg = err?.error?.message || 'Unknown error';
         toast.error(`Could not archive session. ${msg}`);
-        this.archivingSessionId.set(null);
       },
     });
   }

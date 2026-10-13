@@ -1,3 +1,4 @@
+import { InlineActionConfirmationComponent } from '@/shared/components/inline-action-confirmation/inline-action-confirmation.component';
 import { Directive, NO_ERRORS_SCHEMA, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
@@ -287,6 +288,7 @@ describe('Sidebar', () => {
     }),
     getTabsByWorktree: vi.fn(() => []),
     updateTabName: vi.fn(),
+    updateTabStatus: vi.fn(),
   };
 
   const routerMock = {
@@ -314,6 +316,7 @@ describe('Sidebar', () => {
       actionKind: null,
       actionLabel: null,
     })),
+    getKnownActivity: vi.fn(),
     getSessionStatus: vi.fn(() => null),
     getSessionCompletion: vi.fn(() => null),
     sessionTitles: signal(new Map<number, string>()).asReadonly(),
@@ -415,6 +418,7 @@ describe('Sidebar', () => {
     vi.mocked(toast.error).mockClear();
     tabServiceMock.closeTab.mockClear();
     tabServiceMock.updateTabName.mockClear();
+    tabServiceMock.updateTabStatus.mockClear();
     routerMock.navigate.mockClear();
     routerMock.navigateByUrl.mockClear();
     vscodeWebStateMock.destroyIframe.mockClear();
@@ -424,6 +428,7 @@ describe('Sidebar', () => {
       actionKind: null,
       actionLabel: null,
     });
+    claudeStatusMock.getKnownActivity.mockImplementation(() => claudeStatusMock.getActivity());
     claudeStatusMock.getSessionStatus.mockReturnValue(null);
     claudeStatusMock.getSessionCompletion.mockReturnValue(null);
     pendingWorkspaceCreationsMock.getVisibleByRepo.mockReset();
@@ -453,7 +458,7 @@ describe('Sidebar', () => {
     TestBed.resetTestingModule();
     TestBed.overrideComponent(Sidebar, {
       set: {
-        imports: [NgIcon, TaskNavigationLabelComponent, MockTrackNativeModalDirective, ...ZardDropdownImports],
+        imports: [NgIcon, InlineActionConfirmationComponent, TaskNavigationLabelComponent, MockTrackNativeModalDirective, ...ZardDropdownImports],
         schemas: [NO_ERRORS_SCHEMA],
       },
     });
@@ -504,6 +509,90 @@ describe('Sidebar', () => {
     fixture.detectChanges();
     return fixture;
   }
+
+  it.each([true, false])('only archives a running sidebar session after confirmation (confirmed=%s)', (confirmed) => {
+    claudeStatusMock.getActivity.mockReturnValue({
+      activityStatus: 'running', actionKind: null, actionLabel: null,
+    });
+    sessionsServiceMock.archive.mockReset();
+    sessionsServiceMock.archive.mockReturnValue(new Subject());
+    const fixture = createSidebar();
+    fixture.componentInstance.archiveSession(makeBranch().sessions[0], new Event('click'));
+    fixture.detectChanges();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(sessionsServiceMock.archive).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(300);
+    if (confirmed) fixture.componentInstance.confirmArchive(new Event('click'));
+    else fixture.componentInstance.cancelArchive();
+    expect(sessionsServiceMock.archive).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+  });
+
+  it.each([true, false])('only archives a folder containing running sessions after confirmation (confirmed=%s)', (confirmed) => {
+    claudeStatusMock.getActivity.mockReturnValue({
+      activityStatus: 'running', actionKind: null, actionLabel: null,
+    });
+    sessionFoldersServiceMock.archive.mockReset().mockReturnValue(new Subject());
+    const folder = {
+      id: 8, repoId: 1, workspaceId: 1, name: 'Feature work', archivedAt: null,
+      sessions: makeBranch().sessions, archivedSessions: [],
+    };
+    const fixture = createSidebar();
+    fixture.componentInstance.archiveFolder(folder, new Event('click'));
+    fixture.detectChanges();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(sessionFoldersServiceMock.archive).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.folderBusyId()).toBeNull();
+    vi.advanceTimersByTime(300);
+    if (confirmed) fixture.componentInstance.confirmArchive(new Event('click'));
+    else fixture.componentInstance.cancelArchive();
+    expect(sessionFoldersServiceMock.archive).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+    expect(fixture.componentInstance.folderBusyId()).toBe(confirmed ? 8 : null);
+  });
+
+  it('archives a folder with verified idle sessions immediately', () => {
+    sessionFoldersServiceMock.archive.mockReset().mockReturnValue(new Subject());
+    const folder = {
+      id: 8, repoId: 1, workspaceId: 1, name: 'Feature work', archivedAt: null,
+      sessions: makeBranch().sessions, archivedSessions: [],
+    };
+    createSidebar().componentInstance.archiveFolder(folder, new Event('click'));
+    expect(sessionFoldersServiceMock.archive).toHaveBeenCalledOnce();
+  });
+
+  it('ignores an archive response after switching backends and releases the busy guard', () => {
+    const pending = new Subject<any>();
+    sessionsServiceMock.archive.mockReset().mockReturnValue(pending);
+    window.__ELEVENEX_RUNTIME__ = { backendOrigin: 'http://first-backend.test' };
+    try {
+      const component = createSidebar().componentInstance;
+      component.archiveSession(makeBranch().sessions[0], new Event('click'));
+      window.__ELEVENEX_RUNTIME__ = { backendOrigin: 'http://second-backend.test' };
+      navigationServiceMock.refreshTree.mockClear();
+      pending.next({ status: 'archived' });
+      pending.complete();
+      expect(tabServiceMock.updateTabStatus).not.toHaveBeenCalled();
+      expect(navigationServiceMock.refreshTree).not.toHaveBeenCalled();
+      expect(component.isArchivingSession(11)).toBe(false);
+    } finally {
+      delete window.__ELEVENEX_RUNTIME__;
+    }
+  });
+
+  it('releases the folder busy guard after failure so archival can be retried', () => {
+    const pending = new Subject<any>();
+    sessionFoldersServiceMock.archive.mockReset().mockReturnValue(new Subject());
+    sessionFoldersServiceMock.archive.mockReturnValueOnce(pending);
+    const folder = {
+      id: 8, repoId: 1, workspaceId: 1, name: 'Feature work', archivedAt: null,
+      sessions: makeBranch().sessions, archivedSessions: [],
+    };
+    const component = createSidebar().componentInstance;
+    component.archiveFolder(folder, new Event('click'));
+    pending.error({ error: { message: 'Archive failed' } });
+    expect(component.folderBusyId()).toBeNull();
+    component.archiveFolder(folder, new Event('click'));
+    expect(sessionFoldersServiceMock.archive).toHaveBeenCalledTimes(2);
+  });
 
   function getDeleteTrigger(container: HTMLElement, sessionId: number): HTMLButtonElement | null {
     return container.querySelector(`[data-session-delete-trigger-id="${sessionId}"]`);

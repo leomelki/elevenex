@@ -6,13 +6,15 @@ import { ProductivityStateService } from '../../productivity/productivity-state.
 import { PlannotatorStateService } from '../../plannotator';
 import { Tab } from '../tab-service';
 import { AgentRuntimeProviderService } from '@/shared/services/agent-runtime-provider.service';
-import { signal } from '@angular/core';
+import { DestroyRef, signal } from '@angular/core';
+import { SessionArchiveUiService } from '@/shared/services/session-archive-ui.service';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 
 describe('TabBar', () => {
   let originalLocalStorage: Storage | undefined;
 
   const claudeStatusMock = {
+    getKnownActivity: vi.fn(() => ({ activityStatus: 'running', backgroundActive: false, actionKind: null, actionLabel: null })),
     getStatus: vi.fn(() => 'idle'),
     getSessionCompletion: vi.fn(() => null),
   };
@@ -224,6 +226,37 @@ describe('TabBar', () => {
     fixture.detectChanges();
     (Array.from(el.querySelectorAll('button')).find(button => button.textContent?.includes('Unarchive Session')) as HTMLButtonElement).click();
     expect(unarchiveSpy).toHaveBeenCalledWith(2);
+  });
+
+  it('keeps the menu open for inline archive confirmation and closes it on cancel', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TabBar);
+    fixture.componentRef.setInput('tabs', [baseTab]);
+    fixture.componentRef.setInput('activeSessionId', 42);
+    fixture.detectChanges();
+    const service = TestBed.inject(SessionArchiveUiService);
+    const owner = fixture.componentRef.injector.get(DestroyRef);
+    const archive = vi.fn();
+    const component = fixture.componentInstance;
+    component.tabArchive.subscribe(id => {
+      service.request(id, archive, owner);
+      fixture.componentRef.setInput('archiveConfirmationSessionId', service.pendingSessionId(owner));
+    });
+    component.tabArchiveCancel.subscribe(() => service.cancel(owner));
+    try {
+      component.onContextMenu(new MouseEvent('contextmenu'), baseTab);
+      component.onContextMenuArchive();
+      fixture.detectChanges();
+      expect(component.contextMenuOpen()).toBe(true);
+      expect(fixture.nativeElement.querySelector('[data-session-archive-confirm-id="42"]')).toBeTruthy();
+      (fixture.nativeElement.querySelector('[data-session-archive-cancel-id="42"]') as HTMLButtonElement).click();
+      expect(component.contextMenuOpen()).toBe(false);
+      expect(service.isPending('session', 42)).toBe(false);
+      expect(archive).not.toHaveBeenCalled();
+    } finally {
+      service.cancel();
+      vi.useRealTimers();
+    }
   });
 
   it('hides active-session tool buttons for archived tabs', () => {

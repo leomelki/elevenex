@@ -286,13 +286,25 @@
           Unarchive Session
         </button>
       } @else {
+        @if (archiveConfirmationSessionId() === contextMenuSessionId()) {
+          <div class="px-2 py-1.5">
+            <app-inline-action-confirmation
+              [targetId]="contextMenuSessionId()!"
+              [ready]="archiveConfirmationReady()"
+              (confirm)="onContextMenuConfirmArchive()"
+              (cancel)="closeContextMenu()"
+            />
+          </div>
+        } @else {
         <button
+          data-session-archive-controls="true"
           class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-foreground hover:bg-accent cursor-pointer"
           (click)="onContextMenuArchive()"
         >
           <ng-icon name="lucideArchive" size="14" />
           Archive Session
         </button>
+        }
       }
       <button
         class="w-full flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10 cursor-pointer"

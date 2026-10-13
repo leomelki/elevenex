@@ -1,5 +1,5 @@
 import { windowScopedKey } from '@/shared/services/scoped-storage';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { Component, NO_ERRORS_SCHEMA, signal } from '@angular/core';
@@ -114,6 +114,7 @@ describe('SessionContainer modal browser gating', () => {
   const sessionsServiceMock = {
     getOne: vi.fn((_id: number) => of(null)),
     markReviewed: vi.fn(() => of(null)),
+    archive: vi.fn(() => new Subject<Session>()),
     delete: vi.fn(() => of({})),
   };
 
@@ -186,6 +187,7 @@ describe('SessionContainer modal browser gating', () => {
   };
 
   const claudeStatusServiceMock = {
+    getKnownActivity: vi.fn(),
     sessionStatuses: claudeStatusesSignal.asReadonly(),
     sessionCompletions: claudeCompletionsSignal.asReadonly(),
     sessionTitles: claudeTitlesSignal.asReadonly(),
@@ -273,6 +275,9 @@ describe('SessionContainer modal browser gating', () => {
         actionLabel: null,
       },
     );
+    claudeStatusServiceMock.getKnownActivity.mockImplementation((sessionId: number) =>
+      claudeStatusServiceMock.getActivity(sessionId),
+    );
     claudeStatusServiceMock.getSessionCompletion.mockImplementation(
       (sessionId: number) => claudeCompletionsSignal().get(sessionId) ?? null,
     );
@@ -312,7 +317,7 @@ describe('SessionContainer modal browser gating', () => {
     await TestBed.configureTestingModule({
       imports: [SessionContainer],
       providers: [
-        provideRouter([{ path: 'sessions/:id', component: DummyRouteComponent }]),
+        provideRouter([{ path: 'sessions/:id', component: DummyRouteComponent }, { path: 'projects', component: DummyRouteComponent }]),
         { provide: TabService, useValue: tabServiceMock },
         { provide: SessionsService, useValue: sessionsServiceMock },
         { provide: NavigationService, useValue: navigationServiceMock },
@@ -331,6 +336,37 @@ describe('SessionContainer modal browser gating', () => {
         { provide: ModalOverlayStateService, useValue: modalOverlayStateMock },
       ],
     }).compileComponents();
+  });
+
+  it.each([true, false])('only archives a running tab session after confirmation (confirmed=%s)', (confirmed) => {
+    vi.useFakeTimers();
+    claudeActivitiesSignal.set(new Map([[42, {
+      activityStatus: 'running', backgroundActive: false, actionKind: null, actionLabel: null,
+    }]]));
+    sessionsServiceMock.archive.mockClear();
+    const component = TestBed.createComponent(SessionContainer).componentInstance;
+    component.onTabArchiveRequest(42);
+    expect(component.archiveConfirmationSessionId()).toBe(42);
+    expect(sessionsServiceMock.archive).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(300);
+    if (confirmed) component.onTabArchiveConfirm();
+    else component.onTabArchiveCancel();
+    expect(sessionsServiceMock.archive).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it('coalesces tab archive requests while in flight and allows retry after failure', () => {
+    const pending = new Subject<Session>();
+    sessionsServiceMock.archive.mockClear();
+    sessionsServiceMock.archive.mockReturnValueOnce(pending);
+    const component = TestBed.createComponent(SessionContainer).componentInstance;
+    component.onTabArchiveRequest(42);
+    component.onTabArchiveRequest(42);
+    expect(sessionsServiceMock.archive).toHaveBeenCalledOnce();
+    pending.error({ error: { message: 'Archive failed' } });
+    component.onTabArchiveRequest(42);
+    expect(sessionsServiceMock.archive).toHaveBeenCalledTimes(2);
   });
 
   function createBrowserFixture() {

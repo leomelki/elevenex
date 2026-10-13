@@ -45,6 +45,7 @@ export class ClaudeStatusService implements OnDestroy {
   private originWatchTimer: ReturnType<typeof setInterval> | null = null;
   /** Origin the live socket was opened against, so a backend switch is detectable. */
   private connectedOrigin: string | null = null;
+  private snapshotReceived = false;
   private destroyed = false;
 
   private _statuses = signal(new Map<number, ClaudeActivityStatus>());
@@ -90,6 +91,13 @@ export class ClaudeStatusService implements OnDestroy {
       actionLabel: null,
       backgroundActive: false,
     };
+  }
+
+  /** A cached idle value is unsafe for destructive actions until this socket is hydrated. */
+  getKnownActivity(sessionId: number): ClaudeSessionActivity | null {
+    if (!this.ws || !this.snapshotReceived || !isBackendOriginReady()
+      || this.connectedOrigin !== getBackendOrigin()) return null;
+    return this.getActivity(sessionId);
   }
 
   getSessionStatus(sessionId: number): string | null {
@@ -163,6 +171,7 @@ export class ClaudeStatusService implements OnDestroy {
       this.clearState();
     }
     this.connectedOrigin = origin;
+    this.snapshotReceived = false;
 
     const ws = new WebSocket(getWebSocketUrl('/claude-status', undefined, origin));
     this.ws = ws;
@@ -201,6 +210,7 @@ export class ClaudeStatusService implements OnDestroy {
               }
             }
             this._activities.set(activityMap);
+            this.snapshotReceived = true;
             const completionMap = new Map<number, SessionCompletionState>();
             for (const [id, completion] of Object.entries(data.completions ?? {})) {
               completionMap.set(Number(id), completion as SessionCompletionState);
@@ -254,6 +264,7 @@ export class ClaudeStatusService implements OnDestroy {
     };
 
     this.ws.onclose = () => {
+      this.snapshotReceived = false;
       this.ws = null;
       this.clearSilenceTimer();
       this.scheduleReconnect();
@@ -261,6 +272,7 @@ export class ClaudeStatusService implements OnDestroy {
 
     this.ws.onerror = () => {
       if (this.ws === ws) {
+        this.snapshotReceived = false;
         ws.close();
       }
     };
@@ -312,6 +324,7 @@ export class ClaudeStatusService implements OnDestroy {
     this.silenceTimer = setTimeout(() => {
       this.silenceTimer = null;
       if (this.ws === ws) {
+        this.snapshotReceived = false;
         ws.close();
       }
     }, ClaudeStatusService.SILENCE_TIMEOUT_MS);
@@ -354,6 +367,7 @@ export class ClaudeStatusService implements OnDestroy {
   }
 
   private teardownSocket(): void {
+    this.snapshotReceived = false;
     this.clearSilenceTimer();
     const ws = this.ws;
     this.ws = null;

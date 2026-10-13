@@ -1,0 +1,65 @@
+<button
+  type="button"
+  z-button
+  zType="ghost"
+  zSize="sm"
+  class="confirm-button h-[1.55rem]! min-w-[4.75rem] gap-[.32rem] rounded-full! border px-[.62rem]! py-0! text-[.68rem]! font-bold tracking-[.01em] backdrop-blur-sm transition-all hover:-translate-y-px disabled:cursor-default disabled:opacity-[.68]"
+  [class.confirm-ready]="ready()"
+  [zDisabled]="!ready() || busy()"
+  [attr.data-session-delete-confirm-id]="action() === 'delete' ? targetId() : null"
+  [attr.data-session-archive-confirm-id]="
+    action() === 'archive' && scope() === 'session' ? targetId() : null
+  "
+  [attr.data-folder-archive-confirm-id]="
+    action() === 'archive' && scope() === 'folder' ? targetId() : null
+  "
+  [attr.aria-label]="
+    busy()
+      ? action() === 'delete'
+        ? 'Deleting Session'
+        : 'Archiving Session'
+      : 'Confirm ' +
+        (action() === 'delete' ? 'Delete' : 'Archive') +
+        (scope() === 'folder' ? ' Folder and Sessions' : ' Session')
+  "
+  [title]="
+    ready()
+      ? action() === 'archive'
+        ? 'Stop and archive the session and its background agents'
+        : 'Confirm delete'
+      : 'Wait a moment before confirming'
+  "
+  (click)="confirmAction($event)"
+>
+  @if (busy()) {
+    <span
+      class="size-[.72rem] animate-spin rounded-full border-[1.5px] border-current border-t-transparent"
+      aria-hidden="true"
+    ></span>
+    {{ action() === 'delete' ? 'Deleting' : 'Archiving' }}
+  } @else {
+    {{ action() === 'delete' ? 'Delete' : 'Archive' }}
+  }
+</button>
+@if (!busy()) {
+  <button
+    #cancelButton
+    type="button"
+    z-button
+    zType="ghost"
+    zSize="icon"
+    class="size-[1.4rem]! rounded-full! border border-border bg-background p-0! text-[.95rem]! text-muted-foreground transition-all hover:-translate-y-px hover:bg-muted hover:text-foreground focus-visible:ring-ring"
+    [attr.data-session-delete-cancel-id]="action() === 'delete' ? targetId() : null"
+    [attr.data-session-archive-cancel-id]="
+      action() === 'archive' && scope() === 'session' ? targetId() : null
+    "
+    [attr.data-folder-archive-cancel-id]="
+      action() === 'archive' && scope() === 'folder' ? targetId() : null
+    "
+    [attr.aria-label]="'Cancel ' + action()"
+    [title]="'Cancel ' + action()"
+    (click)="cancelAction($event)"
+  >
+    <span aria-hidden="true">×</span>
+  </button>
+}

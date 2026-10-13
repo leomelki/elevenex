@@ -17,11 +17,13 @@ import {
   SessionToolbarButtonPreference,
 } from '@/shared/models/session-toolbar-button.model';
 import { SESSION_MENTION_DRAG_TYPE } from '@/shared/models/session-mention.model';
+import { InlineActionConfirmationComponent } from '@/shared/components/inline-action-confirmation/inline-action-confirmation.component';
+import { SessionArchiveUiService } from '@/shared/services/session-archive-ui.service';
 
 @Component({
   selector: 'app-tab-bar',
   standalone: true,
-  imports: [CommonModule, NgIcon, CommitButtonComponent],
+  imports: [CommonModule, NgIcon, CommitButtonComponent, InlineActionConfirmationComponent],
   templateUrl: './tab-bar.html',
   viewProviders: [
     provideIcons({
@@ -57,6 +59,9 @@ export class TabBar {
   private claudeStatusService = inject(ClaudeStatusService);
   private providerSelection = inject(AgentRuntimeProviderService);
   private agentControl = inject(AgentControlStateService);
+  private readonly archiveUi = inject(SessionArchiveUiService);
+  readonly archiveConfirmationSessionId = input<number | null>(null);
+  readonly archiveConfirmationReady = input(false);
 
   isClaudeProvider = computed(() => this.providerSelection.selectedProvider() === 'claude');
 
@@ -97,6 +102,8 @@ export class TabBar {
   tabClose = output<number>();
   tabDelete = output<number>();
   tabArchive = output<number>();
+  tabArchiveConfirm = output<void>();
+  tabArchiveCancel = output<void>();
   tabUnarchive = output<number>();
   closeAllTabs = output<void>();
   closeOtherTabs = output<number>();
@@ -259,6 +266,7 @@ export class TabBar {
   }
 
   closeContextMenu(): void {
+    if (this.contextMenuSessionId() !== null && this.contextMenuSessionId() === this.archiveConfirmationSessionId()) this.tabArchiveCancel.emit();
     this.contextMenuOpen.set(false);
     this.contextMenuSessionId.set(null);
   }
@@ -294,8 +302,14 @@ export class TabBar {
 
   onContextMenuArchive(): void {
     const sessionId = this.contextMenuSessionId();
+    if (!sessionId) return;
+    this.tabArchive.emit(sessionId);
+    if (!this.archiveUi.isPending('session', sessionId)) this.closeContextMenu();
+  }
+
+  onContextMenuConfirmArchive(): void {
+    this.tabArchiveConfirm.emit();
     this.closeContextMenu();
-    if (sessionId) this.tabArchive.emit(sessionId);
   }
 
   onContextMenuUnarchive(): void {

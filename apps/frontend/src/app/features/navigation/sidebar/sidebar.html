@@ -413,7 +413,16 @@
                         }
                         <span class="sidebar-archive-count">{{ folderSessionCount(folder) }}</span>
                       </button>
-                      <span class="sidebar-actions session-folder-actions">
+                      <span class="sidebar-actions session-folder-actions" [class.sidebar-actions--visible]="isFolderArchiveArmed(folder.id)">
+                        @if (isFolderArchiveArmed(folder.id)) {
+                          <app-inline-action-confirmation
+                            scope="folder"
+                            [targetId]="folder.id"
+                            [ready]="archiveConfirmReady()"
+                            (confirm)="confirmArchive($event)"
+                            (cancel)="cancelArchive($event)"
+                          />
+                        } @else {
                         <button class="session-folder-action" title="New session in folder" aria-label="New session in folder" (click)="createSessionInFolder(repo, workspace, folder, $event)">
                           <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                         </button>
@@ -422,6 +431,7 @@
                         </button>
                         <button
                           class="session-folder-action"
+                          data-session-archive-controls="true"
                           title="Archive folder and sessions"
                           aria-label="Archive folder and sessions"
                           [disabled]="folderBusyId() !== null"
@@ -438,6 +448,7 @@
                         >
                           <ng-icon name="lucideTrash2" class="!w-3.5 !h-3.5" />
                         </button>
+                       }
                       </span>
                     </div>
 
@@ -497,17 +508,25 @@
                           <span
                             class="sidebar-actions session-actions"
                             data-session-delete-controls="true"
-                            [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id)"
+                            [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id) || isSessionArchiveArmed(session.id) || isArchivingSession(session.id)"
                           >
-                            @if (isSessionDeleteArmed(session.id)) {
-                              <button
-                                class="session-delete-confirm session-delete-confirm--ready"
-                                data-session-delete-controls="true"
-                                (click)="confirmDeleteSession(session, $event)"
-                                [disabled]="!isSessionDeleteConfirmReady(session.id)"
-                              >
-                                Delete
-                              </button>
+                            @if (isSessionArchiveArmed(session.id) || isArchivingSession(session.id)) {
+                              <app-inline-action-confirmation
+                                [targetId]="session.id"
+                                [ready]="archiveConfirmReady()"
+                                [busy]="isArchivingSession(session.id)"
+                                (confirm)="confirmArchive($event)"
+                                (cancel)="cancelArchive($event)"
+                              />
+                            } @else if (isSessionDeleteArmed(session.id)) {
+                              <app-inline-action-confirmation
+                                action="delete"
+                                [targetId]="session.id"
+                                [ready]="isSessionDeleteConfirmReady(session.id)"
+                                [busy]="isDeletingSession(session.id)"
+                                (confirm)="confirmDeleteSession(session, $event)"
+                                (cancel)="cancelDeleteSession($event)"
+                              />
                             } @else {
                               <button
                                 class="session-folder-action"
@@ -519,7 +538,7 @@
                               >
                                 <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                               </button>
-                              <button class="session-folder-action" title="Archive session" aria-label="Archive session" (click)="archiveSession(session, $event)">
+                              <button data-session-archive-controls="true" [attr.data-session-archive-trigger-id]="session.id" class="session-folder-action" title="Archive session" aria-label="Archive session" (click)="archiveSession(session, $event)">
                                 <ng-icon name="lucideArchive" class="!w-3.5 !h-3.5" />
                               </button>
                               <button
@@ -540,15 +559,23 @@
                           <ng-icon name="lucideArchive" class="!w-3 !h-3 text-muted-foreground shrink-0" />
                           <span class="sidebar-label--session sidebar-label--session-archived text-sm truncate flex-1">{{ session.name || 'Session ' + session.id }}</span>
                           <span class="sidebar-actions session-actions" data-session-delete-controls="true" [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id)">
-                            @if (isSessionDeleteArmed(session.id)) {
-                              <button
-                                class="session-delete-confirm session-delete-confirm--ready"
-                                data-session-delete-controls="true"
-                                (click)="confirmDeleteSession(session, $event)"
-                                [disabled]="!isSessionDeleteConfirmReady(session.id)"
-                              >
-                                Delete
-                              </button>
+                            @if (isSessionArchiveArmed(session.id) || isArchivingSession(session.id)) {
+                              <app-inline-action-confirmation
+                                [targetId]="session.id"
+                                [ready]="archiveConfirmReady()"
+                                [busy]="isArchivingSession(session.id)"
+                                (confirm)="confirmArchive($event)"
+                                (cancel)="cancelArchive($event)"
+                              />
+                            } @else if (isSessionDeleteArmed(session.id)) {
+                              <app-inline-action-confirmation
+                                action="delete"
+                                [targetId]="session.id"
+                                [ready]="isSessionDeleteConfirmReady(session.id)"
+                                [busy]="isDeletingSession(session.id)"
+                                (confirm)="confirmDeleteSession(session, $event)"
+                                (cancel)="cancelDeleteSession($event)"
+                              />
                             } @else {
                               <button class="session-folder-action" title="Restore session" aria-label="Restore session" (click)="unarchiveSession(session, $event)">
                                 <ng-icon name="lucideArchiveRestore" class="!w-3.5 !h-3.5" />
@@ -678,41 +705,25 @@
                       <span
                         class="sidebar-actions session-actions"
                         data-session-delete-controls="true"
-                        [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id)"
+                        [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id) || isSessionArchiveArmed(session.id) || isArchivingSession(session.id)"
                       >
-                        @if (isSessionDeleteArmed(session.id) || isDeletingSession(session.id)) {
-                          <span class="session-delete-inline" data-session-delete-controls="true">
-                            <button
-                              class="session-delete-confirm"
-                              [attr.data-session-delete-confirm-id]="session.id"
-                              data-session-delete-controls="true"
-                              [class.session-delete-confirm--ready]="isSessionDeleteConfirmReady(session.id)"
-                              [class.session-delete-confirm--loading]="isDeletingSession(session.id)"
-                              [attr.aria-label]="isDeletingSession(session.id) ? 'Deleting Session' : 'Confirm Delete Session'"
-                              [attr.title]="isDeletingSession(session.id) ? 'Deleting session' : isSessionDeleteConfirmReady(session.id) ? 'Confirm delete' : 'Wait a moment before confirming'"
-                              [disabled]="!isSessionDeleteConfirmReady(session.id) || isDeletingSession(session.id)"
-                              (click)="confirmDeleteSession(session, $event)"
-                            >
-                              @if (isDeletingSession(session.id)) {
-                                <span class="session-delete-spinner" aria-hidden="true"></span>
-                                <span>Deleting</span>
-                              } @else {
-                                <span>Delete</span>
-                              }
-                            </button>
-                            @if (!isDeletingSession(session.id)) {
-                              <button
-                                class="session-delete-cancel"
-                                [attr.data-session-delete-cancel-id]="session.id"
-                                data-session-delete-controls="true"
-                                title="Cancel delete"
-                                aria-label="Cancel delete"
-                                (click)="cancelDeleteSession($event)"
-                              >
-                                <span aria-hidden="true">×</span>
-                              </button>
-                            }
-                          </span>
+                        @if (isSessionArchiveArmed(session.id) || isArchivingSession(session.id)) {
+                              <app-inline-action-confirmation
+                                [targetId]="session.id"
+                                [ready]="archiveConfirmReady()"
+                                [busy]="isArchivingSession(session.id)"
+                                (confirm)="confirmArchive($event)"
+                                (cancel)="cancelArchive($event)"
+                              />
+                            } @else if (isSessionDeleteArmed(session.id) || isDeletingSession(session.id)) {
+                          <app-inline-action-confirmation
+                              action="delete"
+                              [targetId]="session.id"
+                              [ready]="isSessionDeleteConfirmReady(session.id)"
+                              [busy]="isDeletingSession(session.id)"
+                              (confirm)="confirmDeleteSession(session, $event)"
+                              (cancel)="cancelDeleteSession($event)"
+                            />
                         } @else {
                           <button
                             class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-foreground"
@@ -726,6 +737,7 @@
                           </button>
                           <button
                             class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-foreground"
+                            data-session-archive-controls="true"
                             [attr.data-session-archive-trigger-id]="session.id"
                             title="Archive Session"
                             aria-label="Archive Session"
@@ -806,28 +818,24 @@
                           }
                         </div>
                         <span class="temporary-session-badge">Temp</span>
-                        <span class="sidebar-actions session-actions" data-session-delete-controls="true" [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id)">
-                          @if (isSessionDeleteArmed(session.id) || isDeletingSession(session.id)) {
-                            <span class="session-delete-inline" data-session-delete-controls="true">
-                              <button
-                                class="session-delete-confirm"
-                                data-session-delete-controls="true"
-                                [class.session-delete-confirm--ready]="isSessionDeleteConfirmReady(session.id)"
-                                [class.session-delete-confirm--loading]="isDeletingSession(session.id)"
-                                [disabled]="!isSessionDeleteConfirmReady(session.id) || isDeletingSession(session.id)"
-                                [attr.aria-label]="isDeletingSession(session.id) ? 'Discarding temporary session' : 'Confirm discard temporary session'"
-                                (click)="confirmDeleteSession(session, $event)"
-                              >
-                                @if (isDeletingSession(session.id)) {
-                                  <span class="session-delete-spinner" aria-hidden="true"></span><span>Discarding</span>
-                                } @else {
-                                  <span>Discard</span>
-                                }
-                              </button>
-                              @if (!isDeletingSession(session.id)) {
-                                <button class="session-delete-cancel" data-session-delete-controls="true" aria-label="Cancel discard" (click)="cancelDeleteSession($event)"><span aria-hidden="true">×</span></button>
-                              }
-                            </span>
+                        <span class="sidebar-actions session-actions" data-session-delete-controls="true" [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id) || isSessionArchiveArmed(session.id) || isArchivingSession(session.id)">
+                          @if (isSessionArchiveArmed(session.id) || isArchivingSession(session.id)) {
+                              <app-inline-action-confirmation
+                                [targetId]="session.id"
+                                [ready]="archiveConfirmReady()"
+                                [busy]="isArchivingSession(session.id)"
+                                (confirm)="confirmArchive($event)"
+                                (cancel)="cancelArchive($event)"
+                              />
+                            } @else if (isSessionDeleteArmed(session.id) || isDeletingSession(session.id)) {
+                            <app-inline-action-confirmation
+                              action="delete"
+                              [targetId]="session.id"
+                              [ready]="isSessionDeleteConfirmReady(session.id)"
+                              [busy]="isDeletingSession(session.id)"
+                              (confirm)="confirmDeleteSession(session, $event)"
+                              (cancel)="cancelDeleteSession($event)"
+                            />
                           } @else {
                             <button
                               class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-destructive"
@@ -984,41 +992,25 @@
                           <span
                             class="sidebar-actions session-actions"
                             data-session-delete-controls="true"
-                            [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id)"
+                            [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id) || isSessionArchiveArmed(session.id) || isArchivingSession(session.id)"
                           >
-                            @if (isSessionDeleteArmed(session.id) || isDeletingSession(session.id)) {
-                              <span class="session-delete-inline" data-session-delete-controls="true">
-                                <button
-                                  class="session-delete-confirm"
-                                  [attr.data-session-delete-confirm-id]="session.id"
-                                  data-session-delete-controls="true"
-                                  [class.session-delete-confirm--ready]="isSessionDeleteConfirmReady(session.id)"
-                                  [class.session-delete-confirm--loading]="isDeletingSession(session.id)"
-                                  [attr.aria-label]="isDeletingSession(session.id) ? 'Deleting Session' : 'Confirm Delete Session'"
-                                  [attr.title]="isDeletingSession(session.id) ? 'Deleting session' : isSessionDeleteConfirmReady(session.id) ? 'Confirm delete' : 'Wait a moment before confirming'"
-                                  [disabled]="!isSessionDeleteConfirmReady(session.id) || isDeletingSession(session.id)"
-                                  (click)="confirmDeleteSession(session, $event)"
-                                >
-                                  @if (isDeletingSession(session.id)) {
-                                    <span class="session-delete-spinner" aria-hidden="true"></span>
-                                    <span>Deleting</span>
-                                  } @else {
-                                    <span>Delete</span>
-                                  }
-                                </button>
-                                @if (!isDeletingSession(session.id)) {
-                                  <button
-                                    class="session-delete-cancel"
-                                    [attr.data-session-delete-cancel-id]="session.id"
-                                    data-session-delete-controls="true"
-                                    title="Cancel delete"
-                                    aria-label="Cancel delete"
-                                    (click)="cancelDeleteSession($event)"
-                                  >
-                                    <span aria-hidden="true">×</span>
-                                  </button>
-                                }
-                              </span>
+                            @if (isSessionArchiveArmed(session.id) || isArchivingSession(session.id)) {
+                              <app-inline-action-confirmation
+                                [targetId]="session.id"
+                                [ready]="archiveConfirmReady()"
+                                [busy]="isArchivingSession(session.id)"
+                                (confirm)="confirmArchive($event)"
+                                (cancel)="cancelArchive($event)"
+                              />
+                            } @else if (isSessionDeleteArmed(session.id) || isDeletingSession(session.id)) {
+                              <app-inline-action-confirmation
+                              action="delete"
+                              [targetId]="session.id"
+                              [ready]="isSessionDeleteConfirmReady(session.id)"
+                              [busy]="isDeletingSession(session.id)"
+                              (confirm)="confirmDeleteSession(session, $event)"
+                              (cancel)="cancelDeleteSession($event)"
+                            />
                             } @else {
                               <button
                                 class="p-0.5 rounded hover:bg-sidebar-accent text-muted-foreground hover:text-foreground"
