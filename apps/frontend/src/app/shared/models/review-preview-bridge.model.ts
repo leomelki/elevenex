@@ -53,6 +53,9 @@ export interface PreviewRect {
 export interface PreviewTheme {
   anchor: string;
   anchorBorder: string;
+  /** Visualization frames inherit the app's semantic colors without DOM access. */
+  variables?: Readonly<Record<string, string>>;
+  colorScheme?: 'light' | 'dark';
 }
 
 /** A discussion anchor to paint into the rendered page. */
@@ -63,7 +66,13 @@ export interface PreviewAnchorHighlight {
 }
 
 export type PreviewInboundMessage =
-  | { type: 'ready'; path: string | null; instrumented: boolean; contentHeight: number; title: string | null }
+  | {
+      type: 'ready';
+      path: string | null;
+      instrumented: boolean;
+      contentHeight: number;
+      title: string | null;
+    }
   | { type: 'selection-changed'; text: string; rect: PreviewRect; source: PreviewSourceRef | null }
   | { type: 'selection-cleared' }
   | { type: 'navigate'; href: string; path: string | null; external: boolean }
@@ -73,6 +82,7 @@ export type PreviewInboundMessage =
   | { type: 'error'; message: string };
 
 export type PreviewOutboundMessage =
+  | { type: 'probe' }
   | { type: 'init'; features: readonly string[]; theme: PreviewTheme }
   | { type: 'scroll-to'; top: number }
   | { type: 'clear-selection' }

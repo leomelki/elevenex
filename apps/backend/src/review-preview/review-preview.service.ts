@@ -3,12 +3,14 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleDestroy,
   PayloadTooLargeException,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, promises as fs } from 'node:fs';
 import type { Readable } from 'node:stream';
 import * as path from 'node:path';
+import { homedir } from 'node:os';
 import { detectMimeType, isWithinWorktree } from '../files/files.service.js';
 import { transformPreviewHtml } from './html-instrumentation.js';
 import type { PreviewSessionDescriptor } from './review-preview.types.js';
@@ -37,6 +39,7 @@ interface PreviewSession {
   previewId: string;
   /** Symlink-resolved worktree root. Every request is confined to this. */
   root: string;
+  visualization: boolean;
   /** Browser-visible origin, used to build the CSP prefix. */
   previewOrigin: string | null;
   createdAt: number;
@@ -58,34 +61,51 @@ export interface PreviewAsset {
 export const PREVIEW_INTERNAL_SEGMENT = '___ex';
 
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
-const MAX_SESSIONS = 32;
+const SESSION_SWEEP_MS = 60_000;
 /** Read into memory below this; stream above it. */
 const STREAM_THRESHOLD_BYTES = 1_000_000;
 /** Refuse outright above this — nothing in a review needs it. */
 const MAX_ASSET_BYTES = 100_000_000;
 
-const ORIGIN_PATTERN = /^https?:\/\/[A-Za-z0-9.\-]+(:\d+)?$/;
+const ORIGIN_PATTERN = /^https?:\/\/[A-Za-z0-9.-]+(:\d+)?$/;
 
 @Injectable()
-export class ReviewPreviewService {
+export class ReviewPreviewService implements OnModuleDestroy {
   private readonly logger = new Logger('ReviewPreview');
   private readonly sessions = new Map<string, PreviewSession>();
   /** root -> previewId, so reopening a worktree reuses its session. */
   private readonly sessionsByRoot = new Map<string, string>();
+  private readonly sweepTimer = setInterval(
+    () => this.sweep(),
+    SESSION_SWEEP_MS,
+  );
+
+  constructor() {
+    // Capabilities are small metadata records. Expire idle records rather than
+    // evicting documents still using their URLs as more artifacts are opened.
+    this.sweepTimer.unref();
+  }
+
+  onModuleDestroy(): void {
+    clearInterval(this.sweepTimer);
+  }
 
   async createSession(
     worktreePath: string,
     previewOrigin: string | null,
+    visualization = false,
   ): Promise<PreviewSessionDescriptor> {
     if (!worktreePath) {
       throw new BadRequestException('worktreePath is required');
     }
 
-    this.sweep();
-
     let root: string;
     try {
-      root = await fs.realpath(worktreePath);
+      root = await fs.realpath(
+        worktreePath.startsWith('~/')
+          ? path.join(homedir(), worktreePath.slice(2))
+          : worktreePath,
+      );
     } catch {
       throw new BadRequestException(`Worktree does not exist: ${worktreePath}`);
     }
@@ -95,32 +115,60 @@ export class ReviewPreviewService {
       throw new BadRequestException(`Not a directory: ${worktreePath}`);
     }
 
-    const existingId = this.sessionsByRoot.get(root);
+    const sessionKey = `${visualization ? 'visualization' : 'review'}:${root}`;
+    const existingId = this.sessionsByRoot.get(sessionKey);
     const existing = existingId ? this.sessions.get(existingId) : undefined;
-    if (existing) {
+    if (existing && Date.now() - existing.lastAccessAt <= SESSION_TTL_MS) {
       existing.lastAccessAt = Date.now();
       // A reopened session can come from a different origin (dev server vs
       // packaged app), and a stale origin would block every asset.
-      existing.previewOrigin = normalizeOrigin(previewOrigin) ?? existing.previewOrigin;
+      existing.previewOrigin =
+        normalizeOrigin(previewOrigin) ?? existing.previewOrigin;
       return this.describe(existing);
     }
 
-    if (this.sessions.size >= MAX_SESSIONS) this.evictOldest();
+    if (existing) this.drop(existing);
 
     const session: PreviewSession = {
       previewId: randomBytes(16).toString('hex'),
       root,
+      visualization,
       previewOrigin: normalizeOrigin(previewOrigin),
       createdAt: Date.now(),
       lastAccessAt: Date.now(),
     };
     this.sessions.set(session.previewId, session);
-    this.sessionsByRoot.set(root, session.previewId);
+    this.sessionsByRoot.set(sessionKey, session.previewId);
 
     this.logger.debug(
       `Preview session ${session.previewId} for ${root} (origin: ${session.previewOrigin ?? 'unknown'})`,
     );
     return this.describe(session);
+  }
+
+  /** One batched heartbeat keeps mounted frames' dependency URLs usable. */
+  touchSessions(previewIds: unknown): { expired: string[] } {
+    if (
+      !Array.isArray(previewIds) ||
+      previewIds.length > 1024 ||
+      previewIds.some(
+        (id) => typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id),
+      )
+    ) {
+      throw new BadRequestException(
+        'previewIds must contain at most 1024 preview IDs',
+      );
+    }
+    const expired: string[] = [];
+    for (const id of new Set<string>(previewIds)) {
+      try {
+        this.requireSession(id);
+      } catch (error) {
+        if (!(error instanceof NotFoundException)) throw error;
+        expired.push(id);
+      }
+    }
+    return { expired };
   }
 
   /** Throws NotFound for an unknown or expired id. */
@@ -137,7 +185,10 @@ export class ReviewPreviewService {
   /**
    * Resolve, read and (for HTML) instrument one file inside a preview session.
    */
-  async readAsset(previewId: string, relativePath: PreviewAssetPath): Promise<PreviewAsset> {
+  async readAsset(
+    previewId: string,
+    relativePath: PreviewAssetPath,
+  ): Promise<PreviewAsset> {
     const session = this.requireSession(previewId);
     const absolutePath = await this.resolveWithinSession(session, relativePath);
 
@@ -162,6 +213,7 @@ export class ReviewPreviewService {
         filePath,
         previewId: session.previewId,
         bridgeUrl: `${previewPrefix}${PREVIEW_INTERNAL_SEGMENT}/bridge.js`,
+        visualization: session.visualization,
       });
       return {
         body: Buffer.from(html, 'utf-8'),
@@ -224,7 +276,9 @@ export class ReviewPreviewService {
       throw new NotFoundException('Not found');
     }
 
-    const target = stats.isDirectory() ? path.join(candidate, 'index.html') : candidate;
+    const target = stats.isDirectory()
+      ? path.join(candidate, 'index.html')
+      : candidate;
 
     let real: string;
     try {
@@ -268,13 +322,19 @@ export class ReviewPreviewService {
     // and send it somewhere. Failing closed on the one that matters beats
     // serving a blank preview.
     const src = p ?? "'self'";
+    // Generated visualizations commonly load D3/Chart.js from these CDNs.
+    // Only scripts/styles get this allowance; fetch/XHR stays confined to the
+    // artifact directory and review sessions retain their own policy.
+    const libraries = session.visualization
+      ? ' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com'
+      : '';
 
     return [
       "default-src 'none'",
       "base-uri 'none'",
       "form-action 'none'",
-      `script-src ${src} 'unsafe-inline' 'unsafe-eval'`,
-      `style-src ${src} 'unsafe-inline'`,
+      `script-src ${src}${libraries} 'unsafe-inline' 'unsafe-eval'`,
+      `style-src ${src}${libraries} 'unsafe-inline'`,
       `img-src ${src} data: blob:`,
       `font-src ${src} data:`,
       `media-src ${src} blob:`,
@@ -305,23 +365,16 @@ export class ReviewPreviewService {
 
   private sweep(): void {
     const now = Date.now();
-    for (const session of [...this.sessions.values()]) {
+    for (const session of this.sessions.values()) {
       if (now - session.lastAccessAt > SESSION_TTL_MS) this.drop(session);
     }
   }
 
-  private evictOldest(): void {
-    let oldest: PreviewSession | null = null;
-    for (const session of this.sessions.values()) {
-      if (!oldest || session.lastAccessAt < oldest.lastAccessAt) oldest = session;
-    }
-    if (oldest) this.drop(oldest);
-  }
-
   private drop(session: PreviewSession): void {
     this.sessions.delete(session.previewId);
-    if (this.sessionsByRoot.get(session.root) === session.previewId) {
-      this.sessionsByRoot.delete(session.root);
+    const key = `${session.visualization ? 'visualization' : 'review'}:${session.root}`;
+    if (this.sessionsByRoot.get(key) === session.previewId) {
+      this.sessionsByRoot.delete(key);
     }
   }
 }

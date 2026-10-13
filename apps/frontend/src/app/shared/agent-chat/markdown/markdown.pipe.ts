@@ -5,7 +5,7 @@ import { Pipe, PipeTransform, inject } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/common';
-import { Marked, type Tokens } from 'marked';
+import { Marked, type Tokens, type TokensList } from 'marked';
 import { isVideoFile, sanitizeWithVideos } from './markdown-video';
 
 function codeRenderer(this: unknown, { text, lang }: { text: string; lang?: string }) {
@@ -317,13 +317,15 @@ export class MarkdownPipe implements PipeTransform {
    *   image links resolve against its own directory.
    */
   transform(
-    value: string | null | undefined,
+    value: string | TokensList | null | undefined,
     worktreePath?: string | null,
     sourcePath?: string | null,
     mediaRevision?: string,
   ): SafeHtml {
     if (!value) return '';
-    const rendered = marked.parse(value) as string;
+    const rendered = (
+      typeof value === 'string' ? marked.parse(value) : marked.parser(value)
+    ) as string;
     const resolved = resolveLocalMedia(
       rendered,
       worktreePath || '',

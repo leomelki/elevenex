@@ -1,0 +1,52 @@
+<div class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+  <span class="min-w-0 truncate text-xs text-muted-foreground" [title]="path()">{{ title() }}</span>
+  <button
+    z-button
+    zType="ghost"
+    zSize="sm"
+    type="button"
+    aria-label="Reload visualization"
+    (click)="retry()"
+  >
+    Reload
+  </button>
+</div>
+@if (error(); as message) {
+  <div
+    role="alert"
+    class="flex items-center justify-between gap-3 px-3 py-2 text-sm text-destructive"
+  >
+    <span>{{ message }}</span>
+    <button z-button zType="outline" zSize="sm" type="button" (click)="retry()">Retry</button>
+  </div>
+}
+@if (notice(); as message) {
+  <div role="status" class="px-3 py-2 text-sm text-muted-foreground">{{ message }}</div>
+}
+<div class="relative" [attr.aria-busy]="loading()">
+  @if (loading()) {
+    <div
+      role="status"
+      class="absolute inset-0 flex items-center justify-center bg-muted text-sm text-muted-foreground"
+    >
+      Loading visualization…
+    </div>
+  }
+  @for (url of frames(); track url) {
+    <iframe
+      #frame
+      class="block w-full border-0 bg-background"
+      [style.height.px]="height()"
+      [title]="title()"
+      sandbox="allow-scripts"
+      referrerpolicy="no-referrer"
+      loading="eager"
+      [src]="url"
+      (load)="onFrameLoad()"
+    ></iframe>
+  } @empty {
+    @if (loading()) {
+      <div class="h-80"></div>
+    }
+  }
+</div>

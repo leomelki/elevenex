@@ -1,0 +1,16 @@
+<div class="agent-markdown__content" mediaPreview>
+  @for (part of parts(); track part.key) {
+    @if (part.kind === 'markdown') {
+      <div
+        class="agent-markdown__section"
+        [innerHTML]="part.content | cwMarkdown: worktreePath() : sourcePath() : mediaRevision"
+      ></div>
+    } @else {
+      <agent-visualization
+        [path]="part.path"
+        [worktreePath]="worktreePath()"
+        [sourcePath]="sourcePath()"
+      />
+    }
+  }
+</div>

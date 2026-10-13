@@ -23,6 +23,7 @@ interface CreatePreviewSessionBody {
    * proxy; see the note in ReviewPreviewService.
    */
   previewOrigin?: string;
+  visualization?: boolean;
 }
 
 /**
@@ -45,7 +46,13 @@ export class ReviewPreviewController {
     return this.reviewPreview.createSession(
       body?.worktreePath,
       body?.previewOrigin ?? originFromRequest(req),
+      body?.visualization === true,
     );
+  }
+
+  @Post('sessions/keepalive')
+  keepalive(@Body() body: { previewIds?: unknown }) {
+    return this.reviewPreview.touchSessions(body?.previewIds);
   }
 
   @Get('p/:previewId/___ex/bridge.js')
