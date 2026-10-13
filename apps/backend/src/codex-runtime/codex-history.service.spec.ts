@@ -4,6 +4,221 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 describe('CodexHistoryService', () => {
+  it.each(['user_message', 'item_completed'])(
+    'restores async replies from %s as question receipts, including after a reload',
+    async (format) => {
+      const root = await mkdtemp(join(tmpdir(), 'codex-async-history-'));
+      try {
+        const question =
+          'Should the review cover those changes, or also recent commits?';
+        const records = [
+          {
+            type: 'session_meta',
+            payload: { id: 'async-thread', cwd: '/repo' },
+          },
+          {
+            type: 'response_item',
+            payload: {
+              type: 'function_call',
+              id: 'function-1',
+              call_id: 'question-1',
+              name: 'request_user_input_async',
+              arguments: JSON.stringify({ questions: [{ title: question }] }),
+            },
+          },
+          {
+            type: 'response_item',
+            payload: {
+              type: 'function_call_output',
+              call_id: 'question-1',
+              output:
+                'The question was shown to the user. Their reply will arrive asynchronously.',
+            },
+          },
+          {
+            type: 'event_msg',
+            payload: {
+              type: 'item_completed',
+              item: {
+                type: 'AgentMessage',
+                id: 'question-1',
+                delivery: 'async',
+                content: [{ type: 'Text', text: question }],
+                questions: [{ title: question }],
+              },
+            },
+          },
+          {
+            type: 'event_msg',
+            timestamp: '2026-10-13T10:00:00.000Z',
+            payload:
+              format === 'user_message'
+                ? {
+                    type: format,
+                    message: `${question}\nAnswer: Archive confirmation changes`,
+                  }
+                : {
+                    type: format,
+                    item: {
+                      type: 'UserMessage',
+                      id: 'answer-1',
+                      content: [
+                        {
+                          type: 'Text',
+                          text: `${question}\nAnswer: Archive confirmation changes`,
+                        },
+                      ],
+                    },
+                  },
+          },
+          {
+            type: 'event_msg',
+            payload: {
+              type: 'user_message',
+              message: 'Answer: This is an ordinary message',
+            },
+          },
+        ];
+        await writeFile(
+          join(root, 'async-thread.jsonl'),
+          records.map((row) => JSON.stringify(row)).join('\n') + '\n',
+        );
+        for (let reload = 0; reload < 2; reload++) {
+          const history = await new CodexHistoryService(root).getHistory(
+            'async-thread',
+          );
+          expect(history).toHaveLength(3);
+          expect(history[0]).toMatchObject({
+            kind: 'tool_use',
+            toolUseId: 'question-1',
+            toolKind: 'ask_user_question',
+          });
+          expect(history[1]).toMatchObject({
+            kind: 'tool_result',
+            toolUseId: 'question-1',
+            content: JSON.stringify({
+              answers: {
+                [question]: { answers: ['Archive confirmation changes'] },
+              },
+            }),
+            transcriptMessageId: 'codex-record:4',
+            timestamp: '2026-10-13T10:00:00.000Z',
+          });
+          expect(history[2]).toMatchObject({
+            kind: 'user',
+            content: 'Answer: This is an ordinary message',
+          });
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('matches queued native async replies to their question, preserves multiline answers, and leaves partial matches visible', () => {
+    const service = new CodexHistoryService();
+    const nativeQuestion = (id: string, questions: { title: string }[]) => ({
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        item: {
+          type: 'AgentMessage',
+          id,
+          delivery: 'async',
+          questions,
+          content: [{ type: 'Text', text: 'Please choose' }],
+        },
+      },
+    });
+    const user = (message: string) => ({
+      type: 'event_msg',
+      payload: { type: 'user_message', message },
+    });
+    const history = (service as any).normalizeRecords([
+      user('Which scope?\nAnswer: Before the question'),
+      nativeQuestion('scope', [{ title: 'Which scope?' }]),
+      nativeQuestion('details', [
+        { title: 'Which approach?' },
+        { title: 'Any constraints?' },
+      ]),
+      user('Which approach?\nAnswer: A partial match'),
+      user(
+        'Which approach?\nAnswer: Complete\n\nAny constraints?\nAnswer: Keep APIs\nAnd keep tests',
+      ),
+      user('Which scope?\nAnswer: Current changes'),
+      user('Which scope?\nAnswer: A normal follow-up after the answer'),
+    ]);
+    expect(
+      history
+        .filter((item: any) => item.kind === 'user')
+        .map((item: any) => item.content),
+    ).toEqual([
+      'Which scope?\nAnswer: Before the question',
+      'Which approach?\nAnswer: A partial match',
+      'Which scope?\nAnswer: A normal follow-up after the answer',
+    ]);
+    expect(history.filter((item: any) => item.kind === 'tool_result')).toEqual([
+      expect.objectContaining({
+        toolUseId: 'details',
+        content: JSON.stringify({
+          answers: {
+            'Which approach?': { answers: ['Complete'] },
+            'Any constraints?': { answers: ['Keep APIs\nAnd keep tests'] },
+          },
+        }),
+      }),
+      expect.objectContaining({
+        toolUseId: 'scope',
+        content: JSON.stringify({
+          answers: {
+            'Which scope?': { answers: ['Current changes'] },
+          },
+        }),
+      }),
+    ]);
+  });
+
+  it('restores replies with an empty optional answer after turn/start trims the prompt', () => {
+    const history = (new CodexHistoryService() as any).normalizeRecords([
+      {
+        type: 'response_item',
+        payload: {
+          type: 'function_call',
+          call_id: 'optional-question',
+          name: 'functions.request_user_input_async',
+          arguments: JSON.stringify({
+            questions: [
+              { title: 'Which approach?' },
+              { title: 'Any constraints?' },
+            ],
+          }),
+        },
+      },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'user_message',
+          message: 'Which approach?\nAnswer: Complete\n\nAny constraints?\nAnswer:',
+        },
+      },
+    ]);
+    expect(history).toHaveLength(2);
+    expect(history[0]).toMatchObject({
+      kind: 'tool_use',
+      toolKind: 'ask_user_question',
+    });
+    expect(history[1]).toMatchObject({
+      kind: 'tool_result',
+      toolUseId: 'optional-question',
+      content: JSON.stringify({
+        answers: {
+          'Which approach?': { answers: ['Complete'] },
+          'Any constraints?': { answers: [] },
+        },
+      }),
+    });
+  });
+
   it('restores the latest child context, ignoring inherited counts, lifetime usage, and rate-limit-only events', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-child-context-'));
     const path = join(root, 'rollout-child.jsonl');

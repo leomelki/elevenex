@@ -70,6 +70,11 @@ import {
 import { CodexAuthService } from './codex-auth.service.js';
 import { CodexHistoryService } from './codex-history.service.js';
 import {
+  codexAsyncQuestionAnswers,
+  codexAsyncQuestionCall,
+  codexAsyncQuestionResult,
+} from './codex-async-questions.js';
+import {
   CodexSubagentTracker,
   collaborationTool,
   executionStatus,
@@ -2084,6 +2089,26 @@ export class CodexRuntimeService
           return `${question.question}\nAnswer: ${answer}`;
         })
         .join('\n\n');
+      const publishAnswer = () => {
+        const toolUseId = requestId.slice('codex-async-user-input:'.length);
+        const call = codexAsyncQuestionCall(
+          toolUseId,
+          asyncRequest.questions ?? [],
+          asyncRequest.createdAt,
+        );
+        const answers = codexAsyncQuestionAnswers(call, prompt);
+        if (answers)
+          this.pushRequestItem(
+            sessionId,
+            codexAsyncQuestionResult(
+              toolUseId,
+              answers,
+              new Date().toISOString(),
+            ),
+            'tool_result',
+            asyncRequest.agentId,
+          );
+      };
       try {
         if (asyncRequest.agentId) {
           const child = await this.appServer.request<{
@@ -2111,6 +2136,7 @@ export class CodexRuntimeService
               new Date().toISOString(),
             ),
           ]);
+          publishAnswer();
           return;
         }
         const activeRun = this.activeRuns.get(sessionId);
@@ -2136,6 +2162,7 @@ export class CodexRuntimeService
         } else {
           await this.submitPrompt(sessionId, prompt);
         }
+        publishAnswer();
       } catch (error) {
         state.asyncUserInputRequests.set(requestId, asyncRequest);
         this.refreshPendingUserInput(sessionId);
@@ -4132,6 +4159,12 @@ export class CodexRuntimeService
       createdAt: new Date().toISOString(),
     };
     state.asyncUserInputRequests.set(requestId, request);
+    this.pushRequestItem(
+      sessionId,
+      codexAsyncQuestionCall(item.id, questions, request.createdAt),
+      'tool_use',
+      agentId,
+    );
     this.refreshPendingUserInput(sessionId);
   }
 
@@ -4324,6 +4357,13 @@ export class CodexRuntimeService
           type: 'collab_agent_tool_call',
         } as unknown as ThreadItem;
       case 'agentMessage': {
+        // Native async questions are rendered by receiveCodexAsyncUserInput.
+        if (
+          raw.delivery === 'async' &&
+          Array.isArray(raw.questions) &&
+          raw.questions.length
+        )
+          return null;
         const finalText = typeof raw.text === 'string' ? raw.text : '';
         // On `item/completed` we get the authoritative final text; on
         // `item/started` text is usually empty. The delta path keeps its

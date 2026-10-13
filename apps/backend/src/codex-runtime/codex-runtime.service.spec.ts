@@ -187,6 +187,17 @@ describe('CodexRuntimeService', () => {
       input: [{ type: 'text', text: 'Which approach?\nAnswer: Small patch' }],
     });
     expect(state.pendingUserInputRequest).toBeNull();
+    expect(state.liveItems).toEqual([]);
+    expect([...runtime.tracker(7).liveItems.get('child').values()]).toEqual([
+      expect.objectContaining({ kind: 'tool_use', toolUseId: 'question' }),
+      expect.objectContaining({
+        kind: 'tool_result',
+        toolUseId: 'question',
+        content: JSON.stringify({
+          answers: { 'question-1': { answers: ['Small patch'] } },
+        }),
+      }),
+    ]);
   });
   it('keeps child streaming and nested collaboration out of the parent transcript', async () => {
     const { service, sessionsService } = createService();
@@ -1274,6 +1285,9 @@ describe('CodexRuntimeService', () => {
       }),
     ).rejects.toThrow('steer failed');
     expect(state.pendingUserInputRequest.requestId).toBe(requestId);
+    expect(
+      state.liveItems.filter((item: any) => item.kind === 'tool_result'),
+    ).toHaveLength(0);
     await service.answerUserInput(7, requestId, 'accept', {
       'question-1': 'Complete',
       'question-2': 'Keep existing APIs',
@@ -1289,6 +1303,23 @@ describe('CodexRuntimeService', () => {
       ],
     });
     expect(state.pendingUserInputRequest).toBeNull();
+    expect(state.liveItems).toEqual([
+      expect.objectContaining({
+        kind: 'tool_use',
+        toolUseId: 'async-question-1',
+        toolKind: 'ask_user_question',
+      }),
+      expect.objectContaining({
+        kind: 'tool_result',
+        toolUseId: 'async-question-1',
+        content: JSON.stringify({
+          answers: {
+            'question-1': { answers: ['Complete'] },
+            'question-2': { answers: ['Keep existing APIs'] },
+          },
+        }),
+      }),
+    ]);
   });
 
   it('queues multiple async questions, keeps them after completion, and accepts a late answer', async () => {

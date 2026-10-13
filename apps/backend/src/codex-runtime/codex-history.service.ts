@@ -30,6 +30,11 @@ import {
 } from './codex-subagents.js';
 import type { ClaudeSubagentState } from '../claude-runtime/claude-runtime.types.js';
 import { codexContextUsage } from './codex-context-usage.js';
+import {
+  codexAsyncQuestionAnswers,
+  codexAsyncQuestionCall,
+  codexAsyncQuestionResult,
+} from './codex-async-questions.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -585,6 +590,8 @@ export class CodexHistoryService {
 
   private normalizeRecords(records: JsonRecord[]): ClaudeTranscriptItem[] {
     const items: ClaudeTranscriptItem[] = [];
+    const asyncQuestions = new Map<string, ClaudeTranscriptItem>();
+    const answeredQuestions = new Map<string, ClaudeTranscriptItem>();
     const responseMessageIds = new Set(
       records.flatMap((entry) => {
         const payload = record(entry.payload);
@@ -602,6 +609,23 @@ export class CodexHistoryService {
       if (this.isVisibleUserMessage(record)) {
         const content = this.extractUserMessageText(record);
         if (content) {
+          let response: ClaudeTranscriptItem | undefined;
+          for (const [toolUseId, call] of asyncQuestions) {
+            const answers = codexAsyncQuestionAnswers(call, content);
+            if (!answers) continue;
+            response = {
+              ...codexAsyncQuestionResult(toolUseId, answers, timestamp),
+              sourceMessageId: this.recordAnchorId(index),
+              transcriptMessageId: this.recordAnchorId(index),
+            };
+            asyncQuestions.delete(toolUseId);
+            answeredQuestions.set(toolUseId, response);
+            break;
+          }
+          if (response) {
+            items.push(response);
+            continue;
+          }
           items.push({
             id: `codex-history:${index}:user`,
             kind: 'user',
@@ -618,6 +642,33 @@ export class CodexHistoryService {
       if (record.type === 'event_msg') {
         const payload = asRecord(record.payload);
         const completed = asRecord(payload?.item);
+        if (
+          payload?.type === 'item_completed' &&
+          completed?.type === 'AgentMessage' &&
+          completed.delivery === 'async' &&
+          typeof completed.id === 'string' &&
+          Array.isArray(completed.questions) &&
+          completed.questions.length
+        ) {
+          // The native event often repeats a saved function call. Some
+          // versions only persist the native event, so restore a call then.
+          if (
+            !asyncQuestions.has(completed.id) &&
+            !answeredQuestions.has(completed.id)
+          ) {
+            const call = {
+              ...codexAsyncQuestionCall(
+                completed.id,
+                completed.questions,
+                timestamp,
+              ),
+              transcriptMessageId: this.recordAnchorId(index),
+            };
+            asyncQuestions.set(completed.id, call);
+            items.push(call);
+          }
+          continue;
+        }
         if (
           payload?.type === 'item_completed' &&
           completed?.type === 'AgentMessage' &&
@@ -697,9 +748,23 @@ export class CodexHistoryService {
       );
       if (normalized) {
         items.push(normalized);
+        if (
+          normalized.kind === 'tool_use' &&
+          normalized.providerToolName?.split('.').at(-1) ===
+            'request_user_input_async' &&
+          normalized.toolUseId
+        )
+          asyncQuestions.set(normalized.toolUseId, normalized);
       }
     }
-    return items;
+    // Replace the delivery acknowledgement with the actual answer receipt.
+    return items.filter(
+      (item) =>
+        item.kind !== 'tool_result' ||
+        !item.toolUseId ||
+        !answeredQuestions.has(item.toolUseId) ||
+        answeredQuestions.get(item.toolUseId) === item,
+    );
   }
 
   private normalizeResponseItem(
@@ -929,6 +994,8 @@ export class CodexHistoryService {
 
   private normalizeToolName(name: string): string {
     if (name.split('.').at(-1) === 'spawn_agent') return 'Agent';
+    if (name.split('.').at(-1) === 'request_user_input_async')
+      return 'request_user_input_async';
     if (name === 'shell_command' || name === 'exec_command') {
       return 'Bash';
     }
