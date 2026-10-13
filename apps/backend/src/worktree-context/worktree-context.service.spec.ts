@@ -50,7 +50,9 @@ describe('WorktreeContextService', () => {
               })),
             })),
             insert: jest.fn(() => ({
-              values: jest.fn(() => ({ run: jest.fn() })),
+              values: jest.fn(() => ({
+                onConflictDoUpdate: jest.fn(() => ({ run: jest.fn() })),
+              })),
             })),
           },
         },

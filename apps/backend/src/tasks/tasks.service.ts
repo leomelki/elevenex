@@ -802,52 +802,62 @@ export class TasksService implements OnApplicationBootstrap {
         setup,
         key,
       );
-      await this.update(id, {
-        path: environment.path,
-        poolWorktreeId: environment.poolId,
-      });
-      if (setup.checkoutMode !== 'snapshot' && !setup.branchPrepared) {
-        if (!(await this.git.hasLocalBranch(repo.path, setup.localBranch!))) {
-          const remote = await this.git.remoteRef(repo.path, setup.branchName);
+      await this.worktreeContext.withTaskPreparation(
+        repo.id,
+        environment.path,
+        async () => {
+          await this.update(id, {
+            path: environment.path,
+            poolWorktreeId: environment.poolId,
+          });
+          if (setup.checkoutMode !== 'snapshot' && !setup.branchPrepared) {
+            if (
+              !(await this.git.hasLocalBranch(repo.path, setup.localBranch!))
+            ) {
+              const remote = await this.git.remoteRef(
+                repo.path,
+                setup.branchName,
+              );
+              await git.raw([
+                'branch',
+                '--no-track',
+                setup.localBranch!,
+                setup.resolvedCommit!,
+              ]);
+              if (setup.mode === 'existing' && remote)
+                await git.raw([
+                  'branch',
+                  '--set-upstream-to',
+                  `${remote.remote}/${remote.branch}`,
+                  setup.localBranch!,
+                ]);
+            }
+            setup.branchPrepared = true;
+            await this.update(id, { taskConfig: JSON.stringify(setup) });
+          }
+          const status = await this.git.status(environment.path);
+          const alreadyCorrect =
+            setup.checkoutMode === 'snapshot'
+              ? !status.branch && status.head === setup.resolvedCommit
+              : status.branch === setup.localBranch;
+          if (!alreadyCorrect) {
+            if (status.dirty)
+              throw new ConflictException(
+                'The selected worktree now has local edits. Choose another worktree.',
+              );
+            await worktreeSimpleGit(environment.path).raw(
+              setup.checkoutMode === 'snapshot'
+                ? ['checkout', '--detach', setup.resolvedCommit!]
+                : ['checkout', setup.localBranch!],
+            );
+          }
           await git.raw([
-            'branch',
-            '--no-track',
-            setup.localBranch!,
-            setup.resolvedCommit!,
+            'update-ref',
+            `refs/elevenex/tasks/${id}/start`,
+            current.startingCommit ?? setup.resolvedCommit!,
           ]);
-          if (setup.mode === 'existing' && remote)
-            await git.raw([
-              'branch',
-              '--set-upstream-to',
-              `${remote.remote}/${remote.branch}`,
-              setup.localBranch!,
-            ]);
-        }
-        setup.branchPrepared = true;
-        await this.update(id, { taskConfig: JSON.stringify(setup) });
-      }
-      const status = await this.git.status(environment.path);
-      const alreadyCorrect =
-        setup.checkoutMode === 'snapshot'
-          ? !status.branch && status.head === setup.resolvedCommit
-          : status.branch === setup.localBranch;
-      if (!alreadyCorrect) {
-        if (status.dirty)
-          throw new ConflictException(
-            'The selected worktree now has local edits. Choose another worktree.',
-          );
-        await worktreeSimpleGit(environment.path).raw(
-          setup.checkoutMode === 'snapshot'
-            ? ['checkout', '--detach', setup.resolvedCommit!]
-            : ['checkout', setup.localBranch!],
-        );
-      }
-      await git.raw([
-        'update-ref',
-        `refs/elevenex/tasks/${id}/start`,
-        current.startingCommit ?? setup.resolvedCommit!,
-      ]);
-      await this.worktreeContext.resetForTask(repo.id, environment.path);
+        },
+      );
       setup.preparationStage = 'restoring_sessions';
       await this.update(id, { taskConfig: JSON.stringify(setup) });
       await this.restoreSessions(id, environment.path, setup.localBranch!);

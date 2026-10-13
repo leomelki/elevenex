@@ -504,6 +504,114 @@ describe('Task lifecycle with real Git and migrations', () => {
     });
   });
 
+  it('blocks context generation while checkout is paused and then summarizes only the new branch', async () => {
+    const one = await create('previous-context-branch');
+    const oldGit = worktreeSimpleGit(one.path);
+    await writeFile(join(one.path, 'previous-task.txt'), 'Previous task work');
+    await oldGit.raw(['add', 'previous-task.txt']);
+    await oldGit.raw(['commit', '-m', 'Previous task changes']);
+    const oldHead = await gitService.resolve(one.path, 'HEAD');
+    await db.insert(schema.worktreeContexts).values({
+      repoId: repo.id,
+      worktreePath: one.path,
+      rootRef: 'main',
+      contextSentence: 'Previous task context.',
+      generationStatus: 'ready',
+    });
+    await service.finish(one.id);
+
+    const rootGit = worktreeSimpleGit(repoPath);
+    await rootGit.raw(['checkout', '-b', 'next-context-base', 'main']);
+    await writeFile(join(repoPath, 'current-task.txt'), 'Current task work');
+    await rootGit.raw(['add', 'current-task.txt']);
+    await rootGit.raw(['commit', '-m', 'Current task changes']);
+    await rootGit.raw(['checkout', 'main']);
+
+    let releaseCheckout!: () => void;
+    let reportPaused!: () => void;
+    const checkoutGate = new Promise<void>((resolve) => {
+      releaseCheckout = resolve;
+    });
+    const checkoutPaused = new Promise<void>((resolve) => {
+      reportPaused = resolve;
+    });
+    const realStatus = gitService.status.bind(gitService);
+    let paused = false;
+    const statusSpy = jest
+      .spyOn(gitService, 'status')
+      .mockImplementation(async (path) => {
+        if (path === one.path && !paused) {
+          const [task] = await db
+            .select()
+            .from(schema.workspaces)
+            .where(eq(schema.workspaces.taskBranch, 'current-context-branch'));
+          if (task?.taskConfig && JSON.parse(task.taskConfig).branchPrepared) {
+            paused = true;
+            reportPaused();
+            await checkoutGate;
+          }
+        }
+        return realStatus(path);
+      });
+    const collect = jest.spyOn(worktreeContext as any, 'collectBranchContext');
+    const generateSentence = jest
+      .spyOn(worktreeContext as any, 'generateSentence')
+      .mockResolvedValue('Current task context.');
+    const task = await service.create(repo.id, {
+      requestId: randomUUID(),
+      mode: 'new',
+      branchName: 'current-context-branch',
+      baseRef: 'next-context-base',
+    });
+    try {
+      await checkoutPaused;
+      expect(await realStatus(one.path)).toMatchObject({
+        branch: null,
+        head: oldHead,
+      });
+      // Requests arrive while the worktree still contains the previous branch.
+      const snapshots = await Promise.all([
+        worktreeContext.generate(repo.id, one.path, {
+          provider: 'codex',
+          force: true,
+          rootRef: 'main',
+        }),
+        worktreeContext.getSnapshot(repo.id, one.path),
+        worktreeContext.getCachedSnapshot(repo.id, one.path),
+      ]);
+      for (const snapshot of snapshots)
+        expect(snapshot).toMatchObject({
+          contextSentence: null,
+          canGenerate: false,
+          contextEnabled: false,
+          hasRecord: false,
+        });
+      expect(collect).not.toHaveBeenCalled();
+      expect(generateSentence).not.toHaveBeenCalled();
+    } finally {
+      releaseCheckout();
+    }
+    const ready = await settled(task.id);
+    statusSpy.mockRestore();
+    expect(ready).toMatchObject({ taskState: 'ready', path: one.path });
+    expect(await realStatus(ready.path)).toMatchObject({
+      branch: 'current-context-branch',
+    });
+    const generated = await worktreeContext.generate(repo.id, ready.path, {
+      provider: 'codex',
+      rootRef: 'main',
+    });
+    expect(generated).toMatchObject({
+      contextSentence: 'Current task context.',
+      generationStatus: 'ready',
+    });
+    expect(generateSentence).toHaveBeenCalledTimes(1);
+    expect(generateSentence.mock.calls[0][1]).toMatchObject({
+      changedFiles: ['current-task.txt'],
+      commits: [expect.objectContaining({ message: 'Current task changes' })],
+    });
+  });
+
   it('keeps local edits reserved and reopens them intact', async () => {
     const task = await create('dirty');
     await writeFile(join(task.path, 'notes.txt'), 'Investigation findings');

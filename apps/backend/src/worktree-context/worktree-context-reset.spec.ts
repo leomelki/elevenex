@@ -86,6 +86,164 @@ describe('Worktree context reset with real SQLite', () => {
     sqlite.close();
   });
 
+  it('handles concurrent context settings immediately after a task reset', async () => {
+    await service.resetForTask(repoId, worktreePath);
+    const snapshots = await Promise.all([
+      service.updateContextEnabled(repoId, worktreePath, false),
+      service.updateContextEnabled(repoId, worktreePath, false),
+    ]);
+    for (const snapshot of snapshots)
+      expect(snapshot).toMatchObject({
+        contextSentence: null,
+        contextEnabled: false,
+        hasRecord: true,
+      });
+  });
+
+  it('preserves a context choice changed during generation', async () => {
+    await service.resetForTask(repoId, worktreePath);
+    const sentence = deferred<string>();
+    const started = deferred<void>();
+    jest.spyOn(service as any, 'generateSentence').mockImplementation(() => {
+      started.resolve();
+      return sentence.promise;
+    });
+    const generating = service.generate(repoId, worktreePath, {
+      provider: 'codex',
+    });
+    await started.promise;
+    try {
+      expect(
+        await service.updateContextEnabled(repoId, worktreePath, false),
+      ).toMatchObject({
+        generationStatus: 'generating',
+        contextEnabled: false,
+      });
+    } finally {
+      sentence.resolve('Current task context.');
+    }
+    expect(await generating).toMatchObject({
+      contextSentence: 'Current task context.',
+      generationStatus: 'ready',
+      contextEnabled: false,
+    });
+  });
+
+  it('keeps context disabled throughout preparation and releases the guard on failure', async () => {
+    const preparation = deferred<void>();
+    const started = deferred<void>();
+    const collect = jest.spyOn(service as any, 'collectBranchContext');
+    const generate = jest
+      .spyOn(service as any, 'generateSentence')
+      .mockResolvedValue('New context.');
+    const pending = service.withTaskPreparation(
+      repoId,
+      worktreePath,
+      async () => {
+        started.resolve();
+        await preparation.promise;
+      },
+    );
+    const rejected = expect(pending).rejects.toThrow('Checkout failed');
+    await started.promise;
+    const snapshots = await Promise.all([
+      service.getSnapshot(repoId, worktreePath),
+      service.getCachedSnapshot(repoId, worktreePath),
+      service.generate(repoId, worktreePath, {
+        provider: 'codex',
+        force: true,
+      }),
+      service.updateRootRef(repoId, worktreePath, 'old-root'),
+      service.updateContextEnabled(repoId, worktreePath, true),
+    ]);
+    for (const snapshot of snapshots)
+      expect(snapshot).toMatchObject({
+        contextSentence: null,
+        canGenerate: false,
+        contextEnabled: false,
+        hasRecord: false,
+      });
+    expect(collect).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+    preparation.reject(new Error('Checkout failed'));
+    await rejected;
+    expect(
+      await service.generate(repoId, worktreePath, { provider: 'codex' }),
+    ).toMatchObject({
+      contextSentence: 'New context.',
+      generationStatus: 'ready',
+    });
+  });
+
+  it('does not launch the old LLM request if preparation starts after the generating record is written', async () => {
+    const writeCompleted = deferred<void>();
+    const releaseWrite = deferred<void>();
+    const realUpsert = (service as any).upsertRecord.bind(service);
+    jest
+      .spyOn(service as any, 'upsertRecord')
+      .mockImplementationOnce(async (...args) => {
+        await realUpsert(...args);
+        writeCompleted.resolve();
+        await releaseWrite.promise;
+      });
+    const generate = jest
+      .spyOn(service as any, 'generateSentence')
+      .mockResolvedValue('Old sentence.');
+    const oldGeneration = service.generate(repoId, worktreePath, {
+      provider: 'codex',
+      force: true,
+    });
+    await writeCompleted.promise;
+    const preparation = deferred<void>();
+    const started = deferred<void>();
+    const preparing = service.withTaskPreparation(
+      repoId,
+      worktreePath,
+      async () => {
+        started.resolve();
+        await preparation.promise;
+      },
+    );
+    await started.promise;
+    try {
+      releaseWrite.resolve();
+      expect(await oldGeneration).toMatchObject({
+        contextSentence: null,
+        canGenerate: false,
+      });
+      expect(generate).not.toHaveBeenCalled();
+    } finally {
+      preparation.resolve();
+      await preparing;
+    }
+  });
+
+  it('does not collect old branch context if a reset happens during the HEAD read', async () => {
+    const branch = deferred<string | null>();
+    const started = deferred<void>();
+    jest
+      .spyOn(service as any, 'readCurrentBranch')
+      .mockImplementationOnce(() => {
+        started.resolve();
+        return branch.promise;
+      });
+    const collect = jest.spyOn(service as any, 'collectBranchContext');
+    const generate = jest.spyOn(service as any, 'generateSentence');
+    const pending = service.generate(repoId, worktreePath, {
+      provider: 'codex',
+      force: true,
+    });
+    await started.promise;
+    await service.resetForTask(repoId, worktreePath);
+    branch.resolve('previous-task-branch');
+    expect(await pending).toMatchObject({
+      contextSentence: null,
+      hasRecord: false,
+    });
+    expect(collect).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
   it.each(['success', 'failure'])(
     'ignores a late %s from the previous generation and preserves the new generation lock',
     async (outcome) => {

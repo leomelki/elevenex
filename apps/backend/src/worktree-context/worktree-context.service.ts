@@ -83,6 +83,7 @@ export class WorktreeContextService {
     string,
     Promise<WorktreeContextSnapshot>
   >();
+  private readonly preparingWorktrees = new Set<string>();
   private readonly revisions = new Map<string, number>();
   private readonly emptySnapshotCache = new Map<string, CachedSnapshotEntry>();
 
@@ -94,7 +95,7 @@ export class WorktreeContextService {
   ) {}
 
   /** Reset task-scoped context without waiting for an old LLM request to finish. */
-  async resetForTask(repoId: number, worktreePath: string): Promise<void> {
+  resetForTask(repoId: number, worktreePath: string): Promise<void> {
     const key = this.cacheKey(repoId, worktreePath);
     this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
     this.snapshotLocks.delete(key);
@@ -109,6 +110,23 @@ export class WorktreeContextService {
         ),
       )
       .run();
+    return Promise.resolve();
+  }
+
+  /** Keep every context entry point disabled while the task changes checkout. */
+  async withTaskPreparation<T>(
+    repoId: number,
+    worktreePath: string,
+    prepare: () => Promise<T>,
+  ): Promise<T> {
+    const key = this.cacheKey(repoId, worktreePath);
+    this.preparingWorktrees.add(key);
+    try {
+      await this.resetForTask(repoId, worktreePath);
+      return await prepare();
+    } finally {
+      this.preparingWorktrees.delete(key);
+    }
   }
 
   private assertCurrentRevision(
@@ -128,8 +146,15 @@ export class WorktreeContextService {
     worktreePath: string,
     operation: (revision: number) => Promise<WorktreeContextSnapshot>,
   ): Promise<WorktreeContextSnapshot> {
-    const revision =
-      this.revisions.get(this.cacheKey(repoId, worktreePath)) ?? 0;
+    const key = this.cacheKey(repoId, worktreePath);
+    if (this.preparingWorktrees.has(key)) {
+      return {
+        ...this.toRecordOnlySnapshot(repoId, worktreePath, null),
+        canGenerate: false,
+        contextEnabled: false,
+      };
+    }
+    const revision = this.revisions.get(key) ?? 0;
     try {
       const snapshot = await operation(revision);
       this.assertCurrentRevision(repoId, worktreePath, revision);
@@ -483,6 +508,7 @@ export class WorktreeContextService {
         : (existing?.rootRef ?? null);
     // Read current branch once here; pass it through to avoid re-reading HEAD.
     const currentBranch = await this.readCurrentBranch(worktreePath);
+    this.assertCurrentRevision(repoId, worktreePath, revision);
     const branchContext = await this.collectBranchContext(
       worktreePath,
       requestedRootRef,
@@ -543,6 +569,7 @@ export class WorktreeContextService {
     });
 
     try {
+      this.assertCurrentRevision(repoId, worktreePath, revision);
       this.logger.log(
         `[worktree-context] invoking ${provider} for ${worktreePath} (root=${branchContext.resolvedRootRef}, commits=${branchContext.commits.length}, files=${branchContext.changedFiles.length})`,
       );
@@ -1060,7 +1087,7 @@ export class WorktreeContextService {
     return rows[0] ?? null;
   }
 
-  private async upsertRecord(
+  private upsertRecord(
     repoId: number,
     worktreePath: string,
     revision: number,
@@ -1075,29 +1102,9 @@ export class WorktreeContextService {
       contextEnabled?: boolean;
     },
   ): Promise<void> {
-    const existing = await this.findRecord(repoId, worktreePath);
     this.assertCurrentRevision(repoId, worktreePath, revision);
     // These single-row SQLite writes are synchronous so reset cannot run between
     // the revision check and the write (awaiting a Drizzle thenable would yield).
-    if (existing) {
-      this.db
-        .update(schema.worktreeContexts)
-        .set({
-          rootRef: input.rootRef,
-          contextSentence: input.contextSentence,
-          generationStatus: input.generationStatus,
-          generatedAt: input.generatedAt,
-          lastUsedAt: input.lastUsedAt,
-          updatedAt: input.updatedAt,
-          ...(input.contextEnabled !== undefined && {
-            contextEnabled: input.contextEnabled,
-          }),
-        })
-        .where(eq(schema.worktreeContexts.id, existing.id))
-        .run();
-      return;
-    }
-
     this.db
       .insert(schema.worktreeContexts)
       .values({
@@ -1112,7 +1119,25 @@ export class WorktreeContextService {
         updatedAt: input.updatedAt,
         contextEnabled: input.contextEnabled ?? true,
       })
+      .onConflictDoUpdate({
+        target: [
+          schema.worktreeContexts.repoId,
+          schema.worktreeContexts.worktreePath,
+        ],
+        set: {
+          rootRef: input.rootRef,
+          contextSentence: input.contextSentence,
+          generationStatus: input.generationStatus,
+          generatedAt: input.generatedAt,
+          lastUsedAt: input.lastUsedAt,
+          updatedAt: input.updatedAt,
+          ...(input.contextEnabled !== undefined && {
+            contextEnabled: input.contextEnabled,
+          }),
+        },
+      })
       .run();
+    return Promise.resolve();
   }
 
   private toSnapshot(
