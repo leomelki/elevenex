@@ -1,14 +1,9 @@
 import { EventEmitter } from 'events';
 
-export type AgentProviderId = 'claude' | 'codex' | 'pi' | 'opencode' | string;
+/** Provider and reasoning IDs are extensible strings; catalogs advertise known values. */
+export type AgentProviderId = string;
 export type AgentPermissionMode = string;
-export type AgentReasoningEffort =
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max'
-  | string;
+export type AgentReasoningEffort = string;
 export type AgentImageMediaType =
   | 'image/png'
   | 'image/jpeg'
@@ -29,6 +24,8 @@ export interface AgentRuntimeProviderInfo {
   id: AgentProviderId;
   displayName: string;
   capabilities: AgentRuntimeProviderCapabilities;
+  /** Selectable permission modes advertised by this provider, when supported. */
+  permissionModes?: readonly string[];
 }
 
 /**

@@ -16,6 +16,7 @@ export const fileSearchTool = defineTool({
   description:
     'Fuzzy-find files by name/path in a worktree, scoped by sessionId or worktreePath. 🟡scoped, capped. Returns compact {path,name}. Next: read_file to open one, or text_search to grep contents.',
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'worktree',
   inputShape: {
     sessionId: z
       .number()

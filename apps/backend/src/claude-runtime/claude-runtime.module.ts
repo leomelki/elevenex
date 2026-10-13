@@ -1,3 +1,4 @@
+import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { Module, forwardRef } from '@nestjs/common';
 import { ClaudeRuntimeService } from './claude-runtime.service.js';
 import { ClaudeMcpService } from './claude-mcp.service.js';
@@ -21,6 +22,7 @@ import { SettingsModule } from '../settings/settings.module.js';
   controllers: [],
   providers: [
     ClaudeRuntimeService,
+    McpAgentTokenService,
     ClaudeMcpService,
     ClaudeTerminalTranscriptMirrorService,
     ClaudeTerminalTranscriptMirrorGateway,

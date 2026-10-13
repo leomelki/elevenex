@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { defineTool } from '../../tool-registry/tool.types.js';
 import { resolveSessionProvider } from './provider.util.js';
+import { taskOperation } from '../setup/task.util.js';
 
 /**
  * fork_session — branch a session into an independent new session sharing the
@@ -12,8 +13,20 @@ export const forkSessionTool = defineTool({
   costClass: 'scoped',
   mutates: true,
   description:
-    'Fork a session into a new independent session in the same worktree, returning the new handle. 🟡scoped. Use to explore an alternative branch of work; then drive the fork with prompt_session.',
+    'Fork conversation history at an explicit user/assistant message into another session sharing the task checkout. Get anchor IDs with read_session(includeIds:true). User anchors return that prompt as an unsent draft; assistant anchors preserve history through the response. Does not start an agent. Use create_task for independent files.',
+  currentSessionScope: 'session',
   inputShape: {
+    anchorMessageId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(500)
+      .describe('Provider message ID from read_session with includeIds:true.'),
+    anchorMessageKind: z
+      .enum(['user', 'assistant'])
+      .describe(
+        'Role of the anchor message. User anchors become an unsent draft.',
+      ),
     sessionId: z
       .number()
       .int()
@@ -28,7 +41,13 @@ export const forkSessionTool = defineTool({
   handler: async (args, ctx) => {
     // Validate source exists with an actionable error before forking.
     await resolveSessionProvider(ctx, args.sessionId);
-    const forked = await ctx.services.sessions.fork(args.sessionId, args.name);
+    const { session: forked, draft } = await taskOperation(() =>
+      ctx.services.sessionForks.create(args.sessionId, {
+        anchorMessageId: args.anchorMessageId,
+        anchorMessageKind: args.anchorMessageKind,
+        name: args.name,
+      }),
+    );
     return {
       data: {
         sessionId: forked.id,
@@ -36,10 +55,15 @@ export const forkSessionTool = defineTool({
         status: forked.status,
         forkedFrom: args.sessionId,
         provider: forked.activeAgentProvider,
+        anchorMessageId: args.anchorMessageId,
+        anchorMessageKind: args.anchorMessageKind,
+        draft: draft ?? null,
       },
       touched: { sessionId: forked.id },
       deepLink: ctx.deepLink.session(forked.id),
-      nextStep: 'Drive the fork with prompt_session, or poll it with session_status.',
+      nextStep: draft
+        ? 'The anchor prompt is returned as an unsent draft, not executed. Inspect it before prompt_session.'
+        : 'History preserved. prompt_session starts the fork; its files are shared with the source task.',
     };
   },
 });

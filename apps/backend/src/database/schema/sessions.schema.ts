@@ -1,79 +1,102 @@
-import { integer, text, sqliteTable } from 'drizzle-orm/sqlite-core';
+import { integer, text, sqliteTable, index } from 'drizzle-orm/sqlite-core';
 import { repos } from './repos.schema.js';
 import { workspaces } from './workspaces.schema.js';
 import { sessionFolders } from './session-folders.schema.js';
 
-export const sessions = sqliteTable('sessions', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  repoId: integer('repo_id')
-    .notNull()
-    .references(() => repos.id, { onDelete: 'cascade' }),
-  workspaceId: integer('workspace_id').references(() => workspaces.id, {
-    onDelete: 'set null',
-  }),
-  folderId: integer('folder_id').references(() => sessionFolders.id, {
-    onDelete: 'set null',
-  }),
-  branchName: text('branch_name').notNull(),
-  worktreePath: text('worktree_path').notNull(),
-  transcriptWorktreePath: text('transcript_worktree_path'),
-  archivedByTask: integer('archived_by_task', { mode: 'boolean' })
-    .notNull()
-    .default(false),
-  name: text('name'),
-  surface: text('surface').notNull().default('session'),
-  // Temporary sessions survive refreshes/reconnects, but are deleted when
-  // their UI tab is explicitly closed instead of becoming durable history.
-  isTemporary: integer('is_temporary', { mode: 'boolean' })
-    .notNull()
-    .default(false),
-  status: text('status').notNull().default('created'),
-  // Tracks which sessions should be restored when their folder is unarchived.
-  // Sessions already archived before the folder action remain archived.
-  archivedByFolder: integer('archived_by_folder', { mode: 'boolean' })
-    .notNull()
-    .default(false),
-  // Bearer token minted for "agent" sessions (the meta-agent that operates
-  // elevenex). Injected as ELEVENEX_AGENT_TOKEN into the inner process env and
-  // presented by the Elevenex MCP server to resolve this session's identity so
-  // human-channel tools route to its panel. Null for ordinary coding sessions.
-  mcpAgentToken: text('mcp_agent_token'),
-  // Autonomy mandate for "agent" sessions: 'full' | 'review' | 'plan'. Controls
-  // the permission policy the runtime enforces (auto-allow vs. ask vs. plan-mode)
-  // and which autonomy clause is substituted into the meta-agent system prompt.
-  // Null for ordinary coding sessions; defaults to 'review' when read.
-  agentAutonomyMode: text('agent_autonomy_mode'),
-  // Composer plan mode belongs to the session, not the ephemeral runtime. Keep
-  // it durable so a backend/app restart can still review a plan already present
-  // in the provider transcript.
-  // Null is reserved for sessions created before plan-mode persistence existed;
-  // Codex resolves those once from the latest transcript item, then saves a
-  // concrete value.
-  planMode: integer('plan_mode', { mode: 'boolean' }),
-  activeAgentProvider: text('active_agent_provider')
-    .notNull()
-    .default('claude'),
-  claudeSessionId: text('claude_session_id').default('-1'),
-  codexSessionId: text('codex_session_id').default('-1'),
-  piSessionPath: text('pi_session_path').default('-1'),
-  opencodeSessionId: text('opencode_session_id').default('-1'),
-  hasInjectedWorktreeContext: integer('has_injected_worktree_context', {
-    mode: 'boolean',
-  })
-    .notNull()
-    .default(false),
-  hasUnreviewedCompletion: integer('has_unreviewed_completion', {
-    mode: 'boolean',
-  })
-    .notNull()
-    .default(false),
-  lastCompletionAt: text('last_completion_at'),
-  lastCompletionKind: text('last_completion_kind'),
-  lastStateChangeAt: text('last_state_change_at'),
-  createdAt: text('created_at')
-    .notNull()
-    .$defaultFn(() => new Date().toISOString()),
-  updatedAt: text('updated_at')
-    .notNull()
-    .$defaultFn(() => new Date().toISOString()),
-});
+export const sessions = sqliteTable(
+  'sessions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    repoId: integer('repo_id')
+      .notNull()
+      .references(() => repos.id, { onDelete: 'cascade' }),
+    workspaceId: integer('workspace_id').references(() => workspaces.id, {
+      onDelete: 'set null',
+    }),
+    folderId: integer('folder_id').references(() => sessionFolders.id, {
+      onDelete: 'set null',
+    }),
+    branchName: text('branch_name').notNull(),
+    worktreePath: text('worktree_path').notNull(),
+    transcriptWorktreePath: text('transcript_worktree_path'),
+    archivedByTask: integer('archived_by_task', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    name: text('name'),
+    surface: text('surface').notNull().default('session'),
+    // Temporary sessions survive refreshes/reconnects, but are deleted when
+    // their UI tab is explicitly closed instead of becoming durable history.
+    isTemporary: integer('is_temporary', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    status: text('status').notNull().default('created'),
+    // Tracks which sessions should be restored when their folder is unarchived.
+    // Sessions already archived before the folder action remain archived.
+    archivedByFolder: integer('archived_by_folder', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    // Bearer token minted lazily when any session connects to Elevenex tools.
+    // Used by the runtime's MCP connection to identify its own session and route
+    // human-channel requests. Never included in model-facing session context.
+    mcpAgentToken: text('mcp_agent_token'),
+    // Autonomy mandate for "agent" sessions: 'full' | 'review' | 'plan'. Controls
+    // the permission policy the runtime enforces (auto-allow vs. ask vs. plan-mode)
+    // and which autonomy clause is substituted into the meta-agent system prompt.
+    // Null for ordinary coding sessions; defaults to 'review' when read.
+    agentAutonomyMode: text('agent_autonomy_mode'),
+    // Composer plan mode belongs to the session, not the ephemeral runtime. Keep
+    // it durable so a backend/app restart can still review a plan already present
+    // in the provider transcript.
+    // Null is reserved for sessions created before plan-mode persistence existed;
+    // Codex resolves those once from the latest transcript item, then saves a
+    // concrete value.
+    planMode: integer('plan_mode', { mode: 'boolean' }),
+    activeAgentProvider: text('active_agent_provider')
+      .notNull()
+      .default('claude'),
+    claudeSessionId: text('claude_session_id').default('-1'),
+    codexSessionId: text('codex_session_id').default('-1'),
+    piSessionPath: text('pi_session_path').default('-1'),
+    opencodeSessionId: text('opencode_session_id').default('-1'),
+    hasInjectedWorktreeContext: integer('has_injected_worktree_context', {
+      mode: 'boolean',
+    })
+      .notNull()
+      .default(false),
+    hasUnreviewedCompletion: integer('has_unreviewed_completion', {
+      mode: 'boolean',
+    })
+      .notNull()
+      .default(false),
+    lastCompletionAt: text('last_completion_at'),
+    lastCompletionKind: text('last_completion_kind'),
+    lastStateChangeAt: text('last_state_change_at'),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text('updated_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => [
+    index('sessions_repo_activity_idx').on(
+      table.repoId,
+      table.surface,
+      table.lastStateChangeAt,
+      table.id,
+    ),
+    index('sessions_workspace_activity_idx').on(
+      table.workspaceId,
+      table.surface,
+      table.lastStateChangeAt,
+      table.id,
+    ),
+    index('sessions_folder_status_idx').on(
+      table.folderId,
+      table.surface,
+      table.status,
+      table.id,
+    ),
+    index('sessions_mcp_token_idx').on(table.mcpAgentToken),
+  ],
+);

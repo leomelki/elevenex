@@ -18,6 +18,7 @@ export const listActionsTool = defineTool({
   description:
     "List a worktree's saved Actions — the named shell commands (build / test / dev server) shown in its Actions panel — with their last run status. ⚡instant. Scope by sessionId or worktreePath. Start here: run_action, set_action, read_action_output and stop_action all take an actionId from this list. Unrelated to get_pending_action/resolve_action, which are a session's permission prompts.",
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'worktree',
   inputShape: {
     sessionId: z
       .number()

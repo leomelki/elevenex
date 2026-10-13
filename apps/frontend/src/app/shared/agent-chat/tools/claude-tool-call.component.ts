@@ -1,5 +1,7 @@
 import { ClaudeDelegationComponent } from './claude-delegation.component';
 import { claudeDelegationTool } from '@/shared/agent-tools/claude-delegation-format';
+import { buildElevenexToolView } from '@/shared/agent-tools/elevenex-tool-view';
+import { ElevenexToolResultComponent } from './elevenex-tool-result/elevenex-tool-result.component';
 import { MediaPreviewDirective } from '../media/media-preview.directive';
 import { AgentCollaborationComponent } from './agent-collaboration.component';
 import { collaborationAction } from '@/shared/agent-tools/agent-collaboration-format';
@@ -119,6 +121,7 @@ type Todo = ToolTodoItem;
   selector: 'cw-tool-call',
   standalone: true,
   imports: [
+    ElevenexToolResultComponent,
     MediaPreviewDirective,
     ZardButtonComponent,
     CommonModule,
@@ -271,16 +274,31 @@ export class ClaudeToolCallComponent {
     return text.length > 120 ? text.slice(0, 117) + '…' : text;
   });
 
-  readonly display = computed<ToolDisplay>(() => describeAgentTool(this.call()));
-
-  readonly state = computed<'running' | 'waiting' | 'denied' | 'error' | 'done'>(() => {
-    if (isToolDenied(this.call())) return 'denied';
-    if (!this.result() && this.isLive()) return 'running';
-    if (isHardError(this.result())) return 'error';
-    return 'done';
+  readonly elevenexView = computed(() => buildElevenexToolView(this.call(), this.result()));
+  readonly display = computed<ToolDisplay>(() => {
+    const display = describeAgentTool(this.call());
+    return this.elevenexView()?.target
+      ? { ...display, target: this.elevenexView()!.target }
+      : display;
   });
 
+  readonly state = computed<'running' | 'waiting' | 'denied' | 'error' | 'done' | 'incomplete'>(
+    () => {
+      if (isToolDenied(this.call())) return 'denied';
+      if (!this.result() && this.isLive()) return 'running';
+      if (this.elevenexView() && !this.result() && !this.isLive()) return 'incomplete';
+      if (
+        isHardError(this.result()) ||
+        this.elevenexView()?.toolFailed ||
+        this.elevenexView()?.summary?.tone === 'error'
+      )
+        return 'error';
+      return 'done';
+    },
+  );
+
   readonly summary = computed<ResultSummary | null>(() => {
+    if (this.state() === 'incomplete') return { text: 'No result recorded', tone: 'warn' };
     if (this.state() === 'denied') {
       return { text: this.interaction()?.decisionLabel ?? 'Denied', tone: 'warn' };
     }
@@ -291,6 +309,11 @@ export class ClaudeToolCallComponent {
           tone: 'neutral',
         };
       }
+      if (this.elevenexView())
+        return {
+          text: `Working ${formatElapsedSeconds(this.runningElapsedSeconds())}`,
+          tone: 'neutral',
+        };
       return null;
     }
     if (this.state() === 'waiting') return null;
@@ -304,7 +327,7 @@ export class ClaudeToolCallComponent {
         tone: this.result()?.isError ? 'warn' : 'ok',
       };
     }
-    return resultSummary(this.display().kind, this.result(), this.interaction());
+    return resultSummary(this.display().kind, this.result(), this.interaction(), this.call());
   });
 
   readonly runningElapsedSeconds = computed(() => {
@@ -343,6 +366,7 @@ export class ClaudeToolCallComponent {
 
   readonly canExpand = computed(() => {
     const k = this.display().kind;
+    if (this.elevenexView()) return true;
     if (k === 'todo_write' || k === 'worktree') return false;
     // Always expandable if we have a result, or if this is an agent (has prompt)
     if (

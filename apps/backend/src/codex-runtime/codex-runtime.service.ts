@@ -1,4 +1,8 @@
 import {
+  elevenexMcpUrl,
+  SESSION_TOOL_INSTRUCTIONS,
+} from '../mcp/session-tool-context.js';
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -40,7 +44,6 @@ import {
 } from '../agent-runtime/agent-model-defaults.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import { SettingsService } from '../settings/settings.service.js';
-import { getElevenexProxyPort } from '../config/ports.js';
 import {
   buildMetaAgentPrompt,
   permissionModeForAutonomy,
@@ -1136,11 +1139,28 @@ export class CodexRuntimeService
       session.codexSessionId,
       request,
     );
-    const { threadId: forkedSessionId } = await this.forkAtTurn(target);
+    // Forked threads are already loaded by app-server. Give the child its own
+    // MCP identity here; a later resume may ignore configuration overrides.
+    const token = await this.mcpAgentTokens.ensureToken(request.childSessionId);
+    const { threadId: forkedSessionId } = await this.forkAtTurn(
+      target,
+      this.elevenexMcpConfig(token),
+    );
     return {
       providerSessionId: forkedSessionId,
       draft: target.draft,
       anchorExcerpt: target.anchorExcerpt,
+    };
+  }
+
+  private elevenexMcpConfig(token: string): Record<string, unknown> {
+    // Override this server alone; preserve unrelated user MCP configuration.
+    return {
+      'mcp_servers.elevenex': {
+        url: elevenexMcpUrl(),
+        http_headers: { Authorization: `Bearer ${token}` },
+        tool_timeout_sec: 660,
+      },
     };
   }
 
@@ -1206,11 +1226,14 @@ export class CodexRuntimeService
     return history;
   }
 
-  private async forkAtTurn(target: {
-    threadId: string;
-    beforeTurnId?: string;
-    lastTurnId?: string;
-  }): Promise<{ threadId: string; history: ClaudeTranscriptItem[] }> {
+  private async forkAtTurn(
+    target: {
+      threadId: string;
+      beforeTurnId?: string;
+      lastTurnId?: string;
+    },
+    config?: Record<string, unknown>,
+  ): Promise<{ threadId: string; history: ClaudeTranscriptItem[] }> {
     // Validate the boundary before creating a child, including when a native
     // beforeTurnId fork excludes that turn from its response entirely.
     const source = await this.appServer.request<CodexThreadHistoryResult>(
@@ -1247,6 +1270,7 @@ export class CodexRuntimeService
       'thread/fork',
       {
         threadId: target.threadId,
+        ...(config ? { config } : {}),
         ...(target.beforeTurnId
           ? { beforeTurnId: target.beforeTurnId }
           : { lastTurnId: target.lastTurnId }),
@@ -3554,7 +3578,7 @@ export class CodexRuntimeService
       const isMission = session.surface === 'agent';
       const missionInstructions = isMission
         ? buildMetaAgentPrompt(session.agentAutonomyMode)
-        : null;
+        : SESSION_TOOL_INSTRUCTIONS;
       if (isMission) {
         const policy = permissionModeForAutonomy(session.agentAutonomyMode);
         state.selectedPermissionMode = policy.permissionMode;
@@ -3582,9 +3606,7 @@ export class CodexRuntimeService
       };
       const approvalsReviewer = permissionOptions.approvalsReviewer ?? 'user';
       const serviceTier = state.fastMode ? 'fast' : null;
-      const mcpAgentToken = isMission
-        ? await this.mcpAgentTokens.ensureToken(sessionId)
-        : null;
+      const mcpAgentToken = await this.mcpAgentTokens.ensureToken(sessionId);
       if (signal.aborted) return;
 
       // Load or create the thread before dispatching the turn. Calling
@@ -3603,23 +3625,7 @@ export class CodexRuntimeService
         sandbox: permissionOptions.sandboxMode,
         approvalPolicy: approvalMap[permissionOptions.approvalPolicy],
         approvalsReviewer,
-        ...(isMission
-          ? {
-              config: {
-                mcp_servers: {
-                  elevenex: {
-                    url:
-                      process.env.ELEVENEX_MCP_URL?.trim() ||
-                      `http://127.0.0.1:${getElevenexProxyPort()}/api/mcp`,
-                    http_headers: {
-                      Authorization: `Bearer ${mcpAgentToken}`,
-                    },
-                    tool_timeout_sec: 660,
-                  },
-                },
-              },
-            }
-          : {}),
+        config: this.elevenexMcpConfig(mcpAgentToken),
       };
 
       const startFreshThread = async (): Promise<string> => {

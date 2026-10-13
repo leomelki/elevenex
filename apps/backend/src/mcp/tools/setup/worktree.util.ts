@@ -3,8 +3,8 @@ import type { WorktreePoolItem } from '../../../worktrees/worktree-pool.service.
 import { ToolError } from '../../tool-registry/tool.types.js';
 import type { ToolContext } from '../../tool-registry/tool.types.js';
 
-export type WorktreeCategory = 'available' | 'yours' | 'all';
-export type DerivedCategory = 'available' | 'yours' | 'main';
+export type WorktreeCategory = 'available' | 'assigned' | 'yours' | 'all';
+export type DerivedCategory = 'available' | 'assigned' | 'main';
 
 /**
  * True for the repository's own main working tree, which `git worktree list`
@@ -16,17 +16,12 @@ export function isMainWorktree(item: WorktreePoolItem): boolean {
   return item.path === item.repoRootPath;
 }
 
-/**
- * Derive a coarse category for a pool item from its link/owner flags:
- *  - `main`      — the repo's main working tree; visible, but never reusable.
- *  - `available` — no owning workspace (unlinked & unowned), free to take.
- *  - `yours`     — has a linked owning workspace (owned by a project here).
- * The pool item carries no per-agent identity, so "yours" means "owned by an
- * elevenex project" rather than a specific caller.
+/** Assigned worktrees belong to tasks, independently of active session counts.
+ * `yours` remains an input alias; it never grants ownership to the calling agent.
  */
 export function deriveCategory(item: WorktreePoolItem): DerivedCategory {
   if (isMainWorktree(item)) return 'main';
-  return item.owner ? 'yours' : 'available';
+  return item.owner ? 'assigned' : 'available';
 }
 
 /**
@@ -39,7 +34,9 @@ export function matchesCategory(
   category: WorktreeCategory,
 ): boolean {
   if (category === 'all') return true;
-  return deriveCategory(item) === category;
+  return (
+    deriveCategory(item) === (category === 'yours' ? 'assigned' : category)
+  );
 }
 
 /**
@@ -64,11 +61,21 @@ export function isInUse(item: WorktreePoolItem): boolean {
 export function poolItemHandle(item: WorktreePoolItem) {
   return {
     worktreeId: item.id,
+    name: item.name,
     path: item.path,
+    managed: item.managed,
+    isDetached: item.isDetached,
     branch: item.currentBranch ?? undefined,
     category: deriveCategory(item),
     owner: item.owner
-      ? { project: item.owner.projectName, workspace: item.owner.workspaceName }
+      ? {
+          taskId: item.owner.workspaceId,
+          taskName: item.owner.workspaceName,
+          repoId: item.owner.repoId,
+          projectId: item.owner.projectId,
+          project: item.owner.projectName,
+          workspace: item.owner.workspaceName,
+        }
       : undefined,
     isDirty: item.isDirty,
     hasConflicts: item.hasConflicts,
@@ -77,8 +84,7 @@ export function poolItemHandle(item: WorktreePoolItem) {
     // Only present when true — a hard "do not reuse this one" marker that no
     // combination of the other flags conveys.
     ...(isMainWorktree(item) ? { isMainWorktree: true as const } : {}),
-    // Sessions still bound to this worktree: >0 means someone is using it and
-    // its files must stay put. 0 means it is free regardless of what it holds.
+    // Task ownership, running processes, and local edits matter even with zero sessions.
     activeSessionCount: item.activeSessionCount,
     runningAgentCount: item.runningAgentCount,
     lastActivityAt: lastActivityAt(item) ?? undefined,

@@ -330,6 +330,63 @@ export class TasksService implements OnApplicationBootstrap {
     return { baseRef, branchName };
   }
 
+  /** Await accepted setup without launching another operation or scanning its checkout.
+   * Cancellation ends this wait; the durable preparation continues independently.
+   */
+  async waitForPreparation(id: number, timeoutMs: number, signal: AbortSignal) {
+    const deadline = Date.now() + timeoutMs;
+    let timedOut = false;
+    for (;;) {
+      signal.throwIfAborted();
+      const task = await this.record(id);
+      if (task.archivedAt || task.taskState !== 'preparing') break;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        timedOut = true;
+        break;
+      }
+      const operation = this.operations.get(id);
+      const outcome = await new Promise<'changed' | 'timeout'>(
+        (resolve, reject) => {
+          let settled = false;
+          const finish = (outcome: 'changed' | 'timeout', error?: unknown) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            signal.removeEventListener('abort', onAbort);
+            if (error) reject(error);
+            else resolve(outcome);
+          };
+          const onAbort = () =>
+            finish(
+              'changed',
+              signal.reason ?? new Error('Task wait cancelled.'),
+            );
+          // Normally await the coalesced setup promise. During startup recovery,
+          // check only the single DB row until its operation is registered.
+          const timer = setTimeout(
+            () => finish('timeout'),
+            operation ? remaining : Math.min(remaining, 250),
+          );
+          signal.addEventListener('abort', onAbort, { once: true });
+          if (signal.aborted) onAbort();
+          void operation?.then(
+            () => finish('changed'),
+            (error) => finish('changed', error),
+          );
+        },
+      );
+      if (outcome === 'timeout' && Date.now() >= deadline) {
+        timedOut = true;
+        break;
+      }
+    }
+    signal.throwIfAborted();
+    const task = await this.get(id);
+    signal.throwIfAborted();
+    return { task, timedOut: timedOut && task.taskState === 'preparing' };
+  }
+
   async create(repoId: number, input: TaskSetup) {
     const repo = await this.repo(repoId);
     await this.projects.assertProjectIsActive(repo.projectId);

@@ -24,6 +24,7 @@ export const changeReviewTool = defineTool({
   description:
     "Compact diff summary (totals + per-file +adds/-dels, no hunks) for a worktree, scoped by sessionId or worktreePath. 🟢cached. Pick scope uncommitted/last-commit/branch. Next: read_file a specific file to see its contents.",
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'worktree',
   inputShape: {
     sessionId: z
       .number()

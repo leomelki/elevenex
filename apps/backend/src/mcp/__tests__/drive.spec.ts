@@ -75,25 +75,42 @@ function makeServices(opts: {
       // parity with the runtime double above.
       sessions: Object.assign(new EventEmitter(), {
         assertSessionWorkspaceLinked: jest.fn().mockResolvedValue(undefined),
-        findOne: jest
-          .fn()
-          .mockImplementation(async () => {
-            if (session === null) throw new Error('not found');
-            return session;
-          }),
+        findOne: jest.fn().mockImplementation(async () => {
+          if (session === null) throw new Error('not found');
+          return session;
+        }),
         start: jest.fn().mockResolvedValue({ success: true, resumed: false }),
-        fork: jest
+        fork: jest.fn().mockResolvedValue({
+          id: 99,
+          name: 'S7 (fork)',
+          status: 'created',
+          activeAgentProvider: 'claude',
+        }),
+        archiveAndStop: jest
           .fn()
-          .mockResolvedValue({ id: 99, name: 'S7 (fork)', status: 'created', activeAgentProvider: 'claude' }),
-        archiveAndStop: jest.fn().mockResolvedValue({ id: 7, status: 'archived' }),
-        reset: jest
-          .fn()
-          .mockResolvedValue({ id: 100, name: 'S7 (reset)', status: 'created', activeAgentProvider: 'claude' }),
+          .mockResolvedValue({ id: 7, status: 'archived' }),
+        reset: jest.fn().mockResolvedValue({
+          id: 100,
+          name: 'S7 (reset)',
+          status: 'created',
+          activeAgentProvider: 'claude',
+        }),
         updateActiveAgentProvider: jest
           .fn()
           .mockResolvedValue({ id: 7, activeAgentProvider: 'codex' }),
         ...opts.sessionsOverrides,
       }),
+      sessionForks: {
+        create: jest.fn().mockResolvedValue({
+          session: {
+            id: 99,
+            name: 'S7 (fork)',
+            status: 'created',
+            activeAgentProvider: 'claude',
+          },
+          draft: null,
+        }),
+      },
       agentRuntime: {
         getProvider: jest.fn().mockReturnValue(runtime),
         getProviderFeature: jest.fn().mockReturnValue(runtime),
@@ -103,11 +120,13 @@ function makeServices(opts: {
 }
 
 describe('Drive tool group', () => {
-  it('exports all ten tools with required flags', () => {
+  it('exports all session control/label tools with required flags', () => {
     const names = DRIVE_TOOLS.map((t) => t.name).sort();
     expect(names).toEqual(
       [
         'archive_session',
+        'rename_session',
+        'unarchive_session',
         'fork_session',
         'get_pending_action',
         'interrupt_session',
@@ -144,7 +163,11 @@ describe('Drive tool group', () => {
       );
       expect(services.sessions.start).toHaveBeenCalledWith(7);
       expect(runtime.submitPrompt).toHaveBeenCalledWith(7, 'do the thing');
-      expect(res.data).toMatchObject({ sessionId: 7, accepted: true, provider: 'claude' });
+      expect(res.data).toMatchObject({
+        sessionId: 7,
+        accepted: true,
+        provider: 'claude',
+      });
       expect(res.deepLink).toBe('/sessions/7');
     });
 
@@ -152,14 +175,20 @@ describe('Drive tool group', () => {
       const { services } = makeServices({
         session: { id: 7, status: 'active', activeAgentProvider: 'claude' },
       });
-      await promptSessionTool.handler({ sessionId: 7, prompt: 'go' }, makeCtx(services));
+      await promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        makeCtx(services),
+      );
       expect(services.sessions.start).not.toHaveBeenCalled();
     });
 
     it('throws a ToolError when the session is not found', async () => {
       const { services } = makeServices({ session: null });
       await expect(
-        promptSessionTool.handler({ sessionId: 404, prompt: 'go' }, makeCtx(services)),
+        promptSessionTool.handler(
+          { sessionId: 404, prompt: 'go' },
+          makeCtx(services),
+        ),
       ).rejects.toBeInstanceOf(ToolError);
     });
 
@@ -190,7 +219,11 @@ describe('Drive tool group', () => {
         makeCtx(services),
       );
 
-      expect(res.data).toMatchObject({ sessionId: 7, accepted: true, status: 'running' });
+      expect(res.data).toMatchObject({
+        sessionId: 7,
+        accepted: true,
+        status: 'running',
+      });
       // No event was ever emitted on the runtime — resolving without one proves
       // the handler didn't subscribe and wait.
     });
@@ -214,14 +247,21 @@ describe('Drive tool group', () => {
         makeCtx(services),
       );
 
-      expect(res.data).toMatchObject({ sessionId: 7, accepted: true, status: 'running' });
+      expect(res.data).toMatchObject({
+        sessionId: 7,
+        accepted: true,
+        status: 'running',
+      });
     });
   });
 
   describe('interrupt_session', () => {
     it('calls provider.interrupt', async () => {
       const { services, runtime } = makeServices({});
-      const res = await interruptSessionTool.handler({ sessionId: 7 }, makeCtx(services));
+      const res = await interruptSessionTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
       expect(runtime.interrupt).toHaveBeenCalledWith(7);
       expect(res.data).toMatchObject({ sessionId: 7, interrupted: true });
     });
@@ -231,10 +271,20 @@ describe('Drive tool group', () => {
     it('forks and returns the new session handle + touched', async () => {
       const { services } = makeServices({});
       const res = await forkSessionTool.handler(
-        { sessionId: 7, name: 'alt' },
+        {
+          sessionId: 7,
+          name: 'alt',
+          anchorMessageId: 'a-1',
+          anchorMessageKind: 'assistant',
+        },
         makeCtx(services),
       );
-      expect(services.sessions.fork).toHaveBeenCalledWith(7, 'alt');
+      expect(services.sessionForks.create).toHaveBeenCalledWith(7, {
+        name: 'alt',
+        anchorMessageId: 'a-1',
+        anchorMessageKind: 'assistant',
+      });
+      expect(services.sessions.fork).not.toHaveBeenCalled();
       expect(res.data).toMatchObject({ sessionId: 99, forkedFrom: 7 });
       expect(res.touched).toEqual({ sessionId: 99 });
       expect(res.deepLink).toBe('/sessions/99');
@@ -244,7 +294,10 @@ describe('Drive tool group', () => {
   describe('archive_session', () => {
     it('calls archiveAndStop', async () => {
       const { services } = makeServices({});
-      const res = await archiveSessionTool.handler({ sessionId: 7 }, makeCtx(services));
+      const res = await archiveSessionTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
       expect(services.sessions.archiveAndStop).toHaveBeenCalledWith(7);
       expect(res.data).toMatchObject({ sessionId: 7, archived: true });
     });
@@ -253,9 +306,16 @@ describe('Drive tool group', () => {
   describe('reset_session', () => {
     it('calls reset and reports the fresh session id', async () => {
       const { services } = makeServices({});
-      const res = await resetSessionTool.handler({ sessionId: 7 }, makeCtx(services));
+      const res = await resetSessionTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
       expect(services.sessions.reset).toHaveBeenCalledWith(7);
-      expect(res.data).toMatchObject({ sessionId: 7, reset: true, newSessionId: 100 });
+      expect(res.data).toMatchObject({
+        sessionId: 7,
+        reset: true,
+        newSessionId: 100,
+      });
       expect(res.touched).toEqual({ sessionId: 100 });
     });
   });
@@ -275,7 +335,10 @@ describe('Drive tool group', () => {
         }),
       });
       const { services } = makeServices({ runtime });
-      const res = await getPendingActionTool.handler({ sessionId: 7 }, makeCtx(services));
+      const res = await getPendingActionTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
       expect(res.data).toMatchObject({
         pending: {
           kind: 'permission',
@@ -290,7 +353,10 @@ describe('Drive tool group', () => {
 
     it('returns null pending when nothing is blocking', async () => {
       const { services } = makeServices({});
-      const res = await getPendingActionTool.handler({ sessionId: 7 }, makeCtx(services));
+      const res = await getPendingActionTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
       expect(res.data).toMatchObject({ pending: null, state: 'idle' });
     });
 
@@ -316,7 +382,10 @@ describe('Drive tool group', () => {
         }),
       });
       const { services } = makeServices({ runtime });
-      const res = await getPendingActionTool.handler({ sessionId: 7 }, makeCtx(services));
+      const res = await getPendingActionTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
       expect(res.data).toMatchObject({
         pending: {
           kind: 'ask_user_question',
@@ -344,7 +413,10 @@ describe('Drive tool group', () => {
         }),
       });
       const { services } = makeServices({ runtime });
-      const res = await getPendingActionTool.handler({ sessionId: 7 }, makeCtx(services));
+      const res = await getPendingActionTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
       expect(res.data).toMatchObject({
         pending: { kind: 'user_input', requestId: 'ui-1' },
       });
@@ -355,7 +427,12 @@ describe('Drive tool group', () => {
     it('routes approve to approvePermission', async () => {
       const { services, runtime } = makeServices({});
       const res = await resolveActionTool.handler(
-        { sessionId: 7, requestId: 'req-1', decision: 'approve', remember: true },
+        {
+          sessionId: 7,
+          requestId: 'req-1',
+          decision: 'approve',
+          remember: true,
+        },
         makeCtx(services),
       );
       expect(services.agentRuntime.getProviderFeature).toHaveBeenCalledWith(
@@ -379,15 +456,26 @@ describe('Drive tool group', () => {
         },
         makeCtx(services),
       );
-      expect(runtime.approvePermission).toHaveBeenCalledWith(7, 'req-2', false, {
-        answers: { 'Which approach?': 'A' },
-      });
+      expect(runtime.approvePermission).toHaveBeenCalledWith(
+        7,
+        'req-2',
+        false,
+        {
+          answers: { 'Which approach?': 'A' },
+        },
+      );
     });
 
     it('routes deny to denyPermission with a message', async () => {
       const { services, runtime } = makeServices({});
       await resolveActionTool.handler(
-        { sessionId: 7, requestId: 'req-1', decision: 'deny', remember: false, message: 'no' },
+        {
+          sessionId: 7,
+          requestId: 'req-1',
+          decision: 'deny',
+          remember: false,
+          message: 'no',
+        },
         makeCtx(services),
       );
       expect(services.agentRuntime.getProviderFeature).toHaveBeenCalledWith(
@@ -406,18 +494,26 @@ describe('Drive tool group', () => {
         { sessionId: 7, provider: 'codex' },
         makeCtx(services),
       );
-      expect(services.sessions.updateActiveAgentProvider).toHaveBeenCalledWith(7, 'codex');
+      expect(services.sessions.updateActiveAgentProvider).toHaveBeenCalledWith(
+        7,
+        'codex',
+      );
       expect(res.data).toMatchObject({ sessionId: 7, provider: 'codex' });
     });
 
     it('maps a domain failure onto a ToolError', async () => {
       const { services } = makeServices({
         sessionsOverrides: {
-          updateActiveAgentProvider: jest.fn().mockRejectedValue(new Error('boom')),
+          updateActiveAgentProvider: jest
+            .fn()
+            .mockRejectedValue(new Error('boom')),
         },
       });
       await expect(
-        setProviderTool.handler({ sessionId: 7, provider: 'codex' }, makeCtx(services)),
+        setProviderTool.handler(
+          { sessionId: 7, provider: 'codex' },
+          makeCtx(services),
+        ),
       ).rejects.toBeInstanceOf(ToolError);
     });
   });
@@ -445,8 +541,14 @@ describe('Drive tool group', () => {
         'claude',
         'setPermissionMode',
       );
-      expect(runtime.setPermissionMode).toHaveBeenCalledWith(7, 'bypassPermissions');
-      expect(res.data).toMatchObject({ sessionId: 7, mode: 'bypassPermissions' });
+      expect(runtime.setPermissionMode).toHaveBeenCalledWith(
+        7,
+        'bypassPermissions',
+      );
+      expect(res.data).toMatchObject({
+        sessionId: 7,
+        mode: 'bypassPermissions',
+      });
     });
   });
 });

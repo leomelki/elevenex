@@ -15,6 +15,7 @@ export const resetSessionTool = defineTool({
   destructive: true,
   description:
     'Wipe a session by archiving it and spawning a fresh session in the same worktree, returning the new id. 🟡scoped, DESTRUCTIVE (the old conversation is retired). Use to start over cleanly; prompt_session the new id afterward.',
+  disallowSelfTarget: 'session',
   inputShape: {
     sessionId: z
       .number()

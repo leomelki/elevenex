@@ -1,3 +1,4 @@
+import { SESSION_TOOL_INSTRUCTIONS } from '../mcp/session-tool-context.js';
 import { readFile } from 'fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -55,9 +56,10 @@ interface PiExtensionApi {
     ) => Promise<unknown>;
   }): void;
   setActiveTools(names: string[]): void;
+  getActiveTools(): string[];
 }
 
-/** Native context telemetry for every session; mission tools only when explicitly configured. */
+/** Native telemetry and Elevenex tools; missions additionally restrict native coding tools. */
 export default function elevenexAgentExtension(pi: PiExtensionApi): void {
   let lastSent: string | null = null;
   let lastReadAt = 0;
@@ -109,42 +111,47 @@ export default function elevenexAgentExtension(pi: PiExtensionApi): void {
     });
   }
   if (!process.env.ELEVENEX_AGENT_TOKEN) return;
+  const isMission = Boolean(process.env.ELEVENEX_AGENT_PROMPT);
   let client: Client | null = null;
   let toolNames: string[] = [];
 
-  pi.registerTool({
-    name: 'TodoWrite',
-    label: 'Mission plan',
-    description:
-      'Record the ordered mission plan and update each step as it progresses.',
-    parameters: {
-      type: 'object',
-      properties: {
-        todos: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              content: { type: 'string' },
-              status: {
-                type: 'string',
-                enum: ['pending', 'in_progress', 'completed'],
+  if (isMission)
+    pi.registerTool({
+      name: 'TodoWrite',
+      label: 'Mission plan',
+      description:
+        'Record the ordered mission plan and update each step as it progresses.',
+      parameters: {
+        type: 'object',
+        properties: {
+          todos: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                content: { type: 'string' },
+                status: {
+                  type: 'string',
+                  enum: ['pending', 'in_progress', 'completed'],
+                },
+                activeForm: { type: 'string' },
               },
-              activeForm: { type: 'string' },
+              required: ['content', 'status'],
             },
-            required: ['content', 'status'],
           },
         },
+        required: ['todos'],
       },
-      required: ['todos'],
-    },
-    execute: async (_id, args) => ({
-      content: [{ type: 'text', text: JSON.stringify(args) }],
-      details: args,
-    }),
-  });
+      execute: async (_id, args) => ({
+        content: [{ type: 'text', text: JSON.stringify(args) }],
+        details: args,
+      }),
+    });
 
   pi.on('session_start', async (_event, ctx) => {
+    const nativeTools = isMission ? [] : pi.getActiveTools();
+    // Finish or fall back before PiSessionRuntime's 30s readiness deadline.
+    const signal = AbortSignal.timeout(20_000);
     try {
       client = new Client({ name: 'elevenex-pi-agent', version: '1.0.0' });
       await client.connect(
@@ -158,10 +165,14 @@ export default function elevenexAgentExtension(pi: PiExtensionApi): void {
             },
           },
         ),
+        { signal, timeout: 20_000 },
       );
       let cursor: string | undefined;
       do {
-        const page = await client.listTools(cursor ? { cursor } : {});
+        const page = await client.listTools(cursor ? { cursor } : {}, {
+          signal,
+          timeout: 20_000,
+        });
         for (const tool of page.tools) {
           const name = `mcp__elevenex__${tool.name}`;
           toolNames.push(name);
@@ -191,17 +202,30 @@ export default function elevenexAgentExtension(pi: PiExtensionApi): void {
         cursor = page.nextCursor;
       } while (cursor);
       // Missions operate through Elevenex; built-in shell/edit tools would bypass its mandate.
-      pi.setActiveTools(['TodoWrite', ...toolNames]);
+      pi.setActiveTools(
+        isMission
+          ? ['TodoWrite', ...toolNames]
+          : [...new Set([...nativeTools, ...toolNames])],
+      );
       // Pi redirects extension stdout to stderr; status notifications use the real RPC output.
       ctx.ui.setStatus('elevenex_agent_ready', 'ready');
     } catch (error) {
-      pi.setActiveTools([]);
-      ctx.ui.setStatus('elevenex_agent_ready', `error: ${String(error)}`);
+      pi.setActiveTools(nativeTools);
+      await client?.close().catch(() => undefined);
+      client = null;
+      if (!isMission)
+        ctx.ui.setStatus('elevenex_mcp_status', `error: ${String(error)}`);
+      ctx.ui.setStatus(
+        'elevenex_agent_ready',
+        isMission ? `error: ${String(error)}` : 'ready',
+      );
     }
   });
 
-  pi.on('before_agent_start', async () => ({
-    systemPrompt: await readFile(process.env.ELEVENEX_AGENT_PROMPT!, 'utf8'),
+  pi.on('before_agent_start', async (event) => ({
+    systemPrompt: isMission
+      ? await readFile(process.env.ELEVENEX_AGENT_PROMPT!, 'utf8')
+      : `${(event as { systemPrompt: string }).systemPrompt}\n\n${SESSION_TOOL_INSTRUCTIONS}`,
   }));
 
   pi.on('session_shutdown', async () => {

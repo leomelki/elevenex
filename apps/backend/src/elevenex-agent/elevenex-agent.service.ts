@@ -51,6 +51,18 @@ export class ElevenexAgentService implements OnModuleInit {
    * and destructive tools deliberately still prompt (per autonomy mode). */
   private static readonly SAFE_TOOLS = [
     'project_overview',
+    'get_current_session',
+    'get_session_config',
+    'get_task_defaults',
+    'get_task',
+    'await_task_ready',
+    'list_tasks',
+    'preview_finish_task',
+    'read_task_draft',
+    'find_branches',
+    'list_todos',
+    'list_scratchpad',
+    'read_scratchpad',
     'find_sessions',
     'session_status',
     'read_session',
@@ -61,7 +73,6 @@ export class ElevenexAgentService implements OnModuleInit {
     'get_worktree_context',
     'await_session_event',
     'get_pending_action',
-    'get_worktree_job',
     'assess_worktree_pool',
     // Actions: reading and waiting are harmless. run/stop/set/delete_action
     // mutate the human's worktree and panel, so they still prompt.

@@ -1,3 +1,4 @@
+import { provideRouter } from '@angular/router';
 import { ClaudeToolCallComponent } from '@/shared/agent-chat/tools/claude-tool-call.component';
 import '@angular/compiler';
 import { TestBed } from '@angular/core/testing';
@@ -455,4 +456,29 @@ describe('ClaudeToolCallComponent', () => {
     expect(diff.textContent).toContain('+0');
     expect(diff.textContent).toContain('-1');
   });
+  it('renders Elevenex execution failures and recovery context in the normal chat', async () => {
+    await TestBed.configureTestingModule({ imports: [ClaudeToolCallComponent], providers: [provideRouter([])] }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', { id: 'mcp-call', kind: 'tool_use', toolUseId: 'mcp-call', toolName: 'mcp__elevenex__finish_task', toolKind: 'mcp', toolInput: { taskId: 9 }, timestamp: '2026-10-13T00:00:00Z' });
+    fixture.componentRef.setInput('isLive', true); fixture.detectChanges();
+    expect(fixture.componentInstance.state()).toBe('running');
+    fixture.componentRef.setInput('result', { id: 'mcp-result', kind: 'tool_result', toolUseId: 'mcp-call', isError: true, content: [{ type: 'text', text: JSON.stringify({ error: { code: 'running_work', message: 'Running work must be confirmed.', details: { agents: 2, terminals: 1, actions: 0 } } }) }], timestamp: '2026-10-13T00:00:01Z' });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.state()).toBe('error');
+    expect(fixture.nativeElement.querySelector('elevenex-tool-result')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('[role="alert"]').textContent).toContain('Running work must be confirmed');
+    expect(fixture.componentInstance.summary()?.tone).toBe('error');
+    fixture.destroy();
+  });
+
+  it('does not mark an interrupted Elevenex call as successful without a result', async () => {
+    await TestBed.configureTestingModule({ imports: [ClaudeToolCallComponent], providers: [provideRouter([])] }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', { id: 'unfinished', kind: 'tool_use', toolName: 'mcp__elevenex__await_task_ready', toolInput: { taskId: 9 }, timestamp: '2026-10-13T00:00:00Z' });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.state()).toBe('incomplete');
+    expect(fixture.componentInstance.summary()?.text).toBe('No result recorded');
+    fixture.destroy();
+  });
+
 });

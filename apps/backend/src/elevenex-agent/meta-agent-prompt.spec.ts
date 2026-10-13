@@ -48,6 +48,15 @@ describe('meta-agent-prompt', () => {
         '# You are the Elevenex Agent',
       );
     });
+
+    it('uses task setup and conversation reuse throughout the mandate', () => {
+      const prompt = buildMetaAgentPrompt('review');
+      expect(prompt).toContain('get_task_defaults');
+      expect(prompt).toContain('open_task_session');
+      for (const name of ['create_worktree', 'get_worktree_job', 'link_worktree', 'steal_worktree', 'switch_branch', 'rename_worktree']) {
+        expect(prompt).not.toContain(name);
+      }
+    });
   });
 
   describe('permissionModeForAutonomy', () => {

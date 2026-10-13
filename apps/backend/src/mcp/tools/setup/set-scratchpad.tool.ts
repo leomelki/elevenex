@@ -12,8 +12,9 @@ export const setScratchpadTool = defineTool({
   costClass: 'instant',
   mutates: true,
   description:
-    'Find-or-create a named scratchpad section in a project and optionally write its content. ⚡instant, idempotent on (project, name). Use to record durable mission notes.',
+    'Find-or-create a named scratchpad section in a project and optionally write its content. ⚡instant, idempotent on (project, name). Use list_scratchpad/read_scratchpad first to preserve existing project notes.',
   annotations: { idempotentHint: true },
+  currentSessionScope: 'project',
   inputShape: {
     projectId: z
       .number()
@@ -22,7 +23,9 @@ export const setScratchpadTool = defineTool({
       .describe('Project the scratchpad section belongs to.'),
     name: z
       .string()
+      .trim()
       .min(1)
+      .max(160)
       .describe('Section name to find or create (matched exactly within the project).'),
     content: z
       .string()

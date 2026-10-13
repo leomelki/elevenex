@@ -20,6 +20,7 @@ export const readSessionRangeTool = defineTool({
   description:
     "Read a specific line window of the rendered transcript. Use grep_session first to find lineNumbers, then zoom in here. Precision must match the grep call to keep line numbers stable. Returns the raw Markdown slice + totalLines for context.",
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'session',
   inputShape: {
     sessionId: z
       .number()

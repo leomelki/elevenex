@@ -26,6 +26,7 @@ export const setActionTool = defineTool({
   description:
     'Create or edit a saved Action (a named shell command on a worktree, e.g. name "test" / command "pnpm test"). ⚡instant. Idempotent: without an actionId it updates the worktree action with the same name instead of creating a duplicate — so prefer set_action over delete_action + set_action when fixing a command. Pass actionId to rename/repoint a specific one. Creating does NOT run it: call run_action next.',
   annotations: { idempotentHint: true },
+  currentSessionScope: 'worktree',
   inputShape: {
     sessionId: z
       .number()

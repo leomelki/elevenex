@@ -22,7 +22,7 @@ export const createSessionFolderTool = defineTool({
       .int()
       .positive()
       .describe(
-        'Workspace where the folder appears. From link_worktree / create_session.',
+        'Workspace where the folder appears. Task ID (also workspaceId) from get_current_session / get_task.',
       ),
     name: z
       .string()

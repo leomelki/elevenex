@@ -12,12 +12,19 @@ import { Injectable } from '@nestjs/common';
 export class DeltaCursorStore {
   private readonly cursors = new Map<string, string>();
 
-  private key(mcpSessionId: string | undefined, scope: string | number): string {
+  private key(
+    mcpSessionId: string | undefined,
+    scope: string | number,
+  ): string {
     return `${mcpSessionId ?? 'anon'}:${scope}`;
   }
 
   /** Last cursor this connection saw for the scope, or undefined if never. */
-  get(mcpSessionId: string | undefined, scope: string | number): string | undefined {
+  get(
+    mcpSessionId: string | undefined,
+    scope: string | number,
+  ): string | undefined {
+    if (!mcpSessionId) return undefined;
     return this.cursors.get(this.key(mcpSessionId, scope));
   }
 
@@ -27,6 +34,7 @@ export class DeltaCursorStore {
     scope: string | number,
     cursor: string,
   ): void {
+    if (!mcpSessionId) return;
     this.cursors.set(this.key(mcpSessionId, scope), cursor);
   }
 

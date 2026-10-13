@@ -1,3 +1,7 @@
+import {
+  elevenexMcpUrl,
+  SESSION_TOOL_INSTRUCTIONS,
+} from '../mcp/session-tool-context.js';
 import type { OpenCodeClient } from './opencode-client.js';
 import { OpenCodeTranscriptStore } from './opencode-transcript-store.js';
 import { OpenCodeSessionTree } from './opencode-session-tree.js';
@@ -40,7 +44,6 @@ import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { SessionTitleService } from '../session-title/session-title.service.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { buildMetaAgentPrompt } from '../elevenex-agent/meta-agent-prompt.js';
-import { getElevenexProxyPort } from '../config/ports.js';
 import { resolveAgentStartupSelection } from '../agent-runtime/agent-model-defaults.js';
 import { contextPercentage } from '../agent-runtime/context-usage.js';
 import { OpenCodeServer } from './opencode-server.js';
@@ -86,6 +89,13 @@ export class OpenCodeAgentRuntimeProvider
   readonly info: AgentRuntimeProviderInfo = {
     id: 'opencode',
     displayName: 'OpenCode',
+    permissionModes: [
+      'default',
+      'auto',
+      'acceptEdits',
+      'bypassPermissions',
+      'dontAsk',
+    ],
     capabilities: {
       mcp: true,
       subagents: true,
@@ -273,24 +283,21 @@ export class OpenCodeAgentRuntimeProvider
       this.sessions.findOne(sessionId),
       this.state(sessionId),
     ]);
-    let config: Config | undefined;
-    let system: string | undefined;
-    if (session.surface === 'agent') {
-      const token = await this.tokens.ensureToken(sessionId);
-      config = {
-        mcp: {
-          elevenex: {
-            type: 'remote',
-            url:
-              process.env.ELEVENEX_MCP_URL?.trim() ||
-              `http://127.0.0.1:${getElevenexProxyPort()}/api/mcp`,
-            headers: { Authorization: `Bearer ${token}` },
-            oauth: false,
-          },
+    const token = await this.tokens.ensureToken(sessionId);
+    const config: Config = {
+      mcp: {
+        elevenex: {
+          type: 'remote',
+          url: elevenexMcpUrl(),
+          headers: { Authorization: `Bearer ${token}` },
+          oauth: false,
         },
-      };
-      system = buildMetaAgentPrompt(session.agentAutonomyMode);
-    }
+      },
+    };
+    const system =
+      session.surface === 'agent'
+        ? buildMetaAgentPrompt(session.agentAutonomyMode)
+        : SESSION_TOOL_INSTRUCTIONS;
     if (this.destroyed || (this.generations.get(sessionId) ?? 0) !== generation)
       throw new Error('OpenCode session closed during startup.');
     const server = new OpenCodeServer({ cwd: session.worktreePath, config });

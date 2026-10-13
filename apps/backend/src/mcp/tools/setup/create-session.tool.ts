@@ -1,118 +1,65 @@
-﻿import { z } from 'zod';
+import { z } from 'zod';
 import { DEFAULT_AGENT_PROVIDERS } from '../../../settings/settings.types.js';
-import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
+import { defineTool } from '../../tool-registry/tool.types.js';
+import { taskOperation } from './task.util.js';
 
-/**
- * create_session â€” create an inner coding session, ready to be triggered with
- * prompt_session. âš¡instant, mutating. This is the bridge between provisioning
- * (link_worktree / create_worktree) and driving (prompt_session): you cannot
- * prompt work into existence without a session.
- *
- * Accepts a workspaceId (the natural output of link_worktree) OR an explicit
- * worktreePath + branchName. The latter usually comes from a finished
- * create_worktree job, but a dedicated worktree is not required: worktreePath
- * can also be a repo's own main checkout (the `path` returned by add_repo /
- * project_overview) when the task does not need isolation â€” see that field's
- * description. The session is NOT started here â€” prompt_session starts it on
- * the first prompt.
- */
 export const createSessionTool = defineTool({
   name: 'create_session',
-  title: 'Create session',
-  costClass: 'instant',
+  title: 'Create task conversation',
+  costClass: 'scoped',
   mutates: true,
+  currentSessionScope: 'task',
   description:
-    'Create an inner coding session (does not start it). âš¡instant. Pass a workspaceId from link_worktree, or a worktreePath+branchName from a finished create_worktree job â€” or point worktreePath straight at a repo\'s main checkout when the task does not need its own worktree (e.g. quick exploration, a read-mostly look-around). Next: prompt_session to trigger work, then await_session_event to watch it.',
+    'Create an additional coding conversation in a ready task using its current checkout. Does not start an agent. Conversations in the same task share files; create_task for isolated parallel work, open_task_session to reuse an existing conversation. Uses the configured default provider when omitted.',
   inputShape: {
-    repoId: z
+    taskId: z
       .number()
       .int()
       .positive()
-      .describe('Repo the session belongs to. From project_overview / add_repo.'),
-    taskId: z.number().int().positive().optional().describe('Ready task to create another conversation in. Takes the task’s current environment.'),
-    workspaceId: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe('Linked workspace to run in (preferred â€” returned by link_worktree). If set, branch/path are taken from it.'),
-    worktreePath: z
-      .string()
-      .min(1)
-      .optional()
       .describe(
-        'Absolute path to run the session in. Normally a dedicated worktree (use when you have no workspaceId, e.g. from a create_worktree job result). ' +
-        "Worktrees are not mandatory though: you can instead pass the repo's own main checkout path (the `path` field from add_repo / project_overview) when the task genuinely does not need isolation â€” a quick exploration, a read-only look-around, or anything you judge fine to run directly against the repo as checked out. " +
-        'That session then shares the single main checkout with everything else that touches it directly (no worktree, no dedicated branch), so it is responsible for its own git state before doing real work: check status, checkout/pull/resolve conflicts as needed â€” often a no-op on a clean tree, but not guaranteed. ' +
-        'Reach for a real worktree instead whenever the work will commit, needs its own branch, or could collide with other in-flight work on the same repo. Requires branchName.',
+        'Ready task ID from get_current_session, get_task, or list_tasks. Repo and checkout are resolved from the task.',
       ),
-    branchName: z
-      .string()
-      .min(1)
-      .optional()
-      .describe('Branch the session runs on. Required when using worktreePath instead of workspaceId â€” pass the checkout\'s actual current branch when pointing worktreePath at a repo\'s main checkout.'),
     name: z
       .string()
+      .trim()
       .min(1)
+      .max(160)
       .optional()
-      .describe('Optional session name; auto-generated (e.g. "Session 3") if omitted.'),
+      .describe('Optional conversation name; generated when omitted.'),
     provider: z
       .enum(DEFAULT_AGENT_PROVIDERS)
-      .default('claude')
-      .describe("Inner agent provider for this session. Default 'claude'."),
+      .optional()
+      .describe(
+        'Agent provider; omitted uses the configured Elevenex default.',
+      ),
+    folderId: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        'Optional session folder in the same task, from list_session_folders.',
+      ),
   },
   handler: async (args, ctx) => {
-    const { repos, sessions } = ctx.services;
-
-    // Validate the repo up front so the agent gets a clean error instead of an
-    // opaque FK failure.
-    const repo = await repos.findOne(args.repoId).catch(() => null);
-    if (!repo) {
-      throw new ToolError({
-        code: 'repo_not_found',
-        message: `No repo with id ${args.repoId}.`,
-        remediation: 'Get a valid repoId from project_overview or add_repo.',
-      });
-    }
-
-    if (
-      args.workspaceId === undefined && args.taskId === undefined &&
-      !(args.worktreePath && args.branchName)
-    ) {
-      throw new ToolError({
-        code: 'scope_required',
-        message:
-          'create_session needs a workspaceId, or both worktreePath and branchName.',
-        remediation:
-          'Pass the workspaceId from link_worktree, or the worktreePath (from a finished create_worktree job) together with its branchName.',
-      });
-    }
-
-    let session;
-    try {
-      session = await sessions.create({
-        repoId: args.repoId,
-        workspaceId: args.taskId ?? args.workspaceId,
-        worktreePath: args.worktreePath,
-        branchName: args.branchName,
+    const task = await taskOperation(() =>
+      ctx.services.tasks.record(args.taskId),
+    );
+    const session = await taskOperation(() =>
+      ctx.services.sessions.create({
+        repoId: task.repoId,
+        workspaceId: task.id,
         name: args.name,
+        folderId: args.folderId,
         surface: 'session',
         activeAgentProvider: args.provider,
-      });
-    } catch (error) {
-      throw new ToolError({
-        code: 'create_session_failed',
-        message: error instanceof Error ? error.message : 'Could not create session.',
-        remediation:
-          'Ensure the worktree exists on disk (create_worktree/link_worktree first) and the workspace/branch are valid.',
-        retryable: false,
-      });
-    }
-
+      }),
+    );
     return {
       data: {
+        taskId: task.id,
         sessionId: session.id,
-        name: session.name ?? `Session ${session.id}`,
+        name: session.name,
         repoId: session.repoId,
         branch: session.branchName,
         worktreePath: session.worktreePath,
@@ -122,7 +69,7 @@ export const createSessionTool = defineTool({
       touched: { sessionId: session.id },
       deepLink: ctx.deepLink.session(session.id),
       nextStep:
-        'Trigger work with prompt_session, then await_session_event / session_status to watch it.',
+        'prompt_session to start work. Coordinate writes with other conversations in this task; their worktree is shared.',
     };
   },
 });

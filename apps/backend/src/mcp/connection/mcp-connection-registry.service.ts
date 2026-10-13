@@ -3,12 +3,12 @@ import type { ConnectionCaps } from '../tool-registry/tool.types.js';
 
 /**
  * What we record per live MCP connection (one per `Mcp-Session-Id`). The bearer
- * token is resolved once at initialize and reused for every call on the
- * connection so tool handlers don't re-hit the token store.
+ * token is resolved on each tool call, updating identity/caps and checking
+ * that a deleted session cannot retain its authenticated capabilities.
  */
 export interface McpConnection {
   mcpSessionId: string;
-  /** Agent session id this connection acts as, or null when anonymous. */
+  /** Coding-session or mission id this connection acts as, or null when anonymous. */
   agentSessionId: number | null;
   caps: ConnectionCaps;
 }

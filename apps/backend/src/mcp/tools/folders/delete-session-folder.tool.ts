@@ -8,6 +8,7 @@ export const deleteSessionFolderTool = defineTool({
   costClass: 'scoped',
   mutates: true,
   destructive: true,
+  disallowSelfTarget: 'folder',
   description:
     'Permanently delete a sidebar folder and every session in it. 🟡scoped and destructive. To keep the sessions, move them out with move_session_to_folder before deleting.',
   inputShape: {
@@ -19,7 +20,10 @@ export const deleteSessionFolderTool = defineTool({
   },
   handler: async (args, ctx) => {
     try {
-      const deleted = await ctx.services.sessionFolders.delete(args.folderId);
+      const deleted = await ctx.services.sessionFolders.delete(
+        args.folderId,
+        ctx.agentSessionId ?? undefined,
+      );
       return {
         data: {
           folderId: deleted.id,

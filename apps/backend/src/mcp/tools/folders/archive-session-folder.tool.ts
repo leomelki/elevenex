@@ -7,6 +7,7 @@ export const archiveSessionFolderTool = defineTool({
   title: 'Archive session folder',
   costClass: 'scoped',
   mutates: true,
+  disallowSelfTarget: 'folder',
   description:
     'Stop and archive a sidebar folder together with its active sessions; this is reversible with unarchive_session_folder. 🟡scoped. Get folderId from list_session_folders.',
   inputShape: {
@@ -18,7 +19,10 @@ export const archiveSessionFolderTool = defineTool({
   },
   handler: async (args, ctx) => {
     try {
-      const folder = await ctx.services.sessionFolders.archive(args.folderId);
+      const folder = await ctx.services.sessionFolders.archive(
+        args.folderId,
+        ctx.agentSessionId ?? undefined,
+      );
       return {
         data: { folderId: folder.id, archived: true },
         touched: { folderId: folder.id },

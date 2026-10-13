@@ -1,27 +1,46 @@
 import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
-import {
-  renderMarkdown,
-  type ConversationExportModel,
-  type ConversationExportOptions,
-} from '../../../agent-runtime/conversation-export.service.js';
+import { transcriptWindow } from './transcript-window.js';
 
-/**
- * read_session — transcript reader backed by the structured Markdown export.
- *
- * First call for a (session, precision) pair returns the full session.
- * Subsequent calls return only turns added since the last read (delta), with
- * turn numbers that reflect their global position in the session. Changing
- * precision resets the cursor and delivers a fresh full read at the new level.
- */
+/** Bounded transcript pages with connection-local delta cursors. */
 export const readSessionTool = defineTool({
   name: 'read_session',
   title: 'Read session transcript',
   costClass: 'cached',
   description:
-    "Read a session's transcript as structured Markdown. First call returns the full session; repeat calls return only new turns (delta). 🟢 Gate with session_status first. Precision: 'small' = user+final-response (cheapest), 'medium' adds work steps, 'full' adds thinking and tool outputs with diffs.",
+    "Read bounded Markdown transcript pages (default 20 turns/12000 characters). Repeat to drain truncated pages, then receive deltas. refresh:true rereads history. Rewinds/provider changes reset automatically. 'small' shows user/final responses; 'medium' adds work; 'full' adds tool details. includeIds:true discovers fork anchors.",
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'session',
   inputShape: {
+    cursor: z
+      .string()
+      .max(2000)
+      .optional()
+      .describe(
+        'Opaque cursor returned by the previous response. Optional for stateful MCP connections; required to continue pages for stateless clients.',
+      ),
+    refresh: z
+      .boolean()
+      .optional()
+      .describe(
+        'Restart at the beginning; default false. Set only for the first call of a fresh read.',
+      ),
+    maxTurns: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .optional()
+      .describe('Turns per page, 1-50; default 20.'),
+    maxCharacters: z
+      .number()
+      .int()
+      .min(1000)
+      .max(24000)
+      .optional()
+      .describe(
+        'Maximum Markdown characters per response, 1000-24000; default 12000. A large turn continues on the next call.',
+      ),
     sessionId: z
       .number()
       .int()
@@ -31,7 +50,7 @@ export const readSessionTool = defineTool({
       .enum(['small', 'medium', 'full'])
       .default('small')
       .describe(
-        "'small' returns user messages + final responses only (cheapest). 'medium' adds intermediate work steps. 'full' adds thinking blocks and tool inputs/outputs with diffs. Changing precision resets the delta cursor.",
+        "'small' returns user messages + final responses only (cheapest). 'medium' adds intermediate work steps. 'full' adds thinking blocks and tool inputs/outputs with diffs. Changing rendering options starts a separate delta cursor.",
       ),
     includeChanges: z
       .boolean()
@@ -70,78 +89,41 @@ export const readSessionTool = defineTool({
       session.activeAgentProvider,
     );
 
-    const totalTurns = model.turns.length;
-    // Cursor scope encodes precision so a change in detail level resets to a
-    // full read rather than delivering a misleadingly-scoped delta.
-    const cursorScope = `${session.id}:${args.precision}`;
-    const stored = ctx.cursors.get(ctx.mcpSessionId, cursorScope);
-
-    // Cursor format: "<turns>:<itemCount>" — tracks both turn boundaries and
-    // intra-turn additions so a completing assistant response is never missed.
-    let fromTurn = 0;
-    let storedItemCount = 0;
-    const isDelta = stored !== undefined;
-    if (stored !== undefined) {
-      const colonIdx = stored.indexOf(':');
-      fromTurn = colonIdx === -1 ? parseInt(stored, 10) : parseInt(stored.slice(0, colonIdx), 10);
-      storedItemCount = colonIdx === -1 ? 0 : parseInt(stored.slice(colonIdx + 1), 10);
-    }
-    const newTurns = totalTurns - fromTurn;
-
-    // When the turn count is the same but items grew, the last turn gained
-    // content (e.g. an assistant response was completed mid-turn). Re-deliver
-    // from the last seen turn boundary so the caller gets the updated turn.
-    const lastTurnUpdated = isDelta && newTurns === 0 && itemCount > storedItemCount;
-
-    if (isDelta && newTurns === 0 && !lastTurnUpdated) {
-      // Nothing new — skip rendering entirely.
-      return {
-        data: { sessionId: session.id, delta: true, newTurns: 0, totalTurns, running },
-        deepLink: ctx.deepLink.session(session.id, { panel: 'transcript' }),
-        nextStep: running
-          ? 'No new turns yet; runtime is still running. Use await_session_event or poll session_status.'
-          : 'No new turns. Session is idle.',
-      };
-    }
-
-    // When only the last turn was updated (not a new turn), re-deliver it.
-    const sliceFrom = lastTurnUpdated ? Math.max(0, fromTurn - 1) : fromTurn;
-
-    const options: ConversationExportOptions = {
-      precision: args.precision,
-      includeChanges: args.includeChanges,
-      includeIds: args.includeIds,
-      turnNumberOffset: isDelta ? sliceFrom : 0,
-    };
-
-    const slicedModel: ConversationExportModel = {
-      ...model,
-      // Preamble (system init items) only belongs in the first full read.
-      preamble: isDelta ? [] : model.preamble,
-      turns: model.turns.slice(sliceFrom),
-    };
-
-    const markdown = renderMarkdown(slicedModel, options);
-
-    ctx.cursors.set(ctx.mcpSessionId, cursorScope, `${totalTurns}:${itemCount}`);
-
+    const identity = [
+      session.activeAgentProvider,
+      session.claudeSessionId,
+      session.codexSessionId,
+      session.piSessionPath,
+      session.opencodeSessionId,
+      model.turns[0]?.user?.id,
+      args.precision,
+      args.includeChanges,
+      args.includeIds,
+    ].join(':');
+    const cursorScope = `${session.id}:${args.precision}:${args.includeChanges}:${args.includeIds}`;
+    const page = transcriptWindow(
+      model,
+      itemCount ?? 0,
+      identity,
+      args.cursor ?? ctx.cursors.get(ctx.mcpSessionId, cursorScope),
+      args,
+    );
+    ctx.signal.throwIfAborted();
+    ctx.cursors.set(ctx.mcpSessionId, cursorScope, page.cursor);
     return {
       data: {
         sessionId: session.id,
-        delta: isDelta,
-        newTurns,
-        totalTurns,
         running,
-        markdown,
+        ...page.data,
+        cursor: page.cursor,
       },
+      truncated: page.truncated,
       deepLink: ctx.deepLink.session(session.id, { panel: 'transcript' }),
-      nextStep: running
-        ? 'Runtime still running; use await_session_event then re-read for the next delta.'
-        : lastTurnUpdated
-          ? `Last turn completed (turn ${totalTurns} updated). Re-read if you expect more turns.`
-          : isDelta
-            ? `Delta delivered (turns ${sliceFrom + 1}–${totalTurns}). Re-read when you expect more turns.`
-            : `Full session delivered (${totalTurns} turn${totalTurns === 1 ? '' : 's'}). Re-read for future deltas.`,
+      nextStep: page.truncated
+        ? 'More transcript remains. Repeat read_session with the same rendering options and refresh omitted/false to continue.'
+        : running
+          ? 'Runtime still running; await_session_event before reading the next delta.'
+          : 'Transcript caught up. Repeat for future deltas, or refresh:true to reread history.',
     };
   },
 });

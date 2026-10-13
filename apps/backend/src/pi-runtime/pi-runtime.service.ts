@@ -1,3 +1,4 @@
+import { elevenexMcpUrl } from '../mcp/session-tool-context.js';
 import { contextPercentage } from '../agent-runtime/context-usage.js';
 import {
   BadRequestException,
@@ -13,7 +14,6 @@ import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { basename, dirname, extname, join } from 'path';
-import { getElevenexProxyPort } from '../config/ports.js';
 import { buildMetaAgentPrompt } from '../elevenex-agent/meta-agent-prompt.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
@@ -820,33 +820,29 @@ export class PiRuntimeService
     const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
     state.cachedWorktreePath = session.worktreePath;
     let agentConfigDir: string | undefined;
-    let agentEnv: NodeJS.ProcessEnv | undefined;
+    const token = await this.mcpAgentTokens.ensureToken(sessionId);
     if (session.surface === 'agent') {
-      const token = await this.mcpAgentTokens.ensureToken(sessionId);
       agentConfigDir = await fs.mkdtemp(join(tmpdir(), 'elevenex-pi-agent-'));
       await fs.writeFile(
         join(agentConfigDir, 'prompt.txt'),
         buildMetaAgentPrompt(session.agentAutonomyMode),
         'utf8',
       );
-      agentEnv = {
-        ELEVENEX_AGENT_TOKEN: token,
-        ELEVENEX_AGENT_PROMPT: join(agentConfigDir, 'prompt.txt'),
-        ELEVENEX_MCP_URL:
-          process.env.ELEVENEX_MCP_URL?.trim() ||
-          `http://127.0.0.1:${getElevenexProxyPort()}/api/mcp`,
-      };
     }
+    const agentEnv: NodeJS.ProcessEnv = {
+      ELEVENEX_AGENT_TOKEN: token,
+      ELEVENEX_AGENT_PROMPT: agentConfigDir
+        ? join(agentConfigDir, 'prompt.txt')
+        : '',
+      ELEVENEX_MCP_URL: elevenexMcpUrl(),
+    };
     const runtime = new PiSessionRuntime({
       cwd: session.worktreePath,
       sessionPath: state.piSessionPath,
       // The extension reports native context usage for both coding and mission sessions.
       extensionPath: await this.agentExtensionPath(),
-      waitForAgentReady: Boolean(agentEnv),
-      env: {
-        ...agentEnv,
-        ELEVENEX_AGENT_TOKEN: agentEnv?.ELEVENEX_AGENT_TOKEN ?? '',
-      },
+      waitForAgentReady: true,
+      env: agentEnv,
     });
     const entry: PiRuntimeEntry = {
       runtime,

@@ -56,6 +56,7 @@ const baseSession = {
 
 function sessionsMock(session: Record<string, unknown> | null = baseSession) {
   return {
+    assertSessionWorkspaceLinked: jest.fn().mockResolvedValue(undefined),
     findOne: jest.fn(async (id: number) => {
       if (session === null) throw new Error('not found');
       return { ...session, id };
@@ -68,6 +69,7 @@ describe('observe tool group', () => {
     const names = OBSERVE_TOOLS.map((t) => t.name);
     expect(names).toEqual(
       expect.arrayContaining([
+        'get_current_session',
         'project_overview',
         'find_sessions',
         'session_status',
@@ -84,13 +86,16 @@ describe('observe tool group', () => {
         'await_session_event',
       ]),
     );
-    expect(OBSERVE_TOOLS).toHaveLength(14);
+    expect(OBSERVE_TOOLS).toHaveLength(20);
   });
 
   describe('session_status', () => {
     it('compacts DB + runtime state and reports a pending action', async () => {
       const services = {
-        sessions: sessionsMock({ ...baseSession, hasUnreviewedCompletion: true }),
+        sessions: sessionsMock({
+          ...baseSession,
+          hasUnreviewedCompletion: true,
+        }),
         agentRuntime: {
           getProvider: () => ({
             getRuntimeState: jest.fn().mockResolvedValue({
@@ -101,7 +106,10 @@ describe('observe tool group', () => {
           }),
         },
       };
-      const res = await sessionStatusTool.handler({ sessionId: 7 }, makeCtx(services));
+      const res = await sessionStatusTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
       expect(res.data).toMatchObject({
         sessionId: 7,
         status: 'running',
@@ -121,7 +129,10 @@ describe('observe tool group', () => {
           }),
         },
       };
-      const res = await sessionStatusTool.handler({ sessionId: 7 }, makeCtx(services));
+      const res = await sessionStatusTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
       expect(res.data).toMatchObject({
         runtimeState: 'running',
         hasPendingAction: false,
@@ -146,7 +157,9 @@ describe('observe tool group', () => {
             getRuntimeState: jest.fn().mockResolvedValue({
               sessionState: 'idle',
               runPhase: 'idle',
-              backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
+              backgroundWork: [
+                { id: 'task:1', kind: 'task', label: 'run tests' },
+              ],
               pendingPrompts: [],
               pendingPermissionRequest: null,
               pendingUserInputRequest: null,
@@ -154,8 +167,14 @@ describe('observe tool group', () => {
           }),
         },
       };
-      const res = await sessionStatusTool.handler({ sessionId: 7 }, makeCtx(services));
-      expect(res.data).toMatchObject({ runtimeState: 'running', hasQueuedWork: true });
+      const res = await sessionStatusTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
+      expect(res.data).toMatchObject({
+        runtimeState: 'running',
+        hasQueuedWork: true,
+      });
       expect(res.nextStep).toContain('Not actually idle');
     });
 
@@ -175,8 +194,14 @@ describe('observe tool group', () => {
           }),
         },
       };
-      const res = await sessionStatusTool.handler({ sessionId: 7 }, makeCtx(services));
-      expect(res.data).toMatchObject({ runtimeState: 'idle', hasQueuedWork: false });
+      const res = await sessionStatusTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
+      expect(res.data).toMatchObject({
+        runtimeState: 'idle',
+        hasQueuedWork: false,
+      });
     });
   });
 
@@ -185,7 +210,9 @@ describe('observe tool group', () => {
       runtimeState: Record<string, unknown> = {},
       sessionStatus = 'active',
     ) {
-      const sessions = new EventEmitter() as EventEmitter & { findOne: jest.Mock };
+      const sessions = new EventEmitter() as EventEmitter & {
+        findOne: jest.Mock;
+      };
       sessions.findOne = jest.fn(async (id: number) => ({
         ...baseSession,
         id,
@@ -220,12 +247,16 @@ describe('observe tool group', () => {
         runPhase: 'idle',
         backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
       };
-      const { sessions, agentRuntime, runtimeEmitter } = makePollServices(runtimeState);
+      const { sessions, agentRuntime, runtimeEmitter } =
+        makePollServices(runtimeState);
       const ctx = makeCtx({ sessions, agentRuntime });
 
       const pending = pollSessionStatusTool.handler({ sessionId: 7 }, ctx);
       await new Promise((r) => setTimeout(r, 10));
-      runtimeEmitter.emit('event', { type: 'complete', payload: { sessionId: 7 } });
+      runtimeEmitter.emit('event', {
+        type: 'complete',
+        payload: { sessionId: 7 },
+      });
       await new Promise((r) => setTimeout(r, 10));
 
       let settledEarly = false;
@@ -236,7 +267,10 @@ describe('observe tool group', () => {
       expect(settledEarly).toBe(false);
 
       runtimeState.backgroundWork = [];
-      runtimeEmitter.emit('event', { type: 'background_work', payload: { sessionId: 7, backgroundWork: [] } });
+      runtimeEmitter.emit('event', {
+        type: 'background_work',
+        payload: { sessionId: 7, backgroundWork: [] },
+      });
 
       const res = await pending;
       expect(res.data).toMatchObject({ sessionId: 7, status: 'completed' });
@@ -269,7 +303,11 @@ describe('observe tool group', () => {
       return {
         user: { id: `u-${userContent}`, kind: 'user', content: userContent },
         steps: [],
-        finalResponse: { id: `a-${userContent}`, kind: 'assistant', content: assistantContent },
+        finalResponse: {
+          id: `a-${userContent}`,
+          kind: 'assistant',
+          content: assistantContent,
+        },
         changes: null,
       };
     }
@@ -301,14 +339,29 @@ describe('observe tool group', () => {
       const ctx = makeCtx(services);
 
       const res = await readSessionTool.handler(
-        { sessionId: 7, precision: 'small', includeChanges: false, includeIds: false },
+        {
+          sessionId: 7,
+          precision: 'small',
+          includeChanges: false,
+          includeIds: false,
+        },
         ctx,
       );
-      expect(res.data).toMatchObject({ delta: false, newTurns: 2, totalTurns: 2 });
-      expect((res.data as { markdown: string }).markdown).toContain('## Turn 1');
-      expect((res.data as { markdown: string }).markdown).toContain('## Turn 2');
+      expect(res.data).toMatchObject({
+        delta: false,
+        newTurns: 2,
+        totalTurns: 2,
+      });
+      expect((res.data as { markdown: string }).markdown).toContain(
+        '## Turn 1',
+      );
+      expect((res.data as { markdown: string }).markdown).toContain(
+        '## Turn 2',
+      );
       // Cursor tracks turn boundaries and content additions at this precision.
-      expect(ctx.cursors.get('t', '7:small')).toBe('2:4');
+      expect(
+        JSON.parse(ctx.cursors.get('t', '7:small:false:false')!),
+      ).toMatchObject({ turns: 2, itemCount: 4 });
     });
 
     it('second call delivers only new turns (delta=true) with correct global turn numbers', async () => {
@@ -317,7 +370,12 @@ describe('observe tool group', () => {
       const ctx = makeCtx(services);
 
       await readSessionTool.handler(
-        { sessionId: 7, precision: 'small', includeChanges: false, includeIds: false },
+        {
+          sessionId: 7,
+          precision: 'small',
+          includeChanges: false,
+          includeIds: false,
+        },
         ctx,
       );
 
@@ -325,7 +383,13 @@ describe('observe tool group', () => {
       const newTurn = makeTurn('more', 'ok');
       (services.conversationExport.buildModel as jest.Mock).mockResolvedValue({
         model: {
-          meta: { title: 'S7', sessionId: 7, provider: 'claude', branch: 'feat/x', exportedAt: '' },
+          meta: {
+            title: 'S7',
+            sessionId: 7,
+            provider: 'claude',
+            branch: 'feat/x',
+            exportedAt: '',
+          },
           preamble: [],
           turns: [...turns, newTurn],
         },
@@ -334,14 +398,29 @@ describe('observe tool group', () => {
       });
 
       const second = await readSessionTool.handler(
-        { sessionId: 7, precision: 'small', includeChanges: false, includeIds: false },
+        {
+          sessionId: 7,
+          precision: 'small',
+          includeChanges: false,
+          includeIds: false,
+        },
         ctx,
       );
-      expect(second.data).toMatchObject({ delta: true, newTurns: 1, totalTurns: 2 });
+      expect(second.data).toMatchObject({
+        delta: true,
+        newTurns: 1,
+        totalTurns: 2,
+      });
       // Turn number must reflect global position (turn 2, not turn 1)
-      expect((second.data as { markdown: string }).markdown).toContain('## Turn 2');
-      expect((second.data as { markdown: string }).markdown).not.toContain('## Turn 1');
-      expect(ctx.cursors.get('t', '7:small')).toBe('2:4');
+      expect((second.data as { markdown: string }).markdown).toContain(
+        '## Turn 2',
+      );
+      expect((second.data as { markdown: string }).markdown).not.toContain(
+        '## Turn 1',
+      );
+      expect(
+        JSON.parse(ctx.cursors.get('t', '7:small:false:false')!),
+      ).toMatchObject({ turns: 2, itemCount: 4 });
     });
 
     it('returns newTurns=0 with no markdown when nothing is new', async () => {
@@ -350,11 +429,21 @@ describe('observe tool group', () => {
       const ctx = makeCtx(services);
 
       await readSessionTool.handler(
-        { sessionId: 7, precision: 'small', includeChanges: false, includeIds: false },
+        {
+          sessionId: 7,
+          precision: 'small',
+          includeChanges: false,
+          includeIds: false,
+        },
         ctx,
       );
       const second = await readSessionTool.handler(
-        { sessionId: 7, precision: 'small', includeChanges: false, includeIds: false },
+        {
+          sessionId: 7,
+          precision: 'small',
+          includeChanges: false,
+          includeIds: false,
+        },
         ctx,
       );
       expect(second.data).toMatchObject({ newTurns: 0, totalTurns: 1 });
@@ -367,22 +456,41 @@ describe('observe tool group', () => {
       const ctx = makeCtx(services);
 
       await readSessionTool.handler(
-        { sessionId: 7, precision: 'small', includeChanges: false, includeIds: false },
+        {
+          sessionId: 7,
+          precision: 'small',
+          includeChanges: false,
+          includeIds: false,
+        },
         ctx,
       );
       // Switch to 'full' — different cursor scope, should be a fresh full read
       const res = await readSessionTool.handler(
-        { sessionId: 7, precision: 'full', includeChanges: false, includeIds: false },
+        {
+          sessionId: 7,
+          precision: 'full',
+          includeChanges: false,
+          includeIds: false,
+        },
         ctx,
       );
-      expect(res.data).toMatchObject({ delta: false, newTurns: 1, totalTurns: 1 });
+      expect(res.data).toMatchObject({
+        delta: false,
+        newTurns: 1,
+        totalTurns: 1,
+      });
     });
 
     it('throws a ToolError for an unknown session', async () => {
       const services = { sessions: sessionsMock(null), conversationExport: {} };
       await expect(
         readSessionTool.handler(
-          { sessionId: 99, precision: 'small', includeChanges: false, includeIds: false },
+          {
+            sessionId: 99,
+            precision: 'small',
+            includeChanges: false,
+            includeIds: false,
+          },
           makeCtx(services),
         ),
       ).rejects.toBeInstanceOf(ToolError);
@@ -396,7 +504,13 @@ describe('observe tool group', () => {
         conversationExport: {
           buildModel: jest.fn(async () => ({
             model: {
-              meta: { title: 'S7', sessionId: 7, provider: 'claude', branch: 'feat/x', exportedAt: '' },
+              meta: {
+                title: 'S7',
+                sessionId: 7,
+                provider: 'claude',
+                branch: 'feat/x',
+                exportedAt: '',
+              },
               preamble: [],
               // Provide a minimal turns array that will render to the given markdown
               // via a passthrough: we mock renderMarkdown indirectly by providing
@@ -413,22 +527,50 @@ describe('observe tool group', () => {
 
     it('returns matches with line numbers and context', async () => {
       const items = [
-        { id: 'u1', kind: 'user' as const, content: 'find the needle please', isError: false },
-        { id: 'a1', kind: 'assistant' as const, content: 'here is the needle result', isError: false },
+        {
+          id: 'u1',
+          kind: 'user' as const,
+          content: 'find the needle please',
+          isError: false,
+        },
+        {
+          id: 'a1',
+          kind: 'assistant' as const,
+          content: 'here is the needle result',
+          isError: false,
+        },
       ];
       const model = buildExportModel(items, {
-        title: 'S7', sessionId: 7, provider: 'claude', branch: 'feat/x', exportedAt: '',
+        title: 'S7',
+        sessionId: 7,
+        provider: 'claude',
+        branch: 'feat/x',
+        exportedAt: '',
       });
       const services = {
         sessions: sessionsMock(),
-        conversationExport: { buildModel: jest.fn(async () => ({ model, running: false })) },
+        conversationExport: {
+          buildModel: jest.fn(async () => ({ model, running: false })),
+        },
       };
 
       const res = await grepSessionTool.handler(
-        { sessionId: 7, query: 'needle', precision: 'small', isRegExp: false, caseSensitive: false, contextLines: 1, maxMatches: 10 },
+        {
+          sessionId: 7,
+          query: 'needle',
+          precision: 'small',
+          isRegExp: false,
+          caseSensitive: false,
+          contextLines: 1,
+          maxMatches: 10,
+        },
         makeCtx(services),
       );
-      const data = res.data as { matchCount: number; matches: { lineNumber: number; line: string }[]; totalLines: number };
+      const data = res.data as {
+        matchCount: number;
+        matches: { lineNumber: number; line: string }[];
+        totalLines: number;
+      };
       expect(data.matchCount).toBeGreaterThan(0);
       expect(data.matches[0].lineNumber).toBeGreaterThan(0);
       expect(data.matches[0].line.toLowerCase()).toContain('needle');
@@ -438,15 +580,38 @@ describe('observe tool group', () => {
 
     it('returns empty matches when nothing found', async () => {
       const model = buildExportModel(
-        [{ id: 'u1', kind: 'user' as const, content: 'hello world', isError: false }],
-        { title: 'S7', sessionId: 7, provider: 'claude', branch: 'feat/x', exportedAt: '' },
+        [
+          {
+            id: 'u1',
+            kind: 'user' as const,
+            content: 'hello world',
+            isError: false,
+          },
+        ],
+        {
+          title: 'S7',
+          sessionId: 7,
+          provider: 'claude',
+          branch: 'feat/x',
+          exportedAt: '',
+        },
       );
       const services = {
         sessions: sessionsMock(),
-        conversationExport: { buildModel: jest.fn(async () => ({ model, running: false })) },
+        conversationExport: {
+          buildModel: jest.fn(async () => ({ model, running: false })),
+        },
       };
       const res = await grepSessionTool.handler(
-        { sessionId: 7, query: 'xyznotfound', precision: 'small', isRegExp: false, caseSensitive: false, contextLines: 2, maxMatches: 10 },
+        {
+          sessionId: 7,
+          query: 'xyznotfound',
+          precision: 'small',
+          isRegExp: false,
+          caseSensitive: false,
+          contextLines: 2,
+          maxMatches: 10,
+        },
         makeCtx(services),
       );
       expect((res.data as { matchCount: number }).matchCount).toBe(0);
@@ -454,14 +619,30 @@ describe('observe tool group', () => {
     });
 
     it('throws on invalid regexp', async () => {
-      const model = buildExportModel([], { title: 'S7', sessionId: 7, provider: 'claude', branch: 'feat/x', exportedAt: '' });
+      const model = buildExportModel([], {
+        title: 'S7',
+        sessionId: 7,
+        provider: 'claude',
+        branch: 'feat/x',
+        exportedAt: '',
+      });
       const services = {
         sessions: sessionsMock(),
-        conversationExport: { buildModel: jest.fn(async () => ({ model, running: false })) },
+        conversationExport: {
+          buildModel: jest.fn(async () => ({ model, running: false })),
+        },
       };
       await expect(
         grepSessionTool.handler(
-          { sessionId: 7, query: '[invalid', precision: 'small', isRegExp: true, caseSensitive: false, contextLines: 2, maxMatches: 10 },
+          {
+            sessionId: 7,
+            query: '[invalid',
+            precision: 'small',
+            isRegExp: true,
+            caseSensitive: false,
+            contextLines: 2,
+            maxMatches: 10,
+          },
           makeCtx(services),
         ),
       ).rejects.toBeInstanceOf(ToolError);
@@ -477,11 +658,17 @@ describe('observe tool group', () => {
         isError: false,
       }));
       const model = buildExportModel(items, {
-        title: 'S7', sessionId: 7, provider: 'claude', branch: 'feat/x', exportedAt: '',
+        title: 'S7',
+        sessionId: 7,
+        provider: 'claude',
+        branch: 'feat/x',
+        exportedAt: '',
       });
       return {
         sessions: sessionsMock(),
-        conversationExport: { buildModel: jest.fn(async () => ({ model, running: false })) },
+        conversationExport: {
+          buildModel: jest.fn(async () => ({ model, running: false })),
+        },
       };
     }
 
@@ -491,7 +678,12 @@ describe('observe tool group', () => {
         { sessionId: 7, startLine: 1, endLine: 5, precision: 'small' },
         makeCtx(services),
       );
-      const data = res.data as { startLine: number; endLine: number; totalLines: number; content: string };
+      const data = res.data as {
+        startLine: number;
+        endLine: number;
+        totalLines: number;
+        content: string;
+      };
       expect(data.startLine).toBe(1);
       expect(data.endLine).toBe(5);
       expect(data.totalLines).toBeGreaterThan(0);
@@ -533,7 +725,12 @@ describe('observe tool group', () => {
 
   describe('ConversationExportService.readDelta', () => {
     function makeService(
-      history: { id: string; kind: string; content?: string; toolName?: string }[],
+      history: {
+        id: string;
+        kind: string;
+        content?: string;
+        toolName?: string;
+      }[],
       runtimeState: Record<string, unknown> = { sessionState: 'idle' },
     ) {
       const provider = {
@@ -555,7 +752,11 @@ describe('observe tool group', () => {
       const svc = makeService(history);
       const res = await svc.readDelta(7, 'claude', { sinceMessageId: 'a' });
       expect(res.items.map((i) => i.id)).toEqual(['b', 'c']);
-      expect(res.items[0]).toMatchObject({ id: 'b', role: 'tool_use', tool: 'Bash' });
+      expect(res.items[0]).toMatchObject({
+        id: 'b',
+        role: 'tool_use',
+        tool: 'Bash',
+      });
       expect(res.lastMessageId).toBe('c');
       expect(res.total).toBe(3);
       expect(res.running).toBe(false);
@@ -615,13 +816,16 @@ describe('observe tool group', () => {
 
   describe('read_file', () => {
     it('windows the requested line range', async () => {
-      const content = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join(
-        '\n',
-      );
+      const content = Array.from(
+        { length: 50 },
+        (_, i) => `line ${i + 1}`,
+      ).join('\n');
       const services = {
         sessions: sessionsMock(),
         files: {
-          readFile: jest.fn().mockResolvedValue({ content, language: 'typescript' }),
+          readFile: jest
+            .fn()
+            .mockResolvedValue({ content, language: 'typescript' }),
         },
       };
       const res = await readFileTool.handler(
@@ -713,7 +917,9 @@ describe('observe tool group', () => {
       runtimeState: Record<string, unknown> = {},
       sessionStatus = 'active',
     ) {
-      const sessions = new EventEmitter() as EventEmitter & { findOne: jest.Mock };
+      const sessions = new EventEmitter() as EventEmitter & {
+        findOne: jest.Mock;
+      };
       sessions.findOne = jest.fn(async (id: number) => ({
         ...baseSession,
         id,
@@ -735,7 +941,8 @@ describe('observe tool group', () => {
       // runtime state to confirm settlement — mutate the same object the mock
       // resolves so that re-read sees the turn as genuinely finished.
       const runtimeState: Record<string, unknown> = {};
-      const { sessions, agentRuntime, runtimeEmitter } = makeAwaitServices(runtimeState);
+      const { sessions, agentRuntime, runtimeEmitter } =
+        makeAwaitServices(runtimeState);
       const ctx = makeCtx({ sessions, agentRuntime });
 
       const pending = awaitSessionEventTool.handler(
@@ -746,10 +953,16 @@ describe('observe tool group', () => {
       await new Promise((r) => setTimeout(r, 10));
       runtimeState.sessionState = 'idle';
       runtimeState.runPhase = 'idle';
-      runtimeEmitter.emit('event', { type: 'complete', payload: { sessionId: 7 } });
+      runtimeEmitter.emit('event', {
+        type: 'complete',
+        payload: { sessionId: 7 },
+      });
 
       const res = await pending;
-      expect(res.data).toMatchObject({ event: 'completed', status: 'completed' });
+      expect(res.data).toMatchObject({
+        event: 'completed',
+        status: 'completed',
+      });
       expect(sessions.listenerCount('session-status-changed')).toBe(0);
       expect(runtimeEmitter.listenerCount('event')).toBe(0);
     });
@@ -760,7 +973,8 @@ describe('observe tool group', () => {
         runPhase: 'idle',
         backgroundWork: [{ id: 'task:1', kind: 'task', label: 'run tests' }],
       };
-      const { sessions, agentRuntime, runtimeEmitter } = makeAwaitServices(runtimeState);
+      const { sessions, agentRuntime, runtimeEmitter } =
+        makeAwaitServices(runtimeState);
       const ctx = makeCtx({ sessions, agentRuntime });
 
       const pending = awaitSessionEventTool.handler(
@@ -770,7 +984,10 @@ describe('observe tool group', () => {
       await new Promise((r) => setTimeout(r, 10));
       // The visible turn ends, but the background task is still running — this
       // must NOT resolve as completed yet.
-      runtimeEmitter.emit('event', { type: 'complete', payload: { sessionId: 7 } });
+      runtimeEmitter.emit('event', {
+        type: 'complete',
+        payload: { sessionId: 7 },
+      });
       await new Promise((r) => setTimeout(r, 10));
 
       let settledEarly = false;
@@ -783,10 +1000,16 @@ describe('observe tool group', () => {
       // Background work clears — the `background_work` event alone must be
       // enough to re-check and resolve, since nothing else is queued.
       runtimeState.backgroundWork = [];
-      runtimeEmitter.emit('event', { type: 'background_work', payload: { sessionId: 7, backgroundWork: [] } });
+      runtimeEmitter.emit('event', {
+        type: 'background_work',
+        payload: { sessionId: 7, backgroundWork: [] },
+      });
 
       const res = await pending;
-      expect(res.data).toMatchObject({ event: 'completed', status: 'completed' });
+      expect(res.data).toMatchObject({
+        event: 'completed',
+        status: 'completed',
+      });
     });
 
     it('resolves when the runtime emits a requires_action run_state', async () => {
@@ -800,7 +1023,11 @@ describe('observe tool group', () => {
       await new Promise((r) => setTimeout(r, 10));
       runtimeEmitter.emit('event', {
         type: 'run_state',
-        payload: { sessionId: 7, sessionState: 'requires_action', runPhase: 'waiting' },
+        payload: {
+          sessionId: 7,
+          sessionState: 'requires_action',
+          runPhase: 'waiting',
+        },
       });
 
       const res = await pending;
@@ -816,11 +1043,18 @@ describe('observe tool group', () => {
         { sessionId: 7, events: ['completed'], timeoutMs: 5000 },
         makeCtx({ sessions, agentRuntime }),
       );
-      expect(res.data).toMatchObject({ event: 'completed', status: 'completed' });
+      expect(res.data).toMatchObject({
+        event: 'completed',
+        status: 'completed',
+      });
     });
 
     it('resolves with failed when DB status becomes archived', async () => {
-      const { sessions, agentRuntime, runtimeEmitter: _r } = makeAwaitServices();
+      const {
+        sessions,
+        agentRuntime,
+        runtimeEmitter: _r,
+      } = makeAwaitServices();
       const ctx = makeCtx({ sessions, agentRuntime });
 
       const pending = awaitSessionEventTool.handler(
@@ -828,7 +1062,10 @@ describe('observe tool group', () => {
         ctx,
       );
       await new Promise((r) => setTimeout(r, 10));
-      sessions.emit('session-status-changed', { sessionId: 7, status: 'archived' });
+      sessions.emit('session-status-changed', {
+        sessionId: 7,
+        status: 'archived',
+      });
 
       const res = await pending;
       expect(res.data).toMatchObject({ event: 'failed', status: 'failed' });

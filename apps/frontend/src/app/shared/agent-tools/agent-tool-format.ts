@@ -8,6 +8,7 @@ import {
   COLLABORATION_LABELS,
   readableCollaborationText,
 } from './agent-collaboration-format';
+import { buildElevenexToolView, elevenexToolName, ELEVENEX_TOOL_META } from './elevenex-tool-view';
 
 // Tool-aware display metadata — mirrors how Claude Code renders tool use/results
 // (see /Users/leo.melki/Documents/claude-code/src/tools/*/UI.tsx).
@@ -468,6 +469,16 @@ export function describeTool(
       ),
     };
   }
+  const elevenex = elevenexToolName({ toolName, toolInput: input });
+  if (elevenex && ELEVENEX_TOOL_META[elevenex]) {
+    const meta = ELEVENEX_TOOL_META[elevenex];
+    return {
+      kind: 'mcp',
+      icon: meta.icon,
+      verb: meta.verb,
+      target: buildElevenexToolView({ toolName, toolInput: input }, null)?.target ?? '',
+    };
+  }
 
   if (toolKind && toolKind !== 'unknown') {
     return describeCanonicalTool(toolKind, toolDisplayName || name, data);
@@ -738,7 +749,12 @@ export function resultSummary(
   kind: ToolKind,
   result: { content?: unknown; isError?: boolean } | null,
   interaction?: ClaudeToolInteractionSummary | null,
+  call?: ToolLike,
 ): ResultSummary | null {
+  if (call && result) {
+    const elevenex = buildElevenexToolView(call, result);
+    if (elevenex?.summary) return elevenex.summary;
+  }
   if (interaction) {
     return {
       text: interaction.decisionLabel,

@@ -13,7 +13,7 @@ export const setPermissionModeTool = defineTool({
   costClass: 'instant',
   mutates: true,
   description:
-    "Set a session's permission mode to govern how the agent asks before acting (default/acceptEdits/plan/bypassPermissions), or null to reset. ⚡instant. Use 'bypassPermissions' for hands-off autonomy; pair with get_pending_action when prompts are expected.",
+    'Set a conversation’s permission mode, or null to restore its provider default. Use get_session_config to discover supported modes. Does not start an agent.',
   inputShape: {
     sessionId: z
       .number()
@@ -21,10 +21,13 @@ export const setPermissionModeTool = defineTool({
       .positive()
       .describe('Session whose permission mode to set.'),
     mode: z
-      .enum(['default', 'acceptEdits', 'plan', 'bypassPermissions'])
+      .string()
+      .trim()
+      .min(1)
+      .max(80)
       .nullable()
       .describe(
-        "Permission mode: 'default' (ask), 'acceptEdits' (auto-approve edits), 'plan' (read-only planning), 'bypassPermissions' (no prompts), or null to reset to provider default.",
+        'Provider permission mode from get_session_config.permissionModes, or null to restore its default. Runtime validation is authoritative.',
       ),
   },
   handler: async (args, ctx) => {

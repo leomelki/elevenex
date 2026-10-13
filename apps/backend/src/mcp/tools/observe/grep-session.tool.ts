@@ -22,6 +22,7 @@ export const grepSessionTool = defineTool({
   description:
     "Search the rendered transcript for a string or regex. ⚠️ The grep runs only against the file generated at the chosen precision — content omitted at that precision level is invisible to this search. 'small' collapses or drops many details; if you might be missing results, retry at a higher precision. Returns matching lines with context and their line numbers. 🟢 Use read_session_range with the same precision to zoom into any match.",
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'session',
   inputShape: {
     sessionId: z
       .number()

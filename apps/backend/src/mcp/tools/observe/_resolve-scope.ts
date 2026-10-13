@@ -1,5 +1,6 @@
 import { ToolError } from '../../tool-registry/tool.types.js';
 import type { ToolContext } from '../../tool-registry/tool.types.js';
+import { taskOperation } from '../setup/task.util.js';
 
 /**
  * Resolves the worktree scope for file/diff observe tools. Either a `sessionId`
@@ -28,6 +29,9 @@ export async function resolveWorktreeScope(
         remediation: 'Use find_sessions to list accessible sessions.',
       });
     }
+    // A finished task's transcript keeps its old path, but that checkout may
+    // now belong to another task. Match the runtime's ownership/lifecycle guard.
+    await taskOperation(() => ctx.services.sessions.assertSessionWorkspaceLinked(session.id));
     return {
       worktreePath: session.worktreePath,
       repoId: session.repoId,

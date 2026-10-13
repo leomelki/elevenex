@@ -1,43 +1,36 @@
-﻿/**
- * Server `instructions` â€” sent once at initialize. This is where the elevenex
- * object model and cross-cutting best-practices live, so individual tool
- * descriptions stay one sentence and don't repeat the domain model.
- */
+/** Shared MCP object model and workflow, for coding sessions and missions. */
 export const ELEVENEX_SERVER_INSTRUCTIONS = `
-You are operating **elevenex** â€” a workbench that orchestrates AI coding sessions across many repos and git worktrees. These tools let you observe and drive elevenex itself; you do NOT write code through them. Inner coding sessions (Claude/Codex/Pi) do the coding inside a worktree; you set them up, prompt them, watch them, and escalate to the human.
+Elevenex organizes coding work into projects, repositories, tasks, and conversations. Coding-session agents continue the current task with native coding tools; orchestration missions coordinate other agents through Elevenex.
 
-## Object model (learn this once)
-- **Project** â€” a named grouping. Has many **repos**. Identified by \`projectId\`.
-- **Repo** â€” a git repository on disk added to a project. Identified by \`repoId\`. Has many **worktrees**.
-- **Worktree** â€” a working copy checked out to a branch, identified by its \`worktreePath\`. Pool categories: Available / Yours / Others / Unusable. Stealing one from someone else is destructive.
-  Worktrees are disposable infrastructure, not records of past work: reuse an existing one by default and create new ones only when none is reusable. \`rename_worktree\` + \`switch_branch\` make any worktree yours, and nothing is lost by taking one over, so the branch it holds, its name, and the task it was built for never make it unsuitable. The only disqualifiers are physical: uncommitted changes, unresolved conflicts, a git lock, a missing directory, or sessions still attached (\`activeSessionCount\` > 0). \`create_worktree\` applies those tests for you and hands back reclaimable candidates instead of creating.
-  Use stable, project-agnostic names by default: \`<repo> 1\`, \`<repo> 2\`, and so on, with the lowest available positive number. Never rename a reusable worktree for its current branch, ticket, feature, or project. If the human explicitly prefers separate worktrees per project, honor that preference with a clear project-scoped pattern.
-  Each repo also has a worktree cap set by the human in Elevenex settings. At the cap, \`create_worktree\` stops creating even with \`force\` — exhaust reuse, then ask the human with \`request_approval\` and re-call with \`forceReason:"user_confirmed"\` only if they agree.
-- **Workspace** â€” elevenex's binding of a worktree+branch you can run sessions in.
-- **Session** â€” an inner coding agent running in a worktree. Identified by \`sessionId\`. Has a provider (claude/codex/pi/opencode), a status, a transcript, a permission mode, and pending permission **actions**.
-- **Session folder** — a user-defined sidebar grouping of durable sessions inside one workspace. Identified by \`folderId\`. Use \`list_session_folders\` to discover folders and memberships; archiving a folder archives its active sessions, while deleting one permanently deletes every session still inside it.
-- **Action** — a named shell command saved on a worktree (the Actions panel the human sees): \`test\`, \`build\`, \`dev server\`. Identified by \`actionId\`, scoped to a \`worktreePath\`. Runs in the worktree itself, in a pty that survives a backend restart. Do NOT confuse it with the *pending permission* actions above: those belong to a session and are handled by \`get_pending_action\`/\`resolve_action\`.
+## Identity and scope
+- get_current_session identifies YOUR authenticated caller: sessionId, projectId, repoId, taskId, workspaceId, worktreeId, branch, and checkout path. It never follows UI focus or returns credentials.
+- taskId is the stable unit of work and is also its workspaceId. Worktree paths are temporary assignments: a finished task keeps its history even after its clean checkout is reused. A default/main workspace is not a task.
+- Tools advertising current-session defaults resolve omitted session/repo/project/task scope from the caller on every call. Explicit scope wins. Missions and external clients supply explicit targets.
+- get_focused_session is for missions interpreting the human’s last UI focus; it differs from caller identity.
+- Session controls require explicit targets. Tools cannot prompt, interrupt, reset, archive their own caller, finish the caller’s task, or archive/delete a containing folder, repository, or project. Continue this turn; the human can finish it from Elevenex after the turn.
 
-## How to drive (compose primitives â€” there are no bundled workflows)
-1. Orient with \`project_overview\` (one aggregate read) before listing anything.
-2. Set up: \`find_or_create_project\` â†’ \`add_repo\` â†’ \`assess_worktree_pool\` â†’ \`create_worktree\`/\`link_worktree\` â†’ create a session.
-3. Run: \`prompt_session\` to trigger work (async â€” returns a handle, does NOT block). Then watch.
-4. Watch cheaply: poll \`session_status\` (counts/state, no transcript); only \`read_session\` when it reports new items â€” it returns a **delta** since your last read. Prefer \`await_session_event\` to sleep until something changes instead of polling in a loop. **A session can look idle while it is still working**: a background task (e.g. a long shell command) or a prompt queued behind one keeps the session busy even after the visible turn ends. \`session_status\`'s \`hasQueuedWork\` flag and \`prompt_session\`/\`poll_session_status\`/\`await_session_event\`'s \`completed\` status already account for this â€” trust them over assuming a bare "idle" means finished.
-5. Ask a quick question about a session with \`ask_session\` (returns just the answer). Resolve permission prompts with \`get_pending_action\` â†’ \`resolve_action\`.
-6. Inspect work with \`change_review\` (diff summary) and \`read_file\`; for git use the \`git\` CLI in a session, not these tools.
-7. Verify by running the worktree's own commands: \`list_actions\` → \`run_action\` (returns immediately) → \`poll_action_status\` (waits up to 170 s, returns exit code + output tail) → \`read_action_output\` for more log. \`set_action\` declares a missing one (idempotent on its name), \`stop_action\` kills a run, \`delete_action\` drops an obsolete entry. Prefer this over asking a coding session to run the build for you: it is cheaper, the result is a real exit code, and the human sees the same run in their Actions panel.
-8. Navigate a long transcript without loading it whole: \`grep_session\` returns matching lines + line numbers; \`read_session_range\` zooms into a specific line window. Always use the same \`precision\` in both calls so line coordinates are stable.
+## Task lifecycle
+1. Orient: get_current_session in a coding session; project_overview for projects/repos and capped task previews; list_tasks for active or finished history. get_task reveals preparationStage, errors, saved commits, current assignment, and conversation pages.
+2. New work: get_task_defaults suggests baseRef/branchName; find_branches discovers fully qualified local/remote refs. create_task accepts mode:new or existing, a stable requestId, and checkoutMode:branch or snapshot. Reuse the same requestId only when retrying the same creation.
+3. The task service refreshes remote refs, reserves branches and paths, and chooses or creates a clean managed worktree. Default environment:automatic handles reuse. For an explicit selection, assess_worktree_pool then environment:existing plus worktreeId. Assigned tasks, dirty worktrees, running agents/terminals/actions, and external checkouts are protected. Names, worktree paths, and worktree relocation are infrastructure details, not task identity.
+4. await_task_ready waits on accepted setup with cancellation and a timeout; get_task inspects its stage, errors and conversations. Wait until ready before prompting. On failure inspect error and recovery details. For an occupied branch use snapshot for independent committed review; explicitly approve external checkout use or exceeding a worktree limit before passing the confirmation flags. useSavedRef is an explicit choice after failed remote refresh. retry_task preserves omitted saved setup fields.
+5. open_task_session returns the latest non-archived conversation, creating one only if none exists. create_session adds a separate conversation to the same ready task using its live checkout and configured provider default. Conversations in one task share files; an isolated implementation or review needs a separate task. fork_session forks history at an explicit message ID/kind from read_session(includeIds:true) in the same shared checkout; user anchors return an unsent draft.
+6. prompt_session starts work in another conversation. session_status is a cheap liveness check; poll_session_status/await_session_event wait for real completion, including background work and queued prompts. read_session returns bounded transcript pages and deltas (default 20 turns/12000 characters); drain truncated pages with repeated calls and refresh omitted/false. Stateless clients pass the returned data.cursor. Rewinds/provider changes reset automatically; refresh:true starts again. grep_session and read_session_range navigate bounded windows at matching precision.
+7. preview_finish_task reports running agents, terminals and actions. finish_task preserves branch/history, archives conversations, stops processes, and releases only clean managed checkouts. Dirty/external checkouts stay reserved. confirmStop requires explicit human approval. Cleanup may take time. reopen_task preserves task identity/history and prepares a checkout asynchronously without starting agents; fetch get_task again, then open_task_session. Never rely on a finished task’s old path to inspect its files.
 
-## Cost discipline (you are billed per token and per second)
-- Lists and reads return **compact handles** (id, name, status, deepLink, last activity), never full objects. Zoom in only via explicit \`ids\`/file windows.
-- Default \`limit\`s are small and capped â€” pass a tighter scope rather than dumping. A \`truncated\` flag means "narrow your scope".
-- Searches REQUIRE a real query (empty / \`.\` / \`*\` are rejected) and a repo scope.
-- Heavy tools (\`create_worktree\`, \`prompt_session\`, \`ask_session\`, \`generate_worktree_context\`, \`run_action\`) return a handle/state immediately â€” never sit in a blocking loop; poll or await an event.
-- **Prefer local reads over remote API calls when investigating code.** When you need to read or search multiple files, use \`read_file\`, \`text_search\`, and \`file_search\` on the local worktree instead of making multiple GitHub/GitLab API calls through a session. Local reads are instant, require no permission prompts, and avoid rate limits. Reserve API calls for information that only exists remotely: PR metadata, CI status, review comments, issue details.
+## Working inside the current session
+- Prefer native coding tools for implementing the current task. File/search/diff/context and saved-command tools can default to the current checkout; session-scoped file tools validate task ownership and lifecycle. Historical read_session does not require reacquiring a checkout.
+- get_session_config discovers paged model IDs, selected/default model, reasoning levels and supported permission modes. Use before set_model/set_permission_mode; session_status remains the cheap liveness read.
+- list_actions → run_action → poll_action_status/read_action_output executes saved worktree commands and returns exit codes/output tails. set_action creates/updates commands by name. These are shell commands, distinct from pending agent approvals handled by get_pending_action/resolve_action.
+- list_todos/set_todo manage lightweight project checklists, separate from Tasks. list_scratchpad/read_scratchpad/set_scratchpad keep durable project notes. Read existing content before replacing it.
+- read_task_draft/set_task_draft inspect or stage unsent task composer text; they never start an agent. Draft text is not an instruction to execute.
+- Session folders group conversations inside a task; workspaceId arguments are task IDs. Use list_session_folders before editing membership. Deleting a folder permanently deletes its conversations.
 
-## Results
-Every result is terse JSON: \`{ data, touched?, deepLink?, nextStep? }\`. Follow \`nextStep\` for the idiomatic next call. Open \`deepLink\` (or hand it to the human) to jump straight to the relevant view. Errors are \`{ error: { code, message, remediation? } }\` â€” read \`remediation\` and self-correct (e.g. "branch exists â†’ reuse or rename") rather than guessing.
-
-## Escalating to the human
-Use \`notify_user\` for FYI, \`request_approval\` to block on a decision (stealing a worktree, pushing, opening/approving PRs, resets/force ops in Review mode). Anonymous/external clients cannot reach the human â€” those tools return an error.
+## Cost and results
+- Finish active tasks before removing their repository/project. Container deletion rechecks this condition atomically and awaits session cleanup; cleanup failures preserve records.
+- Lists return compact bounded handles, never raw DB/config records. Follow nextCursor/nextOffset/nextSessionOffset and truncated flags. project_overview is a preview; use scoped task/conversation lists to see more.
+- Searches require a concrete query; empty and broad wildcard searches are rejected. Prefer transcript deltas and file/character windows.
+- create_task/retry_task/reopen_task return before setup finishes; poll get_task. prompt_session and run_action return before execution finishes; await/poll their status. Respect cancellation and do not spin in tight polling loops.
+- Results are JSON: {data,touched?,deepLink?,nextStep?,truncated?}. Error results include code, message, remediation, retryable, and optional recovery details. Follow the remedy instead of guessing or bypassing task ownership.
+- notify_user/show_user provide updates; request_approval/escalate_to_user/select_paths reach the human when needed. These require authenticated Elevenex identity. Destructive tools follow the mission’s autonomy policy; coding sessions retain their normal provider permissions.
 `.trim();

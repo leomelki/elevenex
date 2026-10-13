@@ -194,14 +194,16 @@
         <button
           type="button"
           class="mc-act__row"
-          [class.is-static]="!row.detail && !row.output"
+          [class.is-static]="!row.detail && !row.output && !row.elevenex"
           [attr.aria-expanded]="isExpanded(row.id)"
-          (click)="(row.detail || row.output) && toggleExpand(row.id)"
+          (click)="(row.detail || row.output || row.elevenex) && toggleExpand(row.id)"
         >
           <span class="mc-act__node" aria-hidden="true">
             <ng-icon [name]="row.icon || 'lucideSparkles'" size="13" />
           </span>
-          <span class="mc-act__verb">{{ row.verb }}</span>
+          <span class="mc-act__verb min-w-0 max-w-[45%] truncate" [title]="row.verb || ''">
+            {{ row.verb }}
+          </span>
           @if (row.target) {
             <span class="mc-act__target">{{ row.target }}</span>
           }
@@ -211,11 +213,15 @@
               <span></span><span></span><span></span>
             </span>
           } @else if (row.result?.text) {
-            <span class="mc-act__result" [attr.data-tone]="row.result?.tone">
+            <span
+              class="mc-act__result max-w-[45%] truncate"
+              [title]="row.result?.text || ''"
+              [attr.data-tone]="row.result?.tone"
+            >
               {{ row.result?.text }}
             </span>
           }
-          @if (row.detail || row.output) {
+          @if (row.detail || row.output || row.elevenex) {
             <ng-icon
               class="mc-act__chevron"
               name="lucideChevronRight"
@@ -226,17 +232,26 @@
         </button>
         @if (isExpanded(row.id)) {
           <div class="mc-act__detail">
-            @if (row.detail) {
-              <div class="mc-act__detail-block">
-                <span class="mc-act__detail-label">Input</span>
-                <pre>{{ row.detail }}</pre>
-              </div>
-            }
-            @if (row.output) {
-              <div class="mc-act__detail-block">
-                <span class="mc-act__detail-label">Result</span>
-                <pre>{{ row.output }}</pre>
-              </div>
+            @if (row.elevenex; as elevenex) {
+              <elevenex-tool-result
+                [view]="elevenex"
+                [toolInput]="row.toolInput"
+                [toolOutput]="row.toolOutput"
+                [pending]="row.status === 'pending'"
+              />
+            } @else {
+              @if (row.detail) {
+                <div class="mc-act__detail-block">
+                  <span class="mc-act__detail-label">Input</span>
+                  <pre>{{ row.detail }}</pre>
+                </div>
+              }
+              @if (row.output) {
+                <div class="mc-act__detail-block">
+                  <span class="mc-act__detail-label">Result</span>
+                  <pre>{{ row.output }}</pre>
+                </div>
+              }
             }
           </div>
         }

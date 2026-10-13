@@ -57,41 +57,67 @@ describe('Session folder tool group', () => {
     }
   });
 
-  it('lists filtered folders with active and archived memberships', async () => {
-    const services = {
-      sessionFolders: {
-        listByRepo: jest
-          .fn()
-          .mockResolvedValue([
-            folder,
-            { ...folder, id: 13, name: 'Old', archivedAt: '2026-01-01' },
-            { ...folder, id: 14, workspaceId: 8, name: 'Other' },
-          ]),
-      },
-      sessions: {
-        findByRepo: jest.fn().mockResolvedValue([
-          { id: 20, folderId: 12, status: 'running' },
-          { id: 21, folderId: 12, status: 'archived' },
-          { id: 22, folderId: null, status: 'created' },
-        ]),
-      },
-    };
-
-    const result = await listSessionFoldersTool.handler(
-      { repoId: 3, workspaceId: 7, state: 'active' },
-      makeCtx(services),
-    );
-
-    expect(services.sessionFolders.listByRepo).toHaveBeenCalledWith(3);
-    expect(result.data).toEqual({
-      count: 1,
+  it('forwards folder scope and returns bounded active/archived memberships', async () => {
+    const listHandlePage = jest.fn().mockReturnValue({
+      total: 1,
+      nextOffset: null,
       folders: [
-        expect.objectContaining({
+        {
           id: 12,
+          name: 'Group',
+          sessionCount: 1,
+          archivedSessionCount: 1,
           sessionIds: [20],
           archivedSessionIds: [21],
-        }),
+        },
       ],
+    });
+    const result = await listSessionFoldersTool.handler(
+      { repoId: 3, workspaceId: 7, state: 'active', limit: 25, offset: 0 },
+      makeCtx({ sessionFolders: { listHandlePage } }),
+    );
+    expect(listHandlePage).toHaveBeenCalledWith(
+      3,
+      expect.objectContaining({
+        workspaceId: 7,
+        state: 'active',
+        limit: 25,
+        offset: 0,
+      }),
+    );
+    expect(result).toMatchObject({
+      data: {
+        count: 1,
+        total: 1,
+        nextOffset: null,
+        folders: [{ id: 12, sessionIds: [20], archivedSessionIds: [21] }],
+      },
+      truncated: false,
+    });
+  });
+
+  it('reports truncated membership previews even on the final folder page', async () => {
+    const listHandlePage = jest.fn().mockReturnValue({
+      total: 1,
+      nextOffset: null,
+      folders: [
+        {
+          id: 12,
+          sessionCount: 50,
+          archivedSessionCount: 0,
+          sessionIds: Array.from({ length: 20 }, (_, id) => id + 1),
+          archivedSessionIds: [],
+        },
+      ],
+    });
+    expect(
+      await listSessionFoldersTool.handler(
+        { repoId: 3, state: 'active', limit: 1, offset: 0 },
+        makeCtx({ sessionFolders: { listHandlePage } }),
+      ),
+    ).toMatchObject({
+      truncated: true,
+      data: { total: 1, folders: [{ sessionCount: 50 }] },
     });
   });
 
@@ -174,6 +200,8 @@ describe('Session folder tool group', () => {
     );
 
     expect(archived.data).toEqual({ folderId: 12, archived: true });
+    expect(services.sessionFolders.archive).toHaveBeenCalledWith(12, 42);
+    expect(services.sessionFolders.delete).toHaveBeenCalledWith(12, 42);
     expect(restored.data).toEqual({ folderId: 12, archived: false });
     expect(deleted.data).toEqual({
       folderId: 12,

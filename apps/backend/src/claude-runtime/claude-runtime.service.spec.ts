@@ -1,3 +1,4 @@
+import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Logger } from '@nestjs/common';
 import { EventEmitter } from 'events';
@@ -226,6 +227,12 @@ describe('ClaudeRuntimeService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ClaudeRuntimeService,
+        {
+          provide: McpAgentTokenService,
+          useValue: {
+            ensureToken: jest.fn().mockResolvedValue('evx_claude_test'),
+          },
+        },
         { provide: DRIZZLE, useValue: db },
         { provide: SessionsService, useValue: sessionsService },
         { provide: ClaudeHooksService, useValue: hooksService },
@@ -312,6 +319,16 @@ describe('ClaudeRuntimeService', () => {
 
     expect(options.permissionMode).toBe('plan');
     expect(baseOptions.permissionMode).toBe('acceptEdits');
+    expect(baseOptions.mcpServers.elevenex).toMatchObject({
+      type: 'http',
+      headers: { Authorization: 'Bearer evx_claude_test' },
+    });
+    expect(baseOptions.systemPrompt).toMatchObject({
+      preset: 'claude_code',
+      append: expect.stringContaining('get_current_session'),
+    });
+    expect(baseOptions.disallowedTools).toBeUndefined();
+    expect(baseOptions.env.ELEVENEX_AGENT_TOKEN).toBe('evx_claude_test');
   });
 
   it('runs review-autonomy agent sessions in auto mode but still asks for destructive elevenex tools', async () => {

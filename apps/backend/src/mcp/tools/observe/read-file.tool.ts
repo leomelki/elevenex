@@ -18,6 +18,7 @@ export const readFileTool = defineTool({
   description:
     'Read a file or a line window inside a worktree, scoped by sessionId or worktreePath. 🟢 Prefer a window to save tokens; capped at 400 lines. Reach here after text_search/file_search; narrow with startLine/endLine when truncated.',
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'worktree',
   inputShape: {
     sessionId: z
       .number()

@@ -16,6 +16,7 @@ export const textSearchTool = defineTool({
   description:
     'Search file contents in a worktree (literal or regex), scoped by sessionId or worktreePath. 🟡scoped, capped. Returns compact path:line rows. Next: read_file to open a hit, or narrow with includes/excludes when truncated.',
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'worktree',
   inputShape: {
     sessionId: z
       .number()
