@@ -1,5 +1,15 @@
 import { spawn } from 'node:child_process';
-import { buildSpawnCommand } from '../config/system-paths.js';
+import { buildSpawnCommand, findBinary } from '../config/system-paths.js';
+import { access } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+export async function resolveOpenCodeBinary(): Promise<string> {
+  const binary = process.env.OPENCODE_BINARY?.trim() || findBinary('opencode');
+  if (binary) return binary;
+  const candidate = join(homedir(), '.opencode', 'bin', process.platform === 'win32' ? 'opencode.exe' : 'opencode');
+  try { await access(candidate); return candidate; } catch { return 'opencode'; }
+}
 
 const versions = new Map<string, Promise<number>>();
 /** Once per CLI binary, asynchronously determine which official protocol to use. */

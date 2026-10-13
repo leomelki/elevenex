@@ -578,8 +578,7 @@ export function createOpenCodeV2Client(
               server.name,
               server.status.status === 'pending'
                 ? {
-                    status: 'failed' as const,
-                    error: 'MCP server is connecting.',
+                    status: 'unknown' as const,
                   }
                 : server.status,
             ]),

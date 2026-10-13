@@ -1,263 +1,144 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import { promises as fs } from 'fs';
-import { homedir } from 'os';
-import { dirname, join } from 'path';
-import { parse, stringify } from 'smol-toml';
+import { Injectable } from '@nestjs/common';
 import { SessionsService } from '../sessions/sessions.service.js';
-import type {
-  CodexMcpScope,
-  CodexMcpServerEntry,
-  CodexMcpSnapshot,
-} from './codex-runtime.types.js';
+import { CodexAppServerClient } from './codex-app-server.js';
+import type { CodexMcpSnapshot } from './codex-runtime.types.js';
 
-type TomlRecord = Record<string, unknown>;
-type CodexMcpServerConfig = {
-  command?: string;
-  args?: unknown;
-  env?: unknown;
-  env_vars?: unknown;
-  cwd?: string;
-  url?: string;
-  bearer_token_env_var?: string;
-  http_headers?: unknown;
-  env_http_headers?: unknown;
-  disabled?: boolean;
-};
-
-type ScopedServerConfig = {
-  scope: CodexMcpScope;
+interface McpStatus {
   name: string;
-  configLocation: string;
-  config: CodexMcpServerConfig;
-};
+  runtimeStatus?: string | null;
+  authStatus: string;
+  tools: Record<string, { name?: string; title?: string }>;
+  toolsError?: string | null;
+  resources: unknown[];
+  resourceTemplates: unknown[];
+  serverInfo?: { name: string; version: string } | null;
+}
 
+/** Live protocol adapter. Native configuration belongs to the shared MCP manager. */
 @Injectable()
 export class CodexMcpService {
-  constructor(private readonly sessionsService: SessionsService) {}
+  constructor(
+    private readonly sessionsService: SessionsService,
+    private readonly appServer: CodexAppServerClient,
+  ) {}
 
-  async getSnapshot(sessionId: number): Promise<CodexMcpSnapshot> {
-    const session = await this.sessionsService.findOne(sessionId);
-    const userPath = this.getUserConfigPath();
-    const projectPath = this.getProjectConfigPath(session.worktreePath);
-    const [userConfig, projectConfig] = await Promise.all([
-      this.readTomlFile(userPath),
-      this.readTomlFile(projectPath),
-    ]);
-    const scoped = [
-      ...this.collectServers('user', userPath, userConfig.data),
-      ...this.collectServers('project', projectPath, projectConfig.data),
-    ];
-    const diagnostics = [
-      this.fileDiagnostic('user', userPath, userConfig.error),
-      this.fileDiagnostic('project', projectPath, projectConfig.error),
-    ].filter((group) => group.errors.length || group.warnings.length);
-
-    const servers = scoped
-      .map((server) => this.toServerEntry(server))
-      .sort((left, right) =>
-        left.scope === right.scope
-          ? left.name.localeCompare(right.name)
-          : left.scope.localeCompare(right.scope),
-      );
-
+  async getSnapshot(
+    sessionId: number,
+    globalServerName?: string,
+  ): Promise<CodexMcpSnapshot> {
+    const servers: CodexMcpSnapshot['servers'] = [];
+    if (this.appServer.isRunning || globalServerName) {
+      const session = await this.sessionsService.findOne(sessionId);
+      const threadId = session.codexSessionId;
+      if (threadId || globalServerName) {
+        let cursor: string | null = null;
+        do {
+          const page: { data: McpStatus[]; nextCursor: string | null } =
+            await this.appServer.request(
+              'mcpServerStatus/list',
+              {
+                ...(globalServerName
+                  ? { serverName: globalServerName }
+                  : { threadId }),
+                cursor,
+                limit: 100,
+              },
+              2_000,
+            );
+          for (const item of page.data) {
+            const tools = Object.entries(item.tools ?? {}).map(
+              ([key, tool]) => ({
+                name: tool.name ?? key,
+                displayName: tool.title ?? tool.name ?? key,
+              }),
+            );
+            const status = item.runtimeStatus;
+            const connectionStatus =
+              status === 'authenticationRequired'
+                ? 'needs-auth'
+                : ['connected', 'failed', 'disabled'].includes(status ?? '')
+                  ? (status as 'connected' | 'failed' | 'disabled')
+                  : 'unknown';
+            servers.push({
+              entryId: `codex:runtime:${item.name}`,
+              name: item.name,
+              scope: globalServerName ? 'user' : 'runtime',
+              transport: 'unknown',
+              configLocation: 'Codex runtime',
+              enabled: status !== 'disabled',
+              connectionStatus,
+              configStatus: 'valid',
+              error: item.toolsError ?? undefined,
+              serverInfo: item.serverInfo ?? undefined,
+              tools,
+              counts: {
+                tools: tools.length,
+                resources: item.resources?.length ?? 0,
+                prompts: 0,
+                loadedContextTools: tools.length,
+              },
+              actions: {
+                canToggle: false,
+                canRecheck: true,
+                canAuth: item.authStatus === 'notLoggedIn',
+                canReauth: item.authStatus === 'oAuth',
+                canViewTools: tools.length > 0,
+              },
+            });
+          }
+          cursor = page.nextCursor;
+        } while (cursor);
+      }
+    }
     return {
       servers,
-      diagnostics,
+      diagnostics: [],
       summary: {
-        connected: servers.filter(
-          (server) => server.connectionStatus === 'connected',
-        ).length,
-        needsAuth: 0,
-        failed: servers.filter((server) => server.connectionStatus === 'failed')
+        connected: servers.filter((s) => s.connectionStatus === 'connected')
           .length,
-        disabled: servers.filter(
-          (server) => server.connectionStatus === 'disabled',
-        ).length,
-        malformed: servers.filter((server) => server.configStatus === 'error')
+        needsAuth: servers.filter((s) => s.connectionStatus === 'needs-auth')
           .length,
+        failed: servers.filter((s) => s.connectionStatus === 'failed').length,
+        disabled: servers.filter((s) => !s.enabled).length,
+        malformed: 0,
         total: servers.length,
       },
       lastUpdatedAt: new Date().toISOString(),
     };
   }
 
-  async toggleServer(
-    sessionId: number,
-    serverName: string,
-  ): Promise<CodexMcpSnapshot> {
-    const server = await this.findServer(sessionId, serverName);
-    const config = await this.readTomlFile(server.configLocation);
-    const root = config.data ?? {};
-    const mcpServers = ensureRecord(root, 'mcp_servers');
-    const current = asRecord(mcpServers[server.name]) ?? {};
-    current.disabled = !current.disabled;
-    mcpServers[server.name] = current;
-    await this.writeTomlFile(server.configLocation, root);
-    return this.getSnapshot(sessionId);
+  async reloadConfiguration(): Promise<void> {
+    if (this.appServer.isRunning)
+      await this.appServer.request('config/mcpServer/reload', {}, 15_000);
   }
 
   async recheckServer(
     sessionId: number,
-    serverName?: string,
-  ): Promise<CodexMcpSnapshot> {
-    void serverName;
-    return this.getSnapshot(sessionId);
-  }
-
-  async startAuth(): Promise<{ message: string }> {
-    throw new BadRequestException(
-      'Codex MCP authentication is handled by the Codex CLI or the server-specific environment variables.',
-    );
-  }
-
-  private async findServer(
-    sessionId: number,
     serverName: string,
-  ): Promise<ScopedServerConfig> {
+    userScope = false,
+  ): Promise<CodexMcpSnapshot> {
+    await this.reloadConfiguration();
+    return this.getSnapshot(sessionId, userScope ? serverName : undefined);
+  }
+
+  async startAuth(sessionId: number, serverName: string, userScope = false) {
     const session = await this.sessionsService.findOne(sessionId);
-    const candidates = [
-      ...this.collectServers(
-        'user',
-        this.getUserConfigPath(),
-        (await this.readTomlFile(this.getUserConfigPath())).data,
-      ),
-      ...this.collectServers(
-        'project',
-        this.getProjectConfigPath(session.worktreePath),
-        (
-          await this.readTomlFile(
-            this.getProjectConfigPath(session.worktreePath),
-          )
-        ).data,
-      ),
-    ];
-    const server = candidates.find((item) => item.name === serverName);
-    if (!server) {
-      throw new NotFoundException(`MCP server "${serverName}" not found.`);
-    }
-    return server;
-  }
-
-  private collectServers(
-    scope: CodexMcpScope,
-    configLocation: string,
-    root: TomlRecord | null,
-  ): ScopedServerConfig[] {
-    const servers = asRecord(root?.mcp_servers);
-    if (!servers) {
-      return [];
-    }
-
-    return Object.entries(servers)
-      .filter(
-        (entry): entry is [string, CodexMcpServerConfig] =>
-          Boolean(entry[1]) && typeof entry[1] === 'object',
-      )
-      .map(([name, config]) => ({
-        scope,
-        name,
-        configLocation,
-        config,
-      }));
-  }
-
-  private toServerEntry(server: ScopedServerConfig): CodexMcpServerEntry {
-    const hasUrl =
-      typeof server.config.url === 'string' && server.config.url.trim();
-    const hasCommand =
-      typeof server.config.command === 'string' && server.config.command.trim();
-    const configStatus = hasUrl || hasCommand ? 'valid' : 'error';
-    const transport = hasUrl ? 'http' : hasCommand ? 'stdio' : 'unknown';
-    const disabled = Boolean(server.config.disabled);
-
-    return {
-      entryId: `codex:${server.scope}:${server.name}`,
-      name: server.name,
-      scope: server.scope,
-      transport,
-      configLocation: server.configLocation,
-      enabled: !disabled,
-      connectionStatus: disabled
-        ? 'disabled'
-        : configStatus === 'error'
-          ? 'failed'
-          : 'unknown',
-      configStatus,
-      error:
-        configStatus === 'error'
-          ? 'Codex MCP server needs a command or url.'
-          : undefined,
-      counts: { tools: 0, resources: 0, prompts: 0, loadedContextTools: 0 },
-      actions: {
-        canToggle: true,
-        canRecheck: true,
-        canAuth: false,
-        canReauth: false,
-        canViewTools: false,
+    const result = await this.appServer.request<{ authorizationUrl: string }>(
+      'mcpServer/oauth/login',
+      {
+        name: serverName,
+        ...(!userScope && session.codexSessionId
+          ? { threadId: session.codexSessionId }
+          : {}),
       },
-    };
-  }
-
-  private fileDiagnostic(
-    scope: CodexMcpScope,
-    configLocation: string,
-    error: string | null,
-  ) {
+      30_000,
+    );
     return {
-      scope,
-      configLocation,
-      errors: error ? [{ path: configLocation, message: error }] : [],
-      warnings: [],
+      serverName,
+      url: result.authorizationUrl,
+      authUrl: result.authorizationUrl,
+      mode: 'external' as const,
+      message: 'Authorize this MCP server, then check its connection.',
     };
   }
-
-  private async readTomlFile(
-    path: string,
-  ): Promise<{ data: TomlRecord | null; error: string | null }> {
-    try {
-      const content = await fs.readFile(path, 'utf-8');
-      return { data: parse(content), error: null };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { data: null, error: null };
-      }
-      return {
-        data: null,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  private async writeTomlFile(path: string, data: TomlRecord): Promise<void> {
-    await fs.mkdir(dirname(path), { recursive: true });
-    await fs.writeFile(path, stringify(data), 'utf-8');
-  }
-
-  private getUserConfigPath(): string {
-    return join(homedir(), '.codex', 'config.toml');
-  }
-
-  private getProjectConfigPath(worktreePath: string): string {
-    return join(worktreePath, '.codex', 'config.toml');
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object'
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function ensureRecord(root: TomlRecord, key: string): Record<string, unknown> {
-  const current = asRecord(root[key]);
-  if (current) {
-    return current;
-  }
-  const next: Record<string, unknown> = {};
-  root[key] = next;
-  return next;
 }

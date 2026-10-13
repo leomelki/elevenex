@@ -107,18 +107,17 @@ export class CodexAgentRuntimeProvider
     return this.mcpService.getSnapshot(sessionId);
   }
 
-  toggleMcpServer(sessionId: number, serverName: string) {
-    return this.mcpService.toggleServer(sessionId, serverName);
-  }
-
-  recheckMcpServer(sessionId: number, serverName: string) {
-    return this.mcpService.recheckServer(sessionId, serverName);
-  }
-
-  startMcpAuth(sessionId: number, serverName: string) {
+  reloadMcpConfiguration(sessionId: number): Promise<void> {
     void sessionId;
-    void serverName;
-    return this.mcpService.startAuth();
+    return this.mcpService.reloadConfiguration();
+  }
+
+  recheckMcpServer(sessionId: number, serverName: string, scope?: string) {
+    return this.mcpService.recheckServer(sessionId, serverName, scope === 'user');
+  }
+
+  startMcpAuth(sessionId: number, serverName: string, scope?: string) {
+    return this.mcpService.startAuth(sessionId, serverName, scope === 'user');
   }
 
   setAgentAutonomy(

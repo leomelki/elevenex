@@ -1,0 +1,277 @@
+<form
+  [formGroup]="form"
+  (ngSubmit)="submit()"
+  class="flex h-full min-h-0 w-full flex-col"
+  aria-label="MCP server configuration"
+>
+  <div class="-mx-1 min-h-0 flex-1 space-y-5 overflow-y-auto px-1 pb-5">
+    @if (!editing()) {
+      <details
+        class="rounded-lg border border-border bg-muted/20 px-4 py-3"
+        [open]="importOpen()"
+        (toggle)="importOpen.set($any($event.target).open)"
+      >
+        <summary class="cursor-pointer text-xs font-medium focus-visible:outline-ring">
+          Paste a configuration snippet
+        </summary>
+        <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
+          Import one server from a standard or OpenCode MCP JSON configuration.
+        </p>
+        <textarea
+          z-input
+          aria-label="Import MCP JSON"
+          [disabled]="busy()"
+          class="mt-3 min-h-28 font-mono text-xs"
+          [value]="importText()"
+          (input)="importText.set($any($event.target).value)"
+          placeholder='{"mcpServers":{"docs":{"url":"https://example.com/mcp"}}}'
+        ></textarea>
+        <button
+          z-button
+          zType="outline"
+          type="button"
+          class="mt-3"
+          [disabled]="!importText().trim() || busy()"
+          (click)="importConfiguration()"
+        >
+          Use configuration
+        </button>
+      </details>
+    }
+
+    <div class="space-y-2">
+      <label for="mcp-server-name" class="text-sm font-medium">Name</label>
+      <input
+        z-input
+        id="mcp-server-name"
+        formControlName="name"
+        placeholder="e.g. project-docs"
+        autocomplete="off"
+        [readOnly]="editing()"
+        [attr.aria-invalid]="
+          (submitted() || form.controls.name.dirty) && form.controls.name.invalid
+        "
+        [attr.aria-describedby]="
+          (submitted() || form.controls.name.dirty) && form.controls.name.invalid
+            ? 'mcp-name-help'
+            : null
+        "
+      />
+      @if ((submitted() || form.controls.name.dirty) && form.controls.name.invalid) {
+        <p id="mcp-name-help" class="text-xs text-destructive">
+          Use letters, numbers, dots, hyphens or underscores.
+        </p>
+      }
+    </div>
+
+    <div class="space-y-2">
+      <span class="text-sm font-medium">Connect using</span>
+      <div class="grid grid-cols-2 gap-2" aria-label="Connection type">
+        @if (transports().includes('http') || transports().includes('sse')) {
+          <button
+            z-button
+            zType="outline"
+            type="button"
+            [class]="[
+              'h-auto min-w-0 justify-start gap-2 whitespace-normal px-3 py-3 text-left',
+              transport() !== 'stdio' ? 'border-primary/40 bg-primary/5' : 'text-muted-foreground',
+            ]"
+            [attr.aria-pressed]="transport() !== 'stdio'"
+            [disabled]="busy()"
+            (click)="transport.set(transports().includes('http') ? 'http' : 'sse')"
+          >
+            <ng-icon name="lucideGlobe" size="18" /><span
+              ><span class="block text-sm">Remote server</span
+              ><span class="mt-0.5 block text-[11px] font-normal text-muted-foreground"
+                >Connect with a URL</span
+              ></span
+            >
+          </button>
+        }
+        @if (transports().includes('stdio')) {
+          <button
+            z-button
+            zType="outline"
+            type="button"
+            [class]="[
+              'h-auto min-w-0 justify-start gap-2 whitespace-normal px-3 py-3 text-left',
+              transport() === 'stdio' ? 'border-primary/40 bg-primary/5' : 'text-muted-foreground',
+            ]"
+            [attr.aria-pressed]="transport() === 'stdio'"
+            [disabled]="busy()"
+            (click)="transport.set('stdio')"
+          >
+            <ng-icon name="lucideTerminal" size="18" /><span
+              ><span class="block text-sm">Local command</span
+              ><span class="mt-0.5 block text-[11px] font-normal text-muted-foreground"
+                >Run on this computer</span
+              ></span
+            >
+          </button>
+        }
+      </div>
+    </div>
+
+    @if (transport() === 'stdio') {
+      <div class="space-y-2">
+        <label for="mcp-command" class="text-sm font-medium">Executable</label
+        ><input
+          z-input
+          id="mcp-command"
+          formControlName="command"
+          placeholder="npx, uvx, node, or a full path"
+          autocomplete="off"
+        />
+      </div>
+      <div class="space-y-2">
+        <label for="mcp-arguments" class="text-sm font-medium"
+          >Arguments <span class="font-normal text-muted-foreground">· optional</span></label
+        ><textarea
+          z-input
+          id="mcp-arguments"
+          formControlName="args"
+          class="min-h-20 font-mono text-xs"
+          placeholder="-y&#10;@example/mcp-server"
+        ></textarea>
+        <p class="text-xs text-muted-foreground">
+          One argument per line. Use &quot;&quot; for an empty argument or a JSON string for escaped
+          newlines.
+        </p>
+      </div>
+    } @else {
+      <div class="space-y-2">
+        <label for="mcp-url" class="text-sm font-medium">Server URL</label
+        ><input
+          z-input
+          id="mcp-url"
+          formControlName="url"
+          placeholder="https://example.com/mcp"
+          type="url"
+          autocomplete="off"
+        />
+        <p class="text-xs text-muted-foreground">Use the MCP endpoint supplied by the service.</p>
+      </div>
+    }
+
+    <div class="space-y-2">
+      <span class="text-sm font-medium">Available in</span>
+      <app-option-select
+        [options]="options(scopes(), scopeLabels)"
+        [value]="scope()"
+        (valueChange)="scope.set($any($event))"
+        [disabled]="editing() || busy()"
+        ariaLabel="Configuration scope"
+      />
+      <p class="text-xs leading-relaxed text-muted-foreground">
+        @switch (scope()) {
+          @case ('project') {
+            Saved in this worktree’s project configuration. Other worktrees have their own settings.
+          }
+          @case ('local') {
+            Saved privately for this worktree, outside the repository.
+          }
+          @case ('user') {
+            Available to this agent in every project on this computer.
+          }
+        }
+      </p>
+    </div>
+
+    <details
+      class="rounded-lg border border-border px-4 py-3"
+      [open]="advancedOpen()"
+      (toggle)="advancedOpen.set($any($event.target).open)"
+    >
+      <summary class="cursor-pointer text-xs font-medium focus-visible:outline-ring">
+        {{ transport() === 'stdio' ? 'Environment variables' : 'Headers and protocol' }}
+        <span class="font-normal text-muted-foreground">· optional</span>
+      </summary>
+      <div class="mt-4 space-y-4">
+        @if (transport() === 'stdio') {
+          <div class="space-y-2">
+            <label for="mcp-environment" class="text-xs font-medium">Environment variables</label
+            ><textarea
+              z-input
+              id="mcp-environment"
+              formControlName="env"
+              class="min-h-20 font-mono text-xs"
+              placeholder="API_KEY=your-key"
+              autocomplete="off"
+              spellcheck="false"
+            ></textarea>
+            <p class="text-xs leading-relaxed text-muted-foreground">
+              One KEY=value per line. Use a JSON string for multiline values. Values are saved in
+              the configuration file.
+            </p>
+          </div>
+        } @else {
+          <div class="space-y-2">
+            <label for="mcp-headers" class="text-xs font-medium">Request headers</label
+            ><textarea
+              z-input
+              id="mcp-headers"
+              formControlName="headers"
+              class="min-h-20 font-mono text-xs"
+              placeholder="Authorization=Bearer your-token"
+              autocomplete="off"
+              spellcheck="false"
+            ></textarea>
+            <p class="text-xs leading-relaxed text-muted-foreground">
+              One Header=value per line.
+              {{
+                browserAuth()
+                  ? 'Leave empty for public services or browser sign-in.'
+                  : 'Use the credentials supplied by the service.'
+              }}
+              Values are saved in the configuration file.
+            </p>
+          </div>
+          @if (transports().includes('sse') && transports().includes('http')) {
+            <div class="space-y-2">
+              <span class="text-xs font-medium">Protocol</span
+              ><app-option-select
+                [options]="remoteOptions()"
+                [value]="transport()"
+                (valueChange)="transport.set($any($event))"
+                [disabled]="busy()"
+                ariaLabel="Remote protocol"
+              />
+              <p class="text-xs text-muted-foreground">
+                Use Streamable HTTP unless the server requires SSE.
+              </p>
+            </div>
+          }
+        }
+      </div>
+    </details>
+
+    @if (nativeOptions()) {
+      <p class="text-xs text-muted-foreground" role="status">
+        Additional options from your configuration snippet will be preserved.
+      </p>
+    }
+    @if (!editing() && !enabled()) {
+      <p class="text-xs text-muted-foreground" role="status">
+        This configuration adds the server disabled. You can enable it after saving.
+      </p>
+    }
+
+    @if (error(); as message) {
+      <p
+        class="rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive"
+        role="alert"
+      >
+        {{ message }}
+      </p>
+    }
+  </div>
+  <div
+    class="-mx-6 flex shrink-0 items-center justify-end gap-2 border-t border-border bg-background px-6 py-4"
+  >
+    <button z-button zType="ghost" type="button" [disabled]="busy()" (click)="cancel.emit()">
+      Cancel</button
+    ><button z-button type="submit" [disabled]="busy()" [zLoading]="busy()">
+      {{ editing() ? 'Save changes' : 'Add server' }}
+    </button>
+  </div>
+</form>

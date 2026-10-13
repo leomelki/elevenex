@@ -22,7 +22,7 @@ export class PiAgentRuntimeProvider
     id: 'pi',
     displayName: 'Pi',
     capabilities: {
-      mcp: false,
+      mcp: true,
       subagents: false,
       permissions: false,
       userInput: true,
@@ -47,6 +47,10 @@ export class PiAgentRuntimeProvider
       this.emit('auth_status', status);
     });
   }
+
+  getMcpSnapshot(sessionId: number) { return this.runtimeService.getMcpSnapshot(sessionId); }
+
+  reloadMcpConfiguration(sessionId: number) { return this.runtimeService.reloadMcpConfiguration(sessionId); }
 
   getHistory(sessionId: number) {
     return this.runtimeService.getHistory(sessionId);

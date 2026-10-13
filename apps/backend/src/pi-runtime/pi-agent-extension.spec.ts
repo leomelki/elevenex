@@ -1,3 +1,4 @@
+jest.mock('./pi-mcp-bridge.js', () => ({ PiMcpBridge: jest.fn(() => ({ connect: jest.fn().mockResolvedValue({ names: [], statuses: [] }), close: jest.fn() })) }));
 import elevenexAgentExtension from './pi-agent-extension.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { readFile } from 'fs/promises';

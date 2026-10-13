@@ -1,0 +1,420 @@
+@let state = store();
+<aside
+  class="flex h-full w-full flex-col border-l border-border bg-background text-foreground shadow-2xl"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="mcp-title"
+  cdkTrapFocus
+  [cdkTrapFocusAutoCapture]="true"
+  (keydown.escape)="escape($event)"
+  data-mcp-manager
+>
+  <header
+    class="flex flex-wrap items-center gap-2 border-b border-border px-5 sm:gap-3 py-4 md:px-6"
+  >
+    <div
+      class="hidden size-9 shrink-0 items-center sm:flex justify-center rounded-lg border border-border bg-muted/40 text-muted-foreground"
+    >
+      <ng-icon name="lucidePlug" size="19" />
+    </div>
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center gap-2">
+        <h2 id="mcp-title" class="text-base font-semibold tracking-tight">MCP servers</h2>
+        <span
+          class="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground"
+          >{{ providerLabel() }}</span
+        >
+      </div>
+      <p class="mt-0.5 text-xs text-muted-foreground">Tools and services your agent can use.</p>
+    </div>
+    <button
+      z-button
+      zType="ghost"
+      zSize="icon"
+      type="button"
+      aria-label="Refresh MCP servers"
+      title="Refresh status"
+      [disabled]="state.loading() || !!state.busy() || state.editorLoading()"
+      (click)="state.load()"
+    >
+      <ng-icon name="lucideRefreshCw" [class.animate-spin]="state.loading()" size="15" />
+    </button>
+    @if (!state.draft()) {
+      <button
+        z-button
+        type="button"
+        [disabled]="!!state.busy() || state.editorLoading()"
+        (click)="state.add()"
+      >
+        <ng-icon name="lucidePlus" size="15" />Add server
+      </button>
+    }
+    <button
+      z-button
+      zType="ghost"
+      zSize="icon"
+      type="button"
+      aria-label="Close MCP manager"
+      [disabled]="!!state.busy()"
+      (click)="state.close()"
+    >
+      <ng-icon name="lucideX" size="18" />
+    </button>
+  </header>
+
+  @if (state.discardPending()) {
+    <div
+      class="flex flex-wrap items-center justify-between gap-3 border-b border-warning/25 bg-warning/5 px-6 py-4"
+      role="alertdialog"
+      aria-labelledby="mcp-discard-title"
+      aria-describedby="mcp-discard-description"
+      cdkTrapFocus
+      [cdkTrapFocusAutoCapture]="true"
+    >
+      <div>
+        <h3 id="mcp-discard-title" class="text-sm font-semibold">Discard unsaved changes?</h3>
+        <p id="mcp-discard-description" class="mt-1 text-xs text-muted-foreground">
+          Your server configuration has not been saved.
+        </p>
+      </div>
+      <div class="flex gap-2">
+        <button
+          z-button
+          zType="outline"
+          type="button"
+          cdkFocusInitial
+          (click)="state.keepEditing()"
+        >
+          Keep editing</button
+        ><button z-button zType="destructive" type="button" (click)="state.discardChanges()">
+          Discard changes
+        </button>
+      </div>
+    </div>
+  }
+  @if (state.error(); as message) {
+    <div
+      class="flex items-start gap-2 border-b border-destructive/25 bg-destructive/5 px-6 py-3 text-sm text-destructive"
+      role="alert"
+    >
+      <ng-icon name="lucideCircleAlert" class="mt-0.5 shrink-0" size="16" /><span>{{
+        message
+      }}</span>
+    </div>
+  }
+  @if (state.snapshot()?.reloadRequired) {
+    <div
+      class="flex items-center justify-between gap-3 border-b border-warning/25 bg-warning/5 px-6 py-3"
+      role="status"
+    >
+      <div>
+        <p class="text-xs font-medium">Configuration changed</p>
+        <p class="mt-0.5 text-xs text-muted-foreground">
+          Saved settings take effect after you apply them while the agent is idle.
+        </p>
+      </div>
+      <button
+        z-button
+        zType="outline"
+        zSize="sm"
+        type="button"
+        [disabled]="!!state.busy() || !!state.draft() || state.editorLoading()"
+        [zLoading]="state.busy() === 'reload'"
+        (click)="state.reload()"
+      >
+        Apply changes
+      </button>
+    </div>
+  }
+
+  <div class="flex min-h-0 flex-1">
+    <nav
+      class="flex w-full shrink-0 flex-col border-border md:w-[300px] md:border-r md:bg-muted/10"
+      [class.hidden]="showDetail()"
+      [class.md:flex]="showDetail()"
+      aria-label="MCP servers"
+    >
+      <div class="space-y-3 px-4 pt-4 pb-3">
+        <div
+          class="flex items-center justify-between text-xs text-muted-foreground"
+          aria-live="polite"
+        >
+          <span>{{ state.snapshot()?.summary?.total ?? 0 }} servers</span
+          ><span>{{ state.snapshot()?.summary?.connected ?? 0 }} connected</span>
+        </div>
+        <div class="relative">
+          <ng-icon
+            name="lucideSearch"
+            class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground"
+            size="15"
+          /><input
+            z-input
+            class="pl-9"
+            aria-label="Search MCP servers"
+            placeholder="Find a server…"
+            [value]="query()"
+            (input)="query.set($any($event.target).value)"
+          />
+        </div>
+        <div class="flex gap-1" aria-label="Filter servers">
+          <button
+            z-button
+            [zType]="filter() === 'all' ? 'secondary' : 'ghost'"
+            zSize="sm"
+            type="button"
+            [attr.aria-pressed]="filter() === 'all'"
+            (click)="filter.set('all')"
+          >
+            All
+          </button>
+          <button
+            z-button
+            [zType]="filter() === 'attention' ? 'secondary' : 'ghost'"
+            zSize="sm"
+            type="button"
+            [attr.aria-pressed]="filter() === 'attention'"
+            (click)="filter.set('attention')"
+          >
+            Attention
+            @if (attentionCount()) {
+              <span class="ml-0.5 rounded bg-warning/10 px-1 text-warning">{{
+                attentionCount()
+              }}</span>
+            }
+          </button>
+          <button
+            z-button
+            [zType]="filter() === 'disabled' ? 'secondary' : 'ghost'"
+            zSize="sm"
+            type="button"
+            [attr.aria-pressed]="filter() === 'disabled'"
+            (click)="filter.set('disabled')"
+          >
+            Disabled
+          </button>
+        </div>
+      </div>
+      <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-4" [attr.aria-busy]="state.loading()">
+        @if (state.loading() && !state.snapshot()) {
+          <div class="space-y-5 p-3" role="status" aria-label="Loading MCP servers">
+            @for (item of [1, 2, 3]; track item) {
+              <div class="space-y-2">
+                <z-skeleton class="h-4 w-32" /><z-skeleton class="h-3 w-48" />
+              </div>
+            }
+          </div>
+        } @else {
+          <ul class="space-y-1">
+            @for (server of filteredServers(); track server.entryId) {
+              <li>
+                <button
+                  z-button
+                  zType="ghost"
+                  type="button"
+                  [class]="[
+                    'h-auto w-full justify-start gap-3 whitespace-normal border px-3 py-3 text-left',
+                    selectedServer()?.entryId === server.entryId && !state.draft()
+                      ? 'border-primary/20 bg-primary/5'
+                      : '',
+                  ]"
+                  [attr.aria-pressed]="
+                    selectedServer()?.entryId === server.entryId && !state.draft()
+                  "
+                  [disabled]="!!state.busy() || state.editorLoading()"
+                  [attr.data-mcp-server]="server.name"
+                  (click)="select(server)"
+                  (keydown)="moveSelection($event, $index)"
+                >
+                  <span
+                    class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/70 text-muted-foreground"
+                    aria-hidden="true"
+                    ><ng-icon
+                      [name]="server.transport === 'stdio' ? 'lucideTerminal' : 'lucideGlobe'"
+                      size="16"
+                  /></span>
+                  <span class="min-w-0 flex-1"
+                    ><span class="block truncate text-sm font-medium" [title]="server.name">{{
+                      server.name
+                    }}</span
+                    ><span class="mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1"
+                      ><span class="text-[11px] font-normal text-muted-foreground">{{
+                        scopeLabels[server.scope]
+                      }}</span
+                      ><cw-mcp-server-status [entry]="server" [provider]="provider()" /></span
+                  ></span>
+                </button>
+              </li>
+            } @empty {
+              <div class="px-4 py-10 text-center">
+                <p class="text-sm font-medium">
+                  {{ query() || filter() !== 'all' ? 'No matching servers' : 'No servers yet' }}
+                </p>
+                <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  {{
+                    query() || filter() !== 'all'
+                      ? 'Try another search or clear your filters.'
+                      : 'Add a server to connect tools and services.'
+                  }}
+                </p>
+                @if (query() || filter() !== 'all') {
+                  <button
+                    z-button
+                    zType="ghost"
+                    zSize="sm"
+                    class="mt-3"
+                    type="button"
+                    (click)="query.set(''); filter.set('all')"
+                  >
+                    Clear filters
+                  </button>
+                }
+              </div>
+            }
+          </ul>
+          @if (state.snapshot()?.diagnostics?.length) {
+            <div class="mx-2 mt-4 rounded-lg border border-warning/25 bg-warning/5 p-3">
+              <p class="flex items-center gap-2 text-xs font-medium text-warning">
+                <ng-icon name="lucideCircleAlert" size="14" />Configuration needs attention
+              </p>
+              @for (
+                group of state.snapshot()!.diagnostics;
+                track group.configLocation + group.scope
+              ) {
+                <details class="mt-3" [open]="group.errors.length > 0">
+                  <summary class="cursor-pointer text-xs text-muted-foreground">
+                    {{ scopeLabels[group.scope] }} configuration
+                  </summary>
+                  <p class="mt-2 break-all font-mono text-[11px] text-muted-foreground">
+                    {{ group.configLocation }}
+                  </p>
+                  @for (message of group.errors; track $index) {
+                    <p class="mt-2 break-words text-xs leading-relaxed text-destructive">
+                      {{ message.message }}
+                    </p>
+                  }
+                  @for (message of group.warnings; track $index) {
+                    <p class="mt-2 break-words text-xs leading-relaxed text-warning">
+                      {{ message.message }}
+                    </p>
+                  }
+                </details>
+              }
+            </div>
+          }
+        }
+      </div>
+      <p class="border-t border-border px-4 py-3 text-[11px] leading-relaxed text-muted-foreground">
+        Status updates automatically while this panel is open.
+      </p>
+    </nav>
+
+    <div
+      class="min-w-0 flex-1 flex-col"
+      [class.hidden]="!showDetail()"
+      [class.flex]="showDetail()"
+      [class.md:flex]="!showDetail()"
+      data-mcp-content
+    >
+      <div class="flex items-center gap-2 border-b border-border px-4 py-2 md:hidden">
+        <button
+          z-button
+          zType="ghost"
+          zSize="sm"
+          type="button"
+          [disabled]="!!state.busy()"
+          (click)="back()"
+        >
+          <ng-icon name="lucideArrowLeft" size="15" />Servers
+        </button>
+      </div>
+      @if (state.editorLoading()) {
+        <p class="flex items-center gap-2 px-6 py-8 text-sm text-muted-foreground" role="status">
+          <ng-icon name="lucideLoaderCircle" class="animate-spin" />Opening configuration…
+        </p>
+      } @else if (state.draft(); as draft) {
+        <div class="flex min-h-0 flex-1 flex-col px-6 pt-5">
+          <h3 class="shrink-0 text-lg font-semibold tracking-tight">
+            {{ state.editingId() ? 'Edit server' : 'Add a server' }}
+          </h3>
+          <p class="mt-1 mb-6 shrink-0 text-xs text-muted-foreground">
+            {{
+              state.editingId()
+                ? 'Update how your agent connects to this server.'
+                : 'Connect with a URL, local command, or configuration snippet.'
+            }}
+          </p>
+          <cw-mcp-server-editor
+            [definition]="draft"
+            [browserAuth]="provider() !== 'pi'"
+            [editing]="!!state.editingId()"
+            [busy]="!!state.busy()"
+            [scopes]="state.snapshot()?.availableScopes ?? ['project', 'user']"
+            [transports]="state.snapshot()?.availableTransports ?? ['http', 'stdio']"
+            (dirtyChange)="state.editorDirty.set($event)"
+            (save)="state.save($event)"
+            (cancel)="state.cancelEditor()"
+          />
+        </div>
+      } @else if (selectedServer(); as server) {
+        <div class="min-h-0 flex-1 overflow-y-auto p-6">
+          <cw-mcp-server-detail
+            [entry]="server"
+            [provider]="provider()"
+            [busyId]="state.busy()"
+            [operation]="state.operation()"
+            (authenticate)="state.authenticate($event)"
+            (check)="state.check($event)"
+            (edit)="state.edit($event)"
+            (toggle)="state.toggle($event)"
+            (remove)="state.remove($event)"
+          />
+        </div>
+      } @else if (state.loading() && !state.snapshot()) {
+        <div class="space-y-6 p-6" aria-hidden="true">
+          <z-skeleton class="h-6 w-40" /><z-skeleton class="h-28 w-full" /><z-skeleton
+            class="h-16 w-full"
+          />
+        </div>
+      } @else {
+        <div
+          class="flex min-h-0 flex-1 flex-col items-center justify-center px-8 py-12 text-center"
+        >
+          <div
+            class="mb-4 flex size-14 items-center justify-center rounded-2xl border border-border bg-muted/40 text-muted-foreground"
+          >
+            <ng-icon name="lucidePlug" size="26" />
+          </div>
+          <h3 class="text-base font-semibold">
+            {{
+              state.snapshot()?.servers?.length
+                ? 'No matching servers'
+                : 'Give your agent more tools'
+            }}
+          </h3>
+          <p class="mt-2 max-w-72 text-sm leading-relaxed text-muted-foreground">
+            {{
+              state.snapshot()?.servers?.length
+                ? 'Clear your filters to choose a server.'
+                : 'Connect a service for documentation, search, databases, or your own tools.'
+            }}
+          </p>
+          @if (!state.snapshot()?.servers?.length) {
+            <button z-button class="mt-5" type="button" (click)="state.add()">
+              <ng-icon name="lucidePlus" size="15" />Add your first server
+            </button>
+          } @else {
+            <button
+              z-button
+              zType="outline"
+              class="mt-5"
+              type="button"
+              (click)="query.set(''); filter.set('all')"
+            >
+              Clear filters
+            </button>
+          }
+        </div>
+      }
+    </div>
+  </div>
+</aside>

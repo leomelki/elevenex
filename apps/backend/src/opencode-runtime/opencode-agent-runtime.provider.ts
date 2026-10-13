@@ -1455,8 +1455,16 @@ export class OpenCodeAgentRuntimeProvider
     return history;
   }
 
+  async reloadMcpConfiguration(sessionId: number): Promise<void> {
+    const entry = this.entries.get(sessionId);
+    if (this.starts.has(sessionId) || entry?.run || entry?.state.canInterrupt || entry?.state.subagents.some(agent => agent.status === 'started'))
+      throw new BadRequestException('Finish the current response and background tasks before reloading tools. Your configuration is saved.');
+    this.stop(sessionId);
+  }
+
   async getMcpSnapshot(sessionId: number): Promise<ClaudeMcpSnapshot> {
-    const entry = await this.ensure(sessionId);
+    const entry = this.entries.get(sessionId);
+    if (!entry?.client) return { servers: [], diagnostics: [], summary: { connected: 0, needsAuth: 0, failed: 0, disabled: 0, malformed: 0, total: 0 }, lastUpdatedAt: new Date().toISOString() };
     const [statuses, config] = await Promise.all([
       entry.client!.mcp.status(),
       entry.client!.config.get(),
@@ -1473,7 +1481,7 @@ export class OpenCodeAgentRuntimeProvider
         status.status === 'needs_auth' ||
         status.status === 'needs_client_registration'
           ? 'needs-auth'
-          : status.status;
+          : ['connected', 'failed', 'disabled'].includes(status.status) ? status.status as 'connected' | 'failed' | 'disabled' : 'unknown';
       return {
         entryId: name,
         name,
@@ -1488,7 +1496,7 @@ export class OpenCodeAgentRuntimeProvider
           canToggle: true,
           canRecheck: true,
           canAuth: connectionStatus === 'needs-auth',
-          canReauth: transport === 'http',
+          canReauth: transport === 'http' && !!definition && 'oauth' in definition && !!definition.oauth,
           canViewTools: false,
         },
       };
@@ -1508,15 +1516,6 @@ export class OpenCodeAgentRuntimeProvider
       },
       lastUpdatedAt: new Date().toISOString(),
     };
-  }
-  async toggleMcpServer(sessionId: number, name: string) {
-    const entry = await this.ensure(sessionId);
-    const snapshot = await this.getMcpSnapshot(sessionId);
-    const server = snapshot.servers.find((item) => item.name === name);
-    if (!server) throw new BadRequestException('MCP server was not found.');
-    if (server.enabled) await entry.client!.mcp.disconnect({ name });
-    else await entry.client!.mcp.connect({ name });
-    return this.getMcpSnapshot(sessionId);
   }
   async recheckMcpServer(sessionId: number, name: string) {
     const entry = await this.ensure(sessionId);

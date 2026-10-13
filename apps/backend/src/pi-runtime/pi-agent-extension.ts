@@ -1,3 +1,4 @@
+import { PiMcpBridge } from './pi-mcp-bridge.js';
 import { SESSION_TOOL_INSTRUCTIONS } from '../mcp/session-tool-context.js';
 import { readFile } from 'fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -114,6 +115,7 @@ export default function elevenexAgentExtension(pi: PiExtensionApi): void {
   const isMission = Boolean(process.env.ELEVENEX_AGENT_PROMPT);
   let client: Client | null = null;
   let toolNames: string[] = [];
+  let bridge: PiMcpBridge | null = null;
 
   if (isMission)
     pi.registerTool({
@@ -208,18 +210,50 @@ export default function elevenexAgentExtension(pi: PiExtensionApi): void {
           : [...new Set([...nativeTools, ...toolNames])],
       );
       // Pi redirects extension stdout to stderr; status notifications use the real RPC output.
-      ctx.ui.setStatus('elevenex_agent_ready', 'ready');
     } catch (error) {
       pi.setActiveTools(nativeTools);
       await client?.close().catch(() => undefined);
       client = null;
       if (!isMission)
         ctx.ui.setStatus('elevenex_mcp_status', `error: ${String(error)}`);
-      ctx.ui.setStatus(
-        'elevenex_agent_ready',
-        isMission ? `error: ${String(error)}` : 'ready',
-      );
+      toolNames = [];
+      if (isMission) {
+        ctx.ui.setStatus('elevenex_agent_ready', `error: ${String(error)}`);
+        return;
+      }
     }
+    if (!isMission) {
+      bridge = new PiMcpBridge();
+      try {
+        const baseTools = [...new Set([...nativeTools, ...toolNames])];
+        const reportStatus = (
+          statuses: import('./pi-mcp-bridge.js').PiMcpStatus[],
+        ) => {
+          ctx.ui.setStatus('elevenex_mcp_servers', JSON.stringify(statuses));
+          pi.setActiveTools([
+            ...new Set([
+              ...baseTools,
+              ...statuses
+                .filter((server) => server.status === 'connected')
+                .flatMap((server) => server.tools.map((tool) => tool.name)),
+            ]),
+          ]);
+        };
+        const external = await bridge.connect(
+          (tool) => pi.registerTool(tool),
+          reportStatus,
+        );
+        toolNames.push(...external.names);
+        ctx.ui.setStatus(
+          'elevenex_mcp_servers',
+          JSON.stringify(external.statuses),
+        );
+      } catch (error) {
+        ctx.ui.setStatus('elevenex_mcp_status', `error: ${String(error)}`);
+      }
+      pi.setActiveTools([...new Set([...nativeTools, ...toolNames])]);
+    }
+    ctx.ui.setStatus('elevenex_agent_ready', 'ready');
   });
 
   pi.on('before_agent_start', async (event) => ({
@@ -232,6 +266,7 @@ export default function elevenexAgentExtension(pi: PiExtensionApi): void {
     const closing = client;
     client = null;
     toolNames = [];
-    await closing?.close();
+    await Promise.all([closing?.close(), bridge?.close()]);
+    bridge = null;
   });
 }

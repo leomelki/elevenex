@@ -404,6 +404,10 @@ export type AgentMcpConnectionStatus =
 export type AgentMcpConfigStatus = 'valid' | 'warning' | 'error';
 
 export interface AgentMcpServerEntry {
+  origin?: 'configuration' | 'sdk' | 'plugin';
+  endpoint?: string;
+  revision?: string;
+  shadowed?: boolean;
   entryId: string;
   name: string;
   scope: AgentMcpScope;
@@ -428,6 +432,8 @@ export interface AgentMcpServerEntry {
     displayName: string;
   }[];
   actions: {
+    canEdit?: boolean;
+    canRemove?: boolean;
     canToggle: boolean;
     canRecheck: boolean;
     canAuth: boolean;
@@ -461,6 +467,11 @@ export interface AgentMcpSnapshot {
     total: number;
   };
   lastUpdatedAt: string;
+  provider?: string;
+  availableScopes?: ('project' | 'user' | 'local')[];
+  availableTransports?: ('stdio' | 'http' | 'sse')[];
+  notice?: string;
+  reloadRequired?: boolean;
 }
 
 export interface AgentMcpAuthStartResult {
@@ -912,3 +923,18 @@ export type AgentRuntimeEvent =
   | { type: 'user_input_request'; payload: { sessionId: number; request: AgentUserInputRequest } }
   | { type: 'error'; payload: { sessionId: number; message: string } }
   | { type: 'complete'; payload: { sessionId: number } };
+
+/** Values accepted by the MCP editor; extra native options survive edits. */
+export interface McpServerDefinition {
+  name: string;
+  scope: 'project' | 'user' | 'local';
+  transport: 'stdio' | 'http' | 'sse';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  revision?: string;
+  nativeOptions?: Record<string, unknown>;
+}

@@ -1,3 +1,4 @@
+import { McpManagerStore } from './mcp-manager.store';
 import {
   ZardResizableComponent,
   ZardResizablePanelComponent,
@@ -18,7 +19,7 @@ import { TranscriptViewportDirective } from '@/shared/agent-chat/transcript/tran
 import { ZardButtonComponent } from '@/shared/components/button/button.component';
 import type { AgentShow } from '@/shared/models/agent-channel.model';
 import { AgentProviderId } from '@/shared/models/agent-runtime.model';
-import { ClaudeMcpServerEntry, ClaudeMcpSnapshot } from '@/shared/models/claude-runtime.model';
+import { ClaudeMcpServerEntry } from '@/shared/models/claude-runtime.model';
 import type { DiffSelectionMention } from '@/shared/models/diff-selection-mention.model';
 import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import { AgentRuntimeApiService } from '@/shared/services/agent-runtime-api.service';
@@ -78,7 +79,6 @@ import { PiLoginCardComponent } from './components/pi-login-card.component';
 import { SessionDraftContext } from './session-draft-context.service';
 import { SessionMessageActions } from './session-message-actions.service';
 import { SessionRuntime } from './session-runtime.service';
-import { getHttpErrorMessage } from './workspace-error';
 
 @Component({
   selector: 'app-claude-workspace',
@@ -113,7 +113,7 @@ import { getHttpErrorMessage } from './workspace-error';
   templateUrl: './claude-workspace.component.html',
   styleUrls: ['./claude-workspace.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  providers: [SessionRuntime, SessionDraftContext, SessionMessageActions],
+  providers: [SessionRuntime, SessionDraftContext, SessionMessageActions, McpManagerStore],
   viewProviders: [
     provideIcons({
       lucideWandSparkles,
@@ -141,8 +141,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   private readonly api = inject(ClaudeRuntimeApiService);
   private readonly agentApi = inject(AgentRuntimeApiService);
   private readonly destroyRef = inject(DestroyRef);
-  private mcpRequestVersion = 0;
-  private mcpSnapshotVersion = 0;
+  readonly mcp = inject(McpManagerStore);
   private readonly navigationService = inject(NavigationService);
   readonly viewport = viewChild(TranscriptViewportDirective);
   private readonly composer = viewChild(ClaudeComposerComponent);
@@ -184,18 +183,23 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
 
   readonly tasksDrawerOpen = signal(false);
 
-  readonly mcpDrawerOpen = signal(false);
+  readonly mcpDrawerOpen = this.mcp.open;
 
   readonly exportDialogOpen = signal(false);
 
   readonly exportBusy = signal(false);
 
-  readonly mcpLoading = signal(false);
+  readonly mcpLoading = this.mcp.loading;
 
-  readonly mcpSnapshot = signal<ClaudeMcpSnapshot | null>(null);
+  readonly mcpSnapshot = this.mcp.snapshot;
 
-  readonly mcpBusyServerName = signal<string | null>(null);
+  readonly mcpBusyServerName = this.mcp.busy;
   constructor() {
+    this.mcp.bind(this.sessionId, this.runtime.currentProvider, this.isVisible);
+    this.mcp.authorization.pipe(takeUntilDestroyed()).subscribe(result => {
+      this.openInBrowser.emit(result.url);
+      toast.message(result.message);
+    });
     this.runtime.bindInputs({
       sessionId: this.sessionId,
       repoId: this.repoId,
@@ -220,10 +224,9 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
         }));
     this.runtime.events.pipe(takeUntilDestroyed()).subscribe((event) => {
       if (event.type === 'focus-composer') queueMicrotask(() => this.composer()?.focusAtEnd());
-      if (event.type === 'complete' && this.mcpDrawerOpen()) void this.loadMcpSnapshot(true);
+      if (event.type === 'complete' && this.mcpDrawerOpen()) void this.mcp.load(true);
       if (event.type === 'reset') {
-        this.mcpRequestVersion++;
-        this.mcpSnapshotVersion++;
+        this.mcp.reset();
         this.exportDialogOpen.set(false);
         this.exportBusy.set(false);
         this.tasksDrawerOpen.set(false);
@@ -284,8 +287,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   }
 
   openMcpDrawer(): void {
-    this.mcpDrawerOpen.set(true);
-    void this.loadMcpSnapshot();
+    this.mcp.show();
   }
 
   openExportDialog(): void {
@@ -315,110 +317,13 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
     }
   }
 
-  closeMcpDrawer(): void {
-    this.mcpRequestVersion++;
-    this.mcpSnapshotVersion++;
-    this.mcpLoading.set(false);
-    this.mcpDrawerOpen.set(false);
-    this.mcpBusyServerName.set(null);
-  }
+  closeMcpDrawer(): void { this.mcp.close(); }
 
-  refreshMcpSnapshot(): void {
-    void this.loadMcpSnapshot(true);
-  }
+  refreshMcpSnapshot(): void { void this.mcp.load(); }
 
-  toggleMcpServer(server: ClaudeMcpServerEntry): void {
-    void this.updateMcpServer(
-      server,
-      () => this.api.toggleMcpServer(this.sessionId(), server.name),
-      (snapshot) => {
-        this.mcpSnapshot.set(snapshot);
-        toast.success(`${server.enabled ? 'Disabled' : 'Enabled'} ${server.name}`);
-      },
-      `Could not update ${server.name}.`,
-    );
-  }
+  toggleMcpServer(server: ClaudeMcpServerEntry): void { this.mcp.toggle(server); }
 
-  recheckMcpServer(server: ClaudeMcpServerEntry): void {
-    void this.updateMcpServer(
-      server,
-      () => this.api.recheckMcpServer(this.sessionId(), server.name),
-      (snapshot) => this.mcpSnapshot.set(snapshot),
-      `Could not recheck ${server.name}.`,
-    );
-  }
+  recheckMcpServer(server: ClaudeMcpServerEntry): void { this.mcp.check(server); }
 
-  startMcpAuth(server: ClaudeMcpServerEntry): void {
-    void this.updateMcpServer(
-      server,
-      () => this.api.startMcpAuth(this.sessionId(), server.name),
-      (result) => {
-        this.openInBrowser.emit(result.url);
-        toast.message(result.message);
-      },
-      `Could not start auth for ${server.name}.`,
-      false,
-    );
-  }
-
-  private async updateMcpServer<T>(
-    server: ClaudeMcpServerEntry,
-    request: () => Observable<T>,
-    apply: (result: T) => void,
-    fallback: string,
-    showLoading = true,
-  ): Promise<void> {
-    const version = this.runtime.bootstrapVersion;
-    const requestVersion = ++this.mcpRequestVersion;
-    this.mcpSnapshotVersion++;
-    const isCurrent = () =>
-      this.runtime.isCurrentConversation(version) && requestVersion === this.mcpRequestVersion;
-    this.mcpBusyServerName.set(server.name);
-    if (showLoading) this.mcpLoading.set(true);
-    try {
-      const result = await firstValueFrom(request().pipe(takeUntilDestroyed(this.destroyRef)));
-      if (isCurrent()) apply(result);
-    } catch (error) {
-      if (isCurrent()) toast.error(getHttpErrorMessage(error, fallback));
-    } finally {
-      if (isCurrent()) {
-        this.mcpBusyServerName.set(null);
-        this.mcpLoading.set(false);
-      }
-    }
-  }
-
-  private async loadMcpSnapshot(forceRefresh = false): Promise<void> {
-    const requestVersion = ++this.mcpSnapshotVersion;
-    const version = this.runtime.bootstrapVersion;
-    this.mcpLoading.set(true);
-    try {
-      const snapshot = await firstValueFrom(
-        this.api.getMcpSnapshot(this.sessionId(), forceRefresh),
-      );
-      if (
-        version !== this.runtime.bootstrapVersion ||
-        requestVersion !== this.mcpSnapshotVersion ||
-        this.destroyRef.destroyed
-      )
-        return;
-      this.mcpSnapshot.set(snapshot);
-    } catch (error) {
-      if (
-        version !== this.runtime.bootstrapVersion ||
-        requestVersion !== this.mcpSnapshotVersion ||
-        this.destroyRef.destroyed
-      )
-        return;
-      toast.error(getHttpErrorMessage(error, 'Could not load MCP servers.'));
-    } finally {
-      if (
-        version !== this.runtime.bootstrapVersion ||
-        requestVersion !== this.mcpSnapshotVersion ||
-        this.destroyRef.destroyed
-      )
-        return;
-      this.mcpLoading.set(false);
-    }
-  }
+  startMcpAuth(server: ClaudeMcpServerEntry): void { void this.mcp.authenticate(server); }
 }

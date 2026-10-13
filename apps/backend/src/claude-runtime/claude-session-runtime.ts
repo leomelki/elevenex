@@ -1,6 +1,7 @@
 import {
   query,
   type ModelInfo,
+  type McpServerStatus,
   type Options,
   type PermissionMode,
   type Query,
@@ -218,6 +219,22 @@ export class ClaudeSessionRuntime {
         this.scheduleIdleShutdown();
       }
     }
+  }
+
+  async mcpServerStatus(): Promise<McpServerStatus[]> {
+    const runtimeQuery = this.queryInstance;
+    if (!runtimeQuery) return [];
+    await this.startPromise;
+    if (this.closed || this.queryInstance !== runtimeQuery) return [];
+    return runtimeQuery.mcpServerStatus();
+  }
+
+  async reconnectMcpServer(serverName: string): Promise<void> {
+    const runtimeQuery = this.queryInstance;
+    if (!runtimeQuery) throw new Error('Claude runtime is not running.');
+    await this.startPromise;
+    if (this.closed || this.queryInstance !== runtimeQuery) throw new Error('Claude runtime closed while checking MCP.');
+    await runtimeQuery.reconnectMcpServer(serverName);
   }
 
   async setModel(model?: string): Promise<void> {

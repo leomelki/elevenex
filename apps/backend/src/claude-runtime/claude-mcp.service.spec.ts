@@ -1,296 +1,96 @@
-import { BadRequestException } from '@nestjs/common';
-import { Test, TestingModule } from '@nestjs/testing';
-jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  getSubagentMessages: jest.fn(),
-  getSessionMessages: jest.fn(),
-  query: jest.fn(),
-}));
+import type { McpServerStatus } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeMcpService } from './claude-mcp.service.js';
-import { SessionsService } from '../sessions/sessions.service.js';
-import { ClaudeRuntimeService } from './claude-runtime.service.js';
+import type { ClaudeRuntimeService } from './claude-runtime.service.js';
 
-describe('ClaudeMcpService', () => {
+jest.mock('./claude-runtime.service.js', () => ({
+  ClaudeRuntimeService: class {},
+}));
+
+describe('Claude MCP SDK adapter', () => {
   let service: ClaudeMcpService;
-  let sessionsService: {
-    findOne: jest.Mock;
+  const runtime = {
+    getMcpServerStatuses: jest.fn(),
+    getMcpRuntimeState: jest.fn(),
+    canReconnectMcpServers: jest.fn(),
+    reconnectMcpServer: jest.fn(),
+    startMcpAuthFlow: jest.fn(),
   };
-  let runtimeService: {
-    getRuntimeState: jest.Mock;
-    getPendingMcpAuthUrl: jest.Mock;
-    startMcpAuthFlow: jest.Mock;
-  };
-
-  beforeEach(async () => {
-    jest.restoreAllMocks();
-    sessionsService = {
-      findOne: jest.fn().mockResolvedValue({
-        id: 7,
-        worktreePath: '/tmp/project',
-      }),
-    };
-    runtimeService = {
-      getRuntimeState: jest.fn().mockResolvedValue({
-        sessionMetadata: {
-          mcpServers: [],
-          tools: [],
-          slashCommands: [],
-        },
-        contextUsage: {
-          mcpTools: [],
-        },
-      }),
-      getPendingMcpAuthUrl: jest.fn().mockReturnValue(null),
-      startMcpAuthFlow: jest.fn(),
-    };
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ClaudeMcpService,
-        { provide: SessionsService, useValue: sessionsService },
-        { provide: ClaudeRuntimeService, useValue: runtimeService },
-      ],
-    }).compile();
-
-    service = module.get(ClaudeMcpService);
+  beforeEach(() => {
+    jest.resetAllMocks();
+    runtime.getMcpServerStatuses.mockResolvedValue([]);
+    runtime.getMcpRuntimeState.mockReturnValue({
+      sessionMetadata: null,
+      contextUsage: null,
+    });
+    runtime.canReconnectMcpServers.mockReturnValue(true);
+    service = new ClaudeMcpService(runtime as unknown as ClaudeRuntimeService);
+  });
+  const server = (status: McpServerStatus['status']): McpServerStatus => ({
+    name: 'docs',
+    status,
+    scope: 'project',
+    config: {
+      type: 'http',
+      url: 'https://example.com/mcp',
+      headers: { Authorization: 'secret' },
+    },
+    tools: [{ name: 'lookup' }],
   });
 
-  it('only exposes auth when the server still needs auth', async () => {
-    jest
-      .spyOn(service as never, 'readJsonFile' as never)
-      .mockImplementation(async (path: string) => {
-        if (path.endsWith('.claude.json')) {
-          return {
-            data: {
-              mcpServers: {
-                linear: {
-                  type: 'http',
-                  url: 'https://mcp.example.com',
-                  oauth: {
-                    authServerMetadataUrl:
-                      'https://auth.example.com/.well-known/oauth-authorization-server',
-                  },
-                },
-              },
-            },
-          };
-        }
-        return {};
-      });
-
-    jest.spyOn(service as never, 'getProbeStatus' as never).mockResolvedValue({
-      status: 'connected',
-      checkedAt: Date.now(),
-    });
-
-    const connectedSnapshot = await service.getSnapshot(7, true);
-    expect(connectedSnapshot.servers[0]?.actions.canAuth).toBe(false);
-
-    jest.spyOn(service as never, 'getProbeStatus' as never).mockResolvedValue({
-      status: 'needs-auth',
-      checkedAt: Date.now(),
-    });
-
-    const authRequiredSnapshot = await service.getSnapshot(7, true);
-    expect(authRequiredSnapshot.servers[0]?.actions.canAuth).toBe(true);
+  it('uses live SDK status and tools without exposing credentials', async () => {
+    runtime.getMcpServerStatuses.mockResolvedValue([server('connected')]);
+    const snapshot = await service.getSnapshot(1);
+    expect(snapshot.summary.connected).toBe(1);
+    expect(snapshot.servers[0].tools).toEqual([
+      { name: 'lookup', displayName: 'lookup' },
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain('secret');
+    expect(snapshot.servers[0].actions.canReauth).toBe(false);
   });
 
-  it('opens the OAuth URL produced by Claude Code instead of the bare metadata endpoint', async () => {
-    jest.spyOn(service, 'getSnapshot').mockResolvedValue({
-      servers: [
-        {
-          entryId: 'user:linear',
-          name: 'linear',
-          scope: 'user',
-          transport: 'http',
-          configLocation: '/tmp/.claude.json',
-          enabled: true,
-          connectionStatus: 'needs-auth',
-          configStatus: 'valid',
-          actions: {
-            canToggle: true,
-            canRecheck: true,
-            canAuth: true,
-            canReauth: false,
-            canViewTools: false,
-          },
-        },
-      ],
-      diagnostics: [],
-      summary: {
-        connected: 0,
-        needsAuth: 1,
-        failed: 0,
-        disabled: 0,
-        malformed: 0,
-        total: 1,
-      },
-      lastUpdatedAt: new Date().toISOString(),
-    });
-
-    jest
-      .spyOn(service as never, 'findConfigByServerName' as never)
-      .mockResolvedValue({
-        type: 'http',
-        url: 'https://mcp.example.com',
-        oauth: {
-          authServerMetadataUrl:
-            'https://auth.example.com/.well-known/oauth-authorization-server',
-        },
-      });
-
-    runtimeService.startMcpAuthFlow.mockResolvedValue(
-      'https://auth.example.com/authorize?client_id=claude-code&redirect_uri=http%3A%2F%2Flocalhost%3A49152%2Fcallback&state=abc&code_challenge=pkce',
-    );
-
-    await expect(service.startAuth(7, 'linear')).resolves.toEqual(
-      expect.objectContaining({
-        url: 'https://auth.example.com/authorize?client_id=claude-code&redirect_uri=http%3A%2F%2Flocalhost%3A49152%2Fcallback&state=abc&code_challenge=pkce',
-      }),
-    );
-
-    expect(runtimeService.startMcpAuthFlow).toHaveBeenCalledWith(7, 'linear');
+  it('reconnects the actual conversation connection before reporting status', async () => {
+    runtime.getMcpServerStatuses.mockResolvedValue([server('connected')]);
+    expect((await service.recheckServer(1, 'docs')).summary.connected).toBe(1);
+    expect(runtime.reconnectMcpServer).toHaveBeenCalledWith(1, 'docs');
   });
 
-  it('delegates auth URL generation to the runtime SDK helper', async () => {
-    jest.spyOn(service, 'getSnapshot').mockResolvedValue({
-      servers: [
-        {
-          entryId: 'user:linear',
-          name: 'linear',
-          scope: 'user',
-          transport: 'http',
-          configLocation: '/tmp/.claude.json',
-          enabled: true,
-          connectionStatus: 'needs-auth',
-          configStatus: 'valid',
-          actions: {
-            canToggle: true,
-            canRecheck: true,
-            canAuth: true,
-            canReauth: false,
-            canViewTools: false,
-          },
-        },
-      ],
-      diagnostics: [],
-      summary: {
-        connected: 0,
-        needsAuth: 1,
-        failed: 0,
-        disabled: 0,
-        malformed: 0,
-        total: 1,
-      },
-      lastUpdatedAt: new Date().toISOString(),
+  it('offers native browser authentication when the SDK reports needs-auth', async () => {
+    runtime.getMcpServerStatuses.mockResolvedValue([server('needs-auth')]);
+    runtime.startMcpAuthFlow.mockResolvedValue('https://example.com/authorize');
+    expect(await service.startAuth(1, 'docs')).toMatchObject({
+      url: 'https://example.com/authorize',
+      serverName: 'docs',
     });
+    expect(runtime.startMcpAuthFlow).toHaveBeenCalledWith(1, 'docs');
+  });
 
-    jest
-      .spyOn(service as never, 'findConfigByServerName' as never)
-      .mockResolvedValue({
-        type: 'http',
-        url: 'https://mcp.example.com',
-      });
-    runtimeService.startMcpAuthFlow.mockResolvedValue(
-      'https://auth.example.com/authorize?client_id=claude-code&state=pending',
+  it('does not offer authentication for public connected servers', async () => {
+    runtime.getMcpServerStatuses.mockResolvedValue([server('connected')]);
+    await expect(service.startAuth(1, 'docs')).rejects.toThrow(
+      'does not expose browser auth',
     );
+    expect(runtime.startMcpAuthFlow).not.toHaveBeenCalled();
+  });
 
-    await expect(service.startAuth(7, 'linear')).resolves.toEqual(
-      expect.objectContaining({
-        url: 'https://auth.example.com/authorize?client_id=claude-code&state=pending',
-      }),
+  it('keeps SDK and plugin servers in the managed runtime scope', async () => {
+    runtime.getMcpServerStatuses.mockResolvedValue([
+      { ...server('connected'), source: 'plugin', scope: 'user' },
+    ]);
+    expect((await service.getSnapshot(1)).servers[0].scope).toBe('runtime');
+  });
+
+  it('avoids reconnect controls while a response is running', async () => {
+    runtime.getMcpServerStatuses.mockResolvedValue([server('connected')]);
+    runtime.canReconnectMcpServers.mockReturnValue(false);
+    expect((await service.getSnapshot(1)).servers[0].actions.canRecheck).toBe(
+      false,
     );
   });
 
-  it('opens the Claude connectors page for claude.ai proxy servers', async () => {
-    jest.spyOn(service, 'getSnapshot').mockResolvedValue({
-      servers: [
-        {
-          entryId: 'user:claude.ai github',
-          name: 'claude.ai github',
-          scope: 'user',
-          transport: 'claudeai-proxy',
-          configLocation: '/tmp/.claude.json',
-          enabled: true,
-          connectionStatus: 'needs-auth',
-          configStatus: 'valid',
-          actions: {
-            canToggle: true,
-            canRecheck: true,
-            canAuth: true,
-            canReauth: false,
-            canViewTools: false,
-          },
-        },
-      ],
-      diagnostics: [],
-      summary: {
-        connected: 0,
-        needsAuth: 1,
-        failed: 0,
-        disabled: 0,
-        malformed: 0,
-        total: 1,
-      },
-      lastUpdatedAt: new Date().toISOString(),
-    });
-
-    jest
-      .spyOn(service as never, 'findConfigByServerName' as never)
-      .mockResolvedValue({
-        type: 'claudeai-proxy',
-        url: 'https://claude.ai/api/mcp/github',
-      });
-
-    await expect(service.startAuth(7, 'claude.ai github')).resolves.toEqual(
-      expect.objectContaining({
-        url: 'https://claude.ai/settings/connectors',
-      }),
-    );
-    expect(runtimeService.startMcpAuthFlow).not.toHaveBeenCalled();
-  });
-
-  it('rejects auth start when there is no browser auth endpoint to open', async () => {
-    jest.spyOn(service, 'getSnapshot').mockResolvedValue({
-      servers: [
-        {
-          entryId: 'user:linear',
-          name: 'linear',
-          scope: 'user',
-          transport: 'http',
-          configLocation: '/tmp/.claude.json',
-          enabled: true,
-          connectionStatus: 'needs-auth',
-          configStatus: 'valid',
-          actions: {
-            canToggle: true,
-            canRecheck: true,
-            canAuth: false,
-            canReauth: false,
-            canViewTools: false,
-          },
-        },
-      ],
-      diagnostics: [],
-      summary: {
-        connected: 0,
-        needsAuth: 1,
-        failed: 0,
-        disabled: 0,
-        malformed: 0,
-        total: 1,
-      },
-      lastUpdatedAt: new Date().toISOString(),
-    });
-
-    jest
-      .spyOn(service as never, 'findConfigByServerName' as never)
-      .mockResolvedValue({
-        type: 'http',
-        url: 'https://mcp.example.com',
-      });
-
-    await expect(service.startAuth(7, 'linear')).rejects.toBeInstanceOf(
-      BadRequestException,
+  it('maps pending connections to unverified rather than failed', async () => {
+    runtime.getMcpServerStatuses.mockResolvedValue([server('pending')]);
+    expect((await service.getSnapshot(1)).servers[0].connectionStatus).toBe(
+      'unknown',
     );
   });
 });

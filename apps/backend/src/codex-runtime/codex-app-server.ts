@@ -69,6 +69,8 @@ export class CodexAppServerClient implements OnModuleDestroy {
   private idleTimer: NodeJS.Timeout | null = null;
   private shuttingDown = false;
 
+  get isRunning(): boolean { return !!this.child && this.child.exitCode === null; }
+
   onModuleDestroy(): void {
     this.shuttingDown = true;
     this.clearIdleTimer();

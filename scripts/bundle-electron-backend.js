@@ -143,6 +143,11 @@ async function main() {
     platform: 'node',
     format: 'esm',
     target: 'node22',
+    // The MCP stdio client bundles cross-spawn, whose CommonJS dependencies
+    // still require Node built-ins when this extension is loaded as ESM.
+    banner: {
+      js: "import { createRequire as __elevenexPiCreateRequire } from 'node:module'; const require = __elevenexPiCreateRequire(import.meta.url);",
+    },
     logLevel: 'info',
   });
 

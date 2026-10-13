@@ -231,7 +231,7 @@
                 class="w-full justify-start gap-2 px-2 text-xs"
                 (click)="settingsPopover.hide(); openMcp.emit()"
               >
-                <ng-icon name="lucidePlugZap" size="14" /> Connected tools
+                <ng-icon name="lucidePlugZap" size="14" /> MCP servers
                 @if (mcpSummary(); as summary) {
                   <span class="ml-auto text-muted-foreground">{{ summary.total }}</span>
                 }

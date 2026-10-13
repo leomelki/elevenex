@@ -2626,9 +2626,11 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('warns when the installed Claude CLI version does not match SDK parity', () => {
+    const expectedVersion = loadClaudeSdkPackageMetadata().claudeCodeVersion;
+    expect(expectedVersion).toBeDefined();
     (service as any).claudeCliOverride = {
       path: '/custom/bin/claude',
-      version: '2.1.81 (Claude Code)',
+      version: '0.0.0 (Claude Code)',
       configured: true,
     };
 
@@ -2639,7 +2641,7 @@ describe('ClaudeRuntimeService', () => {
 
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining(
-        'Claude CLI version mismatch: sdk expects 2.1.131, installed CLI reports 2.1.81 (Claude Code).',
+        `Claude CLI version mismatch: sdk expects ${expectedVersion}, installed CLI reports 0.0.0 (Claude Code).`,
       ),
     );
   });

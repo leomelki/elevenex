@@ -1,3 +1,5 @@
+import { McpManagementService } from '../mcp/config/mcp-management.service.js';
+import type { McpServerDefinition } from '../mcp/config/mcp-config.types.js';
 import {
   BadRequestException,
   Body,
@@ -21,6 +23,7 @@ export class AgentRuntimeController {
   constructor(
     private readonly registry: AgentRuntimeRegistryService,
     private readonly exportService: ConversationExportService,
+    private readonly mcp: McpManagementService,
     @Inject(forwardRef(() => SessionsService))
     private readonly sessionsService: SessionsService,
   ) {}
@@ -189,12 +192,56 @@ export class AgentRuntimeController {
     @Param('provider') provider: string,
     @Query('forceRefresh') forceRefresh?: string,
   ) {
-    return this.registry
-      .getProviderFeature(provider, 'getMcpSnapshot')
-      .getMcpSnapshot(
-        sessionId,
-        forceRefresh === '1' || forceRefresh === 'true',
-      );
+    return this.mcp.getSnapshot(sessionId, provider, forceRefresh === 'true' || forceRefresh === '1');
+  }
+
+  @Post('sessions/:sessionId/agents/:provider/mcp/servers')
+  async createMcpServer(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+    @Body() body: McpServerDefinition,
+  ) {
+    await this.assertSessionMutable(sessionId);
+    return this.mcp.save(sessionId, provider, body);
+  }
+
+  @Get('sessions/:sessionId/agents/:provider/mcp/servers/:entryId')
+  @Header('Cache-Control', 'no-store')
+  getMcpServerDefinition(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+    @Param('entryId') entryId: string,
+  ) { return this.mcp.getDefinition(sessionId, provider, entryId); }
+
+  @Post('sessions/:sessionId/agents/:provider/mcp/servers/:entryId')
+  async updateMcpServer(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+    @Param('entryId') entryId: string,
+    @Body() body: McpServerDefinition,
+  ) {
+    await this.assertSessionMutable(sessionId);
+    return this.mcp.save(sessionId, provider, body, entryId);
+  }
+
+  @Post('sessions/:sessionId/agents/:provider/mcp/servers/:entryId/remove')
+  async removeMcpServer(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+    @Param('entryId') entryId: string,
+    @Body() body: { revision: string },
+  ) {
+    await this.assertSessionMutable(sessionId);
+    return this.mcp.remove(sessionId, provider, entryId, body.revision);
+  }
+
+  @Post('sessions/:sessionId/agents/:provider/mcp/reload')
+  async reloadMcpConfiguration(
+    @Param('sessionId', ParseIntPipe) sessionId: number,
+    @Param('provider') provider: string,
+  ) {
+    await this.assertSessionMutable(sessionId);
+    return this.mcp.reload(sessionId, provider);
   }
 
   @Post('sessions/:sessionId/agents/:provider/model')
@@ -264,9 +311,7 @@ export class AgentRuntimeController {
     @Param('serverName') serverName: string,
   ) {
     await this.assertSessionMutable(sessionId);
-    return this.registry
-      .getProviderFeature(provider, 'toggleMcpServer')
-      .toggleMcpServer(sessionId, serverName);
+    return this.mcp.toggle(sessionId, provider, serverName);
   }
 
   @Post('sessions/:sessionId/agents/:provider/mcp/:serverName/recheck')
@@ -276,9 +321,7 @@ export class AgentRuntimeController {
     @Param('serverName') serverName: string,
   ) {
     await this.assertSessionMutable(sessionId);
-    return this.registry
-      .getProviderFeature(provider, 'recheckMcpServer')
-      .recheckMcpServer(sessionId, serverName);
+    return this.mcp.recheck(sessionId, provider, serverName);
   }
 
   @Post('sessions/:sessionId/agents/:provider/mcp/:serverName/auth/start')
@@ -288,9 +331,7 @@ export class AgentRuntimeController {
     @Param('serverName') serverName: string,
   ) {
     await this.assertSessionMutable(sessionId);
-    return this.registry
-      .getProviderFeature(provider, 'startMcpAuth')
-      .startMcpAuth(sessionId, serverName);
+    return this.mcp.startAuth(sessionId, provider, serverName);
   }
 
   @Post('sessions/:sessionId/agents/:provider/terminal-fallback')

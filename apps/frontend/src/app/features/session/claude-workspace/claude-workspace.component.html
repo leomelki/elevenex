@@ -674,17 +674,7 @@
         (close)="tasksDrawerOpen.set(false)"
       />
 
-      <cw-mcp-drawer
-        [open]="mcpDrawerOpen()"
-        [loading]="mcpLoading()"
-        [snapshot]="mcpSnapshot()"
-        [busyServerName]="mcpBusyServerName()"
-        (close)="closeMcpDrawer()"
-        (refresh)="refreshMcpSnapshot()"
-        (toggle)="toggleMcpServer($event)"
-        (recheck)="recheckMcpServer($event)"
-        (auth)="startMcpAuth($event)"
-      />
+      <cw-mcp-drawer [store]="mcp" [provider]="runtime.currentProvider()" />
     }
   </z-resizable-panel>
   <z-resizable-handle

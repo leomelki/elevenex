@@ -1,3 +1,5 @@
+import type { PiMcpStatus } from './pi-mcp-bridge.js';
+import type { ClaudeMcpSnapshot } from '../claude-runtime/claude-runtime.types.js';
 import { elevenexMcpUrl } from '../mcp/session-tool-context.js';
 import { contextPercentage } from '../agent-runtime/context-usage.js';
 import {
@@ -85,6 +87,7 @@ export class PiRuntimeService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(PiRuntimeService.name);
+  private readonly mcpStatuses = new Map<number, PiMcpStatus[]>();
   private readonly activeRuns = new Map<number, PiActiveRun>();
   private readonly initializingRuns = new Set<number>();
   private readonly runtimeStates = new Map<number, PiRuntimeState>();
@@ -797,6 +800,24 @@ export class PiRuntimeService
     );
   }
 
+  async reloadMcpConfiguration(sessionId: number): Promise<void> {
+    if (this.activeRuns.has(sessionId) || this.initializingRuns.has(sessionId) || this.runtimeStarts.has(sessionId))
+      throw new ConflictException('Finish the current response before reloading tools. Your configuration is saved.');
+    await this.stopRuntime(sessionId);
+    this.mcpStatuses.delete(sessionId);
+  }
+
+  async getMcpSnapshot(sessionId: number): Promise<ClaudeMcpSnapshot> {
+    const servers: ClaudeMcpSnapshot['servers'] = (this.mcpStatuses.get(sessionId) ?? []).map(server => ({
+      entryId: `pi:runtime:${server.name}`, name: server.name, scope: 'runtime', transport: 'unknown',
+      configLocation: 'Pi extension', enabled: server.status !== 'disabled', connectionStatus: server.status,
+      configStatus: 'valid', error: server.error, tools: server.tools,
+      counts: { tools: server.tools.length, resources: 0, prompts: 0, loadedContextTools: server.tools.length },
+      actions: { canToggle: false, canRecheck: false, canAuth: false, canReauth: false, canViewTools: server.tools.length > 0 },
+    }));
+    return { servers, diagnostics: [], summary: { connected: servers.filter(s => s.connectionStatus === 'connected').length, needsAuth: servers.filter(s => s.connectionStatus === 'needs-auth').length, failed: servers.filter(s => s.connectionStatus === 'failed').length, disabled: servers.filter(s => !s.enabled).length, malformed: 0, total: servers.length }, lastUpdatedAt: new Date().toISOString() };
+  }
+
   private async ensureRuntime(sessionId: number): Promise<PiSessionRuntime> {
     const pending = this.runtimeStarts.get(sessionId);
     if (pending) return pending;
@@ -835,6 +856,7 @@ export class PiRuntimeService
         ? join(agentConfigDir, 'prompt.txt')
         : '',
       ELEVENEX_MCP_URL: elevenexMcpUrl(),
+      ELEVENEX_MCP_CWD: session.worktreePath,
     };
     const runtime = new PiSessionRuntime({
       cwd: session.worktreePath,
@@ -1280,6 +1302,13 @@ export class PiRuntimeService
     sessionId: number,
     request: PiRpcExtensionUiRequest,
   ): void {
+    if (request.method === 'setStatus' && request.statusKey === 'elevenex_mcp_servers') {
+      try {
+        const statuses = JSON.parse(String(request.statusText));
+        if (Array.isArray(statuses)) this.mcpStatuses.set(sessionId, statuses);
+      } catch { this.logger.debug(`Invalid Pi MCP status session=${sessionId}`); }
+      return;
+    }
     if (
       request.method === 'setStatus' &&
       request.statusKey === 'elevenex_context_usage'
@@ -1448,6 +1477,7 @@ export class PiRuntimeService
     if (!entry) return;
     this.clearIdleTimer(entry);
     this.runtimes.delete(sessionId);
+    this.mcpStatuses.delete(sessionId);
     const run = this.activeRuns.get(sessionId);
     if (run) {
       run.interruptRequested = true;

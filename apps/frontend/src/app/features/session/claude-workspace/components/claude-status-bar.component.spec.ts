@@ -397,7 +397,7 @@ describe('ClaudeStatusBarComponent', () => {
   });
 
   it.each([
-    ['Connected tools', 'openMcp'],
+    ['MCP servers', 'openMcp'],
     ['Raw terminal', 'openTerminal'],
     ['Export conversation…', 'export'],
   ] as const)('opens %s from settings and dismisses the panel', async (label, event) => {

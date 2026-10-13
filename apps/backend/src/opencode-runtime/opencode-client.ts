@@ -51,8 +51,11 @@ export interface OpenCodeClient {
   question: Operations<OpencodeClient['question'], 'list' | 'reply' | 'reject'>;
   mcp: Operations<
     OpencodeClient['mcp'],
-    'status' | 'connect' | 'disconnect'
-  > & { auth: Operations<OpencodeClient['mcp']['auth'], 'start'> };
+    'connect' | 'disconnect'
+  > & {
+    status(): Promise<{ data?: Record<string, { status: string; error?: string }> }>;
+    auth: Operations<OpencodeClient['mcp']['auth'], 'start'>;
+  };
   event: Pick<OpencodeClient['event'], 'subscribe'>;
   /** Native V2 operations where the newer protocol improves on V1. */
   moveSession?(sessionID: string, directory: string): Promise<void>;

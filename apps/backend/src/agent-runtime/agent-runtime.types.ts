@@ -101,24 +101,8 @@ export interface AgentSubagentHistoryPayload {
   transcriptAvailable: boolean;
 }
 
-export interface AgentMcpSnapshot {
-  servers: unknown[];
-  diagnostics: unknown[];
-  summary: {
-    connected: number;
-    needsAuth: number;
-    failed: number;
-    disabled: number;
-    malformed: number;
-    total: number;
-  };
-  lastUpdatedAt: string;
-}
-
-export interface AgentMcpAuthStartResult {
-  authUrl?: string;
-  message?: string;
-}
+export type AgentMcpSnapshot = import('../mcp/mcp.types.js').McpSnapshot;
+export type AgentMcpAuthStartResult = import('../mcp/mcp.types.js').McpAuthStartResult;
 
 export interface AgentAuthStatus {
   isAuthenticating: boolean;
@@ -222,21 +206,20 @@ export interface AgentRuntimeProviderFeatures {
     agentId: string,
     options?: { before?: string },
   ): Promise<AgentSubagentHistoryPayload>;
+  reloadMcpConfiguration(sessionId: number): Promise<void>;
   getMcpSnapshot(
     sessionId: number,
     forceRefresh?: boolean,
   ): Promise<AgentMcpSnapshot>;
-  toggleMcpServer(
-    sessionId: number,
-    serverName: string,
-  ): Promise<AgentMcpSnapshot>;
   recheckMcpServer(
     sessionId: number,
     serverName: string,
+    scope?: import('../mcp/mcp.types.js').McpScope,
   ): Promise<AgentMcpSnapshot>;
   startMcpAuth(
     sessionId: number,
     serverName: string,
+    scope?: import('../mcp/mcp.types.js').McpScope,
   ): Promise<AgentMcpAuthStartResult>;
   setPermissionMode(
     sessionId: number,

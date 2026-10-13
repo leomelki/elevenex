@@ -1,98 +1,63 @@
 import {
-  ClaudeMcpDiagnosticGroup,
-  ClaudeMcpServerEntry,
-  ClaudeMcpSnapshot,
-} from '@/shared/models/claude-runtime.model';
-import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import {
-  lucideBadgeAlert,
-  lucideCircleCheck,
-  lucideKeyRound,
-  lucideLoaderCircle,
-  lucidePlugZap,
-  lucideRefreshCcw,
-  lucideShieldAlert,
-  lucideTriangleAlert,
-  lucideWrench,
-  lucideX,
-} from '@ng-icons/lucide';
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  ViewContainerRef,
+  effect,
+  inject,
+  input,
+  untracked,
+  type ComponentRef,
+} from '@angular/core';
+import { Overlay } from '@angular/cdk/overlay';
+import { ComponentPortal } from '@angular/cdk/portal';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { McpManagerStore } from '../mcp-manager.store';
+import { McpManagerPanelComponent } from './mcp-manager-panel.component';
 
+/** Portal boundary keeps the manager above embedded editors and attached to Angular. */
 @Component({
   selector: 'cw-mcp-drawer',
-  standalone: true,
-  imports: [CommonModule, NgIcon],
+  template: '',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  viewProviders: [
-    provideIcons({
-      lucideBadgeAlert,
-      lucideCircleCheck,
-      lucideKeyRound,
-      lucideLoaderCircle,
-      lucidePlugZap,
-      lucideRefreshCcw,
-      lucideShieldAlert,
-      lucideTriangleAlert,
-      lucideWrench,
-      lucideX,
-    }),
-  ],
-  templateUrl: './claude-mcp-drawer.component.html',
-  styleUrl: './claude-mcp-drawer.component.scss',
 })
 export class ClaudeMcpDrawerComponent {
-  readonly open = input<boolean>(false);
-  readonly loading = input<boolean>(false);
-  readonly snapshot = input<ClaudeMcpSnapshot | null>(null);
-  readonly busyServerName = input<string | null>(null);
+  readonly store = input.required<McpManagerStore>();
+  readonly provider = input('claude');
 
-  readonly close = output<void>();
-  readonly refresh = output<void>();
-  readonly toggle = output<ClaudeMcpServerEntry>();
-  readonly recheck = output<ClaudeMcpServerEntry>();
-  readonly auth = output<ClaudeMcpServerEntry>();
-
-  readonly groupedServers = computed(() => {
-    const servers = this.snapshot()?.servers ?? [];
-    return [
-      { scope: 'project', label: 'Project', servers: servers.filter((s) => s.scope === 'project') },
-      { scope: 'local', label: 'Local', servers: servers.filter((s) => s.scope === 'local') },
-      { scope: 'user', label: 'User', servers: servers.filter((s) => s.scope === 'user') },
-      {
-        scope: 'enterprise',
-        label: 'Enterprise',
-        servers: servers.filter((s) => s.scope === 'enterprise'),
-      },
-      {
-        scope: 'runtime',
-        label: 'Runtime / Other',
-        servers: servers.filter((s) => s.scope === 'runtime'),
-      },
-    ].filter((g) => g.servers.length > 0);
-  });
-
-  readonly expandedTools = signal<Record<string, boolean>>({});
-
-  statusLabel(server: ClaudeMcpServerEntry): string {
-    return server.connectionStatus.replace('-', ' ');
-  }
-
-  scopeLabel(scope: ClaudeMcpDiagnosticGroup['scope']): string {
-    const labels: Record<string, string> = {
-      project: 'Project',
-      local: 'Local',
-      user: 'User',
-      enterprise: 'Enterprise',
-    };
-    return labels[scope] ?? 'Runtime / Other';
-  }
-
-  diagnosticKey(message: { serverName?: string; path?: string; message: string }): string {
-    return `${message.serverName ?? 'file'}:${message.path ?? ''}:${message.message}`;
-  }
-
-  diagnosticMessage(message: { serverName?: string; path?: string; message: string }): string {
-    return [message.serverName, message.path, message.message].filter(Boolean).join(' · ');
+  constructor() {
+    const overlayService = inject(Overlay);
+    const viewContainer = inject(ViewContainerRef);
+    const destroyRef = inject(DestroyRef);
+    const overlay = overlayService.create({
+      hasBackdrop: true,
+      backdropClass: 'bg-[color-mix(in_oklab,var(--surface-shade)_30%,transparent)]',
+      positionStrategy: overlayService.position().global().right('0').top('0'),
+      scrollStrategy: overlayService.scrollStrategies.block(),
+      width: '920px',
+      maxWidth: '100vw',
+      height: '100dvh',
+    });
+    let panel: ComponentRef<McpManagerPanelComponent> | null = null;
+    overlay
+      .backdropClick()
+      .pipe(takeUntilDestroyed())
+      .subscribe(() => this.store().close());
+    effect(() => {
+      const store = this.store();
+      const open = store.open();
+      const provider = this.provider();
+      untracked(() => {
+        if (open) {
+          panel ??= overlay.attach(new ComponentPortal(McpManagerPanelComponent, viewContainer));
+          panel.setInput('store', store);
+          panel.setInput('provider', provider);
+        } else {
+          overlay.detach();
+          panel = null;
+        }
+      });
+    });
+    destroyRef.onDestroy(() => overlay.dispose());
   }
 }

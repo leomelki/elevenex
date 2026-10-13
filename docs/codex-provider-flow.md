@@ -195,9 +195,15 @@ Codex MCP config is read from:
 
 Servers are loaded from `[mcp_servers.<name>]`. Elevenex supports user and
 project scopes, `stdio` servers with `command`, and HTTP servers with `url`.
-Toggling a server writes a `disabled` flag back to the TOML config. Codex MCP
-browser auth is not implemented because Codex handles server auth through its
-CLI/config and environment variables rather than Claude's elicitation flow.
+MCP management uses the shared configuration layer: add, edit, remove and toggle
+operations target a server's exact scope and file. Disabling writes `enabled = false`.
+Edits preserve unrelated TOML and detect conflicting external changes.
+
+The manager renders configuration immediately and refreshes live inventory in the
+background through `mcpServerStatus/list`. Browser authentication uses
+`mcpServer/oauth/login`; Reload tools calls `config/mcpServer/reload`. The shared
+manager also supports Claude, OpenCode (v1/v2 JSONC), and Pi's MCP client extension.
+Configuration changes remain visibly pending until the session reloads its tools.
 
 ## Session History
 

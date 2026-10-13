@@ -1,3 +1,5 @@
+import { McpManagementService } from '../mcp/config/mcp-management.service.js';
+import { McpConfigFileService } from '../mcp/config/mcp-config-file.service.js';
 import { OpenCodeRuntimeModule } from '../opencode-runtime/opencode-runtime.module.js';
 import { OpenCodeAgentRuntimeProvider } from '../opencode-runtime/opencode-agent-runtime.provider.js';
 import { Module, forwardRef } from '@nestjs/common';
@@ -47,6 +49,8 @@ import {
       ],
     },
     AgentRuntimeRegistryService,
+    McpManagementService,
+    McpConfigFileService,
     ConversationExportService,
     AgentRuntimeCleanupService,
     {

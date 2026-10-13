@@ -718,6 +718,29 @@ export class ClaudeRuntimeService
     return transcriptHistory;
   }
 
+  getMcpServerStatuses(sessionId: number) {
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (!runtime) return Promise.resolve([]);
+    return runtime.mcpServerStatus().then(statuses => this.sessionRuntimes.get(sessionId) === runtime ? statuses : []);
+  }
+
+  canReconnectMcpServers(sessionId: number): boolean {
+    return !this.activeRuns.has(sessionId) && !this.initializingRuns.has(sessionId) && !this.isBackgroundWorkLive(sessionId);
+  }
+
+  async reconnectMcpServer(sessionId: number, serverName: string): Promise<void> {
+    if (!this.canReconnectMcpServers(sessionId)) throw new ConflictException('Finish the current response and background tasks before reconnecting MCP tools.');
+    await this.prewarmSession(sessionId);
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (!runtime) throw new BadRequestException('Claude is not running. Connect your Claude account before checking MCP servers.');
+    await runtime.reconnectMcpServer(serverName);
+  }
+
+  getMcpRuntimeState(sessionId: number) {
+    const state = this.runtimeStates.get(sessionId);
+    return { sessionMetadata: state?.sessionMetadata ?? null, contextUsage: state?.contextUsage ?? null };
+  }
+
   async getRuntimeState(sessionId: number): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
@@ -2318,6 +2341,25 @@ export class ClaudeRuntimeService
         }
       });
     }
+  }
+
+  async reloadMcpConfiguration(sessionId: number): Promise<void> {
+    if (this.activeRuns.has(sessionId) || this.initializingRuns.has(sessionId) || this.sessionRuntimeCreateInFlight.has(sessionId) || this.isBackgroundWorkLive(sessionId))
+      throw new ConflictException('Finish the current response and background tasks before reloading tools. Your configuration is saved.');
+    const runtime = this.sessionRuntimes.get(sessionId);
+    if (runtime) {
+      this.sessionRuntimes.delete(sessionId);
+      this.sessionRuntimeCreateInFlight.delete(sessionId);
+      this.lastPrewarmAt.delete(sessionId);
+      await runtime.close();
+    }
+    const state = this.runtimeStates.get(sessionId);
+    if (state?.sessionMetadata) {
+      state.sessionMetadata.mcpServers = [];
+      state.sessionMetadata.tools = state.sessionMetadata.tools.filter(name => !name.startsWith('mcp__'));
+    }
+    if (state?.contextUsage) state.contextUsage.mcpTools = [];
+    // The next prompt starts a runtime with the newly saved native configuration.
   }
 
   private restartIdleRuntimeForOptionChange(sessionId: number): void {

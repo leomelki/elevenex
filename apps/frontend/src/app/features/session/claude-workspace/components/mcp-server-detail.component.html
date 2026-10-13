@@ -1,0 +1,272 @@
+@let server = entry();
+<article class="min-w-0 space-y-6" [attr.data-mcp-detail]="server.name">
+  <div class="flex items-start gap-3">
+    <div
+      class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/40 text-muted-foreground"
+    >
+      <ng-icon [name]="server.transport === 'stdio' ? 'lucideTerminal' : 'lucideGlobe'" size="21" />
+    </div>
+    <div class="min-w-0 flex-1">
+      <h3 class="break-words text-lg font-semibold tracking-tight">{{ server.name }}</h3>
+      <p class="mt-1 text-xs text-muted-foreground">
+        {{ scopeLabels[server.scope] }} ·
+        {{
+          server.transport === 'stdio'
+            ? 'Local command'
+            : server.transport === 'http'
+              ? 'Remote HTTP'
+              : server.transport === 'sse'
+                ? 'Remote SSE'
+                : 'Agent provided'
+        }}
+      </p>
+    </div>
+    @if (server.actions.canEdit) {
+      <button
+        z-button
+        zType="outline"
+        type="button"
+        [disabled]="!!busyId()"
+        (click)="edit.emit(server)"
+      >
+        <ng-icon name="lucidePencil" size="14" />Edit
+      </button>
+    }
+  </div>
+
+  <section class="rounded-xl border border-border p-4" aria-label="Connection status">
+    <div class="flex items-center justify-between gap-3">
+      <cw-mcp-server-status [entry]="server" [provider]="provider()" />
+      @if (server.actions.canToggle) {
+        <button
+          z-button
+          [zType]="server.enabled ? 'ghost' : 'default'"
+          zSize="sm"
+          type="button"
+          [disabled]="!!busyId()"
+          [zLoading]="busyId() === server.entryId && operation() === 'toggle'"
+          [attr.aria-label]="(server.enabled ? 'Disable ' : 'Enable ') + server.name"
+          (click)="toggle.emit(server)"
+        >
+          {{ server.enabled ? 'Disable' : 'Enable server' }}
+        </button>
+      }
+    </div>
+    <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
+      @if (server.shadowed) {
+        Another configuration with this name takes precedence. This entry is not used.
+      } @else if (!server.enabled) {
+        This server is saved. Enable it to make its tools available to {{ providerLabel() }}.
+      } @else if (server.connectionStatus === 'connected') {
+        {{ providerLabel() }} can use this server’s tools in this session.
+      } @else if (server.connectionStatus === 'needs-auth') {
+        {{
+          provider() === 'pi'
+            ? 'Add the service’s credentials in request headers to connect.'
+            : 'Sign in to let your agent access this service.'
+        }}
+      } @else if (server.connectionStatus === 'failed') {
+        The agent could not connect. Check the server configuration and try again.
+      } @else {
+        Status is available after {{ providerLabel() }} starts and connects to this server.
+      }
+    </p>
+    @if (server.error && server.enabled && !server.shadowed) {
+      <p
+        class="mt-3 whitespace-pre-wrap break-words rounded-lg bg-destructive/5 p-3 text-xs leading-relaxed text-destructive"
+      >
+        {{ server.error }}
+      </p>
+    }
+    @if (
+      !server.shadowed &&
+      server.enabled &&
+      (server.actions.canAuth ||
+        server.actions.canReauth ||
+        server.actions.canRecheck ||
+        (server.connectionStatus === 'needs-auth' && server.actions.canEdit))
+    ) {
+      <div class="mt-4 flex flex-wrap gap-2">
+        @if (server.actions.canAuth || server.actions.canReauth) {
+          <button
+            z-button
+            [zType]="server.actions.canAuth ? 'default' : 'outline'"
+            zSize="sm"
+            type="button"
+            [disabled]="!!busyId()"
+            [zLoading]="busyId() === server.entryId && operation() === 'auth'"
+            (click)="authenticate.emit(server)"
+          >
+            <ng-icon name="lucideKeyRound" size="14" />{{
+              server.actions.canAuth ? 'Sign in' : 'Reconnect account'
+            }}
+          </button>
+        } @else if (server.connectionStatus === 'needs-auth' && server.actions.canEdit) {
+          <button
+            z-button
+            zSize="sm"
+            type="button"
+            [disabled]="!!busyId()"
+            (click)="edit.emit(server)"
+          >
+            Add credentials
+          </button>
+        }
+        @if (server.actions.canRecheck) {
+          <button
+            z-button
+            zType="outline"
+            zSize="sm"
+            type="button"
+            [disabled]="!!busyId()"
+            [zLoading]="busyId() === server.entryId && operation() === 'check'"
+            (click)="check.emit(server)"
+          >
+            <ng-icon name="lucideRefreshCw" size="13" />{{
+              server.connectionStatus === 'failed' ? 'Retry connection' : 'Check connection'
+            }}
+          </button>
+        }
+      </div>
+    }
+  </section>
+
+  @if (server.endpoint) {
+    <section class="space-y-2">
+      <h4 class="text-xs font-medium text-muted-foreground">
+        {{ server.transport === 'stdio' ? 'Command' : 'Endpoint' }}
+      </h4>
+      <p
+        class="break-all rounded-lg border border-border bg-muted/30 px-3 py-2.5 font-mono text-xs leading-relaxed"
+      >
+        {{ server.endpoint }}
+      </p>
+    </section>
+  }
+
+  <section aria-label="Server tools">
+    <div class="flex items-center justify-between gap-3">
+      <h4 class="text-sm font-medium">Tools</h4>
+      @if (server.tools?.length) {
+        <span class="text-xs text-muted-foreground">{{ server.tools!.length }} available</span>
+      }
+    </div>
+    @if (server.tools?.length) {
+      @if (server.tools!.length > 10) {
+        <input
+          z-input
+          class="mt-3"
+          aria-label="Search server tools"
+          placeholder="Find a tool…"
+          [value]="toolQuery()"
+          (input)="toolQuery.set($any($event.target).value)"
+        />
+      }
+      <div class="mt-3 divide-y divide-border rounded-lg border border-border">
+        @for (tool of visibleTools(); track tool.name) {
+          <div class="min-w-0 px-3 py-2.5">
+            <p class="break-words text-xs">{{ tool.displayName || tool.name }}</p>
+            @if (tool.displayName && tool.displayName !== tool.name) {
+              <p class="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">
+                {{ tool.name }}
+              </p>
+            }
+          </div>
+        } @empty {
+          <p class="px-3 py-5 text-center text-xs text-muted-foreground">No matching tools.</p>
+        }
+      </div>
+      @if (!allTools() && filteredTools().length > 50) {
+        <button
+          z-button
+          zType="ghost"
+          zSize="sm"
+          class="mt-2 w-full"
+          type="button"
+          (click)="allTools.set(true)"
+        >
+          Show all {{ filteredTools().length }} tools
+        </button>
+      }
+    } @else {
+      <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
+        {{
+          !server.enabled || server.shadowed
+            ? 'Tools appear here when this server is enabled and connected.'
+            : server.connectionStatus === 'connected'
+              ? 'The agent has not reported any tools for this server.'
+              : 'Connect this server to see the tools it provides.'
+        }}
+      </p>
+    }
+  </section>
+
+  <details class="border-t border-border pt-4">
+    <summary class="cursor-pointer text-xs text-muted-foreground focus-visible:outline-ring">
+      Configuration details
+    </summary>
+    <div class="mt-3 space-y-2 text-xs leading-relaxed text-muted-foreground">
+      <p>
+        {{
+          server.actions.canEdit
+            ? 'Saved in the following file.'
+            : 'Managed by ' + providerLabel() + '. Configure it in the agent or its plugin.'
+        }}
+      </p>
+      <p class="break-all font-mono text-[11px]">{{ server.configLocation }}</p>
+      @if (server.serverInfo) {
+        <p>{{ server.serverInfo!.name }} · {{ server.serverInfo!.version }}</p>
+      }
+    </div>
+  </details>
+
+  @if (server.actions.canRemove) {
+    <div class="border-t border-border pt-4">
+      @if (removing()) {
+        <div class="rounded-lg border border-destructive/25 bg-destructive/5 p-3" role="alert">
+          <p class="text-sm font-medium">Remove {{ server.name }}?</p>
+          <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Its saved configuration will be deleted from
+            {{ scopeLabels[server.scope].toLowerCase() }}.
+          </p>
+          <div class="mt-3 flex gap-2">
+            <button
+              z-button
+              zType="destructive"
+              zSize="sm"
+              type="button"
+              [disabled]="!!busyId()"
+              [zLoading]="busyId() === server.entryId && operation() === 'remove'"
+              (click)="remove.emit(server)"
+            >
+              Remove server
+            </button>
+            <button
+              z-button
+              zType="ghost"
+              zSize="sm"
+              type="button"
+              [disabled]="!!busyId()"
+              (click)="removing.set(false)"
+            >
+              Keep server
+            </button>
+          </div>
+        </div>
+      } @else {
+        <button
+          z-button
+          zType="ghost"
+          zSize="sm"
+          type="button"
+          class="text-muted-foreground hover:text-destructive"
+          [attr.aria-label]="'Remove ' + server.name"
+          [disabled]="!!busyId()"
+          (click)="removing.set(true)"
+        >
+          <ng-icon name="lucideTrash2" size="14" />Remove server
+        </button>
+      }
+    </div>
+  }
+</article>

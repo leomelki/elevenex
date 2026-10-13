@@ -1,3 +1,4 @@
+import type { McpServerDefinition } from '../models/agent-runtime.model';
 import { inject, Injectable } from '@angular/core';
 import type { Observable } from 'rxjs';
 import { AgentRuntimeApiService } from './agent-runtime-api.service';
@@ -64,6 +65,22 @@ export class ClaudeRuntimeApiService {
       sessionId,
       this.provider(sessionId),
     ) as Observable<ClaudeAutocompleteItem[]>;
+  }
+
+  getMcpServerDefinition(sessionId: number, entryId: string) {
+    return this.agentRuntimeApi.getMcpServerDefinition(sessionId, entryId, this.provider(sessionId));
+  }
+
+  saveMcpServer(sessionId: number, definition: McpServerDefinition, entryId?: string) {
+    return this.agentRuntimeApi.saveMcpServer(sessionId, definition, entryId, this.provider(sessionId));
+  }
+
+  removeMcpServer(sessionId: number, entryId: string, revision: string) {
+    return this.agentRuntimeApi.removeMcpServer(sessionId, entryId, revision, this.provider(sessionId));
+  }
+
+  reloadMcpConfiguration(sessionId: number) {
+    return this.agentRuntimeApi.reloadMcpConfiguration(sessionId, this.provider(sessionId));
   }
 
   getMcpSnapshot(sessionId: number, forceRefresh = false) {

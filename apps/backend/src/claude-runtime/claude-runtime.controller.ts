@@ -1,3 +1,4 @@
+import { McpManagementService } from '../mcp/config/mcp-management.service.js';
 import {
   BadRequestException,
   Body,
@@ -18,6 +19,7 @@ import { SessionsService } from '../sessions/sessions.service.js';
 export class ClaudeRuntimeController {
   constructor(
     private readonly registry: AgentRuntimeRegistryService,
+    private readonly mcp: McpManagementService,
     @Inject(forwardRef(() => SessionsService))
     private readonly sessionsService: SessionsService,
   ) {}
@@ -61,12 +63,7 @@ export class ClaudeRuntimeController {
     @Param('sessionId', ParseIntPipe) sessionId: number,
     @Query('forceRefresh') forceRefresh?: string,
   ) {
-    return this.registry
-      .getProviderFeature('claude', 'getMcpSnapshot')
-      .getMcpSnapshot(
-        sessionId,
-        forceRefresh === '1' || forceRefresh === 'true',
-      );
+    return this.mcp.getSnapshot(sessionId, 'claude', forceRefresh === 'true' || forceRefresh === '1');
   }
 
   @Post('model')
@@ -95,9 +92,7 @@ export class ClaudeRuntimeController {
     @Param('serverName') serverName: string,
   ) {
     await this.assertSessionMutable(sessionId);
-    return this.registry
-      .getProviderFeature('claude', 'toggleMcpServer')
-      .toggleMcpServer(sessionId, serverName);
+    return this.mcp.toggle(sessionId, 'claude', serverName);
   }
 
   @Post('mcp/:serverName/recheck')
@@ -106,9 +101,7 @@ export class ClaudeRuntimeController {
     @Param('serverName') serverName: string,
   ) {
     await this.assertSessionMutable(sessionId);
-    return this.registry
-      .getProviderFeature('claude', 'recheckMcpServer')
-      .recheckMcpServer(sessionId, serverName);
+    return this.mcp.recheck(sessionId, 'claude', serverName);
   }
 
   @Post('mcp/:serverName/auth/start')
@@ -117,9 +110,7 @@ export class ClaudeRuntimeController {
     @Param('serverName') serverName: string,
   ) {
     await this.assertSessionMutable(sessionId);
-    return this.registry
-      .getProviderFeature('claude', 'startMcpAuth')
-      .startMcpAuth(sessionId, serverName);
+    return this.mcp.startAuth(sessionId, 'claude', serverName);
   }
 
   @Post('terminal-fallback')

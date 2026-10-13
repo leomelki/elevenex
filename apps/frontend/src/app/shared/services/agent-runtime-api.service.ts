@@ -1,3 +1,4 @@
+import type { McpServerDefinition } from '../models/agent-runtime.model';
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import {
@@ -128,6 +129,23 @@ export class AgentRuntimeApiService {
     return this.http.get<AgentAutocompleteItem[]>(
       `${this.basePath(sessionId, provider)}/autocomplete`,
     );
+  }
+
+  getMcpServerDefinition(sessionId: number, entryId: string, provider = this.currentProvider()) {
+    return this.http.get<McpServerDefinition>(`${this.basePath(sessionId, provider)}/mcp/servers/${encodeURIComponent(entryId)}`);
+  }
+
+  saveMcpServer(sessionId: number, definition: McpServerDefinition, entryId?: string, provider = this.currentProvider()) {
+    const suffix = entryId ? `/${encodeURIComponent(entryId)}` : '';
+    return this.http.post<AgentMcpSnapshot>(`${this.basePath(sessionId, provider)}/mcp/servers${suffix}`, definition);
+  }
+
+  removeMcpServer(sessionId: number, entryId: string, revision: string, provider = this.currentProvider()) {
+    return this.http.post<AgentMcpSnapshot>(`${this.basePath(sessionId, provider)}/mcp/servers/${encodeURIComponent(entryId)}/remove`, { revision });
+  }
+
+  reloadMcpConfiguration(sessionId: number, provider = this.currentProvider()) {
+    return this.http.post<AgentMcpSnapshot>(`${this.basePath(sessionId, provider)}/mcp/reload`, {});
   }
 
   getMcpSnapshot(sessionId: number, forceRefresh = false, provider = this.currentProvider()) {

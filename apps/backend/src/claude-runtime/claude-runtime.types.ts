@@ -1,3 +1,4 @@
+import type { McpScope, McpTransport, McpConnectionStatus, McpConfigStatus, McpServerEntry, McpDiagnosticMessage, McpDiagnosticGroup, McpSnapshot, McpAuthStartResult } from '../mcp/mcp.types.js';
 export type ClaudeRunPhase = 'idle' | 'running' | 'waiting' | 'error';
 export type ClaudeSessionExecutionState =
   | 'idle'
@@ -285,97 +286,15 @@ export interface ClaudeRuntimeSessionMetadata {
   }[];
 }
 
-export type ClaudeMcpScope =
-  | 'project'
-  | 'local'
-  | 'user'
-  | 'enterprise'
-  | 'runtime';
-
-export type ClaudeMcpTransport =
-  | 'stdio'
-  | 'sse'
-  | 'http'
-  | 'ws'
-  | 'sdk'
-  | 'claudeai-proxy'
-  | 'unknown';
-
-export type ClaudeMcpConnectionStatus =
-  | 'connected'
-  | 'failed'
-  | 'needs-auth'
-  | 'disabled'
-  | 'unknown';
-
-export type ClaudeMcpConfigStatus = 'valid' | 'warning' | 'error';
-
-export interface ClaudeMcpServerEntry {
-  entryId: string;
-  name: string;
-  scope: ClaudeMcpScope;
-  transport: ClaudeMcpTransport;
-  configLocation: string;
-  enabled: boolean;
-  connectionStatus: ClaudeMcpConnectionStatus;
-  configStatus: ClaudeMcpConfigStatus;
-  error?: string;
-  serverInfo?: {
-    name: string;
-    version: string;
-  };
-  counts?: {
-    tools: number;
-    resources: number;
-    prompts: number;
-    loadedContextTools: number;
-  };
-  tools?: {
-    name: string;
-    displayName: string;
-  }[];
-  actions: {
-    canToggle: boolean;
-    canRecheck: boolean;
-    canAuth: boolean;
-    canReauth: boolean;
-    canViewTools: boolean;
-  };
-}
-
-export interface ClaudeMcpDiagnosticMessage {
-  serverName?: string;
-  path?: string;
-  message: string;
-}
-
-export interface ClaudeMcpDiagnosticGroup {
-  scope: ClaudeMcpScope;
-  configLocation: string;
-  errors: ClaudeMcpDiagnosticMessage[];
-  warnings: ClaudeMcpDiagnosticMessage[];
-}
-
-export interface ClaudeMcpSnapshot {
-  servers: ClaudeMcpServerEntry[];
-  diagnostics: ClaudeMcpDiagnosticGroup[];
-  summary: {
-    connected: number;
-    needsAuth: number;
-    failed: number;
-    disabled: number;
-    malformed: number;
-    total: number;
-  };
-  lastUpdatedAt: string;
-}
-
-export interface ClaudeMcpAuthStartResult {
-  serverName: string;
-  url: string;
-  mode: 'external';
-  message: string;
-}
+export type ClaudeMcpScope = McpScope;
+export type ClaudeMcpTransport = McpTransport;
+export type ClaudeMcpConnectionStatus = McpConnectionStatus;
+export type ClaudeMcpConfigStatus = McpConfigStatus;
+export type ClaudeMcpServerEntry = McpServerEntry;
+export type ClaudeMcpDiagnosticMessage = McpDiagnosticMessage;
+export type ClaudeMcpDiagnosticGroup = McpDiagnosticGroup;
+export type ClaudeMcpSnapshot = McpSnapshot;
+export type ClaudeMcpAuthStartResult = McpAuthStartResult;
 
 export interface ClaudeRuntimeStatus {
   status: 'compacting' | 'requesting' | null;

@@ -99,12 +99,12 @@ export class ClaudeAgentRuntimeProvider
     return this.runtimeService.getAutocompleteItems(sessionId);
   }
 
-  getMcpSnapshot(sessionId: number, forceRefresh = false) {
-    return this.mcpService.getSnapshot(sessionId, forceRefresh);
+  async reloadMcpConfiguration(sessionId: number): Promise<void> {
+    await this.runtimeService.reloadMcpConfiguration(sessionId);
   }
 
-  toggleMcpServer(sessionId: number, serverName: string) {
-    return this.mcpService.toggleServer(sessionId, serverName);
+  getMcpSnapshot(sessionId: number, forceRefresh = false) {
+    return this.mcpService.getSnapshot(sessionId, forceRefresh);
   }
 
   recheckMcpServer(sessionId: number, serverName: string) {

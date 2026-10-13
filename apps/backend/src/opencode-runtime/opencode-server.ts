@@ -1,4 +1,4 @@
-import { openCodeMajorVersion } from './opencode-version.js';
+import { openCodeMajorVersion, resolveOpenCodeBinary } from './opencode-version.js';
 import { mergeOpenCodeConfig } from './opencode-config.js';
 import { createOpenCodeV2Client } from './opencode-v2-client.js';
 import type { OpenCodeClient } from './opencode-client.js';
@@ -7,14 +7,12 @@ import { EventEmitter } from 'node:events';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
-import { access, realpath } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Config } from '@opencode-ai/sdk/v2/client';
 import {
   buildAugmentedEnvAsync,
   buildSpawnCommand,
-  findBinary,
 } from '../config/system-paths.js';
 
 /** Owns one private server. Configuration overrides never write into the user's repo. */
@@ -46,21 +44,7 @@ export class OpenCodeServer extends EventEmitter {
     const directory = await realpath(this.options.cwd);
     const env = await buildAugmentedEnvAsync(process.env, directory);
     if (this.stopped) throw new Error('OpenCode server is closed.');
-    let binary = process.env.OPENCODE_BINARY?.trim() || findBinary('opencode');
-    if (!binary) {
-      const candidate = join(
-        homedir(),
-        '.opencode',
-        'bin',
-        process.platform === 'win32' ? 'opencode.exe' : 'opencode',
-      );
-      try {
-        await access(candidate);
-        binary = candidate;
-      } catch {
-        binary = 'opencode';
-      }
-    }
+    const binary = await resolveOpenCodeBinary();
     const major = await openCodeMajorVersion(binary, directory, env);
     if (this.stopped) throw new Error('OpenCode server is closed.');
     let overrides: object | undefined = this.options.config;
