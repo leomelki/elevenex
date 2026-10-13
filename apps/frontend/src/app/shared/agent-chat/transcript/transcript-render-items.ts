@@ -16,6 +16,7 @@ import type {
   AgentSubagentState,
   AgentTranscriptItem,
 } from '@/shared/models/agent-runtime.model';
+import { isUserPrompt } from '@/shared/utils/user-message-display';
 
 export type TranscriptRenderItem =
   | { kind: 'unit'; id: string; unit: PairedTranscriptUnit }
@@ -136,6 +137,8 @@ export function buildTranscriptRenderItems(
     const intermediateUnits = turnUnits.slice(1, firstFinalAssistantIndex);
     const siblingThinkingUnits: PairedTranscriptUnit[] = [];
     const collapsibleUnits: PairedTranscriptUnit[] = [];
+    let stepCount = 0;
+    let hasToolCalls = false;
     for (const intermediate of intermediateUnits) {
       if (
         intermediate.kind === 'thinking' &&
@@ -146,10 +149,13 @@ export function buildTranscriptRenderItems(
         continue;
       }
       collapsibleUnits.push(intermediate);
+      // Human prompts delimit turns; user items inside a turn are injected
+      // context or synthetic events, rather than work steps.
+      if (intermediate.kind !== 'message' || intermediate.item.kind !== 'user') stepCount += 1;
+      if (intermediate.kind === 'tool') hasToolCalls = true;
     }
     const finalUnits = turnUnits.slice(firstFinalAssistantIndex);
     const isCurrentTurn = nextUserIndex === units.length;
-    const hasToolCalls = collapsibleUnits.some((u) => u.kind === 'tool');
     const canCollapse = hasToolCalls && (!isCurrentTurn || settled);
 
     out.push({ kind: 'unit', id: unit.id, unit });
@@ -171,12 +177,12 @@ export function buildTranscriptRenderItems(
         changeDetails: changeCache
           ? changeCache.compute(unit.id, changeUnits)
           : computeTurnChangeDetails(changeUnits),
-        stepCount: collapsibleUnits.length,
+        stepCount,
         agentSummary: buildTurnAgentSummary(
           unit.id,
           getItemStartTimestamp(unit.item),
           getItemCompletionTimestamp(lastAssistantUnit.item),
-          collapsibleUnits.length,
+          stepCount,
           options.subagents,
           options.hookEvents,
           new Set(
@@ -272,7 +278,7 @@ function collectTurnChangeUnits(
 function isUserMessageUnit(
   unit: PairedTranscriptUnit,
 ): unit is Extract<PairedTranscriptUnit, { kind: 'message' }> {
-  return unit.kind === 'message' && unit.item.kind === 'user';
+  return unit.kind === 'message' && isUserPrompt(unit.item);
 }
 
 function isAssistantMessageUnit(

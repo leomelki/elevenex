@@ -69,6 +69,52 @@ describe('ClaudeTranscriptComponent final outputs', () => {
   afterEach(() => document.documentElement.classList.remove('dark'));
 
   it.each(['light', 'dark'])(
+    'keeps injected context in one work turn and out of prompt navigation in %s mode',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      const fixture = await render([
+        { id: 'user', kind: 'user', content: 'Check the changes', timestamp },
+        { ...call, interaction: undefined },
+        {
+          id: 'skill',
+          kind: 'user',
+          timestamp,
+          content:
+            'Base directory for this skill: /repo/.claude/skills/write-tests\n\n# Instructions',
+        },
+        {
+          id: 'image',
+          kind: 'user',
+          timestamp,
+          content:
+            '[Image: original 1100x3000, displayed at 733x2000. Multiply coordinates by 1.50 to map to original image.]',
+        },
+        {
+          id: 'task',
+          kind: 'user',
+          timestamp,
+          content:
+            '<task-notification><task-id>task-1</task-id><summary>Background check done</summary></task-notification>',
+        },
+        { ...call, id: 'next-tool', toolUseId: 'next-tool', interaction: undefined },
+        { id: 'answer', kind: 'assistant', content: 'All checks passed.', timestamp },
+      ]);
+      const element = fixture.nativeElement as HTMLElement;
+      expect(element.querySelectorAll('cw-turn-summary')).toHaveLength(1);
+      expect(element.textContent).toContain('All checks passed.');
+      fixture.componentRef.setInput('turnExpansion', { turns: { user: true }, changes: {} });
+      fixture.detectChanges();
+      expect(element.querySelectorAll('[data-user-prompt-id]')).toHaveLength(1);
+      expect(element.querySelectorAll('.cw-msg--user')).toHaveLength(1);
+      expect(element.textContent).toContain('Loaded skill: write-tests');
+      expect(element.textContent).toContain('Loaded image');
+      expect(element.textContent).toContain('Background check done');
+      expect(element.textContent).not.toContain('Multiply coordinates');
+      expect(element.textContent).not.toContain('Base directory for this skill');
+    },
+  );
+
+  it.each(['light', 'dark'])(
     'renders consecutive final replies outside collapsed work in %s mode',
     async (theme) => {
       document.documentElement.classList.toggle('dark', theme === 'dark');

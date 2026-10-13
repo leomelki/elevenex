@@ -32,7 +32,86 @@ const mention = (overrides: Partial<DiffSelectionMention> = {}): DiffSelectionMe
 describe('ClaudeMessageComponent', () => {
   afterEach(() => {
     document.getSelection()?.removeAllRanges();
+    document.documentElement.classList.remove('dark');
   });
+
+  it.each(['light', 'dark'])(
+    'preserves quoted event text and hides empty bubbles in %s mode',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      await TestBed.configureTestingModule({
+        imports: [ClaudeMessageComponent],
+      }).compileComponents();
+      const fixture = TestBed.createComponent(ClaudeMessageComponent);
+      const content =
+        'Review this XML:\n```xml\n<skill><name>test</name><path>/repo/test</path>Important instructions</skill>\n```';
+      fixture.componentRef.setInput('item', { id: 'quoted', kind: 'user', content, timestamp: '' });
+      fixture.detectChanges();
+      const element = fixture.nativeElement as HTMLElement;
+      expect(element.querySelector('.cw-msg__user-text')?.textContent).toBe(content);
+      expect(element.querySelector('[data-message-load]')).toBeNull();
+
+      fixture.componentRef.setInput('item', {
+        id: 'empty',
+        kind: 'user',
+        content: ' \n\t',
+        timestamp: '',
+      });
+      fixture.detectChanges();
+      expect(element.querySelector('.cw-msg--user')).toBeNull();
+    },
+  );
+
+  it.each(['light', 'dark'])(
+    'renders skill and image loads as events in %s mode',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      await TestBed.configureTestingModule({
+        imports: [ClaudeMessageComponent],
+      }).compileComponents();
+      const fixture = TestBed.createComponent(ClaudeMessageComponent);
+      fixture.componentRef.setInput('showEdit', true);
+      fixture.componentRef.setInput('item', {
+        id: 'skill',
+        kind: 'user',
+        timestamp: '2026-04-24T08:00:00.000Z',
+        content:
+          'Base directory for this skill: /repo/.claude/skills/write-tests\n\n# Long guidelines\nSkill instructions',
+      });
+      fixture.detectChanges();
+      const element = fixture.nativeElement as HTMLElement;
+      expect(element.querySelector('[data-message-load="skill"]')?.textContent).toContain(
+        'Loaded skill: write-tests',
+      );
+      expect(element.textContent).not.toContain('Skill instructions');
+      expect(element.querySelector('.cw-msg--user')).toBeNull();
+      expect(element.querySelector('[aria-label="Edit message"]')).toBeNull();
+
+      fixture.componentRef.setInput('item', {
+        id: 'image',
+        kind: 'user',
+        timestamp: '2026-04-24T08:00:00.000Z',
+        content:
+          '[Image: original 1100x3000, displayed at 733x2000. Multiply coordinates by 1.50 to map to original image.]',
+      });
+      fixture.detectChanges();
+      expect(element.querySelector('[data-message-load="image"]')?.textContent).toContain(
+        'Loaded image',
+      );
+      expect(element.textContent).not.toContain('Multiply coordinates');
+      expect(element.querySelector('.cw-msg--user')).toBeNull();
+
+      fixture.componentRef.setInput('item', {
+        id: 'mixed',
+        kind: 'user',
+        timestamp: '2026-04-24T08:00:00.000Z',
+        content: 'Check this\n[Image: original 1100x3000, displayed at 733x2000.]',
+      });
+      fixture.detectChanges();
+      expect(element.querySelector('.cw-msg__user-text')?.textContent).toBe('Check this');
+      expect(element.querySelector('[data-message-load="image"]')).not.toBeNull();
+    },
+  );
 
   it('renders configured copy, edit, and fork actions', async () => {
     await TestBed.configureTestingModule({

@@ -1,7 +1,7 @@
 import { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
 import { parseDiffSelectionMentions } from '@/shared/utils/diff-selection-mention';
 import { parseSessionMentions } from '@/shared/utils/session-mention';
-import { parseTaskNotifications } from '@/shared/utils/task-notification';
+import { getUserMessageDisplay, isUserPrompt } from '@/shared/utils/user-message-display';
 import {
   Directive,
   ElementRef,
@@ -47,7 +47,7 @@ export class TranscriptViewportDirective {
     const item = this.contextualPrompt();
     if (!item) return '';
 
-    const taskDisplay = parseTaskNotifications(item.content);
+    const taskDisplay = getUserMessageDisplay(item);
     const sessionDisplay = parseSessionMentions(taskDisplay.text);
     const messageDisplay = parseDiffSelectionMentions(sessionDisplay.text);
     const text = messageDisplay.text.trim();
@@ -66,12 +66,7 @@ export class TranscriptViewportDirective {
     let lastId: string | null = null;
     const items = this.items();
     for (const item of items) {
-      if (
-        item.kind === 'user' &&
-        !item.isSynthetic &&
-        !item.parentToolUseId &&
-        parseTaskNotifications(item.content).text.trim()
-      ) {
+      if (isUserPrompt(item)) {
         byId.set(item.id, item);
         firstId ??= item.id;
         lastId = item.id;

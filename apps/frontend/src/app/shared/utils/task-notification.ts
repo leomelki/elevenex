@@ -24,9 +24,10 @@ const VALID_STATUSES: ReadonlySet<TaskNotificationStatus> = new Set([
 export function parseTaskNotifications(value: string | null | undefined): ParsedTaskNotifications {
   const source = value ?? '';
   const notifications: TaskNotification[] = [];
-  const text = source.replace(TASK_NOTIFICATION_PATTERN, (_match, inner: string) => {
+  const text = source.replace(TASK_NOTIFICATION_PATTERN, (match, inner: string) => {
     const notification = parseNotificationBlock(inner);
-    if (notification) notifications.push(notification);
+    if (!notification) return match;
+    notifications.push(notification);
     return '';
   });
   return {

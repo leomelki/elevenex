@@ -30,6 +30,103 @@ function render(items: ClaudeTranscriptItem[], settled = true) {
 }
 
 describe('buildTranscriptRenderItems final outputs', () => {
+  it('keeps empty messages inside the active work turn without counting them as steps', () => {
+    const rendered = render([
+      ...work,
+      item('empty', 'user', { content: ' \n\t' }),
+      item('next-tool', 'tool_use', { toolUseId: 'next-tool', toolName: 'Read' }),
+      item('answer', 'assistant'),
+    ]);
+    expect(rendered.map((entry) => entry.id)).toEqual(['prompt', 'collapsed-prompt', 'answer']);
+    expect(rendered.find((entry) => entry.kind === 'collapsed-turn')).toMatchObject({
+      stepCount: 4,
+      hiddenUnits: [
+        { id: 'commentary' },
+        { id: 'work-thinking' },
+        { id: 'tool' },
+        { id: 'empty' },
+        { id: 'next-tool' },
+      ],
+    });
+  });
+
+  it('starts a new turn when a human quotes an injected event', () => {
+    const rendered = render([
+      ...work,
+      item('answer', 'assistant'),
+      item('quoted', 'user', {
+        content: '```text\n[Image: original 1100x3000, displayed at 733x2000.]\n```',
+      }),
+      item('next-tool', 'tool_use', { toolUseId: 'next-tool', toolName: 'Read' }),
+      item('next-answer', 'assistant'),
+    ]);
+    expect(
+      rendered.filter((entry) => entry.kind === 'collapsed-turn').map((entry) => entry.id),
+    ).toEqual(['collapsed-prompt', 'collapsed-quoted']);
+  });
+
+  it.each([
+    ['skill', 'Base directory for this skill: /repo/.claude/skills/write-tests\n\n# Instructions'],
+    [
+      'image',
+      '[Image: original 1100x3000, displayed at 733x2000. Multiply coordinates by 1.50 to map to original image.]',
+    ],
+    [
+      'task completion',
+      '<task-notification><task-id>task-1</task-id><status>completed</status><summary>Done</summary></task-notification>',
+    ],
+  ])('does not split work at a %s notice', (_label, content) => {
+    const rendered = render([
+      ...work,
+      item('notice', 'user', { content }),
+      item('next-tool', 'tool_use', { toolUseId: 'next-tool', toolName: 'Read' }),
+      item('answer', 'assistant', { receivedAt: '2026-09-30T08:02:00.000Z' }),
+    ]);
+    expect(rendered.map((entry) => entry.id)).toEqual(['prompt', 'collapsed-prompt', 'answer']);
+    expect(rendered.find((entry) => entry.kind === 'collapsed-turn')).toMatchObject({
+      durationLabel: '2m',
+      stepCount: 4,
+      hiddenUnits: [
+        { id: 'commentary' },
+        { id: 'work-thinking' },
+        { id: 'tool' },
+        { id: 'notice' },
+        { id: 'next-tool' },
+      ],
+    });
+  });
+
+  it('does not settle an active turn when a task notification arrives', () => {
+    const rendered = render(
+      [
+        ...work,
+        item('intermediate', 'assistant'),
+        item('notification', 'user', {
+          content:
+            '<task-notification><task-id>task-1</task-id><summary>Done</summary></task-notification>',
+        }),
+        item('next-tool', 'tool_use', { toolName: 'Read' }),
+      ],
+      false,
+    );
+    expect(rendered.every((entry) => entry.kind === 'unit')).toBe(true);
+  });
+
+  it('still starts a turn for human text accompanying an image notice', () => {
+    const rendered = render([
+      ...work,
+      item('answer', 'assistant'),
+      item('next-prompt', 'user', {
+        content: 'Check this\n[Image: original 1100x3000, displayed at 733x2000.]',
+      }),
+      item('next-tool', 'tool_use', { toolName: 'Read' }),
+      item('next-answer', 'assistant'),
+    ]);
+    expect(
+      rendered.filter((entry) => entry.kind === 'collapsed-turn').map((entry) => entry.id),
+    ).toEqual(['collapsed-prompt', 'collapsed-next-prompt']);
+  });
+
   it.each([
     ['adjacent replies', []],
     ['a system notice', [item('notice', 'system')]],

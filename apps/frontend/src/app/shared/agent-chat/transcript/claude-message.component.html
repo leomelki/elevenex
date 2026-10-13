@@ -1,4 +1,14 @@
-@if (isUser() && syntheticMessageInfo(); as info) {
+@if (isUser() && userDisplay().eventOnly) {
+  @if (userDisplay().loads.length) {
+    <cw-message-loads [loads]="userDisplay().loads" [timestamp]="timestampLabel()" />
+  }
+  @if (userTaskNotifications().length) {
+    <cw-message-notifications
+      [notifications]="userTaskNotifications()"
+      [timestamp]="timestampLabel()"
+    />
+  }
+} @else if (isUser() && syntheticMessageInfo(); as info) {
   <div class="cw-synthetic-event flex items-center gap-2.5 py-0.5" [attr.title]="timestampTitle()">
     <span class="h-px flex-1 bg-border/50" aria-hidden="true"></span>
     <span
@@ -12,12 +22,9 @@
     </span>
     <span class="h-px flex-1 bg-border/50" aria-hidden="true"></span>
   </div>
-} @else if (isUser() && isTaskNotificationOnly()) {
-  <cw-message-notifications
-    [notifications]="userTaskNotifications()"
-    [timestamp]="timestampLabel()"
-  />
-} @else if (isUser() || item().kind === 'assistant') {
+} @else if (
+  (isUser() && (userDisplay().text || item().images?.length)) || item().kind === 'assistant'
+) {
   <div
     class="cw-msg group/message flex flex-col text-sm leading-[1.65] text-foreground"
     [class]="isUser() ? 'cw-msg--user items-end' : 'cw-msg--assistant items-start'"
@@ -34,6 +41,9 @@
         >
           @if (userMessageText(); as text) {
             <div class="cw-msg__user-text whitespace-pre-wrap">{{ text }}</div>
+          }
+          @if (userDisplay().loads.length) {
+            <cw-message-loads [loads]="userDisplay().loads" />
           }
           @if (userTaskNotifications().length) {
             <cw-message-notifications [notifications]="userTaskNotifications()" [inline]="true" />

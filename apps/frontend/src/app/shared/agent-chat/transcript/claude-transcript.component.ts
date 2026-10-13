@@ -15,7 +15,7 @@ import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import type { PlanReviewRequest } from '@/shared/models/plan-review.model';
 import type { ReviewChat } from '@/shared/models/review-chat.model';
 import type { SessionFork } from '@/shared/models/session.model';
-import { parseTaskNotifications } from '@/shared/utils/task-notification';
+import { isUserPrompt } from '@/shared/utils/user-message-display';
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 import { TranscriptUnitTemplateDirective } from './transcript-unit-template.directive';
@@ -159,8 +159,7 @@ export class ClaudeTranscriptComponent {
   }
 
   userPromptId(item: AgentTranscriptItem): string | null {
-    if (item.kind !== 'user' || item.isSynthetic || item.parentToolUseId) return null;
-    return parseTaskNotifications(item.content).text.trim() ? item.id : null;
+    return isUserPrompt(item) ? item.id : null;
   }
 
   isTurnExpanded(turnId: string): boolean {

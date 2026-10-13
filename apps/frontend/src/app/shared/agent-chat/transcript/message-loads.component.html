@@ -1,0 +1,18 @@
+@for (load of loads(); track $index) {
+  <div
+    class="flex min-w-0 items-center gap-2 py-1 text-xs text-muted-foreground"
+    [attr.data-message-load]="load.kind"
+    [attr.title]="load.detail"
+  >
+    <ng-icon
+      class="shrink-0"
+      [name]="load.kind === 'skill' ? 'lucideBookOpen' : 'lucideImage'"
+      size="14"
+      aria-hidden="true"
+    />
+    <span class="min-w-0 truncate">{{ load.label }}</span>
+    @if (timestamp(); as label) {
+      <span class="shrink-0 text-[11px]">{{ label }}</span>
+    }
+  </div>
+}

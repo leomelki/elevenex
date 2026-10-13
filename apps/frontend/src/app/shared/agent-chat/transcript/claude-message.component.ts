@@ -5,7 +5,7 @@ import type { PlanReviewRequest } from '@/shared/models/plan-review.model';
 import type { SessionFork } from '@/shared/models/session.model';
 import { parseDiffSelectionMentions } from '@/shared/utils/diff-selection-mention';
 import { parseSessionMentions } from '@/shared/utils/session-mention';
-import { parseTaskNotifications } from '@/shared/utils/task-notification';
+import { getUserMessageDisplay } from '@/shared/utils/user-message-display';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -21,6 +21,7 @@ import { MessageActionsComponent, type MessageActionState } from './message-acti
 import { MessageDiagnosticComponent } from './message-diagnostic.component';
 import { MessageForksComponent } from './message-forks.component';
 import { MessageMentionsComponent } from './message-mentions.component';
+import { MessageLoadsComponent } from './message-loads.component';
 import { MessageNotificationsComponent } from './message-notifications.component';
 import { MessagePlanLauncherComponent } from './message-plan-launcher.component';
 import { formatMessageTimestamp } from './message-timestamp';
@@ -35,6 +36,7 @@ import { formatMessageTimestamp } from './message-timestamp';
     MessageDiagnosticComponent,
     MessageForksComponent,
     MessageMentionsComponent,
+    MessageLoadsComponent,
     MessageNotificationsComponent,
     MessagePlanLauncherComponent,
   ],
@@ -98,16 +100,10 @@ export class ClaudeMessageComponent {
     forkDisabledReason: this.forkDisabledReason(),
     forking: this.forking(),
   }));
-  readonly userTaskNotificationDisplay = computed(() =>
-    parseTaskNotifications(this.item().content),
-  );
-  readonly userTaskNotifications = computed(() => this.userTaskNotificationDisplay().notifications);
-  readonly isTaskNotificationOnly = computed(
-    () =>
-      this.userTaskNotifications().length > 0 && !this.userTaskNotificationDisplay().text.trim(),
-  );
+  readonly userDisplay = computed(() => getUserMessageDisplay(this.item()));
+  readonly userTaskNotifications = computed(() => this.userDisplay().notifications);
   readonly userSessionMentionDisplay = computed(() =>
-    parseSessionMentions(this.userTaskNotificationDisplay().text),
+    parseSessionMentions(this.userDisplay().text),
   );
   readonly userMessageDisplay = computed(() =>
     parseDiffSelectionMentions(this.userSessionMentionDisplay().text),
