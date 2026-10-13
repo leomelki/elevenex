@@ -590,17 +590,26 @@ export class ClaudeToolCallComponent {
     if (this.display().kind !== 'ask_user_question') return [];
     const answers = this.parsedResult()?.['answers'];
     if (!answers || typeof answers !== 'object') return [];
-    return Object.entries(answers as Record<string, unknown>).map(([question, answer]) => ({
-      question: this.askQuestionLabel(question),
-      answer: this.askAnswerText(answer),
-    }));
+    return Object.entries(answers as Record<string, unknown>)
+      .map(([question, answer]) => ({
+        question: this.askQuestionLabel(question),
+        answer: this.askAnswerText(answer),
+      }))
+      .filter((entry) => entry.answer.trim().length > 0);
   });
 
-  readonly isQuestionResponse = computed(
-    () => this.display().kind === 'ask_user_question' && (!!this.result() || !!this.interaction()),
-  );
+  readonly isQuestionResponse = computed(() => {
+    if (this.display().kind !== 'ask_user_question') return false;
+    if (this.interaction()?.kind === 'ask_user_question') return true;
+    // Async question tools finish when the question is delivered. Their
+    // acknowledgement is not a user response (or a declined question).
+    const answers = this.parsedResult()?.['answers'];
+    return !isHardError(this.result()) && !!answers && typeof answers === 'object';
+  });
 
-  readonly questionResponseSent = computed(() => this.askAnswers().length > 0);
+  readonly questionResponseSent = computed(() =>
+    this.askAnswers().some((entry) => entry.answer.trim().length > 0),
+  );
 
   readonly questionReceiptEntries = computed<Array<{ question: string; answer: string }>>(() => {
     const answers = this.askAnswers();
@@ -610,7 +619,8 @@ export class ClaudeToolCallComponent {
     return questions
       .map((candidate) => {
         if (!candidate || typeof candidate !== 'object') return null;
-        const question = (candidate as Record<string, unknown>)['question'];
+        const data = candidate as Record<string, unknown>;
+        const question = data['question'] ?? data['title'];
         return typeof question === 'string' ? { question, answer: 'No answer was sent.' } : null;
       })
       .filter((entry): entry is { question: string; answer: string } => entry !== null);
@@ -622,9 +632,10 @@ export class ClaudeToolCallComponent {
     const match = questions.find((candidate) => {
       if (!candidate || typeof candidate !== 'object') return false;
       const question = candidate as Record<string, unknown>;
-      return question['id'] === key || question['question'] === key;
+      return question['id'] === key || question['question'] === key || question['title'] === key;
     }) as Record<string, unknown> | undefined;
-    return typeof match?.['question'] === 'string' ? match['question'] : key;
+    const label = match?.['question'] ?? match?.['title'];
+    return typeof label === 'string' ? label : key;
   }
 
   private askAnswerText(value: unknown): string {

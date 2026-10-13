@@ -40,6 +40,80 @@ describe('ClaudeToolCallComponent', () => {
     vi.useRealTimers();
   });
 
+  it.each(['light', 'dark'])('does not mistake an async question acknowledgement for a declined response in %s mode', async (theme) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    try {
+      await TestBed.configureTestingModule({ imports: [ClaudeToolCallComponent] }).compileComponents();
+      const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+      fixture.componentRef.setInput('call', {
+        id: 'async-question:tool_use', kind: 'tool_use', toolUseId: 'async-question',
+        toolName: 'request_user_input_async', providerToolName: 'request_user_input_async',
+        toolKind: 'ask_user_question',
+        toolInput: { questions: [{ title: 'Which approach?', options: ['Minimal', 'Complete'] }] },
+        timestamp: '2026-10-13T08:00:00.000Z',
+      });
+      fixture.componentRef.setInput('result', {
+        id: 'async-question:tool_result', kind: 'tool_result', toolUseId: 'async-question',
+        content: 'The question was shown to the user. Their reply will arrive asynchronously.',
+        timestamp: '2026-10-13T08:00:01.000Z',
+      });
+      fixture.detectChanges();
+      const element = fixture.nativeElement as HTMLElement;
+      expect(element.querySelector('.cw-answer-receipt')).toBeNull();
+      expect(element.textContent).toContain('Which approach?');
+      expect(element.textContent).toContain('Question sent');
+      expect(element.textContent).not.toContain('Declined');
+      expect(element.textContent).not.toContain('Your response');
+
+      // If a saved result contains a real answer, render the normal receipt.
+      fixture.componentRef.setInput('result', {
+        id: 'async-question:tool_result', kind: 'tool_result', toolUseId: 'async-question',
+        content: JSON.stringify({ answers: { 'Which approach?': { answers: ['Complete'] } } }),
+        timestamp: '2026-10-13T08:00:05.000Z',
+      });
+      fixture.detectChanges();
+      const receipt = element.querySelector('.cw-answer-receipt') as HTMLElement;
+      expect(receipt.dataset['outcome']).toBe('sent');
+      expect(receipt.textContent).toContain('Which approach?');
+      expect(receipt.textContent).toContain('Complete');
+      fixture.destroy();
+    } finally {
+      document.documentElement.classList.remove('dark');
+    }
+  });
+
+  it('does not count empty Codex answers as sent or mistake tool errors for a decline', async () => {
+    await TestBed.configureTestingModule({ imports: [ClaudeToolCallComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', {
+      id: 'question:tool_use', kind: 'tool_use', toolUseId: 'question',
+      toolName: 'AskUserQuestion',
+      toolInput: { questions: [{ id: 'approach', title: 'Which approach?' }] },
+      timestamp: '2026-10-13T08:00:00.000Z',
+    });
+    fixture.componentRef.setInput('result', {
+      id: 'question:tool_result', kind: 'tool_result', toolUseId: 'question',
+      content: JSON.stringify({ answers: { approach: { answers: [] } } }),
+      timestamp: '2026-10-13T08:00:01.000Z',
+    });
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+    const receipt = element.querySelector('.cw-answer-receipt') as HTMLElement;
+    expect(receipt.dataset['outcome']).toBe('declined');
+    expect(receipt.textContent).toContain('Which approach?');
+    expect(receipt.textContent).toContain('No answer was sent.');
+
+    fixture.componentRef.setInput('result', {
+      id: 'question:tool_result', kind: 'tool_result', toolUseId: 'question',
+      content: '<tool_use_error>Question delivery failed</tool_use_error>', isError: true,
+      timestamp: '2026-10-13T08:00:02.000Z',
+    });
+    fixture.detectChanges();
+    expect(element.querySelector('.cw-answer-receipt')).toBeNull();
+    expect(element.querySelector('.cw-tool')?.getAttribute('data-state')).toBe('error');
+    fixture.destroy();
+  });
+
   it('keeps answered questions visible as a decision receipt without expanding the tool', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeToolCallComponent],

@@ -494,8 +494,8 @@ export function describeTool(
   if (n === 'askuserquestion') {
     const questions = Array.isArray(data['questions']) ? data['questions'] : [];
     const firstQuestion = asRecord(questions[0]);
-    const questionText =
-      typeof firstQuestion['question'] === 'string' ? firstQuestion['question'] : '';
+    const label = firstQuestion['question'] ?? firstQuestion['title'];
+    const questionText = typeof label === 'string' ? label : '';
     const extraCount = Math.max(questions.length - 1, 0);
     return {
       kind: 'ask_user_question',
@@ -831,7 +831,7 @@ export function resultSummary(
           ? Object.keys(parsed['answers'] as Record<string, unknown>).length
           : 0;
       return {
-        text: `${answers || 'Answered'} question${answers === 1 ? '' : 's'}`,
+        text: answers ? `${answers} question${answers === 1 ? '' : 's'}` : 'Question sent',
         tone: softTone('ok'),
       };
     }
