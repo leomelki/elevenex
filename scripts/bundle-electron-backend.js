@@ -84,7 +84,7 @@ function findPnpmPackageRoot(packageName) {
   return path.dirname(candidates[0]);
 }
 
-function createPnpmAliasPlugin(packageName) {
+function createPnpmAliasPlugin(packageName, entryField = 'main') {
   return {
     name: `alias-${packageName.replace(/[\/@]/g, '-')}`,
     setup(build) {
@@ -92,7 +92,7 @@ function createPnpmAliasPlugin(packageName) {
         const packageRoot = findPnpmPackageRoot(packageName);
         const packageJson = JSON.parse(readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
         return {
-          path: path.join(packageRoot, packageJson.main || 'index.js'),
+          path: path.join(packageRoot, packageJson[entryField] || 'index.js'),
         };
       });
     },
@@ -131,7 +131,14 @@ async function main() {
     minify: false,
     legalComments: 'none',
     external: EXTERNAL_MODULES,
-    plugins: [createPnpmAliasPlugin('express'), createSharpStubPlugin()],
+    plugins: [
+      createPnpmAliasPlugin('express'),
+      // jsonc-parser's UMD `main` hands `require` to a factory, so esbuild
+      // cannot see its ./impl/* requires and leaves them dangling in main.cjs.
+      // Its ESM `module` build uses static imports that bundle correctly.
+      createPnpmAliasPlugin('jsonc-parser', 'module'),
+      createSharpStubPlugin(),
+    ],
     logLevel: 'info',
   });
 
