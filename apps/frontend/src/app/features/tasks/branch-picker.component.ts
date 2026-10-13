@@ -17,7 +17,14 @@ import { ZardInputDirective } from '@/shared/components/input';
 import { BranchesService } from '@/shared/services/branches.service';
 import { BranchInfo } from '@/shared/models/branch.model';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideGitBranch, lucideGlobe2, lucidePlus, lucideCheck } from '@ng-icons/lucide';
+import {
+  lucideGitBranch,
+  lucideGlobe2,
+  lucidePlus,
+  lucideCheck,
+  lucideLoaderCircle,
+} from '@ng-icons/lucide';
+import { ZardSkeletonComponent } from '@/shared/components/skeleton';
 import { BranchRefPipe } from './branch-ref.pipe';
 import { catchError, forkJoin, of, Subject, switchMap, timer } from 'rxjs';
 
@@ -28,10 +35,12 @@ type BranchOption =
 
 @Component({
   selector: 'app-task-branch-picker',
-  imports: [ZardInputDirective, BranchRefPipe, NgIcon],
+  imports: [ZardInputDirective, ZardSkeletonComponent, BranchRefPipe, NgIcon],
   templateUrl: './branch-picker.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  viewProviders: [provideIcons({ lucideGitBranch, lucideGlobe2, lucidePlus, lucideCheck })],
+  viewProviders: [
+    provideIcons({ lucideGitBranch, lucideGlobe2, lucidePlus, lucideCheck, lucideLoaderCircle }),
+  ],
 })
 export class TaskBranchPickerComponent {
   readonly repoId = input.required<number>();
@@ -53,24 +62,30 @@ export class TaskBranchPickerComponent {
   readonly error = signal('');
   readonly query = signal('');
   readonly index = signal(0);
+  /** Create was chosen before the lookup for its exact name returned. */
+  readonly createPending = signal(false);
   private readonly api = inject(BranchesService);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
   private autofocusPending = true;
-  private readonly searches = new Subject<{ id: number; query: string }>();
+  private firstSearch = true;
+  /** The highlight follows the best match until the user moves it. */
+  private navigated = false;
+  private readonly searches = new Subject<{ id: number; query: string; delay: number }>();
+  /** While a search runs, narrow the previous results instead of blanking the list. */
+  readonly visibleBranches = computed(() => {
+    const query = this.query().trim().toLowerCase();
+    return this.loading() && query
+      ? this.branches().filter((branch) => branch.name.toLowerCase().includes(query))
+      : this.branches();
+  });
   readonly canCreate = computed(() => {
-    const name = this.query().trim();
+    const name = this.query().trim().toLowerCase();
     return (
       this.allowCreate() &&
       !!name &&
-      !this.loading() &&
       !this.error() &&
-      !this.branches().some(
-        (branch) =>
-          branch.name.toLowerCase() === name.toLowerCase() ||
-          (branch.isRemote &&
-            branch.name.slice(branch.name.indexOf('/') + 1).toLowerCase() === name.toLowerCase()),
-      )
+      !this.visibleBranches().some((branch) => this.namedExactly(branch, name))
     );
   });
   readonly options = computed<BranchOption[]>(() => {
@@ -79,7 +94,7 @@ export class TaskBranchPickerComponent {
     return [
       ...(this.canCreate() ? [{ kind: 'create' as const, name: this.query().trim() }] : []),
       ...(showDefault ? [{ kind: 'default' as const, ref }] : []),
-      ...this.branches()
+      ...this.visibleBranches()
         .filter((branch) => !showDefault || !this.matchesRef(branch, ref))
         .map((branch) => ({ kind: 'branch' as const, branch })),
     ];
@@ -87,8 +102,8 @@ export class TaskBranchPickerComponent {
   constructor() {
     this.searches
       .pipe(
-        switchMap(({ id, query }) =>
-          timer(140).pipe(
+        switchMap(({ id, query, delay }) =>
+          timer(delay).pipe(
             switchMap(() =>
               forkJoin([
                 this.api.searchBranches(id, query, true),
@@ -105,17 +120,44 @@ export class TaskBranchPickerComponent {
         takeUntilDestroyed(inject(DestroyRef)),
       )
       .subscribe(([local, remote]) => {
+        const active = this.navigated ? this.options()[this.index()] : undefined;
         this.branches.set([
           ...local.slice(0, 100),
           ...remote.filter((branch) => !branch.name.endsWith('/HEAD')).slice(0, 100),
         ]);
         this.loading.set(false);
-        const selectedIndex = this.options().findIndex((option) => this.optionSelected(option));
-        this.index.set(selectedIndex >= 0 ? selectedIndex : 0);
+        const options = this.options();
+        if (this.createPending()) {
+          this.createPending.set(false);
+          const create = options.findIndex((option) => option.kind === 'create');
+          if (create >= 0) {
+            this.index.set(create);
+            this.choose(options[create]);
+          } else {
+            // The name already exists: highlight it rather than create a duplicate.
+            const name = this.query().trim().toLowerCase();
+            const existing = options.findIndex(
+              (option) => option.kind === 'branch' && this.namedExactly(option.branch, name),
+            );
+            this.index.set(Math.max(0, existing));
+          }
+          return;
+        }
+        const kept = active
+          ? options.findIndex((option) => this.optionKey(option) === this.optionKey(active))
+          : -1;
+        this.index.set(kept >= 0 ? kept : this.defaultIndex());
       });
     effect(() => this.query.set(this.initialQuery()));
     effect(() => {
-      const request = { id: this.repoId(), query: this.query() };
+      // Open on results immediately; debounce only what the user types next.
+      const request = {
+        id: this.repoId(),
+        query: this.query().trim(),
+        delay: this.firstSearch ? 0 : 140,
+      };
+      this.firstSearch = false;
+      this.navigated = false;
       this.loading.set(true);
       this.error.set('');
       this.searches.next(request);
@@ -131,6 +173,16 @@ export class TaskBranchPickerComponent {
         { injector: this.injector },
       );
     });
+  }
+  private namedExactly(branch: BranchInfo, name: string) {
+    const lower = branch.name.toLowerCase();
+    return lower === name || (branch.isRemote && lower.slice(lower.indexOf('/') + 1) === name);
+  }
+  private defaultIndex() {
+    return Math.max(
+      0,
+      this.options().findIndex((option) => this.optionSelected(option)),
+    );
   }
   private matchesRef(branch: BranchInfo, ref: string) {
     return ref === branch.name || ref === this.branchRef(branch);
@@ -154,15 +206,20 @@ export class TaskBranchPickerComponent {
         : 'create';
   }
   search(value: string) {
+    if (value === this.query()) return;
     this.loading.set(true);
+    this.createPending.set(false);
     this.query.set(value);
+    this.index.set(this.defaultIndex());
     this.queryChange.emit(value);
   }
   choose(option: BranchOption) {
-    if (this.disabled() || this.selectionPending() || (this.loading() && option.kind !== 'default'))
-      return;
-    if (option.kind === 'create') this.createRequested.emit(option.name);
-    else if (option.kind === 'default') this.referencePicked.emit(option.ref);
+    if (this.disabled() || this.selectionPending()) return;
+    if (option.kind === 'create') {
+      // Shown results may predate this name; confirm it is new before leaving the step.
+      if (this.loading()) this.createPending.set(true);
+      else this.createRequested.emit(option.name);
+    } else if (option.kind === 'default') this.referencePicked.emit(option.ref);
     else this.picked.emit(option.branch);
   }
   activate() {
@@ -176,6 +233,7 @@ export class TaskBranchPickerComponent {
     const list = this.options();
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
+      this.navigated = true;
       this.index.set(
         Math.max(0, Math.min(list.length - 1, this.index() + (event.key === 'ArrowDown' ? 1 : -1))),
       );

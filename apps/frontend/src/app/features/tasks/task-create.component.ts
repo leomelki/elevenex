@@ -156,7 +156,7 @@ export class TaskCreateComponent {
       (this.step() !== 'base' || (!this.defaultsLoading() && this.canContinue())) &&
       (this.step() !== 'branch' || !this.suggestionLoading()) &&
       !!picker &&
-      (!picker.loading() || picker.options()[picker.index()]?.kind === 'default') &&
+      !picker.createPending() &&
       !!picker.options()[picker.index()]
     );
   });

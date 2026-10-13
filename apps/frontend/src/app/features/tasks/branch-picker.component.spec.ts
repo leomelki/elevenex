@@ -156,6 +156,119 @@ describe('Task branch picker', () => {
     await vi.advanceTimersByTimeAsync(150);
     expect(component.branches().map((item) => item.name)).toEqual(['newer']);
   });
+  it('loads the first results without waiting for the typing debounce', async () => {
+    vi.useFakeTimers();
+    const { fixture, api, component } = picker(of([{ ...branch(false), name: 'review' }]));
+    fixture.componentRef.setInput('initialQuery', ' review ');
+    fixture.detectChanges();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.searchBranches).toHaveBeenCalledWith(1, 'review', true);
+    expect(component.loading()).toBe(false);
+    component.search('reviews');
+    fixture.detectChanges();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(api.searchBranches).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(api.searchBranches).toHaveBeenLastCalledWith(1, 'reviews', true);
+  });
+  it('narrows the previous results and keeps Create visible while a search runs', async () => {
+    vi.useFakeTimers();
+    const { fixture, api, component } = picker(
+      of([
+        { ...branch(false), name: 'review-api' },
+        { ...branch(false), name: 'release' },
+      ]),
+    );
+    fixture.componentRef.setInput('initialQuery', 're');
+    fixture.componentRef.setInput('allowCreate', true);
+    fixture.detectChanges();
+    await vi.advanceTimersByTimeAsync(0);
+    api.searchBranches.mockReturnValue(new Subject());
+    component.search('review');
+    fixture.detectChanges();
+    expect(component.loading()).toBe(true);
+    expect(component.options().map((option) => component.optionKey(option))).toEqual([
+      'create',
+      'refs/heads/review-api',
+    ]);
+    const buttons = fixture.nativeElement.querySelectorAll('[role="option"]');
+    expect([...buttons].every((button: HTMLButtonElement) => !button.disabled)).toBe(true);
+    const picked = vi.fn();
+    component.picked.subscribe(picked);
+    component.choose(component.options()[1]);
+    expect(picked).toHaveBeenCalledWith(expect.objectContaining({ name: 'review-api' }));
+  });
+  it('creates once the pending lookup confirms the name is new', async () => {
+    vi.useFakeTimers();
+    const { fixture, api, component } = picker();
+    fixture.componentRef.setInput('allowCreate', true);
+    fixture.detectChanges();
+    await vi.advanceTimersByTimeAsync(0);
+    const local = new Subject<BranchInfo[]>();
+    api.searchBranches.mockReturnValue(local);
+    component.search('review-api');
+    const create = vi.fn();
+    component.createRequested.subscribe(create);
+    component.key(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
+    expect(create).not.toHaveBeenCalled();
+    expect(component.createPending()).toBe(true);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Checking name…');
+    await vi.advanceTimersByTimeAsync(150);
+    local.next([{ ...branch(false), name: 'review-api-old' }]);
+    local.complete();
+    expect(create).toHaveBeenCalledExactlyOnceWith('review-api');
+    expect(component.createPending()).toBe(false);
+  });
+  it('highlights an existing branch instead of creating a duplicate after a pending lookup', async () => {
+    vi.useFakeTimers();
+    const { fixture, api, component } = picker();
+    fixture.componentRef.setInput('allowCreate', true);
+    fixture.detectChanges();
+    await vi.advanceTimersByTimeAsync(0);
+    api.searchRemoteBranches.mockReturnValue(of([{ ...branch(true), name: 'origin/review' }]));
+    component.search('review');
+    const create = vi.fn();
+    const picked = vi.fn();
+    component.createRequested.subscribe(create);
+    component.picked.subscribe(picked);
+    component.activate();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(create).not.toHaveBeenCalled();
+    expect(picked).not.toHaveBeenCalled();
+    expect(component.options()[component.index()]).toEqual(
+      expect.objectContaining({
+        kind: 'branch',
+        branch: expect.objectContaining({ name: 'origin/review' }),
+      }),
+    );
+  });
+  it('keeps an arrow-key highlight when results refresh', async () => {
+    vi.useFakeTimers();
+    const results = ['review-a', 'review-b', 'review-c'].map((name) => ({
+      ...branch(false),
+      name,
+    }));
+    const { fixture, api, component } = picker(of(results));
+    fixture.componentRef.setInput('initialQuery', 'review');
+    fixture.detectChanges();
+    await vi.advanceTimersByTimeAsync(0);
+    const local = new Subject<BranchInfo[]>();
+    api.searchBranches.mockReturnValue(local);
+    component.search('review-');
+    fixture.detectChanges();
+    // jsdom does not implement scrolling.
+    fixture.nativeElement.querySelectorAll('[role="option"]').forEach((option: HTMLElement) => {
+      option.scrollIntoView = vi.fn();
+    });
+    component.key(new KeyboardEvent('keydown', { key: 'ArrowDown', cancelable: true }));
+    expect(component.index()).toBe(1);
+    await vi.advanceTimersByTimeAsync(150);
+    local.next([results[0], results[2], results[1]]);
+    local.complete();
+    expect(component.index()).toBe(2);
+    expect(component.options()[2]).toEqual({ kind: 'branch', branch: results[1] });
+  });
   it('does not offer creation when branch lookup fails or allow duplicate activation while busy', async () => {
     vi.useFakeTimers();
     const { fixture, component } = picker(throwError(() => new Error('offline')));

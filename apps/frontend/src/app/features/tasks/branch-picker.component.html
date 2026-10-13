@@ -1,5 +1,17 @@
 <div class="space-y-2">
-  <label class="block text-sm font-medium" for="task-branch-search">{{ label() }}</label>
+  <div class="flex items-center justify-between gap-2">
+    <label class="block text-sm font-medium" for="task-branch-search">{{ label() }}</label>
+    @if (loading() && visibleBranches().length) {
+      <!-- Delayed so quick responses do not flash a loading state on every keystroke. -->
+      <span
+        class="flex items-center gap-1.5 text-xs text-muted-foreground animate-in fade-in fill-mode-both delay-300"
+        aria-hidden="true"
+      >
+        <ng-icon name="lucideLoaderCircle" size="12" class="animate-spin" />
+        Searching
+      </span>
+    }
+  </div>
   <input
     z-input
     id="task-branch-search"
@@ -35,7 +47,7 @@
         [id]="'task-branch-option-' + i"
         [attr.aria-selected]="optionSelected(option)"
         [attr.data-branch-kind]="option.kind"
-        [disabled]="disabled() || selectionPending() || (loading() && option.kind !== 'default')"
+        [disabled]="disabled() || selectionPending()"
         class="flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
         [class.bg-accent]="index() === i"
         (click)="choose(option)"
@@ -57,7 +69,9 @@
           <span class="min-w-0 flex-1 truncate font-medium"
             >Create <span class="text-primary">{{ option.name }}</span></span
           >
-          <span class="shrink-0 text-xs text-muted-foreground">New branch</span>
+          <span class="shrink-0 text-xs text-muted-foreground">{{
+            createPending() ? 'Checking name…' : 'New branch'
+          }}</span>
         } @else if (option.kind === 'default') {
           <span class="min-w-0 flex-1 truncate font-medium">{{ option.ref | branchRef }}</span>
           <span
@@ -78,11 +92,24 @@
         }
       </button>
     }
-    @if (loading() || error() || !options().length) {
-      <p class="px-3 py-5 text-center text-sm text-muted-foreground" role="status">
-        {{ loading() ? 'Loading branches…' : error() || 'No matching branches' }}
+    @if (loading() && !visibleBranches().length) {
+      <div aria-hidden="true">
+        @for (width of ['w-2/3', 'w-1/2', 'w-3/5']; track $index) {
+          <div class="px-3 py-3"><z-skeleton [class]="'h-4 ' + width" /></div>
+        }
+      </div>
+    } @else if (error() || !options().length) {
+      <p class="px-3 py-5 text-center text-sm text-muted-foreground">
+        {{ error() || 'No matching branches' }}
       </p>
     }
+    <p class="sr-only" role="status">
+      {{
+        loading()
+          ? 'Searching branches…'
+          : error() || (options().length ? '' : 'No matching branches')
+      }}
+    </p>
   </div>
   <p class="text-xs text-muted-foreground">
     ↑↓ to navigate <span aria-hidden="true">·</span> Enter to

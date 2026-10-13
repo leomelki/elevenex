@@ -149,7 +149,10 @@ describe('Task lifecycle with real Git and migrations', () => {
       allocator,
       { assertProjectIsActive: jest.fn() } as unknown as ProjectsService,
       sessions as unknown as SessionsService,
-      { invalidateCache: jest.fn() } as unknown as BranchesService,
+      {
+        invalidateCache: jest.fn(),
+        getBranches: jest.fn().mockResolvedValue([]),
+      } as unknown as BranchesService,
       hooks as unknown as ClaudeHooksService,
       terminals as unknown as UserPtyManager,
       actions as unknown as ActionsService,

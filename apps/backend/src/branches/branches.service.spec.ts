@@ -24,7 +24,7 @@ describe('BranchesService', () => {
 
     // Initialize a git repo with multiple branches
     fs.mkdirSync(mainRepoPath);
-    execSync('git init', { cwd: mainRepoPath });
+    execSync('git init -b main', { cwd: mainRepoPath });
     execSync('git config user.email "test@test.com"', { cwd: mainRepoPath });
     execSync('git config user.name "Test User"', { cwd: mainRepoPath });
 
@@ -133,6 +133,116 @@ describe('BranchesService', () => {
       await expect(service.getBranches(nonGitDir)).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    it('lists remote-tracking refs without symbolic aliases or misclassifying local names', async () => {
+      const git = (command: string) => execSync(command, { cwd: mainRepoPath });
+      git('git update-ref refs/remotes/origin/main HEAD');
+      git('git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main');
+      git('git branch remotes/lookalike');
+
+      const branches = await service.getBranches(mainRepoPath, true);
+
+      expect(branches.filter((b) => b.isRemote).map((b) => b.name)).toEqual([
+        'origin/main',
+      ]);
+      expect(branches.find((b) => b.name === 'remotes/lookalike')).toEqual(
+        expect.objectContaining({ isRemote: false, current: false }),
+      );
+    });
+
+    it('answers pickers from a recent listing while refreshing it in the background', async () => {
+      const now = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+      const read = jest
+        .spyOn(service as any, 'readBranches')
+        .mockResolvedValueOnce([{ name: 'old', isRemote: false }])
+        .mockResolvedValue([{ name: 'new', isRemote: false }]);
+      await service.getBranches(mainRepoPath);
+      now.mockReturnValue(1_010_000);
+
+      const stale = await service.getBranches(mainRepoPath, false, {
+        allowStale: true,
+      });
+
+      expect(stale.map((b) => b.name)).toEqual(['old']);
+      expect(read).toHaveBeenCalledTimes(2);
+      await Promise.resolve();
+      expect(
+        (await service.getBranches(mainRepoPath)).map((b) => b.name),
+      ).toEqual(['new']);
+      expect(read).toHaveBeenCalledTimes(2);
+      now.mockReturnValue(1_200_000);
+      await service.getBranches(mainRepoPath, false, { allowStale: true });
+      expect(read).toHaveBeenCalledTimes(3);
+      now.mockRestore();
+    });
+  });
+
+  describe('search', () => {
+    const remote = (name: string) => ({
+      name,
+      commit: 'abc',
+      label: name,
+      current: false,
+      isRemote: true,
+      hasWorktree: false,
+      worktreePath: null,
+    });
+
+    it('ranks exact and prefix matches above names that merely contain the query', async () => {
+      jest
+        .spyOn(service as any, 'readBranches')
+        .mockResolvedValue(
+          [
+            'origin/aaron/domain-fix',
+            'origin/main-backport',
+            'origin/jo/main',
+            'origin/main',
+            'origin/remain',
+          ].map(remote),
+        );
+
+      const results = await service.searchRemoteBranches(
+        mainRepoPath,
+        ' Main ',
+      );
+
+      expect(results.map((b) => b.name)).toEqual([
+        'origin/main',
+        'origin/main-backport',
+        'origin/jo/main',
+        'origin/remain',
+        'origin/aaron/domain-fix',
+      ]);
+    });
+
+    it('caps results and puts the checked-out branch first for an empty query', async () => {
+      jest.spyOn(service as any, 'readBranches').mockResolvedValue([
+        ...Array.from({ length: 150 }, (_, i) => ({
+          ...remote(`feature-${i}`),
+          isRemote: false,
+        })),
+        { ...remote('zz-current'), isRemote: false, current: true },
+      ]);
+
+      const results = await service.searchBranches(mainRepoPath, '', true);
+
+      expect(results).toHaveLength(100);
+      expect(results[0].name).toBe('zz-current');
+    });
+  });
+
+  describe('createBranch', () => {
+    it('creates a branch and rejects a duplicate', async () => {
+      const created = await service.createBranch(
+        mainRepoPath,
+        'review',
+        'main',
+      );
+      expect(created).toEqual(expect.objectContaining({ name: 'review' }));
+      await expect(
+        service.createBranch(mainRepoPath, 'review', 'main'),
+      ).rejects.toThrow('already exists');
     });
   });
 });

@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { SimpleGit, BranchSummary } from 'simple-git';
+import { SimpleGit } from 'simple-git';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 import * as fs from 'node:fs';
 
@@ -13,47 +13,72 @@ export interface BranchInfo {
   worktreePath: string | null;
 }
 
+/** Lower is better: exact name, name prefix, segment start, then substring.
+ * Remote names also match without their `origin/` prefix. Returns -1 when
+ * the branch does not contain the (lowercase) query at all.
+ */
+function branchMatchRank(branch: BranchInfo, query: string): number {
+  const name = branch.name.toLowerCase();
+  let at = name.indexOf(query);
+  if (at < 0) return -1;
+  const short = branch.isRemote ? name.slice(name.indexOf('/') + 1) : name;
+  if (name === query || short === query) return 0;
+  if (at === 0 || short.startsWith(query)) return 1;
+  for (; at >= 0; at = name.indexOf(query, at + 1))
+    if ('/-_.'.includes(name[at - 1])) return 2;
+  return 3;
+}
+
 @Injectable()
 export class BranchesService {
-  private cache = new Map<string, { data: BranchInfo[]; timestamp: number }>();
+  private readonly cache = new Map<
+    string,
+    { data: BranchInfo[]; timestamp: number }
+  >();
   private readonly inFlight = new Map<string, Promise<BranchInfo[]>>();
   private readonly generations = new Map<string, number>();
   private readonly CACHE_TTL_MS = 5_000;
-
-  private getCacheKey(repoPath: string, includeRemote: boolean): string {
-    return `${repoPath}:${includeRemote}`;
-  }
+  /** How old a listing interactive pickers may show while it refreshes. */
+  private readonly STALE_TTL_MS = 60_000;
+  private readonly SEARCH_LIMIT = 100;
 
   invalidateCache(repoPath: string): void {
     this.generations.set(repoPath, (this.generations.get(repoPath) ?? 0) + 1);
     this.inFlight.delete(repoPath);
-    for (const key of this.cache.keys()) {
-      if (key.startsWith(repoPath + ':')) {
-        this.cache.delete(key);
-      }
-    }
+    this.cache.delete(repoPath);
   }
 
+  /** `allowStale` answers from a listing up to a minute old and refreshes it
+   * in the background, so typing in a picker never waits on git.
+   */
   async getBranches(
     repoPath: string,
     includeRemote = false,
+    { allowStale = false } = {},
   ): Promise<BranchInfo[]> {
-    // Local and remote searches share one enumeration, even while a large
-    // repository's first read is still running.
-    const cacheKey = this.getCacheKey(repoPath, true);
-    const cached = this.cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
-      return includeRemote
-        ? cached.data
-        : cached.data.filter((branch) => !branch.isRemote);
+    const select = (data: BranchInfo[]) =>
+      includeRemote ? data : data.filter((branch) => !branch.isRemote);
+    const cached = this.cache.get(repoPath);
+    const age = cached ? Date.now() - cached.timestamp : Infinity;
+    if (cached && age < this.CACHE_TTL_MS) return select(cached.data);
+    if (cached && allowStale && age < this.STALE_TTL_MS) {
+      void this.refresh(repoPath).catch(() => undefined);
+      return select(cached.data);
     }
+    return select(await this.refresh(repoPath));
+  }
+
+  /** Local and remote searches share one enumeration, even while a large
+   * repository's first read is still running.
+   */
+  private refresh(repoPath: string): Promise<BranchInfo[]> {
     let pending = this.inFlight.get(repoPath);
     if (!pending) {
       const generation = this.generations.get(repoPath) ?? 0;
       pending = this.readBranches(repoPath)
         .then((data) => {
           if ((this.generations.get(repoPath) ?? 0) === generation)
-            this.cache.set(cacheKey, { data, timestamp: Date.now() });
+            this.cache.set(repoPath, { data, timestamp: Date.now() });
           return data;
         })
         .finally(() => {
@@ -62,75 +87,59 @@ export class BranchesService {
         });
       this.inFlight.set(repoPath, pending);
     }
-    const data = await pending;
-    return includeRemote ? data : data.filter((branch) => !branch.isRemote);
+    return pending;
   }
 
   private async readBranches(repoPath: string): Promise<BranchInfo[]> {
     try {
-      // Use separate SimpleGit instances for true parallelism
-      // (simple-git serializes commands per instance)
-      const [branchSummary, worktreePaths] = await Promise.all([
-        worktreeSimpleGit(repoPath).branch(['-a']) as Promise<BranchSummary>,
+      // `git branch -v` reads every tip commit for its subject, which takes
+      // tens of seconds with thousands of remote branches; for-each-ref only
+      // reads refs. Separate SimpleGit instances run in parallel (simple-git
+      // serializes commands per instance).
+      const [refs, worktreePaths, normalizedRepoPath] = await Promise.all([
+        worktreeSimpleGit(repoPath).raw([
+          'for-each-ref',
+          '--format=%(refname)%00%(objectname)%00%(HEAD)%00%(symref)',
+          'refs/heads',
+          'refs/remotes',
+        ]),
         this.listWorktreePaths(worktreeSimpleGit(repoPath)),
+        // Normalize repo path for comparison (macOS symlink issue)
+        fs.promises.realpath(repoPath).catch(() => repoPath),
       ]);
 
-      // Normalize repo path for comparison (macOS symlink issue)
-      let normalizedRepoPath = repoPath;
-      try {
-        normalizedRepoPath = await fs.promises.realpath(repoPath);
-      } catch {
-        /* ignore */
-      }
+      // Don't show the main repo as a worktree.
+      const mainCheckouts = new Set<string>();
+      await Promise.all(
+        [...worktreePaths].map(async ([branch, worktreePath]) => {
+          const real = await fs.promises
+            .realpath(worktreePath)
+            .catch(() => worktreePath);
+          if (real === normalizedRepoPath) mainCheckouts.add(branch);
+        }),
+      );
 
       const branches: BranchInfo[] = [];
-
-      for (const [branchName, info] of Object.entries(branchSummary.branches)) {
-        const isRemote = branchName.startsWith('remotes/');
-
-        const displayName = isRemote
-          ? branchName.replace(/^remotes\//, '')
-          : branchName;
-
-        if (isRemote) {
-          branches.push({
-            name: displayName,
-            commit: info.commit,
-            label: info.label,
-            current: false,
-            isRemote: true,
-            hasWorktree: false,
-            worktreePath: null,
-          });
-          continue;
-        }
-
-        let worktreePath = worktreePaths.get(branchName) || null;
-
-        // Normalize worktree path for comparison
-        if (worktreePath) {
-          try {
-            const normalizedWorktreePath =
-              await fs.promises.realpath(worktreePath);
-            if (normalizedWorktreePath === normalizedRepoPath) {
-              worktreePath = null; // Don't show main repo as a worktree
-            }
-          } catch {
-            /* ignore */
-          }
-        }
-
+      for (const line of refs.split('\n')) {
+        const [ref, commit, head, symref] = line.split('\0');
+        // Skip blank lines and `origin/HEAD`-style aliases.
+        if (!commit || symref) continue;
+        const isRemote = ref.startsWith('refs/remotes/');
+        const name = ref.slice(isRemote ? 13 : 11);
+        const worktreePath =
+          isRemote || mainCheckouts.has(name)
+            ? null
+            : (worktreePaths.get(name) ?? null);
         branches.push({
-          name: branchName,
-          commit: info.commit,
-          label: info.label,
-          current: info.current,
-          isRemote: false,
+          name,
+          commit,
+          label: name,
+          current: head === '*',
+          isRemote,
           hasWorktree: worktreePath !== null,
           worktreePath,
         });
       }
-
       return branches;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -140,53 +149,60 @@ export class BranchesService {
     }
   }
 
+  /** Best matches first; ties keep git's refname order, shorter names first. */
+  private rank(branches: BranchInfo[], query: string): BranchInfo[] {
+    const lowerQuery = query.toLowerCase();
+    return branches
+      .map((branch, index) => ({
+        branch,
+        index,
+        rank: branchMatchRank(branch, lowerQuery),
+      }))
+      .filter((match) => match.rank >= 0)
+      .sort(
+        (a, b) =>
+          a.rank - b.rank ||
+          a.branch.name.length - b.branch.name.length ||
+          a.index - b.index,
+      )
+      .map((match) => match.branch);
+  }
+
   async searchBranches(
     repoPath: string,
     query: string,
     allowEmpty = false,
   ): Promise<BranchInfo[]> {
-    const allBranches = await this.getBranches(repoPath);
+    query = query?.trim() ?? '';
+    const allBranches = await this.getBranches(repoPath, false, {
+      allowStale: true,
+    });
 
-    if (!allowEmpty && (!query || query.length < 3)) {
+    if (!allowEmpty && query.length < 3) {
       return [];
     }
 
-    let filtered = allBranches;
-    if (query && query.length > 0) {
-      const lowerQuery = query.toLowerCase();
-      filtered = allBranches.filter((branch) =>
-        branch.name.toLowerCase().includes(lowerQuery),
-      );
+    if (query) {
+      const ranked = this.rank(allBranches, query);
+      return allowEmpty ? ranked.slice(0, this.SEARCH_LIMIT) : ranked;
     }
-
-    if (allowEmpty) {
-      filtered.sort((a, b) => {
-        if (a.current !== b.current) return a.current ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-      return filtered.slice(0, 100);
-    }
-
-    return filtered;
+    return [...allBranches]
+      .sort((a, b) => Number(b.current) - Number(a.current))
+      .slice(0, this.SEARCH_LIMIT);
   }
 
   async searchRemoteBranches(
     repoPath: string,
     query: string,
   ): Promise<BranchInfo[]> {
-    const allBranches = await this.getBranches(repoPath, true);
-    const remoteBranches = allBranches.filter((b) => b.isRemote);
-
-    let filtered = remoteBranches;
-    if (query && query.length > 0) {
-      const lowerQuery = query.toLowerCase();
-      filtered = remoteBranches.filter((branch) =>
-        branch.name.toLowerCase().includes(lowerQuery),
-      );
-    }
-
-    filtered.sort((a, b) => a.name.localeCompare(b.name));
-    return filtered.slice(0, 100);
+    query = query?.trim() ?? '';
+    const remoteBranches = (
+      await this.getBranches(repoPath, true, { allowStale: true })
+    ).filter((branch) => branch.isRemote);
+    return (query ? this.rank(remoteBranches, query) : remoteBranches).slice(
+      0,
+      this.SEARCH_LIMIT,
+    );
   }
 
   async createBranch(
@@ -206,8 +222,14 @@ export class BranchesService {
         );
       }
 
-      const existingBranches = await git.branch();
-      if (existingBranches.branches[branchName]) {
+      // `git.branch()` would list every remote branch with its subject.
+      const exists = await git
+        .raw(['rev-parse', '--verify', `refs/heads/${branchName}`])
+        .then(
+          () => true,
+          () => false,
+        );
+      if (exists) {
         throw new BadRequestException(`Branch "${branchName}" already exists`);
       }
 

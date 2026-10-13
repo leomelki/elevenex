@@ -309,6 +309,10 @@ export class TasksService implements OnApplicationBootstrap {
 
   async defaults(repoId: number, name = '') {
     const repo = await this.repo(repoId);
+    // Creation asks for defaults first; warm the branch listing it searches next.
+    void this.branches
+      .getBranches(repo.path, true, { allowStale: true })
+      .catch(() => undefined);
     const baseRef = await this.git.defaultBase(repo.path);
     let branchName = taskBranchSlug(name);
     if (name.trim()) {
