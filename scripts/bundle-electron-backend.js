@@ -115,6 +115,17 @@ async function main() {
     platform: 'node',
     format: 'cjs',
     target: 'node22',
+    // ESM-only dependencies such as the Claude Agent SDK use import.meta.url
+    // both to create a package-scoped require and to resolve adjacent runtime
+    // files. esbuild otherwise replaces import.meta with an empty object when
+    // emitting CommonJS, which makes the embedded backend crash at startup.
+    // Give bundled modules the equivalent URL of the generated main.cjs file.
+    banner: {
+      js: "const __elevenexImportMetaUrl = require('node:url').pathToFileURL(__filename).href;",
+    },
+    define: {
+      'import.meta.url': '__elevenexImportMetaUrl',
+    },
     sourcemap: true,
     sourcesContent: true,
     minify: false,
