@@ -34,6 +34,7 @@ import { ActionsService } from '../actions/actions.service.js';
 import { TaskGitService, taskBranchSlug } from './task-git.service.js';
 import { TaskWorktreeAllocator } from './task-worktree-allocator.service.js';
 import { TaskSetup } from './task.types.js';
+import { WorktreeContextService } from '../worktree-context/worktree-context.service.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
 import { refreshWorkspaceCheckout } from '../workspaces/workspace-ownership.js';
 import { compareWorkspaceOrder } from '../workspaces/workspace-order.js';
@@ -60,6 +61,7 @@ export class TasksService implements OnApplicationBootstrap {
     private readonly hooks: ClaudeHooksService,
     private readonly terminals: UserPtyManager,
     private readonly actions: ActionsService,
+    private readonly worktreeContext: WorktreeContextService,
     @Optional() private readonly navigationEvents?: NavigationEventsService,
   ) {}
 
@@ -845,14 +847,7 @@ export class TasksService implements OnApplicationBootstrap {
         `refs/elevenex/tasks/${id}/start`,
         current.startingCommit ?? setup.resolvedCommit!,
       ]);
-      await this.db
-        .delete(schema.worktreeContexts)
-        .where(
-          and(
-            eq(schema.worktreeContexts.repoId, repo.id),
-            eq(schema.worktreeContexts.worktreePath, environment.path),
-          ),
-        );
+      await this.worktreeContext.resetForTask(repo.id, environment.path);
       setup.preparationStage = 'restoring_sessions';
       await this.update(id, { taskConfig: JSON.stringify(setup) });
       await this.restoreSessions(id, environment.path, setup.localBranch!);

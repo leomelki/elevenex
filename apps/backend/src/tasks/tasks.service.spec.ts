@@ -23,6 +23,8 @@ import { WorktreePoolService } from '../worktrees/worktree-pool.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { SettingsService } from '../settings/settings.service.js';
+import { WorktreeContextService } from '../worktree-context/worktree-context.service.js';
+import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 import { BranchesService } from '../branches/branches.service.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { UserPtyManager } from '../user-terminal/user-pty-manager.service.js';
@@ -44,6 +46,7 @@ describe('Task lifecycle with real Git and migrations', () => {
   let sqlite: InstanceType<typeof Database>;
   let service: TasksService;
   let gitService: TaskGitService;
+  let worktreeContext: WorktreeContextService;
   let repo: typeof schema.repos.$inferSelect;
   const hooks = { getStatus: jest.fn(() => 'idle') };
   const terminals = {
@@ -143,6 +146,11 @@ describe('Task lifecycle with real Git and migrations', () => {
       terminals as unknown as UserPtyManager,
       actions as unknown as ActionsService,
     );
+    worktreeContext = new WorktreeContextService(
+      db,
+      sessions as unknown as SessionsService,
+      { generate: jest.fn() } as unknown as TextAgentGenerationService,
+    );
     service = new TasksService(
       db,
       gitService,
@@ -156,6 +164,7 @@ describe('Task lifecycle with real Git and migrations', () => {
       hooks as unknown as ClaudeHooksService,
       terminals as unknown as UserPtyManager,
       actions as unknown as ActionsService,
+      worktreeContext,
     );
   });
   afterEach(async () => {
@@ -456,6 +465,43 @@ describe('Task lifecycle with real Git and migrations', () => {
       status: 'stopped',
     });
     expect(reactivateRuntime).toHaveBeenCalledWith(one.sessions[0].id);
+  });
+
+  it('clears the previous task context before opening a conversation in a reused worktree', async () => {
+    const one = await create('old-context');
+    await db.insert(schema.worktreeContexts).values({
+      repoId: repo.id,
+      worktreePath: one.path,
+      rootRef: 'old-comparison-root',
+      contextSentence: 'This context belongs to the previous task.',
+      generationStatus: 'ready',
+      contextEnabled: false,
+      generatedAt: '2026-04-24T08:00:00.000Z',
+      lastUsedAt: '2026-04-24T09:00:00.000Z',
+    });
+    await service.finish(one.id);
+    const reset = jest.spyOn(worktreeContext, 'resetForTask');
+    const openConversation = jest.spyOn(service, 'openConversation');
+
+    const two = await create('fresh-context');
+
+    expect(two).toMatchObject({ taskState: 'ready', path: one.path });
+    expect(reset).toHaveBeenCalledWith(repo.id, one.path);
+    expect(reset.mock.invocationCallOrder[0]).toBeLessThan(
+      openConversation.mock.invocationCallOrder[0],
+    );
+    expect(two.sessions[0].hasInjectedWorktreeContext).toBe(false);
+    expect(
+      await worktreeContext.getCachedSnapshot(repo.id, two.path),
+    ).toMatchObject({
+      contextSentence: null,
+      rootRef: null,
+      generationStatus: 'idle',
+      generatedAt: null,
+      lastUsedAt: null,
+      hasRecord: false,
+      contextEnabled: true,
+    });
   });
 
   it('keeps local edits reserved and reopens them intact', async () => {

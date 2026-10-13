@@ -11,11 +11,13 @@ import { TaskGitService } from './task-git.service.js';
 import { TaskWorktreeAllocator } from './task-worktree-allocator.service.js';
 import { TasksService } from './tasks.service.js';
 import { TasksController } from './tasks.controller.js';
+import { WorktreeContextModule } from '../worktree-context/worktree-context.module.js';
 
 @Module({
   imports: [
     ProjectsModule,
     SessionsModule,
+    WorktreeContextModule,
     WorktreesModule,
     BranchesModule,
     ClaudeHooksModule,

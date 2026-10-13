@@ -46,11 +46,11 @@ describe('WorktreeContextService', () => {
             })),
             update: jest.fn(() => ({
               set: jest.fn(() => ({
-                where: jest.fn(() => Promise.resolve()),
+                where: jest.fn(() => ({ run: jest.fn() })),
               })),
             })),
             insert: jest.fn(() => ({
-              values: jest.fn(() => Promise.resolve()),
+              values: jest.fn(() => ({ run: jest.fn() })),
             })),
           },
         },
