@@ -154,8 +154,12 @@ export class ClaudeHooksService extends EventEmitter {
   updateRuntimeActivity(
     sessionId: number,
     activity: ClaudeSessionActivity,
+    options: { authoritative?: boolean } = {},
   ): void {
     const previous = this.getActivity(sessionId);
+    // Native providers own their turn state. A leftover TUI hook must not
+    // revive a running indicator after their runtime has returned to idle.
+    if (options.authoritative) this.statuses.delete(sessionId);
     if (activity.activityStatus === 'idle' && !activity.backgroundActive) {
       this.runtimeActivities.delete(sessionId);
     } else {

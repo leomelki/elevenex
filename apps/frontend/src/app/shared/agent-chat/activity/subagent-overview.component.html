@@ -1,54 +1,62 @@
 @if (agents().length) {
   <section
-    class="mx-auto w-full max-w-[52rem] rounded-xl border border-border bg-card"
+    class="mx-auto w-full max-w-[52rem] rounded-xl border-border"
+    [class.border]="running().length > 0"
+    [class.bg-card]="running().length > 0"
     aria-label="Delegated agents"
   >
     <button
       z-button
       zType="ghost"
       type="button"
-      class="h-auto w-full justify-start gap-2.5 rounded-b-none px-3 py-2 text-xs"
+      class="h-auto w-full justify-start gap-2.5 px-3 py-2 text-xs text-muted-foreground"
+      [class.rounded-b-none]="running().length > 0"
       (click)="inspect.emit(running()[0]?.agentId ?? agents()[0].agentId)"
     >
-      <ng-icon name="lucideBot" size="15" class="text-primary" />
-      <span class="font-semibold"
-        >Agents <span class="ml-1 text-muted-foreground">{{ agents().length }}</span></span
-      >
-      <span class="ml-auto text-muted-foreground"
-        >{{ running().length ? running().length + ' active' : 'Finished' }}
+      <ng-icon name="lucideBot" size="15" [class.text-primary]="running().length > 0" />
+      <span [class.font-semibold]="running().length > 0">Agents</span>
+      <span class="ml-auto text-muted-foreground">
+        @if (running().length) {
+          {{ running().length }} active
+        }
+        @if (finished().length) {
+          {{ running().length ? ' · ' : '' }}{{ finished().length }} finished
+        }
         @if (attention()) {
           <span class="text-warning"> · {{ attention() }} need attention</span>
         }
       </span>
       <ng-icon name="lucideArrowUpRight" size="14" />
     </button>
-    <div class="flex flex-wrap gap-1.5 border-t border-border/70 px-2 py-1.5">
-      @for (agent of featured(); track agent.agentId) {
-        <button
-          z-button
-          zType="ghost"
-          zSize="sm"
-          type="button"
-          class="h-auto min-w-0 gap-2 rounded-lg px-2 py-1"
-          [attr.aria-label]="'Inspect ' + agentLabel(agent)"
-          (click)="inspect.emit(agent.agentId)"
-        >
-          <span class="max-w-40 truncate text-xs">{{ agentLabel(agent) }}</span>
-          <cw-subagent-status [agent]="agent" />
-        </button>
-      }
-      @if (agents().length > 3) {
-        <button
-          z-button
-          zType="ghost"
-          zSize="sm"
-          type="button"
-          class="h-auto px-2 py-1 text-xs text-muted-foreground"
-          (click)="inspect.emit(agents()[0].agentId)"
-        >
-          +{{ agents().length - 3 }} more
-        </button>
-      }
-    </div>
+    @if (running().length) {
+      <div class="flex flex-wrap gap-1.5 border-t border-border/70 px-2 py-1.5">
+        @for (agent of featured(); track agent.agentId) {
+          <button
+            z-button
+            zType="ghost"
+            zSize="sm"
+            type="button"
+            class="h-auto min-w-0 gap-2 rounded-lg px-2 py-1"
+            [attr.aria-label]="'Inspect ' + agentLabel(agent)"
+            (click)="inspect.emit(agent.agentId)"
+          >
+            <span class="max-w-40 truncate text-xs">{{ agentLabel(agent) }}</span>
+            <cw-subagent-status [agent]="agent" />
+          </button>
+        }
+        @if (running().length > featured().length) {
+          <button
+            z-button
+            zType="ghost"
+            zSize="sm"
+            type="button"
+            class="h-auto px-2 py-1 text-xs text-muted-foreground"
+            (click)="inspect.emit(running()[0].agentId)"
+          >
+            +{{ running().length - featured().length }} active
+          </button>
+        }
+      </div>
+    }
   </section>
 }

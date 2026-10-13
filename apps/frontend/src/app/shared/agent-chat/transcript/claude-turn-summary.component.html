@@ -63,44 +63,67 @@
 
   @if (agentSummary(); as summary) {
     <div
-      class="flex flex-col gap-2 mx-auto w-full px-[0.875rem] py-[0.625rem] border border-[color-mix(in_oklab,var(--primary)_20%,var(--border))] rounded-xl cw-agents-bg"
+      class="mx-auto flex w-full flex-col gap-2 rounded-xl border-border px-3 py-1.5"
+      [class.border]="activeAgents().length > 0"
+      [class.bg-card]="activeAgents().length > 0"
     >
       <div class="flex items-center justify-between gap-3">
-        <span class="text-[0.75rem] font-semibold text-foreground">
-          {{ summary.agents.length === 1 ? '1 agent ran' : summary.agents.length + ' agents ran' }}
+        <span class="text-xs text-muted-foreground">
+          {{ summary.agents.length }} agent{{ summary.agents.length === 1 ? '' : 's' }}
+          @if (activeAgents().length) {
+            · {{ activeAgents().length }} active
+          }
         </span>
+        @if (finishedCount() && !expanded()) {
+          <button
+            z-button
+            zType="ghost"
+            zSize="sm"
+            type="button"
+            class="ml-auto h-auto px-2 py-1 text-xs text-muted-foreground"
+            [attr.aria-expanded]="agentsExpanded()"
+            (click)="agentsExpanded.set(!agentsExpanded())"
+          >
+            {{ agentsExpanded() ? 'Hide finished' : finishedCount() + ' finished · Show' }}
+          </button>
+        }
         @if (canInspect()) {
           <button
             type="button"
-            class="cw-turn-gap__inspect inline-flex items-center gap-1.5 px-3 py-[0.3rem] rounded-full border border-primary/38 bg-primary/9 text-[color-mix(in_oklab,var(--primary)_80%,var(--foreground))] text-[0.75rem] font-semibold cursor-pointer whitespace-nowrap transition-[background,border-color] duration-[120ms] hover:bg-primary/15 hover:border-primary/55 focus-visible:outline-none"
+            z-button
+            zType="ghost"
+            zSize="sm"
+            class="cw-turn-gap__inspect h-auto px-2 py-1 text-xs text-muted-foreground"
             (click)="inspect.emit()"
           >
             Inspect agents →
           </button>
         }
       </div>
-      <div class="flex flex-col gap-1.5">
-        @for (agent of summary.agents; track agent.agentId) {
-          <button
-            type="button"
-            class="flex items-center gap-2 min-w-0 w-full rounded-lg border border-border/80 bg-background/70 px-[0.625rem] py-[0.4rem] text-foreground cursor-pointer text-left transition-[background,border-color] duration-100 enabled:hover:bg-primary/6 enabled:hover:border-primary/28 disabled:cursor-default focus-visible:outline-none"
-            [attr.data-state]="agent.status"
-            [disabled]="!canInspect()"
-            (click)="inspectAgent.emit(agent.agentId)"
-          >
-            <span class="text-[0.8125rem] font-semibold capitalize shrink-0">{{
-              agentLabel(agent)
-            }}</span>
-            <cw-subagent-status [agent]="agent" />
-            @if (agent.summary) {
-              <span
-                class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.75rem] text-muted-foreground"
-                >{{ agent.summary }}</span
-              >
-            }
-          </button>
-        }
-      </div>
+      @if (visibleAgents().length) {
+        <div class="flex flex-col gap-1.5">
+          @for (agent of visibleAgents(); track agent.agentId) {
+            <button
+              type="button"
+              class="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-1.5 text-left text-foreground transition-colors enabled:hover:bg-muted disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              [attr.data-state]="agent.status"
+              [disabled]="!canInspect()"
+              (click)="inspectAgent.emit(agent.agentId)"
+            >
+              <span class="text-[0.8125rem] font-semibold capitalize shrink-0">{{
+                agentLabel(agent)
+              }}</span>
+              <cw-subagent-status [agent]="agent" />
+              @if (agent.summary) {
+                <span
+                  class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.75rem] text-muted-foreground"
+                  >{{ agent.summary }}</span
+                >
+              }
+            </button>
+          }
+        </div>
+      }
     </div>
   }
 </div>

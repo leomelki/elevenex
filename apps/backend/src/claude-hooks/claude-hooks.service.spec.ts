@@ -261,6 +261,45 @@ describe('ClaudeHooksService', () => {
     });
   });
 
+  it('clears stale hook and background activity when an authoritative runtime becomes idle', async () => {
+    await service.updateStatus(5, 'running');
+    service.updateRuntimeActivity(5, {
+      activityStatus: 'idle',
+      actionKind: null,
+      actionLabel: null,
+      backgroundActive: true,
+    });
+    const listener = jest.fn();
+    service.on('status-changed', listener);
+    const idle = {
+      activityStatus: 'idle' as const,
+      actionKind: null,
+      actionLabel: null,
+      backgroundActive: false,
+    };
+    service.updateRuntimeActivity(5, idle, { authoritative: true });
+    expect(service.getActivity(5)).toEqual(idle);
+    expect(listener).toHaveBeenLastCalledWith({
+      sessionId: 5,
+      status: 'idle',
+      ...idle,
+    });
+    expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+  });
+
+  it('keeps confirmed background work visible with an idle authoritative parent', async () => {
+    await service.updateStatus(5, 'running');
+    const activity = {
+      activityStatus: 'idle' as const,
+      actionKind: null,
+      actionLabel: null,
+      backgroundActive: true,
+    };
+    service.updateRuntimeActivity(5, activity, { authoritative: true });
+    expect(service.getActivity(5)).toEqual(activity);
+    expect(service.getAllActivities()[5]).toEqual(activity);
+  });
+
   it('ignores late hook events after a session is cleared', async () => {
     service.clearStatus(42);
 

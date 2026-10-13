@@ -451,6 +451,12 @@ export class CodexRuntimeService
     );
     state.cachedWorktreePath = session.worktreePath;
     await this.restoreSubagents(sessionId, state);
+    // Hydration must also repair the sidebar's independently streamed status.
+    this.hooksService.updateRuntimeActivity(
+      sessionId,
+      this.toSidebarActivity(state, sessionId),
+      { authoritative: true },
+    );
     await this.refreshAuthStatusFast(state, sessionId);
     if (state.authStatus?.authMethod === 'oauth') {
       void this.refreshCodexPlanUsage();
@@ -555,6 +561,9 @@ export class CodexRuntimeService
     const tracker = this.tracker(sessionId);
     if (this.restoredSubagents.has(tracker)) return Promise.resolve();
     const restore = (async () => {
+      // Rollouts survive process death and can end with task_started. Only live
+      // notifications can establish activity in this backend's app-server.
+      const historical = new WeakSet<ClaudeSubagentState>();
       let rootFound = false;
       const queue = [{ id: rootId, prompt: undefined as string | undefined }];
       const seen = new Set<string>();
@@ -593,8 +602,8 @@ export class CodexRuntimeService
               snapshot.executionStatus &&
               snapshot.timestamp &&
               snapshot.timestamp >= current.timestamp
-            )
-              tracker.upsert(
+            ) {
+              const updated = tracker.upsert(
                 id,
                 {
                   executionStatus: snapshot.executionStatus,
@@ -604,11 +613,14 @@ export class CodexRuntimeService
                 },
                 snapshot.timestamp,
               );
+              if (historical.has(current)) historical.add(updated);
+            }
             if (
               snapshot.updatedAt &&
               snapshot.updatedAt > tracker.agents.get(id)!.timestamp
-            )
-              tracker.upsert(
+            ) {
+              const before = tracker.agents.get(id)!;
+              const updated = tracker.upsert(
                 id,
                 {
                   lastAssistantMessage:
@@ -617,20 +629,36 @@ export class CodexRuntimeService
                 },
                 snapshot.updatedAt,
               );
+              if (historical.has(before)) historical.add(updated);
+            }
           }
           for (const agent of snapshot.subagents) {
             if (agent.agentId === rootId || seen.has(agent.agentId)) continue;
             const old = tracker.agents.get(agent.agentId);
-            if (!old || old.timestamp <= agent.timestamp)
-              tracker.agents.set(agent.agentId, {
+            if (!old || old.timestamp <= agent.timestamp) {
+              const restored = {
                 ...old,
                 ...agent,
                 parentAgentId: id === rootId ? undefined : id,
-              });
+              };
+              tracker.agents.set(agent.agentId, restored);
+              if (!old || historical.has(old)) historical.add(restored);
+            }
             queue.push({ id: agent.agentId, prompt: agent.prompt });
           }
         }
       }
+      const timestamp = new Date().toISOString();
+      const stopped = [...tracker.agents.values()]
+        .filter((agent) => historical.has(agent) && isAgentActive(agent))
+        .map((agent) =>
+          tracker.upsert(
+            agent.agentId,
+            { executionStatus: 'interrupted' },
+            timestamp,
+          ),
+        );
+      if (stopped.length) this.publishSubagents(sessionId, stopped);
       if (rootFound) this.restoredSubagents.add(tracker);
     })().finally(() => {
       if (this.subagentRestores.get(sessionId) === restore)
@@ -717,6 +745,15 @@ export class CodexRuntimeService
           tracker.agents.set(child.agentId, {
             ...child,
             parentAgentId: agentId,
+            // Discovered descendants have no live activity in this runtime.
+            ...(isAgentActive(child)
+              ? {
+                  status: 'stopped',
+                  executionStatus: 'interrupted',
+                  timestamp: new Date().toISOString(),
+                  completedAt: new Date().toISOString(),
+                }
+              : {}),
           });
           this.publishSubagents(sessionId, [
             tracker.agents.get(child.agentId)!,
@@ -2657,6 +2694,7 @@ export class CodexRuntimeService
     this.hooksService.updateRuntimeActivity(
       sessionId,
       this.toSidebarActivity(state, sessionId),
+      { authoritative: true },
     );
     this.emitEvent({
       type: 'run_state',

@@ -76,6 +76,97 @@ describe('AgentCollaborationComponent', () => {
     expect(fixture.nativeElement.querySelector('[aria-label^="Inspect"]')).toBeNull();
     expect(fixture.nativeElement.textContent).toContain('Reviewer');
   });
+  it('collapses a finished agent and keeps its inspector available after expansion', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput(
+      'agents',
+      buildSubagentIndex([
+        {
+          agentId: 'child',
+          agentPath: '/root/reviewer',
+          agentType: 'explorer',
+          displayName: 'Ada',
+          status: 'stopped',
+          executionStatus: 'completed',
+          timestamp,
+        },
+      ]),
+    );
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('article').getAttribute('data-compact')).toBe(
+      'true',
+    );
+    expect(fixture.nativeElement.querySelector('[aria-label="Inspect Ada"]')).toBeNull();
+    expect(fixture.nativeElement.textContent).toContain('1 agent');
+    fixture.nativeElement.querySelector('[aria-expanded]').click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[aria-label="Inspect Ada"]')).not.toBeNull();
+    expect(fixture.nativeElement.textContent).toContain('Completed');
+  });
+  it('collapses an old running status when the agent has since stopped', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('call', {
+      id: 'call',
+      kind: 'tool_use',
+      toolName: 'list_agents',
+      toolInput: {},
+      timestamp,
+    });
+    fixture.componentRef.setInput('result', {
+      id: 'result',
+      kind: 'tool_result',
+      content: JSON.stringify({
+        agents: [
+          { agent_id: 'child', status: 'running' },
+          { agent_name: '/root', agent_status: 'running' },
+        ],
+      }),
+      timestamp,
+    });
+    fixture.componentRef.setInput(
+      'agents',
+      buildSubagentIndex([
+        {
+          agentId: 'child',
+          agentType: 'explorer',
+          displayName: 'Ada',
+          status: 'stopped',
+          executionStatus: 'interrupted',
+          timestamp: '2026-10-12T11:00:00.000Z',
+        },
+      ]),
+    );
+    fixture.detectChanges();
+    expect(fixture.componentInstance.visibleRows()).toEqual([]);
+    expect(fixture.nativeElement.querySelector('cw-subagent-status')).toBeNull();
+    expect(fixture.nativeElement.textContent).not.toContain('active');
+    fixture.nativeElement.querySelector('[aria-expanded]').click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Statuses reported by this step');
+    expect(fixture.nativeElement.textContent).toContain('Now');
+    expect(fixture.nativeElement.textContent).toContain('Stopped');
+  });
+  it('keeps a failed agent visible for attention', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput(
+      'agents',
+      buildSubagentIndex([
+        {
+          agentId: 'child',
+          agentPath: '/root/reviewer',
+          agentType: 'explorer',
+          displayName: 'Ada',
+          status: 'stopped',
+          executionStatus: 'error',
+          timestamp,
+        },
+      ]),
+    );
+    fixture.detectChanges();
+    expect(fixture.componentInstance.compact()).toBe(false);
+    expect(fixture.nativeElement.querySelector('[aria-label="Inspect Ada"]')).not.toBeNull();
+    expect(fixture.nativeElement.textContent).toContain('Failed');
+  });
   it('copies the readable message rather than its JSON envelope', async () => {
     const fixture = await render();
     const old = Object.getOwnPropertyDescriptor(navigator, 'clipboard');

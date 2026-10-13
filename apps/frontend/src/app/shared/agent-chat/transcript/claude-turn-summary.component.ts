@@ -2,7 +2,8 @@ import type { TurnAgentSummary } from '@/shared/agent-chat/activity/agent-deep-d
 import type { TurnChangeDetails } from '@/shared/agent-chat/tools/turn-change-stats';
 import { CommonModule } from '@angular/common';
 import { SubagentStatusComponent, agentLabel } from '../activity/subagent-status.component';
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+import { ZardButtonComponent } from '@/shared/components/button';
 
 /**
  * The band that stands in for a settled turn's work: the "Worked for X" pill,
@@ -14,7 +15,7 @@ import { ChangeDetectionStrategy, Component, input, output } from '@angular/core
 @Component({
   selector: 'cw-turn-summary',
   standalone: true,
-  imports: [CommonModule, SubagentStatusComponent],
+  imports: [CommonModule, SubagentStatusComponent, ZardButtonComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './claude-turn-summary.component.html',
   styleUrl: './claude-turn-summary.component.scss',
@@ -27,6 +28,18 @@ export class ClaudeTurnSummaryComponent {
   readonly expanded = input(false);
   readonly changesExpanded = input(false);
   readonly canInspect = input(false);
+  readonly agentsExpanded = signal(false);
+  readonly activeAgents = computed(() =>
+    (this.agentSummary()?.agents ?? []).filter((agent) => agent.status === 'started'),
+  );
+  readonly finishedCount = computed(
+    () => (this.agentSummary()?.agents.length ?? 0) - this.activeAgents().length,
+  );
+  readonly visibleAgents = computed(() =>
+    this.agentsExpanded() || this.expanded()
+      ? (this.agentSummary()?.agents ?? [])
+      : this.activeAgents(),
+  );
 
   readonly toggle = output<void>();
   readonly toggleChanges = output<void>();

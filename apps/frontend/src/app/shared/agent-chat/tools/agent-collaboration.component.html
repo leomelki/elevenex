@@ -1,6 +1,9 @@
 @if (view(); as tool) {
   <article
-    class="cw-collaboration overflow-hidden rounded-xl border border-border bg-card text-[13px]"
+    class="cw-collaboration overflow-hidden rounded-xl border-border text-[13px]"
+    [class.border]="!compact() || expanded()"
+    [class.bg-card]="!compact() || expanded()"
+    [attr.data-compact]="compact()"
     [attr.data-action]="tool.action"
     [attr.data-outcome]="tool.tone"
   >
@@ -9,21 +12,26 @@
       zType="ghost"
       type="button"
       class="h-auto w-full justify-start gap-2.5 rounded-none px-3 py-2.5 text-left"
+      [class.py-1.5]="compact() && !expanded()"
       [attr.aria-expanded]="expanded()"
       (click)="expanded.set(!expanded())"
     >
       <span
-        class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-primary"
+        class="flex shrink-0 items-center justify-center rounded-lg"
+        [class]="compact() ? 'size-5 text-muted-foreground' : 'size-7 bg-primary/8 text-primary'"
       >
         <ng-icon [name]="tool.icon" size="15" />
       </span>
       <span class="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span class="font-semibold text-foreground">{{ tool.label }}</span>
-        @if (payloadPreview()) {
+        <span
+          [class]="compact() ? 'text-xs text-muted-foreground' : 'font-semibold text-foreground'"
+          >{{ tool.label }}</span
+        >
+        @if (payloadPreview() && (!compact() || expanded())) {
           <span class="truncate text-xs font-normal text-muted-foreground">{{
             payloadPreview()
           }}</span>
-        } @else if (tool.sender) {
+        } @else if (tool.sender && (!compact() || expanded())) {
           <span class="text-xs font-normal text-muted-foreground">From {{ tool.sender }}</span>
         }
       </span>
@@ -34,7 +42,7 @@
         @if (isLive() && !result()) {
           <ng-icon name="lucideLoaderCircle" size="12" class="animate-spin" />
         }
-        {{ tool.outcome }}
+        {{ displayedOutcome() }}
         @if (tool.action === 'wait' && isLive() && !result() && elapsedSeconds()) {
           <span class="tabular-nums">· {{ elapsedSeconds() }}s</span>
         }
@@ -47,7 +55,7 @@
       />
     </button>
 
-    @if (tool.rows.length) {
+    @if (visibleRows().length || (expanded() && tool.rows.length)) {
       <div
         class="flex max-h-72 flex-col overflow-auto border-t border-border/70"
         [attr.aria-label]="
@@ -56,7 +64,7 @@
             : 'Agents involved'
         "
       >
-        @if (tool.action === 'list' || tool.action === 'wait') {
+        @if (expanded() && (tool.action === 'list' || tool.action === 'wait')) {
           <p class="px-3 pt-2 text-[10px] text-muted-foreground">Statuses reported by this step</p>
         }
         @for (row of visibleRows(); track row.key) {
@@ -153,7 +161,7 @@
             }
           </div>
         }
-        @if (tool.rows.length > visibleRows().length || showAll()) {
+        @if (expanded() && (tool.rows.length > visibleRows().length || showAll())) {
           <button
             z-button
             zType="ghost"
@@ -170,10 +178,31 @@
           </button>
         }
       </div>
-    } @else if (tool.action === 'list' && result() && !tool.error) {
+    } @else if (
+      expanded() && tool.action === 'list' && result() && !tool.error && !tool.rows.length
+    ) {
       <p class="border-t border-border/70 px-3 py-2 text-xs text-muted-foreground">
         No agents were reported by this check.
       </p>
+    }
+
+    @if (!expanded() && tool.rows.length > visibleRows().length) {
+      <button
+        z-button
+        zType="ghost"
+        zSize="sm"
+        type="button"
+        class="h-auto justify-start px-3 py-1 text-xs text-muted-foreground"
+        (click)="expanded.set(true)"
+      >
+        @if (tool.rows.length > prominentRows().length) {
+          {{ tool.rows.length - prominentRows().length }} agent{{
+            tool.rows.length - prominentRows().length === 1 ? '' : 's'
+          }}
+          ·
+        }
+        {{ prominentRows().length > visibleRows().length ? 'More agents · ' : '' }}Show details
+      </button>
     }
 
     @if (tool.error) {

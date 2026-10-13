@@ -16,22 +16,15 @@ export class SubagentOverviewComponent {
   readonly agents = input.required<AgentSubagentState[]>();
   readonly inspect = output<string>();
   readonly running = computed(() => this.agents().filter((agent) => agent.status === 'started'));
+  readonly finished = computed(() => this.agents().filter((agent) => agent.status === 'stopped'));
   readonly attention = computed(
     () =>
       this.agents().filter((agent) =>
-        ['error', 'interrupted', 'waiting', 'paused', 'unavailable'].includes(
-          agent.executionStatus ?? '',
-        ),
+        ['error', 'waiting', 'paused', 'unavailable'].includes(agent.executionStatus ?? ''),
       ).length,
   );
   readonly featured = computed(() =>
-    [...this.agents()]
-      .sort(
-        (a, b) =>
-          Number(b.status === 'started') - Number(a.status === 'started') ||
-          b.timestamp.localeCompare(a.timestamp),
-      )
-      .slice(0, 3),
+    [...this.running()].sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 3),
   );
   protected readonly agentLabel = agentLabel;
 }

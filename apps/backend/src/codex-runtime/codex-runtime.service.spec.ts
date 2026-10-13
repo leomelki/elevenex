@@ -390,6 +390,179 @@ describe('CodexRuntimeService', () => {
     expect(runtime.subagentTrackers.has(7)).toBe(false);
   });
 
+  it('does not restore abandoned rollout turns as live work or resurrect them on inspector reads', async () => {
+    const { service, historyService, sessionsService, appServer } =
+      createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'root');
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'root',
+    });
+    const timestamp = '2026-10-12T10:00:00.000Z';
+    historyService.getSubagentSnapshot.mockImplementation(
+      async (...args: unknown[]) => ({
+        history: [],
+        path: '/tmp/rollout',
+        timestamp,
+        executionStatus: args[0] === 'finished' ? 'completed' : 'running',
+        subagents:
+          args[0] === 'root'
+            ? ['abandoned', 'finished', 'missing'].map((agentId) => ({
+                agentId,
+                agentType: 'worker',
+                status: 'started',
+                executionStatus: 'running',
+                timestamp,
+              }))
+            : [],
+      }),
+    );
+    const snapshot =
+      historyService.getSubagentSnapshot.getMockImplementation()!;
+    historyService.getSubagentSnapshot.mockImplementation(
+      async (...args: unknown[]) =>
+        args[0] === 'missing' ? null : snapshot(...args),
+    );
+    await runtime.restoreSubagents(7, state);
+    for (const id of ['abandoned', 'missing']) {
+      expect(runtime.tracker(7).agents.get(id)).toMatchObject({
+        status: 'stopped',
+        executionStatus: 'interrupted',
+        completedAt: expect.any(String),
+      });
+    }
+    expect(runtime.tracker(7).agents.get('finished').executionStatus).toBe(
+      'completed',
+    );
+    expect(runtime.subagentBackgroundWork(7)).toEqual([]);
+    expect(runtime.toRuntimeStatePayload(7, state).canInterrupt).toBe(false);
+    expect(appServer.addRef).not.toHaveBeenCalled();
+    const history = await service.getSubagentHistory(7, 'abandoned');
+    expect(history.subagent.executionStatus).toBe('interrupted');
+    expect(runtime.subagentBackgroundWork(7)).toEqual([]);
+  });
+
+  it('preserves a live child that starts while its saved history is being restored', async () => {
+    const { service, historyService } = createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'root');
+    const timestamp = '2026-10-12T10:00:00.000Z';
+    historyService.getSubagentSnapshot.mockImplementation(
+      async (...args: unknown[]) => {
+        if (args[0] === 'child') {
+          runtime.handleSubagentNotification({
+            method: 'turn/started',
+            params: { threadId: 'child' },
+          });
+        }
+        return {
+          history: [],
+          path: '/tmp/rollout',
+          executionStatus: 'running',
+          timestamp,
+          subagents:
+            args[0] === 'root'
+              ? [
+                  {
+                    agentId: 'child',
+                    agentType: 'worker',
+                    status: 'started',
+                    executionStatus: 'running',
+                    timestamp,
+                  },
+                ]
+              : [],
+        };
+      },
+    );
+    await runtime.restoreSubagents(7, state);
+    expect(runtime.tracker(7).agents.get('child').executionStatus).toBe(
+      'running',
+    );
+    expect(runtime.subagentBackgroundWork(7)).toHaveLength(1);
+  });
+
+  it('does not treat newly discovered historical descendants as live work', async () => {
+    const { service, historyService, sessionsService } = createService();
+    const runtime = service as any;
+    runtime.ensureRuntimeState(7, 'root');
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'root',
+    });
+    const timestamp = '2026-10-12T10:00:00.000Z';
+    runtime
+      .tracker(7)
+      .upsert('child', { executionStatus: 'completed' }, timestamp);
+    historyService.getSubagentSnapshot.mockResolvedValue({
+      history: [],
+      path: '/tmp/rollout',
+      subagents: [
+        {
+          agentId: 'grandchild',
+          agentType: 'worker',
+          status: 'started',
+          timestamp,
+        },
+      ],
+    });
+    await service.getSubagentHistory(7, 'child');
+    expect(runtime.tracker(7).agents.get('grandchild')).toMatchObject({
+      parentAgentId: 'child',
+      status: 'stopped',
+      executionStatus: 'interrupted',
+    });
+    expect(runtime.subagentBackgroundWork(7)).toEqual([]);
+  });
+
+  it('repairs sidebar activity on every snapshot, including an already restored idle session', async () => {
+    const { service, historyService, sessionsService, hooksService } =
+      createService();
+    const runtime = service as any;
+    jest
+      .spyOn(runtime, 'scheduleModelCatalogRefresh')
+      .mockImplementation(() => undefined);
+    jest
+      .spyOn(runtime, 'refreshCodexPlanUsage')
+      .mockImplementation(async () => undefined);
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'root',
+    });
+    historyService.getSubagentSnapshot.mockResolvedValue({
+      history: [],
+      subagents: [],
+      path: '/tmp/rollout',
+    });
+    const state = await service.getRuntimeState(7);
+    expect(state).toMatchObject({ runPhase: 'idle', backgroundWork: [] });
+    expect(hooksService.updateRuntimeActivity).toHaveBeenLastCalledWith(
+      7,
+      {
+        activityStatus: 'idle',
+        actionKind: null,
+        actionLabel: null,
+        backgroundActive: false,
+      },
+      { authoritative: true },
+    );
+    hooksService.updateRuntimeActivity.mockClear();
+    await service.getSnapshot(7);
+    expect(hooksService.updateRuntimeActivity).toHaveBeenCalledTimes(1);
+    expect(historyService.getSubagentSnapshot).toHaveBeenCalledTimes(1);
+    expect(hooksService.updateRuntimeActivity).toHaveBeenLastCalledWith(
+      7,
+      {
+        activityStatus: 'idle',
+        actionKind: null,
+        actionLabel: null,
+        backgroundActive: false,
+      },
+      { authoritative: true },
+    );
+  });
+
   it('does not dispatch a turn after cleanup cancels initialization', async () => {
     const { service, appServer } = createService();
     wireAppServerTurn(appServer);
