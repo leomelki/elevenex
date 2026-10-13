@@ -431,6 +431,21 @@ describe('ClaudeWorkspaceComponent', () => {
     },
   );
 
+  it.each(['codex', 'claude'])('queues %s follow-ups without adding an optimistic turn', async (provider) => {
+    const fixture = createWorkspace();
+    const runtime = fixture.componentInstance.runtime;
+    runtime.currentProvider.set(provider);
+    runtime.applyRuntimeState({ ...runtimeState(), runPhase: 'running', nativeSteering: true });
+
+    await fixture.componentInstance.draft.submitPrompt('Check performance next');
+
+    expect(runtime.submitting()).toBe(false);
+    expect(runtime.optimisticUserItems()).toEqual([]);
+    expect(wsMock.send).toHaveBeenCalledWith(
+      7, expect.objectContaining({ type: 'submit_prompt', prompt: 'Check performance next', queue: true }),
+    );
+  });
+
   it('ignores a late mention and keeps the new session mention request intact', async () => {
     const fixture = createWorkspace();
     fixture.detectChanges();
@@ -2401,6 +2416,7 @@ describe('ClaudeWorkspaceComponent', () => {
     );
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
       type: 'submit_prompt',
+      queue: true,
       prompt: [
         '<elevenex-worktree-context>',
         'Context for this session: This branch updates first-message context handling.',
@@ -2429,6 +2445,7 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
       type: 'submit_prompt',
+      queue: true,
       prompt: 'Ship this change',
       titlePrompt: 'Ship this change',
     });
@@ -2450,6 +2467,7 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
       type: 'submit_prompt',
+      queue: true,
       prompt: 'Ship this change',
       titlePrompt: 'Ship this change',
     });
@@ -2468,6 +2486,7 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
       type: 'submit_prompt',
+      queue: true,
       prompt: 'Ship this change',
       titlePrompt: 'Ship this change',
     });
@@ -2485,6 +2504,7 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(worktreeContextServiceMock.consume).not.toHaveBeenCalled();
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
       type: 'submit_prompt',
+      queue: true,
       prompt: '/status',
       titlePrompt: '/status',
     });
@@ -2505,6 +2525,7 @@ describe('ClaudeWorkspaceComponent', () => {
 
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
       type: 'submit_prompt',
+      queue: true,
       prompt: [
         '<elevenex-worktree-context>',
         'Context for this session: This branch updates first-message context handling.',
@@ -2544,6 +2565,7 @@ describe('ClaudeWorkspaceComponent', () => {
     ]);
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
       type: 'submit_prompt',
+      queue: true,
       prompt: [
         '<elevenex-worktree-context>',
         'Context for this session: This branch updates first-message context handling.',
@@ -2563,6 +2585,7 @@ describe('ClaudeWorkspaceComponent', () => {
 
     expect(wsMock.send).toHaveBeenLastCalledWith(7, {
       type: 'submit_prompt',
+      queue: true,
       prompt: [
         '<elevenex-worktree-context>',
         'Context for this session: This branch updates first-message context handling.',
@@ -2702,6 +2725,7 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(fixture.componentInstance.runtime.planMode()).toBe(false);
     expect(wsMock.send).toHaveBeenCalledWith(7, {
       type: 'submit_prompt',
+      queue: true,
       prompt: 'implement plan',
       titlePrompt: 'implement plan',
     });

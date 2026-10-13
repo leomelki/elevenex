@@ -663,19 +663,11 @@ export class SessionRuntime {
 
   acceptPrompt(content: string): boolean {
     const startsImmediately =
-      (this.runPhase() === 'idle' ||
-        (this.currentProvider() === 'claude' &&
-          this.nativeSteering() &&
-          this.runPhase() === 'running')) &&
+      this.runPhase() === 'idle' &&
       (!this.queueBehindBackgroundWork() || !this.backgroundWork().length) &&
       !this.pendingPrompts().length &&
       !this.queuePaused();
-    if (
-      startsImmediately &&
-      this.submitting() &&
-      !(this.currentProvider() === 'claude' && this.nativeSteering())
-    )
-      return false;
+    if (startsImmediately && this.submitting()) return false;
     if (startsImmediately) {
       this.submitting.set(true);
       this.conversation.addOptimisticPrompt(content);

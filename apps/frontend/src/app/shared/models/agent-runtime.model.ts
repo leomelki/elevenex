@@ -77,7 +77,13 @@ export interface AgentImageInput {
 export type AgentRuntimeCommand =
   | { type: 'hydrate'; includeHistory?: boolean }
   | { type: 'interrupt' | 'resume_pending_prompts' | 'clear_pending_prompts' }
-  | { type: 'submit_prompt'; prompt: string; titlePrompt?: string; images?: AgentImageInput[] }
+  | {
+      type: 'submit_prompt';
+      prompt: string;
+      titlePrompt?: string;
+      images?: AgentImageInput[];
+      queue?: boolean;
+    }
   | { type: 'cancel_pending_prompt' | 'steer_pending_prompt'; id: string }
   | {
       type: 'approve_permission';

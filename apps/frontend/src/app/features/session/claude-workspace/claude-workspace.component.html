@@ -594,7 +594,6 @@
                 [backgroundAgentCount]="runtime.backgroundWork().length"
                 [queueBehindBackgroundWork]="runtime.queueBehindBackgroundWork()"
                 [nativeSteering]="runtime.currentProvider() === 'codex' || runtime.nativeSteering()"
-                [liveInput]="runtime.currentProvider() === 'claude' && runtime.nativeSteering()"
                 [providerName]="runtime.currentProvider() === 'claude' ? 'Claude' : 'Codex'"
                 [canInterrupt]="runtime.canInterrupt()"
                 [blockedByPermission]="!!runtime.composerPermissionDisabledReason()"

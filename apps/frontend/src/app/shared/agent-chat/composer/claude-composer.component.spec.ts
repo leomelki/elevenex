@@ -81,6 +81,33 @@ describe('ClaudeComposerComponent', () => {
     expect(fixture.nativeElement.querySelector('[aria-label="Queue message"]')).toBeTruthy();
   });
 
+  it.each(['Codex', 'Claude'])('queues %s follow-ups and keeps steering in the queue', async (provider) => {
+    await TestBed.configureTestingModule({ imports: [ClaudeComposerComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeComposerComponent);
+    fixture.componentRef.setInput('providerName', provider);
+    fixture.componentRef.setInput('nativeSteering', true);
+    fixture.componentRef.setInput('running', true);
+    fixture.componentRef.setInput('value', 'Focus on the API instead');
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.queueing()).toBe(true);
+    expect(fixture.nativeElement.textContent).not.toContain('Send now');
+    const received = vi.fn();
+    fixture.componentInstance.send.subscribe(received);
+    fixture.nativeElement.querySelector('[aria-label="Queue message"]').click();
+    expect(received).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'Focus on the API instead', queue: true,
+    }));
+
+    fixture.componentRef.setInput('running', false);
+    fixture.componentRef.setInput('pendingPrompts', [{
+      id: 'correction', prompt: 'Focus on the API instead', queuedAt: new Date().toISOString(),
+    }]);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.queueing()).toBe(true);
+    expect(fixture.nativeElement.querySelector('.cw-comp__pending-steer')).toBeTruthy();
+  });
+
   it('preserves background queueing for providers that require it', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeComposerComponent],
@@ -94,12 +121,13 @@ describe('ClaudeComposerComponent', () => {
     );
   });
 
-  it('describes Codex steering as non-interrupting and forwards the selected queued message', async () => {
+  it.each(['Codex', 'Claude'])('describes %s steering as non-interrupting and forwards the selected queued message', async (provider) => {
     await TestBed.configureTestingModule({
       imports: [ClaudeComposerComponent],
     }).compileComponents();
     const fixture = TestBed.createComponent(ClaudeComposerComponent);
     fixture.componentRef.setInput('nativeSteering', true);
+    fixture.componentRef.setInput('providerName', provider);
     fixture.componentRef.setInput('running', true);
     fixture.componentRef.setInput('pendingPrompts', [
       {
@@ -334,7 +362,7 @@ describe('ClaudeComposerComponent', () => {
     fixture.detectChanges();
 
     fixture.componentInstance.submit();
-    expect(sendSpy).toHaveBeenCalledWith({ text: 'Continue', images: [], diffMentions: [] });
+    expect(sendSpy).toHaveBeenCalledWith({ text: 'Continue', queue: true, images: [], diffMentions: [] });
   });
 
   it('renders and sends diff mentions without typed text', async () => {
@@ -359,7 +387,7 @@ describe('ClaudeComposerComponent', () => {
     expect(element.textContent).toContain('const value = true;');
 
     fixture.componentInstance.submit();
-    expect(sendSpy).toHaveBeenCalledWith({ text: '', images: [], diffMentions: [diffMention] });
+    expect(sendSpy).toHaveBeenCalledWith({ text: '', queue: true, images: [], diffMentions: [diffMention] });
   });
 
   it('finds sessions with @ and attaches the selected session', async () => {
@@ -430,6 +458,7 @@ describe('ClaudeComposerComponent', () => {
 
     expect(sendSpy).toHaveBeenCalledWith({
       text: '',
+      queue: true,
       images: [attachedImage],
       diffMentions: [],
     });

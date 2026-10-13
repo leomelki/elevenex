@@ -371,22 +371,6 @@
           #actions
           class="cw-comp__btns col-start-3 row-start-1 inline-flex shrink-0 items-center gap-1 group-data-[expanded=true]/editor:row-start-2"
         >
-          @if (liveInput() && running()) {
-            <button
-              z-button
-              zType="ghost"
-              zSize="sm"
-              type="button"
-              class="h-8 rounded-lg px-2 text-xs"
-              [attr.aria-pressed]="queueInstead()"
-              [title]="
-                queueInstead() ? 'Send in a later turn' : 'Send guidance while Claude keeps working'
-              "
-              (click)="queueInstead.set(!queueInstead())"
-            >
-              {{ queueInstead() ? 'Queue' : 'Send now' }}
-            </button>
-          }
           @if (running()) {
             <button
               type="button"

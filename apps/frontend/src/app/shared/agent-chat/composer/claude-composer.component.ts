@@ -152,14 +152,12 @@ export class ClaudeComposerComponent {
   readonly backgroundAgentCount = input<number>(0);
   readonly queueBehindBackgroundWork = input<boolean>(true);
   readonly nativeSteering = input<boolean>(false);
-  readonly liveInput = input(false);
   readonly agentPickerOpen = signal(false);
   readonly availableAgents = computed(() =>
     this.autocompleteItems().filter((item) => item.kind === 'agent'),
   );
   readonly providerName = input('Codex');
-  readonly queueInstead = signal(false);
-  readonly sending = computed(() => this.submitting() && !(this.liveInput() && this.running()));
+  readonly sending = this.submitting;
   readonly steerActionLabel = computed(() =>
     this.nativeSteering()
       ? 'Guide ' + this.providerName() + ' with this message without stopping its current work'
@@ -171,9 +169,9 @@ export class ClaudeComposerComponent {
 
   readonly queueing = computed(
     () =>
-      (this.running() && (!this.liveInput() || this.queueInstead())) ||
+      this.running() ||
       (this.queueBehindBackgroundWork() && this.backgroundAgentCount() > 0) ||
-      (this.pendingPrompts().length > 0 && !this.liveInput()) ||
+      this.pendingPrompts().length > 0 ||
       this.queuePaused(),
   );
 
@@ -364,7 +362,7 @@ export class ClaudeComposerComponent {
     if (this.sending() && !this.queueing()) return;
     this.send.emit({
       text: v,
-      ...(this.liveInput() && this.running() && this.queueInstead() ? { queue: true } : {}),
+      queue: true,
       images,
       diffMentions,
       ...(sessionMentions.length ? { sessionMentions } : {}),
