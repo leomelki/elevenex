@@ -58,6 +58,93 @@ function fixture() {
 
 describe('OpenCode catalogs and authentication', () => {
   afterEach(() => jest.clearAllMocks());
+  it('queues one fresh probe after an older probe for concurrent reloads', async () => {
+    const f = fixture();
+    let finish!: () => void;
+    f.server.start.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve(f.client);
+        }),
+    );
+    try {
+      const automatic = f.service.refreshNow();
+      const first = f.service.getModelCatalog(true);
+      const second = f.service.getModelCatalog(true);
+      expect(f.server.close).not.toHaveBeenCalled();
+      finish();
+      await Promise.all([automatic, first, second]);
+      expect(f.server.close).toHaveBeenCalledTimes(1);
+      expect(OpenCodeServer).toHaveBeenCalledTimes(2);
+      expect(f.client.provider.list).toHaveBeenCalledTimes(2);
+    } finally {
+      f.service.onModuleDestroy();
+    }
+  });
+
+  it('keeps the catalog server when login starts while a reload is queued', async () => {
+    const f = fixture();
+    let finish!: () => void;
+    f.server.start.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve(f.client);
+        }),
+    );
+    try {
+      const automatic = f.service.refreshNow();
+      const forced = f.service.getModelCatalog(true);
+      (f.service as any).login = { controller: new AbortController() };
+      finish();
+      await automatic;
+      expect((await forced).unavailableReason).toContain('Finish signing in');
+      expect(f.server.close).not.toHaveBeenCalled();
+      expect(OpenCodeServer).toHaveBeenCalledTimes(1);
+    } finally {
+      f.service.onModuleDestroy();
+    }
+  });
+  it('does not hold up automatic reads for a pending catalog probe', async () => {
+    const f = fixture();
+    const probe = jest
+      .spyOn(f.service, 'refreshNow')
+      .mockReturnValue(new Promise(() => {}));
+    try {
+      const catalog = await f.service.getModelCatalog();
+      expect(catalog.models).toEqual([]);
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(f.server.close).not.toHaveBeenCalled();
+    } finally {
+      probe.mockRestore();
+      f.service.onModuleDestroy();
+    }
+  });
+  it('restarts only the catalog server and waits for a forced fresh catalog', async () => {
+    const f = fixture();
+    try {
+      await f.service.refreshNow();
+      await f.service.getModelCatalog(true);
+      expect(f.server.close).toHaveBeenCalledTimes(1);
+      expect(OpenCodeServer).toHaveBeenCalledTimes(2);
+      expect(f.client.provider.list).toHaveBeenCalledTimes(2);
+    } finally {
+      f.service.onModuleDestroy();
+    }
+  });
+
+  it('retains the last working models when refresh fails', async () => {
+    const f = fixture();
+    try {
+      await f.service.refreshNow();
+      const original = await f.service.getModelCatalog();
+      f.server.start.mockRejectedValueOnce(new Error('CLI is updating'));
+      const refreshed = await f.service.getModelCatalog(true);
+      expect(refreshed.models).toEqual(original.models);
+      expect(refreshed.unavailableReason).toContain('CLI is updating');
+    } finally {
+      f.service.onModuleDestroy();
+    }
+  });
   it('coalesces catalog refresh and obtains models from the native provider', async () => {
     const f = fixture();
     try {

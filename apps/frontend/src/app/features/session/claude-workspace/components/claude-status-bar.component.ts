@@ -1,3 +1,6 @@
+import { AgentModelCatalogService } from '@/shared/services/agent-model-catalog.service';
+import { ModelCatalogRefreshComponent } from '@/shared/components/model-catalog-refresh/model-catalog-refresh.component';
+import { withPinnedModel } from '@/shared/models/agent-model-options';
 import { ZardButtonComponent } from '@/shared/components/button';
 import {
   ZardDropdownDirective,
@@ -25,7 +28,7 @@ import {
 } from '@/shared/models/claude-runtime.model';
 import { CdkTrapFocus } from '@angular/cdk/a11y';
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideChevronDown,
@@ -76,6 +79,7 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
   standalone: true,
   imports: [
     CommonModule,
+    ModelCatalogRefreshComponent,
     NgIcon,
     ZardProgressBarComponent,
     ZardButtonComponent,
@@ -113,6 +117,7 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
   styleUrl: './claude-status-bar.component.scss',
 })
 export class ClaudeStatusBarComponent {
+  readonly catalog = inject(AgentModelCatalogService);
   readonly phase = input<ClaudeStatusBarPhase>('ready');
   readonly providers = input<AgentRuntimeProviderInfo[]>([]);
   readonly currentProvider = input<AgentProviderId>('claude');
@@ -121,6 +126,36 @@ export class ClaudeStatusBarComponent {
   readonly reasoningEffort = input<ClaudeReasoningEffort | null>(null);
   readonly fastMode = input(false);
   readonly availableModels = input<ClaudeModelOption[]>([]);
+  readonly pickerModels = computed(() => {
+    const catalog = this.catalog
+      .catalogs()
+      .find((item) => item.provider === this.currentProvider());
+    if (!catalog || (catalog.unavailableReason && !catalog.models.length))
+      return this.availableModels();
+    // Session discovery can finish after the shared catalog read, and may
+    // include models/capabilities configured only in this worktree.
+    const merged = new Map<string, ClaudeModelOption>(
+      (catalog?.models ?? []).map((model) => [model.id, model]),
+    );
+    for (const model of this.availableModels()) {
+      merged.set(model.id, { ...merged.get(model.id), ...model });
+    }
+    const models = [...merged.values()];
+    const selected = this.selectedModel() ?? '';
+    const family =
+      this.currentProvider() === 'claude'
+        ? /^claude-(sonnet|opus|haiku)(?:-|$)/.exec(selected)?.[1]
+        : null;
+    return withPinnedModel(
+      models,
+      family && models.some((model) => model.id === family) ? family : selected,
+    );
+  });
+
+  loadModels(): void {
+    void this.catalog.load(this.currentProvider()).catch(() => undefined);
+  }
+
   readonly contextUsage = input<ClaudeContextUsage | null>(null);
   readonly planUsage = input<AgentPlanUsage | null>(null);
   readonly tasks = input<ClaudeTaskState[]>([]);
@@ -249,15 +284,14 @@ export class ClaudeStatusBarComponent {
     const id = this.selectedModel();
     if (!id) {
       return (
-        this.availableModels().find((model) => model.isProviderDefault)?.displayName ??
-        'Agent default'
+        this.pickerModels().find((model) => model.isProviderDefault)?.displayName ?? 'Agent default'
       );
     }
     return this.selectedModelOption()?.displayName ?? id;
   });
   readonly selectedModelOption = computed(() => {
     const id = this.selectedModel();
-    const models = this.availableModels();
+    const models = this.pickerModels();
     if (!id) return models.find((m) => m.isProviderDefault) ?? models[0];
     const exact = models.find((m) => m.id === id);
     if (exact || this.currentProvider() !== 'claude') return exact;

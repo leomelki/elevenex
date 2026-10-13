@@ -617,10 +617,15 @@ export class ClaudeRuntimeService
   // model list immediately (e.g. in the model picker) without waiting for a
   // per-session Claude Code process to spawn on the first prompt. The cache
   // is warmed at startup, refreshed periodically in the background, and
-  // opportunistically updated by any session's own live process.
+  // seeded by live sessions until the first current CLI probe succeeds.
   private modelsCache: ClaudeModelOption[] | null = null;
   private modelsCacheAt = 0;
+  private modelsCacheFromGlobalProbe = false;
+  private modelsRefreshError: string | null = null;
   private modelsRefreshPromise: Promise<ClaudeModelOption[]> | null = null;
+  private forcedModelsRefreshPromise: Promise<ClaudeModelOption[]> | null =
+    null;
+  private modelsRefreshDestroyed = false;
   private modelsRefreshTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -662,6 +667,7 @@ export class ClaudeRuntimeService
   }
 
   onModuleDestroy(): void {
+    this.modelsRefreshDestroyed = true;
     if (this.modelsRefreshTimer) {
       clearInterval(this.modelsRefreshTimer);
       this.modelsRefreshTimer = null;
@@ -761,12 +767,14 @@ export class ClaudeRuntimeService
   }
 
   /**
-   * Session-independent model catalog for the settings pickers. Serves the
-   * cached list immediately and refreshes in the background, so opening
-   * settings never waits on a Claude CLI probe.
+   * Session-independent catalog. Ordinary reads return immediately and refresh
+   * in the background. Only explicit reloads wait for the CLI probe.
    */
-  getModelCatalog(): AgentProviderModelCatalogPayload {
-    this.refreshGlobalModelsIfStale();
+  async getModelCatalog(
+    refresh = false,
+  ): Promise<AgentProviderModelCatalogPayload> {
+    if (refresh) await this.refreshGlobalModels('manual', true);
+    else this.refreshGlobalModelsIfStale();
     return {
       models: this.modelsCache?.length
         ? [...this.modelsCache]
@@ -774,6 +782,7 @@ export class ClaudeRuntimeService
       reasoningEfforts: [...AGENT_REASONING_EFFORTS],
       providerDefaultModelId: null,
       supportsModelSelection: true,
+      unavailableReason: this.modelsRefreshError,
     };
   }
 
@@ -1499,7 +1508,9 @@ export class ClaudeRuntimeService
         force: true,
         reason: 'model_change',
       }).catch((error) => {
-        this.logger.debug(`Model metadata refresh failed session=${sessionId}: ${String(error)}`);
+        this.logger.debug(
+          `Model metadata refresh failed session=${sessionId}: ${String(error)}`,
+        );
       });
       this.emitRunState(sessionId);
     }
@@ -6677,8 +6688,12 @@ export class ClaudeRuntimeService
     if (state.metadataRefreshPromise) {
       // Preserve a coalesced model change so discovery cannot replace the
       // user's selection with a resolved model name in the queued refresh.
-      if (options.force && state.metadataRefreshPendingReason !== 'model_change')
-        state.metadataRefreshPendingReason = options.reason ?? 'context_boundary';
+      if (
+        options.force &&
+        state.metadataRefreshPendingReason !== 'model_change'
+      )
+        state.metadataRefreshPendingReason =
+          options.reason ?? 'context_boundary';
       if (options.reason !== 'sdk_activity')
         this.logger.debug(
           `Claude runtime metadata refresh coalesced session=${sessionId} reason=${options.reason ?? 'unspecified'}`,
@@ -6728,7 +6743,9 @@ export class ClaudeRuntimeService
           if (!isCurrent()) return;
           const mappedModels = models.map((model) => this.toModelOption(model));
           state.availableModels = mappedModels;
-          if (mappedModels.length) {
+          // Warm sessions may still run the previous CLI or have project-only
+          // settings. They can seed a cold cache, but cannot replace a probe.
+          if (mappedModels.length && !this.modelsCacheFromGlobalProbe) {
             this.modelsCache = mappedModels;
             this.modelsCacheAt = Date.now();
           }
@@ -6812,7 +6829,29 @@ export class ClaudeRuntimeService
    * into a single in-flight refresh; failures keep serving the last
    * known-good list rather than reverting to the static fallback.
    */
-  private async refreshGlobalModels(
+  private refreshGlobalModels(
+    reason: string,
+    force = false,
+  ): Promise<ClaudeModelOption[]> {
+    if (this.modelsRefreshDestroyed) {
+      return Promise.resolve(this.modelsCache ?? [...FALLBACK_MODELS]);
+    }
+    if (this.forcedModelsRefreshPromise) return this.forcedModelsRefreshPromise;
+    if (!force) return this.loadGlobalModels(reason);
+    // An automatic probe may still be using the previous installation.
+    // Follow it with one fresh probe, shared by all explicit reloads.
+    this.forcedModelsRefreshPromise = (async () => {
+      await this.modelsRefreshPromise;
+      if (this.modelsRefreshDestroyed)
+        return this.modelsCache ?? [...FALLBACK_MODELS];
+      return this.loadGlobalModels(reason, true);
+    })().finally(() => {
+      this.forcedModelsRefreshPromise = null;
+    });
+    return this.forcedModelsRefreshPromise;
+  }
+
+  private async loadGlobalModels(
     reason: string,
     force = false,
   ): Promise<ClaudeModelOption[]> {
@@ -6827,6 +6866,7 @@ export class ClaudeRuntimeService
     const refreshPromise = (async () => {
       let runtime: ClaudeSessionRuntime | null = null;
       try {
+        this.claudeCliOverride = this.resolveClaudeCliOverride();
         const options = await this.buildEphemeralModelQueryOptions();
         runtime = new ClaudeSessionRuntime({
           sessionId: -1,
@@ -6840,14 +6880,32 @@ export class ClaudeRuntimeService
         const models = await runtime.supportedModels();
         const mapped = models.map((model) => this.toModelOption(model));
         if (mapped.length) {
+          this.modelsCacheFromGlobalProbe = true;
+          const changed =
+            JSON.stringify(this.modelsCache) !== JSON.stringify(mapped);
           this.modelsCache = mapped;
+          if (changed) {
+            for (const [sessionId, state] of this.runtimeStates) {
+              const models = new Map(mapped.map((model) => [model.id, model]));
+              for (const model of state.availableModels) {
+                models.set(model.id, { ...models.get(model.id), ...model });
+              }
+              state.availableModels = [...models.values()];
+              this.emitRunState(sessionId);
+            }
+          }
         }
+        this.modelsRefreshError = mapped.length
+          ? null
+          : 'Claude did not report any models. Check that its CLI is installed and signed in.';
         this.modelsCacheAt = Date.now();
         this.logger.debug(
           `Refreshed Claude models cache reason=${reason} count=${mapped.length}`,
         );
         return this.modelsCache ?? [...FALLBACK_MODELS];
       } catch (error) {
+        this.modelsRefreshError =
+          'Could not refresh Claude models. Check that its CLI is installed and signed in.';
         // Keep serving the last known-good list rather than clearing it out
         // on a transient failure (e.g. Claude CLI briefly unavailable).
         this.modelsCacheAt = Date.now();

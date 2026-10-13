@@ -1,8 +1,11 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ChildProcess, spawn } from 'child_process';
 import { createInterface } from 'readline';
-import { buildAugmentedEnv, buildSpawnCommand } from '../config/system-paths.js';
-import { resolveCodexBinary } from './codex-binary.js';
+import {
+  buildAugmentedEnv,
+  buildSpawnCommand,
+} from '../config/system-paths.js';
+import { codexBinaryIdentity, resolveCodexBinary } from './codex-binary.js';
 
 const CLIENT_INFO = {
   name: 'elevenex',
@@ -68,6 +71,35 @@ export class CodexAppServerClient implements OnModuleDestroy {
   private refCount = 0;
   private idleTimer: NodeJS.Timeout | null = null;
   private shuttingDown = false;
+  private restartPending = false;
+  private binaryIdentity: string | null = null;
+
+  /** Keep the warm server unless its executable has actually been replaced. */
+  async restartIfBinaryChanged(): Promise<void> {
+    const child = this.child;
+    if (!child || !this.binaryIdentity) return;
+    const identity = await codexBinaryIdentity();
+    if (this.child === child && identity && identity !== this.binaryIdentity) {
+      this.restartWhenIdle();
+    }
+  }
+
+  /** Adopt the updated CLI after all turns and requests have finished. */
+  restartWhenIdle(): void {
+    this.restartPending = true;
+    this.restartIfIdle();
+  }
+
+  private restartIfIdle(): void {
+    if (!this.restartPending || this.refCount > 0 || this.pending.size > 0)
+      return;
+    this.restartPending = false;
+    this.clearIdleTimer();
+    const child = this.child;
+    this.child = null;
+    this.initializePromise = null;
+    if (child && !child.killed) child.kill('SIGTERM');
+  }
 
   get isRunning(): boolean { return !!this.child && this.child.exitCode === null; }
 
@@ -92,6 +124,7 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (this.refCount === 0) return;
     this.refCount -= 1;
     if (this.refCount === 0) {
+      this.restartIfIdle();
       this.scheduleIdleShutdown();
     }
   }
@@ -140,7 +173,13 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
     }
-    this.spawnChild();
+    const binary = resolveCodexBinary();
+    const identity = await codexBinaryIdentity(binary);
+    if (this.shuttingDown) {
+      throw new Error('codex app-server client is shutting down');
+    }
+    this.spawnChild(binary);
+    this.binaryIdentity = identity;
     try {
       await this.sendRequest<unknown>(
         'initialize',
@@ -172,7 +211,11 @@ export class CodexAppServerClient implements OnModuleDestroy {
     timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS,
   ): Promise<T> {
     await this.ensureReady();
-    return this.sendRequest<T>(method, params, timeoutMs);
+    try {
+      return await this.sendRequest<T>(method, params, timeoutMs);
+    } finally {
+      this.restartIfIdle();
+    }
   }
 
   async prewarm(): Promise<void> {
@@ -240,8 +283,7 @@ export class CodexAppServerClient implements OnModuleDestroy {
     });
   }
 
-  private spawnChild(): void {
-    const codexBin = resolveCodexBinary();
+  private spawnChild(codexBin: string): void {
     this.logger.log(`Spawning codex app-server (${codexBin})`);
     const { command, shell } = buildSpawnCommand(codexBin);
     const child = spawn(command, ['app-server', '--listen', 'stdio://'], {

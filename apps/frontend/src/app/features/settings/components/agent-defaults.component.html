@@ -59,9 +59,14 @@
               }
             </div>
             <div class="grid gap-2">
-              <label class="text-xs font-medium text-muted-foreground" id="preset-model-label"
-                >Model</label
-              >
+              <div class="flex items-start justify-between gap-2">
+                <label
+                  class="pt-1 text-xs font-medium text-muted-foreground"
+                  id="preset-model-label"
+                  >Model</label
+                >
+                <app-model-catalog-refresh [provider]="presetProvider()" />
+              </div>
               <app-option-select
                 [options]="presetModelOptions()"
                 [value]="presetModel()"
@@ -253,15 +258,18 @@
   } @else {
     <div class="mb-5 flex items-center justify-between gap-4">
       <p class="text-sm text-muted-foreground">Your setups, ready to launch.</p>
-      <button
-        z-button
-        zSize="sm"
-        type="button"
-        [zDisabled]="!canAddPreset() || appSettings.saving() || !catalog.loaded()"
-        (click)="openNewPreset()"
-      >
-        <ng-icon name="lucidePlus" size="14" />New preset
-      </button>
+      <div class="flex items-start gap-2">
+        <app-model-catalog-refresh />
+        <button
+          z-button
+          zSize="sm"
+          type="button"
+          [zDisabled]="!canAddPreset() || appSettings.saving() || !catalog.loaded()"
+          (click)="openNewPreset()"
+        >
+          <ng-icon name="lucidePlus" size="14" />New preset
+        </button>
+      </div>
     </div>
     <div class="mb-5 flex items-center gap-3 rounded-xl border border-border bg-muted/35 p-4">
       <span

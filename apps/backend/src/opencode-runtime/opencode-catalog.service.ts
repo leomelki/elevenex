@@ -10,6 +10,7 @@ import type {
 } from '../agent-runtime/agent-runtime.types.js';
 import { OpenCodeServer } from './opencode-server.js';
 import { loadOpenCodeModels } from './opencode-model-catalog.js';
+import { clearOpenCodeVersionCache } from './opencode-version.js';
 
 @Injectable()
 export class OpenCodeCatalogService
@@ -18,6 +19,7 @@ export class OpenCodeCatalogService
 {
   private server: OpenCodeServer | null = null;
   private refresh: Promise<void> | null = null;
+  private forcedRefresh: Promise<void> | null = null;
   private refreshedAt = 0;
   private idleTimer: NodeJS.Timeout | null = null;
   private destroyed = false;
@@ -73,20 +75,45 @@ export class OpenCodeCatalogService
     return this.server.start();
   }
 
-  getModelCatalog(): Promise<AgentProviderModelCatalogPayload> {
-    if (Date.now() - this.refreshedAt > 5 * 60_000)
+  async getModelCatalog(
+    force = false,
+  ): Promise<AgentProviderModelCatalogPayload> {
+    if (force && !this.login) await this.refreshNow(true);
+    else if (!force && Date.now() - this.refreshedAt > 5 * 60_000)
       void this.refreshNow().catch(() => undefined);
-    return Promise.resolve({
+    return {
       ...this.catalog,
       models: [...this.catalog.models],
-    });
+      unavailableReason:
+        force && this.login
+          ? 'Finish signing in before refreshing OpenCode models.'
+          : this.catalog.unavailableReason,
+    };
   }
   async getAuthStatus(): Promise<AgentAuthStatus> {
     if (Date.now() - this.refreshedAt > 30_000) await this.refreshNow();
     return this.status;
   }
 
-  refreshNow(): Promise<void> {
+  refreshNow(restart = false): Promise<void> {
+    if (this.destroyed) return Promise.resolve();
+    if (this.forcedRefresh) return this.forcedRefresh;
+    if (!restart) return this.startRefresh();
+    this.forcedRefresh = (async () => {
+      await this.refresh;
+      // Login may have started while the older probe was finishing.
+      if (this.destroyed || this.login) return;
+      this.server?.close();
+      this.server = null;
+      clearOpenCodeVersionCache();
+      await this.startRefresh();
+    })().finally(() => {
+      this.forcedRefresh = null;
+    });
+    return this.forcedRefresh;
+  }
+
+  private startRefresh(): Promise<void> {
     if (this.refresh) return this.refresh;
     this.refresh = this.load().finally(() => {
       this.refresh = null;
@@ -116,7 +143,6 @@ export class OpenCodeCatalogService
     } catch (error) {
       this.server?.close();
       this.server = null;
-      this.models.clear();
       this.status = {
         ...this.status,
         installed: false,
@@ -125,8 +151,6 @@ export class OpenCodeCatalogService
       };
       this.catalog = {
         ...this.catalog,
-        models: [],
-        providerDefaultModelId: null,
         unavailableReason: String(error),
       };
     }

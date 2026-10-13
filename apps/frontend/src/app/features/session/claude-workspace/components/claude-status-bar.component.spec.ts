@@ -1,6 +1,8 @@
 import '@angular/compiler';
 import { OverlayContainer } from '@angular/cdk/overlay';
 import { TestBed } from '@angular/core/testing';
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZard } from '@/shared/core/provider/providezard';
 import { describe, expect, it } from 'vitest';
 import { ClaudeStatusBarComponent } from './claude-status-bar.component';
@@ -9,7 +11,7 @@ describe('ClaudeStatusBarComponent', () => {
   async function render() {
     await TestBed.configureTestingModule({
       imports: [ClaudeStatusBarComponent],
-      providers: [provideZard()],
+      providers: [provideZard(), provideHttpClient(), provideHttpClientTesting()],
     }).compileComponents();
 
     const fixture = TestBed.createComponent(ClaudeStatusBarComponent);
@@ -56,6 +58,73 @@ describe('ClaudeStatusBarComponent', () => {
       'bypassPermissions',
     ]);
   });
+
+  it('updates model choices from a refreshed catalog while preserving the selected model', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('currentProvider', 'codex');
+    fixture.componentRef.setInput('selectedModel', 'saved-model');
+    fixture.componentRef.setInput('availableModels', [{ id: 'old-model', displayName: 'Old' }]);
+    fixture.componentInstance.catalog.catalogs.set([
+      {
+        provider: 'codex',
+        displayName: 'Codex',
+        models: [{ id: 'new-model', displayName: 'New', description: '' }],
+        reasoningEfforts: ['high'],
+        providerDefaultModelId: 'new-model',
+        supportsModelSelection: true,
+      },
+    ]);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.pickerModels().map((model) => model.id)).toEqual([
+      'new-model',
+      'old-model',
+      'saved-model',
+    ]);
+    expect(fixture.componentInstance.selectedModel()).toBe('saved-model');
+  });
+
+  it.each(['light', 'dark'])(
+    'keeps fresh session models and project capabilities in %s mode',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      try {
+        const fixture = await render();
+        fixture.componentRef.setInput('currentProvider', 'opencode');
+        fixture.componentRef.setInput('selectedModel', 'project/local');
+        fixture.componentInstance.catalog.catalogs.set([
+          {
+            provider: 'opencode',
+            displayName: 'OpenCode',
+            models: [{ id: 'global/model', displayName: 'Global', description: '' }],
+            reasoningEfforts: [],
+            providerDefaultModelId: null,
+            supportsModelSelection: true,
+          },
+        ]);
+        fixture.detectChanges();
+        fixture.componentRef.setInput('availableModels', [
+          {
+            id: 'project/local',
+            displayName: 'Local',
+            description: '',
+            supportsEffort: true,
+            reasoningEfforts: ['fast', 'deep'],
+          },
+        ]);
+        fixture.detectChanges();
+        expect(fixture.componentInstance.pickerModels().map((model) => model.id)).toEqual([
+          'global/model',
+          'project/local',
+        ]);
+        expect(fixture.componentInstance.selectedModelSupportsEffort()).toBe(true);
+        expect(
+          fixture.componentInstance.reasoningEffortOptions().map((option) => option.id),
+        ).toEqual(['', 'fast', 'deep']);
+      } finally {
+        document.documentElement.classList.remove('dark');
+      }
+    },
+  );
 
   it('keeps background agents visible without claiming they block Codex follow-ups', async () => {
     const fixture = await render();

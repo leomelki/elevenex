@@ -185,10 +185,10 @@ export interface AgentRuntimeProviderFeatures {
   ): Promise<AgentRuntimeStatePayload>;
   /**
    * Selectable models and thinking levels, independent of any session. Should
-   * resolve from cache and refresh in the background rather than blocking on a
-   * provider round-trip.
+   * use a bounded cache. An explicit refresh waits for the current CLI to
+   * report its models, bypassing that cache without interrupting active turns.
    */
-  getModelCatalog(): Promise<AgentProviderModelCatalogPayload>;
+  getModelCatalog(refresh?: boolean): Promise<AgentProviderModelCatalogPayload>;
   getAuthStatus(): Promise<AgentAuthStatus>;
   startLogin(options: {
     mode: AgentLoginMode;

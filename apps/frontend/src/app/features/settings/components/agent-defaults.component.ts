@@ -1,3 +1,4 @@
+import { ModelCatalogRefreshComponent } from '@/shared/components/model-catalog-refresh/model-catalog-refresh.component';
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -60,6 +61,7 @@ const EFFORT_HINTS: Record<string, string> = {
   selector: 'app-agent-defaults',
   imports: [
     FormsModule,
+    ModelCatalogRefreshComponent,
     NgIcon,
     OptionSelectComponent,
     ZardButtonComponent,

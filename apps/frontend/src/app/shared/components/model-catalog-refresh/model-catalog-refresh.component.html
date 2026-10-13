@@ -1,0 +1,25 @@
+<div class="flex flex-col items-end gap-1">
+  <button
+    z-button
+    zType="ghost"
+    zSize="xs"
+    type="button"
+    class="gap-1.5 text-muted-foreground"
+    [zDisabled]="catalog.isRefreshing(provider()) || refreshing()"
+    [attr.aria-busy]="refreshing()"
+    title="Reload available models from your installed agents"
+    (click)="refresh($event)"
+  >
+    <ng-icon name="lucideRefreshCw" size="12" [class.animate-spin]="refreshing()" />
+    {{ refreshing() ? 'Refreshing…' : 'Refresh models' }}
+  </button>
+  @if (message()) {
+    <span
+      role="status"
+      class="max-w-64 text-right text-xs"
+      [class.text-destructive]="failed()"
+      [class.text-muted-foreground]="!failed()"
+      >{{ message() }}</span
+    >
+  }
+</div>

@@ -428,6 +428,11 @@ export function refreshLoginShellEnv(force = false): Promise<void> {
   return _refreshInFlight;
 }
 
+/** Re-resolve installations after a user updates or installs an agent CLI. */
+export function clearBinaryPathCache(): void {
+  binaryPathCache.clear();
+}
+
 export function findBinary(name: string): string | null {
   if (binaryPathCache.has(name)) {
     return binaryPathCache.get(name) ?? null;

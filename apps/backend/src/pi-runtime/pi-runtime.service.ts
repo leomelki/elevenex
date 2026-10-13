@@ -107,7 +107,12 @@ export class PiRuntimeService
   // refreshed whenever auth credentials change.
   private modelsCache: ClaudeModelOption[] | null = null;
   private modelsCacheAt = 0;
+  private modelsCacheFromGlobalProbe = false;
+  private modelsRefreshError: string | null = null;
   private modelsRefreshPromise: Promise<ClaudeModelOption[]> | null = null;
+  private forcedModelsRefreshPromise: Promise<ClaudeModelOption[]> | null =
+    null;
+  private modelsRefreshDestroyed = false;
   private modelsRefreshTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -129,17 +134,22 @@ export class PiRuntimeService
    * its models once a signed-in CLI has reported them, so an empty list is a
    * normal state that the UI explains rather than an error.
    */
-  getModelCatalog(): AgentProviderModelCatalogPayload {
-    this.refreshGlobalModelsIfStale();
+  async getModelCatalog(
+    refresh = false,
+  ): Promise<AgentProviderModelCatalogPayload> {
+    if (refresh) await this.refreshGlobalModels('manual', true);
+    else this.refreshGlobalModelsIfStale();
     const models = this.modelsCache ? [...this.modelsCache] : [];
     return {
       models,
       reasoningEfforts: [...AGENT_REASONING_EFFORTS],
       providerDefaultModelId: null,
       supportsModelSelection: true,
-      unavailableReason: models.length
-        ? null
-        : 'Pi has not reported any models yet — check that its CLI is installed and signed in.',
+      unavailableReason:
+        this.modelsRefreshError ??
+        (models.length
+          ? null
+          : 'Pi has not reported any models yet — check that its CLI is installed and signed in.'),
     };
   }
 
@@ -791,6 +801,7 @@ export class PiRuntimeService
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.modelsRefreshDestroyed = true;
     if (this.modelsRefreshTimer) {
       clearInterval(this.modelsRefreshTimer);
       this.modelsRefreshTimer = null;
@@ -1018,10 +1029,9 @@ export class PiRuntimeService
         .map((model) => this.toModelOption(model))
         .filter((model): model is ClaudeModelOption => Boolean(model));
       state.availableModels = models;
-      // A running Pi RPC process is the freshest source of truth for the
-      // current account's models, so opportunistically update the global
-      // cache other sessions/pickers read from.
-      if (models.length) {
+      // A warm process can seed a cold cache. Once a current CLI probe has
+      // succeeded, older/project-specific processes must not replace it.
+      if (models.length && !this.modelsCacheFromGlobalProbe) {
         this.modelsCache = models;
         this.modelsCacheAt = Date.now();
       }
@@ -1035,7 +1045,27 @@ export class PiRuntimeService
    * RPC process, independent of any session's worktree/runtime. Concurrent
    * calls are coalesced into a single in-flight refresh.
    */
-  private async refreshGlobalModels(
+  private refreshGlobalModels(
+    reason: string,
+    force = false,
+  ): Promise<ClaudeModelOption[]> {
+    if (this.modelsRefreshDestroyed)
+      return Promise.resolve(this.modelsCache ?? []);
+    if (this.forcedModelsRefreshPromise) return this.forcedModelsRefreshPromise;
+    if (!force) return this.loadGlobalModels(reason);
+    // A probe started before an installation/credential change cannot satisfy
+    // an explicit reload. Queue one fresh probe after it, coalescing callers.
+    this.forcedModelsRefreshPromise = (async () => {
+      await this.modelsRefreshPromise;
+      if (this.modelsRefreshDestroyed) return this.modelsCache ?? [];
+      return this.loadGlobalModels(reason, true);
+    })().finally(() => {
+      this.forcedModelsRefreshPromise = null;
+    });
+    return this.forcedModelsRefreshPromise;
+  }
+
+  private async loadGlobalModels(
     reason: string,
     force = false,
   ): Promise<ClaudeModelOption[]> {
@@ -1058,14 +1088,32 @@ export class PiRuntimeService
           .map((model) => this.toModelOption(model))
           .filter((model): model is ClaudeModelOption => Boolean(model));
         if (models.length) {
+          this.modelsCacheFromGlobalProbe = true;
+          const changed =
+            JSON.stringify(this.modelsCache) !== JSON.stringify(models);
           this.modelsCache = models;
+          if (changed) {
+            for (const [sessionId, state] of this.runtimeStates) {
+              const merged = new Map(models.map((model) => [model.id, model]));
+              for (const model of state.availableModels) {
+                merged.set(model.id, { ...merged.get(model.id), ...model });
+              }
+              state.availableModels = [...merged.values()];
+              this.emitRunState(sessionId);
+            }
+          }
         }
+        this.modelsRefreshError = models.length
+          ? null
+          : 'Pi did not report any models. Check that its CLI is installed and signed in.';
         this.modelsCacheAt = Date.now();
         this.logger.debug(
           `Refreshed Pi models cache reason=${reason} count=${models.length}`,
         );
         return this.modelsCache ?? [];
       } catch (error) {
+        this.modelsRefreshError =
+          'Could not refresh Pi models. Check that its CLI is installed and signed in.';
         // Keep serving the last known-good list rather than clearing it out
         // on a transient failure (e.g. Pi CLI briefly unavailable).
         this.modelsCacheAt = Date.now();

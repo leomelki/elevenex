@@ -6,6 +6,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AGENT_RUNTIME_PROVIDERS } from './agent-runtime.tokens.js';
+import {
+  clearBinaryPathCache,
+  refreshLoginShellEnv,
+} from '../config/system-paths.js';
 import { AGENT_REASONING_EFFORTS } from './agent-runtime.types.js';
 import type {
   AgentProviderId,
@@ -38,9 +42,24 @@ export class AgentRuntimeRegistryService {
    * provider failing (CLI missing, signed out, slow) degrades to an empty
    * catalog for that provider instead of failing the whole request.
    */
-  async listModelCatalogs(): Promise<AgentProviderModelCatalog[]> {
+  async refreshModelCatalogs(
+    providerId?: string,
+  ): Promise<AgentProviderModelCatalog[]> {
+    if (providerId) this.getProvider(providerId);
+    await refreshLoginShellEnv(true);
+    clearBinaryPathCache();
+    return this.listModelCatalogs(true, providerId);
+  }
+
+  async listModelCatalogs(
+    refresh = false,
+    providerId?: string,
+  ): Promise<AgentProviderModelCatalog[]> {
+    const providers = providerId
+      ? [this.getProvider(providerId)]
+      : [...this.providersById.values()];
     return Promise.all(
-      [...this.providersById.values()].map(async (provider) => {
+      providers.map(async (provider) => {
         const base = {
           provider: provider.info.id,
           displayName: provider.info.displayName,
@@ -57,7 +76,7 @@ export class AgentRuntimeRegistryService {
         }
 
         try {
-          const catalog = await provider.getModelCatalog();
+          const catalog = await provider.getModelCatalog(refresh);
           return {
             ...base,
             ...catalog,

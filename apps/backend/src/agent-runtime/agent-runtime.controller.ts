@@ -38,6 +38,21 @@ export class AgentRuntimeController {
     return this.registry.listModelCatalogs();
   }
 
+  @Get('agent-providers/:provider/models')
+  listProviderModelCatalog(@Param('provider') provider: string) {
+    return this.registry.listModelCatalogs(false, provider);
+  }
+
+  @Post('agent-providers/models/refresh')
+  refreshModelCatalogs() {
+    return this.registry.refreshModelCatalogs();
+  }
+
+  @Post('agent-providers/:provider/models/refresh')
+  refreshProviderModelCatalog(@Param('provider') provider: string) {
+    return this.registry.refreshModelCatalogs(provider);
+  }
+
   @Get('agent-providers/:provider/auth/status')
   getAuthStatus(@Param('provider') provider: string) {
     return this.registry

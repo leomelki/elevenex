@@ -139,8 +139,8 @@ export class OpenCodeAgentRuntimeProvider
     this.destroyed = true;
     for (const id of this.entries.keys()) this.stop(id);
   }
-  getModelCatalog() {
-    return this.catalog.getModelCatalog();
+  getModelCatalog(refresh = false) {
+    return this.catalog.getModelCatalog(refresh);
   }
   getAuthStatus() {
     return this.catalog.getAuthStatus();

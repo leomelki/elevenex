@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PiRuntimeService } from './pi-runtime.service.js';
+import { PiSessionRuntime } from './pi-session-runtime.js';
 import type { PiSessionRuntimeEvent } from './pi-runtime.types.js';
 import { buildAugmentedEnvAsync } from '../config/system-paths.js';
 
@@ -249,6 +250,57 @@ describe('PiRuntimeService lifecycle', () => {
     mockBuildAugmentedEnv.mockResolvedValue({ PATH: '/mock/bin' });
     delete process.env.PI_RUNTIME_IDLE_MS;
     delete process.env.PI_RUNTIME_IDLE_CAP;
+  });
+
+  it('queues one fresh CLI probe after an automatic probe for concurrent reloads', async () => {
+    const { service } = createService();
+    const runtimeService = service as any;
+    const previous = createDeferred<void>();
+    runtimeService.modelsRefreshPromise = previous.promise.finally(() => {
+      runtimeService.modelsRefreshPromise = null;
+    });
+    const start = jest
+      .spyOn(PiSessionRuntime.prototype, 'start')
+      .mockResolvedValue(undefined);
+    const send = jest
+      .spyOn(PiSessionRuntime.prototype, 'send')
+      .mockResolvedValue({
+        models: [{ provider: 'local', id: 'new', name: 'New' }],
+      });
+    const stop = jest
+      .spyOn(PiSessionRuntime.prototype, 'stop')
+      .mockResolvedValue(undefined);
+    try {
+      const first = service.getModelCatalog(true);
+      const second = service.getModelCatalog(true);
+      expect(start).not.toHaveBeenCalled();
+      previous.resolve();
+      const results = await Promise.all([first, second]);
+      expect(results.map((catalog) => catalog.models[0].id)).toEqual([
+        'local/new',
+        'local/new',
+      ]);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(stop).toHaveBeenCalledTimes(1);
+      runtimeService.runtimes.set(7, {
+        runtime: {
+          send: jest
+            .fn()
+            .mockResolvedValue({
+              models: [{ provider: 'project', id: 'old', reasoning: true }],
+            }),
+        },
+      });
+      await runtimeService.refreshModels(7);
+      expect((await service.getModelCatalog()).models[0].id).toBe('local/new');
+      runtimeService.runtimes.delete(7);
+    } finally {
+      start.mockRestore();
+      send.mockRestore();
+      stop.mockRestore();
+      await service.onModuleDestroy();
+    }
   });
 
   it('coalesces concurrent session startup into one Pi process', async () => {

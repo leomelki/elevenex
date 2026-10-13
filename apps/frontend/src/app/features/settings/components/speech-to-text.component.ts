@@ -1,3 +1,4 @@
+import { ModelCatalogRefreshComponent } from '@/shared/components/model-catalog-refresh/model-catalog-refresh.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -131,6 +132,7 @@ interface TestResult {
   standalone: true,
   imports: [
     FormsModule,
+    ModelCatalogRefreshComponent,
     NgIcon,
     ZardButtonComponent,
     ZardCheckboxComponent,

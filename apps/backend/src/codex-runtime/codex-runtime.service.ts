@@ -231,6 +231,8 @@ export class CodexRuntimeService
   private lastModelRefreshAt = 0;
   private lastModelRefreshAttemptAt = 0;
   private modelRefreshInFlight: Promise<void> | null = null;
+  private modelRefreshError: string | null = null;
+  private forcedModelRefresh: Promise<void> | null = null;
   private modelRefreshTimer: NodeJS.Timeout | null = null;
   private modelCatalogInterval: NodeJS.Timeout | null = null;
   private readonly prewarmInFlight = new Map<number, Promise<void>>();
@@ -258,8 +260,12 @@ export class CodexRuntimeService
    * catalog probe, the first/stale read waits for Codex itself to report the
    * models available to the current account. Subsequent reads use the cache.
    */
-  async getModelCatalog(): Promise<AgentProviderModelCatalogPayload> {
-    await this.refreshModelCatalogIfStale();
+  async getModelCatalog(
+    refresh = false,
+  ): Promise<AgentProviderModelCatalogPayload> {
+    await (refresh
+      ? this.forceRefreshModelCatalog()
+      : this.refreshModelCatalogIfStale());
     const models = [...this.codexModels];
     // Codex reports supported efforts per model; the provider-wide list is the
     // union so the picker still offers everything reachable by some model.
@@ -277,6 +283,7 @@ export class CodexRuntimeService
         : [...AGENT_REASONING_EFFORTS],
       providerDefaultModelId: this.codexDefaultModel,
       supportsModelSelection: true,
+      unavailableReason: this.modelRefreshError,
     };
   }
 
@@ -3036,9 +3043,22 @@ export class CodexRuntimeService
     this.modelRefreshTimer.unref?.();
   }
 
-  private refreshModelCatalogIfStale(): Promise<void> {
+  private forceRefreshModelCatalog(): Promise<void> {
+    if (this.forcedModelRefresh) return this.forcedModelRefresh;
+    // A background request may be querying the old shared app-server. An
+    // explicit reload must follow it with a probe of the current installation.
+    this.forcedModelRefresh = (async () => {
+      await this.modelRefreshInFlight;
+      await this.refreshModelCatalogIfStale(true);
+    })().finally(() => {
+      this.forcedModelRefresh = null;
+    });
+    return this.forcedModelRefresh;
+  }
+
+  private refreshModelCatalogIfStale(force = false): Promise<void> {
     const now = Date.now();
-    if (now - this.lastModelRefreshAt < CODEX_MODEL_REFRESH_TTL_MS) {
+    if (!force && now - this.lastModelRefreshAt < CODEX_MODEL_REFRESH_TTL_MS) {
       return Promise.resolve();
     }
     if (this.modelRefreshInFlight) {
@@ -3046,16 +3066,28 @@ export class CodexRuntimeService
     }
     // Avoid repeatedly holding up catalog requests when Codex is unavailable,
     // while retrying much sooner than the normal successful-refresh TTL.
-    if (now - this.lastModelRefreshAttemptAt < CODEX_MODEL_REFRESH_RETRY_MS) {
+    if (
+      !force &&
+      now - this.lastModelRefreshAttemptAt < CODEX_MODEL_REFRESH_RETRY_MS
+    ) {
       return Promise.resolve();
     }
 
     this.lastModelRefreshAttemptAt = now;
-    this.modelRefreshInFlight = this.refreshModelCatalog()
-      .then((refreshed) => {
-        if (refreshed) this.lastModelRefreshAt = Date.now();
+    this.modelRefreshInFlight = this.refreshModelCatalog(force)
+      .then(async (refreshed) => {
+        if (refreshed) {
+          this.lastModelRefreshAt = Date.now();
+          this.modelRefreshError = null;
+          if (force) await this.appServer.restartIfBinaryChanged();
+        } else {
+          this.modelRefreshError =
+            'Codex did not report any models. Check that its CLI is installed and signed in.';
+        }
       })
       .catch((error) => {
+        this.modelRefreshError =
+          'Could not refresh Codex models. Check that its CLI is installed and signed in.';
         this.logger.debug(
           `Codex model catalog refresh failed: ${
             error instanceof Error ? error.message : String(error)
@@ -3068,8 +3100,16 @@ export class CodexRuntimeService
     return this.modelRefreshInFlight;
   }
 
-  private async refreshModelCatalog(): Promise<boolean> {
-    const models = await this.fetchCodexAppServerModels();
+  private async refreshModelCatalog(force = false): Promise<boolean> {
+    // A separate probe sees the newly installed CLI even while the shared
+    // app-server is busy streaming turns from the previous version.
+    const probe = force ? new CodexAppServerClient() : this.appServer;
+    let models: CodexAppServerModel[];
+    try {
+      models = await this.fetchCodexAppServerModels(probe);
+    } finally {
+      if (force) probe.onModuleDestroy();
+    }
     if (!models.length) {
       return false;
     }
@@ -3089,6 +3129,7 @@ export class CodexRuntimeService
       state.availableModels = [...this.codexModels];
       if (
         !configuredModel &&
+        (!force || !state.selectedModel) &&
         (!state.selectedModel || state.selectedModel === previousDefault)
       ) {
         state.selectedModel = this.codexDefaultModel;
@@ -3111,8 +3152,10 @@ export class CodexRuntimeService
     return true;
   }
 
-  private async fetchCodexAppServerModels(): Promise<CodexAppServerModel[]> {
-    const result = await this.appServer.request<unknown>(
+  private async fetchCodexAppServerModels(
+    server = this.appServer,
+  ): Promise<CodexAppServerModel[]> {
+    const result = await server.request<unknown>(
       'model/list',
       { limit: 100, includeHidden: false },
       CODEX_MODEL_LIST_TIMEOUT_MS,

@@ -63,8 +63,8 @@ export class ClaudeAgentRuntimeProvider
     return this.runtimeService.getRuntimeState(sessionId);
   }
 
-  getModelCatalog() {
-    return Promise.resolve(this.runtimeService.getModelCatalog());
+  getModelCatalog(refresh = false) {
+    return this.runtimeService.getModelCatalog(refresh);
   }
 
   getAuthStatus() {

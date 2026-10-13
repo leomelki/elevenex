@@ -10,6 +10,10 @@
       class="cw-sb__model-trigger h-8 min-w-0 max-w-full justify-start gap-1.5 rounded-lg px-1.5 text-left text-xs"
       z-dropdown
       [zDropdownMenu]="modelMenu"
+      (click)="loadModels()"
+      (keydown.enter)="loadModels()"
+      (keydown.space)="loadModels()"
+      (keydown.arrowdown)="loadModels()"
       [attr.aria-label]="
         'Configure agent, model and thinking' +
         (selectedModelSupportsFastMode() && fastMode() ? ' · Fast mode enabled' : '')
@@ -93,7 +97,10 @@
         </z-dropdown-menu-sub-content>
       }
       <div role="group" aria-label="Model">
-        <div class="mb-1 px-2 text-xs font-medium text-muted-foreground">Model</div>
+        <div class="mb-1 flex items-start justify-between gap-2 px-2">
+          <span class="pt-1 text-xs font-medium text-muted-foreground">Model</span>
+          <app-model-catalog-refresh [provider]="currentProvider()" />
+        </div>
         <div class="max-h-32 overflow-y-auto">
           <cw-setting-option
             label="Agent default"
@@ -101,7 +108,7 @@
             [selected]="!selectedModel()"
             (picked)="pickModel('')"
           />
-          @for (m of availableModels(); track m.id) {
+          @for (m of pickerModels(); track m.id) {
             <cw-setting-option
               [label]="m.displayName"
               [description]="m.description"

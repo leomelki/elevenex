@@ -1,3 +1,4 @@
+import { ClaudeSessionRuntime } from './claude-session-runtime.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Logger } from '@nestjs/common';
@@ -2166,13 +2167,19 @@ describe('ClaudeRuntimeService', () => {
       isIdle: false,
       setModel: jest.fn().mockResolvedValue(undefined),
       supportedModels: jest.fn().mockResolvedValue([]),
-      getContextUsage: jest.fn(() => new Promise((resolve) => resolveUsage = resolve)),
+      getContextUsage: jest.fn(
+        () => new Promise((resolve) => (resolveUsage = resolve)),
+      ),
     });
     const result = await service.setSelectedModel(7, 'sonnet');
     expect(result.selectedModel).toBe('sonnet');
     resolveUsage({
-      model: 'claude-sonnet-resolved', totalTokens: 0, maxTokens: 200_000,
-      percentage: 0, memoryFiles: [], mcpTools: [],
+      model: 'claude-sonnet-resolved',
+      totalTokens: 0,
+      maxTokens: 200_000,
+      percentage: 0,
+      memoryFiles: [],
+      mcpTools: [],
     });
     await new Promise((resolve) => setImmediate(resolve));
     expect(runtimeService.ensureRuntimeState(7).selectedModel).toBe('sonnet');
@@ -2234,15 +2241,22 @@ describe('ClaudeRuntimeService', () => {
     const runtimeService = service as any;
     let resolveUsage!: (usage: unknown) => void;
     const usage = {
-      model: 'claude-sonnet-resolved', totalTokens: 0, maxTokens: 200_000,
-      percentage: 0, memoryFiles: [], mcpTools: [],
+      model: 'claude-sonnet-resolved',
+      totalTokens: 0,
+      maxTokens: 200_000,
+      percentage: 0,
+      memoryFiles: [],
+      mcpTools: [],
     };
     runtimeService.sessionRuntimes.set(7, {
       isIdle: false,
       setModel: jest.fn().mockResolvedValue(undefined),
       supportedModels: jest.fn().mockResolvedValue([]),
-      getContextUsage: jest.fn()
-        .mockImplementationOnce(() => new Promise((resolve) => resolveUsage = resolve))
+      getContextUsage: jest
+        .fn()
+        .mockImplementationOnce(
+          () => new Promise((resolve) => (resolveUsage = resolve)),
+        )
         .mockResolvedValue(usage),
     });
     const refresh = runtimeService.refreshRuntimeMetadata(7);
@@ -2327,6 +2341,134 @@ describe('ClaudeRuntimeService', () => {
       supportsEffort: true,
       reasoningEfforts: ['low', 'medium', 'high'],
     });
+  });
+
+  it('queues one current CLI probe after an older automatic probe', async () => {
+    const runtimeService = service as any;
+    let finish!: () => void;
+    runtimeService.modelsRefreshPromise = new Promise<void>((resolve) => {
+      finish = resolve;
+    }).finally(() => {
+      runtimeService.modelsRefreshPromise = null;
+    });
+    const options = jest
+      .spyOn(runtimeService, 'buildEphemeralModelQueryOptions')
+      .mockResolvedValue({});
+    const models = jest
+      .spyOn(ClaudeSessionRuntime.prototype, 'supportedModels')
+      .mockResolvedValue([
+        { value: 'new', displayName: 'New', description: '' },
+      ]);
+    const close = jest
+      .spyOn(ClaudeSessionRuntime.prototype, 'close')
+      .mockResolvedValue(undefined);
+    try {
+      const first = service.getModelCatalog(true);
+      const second = service.getModelCatalog(true);
+      expect(models).not.toHaveBeenCalled();
+      finish();
+      const results = await Promise.all([first, second]);
+      expect(results.map((catalog) => catalog.models[0].id)).toEqual([
+        'new',
+        'new',
+      ]);
+      expect(models).toHaveBeenCalledTimes(1);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      options.mockRestore();
+      models.mockRestore();
+      close.mockRestore();
+    }
+  });
+
+  it('bypasses the global model cache on explicit reload and keeps the last working list on failure', async () => {
+    const runtimeService = service as any;
+    runtimeService.modelsCache = [{ id: 'old', displayName: 'Old' }];
+    runtimeService.modelsCacheAt = Date.now();
+    const options = jest
+      .spyOn(runtimeService, 'buildEphemeralModelQueryOptions')
+      .mockResolvedValue({});
+    const models = jest
+      .spyOn(ClaudeSessionRuntime.prototype, 'supportedModels')
+      .mockResolvedValue([
+        { value: 'new', displayName: 'New', description: '' },
+      ]);
+    const close = jest
+      .spyOn(ClaudeSessionRuntime.prototype, 'close')
+      .mockResolvedValue(undefined);
+    const state = runtimeService.ensureRuntimeState(7);
+    const publish = jest.spyOn(runtimeService, 'emitRunState');
+    state.availableModels = [
+      { id: 'project-model', displayName: 'Project', supportsEffort: true },
+    ];
+    try {
+      const [first, second] = await Promise.all([
+        service.getModelCatalog(true),
+        service.getModelCatalog(true),
+      ]);
+      expect(first.models[0].id).toBe('new');
+      expect(second.models[0].id).toBe('new');
+      expect(models).toHaveBeenCalledTimes(1);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(state.availableModels[0].id).toBe('new');
+      expect(
+        state.availableModels.find((model: any) => model.id === 'project-model')
+          ?.supportsEffort,
+      ).toBe(true);
+      expect(publish).toHaveBeenCalledTimes(1);
+      await service.getModelCatalog(true);
+      expect(publish).toHaveBeenCalledTimes(1);
+      // An older warm process can refresh its own state without rolling back
+      // the catalog reported by the current CLI.
+      const oldRuntime = {
+        supportedModels: jest
+          .fn()
+          .mockResolvedValue([
+            { value: 'old', displayName: 'Old', description: '' },
+          ]),
+        getContextUsage: jest
+          .fn()
+          .mockResolvedValue({
+            model: 'old',
+            input_tokens: 0,
+            output_tokens: 0,
+          }),
+      };
+      runtimeService.sessionRuntimes.set(7, oldRuntime);
+      await runtimeService.refreshRuntimeMetadata(7);
+      expect((await service.getModelCatalog()).models[0].id).toBe('new');
+      runtimeService.sessionRuntimes.delete(7);
+      models.mockRejectedValueOnce(new Error('CLI unavailable'));
+      const failed = await service.getModelCatalog(true);
+      expect(failed.models[0].id).toBe('new');
+      expect(failed.unavailableReason).toContain('Could not refresh Claude');
+    } finally {
+      options.mockRestore();
+      models.mockRestore();
+      close.mockRestore();
+      publish.mockRestore();
+    }
+  });
+
+  it('returns cached models immediately while automatic discovery is still pending', async () => {
+    const runtimeService = service as any;
+    runtimeService.modelsCache = [{ id: 'cached', displayName: 'Cached' }];
+    runtimeService.modelsCacheAt = 0;
+    const warmRuntime = { close: jest.fn() };
+    runtimeService.sessionRuntimes.set(7, warmRuntime);
+    const probe = jest
+      .spyOn(runtimeService, 'refreshGlobalModels')
+      .mockReturnValue(new Promise(() => {}));
+    try {
+      const catalog = await service.getModelCatalog();
+      expect(catalog.models[0].id).toBe('cached');
+      expect(probe).toHaveBeenCalledWith('stale_on_read');
+      expect(runtimeService.sessionRuntimes.get(7)).toBe(warmRuntime);
+      expect(warmRuntime.close).not.toHaveBeenCalled();
+    } finally {
+      probe.mockRestore();
+      runtimeService.sessionRuntimes.delete(7);
+    }
   });
 
   it('rebuilds an idle Claude session when the thinking level changes', async () => {
