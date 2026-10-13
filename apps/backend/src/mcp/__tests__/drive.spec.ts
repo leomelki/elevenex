@@ -156,6 +156,19 @@ describe('Drive tool group', () => {
   });
 
   describe('prompt_session', () => {
+    const sourceMention = {
+      sessionId: 8,
+      title: 'Previous work',
+      provider: 'codex',
+      providerSessionId: 'thread-8',
+      branch: 'feature',
+      status: 'archived',
+      transcriptExportPath: '/tmp/session-8.md',
+      contextMarkdown: 'Work completed.',
+      omittedTurns: 0,
+      generatedAt: '',
+    };
+
     it('starts a non-running session, submits, and returns accepted without blocking', async () => {
       const { services, runtime } = makeServices({
         session: { id: 7, status: 'created', activeAgentProvider: 'claude' },
@@ -337,6 +350,124 @@ describe('Drive tool group', () => {
       expect(services.sessions.start).not.toHaveBeenCalled();
       expect(runtime.submitPrompt).not.toHaveBeenCalled();
     });
+
+    it.each([false, true])(
+      'does not submit after cancellation during target startup (mentions: %s)',
+      async (withMentions) => {
+        const { services, runtime } = makeServices({});
+        const controller = new AbortController();
+        const reason = new Error('cancelled during startup');
+        services.sessions.start.mockImplementation(async () => {
+          controller.abort(reason);
+        });
+        await expect(
+          promptSessionTool.handler(
+            {
+              sessionId: 7,
+              prompt: 'go',
+              ...(withMentions ? { mentionSessionIds: [8] } : {}),
+            },
+            {
+              ...makeCtx({
+                ...services,
+                conversationExport: {
+                  buildMention: jest.fn().mockResolvedValue(sourceMention),
+                },
+              }),
+              signal: controller.signal,
+            },
+          ),
+        ).rejects.toBe(reason);
+        expect(runtime.submitPrompt).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([false, true])(
+      'stops exports and preserves cancellation when an in-flight export settles (failure: %s)',
+      async (fails) => {
+        const { services, runtime } = makeServices({});
+        const controller = new AbortController();
+        const reason = new Error('cancelled during export');
+        const buildMention = jest.fn().mockImplementation(async () => {
+          controller.abort(reason);
+          if (fails) throw new Error('export failed');
+          return sourceMention;
+        });
+        await expect(
+          promptSessionTool.handler(
+            { sessionId: 7, prompt: 'go', mentionSessionIds: [8, 9] },
+            {
+              ...makeCtx({ ...services, conversationExport: { buildMention } }),
+              signal: controller.signal,
+            },
+          ),
+        ).rejects.toBe(reason);
+        expect(buildMention).toHaveBeenCalledTimes(1);
+        expect(services.sessions.start).not.toHaveBeenCalled();
+        expect(runtime.submitPrompt).not.toHaveBeenCalled();
+      },
+    );
+
+    it('uses the current target provider and status after exporting mentions', async () => {
+      const { services, runtime } = makeServices({});
+      const currentRuntime = makeRuntime();
+      services.agentRuntime.getProvider.mockImplementation((provider) =>
+        provider === 'codex' ? currentRuntime : runtime,
+      );
+      const buildMention = jest.fn().mockImplementation(async () => {
+        services.sessions.findOne.mockResolvedValue({
+          id: 7,
+          status: 'active',
+          activeAgentProvider: 'codex',
+        });
+        return sourceMention;
+      });
+      const result = await promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go', mentionSessionIds: [8] },
+        makeCtx({ ...services, conversationExport: { buildMention } }),
+      );
+      expect(result.data).toMatchObject({ provider: 'codex', accepted: true });
+      expect(services.sessions.start).not.toHaveBeenCalled();
+      expect(runtime.submitPrompt).not.toHaveBeenCalled();
+      expect(currentRuntime.submitPrompt).toHaveBeenCalledWith(
+        7,
+        expect.stringContaining('Session ID: 8'),
+      );
+    });
+
+    it.each(['deleted', 'archived', 'unlinked'])(
+      'does not submit when the target becomes %s while exporting mentions',
+      async (change) => {
+        const { services, runtime } = makeServices({
+          session: { id: 7, status: 'active', activeAgentProvider: 'claude' },
+        });
+        const buildMention = jest.fn().mockImplementation(async () => {
+          if (change === 'deleted') {
+            services.sessions.findOne.mockRejectedValue(new Error('not found'));
+          } else if (change === 'archived') {
+            services.sessions.findOne.mockResolvedValue({
+              id: 7,
+              status: 'archived',
+              activeAgentProvider: 'claude',
+            });
+            // The session service rejects starting archived sessions.
+            services.sessions.start.mockRejectedValue(new Error('archived'));
+          } else {
+            services.sessions.assertSessionWorkspaceLinked.mockRejectedValue(
+              new Error('unlinked'),
+            );
+          }
+          return sourceMention;
+        });
+        await expect(
+          promptSessionTool.handler(
+            { sessionId: 7, prompt: 'go', mentionSessionIds: [8] },
+            makeCtx({ ...services, conversationExport: { buildMention } }),
+          ),
+        ).rejects.toThrow();
+        expect(runtime.submitPrompt).not.toHaveBeenCalled();
+      },
+    );
 
     it('validates mention IDs and caps exports per prompt', () => {
       const schema = z.object(promptSessionTool.inputShape);

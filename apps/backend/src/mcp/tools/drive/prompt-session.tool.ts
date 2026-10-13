@@ -48,7 +48,7 @@ export const promptSessionTool = defineTool({
   handler: async (args, ctx) => {
     const { sessions } = ctx.services;
     await sessions.assertSessionWorkspaceLinked(args.sessionId);
-    const { session, provider } = await resolveSessionProvider(
+    let { session, provider } = await resolveSessionProvider(
       ctx,
       args.sessionId,
     );
@@ -56,6 +56,7 @@ export const promptSessionTool = defineTool({
     const mentionSessionIds = [...new Set(args.mentionSessionIds ?? [])];
     // Validate all references before exporting history or starting the target.
     for (const sessionId of mentionSessionIds) {
+      ctx.signal.throwIfAborted();
       if (sessionId === args.sessionId) {
         throw new ToolError({
           code: 'invalid_session_mention',
@@ -72,8 +73,10 @@ export const promptSessionTool = defineTool({
       try {
         const mention =
           await ctx.services.conversationExport.buildMention(sessionId);
+        ctx.signal.throwIfAborted();
         mentions.push(serializeSessionMention(mention));
       } catch (error) {
+        ctx.signal.throwIfAborted();
         throw new ToolError({
           code: 'session_mention_failed',
           message: `Could not build context for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
@@ -88,11 +91,23 @@ export const promptSessionTool = defineTool({
       : args.prompt;
     ctx.signal.throwIfAborted();
 
+    if (mentionSessionIds.length) {
+      // Reading source histories can be slow. The target may have been
+      // archived, reconfigured, or moved to an unavailable task meanwhile.
+      await sessions.assertSessionWorkspaceLinked(args.sessionId);
+      ({ session, provider } = await resolveSessionProvider(
+        ctx,
+        args.sessionId,
+      ));
+      ctx.signal.throwIfAborted();
+    }
+
     // Idempotent start: archived sessions throw inside start(); active ones are
     // a cheap no-op. We start unless already in a live run state.
     if (session.status !== 'active' && session.status !== 'running') {
       await sessions.start(args.sessionId);
     }
+    ctx.signal.throwIfAborted();
 
     const runtime = ctx.services.agentRuntime.getProvider(provider);
     // submitPrompt() resolves once the runtime has actually accepted the
