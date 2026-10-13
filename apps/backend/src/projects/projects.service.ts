@@ -15,6 +15,7 @@ import {
   DEFAULT_BROWSER_ISOLATION_SHARED_GLOBS,
 } from '../browser-isolation/browser-isolation.defaults.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import { assertTaskHistoryCanBeDeleted } from '../tasks/task-deletion-guard.js';
 
 export type ProjectListState = 'active' | 'archived' | 'all';
 
@@ -76,24 +77,28 @@ export class ProjectsService {
 
   async create(name: string, hidden = false) {
     try {
-      return this.db.transaction((tx) => {
-        const rows = tx
-          .insert(schema.projects)
-          .values({ name, hidden })
-          .returning()
-          .all();
-        const project = rows[0];
+      return Promise.resolve(
+        this.db.transaction((tx) => {
+          const rows = tx
+            .insert(schema.projects)
+            .values({ name, hidden })
+            .returning()
+            .all();
+          const project = rows[0];
 
-        tx.insert(schema.browserIsolationSettings)
-          .values({
-            projectId: project.id,
-            mode: DEFAULT_BROWSER_ISOLATION_MODE,
-            sharedGlobs: JSON.stringify(DEFAULT_BROWSER_ISOLATION_SHARED_GLOBS),
-          })
-          .run();
+          tx.insert(schema.browserIsolationSettings)
+            .values({
+              projectId: project.id,
+              mode: DEFAULT_BROWSER_ISOLATION_MODE,
+              sharedGlobs: JSON.stringify(
+                DEFAULT_BROWSER_ISOLATION_SHARED_GLOBS,
+              ),
+            })
+            .run();
 
-        return project;
-      });
+          return project;
+        }),
+      );
     } catch (error: unknown) {
       if (isSqliteUniqueConstraintError(error)) {
         throw new ConflictException('Project name already exists');
@@ -182,15 +187,24 @@ export class ProjectsService {
     return rows[0];
   }
 
-  async delete(id: number) {
-    const rows = await this.db
-      .delete(schema.projects)
-      .where(eq(schema.projects.id, id))
-      .returning();
+  assertTaskHistoryCanBeDeleted(id: number) {
+    assertTaskHistoryCanBeDeleted(this.db, { projectId: id });
+  }
+
+  async delete(id: number, options: { requireFinishedTasks?: boolean } = {}) {
+    const rows = this.db.transaction((tx) => {
+      if (options.requireFinishedTasks)
+        assertTaskHistoryCanBeDeleted(tx, { projectId: id });
+      return tx
+        .delete(schema.projects)
+        .where(eq(schema.projects.id, id))
+        .returning()
+        .all();
+    });
 
     if (rows.length === 0) {
       throw new NotFoundException(`Project with id ${id} not found`);
     }
-    return rows[0];
+    return Promise.resolve(rows[0]);
   }
 }

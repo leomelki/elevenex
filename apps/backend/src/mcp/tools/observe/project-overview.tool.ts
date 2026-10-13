@@ -15,6 +15,7 @@ function sessionHandle(
     activeAgentProvider: string;
     hasUnreviewedCompletion: boolean;
     lastCompletionAt: string | null;
+    workspaceId?: number | null;
   },
   deepLink: string,
 ) {
@@ -24,6 +25,8 @@ function sessionHandle(
     status: s.status,
     branch: s.branchName,
     provider: s.activeAgentProvider,
+    workspaceId: s.workspaceId ?? null,
+    worktreePath: s.worktreePath,
     needsReview: s.hasUnreviewedCompletion,
     lastCompletionAt: s.lastCompletionAt ?? undefined,
     deepLink,
@@ -40,8 +43,9 @@ export const projectOverviewTool = defineTool({
   name: 'project_overview',
   title: 'Project overview',
   costClass: 'instant',
+  paginated: true,
   description:
-    'Aggregate snapshot to orient yourself: pass nothing for the project list + attention counts, or a projectId to expand that project (repos + compact session handles). Start here before list_* calls. ⚡instant. Next: find_sessions to page sessions, or session_status to poll one.',
+    'Aggregate snapshot to orient yourself: pass nothing for the project list + attention counts, or a projectId to expand that project (repos + capped task/conversation previews). Start here before list_* calls. ⚡instant. Next: find_sessions to page sessions, or session_status to poll one.',
   annotations: { readOnlyHint: true },
   inputShape: {
     projectId: z
@@ -49,14 +53,35 @@ export const projectOverviewTool = defineTool({
       .int()
       .positive()
       .optional()
-      .describe('Expand this project (repos + sessions). Omit for the project list.'),
+      .describe(
+        'Expand this project (repos + sessions). Omit for the project list.',
+      ),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(25)
+      .describe(
+        'Project/repo page size, 1-100; default 25. Per-repo task/session previews are capped separately.',
+      ),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .default(0)
+      .describe('Project/repo page offset, default 0.'),
     state: z
       .enum(['active', 'archived', 'all'])
       .default('active')
-      .describe("Which projects to list when projectId is omitted. Default 'active'."),
+      .describe(
+        "Which projects to list when projectId is omitted. Default 'active'.",
+      ),
   },
   handler: async (args, ctx) => {
-    const { projects, repos, sessions } = ctx.services;
+    const { projects, repos, sessions, tasks } = ctx.services;
+    const limit = args.limit ?? 25;
+    const offset = args.offset ?? 0;
 
     if (args.projectId !== undefined) {
       const project = await projects.findOne(args.projectId).catch(() => null);
@@ -64,18 +89,36 @@ export const projectOverviewTool = defineTool({
         throw new ToolError({
           code: 'project_not_found',
           message: `No project with id ${args.projectId}.`,
-          remediation: 'Call project_overview with no projectId to list valid ids.',
+          remediation:
+            'Call project_overview with no projectId to list valid ids.',
         });
       }
       const repoList = await repos.findByProject(project.id);
       const repoSummaries = await Promise.all(
-        repoList.map(async (repo) => {
-          const repoSessions = await sessions.findByRepo(repo.id);
+        repoList.slice(offset, offset + limit).map(async (repo) => {
+          const [sessionPage, repoTasks] = await Promise.all([
+            sessions.listHandlePage({
+              repoId: repo.id,
+              state: 'active',
+              limit: 5,
+            }),
+            tasks.list(repo.id, 'active', 10),
+          ]);
           return {
             id: repo.id,
             name: repo.name,
             path: repo.path,
-            sessions: repoSessions.map((s) =>
+            tasks: repoTasks.map((task) => ({
+              taskId: task.id,
+              name: task.name,
+              branch: task.taskBranch,
+              state: task.taskState,
+              deepLink: ctx.deepLink.task(task.id),
+            })),
+            nextTaskCursor:
+              repoTasks.length === 10 ? repoTasks.at(-1)!.id : null,
+            sessionCount: sessionPage.total,
+            sessions: sessionPage.rows.map((s) =>
               sessionHandle(s, ctx.deepLink.session(s.id)),
             ),
           };
@@ -91,18 +134,23 @@ export const projectOverviewTool = defineTool({
               : {}),
           },
           repos: repoSummaries,
+          totalRepos: repoList.length,
+          nextOffset: offset + limit < repoList.length ? offset + limit : null,
         },
+        truncated: offset + limit < repoList.length,
         deepLink: ctx.deepLink.project(project.id),
         nextStep:
-          'Use find_sessions for paging, or session_status / await_session_event to watch a session.',
+          'Per-repo previews are bounded: use list_tasks with nextTaskCursor for more tasks, get_task for conversations, or find_sessions for more sessions.',
       };
     }
 
     const projectList = await projects.findAll(args.state);
     const completion = await sessions.findAllCompletionStates();
-    const needsReview = completion.filter((c) => c.hasUnreviewedCompletion).length;
+    const needsReview = completion.filter(
+      (c) => c.hasUnreviewedCompletion,
+    ).length;
     const overview = await Promise.all(
-      projectList.map(async (p) => ({
+      projectList.slice(offset, offset + limit).map(async (p) => ({
         id: p.id,
         name: p.name,
         archived: p.archivedAt !== null,
@@ -113,8 +161,11 @@ export const projectOverviewTool = defineTool({
     return {
       data: {
         projects: overview,
+        total: projectList.length,
+        nextOffset: offset + limit < projectList.length ? offset + limit : null,
         attention: { sessionsNeedingReview: needsReview },
       },
+      truncated: offset + limit < projectList.length,
       nextStep:
         'Pass a projectId to project_overview to expand a project, or find_sessions to page sessions.',
     };

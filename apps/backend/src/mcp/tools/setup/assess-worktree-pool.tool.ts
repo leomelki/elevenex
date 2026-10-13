@@ -10,35 +10,29 @@ import {
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 
-/**
- * assess_worktree_pool — list a repo's worktrees as compact handles, scoped by
- * category and capped to bound the git-status hotspot. 🟢cached. Scope to
- * 'available' to find a free worktree to reuse; 'yours' for ones a project
- * already owns. Next: link_worktree (reuse), create_worktree (new), or
- * steal_worktree (take from another project).
- */
+/** Optional pool inspection for selecting environment:existing. Tasks owns allocation. */
 export const assessWorktreePoolTool = defineTool({
   name: 'assess_worktree_pool',
   title: 'Assess worktree pool',
   costClass: 'cached',
   paginated: true,
   description:
-    "List a repo's worktrees as compact handles, scoped by category and capped (the git-status scan is expensive — always scope). 🟢cached. Use 'available' to find a free worktree, 'yours' for owned ones. " +
-    'Judge reusability from the flags, not the names: a worktree with isDirty/hasConflicts/isLocked/isMissing false and activeSessionCount 0 is free to take whatever branch it holds or task it was made for, because rename_worktree + switch_branch reset it. ' +
-    "The one exception is isMainWorktree:true — the repository's own checkout, which only appears under category 'all' and must never be linked, stolen, renamed or switched. " +
-    'Next: link_worktree to reuse, create_worktree for a new one, or steal_worktree to take an owned one.',
+    'Inspect a bounded worktree pool page to select an explicit environment for create_task/retry_task. Prefer automatic allocation. Assigned checkouts belong to tasks even with zero running agents; never take them over. The allocator rechecks ownership, dirtiness, running processes, and limits.',
+  currentSessionScope: 'repo',
   annotations: { readOnlyHint: true },
   inputShape: {
     repoId: z
       .number()
       .int()
       .positive()
-      .describe('Repo whose worktree pool to inspect. From add_repo / project_overview.'),
+      .describe(
+        'Repo whose worktree pool to inspect. From add_repo / project_overview.',
+      ),
     category: z
-      .enum(['available', 'yours', 'all'])
+      .enum(['available', 'assigned', 'yours', 'all'])
       .default('available')
       .describe(
-        "Scope to reduce cost: 'available' (unowned, free to take), 'yours' (owned by a project), 'all'. Default 'available'.",
+        "Scope to reduce cost: 'available' (unowned, free to take), 'assigned' (owned by a task), 'all'; 'yours' is a compatibility alias for assigned. Default 'available'.",
       ),
     limit: z
       .number()
@@ -46,7 +40,9 @@ export const assessWorktreePoolTool = defineTool({
       .min(1)
       .max(MAX_LIMIT)
       .default(DEFAULT_LIMIT)
-      .describe(`Max worktrees to return (1-${MAX_LIMIT}). Default ${DEFAULT_LIMIT}. Caps the hotspot.`),
+      .describe(
+        `Max worktrees to return (1-${MAX_LIMIT}). Default ${DEFAULT_LIMIT}. Caps the hotspot.`,
+      ),
   },
   handler: async (args, ctx) => {
     const { worktreePool } = ctx.services;
@@ -74,9 +70,8 @@ export const assessWorktreePoolTool = defineTool({
         worktrees: collected.map(poolItemHandle),
       },
       truncated,
-      nextStep: truncated
-        ? 'More worktrees match: raise limit or narrow category. To act: link_worktree, create_worktree, or steal_worktree.'
-        : 'Prefer reusing: link_worktree for a clean unowned one, steal_worktree for a clean idle owned one (then rename_worktree). create_worktree only when none is reusable.',
+      nextStep:
+        'Use create_task or retry_task with environment:existing and a worktreeId only when explicitly choosing a checkout. Otherwise let automatic allocation choose. An assigned task can be opened with get_task; independent review uses snapshot.',
     };
   },
 });

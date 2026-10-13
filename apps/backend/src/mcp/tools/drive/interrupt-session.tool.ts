@@ -13,6 +13,7 @@ export const interruptSessionTool = defineTool({
   mutates: true,
   description:
     "Interrupt a session's currently running agent turn (the session stays alive). 🟡scoped. Use when a prompt_session run is off-track; then re-prompt with prompt_session or inspect with session_status.",
+  disallowSelfTarget: 'session',
   inputShape: {
     sessionId: z
       .number()

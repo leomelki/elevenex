@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
+import { taskOperation } from '../setup/task.util.js';
 
 /**
  * find_sessions — paginated, scoped session listing. ⚡instant DB read. Scope
@@ -12,25 +13,60 @@ export const findSessionsTool = defineTool({
   costClass: 'instant',
   paginated: true,
   description:
-    'List sessions as compact handles, scoped by repoId (cheapest) or projectId, optionally filtered by status. ⚡instant, paginated. Use after project_overview to drill in; then session_status to poll one or read_session to read its transcript.',
+    'Page coding conversations in a task, repo, or project. Task scope is cheapest; repo defaults to your current repo. Include archived history explicitly, without reacquiring a checkout. session_status/read_session inspect a conversation.',
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'repo',
   inputShape: {
+    folderId: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        'Optional session-folder membership filter within the selected task/repo/project scope.',
+      ),
+    taskId: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        'Scope to one task’s conversations, including finished-task history when state is all/archived. Mutually exclusive with repoId/projectId.',
+      ),
     repoId: z
       .number()
       .int()
       .positive()
       .optional()
-      .describe('Scope to one repo (cheapest). Mutually exclusive with projectId.'),
+      .describe(
+        'Scope to one repo (cheapest). Mutually exclusive with projectId.',
+      ),
     projectId: z
       .number()
       .int()
       .positive()
       .optional()
-      .describe('Scope to all repos in a project. Used only when repoId is omitted.'),
+      .describe(
+        'Scope to all repos in a project. Used only when repoId is omitted.',
+      ),
     status: z
-      .enum(['created', 'running', 'completed', 'requires_action', 'failed', 'stopped'])
+      .enum([
+        'created',
+        'running',
+        'completed',
+        'requires_action',
+        'failed',
+        'stopped',
+        'archived',
+      ])
       .optional()
-      .describe('Optional status filter applied in-memory.'),
+      .describe('Optional conversation runtime status filter, applied in SQL.'),
+    state: z
+      .enum(['active', 'archived', 'all'])
+      .default('active')
+      .describe(
+        'Conversation lifecycle filter, default active. all/archived includes finished-task conversations; use status for runtime state.',
+      ),
     needsReviewOnly: z
       .boolean()
       .default(false)
@@ -50,50 +86,54 @@ export const findSessionsTool = defineTool({
       .describe('Pagination offset for paging past `limit`. Default 0.'),
   },
   handler: async (args, ctx) => {
-    const { repos, sessions } = ctx.services;
+    const { sessions } = ctx.services;
 
-    let scoped: Awaited<ReturnType<typeof sessions.findByRepo>>;
-    if (args.repoId !== undefined) {
-      scoped = await sessions.findByRepo(args.repoId);
-    } else if (args.projectId !== undefined) {
-      const repoList = await repos.findByProject(args.projectId);
-      const perRepo = await Promise.all(
-        repoList.map((r) => sessions.findByRepo(r.id)),
-      );
-      scoped = perRepo.flat();
-    } else {
+    if (
+      [args.repoId, args.projectId, args.taskId].filter(
+        (id) => id !== undefined,
+      ).length > 1
+    ) {
       throw new ToolError({
-        code: 'scope_required',
-        message: 'find_sessions needs a repoId or projectId to bound the query.',
-        remediation: 'Pass repoId (preferred) or projectId. Get ids from project_overview.',
+        code: 'conflicting_scope',
+        message: 'Pass only one of taskId, repoId or projectId.',
+        remediation:
+          'Choose taskId for one task’s conversations, or repoId/projectId for broader discovery.',
       });
     }
 
-    let filtered = scoped;
-    if (args.status) filtered = filtered.filter((s) => s.status === args.status);
-    if (args.needsReviewOnly)
-      filtered = filtered.filter((s) => s.hasUnreviewedCompletion);
-
-    // Newest activity first for a useful default ordering.
-    filtered.sort((a, b) =>
-      (b.lastStateChangeAt ?? '').localeCompare(a.lastStateChangeAt ?? ''),
-    );
-
-    const total = filtered.length;
-    const page = filtered.slice(args.offset, args.offset + args.limit);
-    const truncated = args.offset + page.length < total;
+    if (args.taskId !== undefined) {
+      await taskOperation(() => ctx.services.tasks.record(args.taskId!));
+    } else if (args.repoId === undefined && args.projectId === undefined) {
+      throw new ToolError({
+        code: 'scope_required',
+        message: 'find_sessions needs a taskId, repoId or projectId.',
+        remediation:
+          'Use get_current_session or project_overview to choose scope.',
+      });
+    }
+    const {
+      rows: page,
+      total,
+      nextOffset,
+    } = await sessions.listHandlePage(args);
+    const truncated = nextOffset !== null;
 
     return {
       data: {
         total,
         offset: args.offset,
         count: page.length,
+        nextOffset,
         sessions: page.map((s) => ({
           id: s.id,
           name: s.name ?? `Session ${s.id}`,
           status: s.status,
           branch: s.branchName,
           provider: s.activeAgentProvider,
+          repoId: s.repoId,
+          workspaceId: s.workspaceId,
+          folderId: s.folderId,
+          worktreePath: s.worktreePath,
           needsReview: s.hasUnreviewedCompletion,
           lastActivityAt: s.lastStateChangeAt ?? undefined,
           deepLink: ctx.deepLink.session(s.id),

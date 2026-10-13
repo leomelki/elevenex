@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -8,6 +9,10 @@ import { and, eq, inArray, ne } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { SessionsService } from './sessions.service.js';
+import {
+  querySessionFolders,
+  type SessionFolderQuery,
+} from './session-folder-query.js';
 
 @Injectable()
 export class SessionFoldersService {
@@ -23,6 +28,10 @@ export class SessionFoldersService {
       .where(eq(schema.sessionFolders.repoId, repoId));
   }
 
+  listHandlePage(repoId: number, options: SessionFolderQuery) {
+    return querySessionFolders(this.db, repoId, options);
+  }
+
   async create(input: { repoId: number; workspaceId: number; name: string }) {
     const name = this.normalizedName(input.name);
     await this.assertWorkspace(input.repoId, input.workspaceId);
@@ -33,28 +42,59 @@ export class SessionFoldersService {
     return rows[0];
   }
 
-  async groupSessions(input: { repoId: number; workspaceId: number; name: string; sessionIds: number[] }) {
+  async groupSessions(input: {
+    repoId: number;
+    workspaceId: number;
+    name: string;
+    sessionIds: number[];
+  }) {
     const name = this.normalizedName(input.name);
     await this.assertWorkspace(input.repoId, input.workspaceId);
     const sessionIds = [...new Set(input.sessionIds)];
-    if (sessionIds.length !== 2 || sessionIds.some((id) => !Number.isInteger(id))) {
-      throw new BadRequestException('Exactly two different sessions are required');
+    if (
+      sessionIds.length !== 2 ||
+      sessionIds.some((id) => !Number.isInteger(id))
+    ) {
+      throw new BadRequestException(
+        'Exactly two different sessions are required',
+      );
     }
 
     const sessions = await this.db
-      .select({ id: schema.sessions.id, repoId: schema.sessions.repoId, workspaceId: schema.sessions.workspaceId, status: schema.sessions.status, isTemporary: schema.sessions.isTemporary })
+      .select({
+        id: schema.sessions.id,
+        repoId: schema.sessions.repoId,
+        workspaceId: schema.sessions.workspaceId,
+        status: schema.sessions.status,
+        isTemporary: schema.sessions.isTemporary,
+      })
       .from(schema.sessions)
       .where(inArray(schema.sessions.id, sessionIds));
     if (
       sessions.length !== 2 ||
-      sessions.some((session) => session.repoId !== input.repoId || session.workspaceId !== input.workspaceId || session.status === 'archived' || session.isTemporary)
+      sessions.some(
+        (session) =>
+          session.repoId !== input.repoId ||
+          session.workspaceId !== input.workspaceId ||
+          session.status === 'archived' ||
+          session.isTemporary,
+      )
     ) {
-      throw new BadRequestException('Sessions must be durable, active, and belong to this workspace');
+      throw new BadRequestException(
+        'Sessions must be durable, active, and belong to this workspace',
+      );
     }
 
     return this.db.transaction((tx) => {
-      const folder = tx.insert(schema.sessionFolders).values({ repoId: input.repoId, workspaceId: input.workspaceId, name }).returning().get();
-      tx.update(schema.sessions).set({ folderId: folder.id, updatedAt: new Date().toISOString() }).where(inArray(schema.sessions.id, sessionIds)).run();
+      const folder = tx
+        .insert(schema.sessionFolders)
+        .values({ repoId: input.repoId, workspaceId: input.workspaceId, name })
+        .returning()
+        .get();
+      tx.update(schema.sessions)
+        .set({ folderId: folder.id, updatedAt: new Date().toISOString() })
+        .where(inArray(schema.sessions.id, sessionIds))
+        .run();
       return folder;
     });
   }
@@ -72,7 +112,7 @@ export class SessionFoldersService {
     return rows[0];
   }
 
-  async archive(id: number) {
+  async archive(id: number, protectedSessionId?: number) {
     const folder = await this.findOne(id);
     if (folder.archivedAt) return folder;
 
@@ -85,6 +125,7 @@ export class SessionFoldersService {
           ne(schema.sessions.status, 'archived'),
         ),
       );
+    this.assertCallerNotInMembers(sessions, protectedSessionId);
     await Promise.all(
       sessions.map((session) => this.sessions.archiveAndStop(session.id)),
     );
@@ -163,17 +204,36 @@ export class SessionFoldersService {
     return restored;
   }
 
-  async delete(id: number) {
+  async delete(id: number, protectedSessionId?: number) {
     const folder = await this.findOne(id);
     const rows = await this.db
       .select({ id: schema.sessions.id })
       .from(schema.sessions)
       .where(eq(schema.sessions.folderId, id));
+    this.assertCallerNotInMembers(rows, protectedSessionId);
     await this.sessions.deleteMany(rows.map((row) => row.id));
     await this.db
       .delete(schema.sessionFolders)
       .where(eq(schema.sessionFolders.id, id));
     return { ...folder, deletedSessionIds: rows.map((row) => row.id) };
+  }
+
+  private assertCallerNotInMembers(
+    rows: { id: number }[],
+    protectedSessionId?: number,
+  ) {
+    // Check the captured IDs that will actually be stopped/deleted. A caller
+    // can move folders after the MCP wrapper validates containment.
+    if (
+      protectedSessionId !== undefined &&
+      rows.some((row) => row.id === protectedSessionId)
+    ) {
+      throw new ConflictException({
+        code: 'self_target_not_allowed',
+        message:
+          'This operation would stop or delete the calling conversation.',
+      });
+    }
   }
 
   private async findOne(id: number) {

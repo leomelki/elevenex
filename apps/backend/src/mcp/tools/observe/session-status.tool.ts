@@ -18,6 +18,7 @@ export const sessionStatusTool = defineTool({
   description:
     "Cheap liveness poll for one session (DB status + live runtime state, no transcript). ⚡instant. Gate before reading: call read_session when items advanced, get_pending_action when hasPendingAction, or await_session_event to block on a change. `hasQueuedWork:true` means a background task or queued prompt will resume the session even though it looks idle — do not treat it as finished.",
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'session',
   inputShape: {
     sessionId: z
       .number()

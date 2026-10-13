@@ -1,3 +1,4 @@
+import { SESSION_TOOL_INSTRUCTIONS } from '../mcp/session-tool-context.js';
 import { jest } from '@jest/globals';
 
 jest.mock('../session-title/session-title.service.js', () => ({
@@ -1033,7 +1034,14 @@ describe('CodexRuntimeService', () => {
 
       expect(appServer.request.mock.calls).toEqual([
         ['thread/read', { threadId: 'source-thread', includeTurns: true }],
-        ['thread/fork', { threadId: 'source-thread', ...boundary }],
+        [
+          'thread/fork',
+          expect.objectContaining({
+            threadId: 'source-thread',
+            ...boundary,
+            config: expect.any(Object),
+          }),
+        ],
       ]);
       expect(historyService.waitForHistory).toHaveBeenCalledWith(
         'forked-thread',
@@ -1114,10 +1122,13 @@ describe('CodexRuntimeService', () => {
         anchorMessageId: 'assistant-1',
       }),
     );
-    expect(appServer.request).toHaveBeenCalledWith('thread/fork', {
-      threadId: 'source-thread',
-      lastTurnId: 'turn-1',
-    });
+    expect(appServer.request).toHaveBeenCalledWith(
+      'thread/fork',
+      expect.objectContaining({
+        threadId: 'source-thread',
+        lastTurnId: 'turn-1',
+      }),
+    );
     expect(appServer.request).toHaveBeenCalledWith('thread/rollback', {
       threadId: 'forked-thread',
       numTurns: 1,
@@ -1154,10 +1165,13 @@ describe('CodexRuntimeService', () => {
       childSessionName: 'Fork',
     });
 
-    expect(appServer.request).toHaveBeenCalledWith('thread/fork', {
-      threadId: 'source-thread',
-      beforeTurnId: 'turn-2',
-    });
+    expect(appServer.request).toHaveBeenCalledWith(
+      'thread/fork',
+      expect.objectContaining({
+        threadId: 'source-thread',
+        beforeTurnId: 'turn-2',
+      }),
+    );
     expect(appServer.request).toHaveBeenCalledWith('thread/rollback', {
       threadId: 'forked-thread',
       numTurns: 1,
@@ -1189,10 +1203,13 @@ describe('CodexRuntimeService', () => {
       'source-thread',
       'codex-record:3',
     );
-    expect(appServer.request).toHaveBeenCalledWith('thread/fork', {
-      threadId: 'source-thread',
-      beforeTurnId: 'turn-2',
-    });
+    expect(appServer.request).toHaveBeenCalledWith(
+      'thread/fork',
+      expect.objectContaining({
+        threadId: 'source-thread',
+        beforeTurnId: 'turn-2',
+      }),
+    );
     expect(appServer.request).toHaveBeenCalledWith('thread/rollback', {
       threadId: 'rewound-thread',
       numTurns: 2,
@@ -1264,6 +1281,31 @@ describe('CodexRuntimeService', () => {
       'rewound-thread',
       0,
       '/tmp/fork.jsonl',
+    );
+  });
+
+  it('authenticates an already-loaded history fork as the child session', async () => {
+    const { service, appServer, mcpAgentTokens } = createService();
+    mcpAgentTokens.ensureToken.mockResolvedValueOnce('evx_child_identity');
+    appServer.request.mockResolvedValueOnce(forkResult('source-thread', 1));
+    appServer.request.mockResolvedValueOnce(forkResult('child-thread', 1));
+    await service.forkConversation({
+      parentSessionId: 7,
+      childSessionId: 8,
+      anchorMessageId: 'assistant-1',
+      anchorMessageKind: 'assistant',
+      childSessionName: 'Fork',
+    });
+    expect(mcpAgentTokens.ensureToken).toHaveBeenCalledWith(8);
+    expect(appServer.request).toHaveBeenCalledWith(
+      'thread/fork',
+      expect.objectContaining({
+        config: {
+          'mcp_servers.elevenex': expect.objectContaining({
+            http_headers: { Authorization: 'Bearer evx_child_identity' },
+          }),
+        },
+      }),
     );
   });
 
@@ -1648,7 +1690,7 @@ describe('CodexRuntimeService', () => {
         settings: {
           model: 'gpt-test',
           reasoning_effort: null,
-          developer_instructions: null,
+          developer_instructions: SESSION_TOOL_INSTRUCTIONS,
         },
       },
     });
@@ -1677,11 +1719,18 @@ describe('CodexRuntimeService', () => {
         approvalPolicy: 'on-request',
       }),
     );
-    expect(mcpAgentTokens.ensureToken).not.toHaveBeenCalled();
+    expect(mcpAgentTokens.ensureToken).toHaveBeenCalledWith(7);
     const threadStartParams = appServer.request.mock.calls.find(
       ([method]) => method === 'thread/start',
     )?.[1];
-    expect(threadStartParams).not.toHaveProperty('config');
+    expect(threadStartParams).toMatchObject({
+      developerInstructions: SESSION_TOOL_INSTRUCTIONS,
+      config: {
+        'mcp_servers.elevenex': {
+          http_headers: { Authorization: 'Bearer evx_codex_test' },
+        },
+      },
+    });
     expect(wire.turnStartParams).toEqual({
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'Plan this change' }],
@@ -1698,7 +1747,7 @@ describe('CodexRuntimeService', () => {
         settings: {
           model: 'gpt-test',
           reasoning_effort: null,
-          developer_instructions: null,
+          developer_instructions: SESSION_TOOL_INSTRUCTIONS,
         },
       },
     });
@@ -1727,14 +1776,14 @@ describe('CodexRuntimeService', () => {
       ) as any
     )[1];
     expect(threadParams.developerInstructions).toContain('Review destructive');
-    expect(threadParams.config.mcp_servers.elevenex).toMatchObject({
+    expect(threadParams.config['mcp_servers.elevenex']).toMatchObject({
       http_headers: { Authorization: 'Bearer evx_codex_test' },
       tool_timeout_sec: 660,
     });
     expect(
-      threadParams.config.mcp_servers.elevenex.enabled_tools,
+      threadParams.config['mcp_servers.elevenex'].enabled_tools,
     ).toBeUndefined();
-    expect(Object.keys(threadParams.config.mcp_servers)).toEqual(['elevenex']);
+    expect(Object.keys(threadParams.config)).toEqual(['mcp_servers.elevenex']);
     expect(
       (wire.turnStartParams as any).collaborationMode.settings
         .developer_instructions,
@@ -1772,7 +1821,7 @@ describe('CodexRuntimeService', () => {
         settings: {
           model: 'gpt-test',
           reasoning_effort: null,
-          developer_instructions: null,
+          developer_instructions: SESSION_TOOL_INSTRUCTIONS,
         },
       },
     });

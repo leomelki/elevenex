@@ -1,3 +1,4 @@
+import { ElevenexToolResultComponent } from '@/shared/agent-chat/tools/elevenex-tool-result/elevenex-tool-result.component';
 import { TabService } from '@/features/session/tab-service';
 import { AgentChatConnection } from '@/shared/agent-chat/agent-chat-connection';
 import { AgentConversation } from '@/shared/agent-chat/agent-conversation';
@@ -109,6 +110,7 @@ import {
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    ElevenexToolResultComponent,
     CommonModule,
     FormsModule,
     NgIcon,
@@ -221,7 +223,9 @@ export class MissionConversationComponent {
     this.shows.liveShows().filter((s) => s.agentSessionId === this.mission().sessionId),
   );
 
-  readonly rows = computed(() => buildMissionRows(this.conversation.items(), this.missionShows()));
+  readonly rows = computed(() =>
+    buildMissionRows(this.conversation.items(), this.missionShows(), this.isRunning()),
+  );
 
   /**
    * The timeline as render groups. A whole turn's work — the agent's tool

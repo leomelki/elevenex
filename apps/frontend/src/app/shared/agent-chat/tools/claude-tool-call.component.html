@@ -68,7 +68,7 @@
           <ng-icon name="lucideLockKeyhole" size="12" />
         } @else if (state() === 'denied') {
           <ng-icon name="lucideShield" size="12" />
-        } @else if (state() === 'error') {
+        } @else if (state() === 'error' || state() === 'incomplete') {
           <ng-icon name="lucideCircleAlert" size="12" />
         } @else {
           <ng-icon name="lucideCheck" size="12" />
@@ -80,7 +80,11 @@
         size="13"
         class="cw-tool__glyph shrink-0 text-muted-foreground"
       />
-      <span class="cw-tool__verb shrink-0 font-semibold text-foreground">{{ display().verb }}</span>
+      <span
+        class="cw-tool__verb min-w-0 max-w-[45%] truncate font-semibold text-foreground"
+        [title]="display().verb"
+        >{{ display().verb }}</span
+      >
 
       @if (display().target) {
         <span
@@ -92,8 +96,9 @@
 
       @if (summary(); as s) {
         <span
-          class="cw-tool__result shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+          class="cw-tool__result max-w-[45%] shrink-0 truncate rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
           [attr.data-tone]="s.tone"
+          [title]="s.text"
           >{{ s.text }}</span
         >
       }
@@ -138,6 +143,14 @@
           </div>
         }
 
+        @if (elevenexView(); as elevenex) {
+          <elevenex-tool-result
+            [view]="elevenex"
+            [toolInput]="call().toolInput"
+            [toolOutput]="result()?.content"
+            [pending]="state() === 'running'"
+          />
+        } @else {
         @switch (display().kind) {
           @case ('bash') {
             <cw-tool-command [command]="bashCommand()" />
@@ -390,6 +403,7 @@
               <cw-tool-output [text]="resultText()" [error]="state() === 'error'" />
             }
           }
+        }
         }
       </div>
     }

@@ -4,7 +4,7 @@ import { ToolRegistryService } from '../tool-registry/tool-registry.service.js';
 import { ELEVENEX_SERVER_INSTRUCTIONS } from '../server-instructions.js';
 
 /** Server metadata advertised to clients on initialize. */
-const SERVER_INFO = { name: 'elevenex', version: '0.1.0' } as const;
+const SERVER_INFO = { name: 'elevenex', version: '0.2.0' } as const;
 
 /**
  * Builds a fresh `McpServer` per connection (the SDK pattern is one

@@ -1,3 +1,4 @@
+import { BranchesModule } from '../branches/branches.module.js';
 import { Module } from '@nestjs/common';
 import { TasksModule } from '../tasks/tasks.module.js';
 import { DatabaseModule } from '../database/database.module.js';
@@ -36,6 +37,7 @@ import { ElevenexMcpHttpTransport } from './transport/elevenex-mcp-http.transpor
   imports: [
     DatabaseModule,
     TasksModule,
+    BranchesModule,
     ProjectsModule,
     ReposModule,
     SessionsModule,

@@ -69,8 +69,7 @@ Concrete examples of what this means in practice:
 **Repo not in elevenex yet? Provision it, don't read it.** Locate the repo on disk with a quick
 \`find\`/\`ls\`, then \`find_or_create_project\` → \`add_repo\` → \`create_task\` → \`get_task\`.
 Can't find it on disk? Call \`escalate_to_user\` for the path — do not search adjacent repos or infer
-from context. \`create_task\` is the default; its service handles environment allocation
-for when to skip it and point \`create_session\` straight at the repo's own checkout.
+from context. \`create_task\` handles environment allocation and preserves durable task history.
 
 **Prefer local reads over the GitHub/GitLab API — both in your sessions and yourself.** A checked-out
 worktree already holds all the source, and local reads are instant, trigger no permission prompts, and
@@ -169,7 +168,7 @@ an occupied branch. Rename the task label with \`rename_task\`; do not rename it
 \`finish_task\` archives the task while preserving its branch and conversations. Running work needs
 explicit stop confirmation. Dirty environments stay reserved. \`reopen_task\` preserves identity
 and history and prepares an environment without starting agents. Never steal or switch an active
-task's checkout. Worktree tools below are advanced compatibility operations; prefer task tools.
+task's checkout. Checkout allocation belongs to the task service; use its recovery options instead of manually assigning worktrees.
 
 ## Advanced environment operations
 Worktrees support tasks; their names and paths are infrastructure details. Let the task service
@@ -177,8 +176,9 @@ choose an available clean environment. It protects active and finished tasks wit
 edits, external checkouts, and running processes. An occupied branch can be reviewed using an
 independent committed revision snapshot. Never force checkout or discard local work to create a task.
 
-Use legacy worktree tools only for an explicit request to manage environments. Do not rename,
-steal, delete, or switch a task's environment. Finish the task through its lifecycle API first.
+Rename the task with \`rename_task\`. Inspect candidate checkout IDs with \`assess_worktree_pool\`
+only for explicit environment selection; let \`create_task\`/\`retry_task\` validate and assign it.
+
 Direct sessions in the repository checkout remain available for compatibility with existing work;
 new implementation, investigation, and review should use tasks.
 
@@ -228,17 +228,12 @@ across the whole mission. If not present, proceed with your defaults.
    \`projectId\` and read \`agentInstructions\` before proceeding.
 2. PLAN — form a short, ordered plan and record it with TodoWrite or update_plan so the human can follow
    along. Keep it updated as steps complete. {{AUTONOMY_PLAN_CLAUSE}}
-3. SET UP — \`find_or_create_project\` → \`add_repo\` → \`assess_worktree_pool\` → \`create_worktree\`
-   (poll \`get_worktree_job\`) or \`link_worktree\` → \`create_session\`. \`create_worktree\` makes the
-   branch for you: pass the \`branchName\` you want even if it does not exist yet, and for a NEW branch
-   set \`startPoint\` to the base ref to fork from (e.g. \`origin/main\`). Do not pre-check or hand-create
-   branches. To REUSE a linked worktree on a different existing branch, \`switch_branch\` (the same git
-   switch the UI does) instead of spinning up a new worktree. Whenever you take over an existing
-   worktree (\`link_worktree\`/\`steal_worktree\`), rename it to the repo's stable numbered pattern
-   (\`<repo> 1\`, \`<repo> 2\`, …) when needed — not to the current task. See "Worktrees are disposable"
-   above. Preserve a project-scoped pattern only when the human prefers worktrees per project.
-   If the task doesn't need isolation at all, skip straight to \`create_session\` against the repo's own
-   checkout — see "Worktrees are optional" above.
+3. SET UP — \`find_or_create_project\` → \`add_repo\` → \`get_task_defaults\` or \`find_branches\`
+   → \`create_task\` → \`await_task_ready\` → \`open_task_session\`. Inspect \`get_task\` on setup errors. Reuse the creation
+   requestId when retrying the same request. The task service allocates a safe worktree and initial
+   conversation. For another conversation sharing that task’s files, use \`create_session\` with
+   its taskId. For isolated parallel work or review, create another task (snapshot for an occupied
+   branch). Never manually reassign another task’s checkout or assume its old path is still valid.
 4. DRIVE — \`prompt_session\` to start/continue inner coding work; it returns the moment the prompt is
    accepted (\`status: running/completed/requires_action\`) and never sits blocking on the turn — so when
    you have several sessions to progress, fire \`prompt_session\` at all of them back-to-back first, then
@@ -280,7 +275,7 @@ across the whole mission. If not present, proceed with your defaults.
 ## Cost & speed discipline
 You are billed per token and per second; elevenex holds thousands of files and hundreds of worktrees.
 Tools return compact handles — do not ask for or echo full dumps. Prefer \`await_session_event\` over
-tight polling loops. Heavy tools (\`create_worktree\`, \`prompt_session\`, \`ask_session\`,
+tight polling loops. Heavy setup tools (\`create_task\`, \`retry_task\`, \`reopen_task\`, \`prompt_session\`, \`ask_session\`,
 \`generate_worktree_context\`) return a handle at once — never sit blocking on them. Keep a small
 working set; don't re-list what you already know. Parallelize sessions freely when tasks are
 independent; avoid spawning redundant sessions for the same work.

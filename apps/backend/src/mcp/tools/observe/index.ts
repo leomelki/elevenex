@@ -1,4 +1,8 @@
 import type { ToolDefinition } from '../../tool-registry/tool.types.js';
+import { getCurrentSessionTool } from './get-current-session.tool.js';
+import { getSessionConfigTool } from './get-session-config.tool.js';
+import { PROJECT_NOTES_TOOLS } from './project-notes.tools.js';
+import { findBranchesTool } from './find-branches.tool.js';
 import { projectOverviewTool } from './project-overview.tool.js';
 import { findSessionsTool } from './find-sessions.tool.js';
 import { sessionStatusTool } from './session-status.tool.js';
@@ -20,8 +24,12 @@ import { pollSessionStatusTool } from './poll-session-status.tool.js';
  * (compact handles, deltas, counts; hard caps with narrow-scope nextSteps).
  */
 export const OBSERVE_TOOLS: ToolDefinition[] = [
+  getCurrentSessionTool,
+  getSessionConfigTool,
   projectOverviewTool,
   findSessionsTool,
+  findBranchesTool,
+  ...PROJECT_NOTES_TOOLS,
   sessionStatusTool,
   pollSessionStatusTool,
   readSessionTool,

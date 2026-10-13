@@ -14,7 +14,17 @@ import { pollActionStatusTool } from '../tools/actions/poll-action-status.tool.j
 
 function makeCtx(services: any): ToolContext {
   return {
-    services,
+    services: {
+      ...services,
+      sessions: services.sessions
+        ? {
+            assertSessionWorkspaceLinked: jest
+              .fn()
+              .mockResolvedValue(undefined),
+            ...services.sessions,
+          }
+        : services.sessions,
+    },
     agentSessionId: 42,
     caps: {
       isAgent: true,

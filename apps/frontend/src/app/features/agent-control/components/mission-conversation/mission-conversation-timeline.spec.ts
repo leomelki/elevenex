@@ -85,4 +85,19 @@ describe('mission conversation timeline', () => {
       'cluster-after',
     ]);
   });
+  it('uses the shared Elevenex result model for mission task receipts', () => {
+    const rows = buildMissionRows([
+      { ...item('call', 'tool_use', '', 0), toolUseId: 'task-call', toolName: 'mcp__elevenex__create_task', toolInput: { name: 'Fix auth' } },
+      { ...item('result', 'tool_result', JSON.stringify({ data: { taskId: 9, name: 'Fix auth', state: 'preparing' }, deepLink: '/tasks/9' }), 1), toolUseId: 'task-call' },
+    ], []);
+    expect(rows[0]).toMatchObject({ category: 'setup', verb: 'Create task', result: { text: 'Preparing', tone: 'warn' }, elevenex: { link: '/tasks/9' } });
+  });
+
+  it('shows structured failures and absent responses without a false success state', () => {
+    const call = { ...item('call', 'tool_use', '', 0), toolUseId: 'task-call', toolName: 'mcp__elevenex__finish_task' };
+    expect(buildMissionRows([call], [], false)[0]).toMatchObject({ status: 'incomplete', result: { text: 'No result recorded' } });
+    const response = { ...item('result', 'tool_result', JSON.stringify({ error: { code: 'running_work', message: 'Running work.' } }), 1), toolUseId: 'task-call' };
+    expect(buildMissionRows([call, response], [])[0]).toMatchObject({ status: 'error', elevenex: { toolFailed: true }, result: { tone: 'error' } });
+  });
+
 });

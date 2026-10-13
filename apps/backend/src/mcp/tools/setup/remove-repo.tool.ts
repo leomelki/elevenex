@@ -8,10 +8,12 @@ import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 export const removeRepoTool = defineTool({
   name: 'remove_repo',
   title: 'Remove repo',
-  costClass: 'instant',
+  costClass: 'heavy',
   mutates: true,
+  destructive: true,
+  disallowSelfTarget: 'repo',
   description:
-    'Detach a repository from its project (removes the elevenex record; leaves the folder on disk). ⚡instant. Reverses add_repo.',
+    'Permanently remove a repository and its task/conversation history after stopping session runtimes. Finish active tasks first so preparation and checkout processes are cleaned up. Leaves files on disk. Irreversible; cannot remove the caller’s own repository.',
   inputShape: {
     repoId: z
       .number()
@@ -21,12 +23,16 @@ export const removeRepoTool = defineTool({
   },
   handler: async (args, ctx) => {
     const { repos } = ctx.services;
+    repos.assertTaskHistoryCanBeDeleted(args.repoId);
     try {
-      await repos.remove(args.repoId);
+      await ctx.services.sessions.archiveAllByRepo(args.repoId, true);
+      ctx.signal.throwIfAborted();
+      await repos.remove(args.repoId, { requireFinishedTasks: true });
     } catch (error) {
       throw new ToolError({
         code: 'remove_repo_failed',
-        message: error instanceof Error ? error.message : 'Could not remove repo.',
+        message:
+          error instanceof Error ? error.message : 'Could not remove repo.',
         remediation: 'Verify the repoId exists via project_overview.',
       });
     }

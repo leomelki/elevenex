@@ -1,5 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, and, count, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { ProjectsService } from '../projects/projects.service.js';
@@ -38,6 +38,71 @@ export class ScratchpadService {
       .from(schema.scratchpadSections)
       .where(eq(schema.scratchpadSections.projectId, projectId))
       .orderBy(asc(schema.scratchpadSections.sortOrder));
+  }
+
+  async listHandles(projectId: number, offset = 0, limit = 25) {
+    const where = eq(schema.scratchpadSections.projectId, projectId);
+    return Promise.resolve(
+      this.db.transaction((tx) => {
+        const total = tx
+          .select({ value: count() })
+          .from(schema.scratchpadSections)
+          .where(where)
+          .get()!.value;
+        const sections = tx
+          .select({
+            sectionId: schema.scratchpadSections.id,
+            name: schema.scratchpadSections.name,
+            description: sql<
+              string | null
+            >`substr(${schema.scratchpadSections.description}, 1, 200)`,
+            contentLength: sql<number>`length(${schema.scratchpadSections.content})`,
+          })
+          .from(schema.scratchpadSections)
+          .where(where)
+          .orderBy(
+            asc(schema.scratchpadSections.sortOrder),
+            asc(schema.scratchpadSections.id),
+          )
+          .limit(Math.min(100, Math.max(1, limit)))
+          .offset(Math.max(0, offset))
+          .all();
+        return {
+          sections,
+          total,
+          nextOffset:
+            offset + sections.length < total ? offset + sections.length : null,
+        };
+      }),
+    );
+  }
+
+  async readWindow(
+    projectId: number,
+    sectionId: number,
+    offset: number,
+    limit: number,
+  ) {
+    return (
+      (
+        await this.db
+          .select({
+            sectionId: schema.scratchpadSections.id,
+            projectId: schema.scratchpadSections.projectId,
+            name: schema.scratchpadSections.name,
+            content: sql<string>`substr(${schema.scratchpadSections.content}, ${offset + 1}, ${Math.min(12000, Math.max(1, limit))})`,
+            isMarkdown: schema.scratchpadSections.isMarkdown,
+            totalCharacters: sql<number>`length(${schema.scratchpadSections.content})`,
+          })
+          .from(schema.scratchpadSections)
+          .where(
+            and(
+              eq(schema.scratchpadSections.id, sectionId),
+              eq(schema.scratchpadSections.projectId, projectId),
+            ),
+          )
+      )[0] ?? null
+    );
   }
 
   async update(

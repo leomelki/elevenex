@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { ProjectsService } from '../projects/projects.service.js';
+import { assertTaskHistoryCanBeDeleted } from '../tasks/task-deletion-guard.js';
 
 // Colorblind-safe palette (OKLCH-based perceptually distinct colors)
 // These colors are distinguishable for protanopia, deuteranopia, and tritanopia
@@ -107,14 +108,23 @@ export class ReposService {
     return REPO_COLORS[index];
   }
 
-  async remove(id: number) {
+  assertTaskHistoryCanBeDeleted(id: number) {
+    assertTaskHistoryCanBeDeleted(this.db, { repoId: id });
+  }
+
+  async remove(id: number, options: { requireFinishedTasks?: boolean } = {}) {
     const repo = await this.findOne(id);
     await this.projectsService.assertProjectIsActive(repo.projectId);
 
-    const rows = await this.db
-      .delete(schema.repos)
-      .where(eq(schema.repos.id, id))
-      .returning();
+    const rows = this.db.transaction((tx) => {
+      if (options.requireFinishedTasks)
+        assertTaskHistoryCanBeDeleted(tx, { repoId: id });
+      return tx
+        .delete(schema.repos)
+        .where(eq(schema.repos.id, id))
+        .returning()
+        .all();
+    });
 
     if (rows.length === 0) {
       throw new NotFoundException(`Repo with id ${id} not found`);

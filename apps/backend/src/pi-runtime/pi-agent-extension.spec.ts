@@ -22,7 +22,12 @@ describe('Pi mission extension', () => {
     string,
     (event?: unknown, ctx?: unknown) => Promise<unknown>
   >;
-  let pi: { on: jest.Mock; registerTool: jest.Mock; setActiveTools: jest.Mock };
+  let pi: {
+    on: jest.Mock;
+    registerTool: jest.Mock;
+    setActiveTools: jest.Mock;
+    getActiveTools: jest.Mock;
+  };
   const status = jest.fn();
 
   beforeEach(() => {
@@ -39,11 +44,13 @@ describe('Pi mission extension', () => {
         },
       ],
     });
+    client.close.mockResolvedValue(undefined);
     handlers = new Map();
     pi = {
       on: jest.fn((name, handler) => handlers.set(name, handler)),
       registerTool: jest.fn(),
       setActiveTools: jest.fn(),
+      getActiveTools: jest.fn(() => ['read', 'bash', 'edit', 'write']),
     };
     elevenexAgentExtension(pi);
   });
@@ -98,6 +105,56 @@ describe('Pi mission extension', () => {
       'TodoWrite',
     ]);
     expect(status.mock.calls[0][1]).toContain('offline');
+  });
+
+  function codingSession() {
+    delete process.env.ELEVENEX_AGENT_PROMPT;
+    handlers.clear();
+    pi.registerTool.mockClear();
+    elevenexAgentExtension(pi);
+  }
+
+  it('adds Elevenex tools while preserving native coding tools and the coding prompt', async () => {
+    codingSession();
+    await handlers.get('session_start')!({}, { ui: { setStatus: status } });
+    expect(pi.setActiveTools).toHaveBeenCalledWith([
+      'read',
+      'bash',
+      'edit',
+      'write',
+      'mcp__elevenex__project_overview',
+    ]);
+    expect(pi.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual([
+      'mcp__elevenex__project_overview',
+    ]);
+    const result = await handlers.get('before_agent_start')!({
+      systemPrompt: 'Native coding prompt',
+    });
+    expect(result).toMatchObject({
+      systemPrompt: expect.stringContaining('Native coding prompt'),
+    });
+    expect(result).toMatchObject({
+      systemPrompt: expect.stringContaining('get_current_session'),
+    });
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps coding sessions usable if the Elevenex connection fails', async () => {
+    codingSession();
+    client.connect.mockRejectedValue(new Error('offline'));
+    await handlers.get('session_start')!({}, { ui: { setStatus: status } });
+    expect(pi.setActiveTools).toHaveBeenCalledWith([
+      'read',
+      'bash',
+      'edit',
+      'write',
+    ]);
+    expect(status).toHaveBeenCalledWith(
+      'elevenex_mcp_status',
+      expect.stringContaining('offline'),
+    );
+    expect(status).toHaveBeenCalledWith('elevenex_agent_ready', 'ready');
+    expect(client.close).toHaveBeenCalled();
   });
   it('reports native context during coding sessions without enabling mission tools', async () => {
     delete process.env.ELEVENEX_AGENT_TOKEN;

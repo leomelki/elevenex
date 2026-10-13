@@ -1,5 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { eq, asc, and } from 'drizzle-orm';
+import { eq, asc, and, count } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { ProjectsService } from '../projects/projects.service.js';
@@ -37,6 +37,47 @@ export class TodosService {
       .from(schema.todoItems)
       .where(eq(schema.todoItems.projectId, projectId))
       .orderBy(asc(schema.todoItems.sortOrder));
+  }
+
+  async listHandles(
+    projectId: number,
+    state: 'open' | 'completed' | 'all',
+    offset = 0,
+    limit = 25,
+  ) {
+    const where = and(
+      eq(schema.todoItems.projectId, projectId),
+      state === 'all'
+        ? undefined
+        : eq(schema.todoItems.completed, state === 'completed'),
+    );
+    return Promise.resolve(
+      this.db.transaction((tx) => {
+        const total = tx
+          .select({ value: count() })
+          .from(schema.todoItems)
+          .where(where)
+          .get()!.value;
+        const todos = tx
+          .select({
+            todoId: schema.todoItems.id,
+            text: schema.todoItems.text,
+            completed: schema.todoItems.completed,
+          })
+          .from(schema.todoItems)
+          .where(where)
+          .orderBy(asc(schema.todoItems.sortOrder), asc(schema.todoItems.id))
+          .limit(Math.min(100, Math.max(1, limit)))
+          .offset(Math.max(0, offset))
+          .all();
+        return {
+          todos,
+          total,
+          nextOffset:
+            offset + todos.length < total ? offset + todos.length : null,
+        };
+      }),
+    );
   }
 
   async update(

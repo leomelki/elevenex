@@ -5,10 +5,27 @@ export const listSessionFoldersTool = defineTool({
   name: 'list_session_folders',
   title: 'List session folders',
   costClass: 'instant',
+  paginated: true,
   description:
     'List the sidebar session folders and their session memberships for one repo, optionally narrowed to a workspace. ⚡instant. Use this to discover folder ids before moving, renaming, archiving, restoring, or deleting folders.',
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'repo',
   inputShape: {
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(25)
+      .describe(
+        'Folder page size, default 25; max 100. Each membership preview is capped at 20 IDs.',
+      ),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .default(0)
+      .describe('Folder page offset, default 0.'),
     repoId: z
       .number()
       .int()
@@ -22,7 +39,7 @@ export const listSessionFoldersTool = defineTool({
       .positive()
       .optional()
       .describe(
-        'Optional workspace filter. From link_worktree / create_session.',
+        'Optional workspace filter. Task ID (also workspaceId) from get_current_session / get_task.',
       ),
     state: z
       .enum(['active', 'archived', 'all'])
@@ -30,49 +47,22 @@ export const listSessionFoldersTool = defineTool({
       .describe("Folder state to include. Default 'active'."),
   },
   handler: async (args, ctx) => {
-    const [allFolders, allSessions] = await Promise.all([
-      ctx.services.sessionFolders.listByRepo(args.repoId),
-      ctx.services.sessions.findByRepo(args.repoId),
-    ]);
-    const folders = allFolders
-      .filter(
-        (folder) =>
-          args.workspaceId === undefined ||
-          folder.workspaceId === args.workspaceId,
-      )
-      .filter((folder) =>
-        args.state === 'all'
-          ? true
-          : args.state === 'archived'
-            ? folder.archivedAt !== null
-            : folder.archivedAt === null,
-      )
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    return {
-      data: {
-        count: folders.length,
-        folders: folders.map((folder) => {
-          const members = allSessions.filter(
-            (session) => session.folderId === folder.id,
-          );
-          return {
-            id: folder.id,
-            name: folder.name,
-            repoId: folder.repoId,
-            workspaceId: folder.workspaceId,
-            archived: folder.archivedAt !== null,
-            sessionIds: members
-              .filter((session) => session.status !== 'archived')
-              .map((session) => session.id),
-            archivedSessionIds: members
-              .filter((session) => session.status === 'archived')
-              .map((session) => session.id),
-          };
-        }),
-      },
+    const page = ctx.services.sessionFolders.listHandlePage(args.repoId, {
+      ...args,
+      limit: args.limit ?? 25,
+      offset: args.offset ?? 0,
+    });
+    return Promise.resolve({
+      data: { count: page.folders.length, ...page },
+      truncated:
+        page.nextOffset !== null ||
+        page.folders.some(
+          (folder) =>
+            folder.sessionCount > folder.sessionIds.length ||
+            folder.archivedSessionCount > folder.archivedSessionIds.length,
+        ),
       nextStep:
-        'Use create_session_folder, move_session_to_folder, rename_session_folder, archive_session_folder, unarchive_session_folder, or delete_session_folder.',
-    };
+        'Memberships are previews. find_sessions with taskId, folderId and state:all pages conversations. Use folder tools to change groups.',
+    });
   },
 });

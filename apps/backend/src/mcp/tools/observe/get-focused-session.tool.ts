@@ -5,7 +5,8 @@ import { defineTool } from '../../tool-registry/tool.types.js';
  * has open in the elevenex UI. ⚡instant: one DB read of the volatile focus the
  * UI reported with the user's last message, no transcript.
  *
- * This is the agent's ONLY way to learn "this session" / "the project I'm in".
+ * Missions use this to resolve the human’s UI focus. Coding sessions use
+ * get_current_session for their own authenticated identity.
  * It is intentionally pull-based: the focus is NOT injected into the
  * conversation, so the agent only consults it when the user's words imply the
  * currently-open thing — and otherwise keeps working on the session the
@@ -17,7 +18,7 @@ export const getFocusedSessionTool = defineTool({
   title: 'Get focused session',
   costClass: 'instant',
   description:
-    "Resolve the session/project the human has OPEN in the elevenex UI right now (live name, branch, status, project). ⚡instant. Call this ONLY when the user's words imply the current/open thing — \"this session\", \"the session I have open\", \"the project I'm in\", \"here\" — to learn which session they mean. Do NOT call it for follow-ups that refer to the session this conversation is already about. Ephemeral: it reflects the user's LAST message and can change between turns, so fetch it fresh each time and never reuse a remembered value.",
+    'For missions: resolve the session/project the human has OPEN in the elevenex UI right now (live name, branch, status, project). ⚡instant. Call this ONLY when the user\'s words imply the current/open thing — "this session", "the session I have open", "the project I\'m in", "here" — to learn which session they mean. Do NOT call it for follow-ups that refer to the session this conversation is already about. Ephemeral: it reflects the user\'s LAST message and can change between turns, so fetch it fresh each time and never reuse a remembered value.',
   annotations: { readOnlyHint: true },
   inputShape: {},
   handler: async (_args, ctx) => {

@@ -8,11 +8,12 @@ import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 export const deleteProjectTool = defineTool({
   name: 'delete_project',
   title: 'Delete project',
-  costClass: 'instant',
+  costClass: 'heavy',
   mutates: true,
   destructive: true,
+  disallowSelfTarget: 'project',
   description:
-    'Permanently delete a project and all associated data (repos, worktrees, sessions). This is irreversible — use archive instead if you want to preserve history. ⚡instant.',
+    'Permanently delete a project and its task/conversation history after stopping its session runtimes. Irreversible. Cannot delete the caller’s own project. Finish tasks instead to preserve history.',
   inputShape: {
     projectId: z
       .number()
@@ -30,21 +31,22 @@ export const deleteProjectTool = defineTool({
       throw new ToolError({
         code: 'project_not_found',
         message: `No project found with id ${args.projectId}.`,
-        remediation: 'Check the projectId via list_projects or project_overview.',
+        remediation: 'Check the projectId via project_overview.',
       });
     }
 
     // Stop any running sessions before the DB cascade removes their records.
-    await sessions.archiveAllByProject(args.projectId).catch(() => {
-      // Best-effort — proceed with deletion even if session cleanup partially fails.
-    });
+    projects.assertTaskHistoryCanBeDeleted(args.projectId);
+    await sessions.archiveAllByProject(args.projectId, true);
+    ctx.signal.throwIfAborted();
 
     try {
-      await projects.delete(args.projectId);
+      await projects.delete(args.projectId, { requireFinishedTasks: true });
     } catch (error) {
       throw new ToolError({
         code: 'delete_project_failed',
-        message: error instanceof Error ? error.message : 'Could not delete project.',
+        message:
+          error instanceof Error ? error.message : 'Could not delete project.',
         remediation: 'Verify the projectId is correct and try again.',
       });
     }
@@ -52,7 +54,7 @@ export const deleteProjectTool = defineTool({
     return {
       data: { projectId: args.projectId, name: project.name, deleted: true },
       touched: { projectId: args.projectId },
-      nextStep: 'Confirm deletion with list_projects.',
+      nextStep: 'Confirm deletion with project_overview.',
     };
   },
 });

@@ -2,7 +2,6 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { ClaudeMcpService } from '../claude-runtime/claude-mcp.service.js';
 import { ClaudeRuntimeService } from '../claude-runtime/claude-runtime.service.js';
-import type { ClaudePermissionMode } from '../claude-runtime/claude-runtime.types.js';
 import type {
   AgentImageInput,
   AgentForkConversationRequest,
@@ -20,6 +19,14 @@ export class ClaudeAgentRuntimeProvider
   readonly info: AgentRuntimeProviderInfo = {
     id: 'claude',
     displayName: 'Claude Code',
+    permissionModes: [
+      'default',
+      'auto',
+      'acceptEdits',
+      'bypassPermissions',
+      'dontAsk',
+      'plan',
+    ],
     capabilities: {
       mcp: true,
       subagents: true,

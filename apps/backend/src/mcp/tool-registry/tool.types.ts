@@ -10,7 +10,7 @@ import type { HumanChannel } from '../human-channel/human-channel.js';
  *  - `instant`  ⚡ pure DB read (paginate + require scope).
  *  - `cached`   🟢 fast, reuses a backend cache (git-status / branch / change-review).
  *  - `scoped`   🟡 search that must be bounded (require a query + cap results).
- *  - `heavy`    🔴 launches real work — must return a handle to poll, never block.
+ *  - `heavy`    🔴 agent/network/LLM work — prefer background handles; describe bounded waits.
  */
 export type CostClass = 'instant' | 'cached' | 'scoped' | 'heavy';
 
@@ -22,18 +22,21 @@ export class ToolError extends Error {
   readonly code: string;
   readonly remediation?: string;
   readonly retryable: boolean;
+  readonly details?: Record<string, unknown>;
 
   constructor(args: {
     code: string;
     message: string;
     remediation?: string;
     retryable?: boolean;
+    details?: Record<string, unknown>;
   }) {
     super(args.message);
     this.name = 'ToolError';
     this.code = args.code;
     this.remediation = args.remediation;
     this.retryable = args.retryable ?? false;
+    this.details = args.details;
   }
 }
 
@@ -56,11 +59,11 @@ export interface ToolResultEnvelope<TData = unknown> {
 
 /**
  * Capabilities for the calling connection, derived from its bearer token.
- * Agent sessions get everything; anonymous external clients get reads and
+ * Authenticated coding sessions and missions get everything; anonymous external clients get reads and
  * non-destructive mutations (destructive ops and the human channel degrade).
  */
 export interface ConnectionCaps {
-  /** True when the bearer token resolved to a live agent session. */
+  /** True when the bearer token resolved to an existing Elevenex session. */
   isAgent: boolean;
   /** May call mutating (non-destructive) tools. */
   canMutate: boolean;
@@ -77,7 +80,7 @@ export interface ConnectionCaps {
 export interface ToolContext {
   /** Injected domain services (the reused NestJS providers). */
   services: McpToolServices;
-  /** Resolved agent session id, or null for anonymous/tokenless callers. */
+  /** Calling coding-session or mission id, or null for anonymous/tokenless callers. */
   agentSessionId: number | null;
   /** What this connection is allowed to do. */
   caps: ConnectionCaps;
@@ -122,7 +125,7 @@ export interface ToolDefinition<Shape extends z.ZodRawShape = z.ZodRawShape> {
     idempotentHint?: boolean;
     openWorldHint?: boolean;
   };
-  /** Requires a live agent session (human-channel tools). */
+  /** Requires an authenticated Elevenex session (context and human-channel tools). */
   requiresAgent?: boolean;
   /** Mutates state — gated on `caps.canMutate`. */
   mutates?: boolean;
@@ -138,6 +141,13 @@ export interface ToolDefinition<Shape extends z.ZodRawShape = z.ZodRawShape> {
    * pathological searches before the handler runs.
    */
   requiresQuery?: boolean;
+  /** Scope omitted by a coding-session caller defaults to its own context.
+   * Missions and anonymous clients must still provide an explicit scope.
+   * Control/destructive tools deliberately do not opt in.
+   */
+  currentSessionScope?: 'session' | 'worktree' | 'project' | 'repo' | 'task';
+  /** Reject operations that would queue behind or terminate the calling agent. */
+  disallowSelfTarget?: 'session' | 'task' | 'folder' | 'repo' | 'project';
   handler: (
     args: InferShape<Shape>,
     ctx: ToolContext,

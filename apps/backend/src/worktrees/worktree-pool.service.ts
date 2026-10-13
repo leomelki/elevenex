@@ -37,6 +37,7 @@ export interface WorktreePoolItem {
   path: string;
   name: string;
   createdFromRef: string | null;
+  managed: boolean;
   currentBranch: string | null;
   head: string | null;
   isDetached: boolean;
@@ -252,6 +253,7 @@ export class WorktreePoolService {
         path: pool.path,
         name: pool.name,
         createdFromRef: pool.createdFromRef,
+        managed: pool.managed,
         currentBranch,
         head: gitInfo?.head ?? null,
         isDetached: gitInfo?.isDetached ?? currentBranch === null,

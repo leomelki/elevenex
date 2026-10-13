@@ -25,6 +25,13 @@ export class CodexAgentRuntimeProvider
   readonly info: AgentRuntimeProviderInfo = {
     id: 'codex',
     displayName: 'OpenAI Codex',
+    permissionModes: [
+      'default',
+      'auto',
+      'acceptEdits',
+      'bypassPermissions',
+      'plan',
+    ],
     capabilities: {
       mcp: true,
       subagents: false,

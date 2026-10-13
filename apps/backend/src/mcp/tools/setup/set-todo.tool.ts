@@ -11,7 +11,8 @@ export const setTodoTool = defineTool({
   costClass: 'instant',
   mutates: true,
   description:
-    "Add a project todo, or update an existing one (pass todoId) to edit its text or mark it completed. ⚡instant. Lightweight mission bookkeeping on a project's todo list.",
+    "Add a project todo, or update an existing one (pass todoId) to edit its text or mark it completed. ⚡instant. Lightweight project checklist items; use create_task for executable work and list_todos to find todoIds.",
+  currentSessionScope: 'project',
   inputShape: {
     projectId: z
       .number()
@@ -37,6 +38,8 @@ export const setTodoTool = defineTool({
     const { todos } = ctx.services;
 
     if (args.todoId !== undefined) {
+      const existing = (await todos.findByProject(args.projectId)).find(todo => todo.id === args.todoId);
+      if (!existing) throw new ToolError({ code: 'todo_not_found', message: 'This todo does not belong to the specified project.', remediation: 'Use list_todos for the intended project before updating it.' });
       const patch: { text?: string; completed?: boolean } = {};
       if (args.text !== undefined) patch.text = args.text;
       if (args.completed !== undefined) patch.completed = args.completed;

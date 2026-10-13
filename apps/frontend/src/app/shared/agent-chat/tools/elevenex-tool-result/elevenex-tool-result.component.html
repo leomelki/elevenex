@@ -1,0 +1,208 @@
+<section class="space-y-3 text-xs text-foreground" [attr.aria-label]="view().title + ' result'">
+  @if (pending()) {
+    <div
+      class="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-muted-foreground"
+      role="status"
+    >
+      <span
+        class="size-1.5 shrink-0 animate-pulse rounded-full bg-warning"
+        aria-hidden="true"
+      ></span>
+      <span>{{
+        view().tool === 'await_task_ready'
+          ? 'Waiting for task setup to finish…'
+          : 'Waiting for the tool response…'
+      }}</span>
+    </div>
+  }
+
+  @if (view().error; as error) {
+    <div
+      class="space-y-2 rounded-md border border-destructive/25 bg-destructive/5 p-3"
+      role="alert"
+    >
+      <div class="flex items-start gap-2 font-medium text-destructive">
+        <ng-icon name="lucideTriangleAlert" size="15" class="mt-0.5 shrink-0" aria-hidden="true" />
+        <span class="min-w-0 break-words">{{ error.message }}</span>
+      </div>
+      @if (error.remediation) {
+        <p class="m-0 whitespace-pre-wrap break-words text-foreground">{{ error.remediation }}</p>
+      }
+      @if (error.fields.length) {
+        <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
+          @for (field of error.fields; track field.label) {
+            <dt class="text-muted-foreground">{{ field.label }}</dt>
+            <dd class="m-0 min-w-0 break-words" [class.font-mono]="field.mono">
+              @if (field.link) {
+                <a
+                  [routerLink]="linkUrl(field.link)"
+                  class="rounded-sm text-primary underline decoration-border underline-offset-4 hover:decoration-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+                  >{{ field.value }}</a
+                >
+              } @else {
+                {{ field.value }}
+              }
+            </dd>
+          }
+        </dl>
+      }
+      @if (error.code) {
+        <span class="inline-block font-mono text-[10px] text-muted-foreground">{{
+          error.code
+        }}</span>
+      }
+    </div>
+  }
+
+  @if (view().fields.length) {
+    <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5">
+      @for (field of view().fields; track field.label) {
+        <dt class="py-0.5 text-muted-foreground">{{ field.label }}</dt>
+        <dd
+          class="m-0 min-w-0 break-words py-0.5 [overflow-wrap:anywhere]"
+          [class.font-mono]="field.mono"
+        >
+          @if (field.link) {
+            <a
+              [routerLink]="linkUrl(field.link)"
+              class="rounded-sm text-primary underline decoration-border underline-offset-4 hover:decoration-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+              >{{ field.value }}</a
+            >
+          } @else {
+            {{ field.value }}
+          }
+        </dd>
+      }
+    </dl>
+  }
+
+  @if (view().notice) {
+    <p
+      class="m-0 rounded-md border border-border bg-muted/40 px-3 py-2 leading-relaxed text-muted-foreground"
+    >
+      {{ view().notice }}
+    </p>
+  }
+
+  @if (view().rows.length) {
+    <div class="overflow-hidden rounded-md border border-border">
+      <div class="border-b border-border bg-muted/40 px-3 py-1.5 font-medium text-muted-foreground">
+        {{ view().listLabel }}
+      </div>
+      <ul class="m-0 list-none divide-y divide-border p-0">
+        @for (row of view().rows; track $index) {
+          <li class="flex min-w-0 items-start justify-between gap-3 px-3 py-2">
+            <div class="min-w-0 flex-1">
+              @if (row.link) {
+                <a
+                  [routerLink]="linkUrl(row.link)"
+                  class="inline-flex items-center gap-1 rounded-sm font-medium text-primary underline decoration-border underline-offset-4 hover:decoration-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 [overflow-wrap:anywhere]"
+                  >{{ row.title }}</a
+                >
+              } @else {
+                <div class="font-medium [overflow-wrap:anywhere]">{{ row.title }}</div>
+              }
+              @if (row.detail) {
+                <div
+                  class="mt-0.5 text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
+                >
+                  {{ row.detail }}
+                </div>
+              }
+            </div>
+            @if (row.status; as status) {
+              <span
+                class="shrink-0 rounded-full px-2 py-0.5 text-[10px]"
+                [class.bg-muted]="status.tone === 'neutral'"
+                [class.text-muted-foreground]="status.tone === 'neutral'"
+                [class.bg-success/10]="status.tone === 'ok'"
+                [class.text-success]="status.tone === 'ok'"
+                [class.bg-warning/10]="status.tone === 'warn'"
+                [class.text-warning]="status.tone === 'warn'"
+                [class.bg-destructive/10]="status.tone === 'error'"
+                [class.text-destructive]="status.tone === 'error'"
+                >{{ status.text }}</span
+              >
+            }
+          </li>
+        }
+      </ul>
+    </div>
+  } @else if (view().listEmpty && !pending()) {
+    <div class="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
+      No matching entries were returned.
+    </div>
+  }
+
+  @if (view().content) {
+    <div class="space-y-1.5">
+      <div class="font-medium text-muted-foreground">{{ view().contentLabel }}</div>
+      <cw-tool-output [text]="content()" />
+      @if (view().content.length > 6000) {
+        <button
+          z-button
+          zType="ghost"
+          zSize="xs"
+          type="button"
+          (click)="toggleContent()"
+          [attr.aria-expanded]="contentExpanded()"
+        >
+          {{ contentExpanded() ? 'Show less' : 'Show full returned content' }}
+        </button>
+      }
+    </div>
+  }
+
+  @if (view().more) {
+    <p class="m-0 text-[11px] text-muted-foreground">
+      This response is a preview. More entries or content are available through the agent.
+    </p>
+  }
+  @if (view().link; as link) {
+    <a z-button zType="outline" zSize="xs" [routerLink]="linkUrl(link)" class="gap-1.5">
+      {{ view().linkLabel }} <ng-icon name="lucideArrowUpRight" size="12" aria-hidden="true" />
+    </a>
+  }
+
+  <div class="border-t border-border/70 pt-2">
+    <button
+      z-button
+      zType="ghost"
+      zSize="xs"
+      type="button"
+      class="gap-1.5 text-muted-foreground"
+      (click)="toggleDetails()"
+      [attr.aria-expanded]="detailsOpen()"
+    >
+      <ng-icon
+        name="lucideChevronRight"
+        size="12"
+        [class.rotate-90]="detailsOpen()"
+        aria-hidden="true"
+      />
+      Request and response details
+    </button>
+    @if (detailsOpen()) {
+      <div class="mt-2 space-y-2">
+        <button
+          z-button
+          zType="outline"
+          zSize="xs"
+          type="button"
+          class="gap-1.5"
+          [cdkCopyToClipboard]="raw()"
+          (cdkCopyToClipboardCopied)="copied.set($event)"
+        >
+          <ng-icon [name]="copied() ? 'lucideCheck' : 'lucideCopy'" size="12" aria-hidden="true" />
+          {{ copied() ? 'Copied' : 'Copy details' }}
+        </button>
+        <cw-tool-output [text]="rawPreview()" />
+        @if (raw().length > 50000) {
+          <p class="m-0 text-[11px] text-muted-foreground">
+            Showing the first 50,000 characters. Copy details includes the full captured response.
+          </p>
+        }
+      </div>
+    }
+  </div>
+</section>

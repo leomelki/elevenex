@@ -253,9 +253,7 @@ describe('PlanChatForksService.ask', () => {
 
   it('rejects when the parent session is busy producing a response', async () => {
     const runtime = makeRuntime({
-      getRuntimeState: jest
-        .fn()
-        .mockResolvedValue({ sessionState: 'running' }),
+      getRuntimeState: jest.fn().mockResolvedValue({ sessionState: 'running' }),
     });
     const { service, sessionsService } = makeService(runtime);
 
@@ -268,9 +266,11 @@ describe('PlanChatForksService.ask', () => {
 
   it('returns null (running) immediately when the request is already aborted', async () => {
     const runtime = makeRuntime({
-      getRuntimeState: jest.fn().mockImplementation(async (id: number) =>
-        id === 7 ? { sessionState: 'idle' } : { sessionState: 'running' },
-      ),
+      getRuntimeState: jest
+        .fn()
+        .mockImplementation(async (id: number) =>
+          id === 7 ? { sessionState: 'idle' } : { sessionState: 'running' },
+        ),
       getHistory: jest
         .fn()
         .mockResolvedValueOnce([{ id: 'm1', kind: 'user', content: 'go' }])

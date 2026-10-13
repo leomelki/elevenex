@@ -95,7 +95,11 @@ describe('human-channel tools', () => {
       channel.resolveApproval({ id: a.id, decision: 'proceed' }),
     );
     const result = await escalateToUserTool.handler(
-      { blockedOn: 'which repo?', options: ['proceed', 'stop'], timeoutMs: 5000 } as never,
+      {
+        blockedOn: 'which repo?',
+        options: ['proceed', 'stop'],
+        timeoutMs: 5000,
+      } as never,
       ctx,
     );
     expect((result.data as { choice: string }).choice).toBe('proceed');
@@ -103,7 +107,10 @@ describe('human-channel tools', () => {
 
   it('denies the human channel to anonymous (no agent session) callers', async () => {
     const channel = new AgentHumanChannelService();
-    const ctx = makeCtx(channel, { agentSessionId: null, canUseHumanChannel: false });
+    const ctx = makeCtx(channel, {
+      agentSessionId: null,
+      canUseHumanChannel: false,
+    });
     await expect(
       notifyUserTool.handler({ message: 'x', level: 'info' } as never, ctx),
     ).rejects.toMatchObject({ code: 'human_channel_unavailable' });
@@ -122,7 +129,11 @@ describe('human-channel tools', () => {
     );
 
     const result = await selectPathsTool.handler(
-      { title: 'Which entry file?', rootPath: '/repo', timeoutMs: 5000 } as never,
+      {
+        title: 'Which entry file?',
+        rootPath: '/repo',
+        timeoutMs: 5000,
+      } as never,
       ctx,
     );
     const data = result.data as {
@@ -140,13 +151,20 @@ describe('human-channel tools', () => {
     const channel = new AgentHumanChannelService();
     const ctx = makeCtx(channel);
     channel.on('selection', (s: { id: string }) =>
-      channel.resolveSelection({ id: s.id, outcome: 'text', text: 'look in packages/*' }),
+      channel.resolveSelection({
+        id: s.id,
+        outcome: 'text',
+        text: 'look in packages/*',
+      }),
     );
     const result = await selectPathsTool.handler(
       { title: 'Where is it?', rootPath: '/repo', timeoutMs: 5000 } as never,
       ctx,
     );
-    expect(result.data).toMatchObject({ outcome: 'text', text: 'look in packages/*' });
+    expect(result.data).toMatchObject({
+      outcome: 'text',
+      text: 'look in packages/*',
+    });
   });
 
   it('select_paths resolves to cancelled on timeout', async () => {

@@ -43,10 +43,12 @@ describe('agent-tool-policy', () => {
     );
   });
 
-  it('exposes exactly the five destructive names, fully qualified', () => {
+  it('exposes the destructive destructive names, fully qualified', () => {
     expect([...DESTRUCTIVE_ELEVENEX_TOOLS].sort()).toEqual([
+      'mcp__elevenex__delete_project',
       'mcp__elevenex__delete_session_folder',
       'mcp__elevenex__delete_worktree',
+      'mcp__elevenex__finish_task',
       'mcp__elevenex__remove_repo',
       'mcp__elevenex__reset_session',
       'mcp__elevenex__steal_worktree',

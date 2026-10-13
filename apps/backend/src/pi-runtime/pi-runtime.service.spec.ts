@@ -94,6 +94,18 @@ function createPiProcess(
     child.emit('exit', 0, null);
     return true;
   });
+  // Emit readiness after startup actually attaches its stdout listener.
+  child.stdout.on('newListener', (event) => {
+    if (event === 'data')
+      void Promise.resolve().then(() =>
+        child.stdout.emit(
+          'data',
+          Buffer.from(
+            '{"type":"extension_ui_request","statusKey":"elevenex_agent_ready","statusText":"ready"}\n',
+          ),
+        ),
+      );
+  });
   child.stdin.onWrite((chunk) => {
     const command = JSON.parse(chunk.trim()) as { id: string; type: string };
     if (command.type === 'get_state') {

@@ -15,6 +15,10 @@ export class DeepLinkBuilder {
     return `/projects/${projectId}`;
   }
 
+  task(taskId: number): string {
+    return `/tasks/${taskId}`;
+  }
+
   session(sessionId: number, opts?: { panel?: 'transcript' | 'changes' | 'terminal' }): string {
     const base = `/sessions/${sessionId}`;
     return opts?.panel ? `${base}?panel=${opts.panel}` : base;

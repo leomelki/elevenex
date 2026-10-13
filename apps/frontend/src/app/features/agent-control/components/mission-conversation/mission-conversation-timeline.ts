@@ -1,4 +1,10 @@
 import {
+  buildElevenexToolView,
+  ELEVENEX_TOOL_META,
+  elevenexToolName,
+  type ElevenexToolView,
+} from '@/shared/agent-tools/elevenex-tool-view';
+import {
   contentToString,
   describeAgentTool,
   resultSummary,
@@ -70,10 +76,13 @@ export interface ConversationRow {
   verb?: string;
   target?: string;
   category?: ActionCategory;
-  status?: 'pending' | 'ok' | 'error';
+  status?: 'pending' | 'ok' | 'error' | 'incomplete';
   result?: ResultSummary | null;
   detail?: string;
   output?: string;
+  elevenex?: ElevenexToolView | null;
+  toolInput?: unknown;
+  toolOutput?: unknown;
   toolUseId?: string;
   // show
   show?: AgentShow;
@@ -106,6 +115,7 @@ export type TimelineGroup = ClusterGroup | SingleGroup;
 export function buildMissionRows(
   items: readonly ClaudeTranscriptItem[],
   shows: readonly AgentShow[],
+  running = true,
 ): ConversationRow[] {
   const resultByToolUse = new Map<string, ClaudeTranscriptItem>();
   for (const item of items) {
@@ -158,9 +168,12 @@ export function buildMissionRows(
         const view = describeAgentTool(item);
         const meta = actionMeta(item);
         const result = item.toolUseId ? resultByToolUse.get(item.toolUseId) : undefined;
+        const elevenex = buildElevenexToolView(item, result ?? null);
         const status: ConversationRow['status'] = !result
-          ? 'pending'
-          : result.isError
+          ? running
+            ? 'pending'
+            : 'incomplete'
+          : result.isError || elevenex?.toolFailed || elevenex?.summary?.tone === 'error'
             ? 'error'
             : 'ok';
         const output = result ? contentToString(result.content).trim() : '';
@@ -171,12 +184,22 @@ export function buildMissionRows(
           kind: item.kind,
           icon: meta.icon ?? view.icon,
           verb: view.verb,
-          target: view.target,
+          target: elevenex?.target || view.target,
+          elevenex,
+          toolInput: item.toolInput,
+          toolOutput: result?.content,
           category: meta.category,
           status,
           result: result
-            ? resultSummary(view.kind, { content: result.content, isError: result.isError })
-            : null,
+            ? resultSummary(
+                view.kind,
+                { content: result.content, isError: result.isError },
+                undefined,
+                item,
+              )
+            : !running
+              ? { text: 'No result recorded', tone: 'warn' }
+              : null,
           detail,
           output,
           toolUseId: item.toolUseId,
@@ -280,23 +303,11 @@ function actionMeta(item: ClaudeTranscriptItem): {
   category: ActionCategory;
 } {
   const tool = elevenexToolName(item);
+  if (tool && ELEVENEX_TOOL_META[tool]) return ELEVENEX_TOOL_META[tool];
   if (tool && ELEVENEX_ACTIONS[tool]) {
     return ELEVENEX_ACTIONS[tool];
   }
   return { icon: null, category: 'work' };
-}
-
-function elevenexToolName(item: ClaudeTranscriptItem): string | null {
-  const raw = item.toolName || item.providerToolName || '';
-  const parts = raw.split('__');
-  if (parts.length >= 3 && parts[1] === 'elevenex') {
-    return parts.slice(2).join('__');
-  }
-  const data = item.toolInput as Record<string, unknown> | undefined;
-  if (data && data['server'] === 'elevenex' && typeof data['tool'] === 'string') {
-    return data['tool'];
-  }
-  return null;
 }
 
 /** Latest LLM tool-use summary that covers any of the cluster's tool ids. */

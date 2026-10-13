@@ -14,6 +14,7 @@ export const getWorktreeContextTool = defineTool({
   description:
     "Cached AI codebase summary for a worktree, scoped by sessionId or repoId+worktreePath. 🟢cached — returns only what's already generated, never regenerates (that's a heavy setup tool). Use to orient before text_search/read_file.",
   annotations: { readOnlyHint: true },
+  currentSessionScope: 'worktree',
   inputShape: {
     sessionId: z
       .number()

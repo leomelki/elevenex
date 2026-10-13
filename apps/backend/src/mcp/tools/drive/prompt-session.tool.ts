@@ -21,6 +21,7 @@ export const promptSessionTool = defineTool({
   mutates: true,
   description:
     "Send a prompt to a session's agent. 🔴heavy. Starts the session if needed, submits the prompt, and returns immediately once it is accepted — it does NOT wait for the turn to finish, so you can prompt_session other sessions right away instead of waiting on this one. Call poll_session_status or await_session_event when you actually need to wait for this session. Resolve any permission prompts with get_pending_action → resolve_action.",
+  disallowSelfTarget: 'session',
   inputShape: {
     sessionId: z
       .number()

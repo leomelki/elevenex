@@ -12,7 +12,8 @@ export const archiveSessionTool = defineTool({
   costClass: 'scoped',
   mutates: true,
   description:
-    'Stop and archive a session once its work is finished or abandoned (retires it, not destructive). 🟡scoped. Distinct from reset_session, which wipes and starts fresh in the same worktree.',
+    'Stop and archive one conversation while leaving its task and worktree assigned. unarchive_session restores it; finish_task finishes the entire task and may release its clean checkout. Cannot archive the calling session.',
+  disallowSelfTarget: 'session',
   inputShape: {
     sessionId: z
       .number()

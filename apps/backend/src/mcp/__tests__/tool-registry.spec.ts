@@ -1,4 +1,5 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import { ToolRegistryService } from '../tool-registry/tool-registry.service.js';
 import { DeltaCursorStore } from '../tool-registry/delta-cursor.store.js';
 import { DeepLinkBuilder } from '../deep-link/deep-link.builder.js';
@@ -14,15 +15,17 @@ import type { ToolDefinition } from '../tool-registry/tool.types.js';
  * (caps + guards + envelope shaping) without a real transport.
  */
 class FakeServer {
+  readonly schemas = new Map<string, z.ZodRawShape>();
   readonly tools = new Map<
     string,
     (args: unknown, extra: unknown) => Promise<CallToolResult>
   >();
   registerTool(
     name: string,
-    _config: unknown,
+    config: { inputSchema: z.ZodRawShape },
     handler: (args: unknown, extra: unknown) => Promise<CallToolResult>,
   ) {
+    this.schemas.set(name, config.inputSchema);
     this.tools.set(name, handler);
   }
 }
@@ -77,8 +80,14 @@ function buildServices(): McpToolServices {
       ]),
       countByProject: jest.fn(async () => 1),
     },
+    tasks: { list: jest.fn(async () => []) },
     sessions: {
       findByRepo: jest.fn(async () => SESSIONS),
+      listHandlePage: jest.fn(async (args) => ({
+        rows: args.needsReviewOnly ? [SESSIONS[1]] : SESSIONS,
+        total: args.needsReviewOnly ? 1 : 2,
+        nextOffset: null,
+      })),
       findAllCompletionStates: jest.fn(async () => [
         { id: 11, hasUnreviewedCompletion: true },
       ]),
@@ -199,6 +208,364 @@ describe('ToolRegistry + observe smoke tools', () => {
   });
 });
 
+describe('coding session identity and default scopes', () => {
+  function setup(surface = 'session') {
+    const session = {
+      id: 42,
+      name: 'Current task',
+      surface,
+      status: 'running',
+      projectId: 1,
+      repoId: 5,
+      workspaceId: 9,
+      workspaceName: 'api 1',
+      folderId: 3,
+      worktreePath: '/wt/current',
+      branchName: 'feat/current',
+      activeAgentProvider: 'codex',
+      planMode: false,
+      isTemporary: false,
+      mcpAgentToken: 'must-not-leak',
+    };
+    const services = buildServices();
+    Object.assign(services.sessions, {
+      findOne: jest.fn(async (id) => ({ ...session, id })),
+      assertSessionWorkspaceLinked: jest.fn().mockResolvedValue(undefined),
+      findByWorkspace: jest.fn(async () => []),
+      create: jest.fn(async () => ({ ...session, id: 55 })),
+    });
+    Object.assign(services.repos, {
+      findOne: jest.fn(async () => ({
+        id: 5,
+        name: 'api',
+        path: '/repos/api',
+      })),
+    });
+    Object.assign(services, {
+      files: {
+        readFile: jest.fn(async () => ({ content: 'hello', language: 'text' })),
+      },
+      tasks: {
+        record: jest.fn(async () => ({
+          id: 9,
+          repoId: 5,
+          name: 'Current task',
+          taskState: 'ready',
+          archivedAt: null,
+          linkStatus: 'linked',
+        })),
+        defaults: jest.fn(async () => ({
+          baseRef: 'origin/main',
+          branchName: 'new-task',
+        })),
+        finish: jest.fn(async (id) => ({
+          id,
+          repoId: 5,
+          taskState: 'ready',
+          archivedAt: 'today',
+          linkStatus: 'unlinked',
+          sessions: [],
+        })),
+      },
+      scratchpad: {
+        findByProject: jest.fn(async () => []),
+        create: jest.fn(async () => ({ id: 8, name: 'Notes', content: '' })),
+      },
+    });
+    const server = new FakeServer();
+    buildRegistry(services).registerAll(server as never);
+    return {
+      session,
+      services,
+      call: (
+        name: string,
+        args = {},
+        token: string | undefined = 'agent-token',
+      ) =>
+        server.tools.get(name)!(
+          z.object(server.schemas.get(name)!).parse(args),
+          extraFor(token),
+        ),
+      server,
+    };
+  }
+
+  it('returns the caller’s context without credentials, runtime startup or UI focus', async () => {
+    const bag = setup();
+    const result = await bag.call('get_current_session');
+    expect(result.isError).toBeUndefined();
+    expect(parse(result)).toMatchObject({
+      data: {
+        sessionId: 42,
+        projectId: 1,
+        repoId: 5,
+        workspaceId: 9,
+        folderId: 3,
+        worktreePath: '/wt/current',
+        branchName: 'feat/current',
+        provider: 'codex',
+      },
+      deepLink: '/sessions/42',
+    });
+    expect(JSON.stringify(result)).not.toContain('must-not-leak');
+  });
+
+  it('requires an authenticated identity for current context', async () => {
+    const result = await setup().call('get_current_session', {}, 'unknown');
+    expect(result.isError).toBe(true);
+    expect(parse(result)).toMatchObject({
+      error: { code: 'requires_agent_session' },
+    });
+  });
+
+  it('resolves omitted file scope to the current worktree', async () => {
+    const bag = setup();
+    expect(
+      (await bag.call('read_file', { path: 'README.md' })).isError,
+    ).toBeUndefined();
+    expect(bag.services.files.readFile).toHaveBeenCalledWith(
+      '/wt/current/README.md',
+      '/wt/current',
+    );
+  });
+
+  it('defaults task reads and conversation creation to the caller’s stable task ID', async () => {
+    const bag = setup();
+    expect(parse(await bag.call('read_task_draft'))).toMatchObject({
+      data: { taskId: 9 },
+    });
+    expect(parse(await bag.call('create_session'))).toMatchObject({
+      data: { taskId: 9, sessionId: 55 },
+    });
+    expect(bag.services.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoId: 5,
+        workspaceId: 9,
+        activeAgentProvider: undefined,
+      }),
+    );
+    expect(parse(await bag.call('get_current_session'))).toMatchObject({
+      data: { taskId: 9, taskName: 'Current task' },
+    });
+  });
+
+  it('requires an explicit task when the caller is outside a task', async () => {
+    const bag = setup();
+    bag.session.workspaceId = null as never;
+    expect(parse(await bag.call('read_task_draft'))).toMatchObject({
+      error: { code: 'no_current_task' },
+    });
+  });
+
+  it('does not inject the current repo over an explicit task conversation scope', async () => {
+    const bag = setup();
+    expect(
+      (await bag.call('find_sessions', { taskId: 9 })).isError,
+    ).toBeUndefined();
+    expect(bag.services.sessions.listHandlePage).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: 9 }),
+    );
+    expect(bag.services.sessions.findByRepo).not.toHaveBeenCalled();
+  });
+
+  it('rejects self prompts/stops and finishing the caller’s task before side effects', async () => {
+    const bag = setup();
+    for (const name of [
+      'interrupt_session',
+      'archive_session',
+      'reset_session',
+    ]) {
+      expect(parse(await bag.call(name, { sessionId: 42 }))).toMatchObject({
+        error: { code: 'self_target_not_allowed' },
+      });
+    }
+    expect(
+      parse(
+        await bag.call('prompt_session', { sessionId: 42, prompt: 'continue' }),
+      ),
+    ).toMatchObject({ error: { code: 'self_target_not_allowed' } });
+    expect(
+      parse(await bag.call('finish_task', { taskId: 9, confirmStop: true })),
+    ).toMatchObject({ error: { code: 'self_target_not_allowed' } });
+    expect(bag.services.tasks.finish).not.toHaveBeenCalled();
+    expect(
+      (await bag.call('finish_task', { taskId: 17 })).isError,
+    ).toBeUndefined();
+    expect(bag.services.tasks.finish).toHaveBeenCalledWith(17, false);
+  });
+
+  it('preserves an explicit worktree even when the caller is authenticated', async () => {
+    const bag = setup();
+    await bag.call('read_file', {
+      path: 'README.md',
+      worktreePath: '/wt/other',
+    });
+    expect(bag.services.files.readFile).toHaveBeenCalledWith(
+      '/wt/other/README.md',
+      '/wt/other',
+    );
+  });
+
+  it.each([
+    ['archive_session_folder', { folderId: 3 }],
+    ['delete_session_folder', { folderId: 3 }],
+    ['remove_repo', { repoId: 5 }],
+    ['delete_project', { projectId: 1 }],
+  ])('blocks indirect self termination through %s', async (name, args) => {
+    const bag = setup();
+    const effect = jest.fn();
+    Object.assign(bag.services, {
+      sessionFolders: { archive: effect, delete: effect },
+    });
+    Object.assign(bag.services.repos, { remove: effect });
+    Object.assign(bag.services.projects, { delete: effect });
+    expect(parse(await bag.call(name, args))).toMatchObject({
+      error: { code: 'self_target_not_allowed' },
+    });
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('requires authenticated destructive capabilities to remove a repository', async () => {
+    expect(
+      parse(await setup().call('remove_repo', { repoId: 17 }, 'unknown')),
+    ).toMatchObject({ error: { code: 'destructive_not_allowed' } });
+  });
+
+  it('rechecks folder membership after a pending mission approval', async () => {
+    const bag = setup('agent');
+    const caller = {
+      ...bag.session,
+      activeAgentProvider: 'codex',
+      agentAutonomyMode: 'review',
+    };
+    Object.assign(bag.services.sessions, {
+      findOne: jest.fn(async () => caller),
+    });
+    const effect = jest.fn();
+    Object.assign(bag.services, { sessionFolders: { delete: effect } });
+    const approve = jest.fn(async () => {
+      caller.folderId = 4;
+      return { decision: 'approve' };
+    });
+    const registry = new ToolRegistryService(
+      bag.services,
+      new DeltaCursorStore(),
+      new DeepLinkBuilder(),
+      { bindFor: () => ({ requestApproval: approve }) } as never,
+      { resolveSessionId: async () => 42 } as never,
+      new McpConnectionRegistryService(),
+      { invalidate: jest.fn() } as never,
+    );
+    const server = new FakeServer();
+    registry.registerAll(server as never);
+    expect(
+      parse(
+        await server.tools.get('delete_session_folder')!(
+          { folderId: 4 },
+          extraFor('agent-token'),
+        ),
+      ),
+    ).toMatchObject({ error: { code: 'self_target_not_allowed' } });
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('does not execute a mutation after request cancellation', async () => {
+    const bag = setup();
+    const update = jest.fn();
+    Object.assign(bag.services.sessions, { update });
+    const controller = new AbortController();
+    controller.abort();
+    expect(
+      parse(
+        await bag.server.tools.get('rename_session')!(
+          { sessionId: 42, name: 'Changed' },
+          { ...extraFor('agent-token'), signal: controller.signal },
+        ),
+      ),
+    ).toMatchObject({ error: { code: 'cancelled' } });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('does not silently replace an incomplete explicit repo/checkout scope with the caller', async () => {
+    expect(
+      parse(await setup().call('get_worktree_context', { repoId: 99 })),
+    ).toMatchObject({ error: { code: 'scope_required' } });
+  });
+
+  it('reads current scope again after the session moves to another worktree', async () => {
+    const bag = setup();
+    await bag.call('read_file', { path: 'README.md' });
+    bag.session.worktreePath = '/wt/rebound';
+    bag.session.branchName = 'feat/rebound';
+    await bag.call('read_file', { path: 'README.md' });
+    expect(bag.services.files.readFile).toHaveBeenLastCalledWith(
+      '/wt/rebound/README.md',
+      '/wt/rebound',
+    );
+    expect(parse(await bag.call('get_current_session'))).toMatchObject({
+      data: { worktreePath: '/wt/rebound', branchName: 'feat/rebound' },
+    });
+  });
+
+  it('preserves an explicit session target', async () => {
+    const bag = setup();
+    await bag.call('read_file', { path: 'README.md', sessionId: 11 });
+    expect(bag.services.sessions.findOne).toHaveBeenCalledWith(11);
+    expect(bag.services.sessions.findOne).not.toHaveBeenCalledWith(42);
+  });
+
+  it('defaults related sessions to the current repo but honors a project scope', async () => {
+    const bag = setup();
+    await bag.call('find_sessions');
+    expect(bag.services.sessions.listHandlePage).toHaveBeenCalledWith(
+      expect.objectContaining({ repoId: 5 }),
+    );
+    expect(bag.services.repos.findByProject).not.toHaveBeenCalled();
+    await bag.call('find_sessions', { projectId: 2 });
+    expect(bag.services.sessions.listHandlePage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ projectId: 2 }),
+    );
+  });
+
+  it('defaults project notes to the current project', async () => {
+    const bag = setup();
+    expect(
+      (await bag.call('set_scratchpad', { name: 'Notes' })).isError,
+    ).toBeUndefined();
+    expect(bag.services.scratchpad.create).toHaveBeenCalledWith(1, 'Notes');
+  });
+
+  it('keeps required session controls explicit', () => {
+    const bag = setup();
+    for (const name of [
+      'prompt_session',
+      'interrupt_session',
+      'reset_session',
+      'archive_session',
+    ]) {
+      expect(bag.server.schemas.get(name)!.sessionId.isOptional()).toBe(false);
+    }
+  });
+
+  it('does not default a mission to its hidden workspace', async () => {
+    const bag = setup('agent');
+    const result = await bag.call('read_session');
+    expect(parse(result)).toMatchObject({ error: { code: 'scope_required' } });
+  });
+
+  it('keeps caller context available in a hidden question/review conversation', async () => {
+    expect(
+      parse(await setup('agent_query').call('read_task_draft')),
+    ).toMatchObject({ data: { taskId: 9 } });
+  });
+
+  it('reports missing required scopes to anonymous clients', async () => {
+    const result = await setup().call('read_session', {}, 'unknown');
+    expect(parse(result)).toMatchObject({ error: { code: 'scope_required' } });
+  });
+});
+
 describe('mission autonomy at the MCP boundary', () => {
   function setup(provider: string, mode: string, destructive: boolean) {
     const handler = jest.fn().mockResolvedValue({ data: { ok: true } });
@@ -208,14 +575,12 @@ describe('mission autonomy at the MCP boundary', () => {
     const registry = new ToolRegistryService(
       {
         sessions: {
-          findOne: jest
-            .fn()
-            .mockResolvedValue({
-              id: 42,
-              surface: 'agent',
-              activeAgentProvider: provider,
-              agentAutonomyMode: mode,
-            }),
+          findOne: jest.fn().mockResolvedValue({
+            id: 42,
+            surface: 'agent',
+            activeAgentProvider: provider,
+            agentAutonomyMode: mode,
+          }),
         },
       } as never,
       new DeltaCursorStore(),

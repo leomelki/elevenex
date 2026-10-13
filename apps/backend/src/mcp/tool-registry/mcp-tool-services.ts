@@ -1,3 +1,4 @@
+import { BranchesService } from '../../branches/branches.service.js';
 import { Injectable } from '@nestjs/common';
 import { TasksService } from '../../tasks/tasks.service.js';
 import { ProjectsService } from '../../projects/projects.service.js';
@@ -50,5 +51,6 @@ export class McpToolServices {
     readonly conversationExport: ConversationExportService,
     readonly agentFocus: AgentFocusService,
     readonly tasks: TasksService,
+    readonly branches: BranchesService,
   ) {}
 }

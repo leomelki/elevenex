@@ -1,3 +1,8 @@
+import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
+import {
+  elevenexMcpUrl,
+  SESSION_TOOL_INSTRUCTIONS,
+} from '../mcp/session-tool-context.js';
 import { contextPercentage } from '../agent-runtime/context-usage.js';
 import { TranscriptFileCache } from '../agent-runtime/transcript-file-cache.js';
 import {
@@ -567,6 +572,7 @@ export class ClaudeRuntimeService
     private readonly terminalService: TerminalService,
     private readonly titleService: SessionTitleService,
     private readonly settingsService: SettingsService,
+    private readonly mcpAgentTokens: McpAgentTokenService,
   ) {
     super();
     if (this.claudeCliOverride) {
@@ -5421,6 +5427,7 @@ export class ClaudeRuntimeService
     // silently falling back to its bundled optional executable.
     const pathToClaudeCodeExecutable =
       this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
+    const mcpAgentToken = await this.mcpAgentTokens.ensureToken(sessionId);
     const options: Options & {
       fastMode?: boolean;
       fastModePerSessionOptIn?: boolean;
@@ -5450,7 +5457,7 @@ export class ClaudeRuntimeService
       // edits, builds, commits) is wrong for an orchestrator. The static brain
       // and the per-session context are split at SYSTEM_PROMPT_DYNAMIC_BOUNDARY
       // so the brain stays cacheable across sessions. Normal coding sessions
-      // keep the bare preset.
+      // keep the coding preset and append only the session-tool guidance.
       systemPrompt: isAgentSession
         ? [
             buildMetaAgentPrompt(agentAutonomyMode),
@@ -5460,7 +5467,15 @@ export class ClaudeRuntimeService
         : {
             type: 'preset' as const,
             preset: 'claude_code' as const,
+            append: SESSION_TOOL_INSTRUCTIONS,
           },
+      mcpServers: {
+        elevenex: {
+          type: 'http',
+          url: elevenexMcpUrl(),
+          headers: { Authorization: `Bearer ${mcpAgentToken}` },
+        },
+      },
       tools: {
         type: 'preset' as const,
         preset: 'claude_code' as const,
@@ -5490,14 +5505,14 @@ export class ClaudeRuntimeService
             ],
           }
         : {}),
-      env: await this.withAgentToken(
-        sessionId,
-        buildManagedPlannotatorEnv(
+      env: {
+        ...buildManagedPlannotatorEnv(
           sessionId,
           this.wrapperScriptPath,
           await buildAugmentedEnvAsync(process.env, worktreePath),
         ),
-      ),
+        ELEVENEX_AGENT_TOKEN: mcpAgentToken,
+      },
     };
     return options;
   }
@@ -5512,31 +5527,6 @@ export class ClaudeRuntimeService
   private buildAgentSessionContext(): string {
     const today = new Date().toISOString().slice(0, 10);
     return `# Current context\n\nToday's date: ${today}.`;
-  }
-
-  /**
-   * For "agent" sessions (the meta-agent that operates elevenex), inject the
-   * per-session `ELEVENEX_AGENT_TOKEN` so the inner process authenticates to the
-   * Elevenex MCP server as this session — letting human-channel tools route to
-   * its panel. The shared `.mcp.json` expands `${ELEVENEX_AGENT_TOKEN}`. Plain
-   * coding sessions have no token and this is a no-op.
-   */
-  private async withAgentToken(
-    sessionId: number,
-    env: Record<string, string | undefined>,
-  ): Promise<Record<string, string | undefined>> {
-    try {
-      const session = (await this.sessionsService.findOne(sessionId)) as {
-        mcpAgentToken?: string | null;
-      };
-      const token = session.mcpAgentToken;
-      if (token) {
-        return { ...env, ELEVENEX_AGENT_TOKEN: token };
-      }
-    } catch {
-      // Session lookup failures here must never block a session from starting.
-    }
-    return env;
   }
 
   private async generateAndSaveSessionTitle(
