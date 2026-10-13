@@ -75,10 +75,13 @@
               >
                 <div class="claude-terminal-area relative h-full">
                   @for (tab of tabs(); track tab.sessionId) {
+                    <!-- Keep layout for scroll and terminal sizing; hide inactive panels as a whole. -->
                     <div
-                      class="claude-terminal-wrapper absolute inset-0 h-full"
+                      class="claude-terminal-wrapper absolute inset-0 isolate h-full"
                       [class.invisible]="tab.sessionId !== activeSessionId()"
+                      [class.opacity-0]="tab.sessionId !== activeSessionId()"
                       [class.pointer-events-none]="tab.sessionId !== activeSessionId()"
+                      [attr.inert]="tab.sessionId !== activeSessionId() ? '' : null"
                       [attr.aria-hidden]="tab.sessionId !== activeSessionId() ? 'true' : null"
                     >
                       @if (tab.status !== 'archived' && usesClaudeTerminalFallback(tab.sessionId)) {

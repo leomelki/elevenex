@@ -2,7 +2,7 @@ import { windowScopedKey } from '@/shared/services/scoped-storage';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
-import { Component, signal } from '@angular/core';
+import { Component, NO_ERRORS_SCHEMA, signal } from '@angular/core';
 import { Subject, of, throwError } from 'rxjs';
 import { SessionContainer } from './session-container';
 import { TabService, type Tab } from '../tab-service';
@@ -304,14 +304,8 @@ describe('SessionContainer modal browser gating', () => {
 
     TestBed.overrideComponent(SessionContainer, {
       set: {
-        template: `
-          @if (shouldRenderBrowserPanel()) {
-            <div class="browser-panel-live">live browser</div>
-          }
-          @if (shouldShowBrowserPlaceholder()) {
-            <div class="browser-panel-placeholder">focus mode</div>
-          }
-        `,
+        imports: [],
+        schemas: [NO_ERRORS_SCHEMA],
       },
     });
 
@@ -339,8 +333,69 @@ describe('SessionContainer modal browser gating', () => {
     }).compileComponents();
   });
 
-  it('shows the live browser panel when no modal is open', () => {
+  function createBrowserFixture() {
+    TestBed.overrideComponent(SessionContainer, {
+      set: {
+        template: `
+          @if (shouldRenderBrowserPanel()) {
+            <div class="browser-panel-live">live browser</div>
+          }
+          @if (shouldShowBrowserPlaceholder()) {
+            <div class="browser-panel-placeholder">focus mode</div>
+          }
+        `,
+      },
+    });
+    return TestBed.createComponent(SessionContainer);
+  }
+
+  it('immediately hides the entire inactive chat while preserving mounted session state', () => {
+    tabsSignal.update(tabs => [...tabs, { ...tabs[0], sessionId: 43, sessionName: 'Session 43' }]);
     const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+    const panels = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>('.claude-terminal-wrapper'),
+    );
+    const chats = panels.map(panel => panel.querySelector('app-claude-workspace'));
+
+    for (const sessionId of [43, 42, 43]) {
+      fixture.componentInstance.onTabSelect(sessionId);
+      fixture.detectChanges();
+
+      panels.forEach((panel, index) => {
+        const inactive = [42, 43][index] !== sessionId;
+        expect(panel.classList.contains('opacity-0')).toBe(inactive);
+        expect(panel.classList.contains('invisible')).toBe(inactive);
+        expect(panel.hasAttribute('inert')).toBe(inactive);
+        expect(panel.getAttribute('aria-hidden')).toBe(inactive ? 'true' : null);
+        expect(panel.classList.contains('isolate')).toBe(true);
+        expect(panel.querySelector('app-claude-workspace')).toBe(chats[index]);
+      });
+    }
+  });
+
+  it('keeps the previous chat hidden while the next session loads', () => {
+    const requested = new Subject<Session>();
+    sessionsServiceMock.getOne.mockReturnValue(requested as any);
+    const fixture = TestBed.createComponent(SessionContainer);
+    fixture.detectChanges();
+    const oldPanel = (fixture.nativeElement as HTMLElement).querySelector('.claude-terminal-wrapper')!;
+
+    (fixture.componentInstance as any).loadAndOpenSession(43);
+    fixture.detectChanges();
+    expect(oldPanel.classList.contains('opacity-0')).toBe(true);
+    expect(oldPanel.hasAttribute('inert')).toBe(true);
+
+    requested.next(makeSession({ id: 43 }));
+    fixture.detectChanges();
+    const panels = (fixture.nativeElement as HTMLElement).querySelectorAll('.claude-terminal-wrapper');
+    expect(panels[0]).toBe(oldPanel);
+    expect(panels[0].classList.contains('opacity-0')).toBe(true);
+    expect(panels[1].classList.contains('opacity-0')).toBe(false);
+  });
+
+  it('shows the live browser panel when no modal is open', () => {
+    const fixture = createBrowserFixture();
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
@@ -371,7 +426,7 @@ describe('SessionContainer modal browser gating', () => {
   });
 
   it('switches to the browser placeholder while a modal is open and restores after close', () => {
-    const fixture = TestBed.createComponent(SessionContainer);
+    const fixture = createBrowserFixture();
     fixture.detectChanges();
 
     modalActiveSignal.set(true);
@@ -400,7 +455,7 @@ describe('SessionContainer modal browser gating', () => {
     });
     plannotatorStateMock.hasPanel.mockReturnValue(true);
     plannotatorStateMock.isPanelVisible.mockReturnValue(true);
-    const fixture = TestBed.createComponent(SessionContainer);
+    const fixture = createBrowserFixture();
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
