@@ -818,16 +818,8 @@
                           }
                         </div>
                         <span class="temporary-session-badge">Temp</span>
-                        <span class="sidebar-actions session-actions" data-session-delete-controls="true" [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id) || isSessionArchiveArmed(session.id) || isArchivingSession(session.id)">
-                          @if (isSessionArchiveArmed(session.id) || isArchivingSession(session.id)) {
-                              <app-inline-action-confirmation
-                                [targetId]="session.id"
-                                [ready]="archiveConfirmReady()"
-                                [busy]="isArchivingSession(session.id)"
-                                (confirm)="confirmArchive($event)"
-                                (cancel)="cancelArchive($event)"
-                              />
-                            } @else if (isSessionDeleteArmed(session.id) || isDeletingSession(session.id)) {
+                        <span class="sidebar-actions session-actions" data-session-delete-controls="true" [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id) || isDeletingSession(session.id)">
+                          @if (isSessionDeleteArmed(session.id) || isDeletingSession(session.id)) {
                             <app-inline-action-confirmation
                               action="delete"
                               [targetId]="session.id"
