@@ -95,6 +95,13 @@ guarantees so individual tools can't regress them:
 - **Drive**: `prompt_session`, `interrupt_session`, `fork_session`, `archive_session`,
   `reset_session`, `rename_session`, `unarchive_session`, `get_pending_action`, `resolve_action`, `set_provider`, `set_model`,
   `set_permission_mode`.
+  `prompt_session` accepts optional `mentionSessionIds` (up to 10; deduplicated), attaching the same
+  compact snapshots and transcript exports as chat mentions without returning transcript bodies to
+  the caller. Source sessions can belong to other tasks or be archived; missions and the target
+  itself cannot be mentioned. Create a fresh conversation when prior outcomes suffice; continue a
+  warm session when detailed working context matters. Snapshots omit intermediate steps and nested
+  snapshots but retain user requests and final responses, so select sources sparingly. For very long
+  histories, pass distilled `ask_session` findings instead. `fork_session` preserves history.
 - **Ask**: `ask_session` (hidden `agent_query` fork → just the answer, or a `{running, forkId}`
   handle).
 - **Human channel** (all `requiresAgent`): `notify_user`, `show_user` (non-blocking FYIs),

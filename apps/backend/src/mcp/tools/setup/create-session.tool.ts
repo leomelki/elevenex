@@ -69,7 +69,7 @@ export const createSessionTool = defineTool({
       touched: { sessionId: session.id },
       deepLink: ctx.deepLink.session(session.id),
       nextStep:
-        'prompt_session to start work. Coordinate writes with other conversations in this task; their worktree is shared.',
+        'prompt_session to start work; pass mentionSessionIds for relevant previous conversations when only their outcomes are needed. Coordinate writes with other conversations in this task; their worktree is shared.',
     };
   },
 });

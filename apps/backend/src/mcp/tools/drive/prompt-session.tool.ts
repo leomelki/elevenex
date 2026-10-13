@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { defineTool } from '../../tool-registry/tool.types.js';
+import { serializeSessionMention } from '../../../agent-runtime/session-mention.js';
+import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import { resolveSessionProvider } from './provider.util.js';
 import {
   isSessionSettled,
@@ -20,25 +21,72 @@ export const promptSessionTool = defineTool({
   costClass: 'heavy',
   mutates: true,
   description:
-    "Send a prompt to a session's agent. 🔴heavy. Starts the session if needed, submits the prompt, and returns immediately once it is accepted — it does NOT wait for the turn to finish, so you can prompt_session other sessions right away instead of waiting on this one. Call poll_session_status or await_session_event when you actually need to wait for this session. Resolve any permission prompts with get_pending_action → resolve_action.",
+    "Send a prompt to a session's agent, optionally mentioning previous sessions with compact snapshots and transcript paths (like chat mentions). 🔴heavy. Starts the session if needed, submits the prompt, and returns immediately once it is accepted — it does NOT wait for the turn to finish, so you can prompt_session other sessions right away instead of waiting on this one. Call poll_session_status or await_session_event when you actually need to wait for this session. Resolve any permission prompts with get_pending_action → resolve_action.",
   disallowSelfTarget: 'session',
   inputShape: {
     sessionId: z
       .number()
       .int()
       .positive()
-      .describe('Session to prompt. Get ids from find_sessions / project_overview.'),
+      .describe(
+        'Session to prompt. Get ids from find_sessions / project_overview.',
+      ),
     prompt: z
       .string()
       .min(1)
       .describe(
         'The instruction to send to the agent. Required, non-empty. Keep each prompt scoped to one coherent concern (one feature/fix/investigation) rather than bundling unrelated work — split unrelated concerns across separate prompts or sessions to avoid long, tangled sessions.',
       ),
+    mentionSessionIds: z
+      .array(z.number().int().positive())
+      .max(10)
+      .optional()
+      .describe(
+        'Optional previous session IDs to attach as chat-style context mentions (max 10; duplicates ignored). May include your current coding session, archived sessions, or sessions from other tasks; cannot include the target or orchestration missions. For a fresh session needing prior outcomes rather than detailed working context, mention only relevant sessions and state the next goal in prompt. Snapshots omit intermediate steps but can still be long; continue the existing session for tightly coupled work.',
+      ),
   },
   handler: async (args, ctx) => {
     const { sessions } = ctx.services;
     await sessions.assertSessionWorkspaceLinked(args.sessionId);
-    const { session, provider } = await resolveSessionProvider(ctx, args.sessionId);
+    const { session, provider } = await resolveSessionProvider(
+      ctx,
+      args.sessionId,
+    );
+
+    const mentionSessionIds = [...new Set(args.mentionSessionIds ?? [])];
+    // Validate all references before exporting history or starting the target.
+    for (const sessionId of mentionSessionIds) {
+      if (sessionId === args.sessionId) {
+        throw new ToolError({
+          code: 'invalid_session_mention',
+          message: 'A session cannot mention itself in its own prompt.',
+          remediation:
+            'Mention previous sessions, or omit mentionSessionIds to continue this session.',
+        });
+      }
+      await resolveSessionProvider(ctx, sessionId);
+    }
+    const mentions: string[] = [];
+    for (const sessionId of mentionSessionIds) {
+      ctx.signal.throwIfAborted();
+      try {
+        const mention =
+          await ctx.services.conversationExport.buildMention(sessionId);
+        mentions.push(serializeSessionMention(mention));
+      } catch (error) {
+        throw new ToolError({
+          code: 'session_mention_failed',
+          message: `Could not build context for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+          remediation:
+            'Read the source with read_session or ask_session and pass its relevant findings in prompt, or retry the mention when its history is available.',
+          retryable: true,
+        });
+      }
+    }
+    const prompt = mentions.length
+      ? [args.prompt, ...mentions].join('\n\n')
+      : args.prompt;
+    ctx.signal.throwIfAborted();
 
     // Idempotent start: archived sessions throw inside start(); active ones are
     // a cheap no-op. We start unless already in a live run state.
@@ -51,14 +99,17 @@ export const promptSessionTool = defineTool({
     // prompt — started a fresh run, or queued it behind live background work —
     // not once the turn completes. That is exactly the "received and started"
     // signal we want; nothing below this line should block further.
-    await runtime.submitPrompt(args.sessionId, args.prompt);
+    await runtime.submitPrompt(args.sessionId, prompt);
 
-    const state = await runtime.getRuntimeState(args.sessionId).catch(() => null);
+    const state = await runtime
+      .getRuntimeState(args.sessionId)
+      .catch(() => null);
     const runtimeState = state as SessionRuntimeSnapshot | null;
 
     let status = 'running';
     if (runtimeState) {
-      if (runtimeState.sessionState === 'requires_action') status = 'requires_action';
+      if (runtimeState.sessionState === 'requires_action')
+        status = 'requires_action';
       else if (runtimeState.runPhase === 'error') status = 'failed';
       else if (isSessionSettled(runtimeState)) status = 'completed';
     }

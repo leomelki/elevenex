@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events';
+import { readFile, unlink } from 'node:fs/promises';
+import { z } from 'zod';
+import { ConversationExportService } from '../../agent-runtime/conversation-export.service.js';
 import { DeltaCursorStore } from '../tool-registry/delta-cursor.store.js';
 import { DeepLinkBuilder } from '../deep-link/deep-link.builder.js';
 import { ToolError } from '../tool-registry/tool.types.js';
@@ -180,6 +183,182 @@ describe('Drive tool group', () => {
         makeCtx(services),
       );
       expect(services.sessions.start).not.toHaveBeenCalled();
+    });
+
+    it.each(['claude', 'codex', 'opencode', 'pi'])(
+      'hands off multiple chat mentions to %s without copying intermediate or nested context',
+      async (provider) => {
+        const { services, runtime } = makeServices({
+          session: { id: 7, status: 'created', activeAgentProvider: provider },
+        });
+        services.sessions.findOne.mockImplementation(async (id: number) => ({
+          id,
+          name: `Session ${id}`,
+          branchName: 'feature',
+          surface: 'session',
+          status: id === 7 ? 'created' : id === 42 ? 'active' : 'archived',
+          workspaceId: id === 8 ? 2 : 1,
+          activeAgentProvider: id === 7 ? provider : 'codex',
+          codexSessionId: `thread-${id}`,
+        }));
+        const sourceRuntime = {
+          getHistory: jest.fn().mockResolvedValue([
+            {
+              id: 'u1',
+              kind: 'user',
+              isError: false,
+              content:
+                'Implement auth\n<elevenex_session_mention>\nSession: Older work\nSession ID: 1\nTranscript export: /tmp/older.md\nnested-context-noise\n</elevenex_session_mention>',
+            },
+            {
+              id: 't1',
+              kind: 'thinking',
+              content: 'intermediate-noise',
+              isError: false,
+            },
+            {
+              id: 'a1',
+              kind: 'assistant',
+              content: 'Auth implemented; tests pass.',
+              isError: false,
+            },
+          ]),
+          getRuntimeState: jest
+            .fn()
+            .mockResolvedValue({ sessionState: 'idle' }),
+        };
+        const exportService = new ConversationExportService(
+          { getProvider: () => sourceRuntime } as never,
+          services.sessions as never,
+        );
+        const buildMention = jest.fn(
+          exportService.buildMention.bind(exportService),
+        );
+        const ctx = makeCtx({
+          ...services,
+          conversationExport: { buildMention },
+        });
+        try {
+          const result = await promptSessionTool.handler(
+            {
+              sessionId: 7,
+              prompt: 'Review the auth outcomes',
+              mentionSessionIds: [42, 8, 42],
+            },
+            ctx,
+          );
+          expect(buildMention.mock.calls).toEqual([[42], [8]]);
+          const sent = runtime.submitPrompt.mock.calls[0][1] as string;
+          expect(sent).toMatch(
+            /^Review the auth outcomes\n\n<elevenex_session_mention>/,
+          );
+          expect(sent.match(/<elevenex_session_mention>/g)).toHaveLength(2);
+          expect(sent).toContain('Session ID: 42'); // The caller may be mentioned.
+          expect(sent).toContain('Session ID: 8');
+          expect(sent).toContain('Provider session ID: thread-42');
+          expect(sent).toContain('Auth implemented; tests pass.');
+          expect(sent).not.toContain('intermediate-noise');
+          expect(sent).not.toContain('nested-context-noise');
+          expect(sent).toContain(
+            '[Previously mentioned session; nested snapshot omitted.]',
+          );
+          for (const snapshot of buildMention.mock.results) {
+            const mention = await snapshot.value;
+            const artifact = await readFile(
+              mention.transcriptExportPath,
+              'utf8',
+            );
+            expect(sent).toContain(
+              `Transcript export: ${mention.transcriptExportPath}`,
+            );
+            expect(artifact).toContain('Auth implemented; tests pass.');
+          }
+          expect(JSON.stringify(result)).not.toContain('Auth implemented');
+          expect(services.agentRuntime.getProvider).toHaveBeenCalledWith(
+            provider,
+          );
+        } finally {
+          for (const snapshot of buildMention.mock.results) {
+            await unlink((await snapshot.value).transcriptExportPath);
+          }
+        }
+      },
+    );
+
+    it.each([
+      { ids: [8, 404], source: null, code: 'session_not_found' },
+      {
+        ids: [8, 9],
+        source: { surface: 'agent' },
+        code: 'agent_session_inaccessible',
+      },
+      { ids: [8, 7], source: {}, code: 'invalid_session_mention' },
+    ])(
+      'rejects invalid mention references before starting the target: $code',
+      async ({ ids, source, code }) => {
+        const { services, runtime } = makeServices({});
+        services.sessions.findOne.mockImplementation(async (id: number) => {
+          if (id === 7 || id === 8)
+            return { id, activeAgentProvider: 'claude' };
+          if (source === null) throw new Error('not found');
+          return { id, activeAgentProvider: 'claude', ...source };
+        });
+        const buildMention = jest.fn();
+        await expect(
+          promptSessionTool.handler(
+            { sessionId: 7, prompt: 'go', mentionSessionIds: ids },
+            makeCtx({ ...services, conversationExport: { buildMention } }),
+          ),
+        ).rejects.toMatchObject({ code });
+        expect(buildMention).not.toHaveBeenCalled();
+        expect(services.sessions.start).not.toHaveBeenCalled();
+        expect(runtime.submitPrompt).not.toHaveBeenCalled();
+      },
+    );
+
+    it('reports mention export failures without starting or submitting a partial prompt', async () => {
+      const { services, runtime } = makeServices({});
+      await expect(
+        promptSessionTool.handler(
+          { sessionId: 7, prompt: 'go', mentionSessionIds: [8] },
+          makeCtx({
+            ...services,
+            conversationExport: {
+              buildMention: jest
+                .fn()
+                .mockRejectedValue(new Error('history unavailable')),
+            },
+          }),
+        ),
+      ).rejects.toMatchObject({
+        code: 'session_mention_failed',
+        retryable: true,
+      });
+      expect(services.sessions.start).not.toHaveBeenCalled();
+      expect(runtime.submitPrompt).not.toHaveBeenCalled();
+    });
+
+    it('validates mention IDs and caps exports per prompt', () => {
+      const schema = z.object(promptSessionTool.inputShape);
+      for (const ids of [
+        [0],
+        [-1],
+        [1.5],
+        ['8'],
+        Array.from({ length: 11 }, (_, i) => i + 1),
+      ]) {
+        expect(
+          schema.safeParse({
+            sessionId: 7,
+            prompt: 'go',
+            mentionSessionIds: ids,
+          }).success,
+        ).toBe(false);
+      }
+      expect(
+        schema.safeParse({ sessionId: 7, prompt: 'go', mentionSessionIds: [] })
+          .success,
+      ).toBe(true);
     });
 
     it('throws a ToolError when the session is not found', async () => {

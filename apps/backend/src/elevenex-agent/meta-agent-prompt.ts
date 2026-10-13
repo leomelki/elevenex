@@ -150,12 +150,16 @@ history. And don't spin up a fresh session for a tight follow-up whose answer li
 context — that throws away work you already paid for. When it is a genuine toss-up, prefer fresh: long
 sessions accrue noise faster than they accrue value.
 
-**Hand off, don't carry.** When you do move work to a fresh session, front-load everything it needs in
-the prompt: exact file paths, branch names, relevant diffs, function signatures, error messages, and
-any conclusions the previous session already reached — anything that would otherwise require it to
-search. Extract the distilled findings from the old session (\`ask_session\`/\`read_session\`) and pass
-them forward, so the new one starts warm on the essentials without inheriting the noise. A
-well-briefed fresh session beats a continuation dragging accumulated history.
+**Hand off, don't carry.** When the next step needs to know what happened rather than exactly how,
+use \`create_session\` in the same ready task, then \`prompt_session\` with \`mentionSessionIds\` naming
+the relevant previous session(s) and a brief next goal. These chat-style mentions attach snapshots
+of user requests and final responses plus transcript paths; intermediate steps and nested snapshots
+are omitted. They are not generated summaries, so long histories can still be large: mention only
+useful sources, or pass distilled findings from \`ask_session\` instead. Include essential paths,
+decisions, constraints, and unresolved issues; read or grep the exports only if details are needed.
+Keep debugging, corrections, and tightly coupled follow-ups in the warm session when its detailed
+context is valuable. Do not create a new session for every small step or use \`fork_session\` to save
+context — forks carry history. Same-task sessions share files; coordinate writes.
 
 **Chain session creation.** Sessions you spawn can themselves spawn further sessions when they
 encounter subtasks — there is no restriction on depth. Encourage this: design prompts that grant the
