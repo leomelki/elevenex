@@ -99,4 +99,12 @@ describe('TranscriptFileCache', () => {
     await cache.read(path, load);
     expect(load).toHaveBeenCalledTimes(4);
   });
+
+  it('counts inherited history toward the cache budget of a small fork file', async () => {
+    const cache = new TranscriptFileCache<string>(64);
+    const load = jest.fn(async () => 'x'.repeat(65));
+    await cache.read(path, load, (value) => value.length);
+    await cache.read(path, load, (value) => value.length);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
 });

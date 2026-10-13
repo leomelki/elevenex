@@ -40,6 +40,8 @@ host for SSH sessions). Paths with spaces can be wrapped in `<...>` or URL encod
 The local media endpoint supports image and video formats only.
 
 Click an image, or focus it and press Enter or Space, to open a larger preview.
+Right-click an image in chat or in the enlarged viewer and choose **Copy Image**
+to copy it to the clipboard.
 The viewer provides fit-to-window and smooth zoom up to 300%, previous/next images within
 the message, loading and unavailable states. Use arrow keys to navigate, `+`/`-`
 to zoom, `0` to fit, and Escape to close. Focus returns to the image on dismissal.

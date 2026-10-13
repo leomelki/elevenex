@@ -1051,6 +1051,187 @@ describe('CodexHistoryService', () => {
     }
   });
 
+  it('loads fixed paginated parent prefixes through nested forks and preserves anchors after appends', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-history-base-'));
+    const ordinalRecords = (records: unknown[], start = 0) =>
+      records.map((entry, index) => ({
+        ...(entry as object),
+        ordinal: start + index,
+      }));
+    const completedTurn = (id: string, prompt: string) => [
+      { type: 'event_msg', payload: { type: 'task_started', turn_id: id } },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'item_completed',
+          turn_id: id,
+          item: {
+            type: 'UserMessage',
+            content: [{ type: 'text', text: prompt }],
+          },
+        },
+      },
+      {
+        type: 'response_item',
+        payload: {
+          id: `answer-${id}`,
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: `answer ${prompt}` }],
+        },
+      },
+      { type: 'event_msg', payload: { type: 'task_complete', turn_id: id } },
+    ];
+    const source = ordinalRecords([
+      {
+        type: 'session_meta',
+        payload: { id: 'source', history_mode: 'paginated' },
+      },
+      ...completedTurn('turn-1', 'Bonjour 🌍'),
+      ...completedTurn('turn-2', 'later parent turn'),
+    ]);
+    const prefix = jsonl(source.slice(0, 5));
+    const childMeta = {
+      type: 'session_meta',
+      payload: {
+        id: 'child',
+        history_mode: 'paginated',
+        history_base: {
+          thread_id: 'source',
+          end_ordinal_exclusive: 5,
+          end_byte_offset: Buffer.byteLength(prefix),
+        },
+      },
+    };
+    const child = ordinalRecords(
+      [childMeta, ...completedTurn('turn-3', 'child prompt')],
+      5,
+    );
+    try {
+      await writeFile(join(root, 'rollout-source.jsonl'), jsonl(source));
+      await writeFile(join(root, 'rollout-child.jsonl'), jsonl(child));
+      await writeFile(
+        join(root, 'rollout-grandchild.jsonl'),
+        jsonl([
+          {
+            ordinal: 6,
+            type: 'session_meta',
+            payload: {
+              id: 'grandchild',
+              history_base: {
+                thread_id: 'child',
+                end_ordinal_exclusive: 6,
+                end_byte_offset: Buffer.byteLength(jsonl(child.slice(0, 1))),
+              },
+            },
+          },
+        ]),
+      );
+      const service = new CodexHistoryService(root);
+      expect(
+        (await service.waitForHistory('child', 2)).map((item) => item.content),
+      ).toEqual([
+        'Bonjour 🌍',
+        'answer Bonjour 🌍',
+        'child prompt',
+        'answer child prompt',
+      ]);
+      expect(
+        (await service.getHistory('grandchild')).map((item) => item.content),
+      ).toEqual(['Bonjour 🌍', 'answer Bonjour 🌍']);
+      expect(await service.getThreadTurns('child')).toEqual([
+        { id: 'turn-1', status: 'completed', items: [{ type: 'userMessage' }] },
+        { id: 'turn-3', status: 'completed', items: [{ type: 'userMessage' }] },
+      ]);
+      const inheritedAnchor = (await service.getHistory('child'))[0]
+        .sourceMessageId!;
+      await appendFile(
+        join(root, 'rollout-source.jsonl'),
+        jsonl(ordinalRecords(completedTurn('turn-4', 'new parent turn'), 9)),
+      );
+      await appendFile(
+        join(root, 'rollout-child.jsonl'),
+        jsonl([
+          {
+            ordinal: 10,
+            type: 'event_msg',
+            payload: { type: 'thread_rolled_back', num_turns: 1 },
+          },
+        ]),
+      );
+      expect(
+        (await service.getHistory('child')).map((item) => item.content),
+      ).toEqual(['Bonjour 🌍', 'answer Bonjour 🌍']);
+      expect((await service.getHistory('child'))[0].sourceMessageId).toBe(
+        inheritedAnchor,
+      );
+      expect(await service.rewindHistory('child', inheritedAnchor)).toEqual({
+        threadId: 'child',
+        beforeTurnId: 'turn-1',
+      });
+      expect(
+        (await service.listSessions()).find((item) => item.id === 'grandchild'),
+      ).toMatchObject({ messageCount: 1 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['missing', 'cycle', 'truncated', 'invalid'])(
+    'rejects a %s paginated history base',
+    async (failure) => {
+      const root = await mkdtemp(join(tmpdir(), 'codex-invalid-base-'));
+      try {
+        await writeFile(
+          join(root, 'rollout-source.jsonl'),
+          jsonl([
+            { ordinal: 0, type: 'session_meta', payload: { id: 'source' } },
+          ]),
+        );
+        await writeFile(
+          join(root, 'rollout-child.jsonl'),
+          jsonl([
+            {
+              ordinal: 1,
+              type: 'session_meta',
+              payload: {
+                id: 'child',
+                history_base: {
+                  thread_id:
+                    failure === 'cycle'
+                      ? 'child'
+                      : failure === 'missing'
+                        ? 'absent'
+                        : 'source',
+                  end_ordinal_exclusive: 1,
+                  end_byte_offset:
+                    failure === 'invalid'
+                      ? -1
+                      : failure === 'cycle'
+                        ? 1000
+                        : 99999,
+                },
+              },
+            },
+          ]),
+        );
+        await expect(
+          new CodexHistoryService(root).getHistory('child'),
+        ).rejects.toThrow(
+          failure === 'missing'
+            ? 'parent history not found'
+            : failure === 'invalid'
+              ? 'invalid parent boundary'
+              : failure === 'cycle'
+                ? 'invalid parent chain'
+                : 'parent history is incomplete',
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('rejects rewinding from a non-user Codex record', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-history-'));
     try {

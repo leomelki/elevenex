@@ -822,6 +822,7 @@ describe('CodexRuntimeService', () => {
       }),
     };
     const historyService = {
+      getThreadTurns: jest.fn<() => Promise<any[]>>().mockResolvedValue([]),
       getSubagentSnapshot: jest
         .fn<() => Promise<any>>()
         .mockResolvedValue(null),
@@ -1626,6 +1627,45 @@ describe('CodexRuntimeService', () => {
       'rewound-thread',
     );
   });
+
+  it.each(['user', 'assistant'] as const)(
+    'uses rollout turn boundaries for a paginated %s fork',
+    async (kind) => {
+      const { service, historyService, appServer } = createService();
+      const source = {
+        ...forkResult('source-thread', 0).thread,
+        historyMode: 'paginated',
+      };
+      historyService.getThreadTurns.mockResolvedValueOnce(
+        forkResult('source-thread', 3).thread.turns,
+      );
+      historyService.forkHistory.mockResolvedValueOnce({
+        threadId: 'source-thread',
+        ...(kind === 'user'
+          ? { beforeTurnId: 'turn-2' }
+          : { lastTurnId: 'turn-1' }),
+      });
+      appServer.request.mockResolvedValueOnce({ thread: source });
+      appServer.request.mockResolvedValueOnce(forkResult('forked-thread', 1));
+      await expect(
+        service.forkConversation({
+          parentSessionId: 7,
+          childSessionId: 8,
+          anchorMessageId: 'anchor',
+          anchorMessageKind: kind,
+          childSessionName: 'Fork',
+        }),
+      ).resolves.toMatchObject({ providerSessionId: 'forked-thread' });
+      expect(historyService.getThreadTurns).toHaveBeenCalledWith(
+        'source-thread',
+      );
+      expect(historyService.waitForHistory).toHaveBeenCalledWith(
+        'forked-thread',
+        1,
+        '/tmp/fork.jsonl',
+      );
+    },
+  );
 
   it('rejects a native fork that loses retained turns without replacing the original', async () => {
     const { service, sessionsService, historyService, appServer } =

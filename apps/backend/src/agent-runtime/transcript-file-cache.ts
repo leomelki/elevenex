@@ -19,7 +19,11 @@ export class TranscriptFileCache<T> {
     private readonly maxEntries = 32,
   ) {}
 
-  async read(path: string, load: () => Promise<T>): Promise<T> {
+  async read(
+    path: string,
+    load: () => Promise<T>,
+    measureBytes?: (value: T) => number,
+  ): Promise<T> {
     const file = await stat(path);
     const version = revision(file);
     const cached = this.entries.get(path);
@@ -37,17 +41,18 @@ export class TranscriptFileCache<T> {
     if (!pending) {
       pending = (async () => {
         const value = await load();
+        const bytes = Math.max(file.size, measureBytes?.(value) ?? 0);
         const after = await stat(path).catch(() => null);
         // An append, rewind or replacement during the read must not populate
         // the cache with a snapshot claiming to represent the new revision.
-        if (after && revision(after) === version && file.size <= this.maxBytes) {
+        if (after && revision(after) === version && bytes <= this.maxBytes) {
           this.remove(path);
           this.entries.set(path, {
             revision: version,
-            bytes: file.size,
+            bytes,
             value,
           });
-          this.bytes += file.size;
+          this.bytes += bytes;
           while (
             this.bytes > this.maxBytes ||
             this.entries.size > this.maxEntries

@@ -25,6 +25,22 @@ permissions, MCP handling, terminal fallback, and transcript behavior.
 8. The Codex thread id is stored in `sessions.codex_session_id`; Claude's
    `sessions.claude_session_id` is not reused or modified.
 
+## Conversation Editing And Forking
+
+Both operations create a native Codex fork at a turn boundary and verify that
+the retained history is persisted before publishing it. Editing replaces the
+session's thread id only after that verification, leaving the original intact
+if the fork fails. Legacy CLI versions that ignore fork boundaries are trimmed
+with `thread/rollback`; current versions trim the fork natively.
+
+Paginated threads can return an empty `thread/read` turn list. Elevenex derives
+their boundaries and visible user-message counts from the saved rollout events.
+Paginated forks store a `history_base` reference instead of copying the parent
+rollout. History reads resolve the frozen byte/ordinal prefix recursively,
+including nested forks, and keep the child's identity and message anchors stable.
+Later parent turns remain outside that prefix, and inherited bytes count toward
+the transcript cache limit. Missing or invalid parent history fails explicitly.
+
 ## Subagents
 
 Collaboration tools use dedicated action cards rather than generic JSON output.

@@ -49,6 +49,7 @@ const {
 const { rewriteLocalhostToProxy: rewriteMcpCallbackToProxy } = require('./mcp-proxy-url.cjs');
 const { shouldGrantAppPermission } = require('./permission-policy.cjs');
 const { createWindowRegistry } = require('./window-manager.cjs');
+const { installImageContextMenu } = require('./image-context-menu.cjs');
 const {
   DEFAULT_WINDOW_BOUNDS,
   MIN_WINDOW_SIZE,
@@ -3902,6 +3903,7 @@ async function createAppWindow(options = {}) {
     env: envRef,
     backendOrigin: frontendTarget.backendUrl,
   });
+  installImageContextMenu(win, Menu);
   connectionRegistry.acquire(windowId, envRef);
   applyWindowTitle(win, envRef);
 

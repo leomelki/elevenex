@@ -163,6 +163,7 @@ interface CodexThreadHistoryResult {
   thread?: {
     id: string;
     path?: string | null;
+    historyMode?: string;
     turns: { id: string; status: string; items: { type: string }[] }[];
   };
 }
@@ -1245,6 +1246,11 @@ export class CodexRuntimeService
       !Array.isArray(source.thread.turns)
     ) {
       throw new Error('Codex did not return the source thread history.');
+    }
+    if (source.thread.historyMode === 'paginated') {
+      source.thread.turns = await this.historyService.getThreadTurns(
+        target.threadId,
+      );
     }
     const index = source.thread.turns.findIndex(
       (turn) => turn.id === (target.beforeTurnId ?? target.lastTurnId),

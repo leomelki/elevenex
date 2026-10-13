@@ -5,12 +5,15 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { codexWebSearchInput } from './codex-web-search.js';
 import { promises as fs } from 'fs';
+import { createReadStream } from 'fs';
 import { homedir } from 'os';
 import { basename, join } from 'path';
+import { createInterface } from 'readline';
 import { setTimeout as delay } from 'timers/promises';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
@@ -29,6 +32,12 @@ import type { ClaudeSubagentState } from '../claude-runtime/claude-runtime.types
 import { codexContextUsage } from './codex-context-usage.js';
 
 type JsonRecord = Record<string, unknown>;
+
+export interface CodexHistoryTurn {
+  id: string;
+  status: string;
+  items: { type: string }[];
+}
 
 export interface CodexRewindTarget {
   threadId: string;
@@ -55,6 +64,7 @@ export class CodexHistoryService {
   private readonly pathSearches = new Map<string, Promise<string | null>>();
   private fileScan: Promise<string[]> | null = null;
   private readonly subagentCache = new TranscriptFileCache<{
+    bytes: number;
     history: ClaudeTranscriptItem[];
     records: JsonRecord[];
     displayName?: string;
@@ -89,66 +99,78 @@ export class CodexHistoryService {
   async getSubagentSnapshot(threadId: string, prompt?: string) {
     const path = await this.findSessionFile(threadId);
     if (!path) return null;
-    const snapshot = await this.subagentCache.read(path, async () => {
-      const records = await this.readJsonl(path);
-      const metaRecord = records.find((entry) => entry.type === 'session_meta');
-      const meta = record(metaRecord?.payload);
-      const spawn = record(
-        record(record(meta.source).subagent ?? record(meta.source).subAgent)
-          .thread_spawn,
-      );
-      const normalized = this.normalizeRecords(records);
-      const childStartedAt = textValue(spawn.parent_thread_id)
-        ? textValue(metaRecord?.timestamp)
-        : undefined;
-      const context = record(
-        [...records]
-          .reverse()
-          .find(
-            (entry) =>
-              entry.type === 'turn_context' &&
-              (!childStartedAt ||
-                (textValue(entry.timestamp) ?? '') >= childStartedAt),
-          )?.payload,
-      );
-      const history = childStartedAt
-        ? normalized.filter((item) => item.timestamp >= childStartedAt)
-        : normalized;
-      const ownRecords = childStartedAt
-        ? records.filter(
-            (entry) => (textValue(entry.timestamp) ?? '') >= childStartedAt,
-          )
-        : records;
-      let usageModel: string | null = null;
-      let contextUsage: ClaudeSubagentState['contextUsage'];
-      let contextUsageUpdatedAt: string | undefined;
-      for (const entry of ownRecords) {
-        const payload = record(entry.payload);
-        if (entry.type === 'turn_context')
-          usageModel = textValue(payload.model) ?? usageModel;
-        if (entry.type !== 'event_msg' || payload.type !== 'token_count')
-          continue;
-        const info = record(payload.info);
-        if (!Object.keys(record(info.last_token_usage)).length) continue;
-        contextUsage = codexContextUsage(
-          usageModel,
-          info.last_token_usage,
-          info.model_context_window,
+    const snapshot = await this.subagentCache.read(
+      path,
+      async () => {
+        let bytes = 0;
+        const records = await this.readJsonl(path, (size) => {
+          bytes = size;
+        });
+        const metaRecord = records.find(
+          (entry) => entry.type === 'session_meta',
         );
-        contextUsageUpdatedAt = textValue(entry.timestamp);
-      }
-      return {
-        history,
-        records: ownRecords,
-        displayName: textValue(meta.agent_nickname ?? spawn.agent_nickname),
-        agentType: textValue(meta.agent_role ?? spawn.agent_role),
-        agentPath: textValue(meta.agent_path ?? spawn.agent_path),
-        model: textValue(context.model),
-        reasoningEffort: textValue(context.effort ?? context.reasoning_effort),
-        contextUsage,
-        contextUsageUpdatedAt,
-      };
-    });
+        const meta = record(metaRecord?.payload);
+        const spawn = record(
+          record(record(meta.source).subagent ?? record(meta.source).subAgent)
+            .thread_spawn,
+        );
+        const normalized = this.normalizeRecords(records);
+        const childStartedAt = textValue(spawn.parent_thread_id)
+          ? textValue(metaRecord?.timestamp)
+          : undefined;
+        const context = record(
+          [...records]
+            .reverse()
+            .find(
+              (entry) =>
+                entry.type === 'turn_context' &&
+                (!childStartedAt ||
+                  (textValue(entry.timestamp) ?? '') >= childStartedAt),
+            )?.payload,
+        );
+        const history = childStartedAt
+          ? normalized.filter((item) => item.timestamp >= childStartedAt)
+          : normalized;
+        const ownRecords = childStartedAt
+          ? records.filter(
+              (entry) => (textValue(entry.timestamp) ?? '') >= childStartedAt,
+            )
+          : records;
+        let usageModel: string | null = null;
+        let contextUsage: ClaudeSubagentState['contextUsage'];
+        let contextUsageUpdatedAt: string | undefined;
+        for (const entry of ownRecords) {
+          const payload = record(entry.payload);
+          if (entry.type === 'turn_context')
+            usageModel = textValue(payload.model) ?? usageModel;
+          if (entry.type !== 'event_msg' || payload.type !== 'token_count')
+            continue;
+          const info = record(payload.info);
+          if (!Object.keys(record(info.last_token_usage)).length) continue;
+          contextUsage = codexContextUsage(
+            usageModel,
+            info.last_token_usage,
+            info.model_context_window,
+          );
+          contextUsageUpdatedAt = textValue(entry.timestamp);
+        }
+        return {
+          bytes,
+          history,
+          records: ownRecords,
+          displayName: textValue(meta.agent_nickname ?? spawn.agent_nickname),
+          agentType: textValue(meta.agent_role ?? spawn.agent_role),
+          agentPath: textValue(meta.agent_path ?? spawn.agent_path),
+          model: textValue(context.model),
+          reasoningEffort: textValue(
+            context.effort ?? context.reasoning_effort,
+          ),
+          contextUsage,
+          contextUsageUpdatedAt,
+        };
+      },
+      (snapshot) => snapshot.bytes,
+    );
     // A forked child can inherit its parent's conversation. Start at its own assignment.
     const ownPromptIndex = prompt
       ? snapshot.history.findIndex(
@@ -359,7 +381,47 @@ export class CodexHistoryService {
       }
       await delay(50);
     } while (Date.now() < deadline);
-    throw new Error('Codex fork history is not ready. Please try again.');
+    throw new ServiceUnavailableException(
+      'Codex fork history is not ready. Please try again.',
+    );
+  }
+
+  /** Paginated thread/read can omit turns; rollout events still record boundaries. */
+  async getThreadTurns(threadId: string): Promise<CodexHistoryTurn[]> {
+    const path = await this.findSessionFile(threadId);
+    if (!path) throw new NotFoundException('Codex thread file not found.');
+    const turns = new Map<string, CodexHistoryTurn>();
+    let current: CodexHistoryTurn | undefined;
+    for (const entry of await this.readJsonl(path)) {
+      const payload = record(entry.payload);
+      const id = textValue(payload.turn_id ?? payload.turnId);
+      if (
+        id &&
+        (entry.type === 'turn_context' ||
+          (entry.type === 'event_msg' && payload.type === 'task_started') ||
+          this.isVisibleUserMessage(entry))
+      ) {
+        current = turns.get(id);
+        if (!current) {
+          current = { id, status: 'inProgress', items: [] };
+          turns.set(id, current);
+        }
+      }
+      if (!current) continue;
+      if (id && id !== current.id) continue;
+      if (this.isVisibleUserMessage(entry))
+        current.items.push({ type: 'userMessage' });
+      if (entry.type === 'event_msg') {
+        if (
+          payload.type === 'task_complete' ||
+          payload.type === 'task_completed'
+        )
+          current.status = 'completed';
+        else if (payload.type === 'turn_aborted')
+          current.status = 'interrupted';
+      }
+    }
+    return [...turns.values()];
   }
 
   async forkHistory(
@@ -1017,14 +1079,26 @@ export class CodexHistoryService {
     sessionId: string,
   ): Promise<string | null> {
     for (const path of paths) {
-      const records: JsonRecord[] = await this.readJsonl(path).catch(() => []);
-      if (
-        records.some((record) => {
-          const payload = asRecord(record.payload);
-          return record.type === 'session_meta' && payload?.id === sessionId;
-        })
-      ) {
-        return path;
+      // Inspect physical metadata only: inherited parent metadata must never
+      // resolve a parent id to its child's rollout or recurse during lookup.
+      const stream = createReadStream(path);
+      const lines = createInterface({ input: stream, crlfDelay: Infinity });
+      try {
+        for await (const line of lines) {
+          if (!line.trim()) continue;
+          const meta = this.parseJsonl(line)[0];
+          if (
+            meta.type === 'session_meta' &&
+            record(meta.payload).id === sessionId
+          )
+            return path;
+          break;
+        }
+      } catch {
+        // A rollout can disappear or still be writing its first record.
+      } finally {
+        lines.close();
+        stream.destroy();
       }
     }
     return null;
@@ -1048,9 +1122,89 @@ export class CodexHistoryService {
     }
   }
 
-  private async readJsonl(path: string): Promise<JsonRecord[]> {
-    const content = await fs.readFile(path, 'utf-8');
-    const records = content
+  private async readJsonl(
+    path: string,
+    measureBytes?: (bytes: number) => void,
+  ): Promise<JsonRecord[]> {
+    const { records, bytes } = await this.readInheritedRecords(path);
+    measureBytes?.(bytes);
+    return this.applyRollbacks(records);
+  }
+
+  private async readInheritedRecords(
+    path: string,
+    ancestors = new Set<string>(),
+    endByteOffset?: number,
+  ): Promise<{ records: JsonRecord[]; bytes: number }> {
+    if (ancestors.has(path)) {
+      throw new BadRequestException(
+        'Codex fork history contains an invalid parent chain.',
+      );
+    }
+    const seen = ancestors.add(path);
+    let content: Buffer;
+    if (endByteOffset === undefined) {
+      content = await fs.readFile(path);
+    } else if (endByteOffset === 0) {
+      content = Buffer.alloc(0);
+    } else {
+      // The fork freezes a byte prefix. Do not load later turns from a large,
+      // still-growing parent or split a Unicode record by a character offset.
+      const chunks: Buffer[] = [];
+      for await (const chunk of createReadStream(path, {
+        end: endByteOffset - 1,
+      }))
+        chunks.push(chunk as Buffer);
+      content = Buffer.concat(chunks);
+      if (content.length !== endByteOffset)
+        throw new BadRequestException(
+          'Codex fork parent history is incomplete.',
+        );
+    }
+    const records = this.parseJsonl(content.toString('utf8'));
+    const metaIndex = records.findIndex(
+      (entry) => entry.type === 'session_meta',
+    );
+    const meta = record(records[metaIndex]?.payload);
+    const base = record(meta.history_base);
+    if (!Object.keys(base).length) return { records, bytes: content.length };
+    const parentId = textValue(base.thread_id);
+    const ordinal = base.end_ordinal_exclusive;
+    const offset = base.end_byte_offset;
+    if (
+      !parentId ||
+      typeof ordinal !== 'number' ||
+      !Number.isSafeInteger(ordinal) ||
+      ordinal < 0 ||
+      typeof offset !== 'number' ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0
+    ) {
+      throw new BadRequestException(
+        'Codex fork history has an invalid parent boundary.',
+      );
+    }
+    const parentPath = await this.findSessionFile(parentId);
+    if (!parentPath)
+      throw new NotFoundException('Codex fork parent history not found.');
+    const inherited = await this.readInheritedRecords(parentPath, seen, offset);
+    const prefix = inherited.records.filter(
+      (entry) => typeof entry.ordinal === 'number' && entry.ordinal < ordinal,
+    );
+    // Keep the child's metadata first for identity, while stable logical
+    // record positions preserve edit/fork anchors as its own file grows.
+    return {
+      records: [
+        records[metaIndex],
+        ...prefix,
+        ...records.filter((_entry, index) => index !== metaIndex),
+      ],
+      bytes: content.length + inherited.bytes,
+    };
+  }
+
+  private parseJsonl(content: string): JsonRecord[] {
+    return content
       .split(/\r?\n/)
       .filter((line) => line.trim())
       .map((line) => {
@@ -1060,7 +1214,6 @@ export class CodexHistoryService {
           return { type: 'parse_error', id: randomUUID() };
         }
       });
-    return this.applyRollbacks(records);
   }
 
   private applyRollbacks(records: JsonRecord[]): JsonRecord[] {
