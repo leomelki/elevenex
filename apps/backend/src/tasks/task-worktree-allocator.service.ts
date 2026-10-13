@@ -198,24 +198,47 @@ export class TaskWorktreeAllocator {
         'The selected worktree is in use or has local changes. Choose another worktree.',
       );
     await this.pool.assertWithinWorktreeLimit(repo, setup.confirmOverLimit);
-    const stem = path.join(
-      path.dirname(realRoot),
-      '.worktrees',
-      path.basename(realRoot),
-      `task-${task.id}`,
+    const poolRows = await this.db
+      .select({
+        name: schema.repoWorktrees.name,
+        path: schema.repoWorktrees.path,
+      })
+      .from(schema.repoWorktrees)
+      .where(eq(schema.repoWorktrees.repoRootPath, realRoot));
+    const existingNames = new Set(
+      poolRows.map((entry) => entry.name.trim().toLowerCase()),
     );
-    let worktreePath = stem;
-    // Reopening preserves identity, while the old directory may now belong to another task.
-    for (
-      let suffix = 2;
-      listed.some((entry) => path.resolve(entry.path) === worktreePath) ||
-      (await fs.lstat(worktreePath).then(
-        () => true,
-        () => false,
-      ));
-      suffix++
-    )
-      worktreePath = `${stem}-${suffix}`;
+    const existingPaths = new Set(
+      [...listed, ...poolRows].map((entry) =>
+        path.resolve(entry.path).toLowerCase(),
+      ),
+    );
+    const baseName = repo.name.trim() || 'worktree';
+    let worktreeName: string;
+    let worktreePath: string;
+    // Match the pool creation defaults; a worktree's identity survives task reuse.
+    for (let index = 1; ; index++) {
+      worktreeName = `${baseName} ${index}`;
+      const slug = worktreeName
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      worktreePath = path.join(
+        path.dirname(realRoot),
+        '.worktrees',
+        repo.name,
+        slug,
+      );
+      if (
+        !existingNames.has(worktreeName.toLowerCase()) &&
+        !existingPaths.has(worktreePath.toLowerCase()) &&
+        !(await fs.lstat(worktreePath).then(
+          () => true,
+          () => false,
+        ))
+      )
+        break;
+    }
     await fs.mkdir(path.dirname(worktreePath), { recursive: true });
     await this.reserve(task.id, key, branch, worktreePath);
     const git = worktreeSimpleGit(repo.path);
@@ -242,7 +265,7 @@ export class TaskWorktreeAllocator {
         .values({
           repoRootPath: realRoot,
           path: worktreePath,
-          name: `Worktree ${task.id}`,
+          name: worktreeName,
           managed: true,
           createdFromRef: setup.resolvedCommit,
         })
