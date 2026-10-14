@@ -273,6 +273,28 @@ describe('SessionsService', () => {
   });
 
   describe('findByRepo', () => {
+    it('returns creation order so new sessions remain in the sidebar preview regardless of activity', async () => {
+      const created = await db.insert(schema.sessions).values(
+        Array.from({ length: 12 }, (_, index) => ({
+          repoId,
+          branchName: 'main',
+          worktreePath: '/tmp/test-repo',
+          // Activity runs in the opposite order, with a newly created session
+          // having no activity yet. The repo/activity index must not order rows.
+          lastStateChangeAt: index === 11
+            ? null
+            : new Date(Date.UTC(2026, 0, 12 - index)).toISOString(),
+        })),
+      ).returning();
+
+      const sessions = await service.findByRepo(repoId, { includeFinishedTasks: false });
+
+      expect(sessions.map((session) => session.id)).toEqual(created.map((session) => session.id));
+      expect(sessions.slice(-8).map((session) => session.id)).toEqual(
+        created.slice(-8).map((session) => session.id),
+      );
+    });
+
     it('should return all sessions for a repo', async () => {
       await service.create({
         repoId,

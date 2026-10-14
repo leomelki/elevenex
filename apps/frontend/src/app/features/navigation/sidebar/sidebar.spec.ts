@@ -675,6 +675,43 @@ describe('Sidebar', () => {
     expect(fixture.nativeElement.querySelector('[aria-label="Open task setup"]')).toBeTruthy();
   });
 
+  it('shows the newest eight sessions and reveals older sessions through pagination', () => {
+    showPersistedWorkspace();
+    const workspace = tree()[0].repos[0].workspaces![0];
+    const sessions = Array.from({ length: 35 }, (_, index) => ({
+      ...workspace.sessions[0],
+      id: index + 100,
+      name: `Session ${index + 100}`,
+    }));
+    tree.update((projects) => projects.map((project) => ({
+      ...project,
+      repos: project.repos.map((repo) => ({
+        ...repo,
+        workspaces: repo.workspaces!.map((item) => ({ ...item, sessions })),
+      })),
+    })));
+    const fixture = createSidebar();
+    const visibleIds = () => Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('[data-session-row-id]'),
+      (row) => Number(row.getAttribute('data-session-row-id')),
+    );
+
+    expect(visibleIds()).toEqual(sessions.slice(-8).map((session) => session.id));
+    expect(fixture.componentInstance.getHiddenSessionCount(sessions, 1, 2)).toBe(27);
+
+    fixture.componentInstance.showMoreSessions(1, 2);
+    fixture.detectChanges();
+    expect(visibleIds()).toEqual(sessions.slice(-28).map((session) => session.id));
+
+    fixture.componentInstance.showMoreSessions(1, 2);
+    fixture.detectChanges();
+    expect(visibleIds()).toEqual(sessions.map((session) => session.id));
+
+    fixture.componentInstance.collapseSessionList(1, 2);
+    fixture.detectChanges();
+    expect(visibleIds()).toEqual(sessions.slice(-8).map((session) => session.id));
+  });
+
   it('shows a compact new-session action below a linked workspace session list', () => {
     showPersistedWorkspace();
     const fixture = createSidebar();

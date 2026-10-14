@@ -7,6 +7,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import {
+  asc,
   eq,
   and,
   count,
@@ -219,7 +220,11 @@ export class SessionsService extends EventEmitter {
           ),
           options,
         ),
-      );
+      )
+      // The sidebar takes the last eight entries as the newest sessions.
+      // Without ORDER BY, SQLite can use the activity index and hide new
+      // sessions (whose activity timestamp is null) among older entries.
+      .orderBy(asc(schema.sessions.id));
     return rows.map((session) => this.withInferredActiveAgentProvider(session));
   }
 
