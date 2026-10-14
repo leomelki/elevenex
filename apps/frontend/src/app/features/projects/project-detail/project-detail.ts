@@ -170,7 +170,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
       }
     });
     this.forwardChangesSubscription = this.sshForwardsService.changes.subscribe(() => {
-      if (this.sshProjectId !== null) void this.refreshSshForwards(this.sshProjectId, this.sshGeneration);
+      if (!this.showStart() && this.sshProjectId !== null) void this.refreshSshForwards(this.sshProjectId, this.sshGeneration);
     });
     this.routeSubscription = this.route.paramMap.subscribe((paramMap) => {
       const id = Number(paramMap.get('id'));
@@ -826,10 +826,17 @@ export class ProjectDetail implements OnInit, OnDestroy {
       },
     });
 
-    if (!this.showStart()) this.loadProjectSettings(projectId);
+    if (!this.showStart()) {
+      this.loadProjectSettings(projectId);
+    } else {
+      this.sshForwardsLoading.set(false);
+      this.browserIsolationLoading.set(false);
+    }
   }
 
   private loadProjectSettings(projectId: number) {
+    this.sshForwardsLoading.set(true);
+    this.browserIsolationLoading.set(true);
     void this.loadSshForwards(projectId);
     this.loadBrowserIsolation(projectId);
   }
