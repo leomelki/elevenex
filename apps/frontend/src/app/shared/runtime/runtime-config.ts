@@ -47,8 +47,9 @@ export function getRuntimeConfig(): ElevenexRuntimeConfig {
  * Which backend this window talks to. Used to namespace state that belongs to
  * a workspace rather than to a window.
  */
-export function getBackendServerId(): string {
-  const snapshot = readOnboardingStateSnapshot();
+export function getBackendServerId(
+  snapshot: OnboardingStateSnapshot = readOnboardingStateSnapshot(),
+): string {
   if (snapshot?.mode === 'ssh') {
     const server = getActiveOnboardingServer(snapshot);
     if (server) return `server-${server.id}`;

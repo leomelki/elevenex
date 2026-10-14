@@ -712,6 +712,21 @@ describe('Sidebar', () => {
     expect(visibleIds()).toEqual(sessions.slice(-8).map((session) => session.id));
   });
 
+  it('toggles finished task history through remembered navigation keys', () => {
+    showPersistedWorkspace();
+    const fixture = createSidebar();
+    expect(fixture.nativeElement.querySelector('app-task-history')).toBeNull();
+
+    fixture.componentInstance.toggleFinished(1);
+    fixture.detectChanges();
+    expect(navigationServiceMock.toggleExpand).toHaveBeenCalledWith('finished-1');
+    expect(fixture.nativeElement.querySelector('app-task-history')).toBeTruthy();
+
+    fixture.componentInstance.toggleFinished(1);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('app-task-history')).toBeNull();
+  });
+
   it('shows a compact new-session action below a linked workspace session list', () => {
     showPersistedWorkspace();
     const fixture = createSidebar();

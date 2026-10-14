@@ -41,25 +41,7 @@ import { AgentControlDrawerComponent } from './features/agent-control/agent-cont
 import { AgentCommandBarComponent } from './features/agent-control/agent-command-bar.component';
 import { ZardButtonComponent } from './shared/components/button';
 import { ZardInputDirective } from './shared/components/input';
-import { migratedWindowScopedKey } from '@/shared/services/scoped-storage';
-
-const SIDEBAR_MIN = 250;
-const SIDEBAR_MAX = 420;
-const SIDEBAR_DEFAULT = 260;
-// Sidebar width is window layout: each window keeps its own.
-const SIDEBAR_WIDTH_STORAGE_KEY_BASE = 'sidebar-width';
-
-function sidebarWidthStorageKey(): string {
-  return migratedWindowScopedKey(SIDEBAR_WIDTH_STORAGE_KEY_BASE);
-}
-
-function readSidebarWidth(): number {
-  try {
-    return +(globalThis.localStorage?.getItem(sidebarWidthStorageKey()) ?? SIDEBAR_DEFAULT);
-  } catch {
-    return SIDEBAR_DEFAULT;
-  }
-}
+import { SidebarStateService } from '@/shared/services/sidebar-state.service';
 
 @Component({
   selector: 'app-root',
@@ -106,10 +88,11 @@ export class App implements OnInit, OnDestroy {
   private readonly serverConnection = inject(ServerConnectionService);
   private readonly onboardingState = inject(OnboardingStateService);
   private readonly theme = inject(ThemeService);
+  private readonly sidebarState = inject(SidebarStateService);
   private readonly windowControls = getElectronWindowControlsApi();
   private readonly runtimeMode = getRuntimeConfig().mode;
 
-  sidebarWidth = signal(readSidebarWidth());
+  readonly sidebarWidth = this.sidebarState.width;
   isElectronDesktop = signal(false);
   usesNativeMacControls = signal(false);
   isMaximized = signal(false);
@@ -402,7 +385,7 @@ export class App implements OnInit, OnDestroy {
 
     const onMouseMove = (e: MouseEvent) => {
       const delta = e.clientX - startX;
-      this.sidebarWidth.set(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth + delta)));
+      this.sidebarState.setWidth(startWidth + delta, false);
     };
 
     const onMouseUp = () => {
@@ -410,11 +393,7 @@ export class App implements OnInit, OnDestroy {
       document.removeEventListener('mouseup', onMouseUp);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      try {
-        globalThis.localStorage?.setItem(sidebarWidthStorageKey(), String(this.sidebarWidth()));
-      } catch {
-        // Ignore unavailable storage in restricted runtimes.
-      }
+      this.sidebarState.setWidth(this.sidebarWidth());
     };
 
     document.body.style.cursor = 'col-resize';

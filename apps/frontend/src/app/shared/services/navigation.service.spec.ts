@@ -6,7 +6,6 @@ import { Router } from '@angular/router';
 import { of, Subject } from 'rxjs';
 import { NavigationProject } from '../models/navigation-tree.model';
 import { NavigationService } from './navigation.service';
-import { windowScopedKey } from './scoped-storage';
 import { getBackendOrigin } from '../runtime/runtime-config';
 import { ClaudeStatusService } from './claude-status.service';
 
@@ -240,7 +239,7 @@ describe('NavigationService', () => {
     expect(localStorageMock.setItem).not.toHaveBeenCalled();
   });
 
-  it('auto-expands newly added projects, repositories, workspaces, and sessions on refresh', () => {
+  it('keeps newly added projects, repositories, workspaces, and sessions collapsed on refresh', () => {
     service.tree.set([
       {
         id: 1,
@@ -361,20 +360,28 @@ describe('NavigationService', () => {
 
     service.loadTree();
 
+    expect(service.expandedKeys()).toEqual(new Set());
+    expect(localStorageMock.setItem).not.toHaveBeenCalled();
+  });
+
+  it('preserves selected expansions through light and full refreshes without opening new nodes', () => {
+    const light$ = new Subject<NavigationProject[]>();
+    const full$ = new Subject<NavigationProject[]>();
+    httpGetMock.mockReturnValueOnce(light$).mockReturnValueOnce(full$);
+    service.toggleExpand('project-1');
+    service.toggleExpand('archive-2-3');
+    service.toggleExpand('session-folder-9');
+    localStorageMock.setItem.mockClear();
+
+    service.loadTree();
+    light$.next(makeTree([]));
+    full$.next(makeTree([42]));
+
     expect(service.expandedKeys()).toEqual(
-      new Set(['project-1', 'repo-2', 'workspace-2-3', 'workspace-2-4', 'repo-3', 'project-4']),
+      new Set(['project-1', 'archive-2-3', 'session-folder-9']),
     );
-    expect(localStorageMock.setItem).toHaveBeenCalledWith(
-      windowScopedKey('elevenex-nav-expanded'),
-      JSON.stringify([
-        'project-1',
-        'repo-2',
-        'workspace-2-3',
-        'workspace-2-4',
-        'repo-3',
-        'project-4',
-      ]),
-    );
+    expect(localStorageMock.setItem).not.toHaveBeenCalled();
+    expect(service.tree()[0].repos[0].workspaces![0].sessions).toHaveLength(1);
   });
 
   it('ignores stale full-tree responses after a newer light-tree refresh removes a session', () => {

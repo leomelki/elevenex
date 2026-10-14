@@ -1033,8 +1033,8 @@
 
                 }
               }
-                  <button type="button" class="flex w-full items-center gap-2 px-3 py-2 pl-12 text-left text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" [attr.aria-expanded]="finishedRepoIds().has(repo.id)" (click)="toggleFinished(repo.id)"><ng-icon name="lucideArchive" class="!size-3.5" />Finished tasks</button>
-              @if (finishedRepoIds().has(repo.id)) { <app-task-history [repoId]="repo.id" /> }
+                  <button type="button" class="flex w-full items-center gap-2 px-3 py-2 pl-12 text-left text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" [attr.aria-expanded]="isExpanded('finished-' + repo.id)" (click)="toggleFinished(repo.id)"><ng-icon name="lucideArchive" class="!size-3.5" />Finished tasks</button>
+                  @if (isExpanded('finished-' + repo.id)) { <app-task-history [repoId]="repo.id" /> }
               @for (pendingWorkspace of getPendingWorkspaces(repo); track pendingWorkspace.jobId) {
                     <div class="sidebar-tree-row sidebar-tree-row--busy w-full group" [style.padding-left]="'48px'" [attr.data-pending-workspace]="pendingWorkspace.worktreePath">
                       <span class="w-4 shrink-0"></span>

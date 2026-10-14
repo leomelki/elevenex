@@ -44,6 +44,10 @@ import { SessionFoldersService } from '@/shared/services/session-folders.service
 import { SshForwardsService } from '@/shared/services/ssh-forwards.service';
 import { SshRuntimeRecoveryService } from '@/shared/services/ssh-runtime-recovery.service';
 import { ThemeService } from '@/shared/services/theme.service';
+import {
+  SidebarStateService,
+  SIDEBAR_SESSION_LIST_LIMIT,
+} from '@/shared/services/sidebar-state.service';
 import { WorkspacesService } from '@/shared/services/workspaces.service';
 import {
   Component,
@@ -177,7 +181,7 @@ export class Sidebar implements OnInit, OnDestroy {
   private static readonly SESSION_DELETE_CONFIRM_DELAY_MS = 300;
   private static readonly SESSION_DELETE_AUTO_DISMISS_MS = 3000;
   private static readonly SESSION_TIME_TICK_MS = 60_000;
-  static readonly SESSION_LIST_MAX_VISIBLE = 8;
+  static readonly SESSION_LIST_MAX_VISIBLE = SIDEBAR_SESSION_LIST_LIMIT;
   readonly SESSION_LIST_MAX_VISIBLE = Sidebar.SESSION_LIST_MAX_VISIBLE;
   readonly SESSION_LIST_PAGE_SIZE = 20;
 
@@ -188,8 +192,10 @@ export class Sidebar implements OnInit, OnDestroy {
   taskUi = inject(TaskUiService);
   private tasksApi = inject(TasksApiService);
   private taskOperations = inject(TaskOperationsService);
-  finishedRepoIds = signal(new Set<number>());
-  toggleFinished(repoId: number) { this.finishedRepoIds.update(ids => { const next = new Set(ids); if (next.has(repoId)) next.delete(repoId); else next.add(repoId); return next; }); }
+  private readonly sidebarState = inject(SidebarStateService);
+  toggleFinished(repoId: number) {
+    this.navService.toggleExpand(`finished-${repoId}`);
+  }
   private router = inject(Router);
   private workspacesService = inject(WorkspacesService);
   private sessionsService = inject(SessionsService);
@@ -337,7 +343,7 @@ export class Sidebar implements OnInit, OnDestroy {
   deletingSessionId = signal<number | null>(null);
   archivingSessionId = signal<number | null>(null);
   unarchivingSessionId = signal<number | null>(null);
-  sessionListVisibleLimits = signal<Map<string, number>>(new Map());
+  readonly sessionListVisibleLimits = this.sidebarState.sessionListVisibleLimits;
   private sessionDeleteEnableTimer: number | null = null;
   private sessionDeleteDismissTimer: number | null = null;
   private projectRevealTimer: number | null = null;
@@ -803,15 +809,14 @@ export class Sidebar implements OnInit, OnDestroy {
 
   showMoreSessions(repoId: number, workspaceId: number): void {
     const key = `${repoId}-${workspaceId}`;
-    const next = new Map(this.sessionListVisibleLimits());
-    next.set(key, this.getSessionListVisibleLimit(repoId, workspaceId) + this.SESSION_LIST_PAGE_SIZE);
-    this.sessionListVisibleLimits.set(next);
+    this.sidebarState.setSessionListVisibleLimit(
+      key,
+      this.getSessionListVisibleLimit(repoId, workspaceId) + this.SESSION_LIST_PAGE_SIZE,
+    );
   }
 
   collapseSessionList(repoId: number, workspaceId: number): void {
-    const next = new Map(this.sessionListVisibleLimits());
-    next.delete(`${repoId}-${workspaceId}`);
-    this.sessionListVisibleLimits.set(next);
+    this.sidebarState.setSessionListVisibleLimit(`${repoId}-${workspaceId}`, null);
   }
 
   private getSessionListVisibleLimit(repoId: number, workspaceId: number): number {
