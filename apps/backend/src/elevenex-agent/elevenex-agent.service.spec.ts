@@ -39,7 +39,10 @@ describe('ElevenexAgentService', () => {
       'mcp__elevenex__project_overview',
     );
     expect(settings.permissions.allow).toContain('mcp__elevenex__read_session');
-    // Mutating/destructive tools must NOT be auto-allowed.
+    expect(settings.permissions.allow).toContain(
+      'mcp__elevenex__cancel_finish_task',
+    );
+    // Destructive tools must NOT be auto-allowed.
     expect(settings.permissions.allow).not.toContain(
       'mcp__elevenex__steal_worktree',
     );

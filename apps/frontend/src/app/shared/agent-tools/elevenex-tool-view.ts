@@ -102,6 +102,7 @@ group('setup', 'lucidePencilLine', {
   rename_task: 'Rename task',
   move_task: 'Reorder task',
   set_task_draft: 'Stage task draft',
+  cancel_finish_task: 'Cancel scheduled task finish',
   set_scratchpad: 'Save project note',
   set_todo: 'Update checklist',
   rename_session_folder: 'Rename conversation folder',

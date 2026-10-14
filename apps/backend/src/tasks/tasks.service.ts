@@ -7,6 +7,8 @@ import {
   Logger,
   NotFoundException,
   OnApplicationBootstrap,
+  OnModuleInit,
+  OnModuleDestroy,
   Optional,
 } from '@nestjs/common';
 import {
@@ -18,6 +20,7 @@ import {
   isNull,
   isNotNull,
   lt,
+  ne,
   or,
   sql,
 } from 'drizzle-orm';
@@ -42,11 +45,39 @@ import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
 
 type Task = typeof schema.workspaces.$inferSelect;
 type Repo = typeof schema.repos.$inferSelect;
+type FinishRequest = NonNullable<Task['taskFinishRequest']>;
+
+function sameFinishRequest(
+  a: Task['taskFinishRequest'],
+  b: FinishRequest,
+): boolean {
+  return (
+    a?.sessionId === b.sessionId &&
+    a.requestId === b.requestId &&
+    a.confirmStop === b.confirmStop
+  );
+}
 
 @Injectable()
-export class TasksService implements OnApplicationBootstrap {
+export class TasksService
+  implements OnApplicationBootstrap, OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new Logger(TasksService.name);
   private readonly operations = new Map<number, Promise<void>>();
+  private readonly finishRequests = new Map<
+    number,
+    NonNullable<Task['taskFinishRequest']>
+  >();
+  private readonly deferredFinishes = new Map<number, Promise<void>>();
+  private readonly idleFinishRequests = new Map<number, FinishRequest>();
+  private readonly finishOnIdle = ({ sessionId }: { sessionId: number }) => {
+    for (const [taskId, request] of this.finishRequests) {
+      if (request.sessionId === sessionId && this.sessionIsIdle(sessionId)) {
+        this.idleFinishRequests.set(taskId, request);
+        this.scheduleDeferredFinish(taskId, request);
+      }
+    }
+  };
   private readonly conversations = new Map<
     number,
     Promise<typeof schema.sessions.$inferSelect>
@@ -65,6 +96,95 @@ export class TasksService implements OnApplicationBootstrap {
     @Optional() private readonly navigationEvents?: NavigationEventsService,
   ) {}
 
+  onModuleInit(): void {
+    this.hooks.on('status-changed', this.finishOnIdle);
+  }
+
+  onModuleDestroy(): void {
+    this.hooks.off('status-changed', this.finishOnIdle);
+    this.finishRequests.clear();
+    this.idleFinishRequests.clear();
+  }
+
+  private sessionIsIdle(sessionId: number): boolean {
+    const activity = this.hooks.getActivity(sessionId);
+    return activity.activityStatus === 'idle' && !activity.backgroundActive;
+  }
+
+  private scheduleDeferredFinish(
+    taskId: number,
+    request: NonNullable<Task['taskFinishRequest']>,
+  ) {
+    if (this.deferredFinishes.has(taskId)) return;
+    // Return the tool result and let the provider persist its final reply before
+    // archiving the caller. Recheck activity inside the repository lock as well.
+    const operation = new Promise<void>((resolve) => setImmediate(resolve))
+      .then(async () => {
+        if (this.finishRequests.get(taskId) !== request) return;
+        await this.finish(taskId, request.confirmStop, request);
+      })
+      .catch(async (error: unknown) => {
+        const current = await this.record(taskId).catch(() => null);
+        // A cancelled/replaced request must not report a late failure or erase
+        // a newer request after its old preview finishes.
+        if (
+          !current ||
+          current.archivedAt ||
+          (current.taskFinishRequest
+            ? !sameFinishRequest(current.taskFinishRequest, request)
+            : current.taskState !== 'failed')
+        )
+          return;
+        this.forgetFinishRequest(taskId, request);
+        this.logger.error(`Deferred finish failed for task ${taskId}`, error);
+        await this.db
+          .update(schema.workspaces)
+          .set({
+            taskFinishRequest: null,
+            updatedAt: new Date().toISOString(),
+            taskError: JSON.stringify({
+              code: 'finish_failed',
+              message:
+                'Scheduled task finishing failed. The checkout remains reserved. Inspect running work and finish this task again to retry cleanup.',
+            }),
+          })
+          .where(
+            and(
+              eq(schema.workspaces.id, taskId),
+              eq(schema.workspaces.updatedAt, current.updatedAt),
+              isNull(schema.workspaces.archivedAt),
+            ),
+          );
+      })
+      .finally(() => {
+        this.deferredFinishes.delete(taskId);
+        // An idle event may arrive while the previous activity recheck is still
+        // completing. Do not lose it to in-flight request coalescing.
+        const pending = this.finishRequests.get(taskId);
+        if (
+          pending &&
+          sameFinishRequest(
+            this.idleFinishRequests.get(taskId) ?? null,
+            pending,
+          ) &&
+          this.sessionIsIdle(pending.sessionId)
+        )
+          this.scheduleDeferredFinish(taskId, pending);
+      });
+    this.deferredFinishes.set(taskId, operation);
+    // An error while recording failure must not become an unhandled rejection.
+    void operation.catch((error) =>
+      this.logger.error('Could not record deferred finish failure', error),
+    );
+  }
+
+  private forgetFinishRequest(taskId: number, request: FinishRequest): void {
+    if (sameFinishRequest(this.finishRequests.get(taskId) ?? null, request)) {
+      this.finishRequests.delete(taskId);
+      this.idleFinishRequests.delete(taskId);
+    }
+  }
+
   onApplicationBootstrap(): void {
     // Resume accepted work without delaying backend startup or duplicating filesystem work.
     void this.recover().catch((error) =>
@@ -78,6 +198,13 @@ export class TasksService implements OnApplicationBootstrap {
       .from(schema.workspaces)
       .where(isNull(schema.workspaces.archivedAt));
     for (const task of tasks) {
+      if (task.taskFinishRequest && task.taskState === 'ready') {
+        this.finishRequests.set(task.id, task.taskFinishRequest);
+        if (this.sessionIsIdle(task.taskFinishRequest.sessionId)) {
+          this.idleFinishRequests.set(task.id, task.taskFinishRequest);
+          this.scheduleDeferredFinish(task.id, task.taskFinishRequest);
+        }
+      }
       if (task.taskState === 'preparing' && task.taskConfig)
         this.schedule(task.id);
       else if (task.taskState === 'finishing')
@@ -894,7 +1021,7 @@ export class TasksService implements OnApplicationBootstrap {
     });
   }
 
-  async finishPreview(id: number) {
+  async finishPreview(id: number, excludeSessionId?: number) {
     const task = await this.record(id);
     const sessions = await this.db
       .select()
@@ -921,24 +1048,166 @@ export class TasksService implements OnApplicationBootstrap {
     return {
       agents: sessions.filter(
         (session) =>
+          session.id !== excludeSessionId &&
           session.status !== 'archived' &&
-          this.hooks.getStatus(session.id) !== 'idle',
+          !this.sessionIsIdle(session.id),
       ).length,
       terminals: runningTerminals.filter(Boolean).length,
       actions: actions.filter((action) => action.status === 'running').length,
     };
   }
 
-  async finish(id: number, confirmStop = false) {
+  /** MCP self-finish: consent is checked by the tool; no caller is stopped here. */
+  async finishAfterTurn(id: number, sessionId: number, confirmStop = false) {
     const task = await this.record(id);
-    if (task.archivedAt) return this.get(id);
     const repo = await this.repo(task.repoId);
     await this.projects.assertProjectIsActive(repo.projectId);
     const key = await this.git.repositoryKey(repo.path);
     return this.git.exclusive(key, async () => {
       const current = await this.record(id);
-      if (current.archivedAt) return this.get(id);
+      const caller = (
+        await this.db
+          .select()
+          .from(schema.sessions)
+          .where(eq(schema.sessions.id, sessionId))
+      )[0];
+      if (caller?.workspaceId !== id || caller.status === 'archived')
+        throw new BadRequestException(
+          'The caller no longer belongs to this active task.',
+        );
+      if (
+        current.archivedAt ||
+        current.taskState !== 'ready' ||
+        current.linkStatus !== 'linked'
+      )
+        throw new ConflictException(
+          'Only a ready, active task can be scheduled for finishing.',
+        );
+      if (
+        current.taskFinishRequest &&
+        current.taskFinishRequest.sessionId !== sessionId
+      )
+        throw new ConflictException(
+          'Another conversation has already scheduled this task for finishing.',
+        );
+      const running = await this.finishPreview(id, sessionId);
+      if (
+        !confirmStop &&
+        (running.agents || running.terminals || running.actions)
+      )
+        throw new ConflictException({
+          code: 'running_work',
+          message: 'Explicit stop approval is required for other running work.',
+          ...running,
+        });
+      const request = {
+        requestId: current.taskFinishRequest?.requestId ?? randomUUID(),
+        sessionId,
+        confirmStop:
+          current.taskFinishRequest?.confirmStop === true || confirmStop,
+      };
+      // Keep existing stop consent on retries; a new explicit confirmation may
+      // authorize other work that started after the first request.
+      await this.update(id, { taskFinishRequest: request, taskError: null });
+      this.finishRequests.set(id, request);
+      this.idleFinishRequests.delete(id);
+      // Do not run cleanup from this handler, even if activity tracking currently
+      // says idle. Only a subsequent idle event (or startup recovery) starts it.
+      return { taskId: id, finishScheduled: true, afterSessionId: sessionId };
+    });
+  }
+
+  /** Cancel the durable request without waiting behind a queued Git operation. */
+  async cancelScheduledFinish(id: number, sessionId: number) {
+    const current = await this.record(id);
+    if (current.archivedAt || current.taskState === 'finishing')
+      throw new ConflictException({
+        code: 'finish_already_started',
+        message:
+          'Task cleanup has already started or finished; its scheduled finish can no longer be cancelled.',
+      });
+    const request = current.taskFinishRequest;
+    if (!request)
+      return { taskId: id, cancelled: false, finishScheduled: false };
+    if (request.sessionId !== sessionId)
+      throw new BadRequestException({
+        code: 'finish_request_not_owned',
+        message:
+          'Only the conversation that scheduled this finish can cancel it.',
+      });
+    const changed = await this.db
+      .update(schema.workspaces)
+      .set({
+        taskFinishRequest: null,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(
+        and(
+          eq(schema.workspaces.id, id),
+          eq(schema.workspaces.taskFinishRequest, request),
+          ne(schema.workspaces.taskState, 'finishing'),
+          isNull(schema.workspaces.archivedAt),
+        ),
+      )
+      .returning({ id: schema.workspaces.id });
+    if (!changed.length)
+      throw new ConflictException({
+        code: 'finish_request_changed',
+        message:
+          'The scheduled finish changed or cleanup started during cancellation. Inspect get_task before retrying.',
+      });
+    this.forgetFinishRequest(id, request);
+    return { taskId: id, cancelled: true, finishScheduled: false };
+  }
+
+  async finish(id: number, confirmStop = false, afterTurn?: FinishRequest) {
+    const afterSessionId = afterTurn?.sessionId;
+    const task = await this.record(id);
+    if (task.archivedAt) {
+      this.finishRequests.delete(id);
+      this.idleFinishRequests.delete(id);
+      return this.get(id);
+    }
+    const repo = await this.repo(task.repoId);
+    await this.projects.assertProjectIsActive(repo.projectId);
+    const key = await this.git.repositoryKey(repo.path);
+    return this.git.exclusive(key, async () => {
+      const current = await this.record(id);
+      if (current.archivedAt) {
+        this.finishRequests.delete(id);
+        this.idleFinishRequests.delete(id);
+        return this.get(id);
+      }
+      if (afterSessionId !== undefined) {
+        if (!sameFinishRequest(current.taskFinishRequest, afterTurn!)) {
+          this.forgetFinishRequest(id, afterTurn!);
+          return this.get(id);
+        }
+        if (!this.sessionIsIdle(afterSessionId)) return this.get(id);
+      }
       const running = await this.finishPreview(id);
+      if (afterSessionId !== undefined) {
+        // Terminal/action preview can await slow process checks. A new turn or
+        // a membership change during that wait must never stop the caller.
+        const latest = await this.record(id);
+        if (!sameFinishRequest(latest.taskFinishRequest, afterTurn!)) {
+          this.forgetFinishRequest(id, afterTurn!);
+          return this.get(id);
+        }
+        const caller = (
+          await this.db
+            .select()
+            .from(schema.sessions)
+            .where(eq(schema.sessions.id, afterSessionId))
+        )[0];
+        if (caller?.workspaceId !== id || caller.status === 'archived') {
+          this.finishRequests.delete(id);
+          this.idleFinishRequests.delete(id);
+          await this.update(id, { taskFinishRequest: null });
+          return this.get(id);
+        }
+        if (!this.sessionIsIdle(afterSessionId)) return this.get(id);
+      }
       if (
         !confirmStop &&
         (running.agents || running.terminals || running.actions)
@@ -948,7 +1217,36 @@ export class TasksService implements OnApplicationBootstrap {
           message: 'Stop running work before finishing this task.',
           ...running,
         });
-      await this.update(id, { taskState: 'finishing' });
+      // Block new turns before releasing any checkout. Clear the durable request
+      // so reopening cannot inherit an old instruction to finish again.
+      const claimed = await this.db
+        .update(schema.workspaces)
+        .set({
+          taskState: 'finishing',
+          taskFinishRequest: null,
+          taskError: null,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(
+          and(
+            eq(schema.workspaces.id, id),
+            afterTurn
+              ? and(
+                  eq(schema.workspaces.taskFinishRequest, afterTurn),
+                  eq(schema.workspaces.taskState, 'ready'),
+                  isNull(schema.workspaces.archivedAt),
+                )
+              : undefined,
+          ),
+        )
+        .returning({ id: schema.workspaces.id });
+      if (!claimed.length) {
+        if (afterTurn) this.forgetFinishRequest(id, afterTurn);
+        return this.get(id);
+      }
+      this.finishRequests.delete(id);
+      this.idleFinishRequests.delete(id);
+      this.navigationEvents?.invalidate();
       try {
         const sessions = await this.db
           .select()

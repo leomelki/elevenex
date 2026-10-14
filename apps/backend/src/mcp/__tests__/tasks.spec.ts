@@ -65,6 +65,18 @@ function fixture(overrides: Record<string, unknown> = {}) {
       archivedAt: 'today',
       linkStatus: 'unlinked',
     }),
+    finishAfterTurn: jest.fn().mockResolvedValue({
+      taskId: 9,
+      finishScheduled: true,
+      afterSessionId: 42,
+    }),
+    cancelScheduledFinish: jest
+      .fn()
+      .mockResolvedValue({
+        taskId: 9,
+        cancelled: true,
+        finishScheduled: false,
+      }),
     reopen: jest.fn().mockResolvedValue({
       ...current,
       taskState: 'preparing',
@@ -333,7 +345,7 @@ describe('task-aware agent workflow', () => {
       }),
     );
     try {
-      await f.call('finish_task', { taskId: 9 });
+      await f.call('finish_task', { taskId: 12 });
       throw new Error('expected rejection');
     } catch (error) {
       expect(errorToResult(error).structuredContent).toMatchObject({
@@ -382,8 +394,42 @@ describe('task-aware agent workflow', () => {
       (await f.call('preview_finish_task', { taskId: 9 })).data,
     ).toMatchObject({ agents: 1, terminals: 2, actions: 3 });
     expect(f.tasks.finish).not.toHaveBeenCalled();
-    await f.call('finish_task', { taskId: 9 });
-    expect(f.tasks.finish).toHaveBeenCalledWith(9, false);
+    await f.call('finish_task', { taskId: 12 });
+    expect(f.tasks.finish).toHaveBeenCalledWith(12, false);
+  });
+
+  it('schedules self-finishing only on explicit user request without assuming stop approval', async () => {
+    const f = fixture();
+    await expect(
+      f.call('finish_task', { taskId: 9, confirmStop: true }),
+    ).rejects.toMatchObject({ code: 'self_target_not_allowed' });
+    expect(f.tasks.finishAfterTurn).not.toHaveBeenCalled();
+    const result = await f.call('finish_task', {
+      taskId: 9,
+      userRequested: true,
+    });
+    expect(result.data).toEqual({
+      taskId: 9,
+      finishScheduled: true,
+      afterSessionId: 42,
+    });
+    expect(result.nextStep).toContain('without waiting or polling');
+    expect(result.nextStep).toContain('cancel_finish_task');
+    expect(f.tasks.finishAfterTurn).toHaveBeenCalledWith(9, 42, false);
+    expect(f.tasks.finish).not.toHaveBeenCalled();
+  });
+
+  it('cancels using the authenticated caller and tells it to continue working', async () => {
+    const f = fixture();
+    const result = await f.call('cancel_finish_task', { taskId: 9 });
+    expect(f.tasks.cancelScheduledFinish).toHaveBeenCalledWith(9, 42);
+    expect(result.data).toEqual({
+      taskId: 9,
+      cancelled: true,
+      finishScheduled: false,
+    });
+    expect(result.nextStep).toContain('Continue working normally');
+    expect(f.tasks.finish).not.toHaveBeenCalled();
   });
 
   it('reopens with stable identity and polls the new environment', async () => {

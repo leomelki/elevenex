@@ -4794,6 +4794,23 @@ describe('ClaudeRuntimeService', () => {
       expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
     });
 
+    it('allows cancelling an own queued finish without approval in plan autonomy', async () => {
+      (service as any).sessionRuntimes.set(SESSION_ID, {});
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
+      state.surface = 'agent';
+      state.agentAutonomyMode = 'plan';
+      const canUseTool = (service as any).createCanUseTool(SESSION_ID, state);
+      expect(
+        await canUseTool(
+          'mcp__elevenex__cancel_finish_task',
+          { taskId: 9 },
+          { toolUseID: 'cancel-finish' },
+        ),
+      ).toMatchObject({ behavior: 'allow' });
+      expect(state.pendingPermissionRequest).toBeNull();
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
+    });
+
     // Regression: canUseTool read activeRuns directly and auto-denied any
     // permission RPC that arrived before reconcileBackgroundResume (or after
     // finishRun already retired the run) had registered one — the CLI's own

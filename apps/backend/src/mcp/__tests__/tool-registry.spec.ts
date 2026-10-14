@@ -266,6 +266,16 @@ describe('coding session identity and default scopes', () => {
           linkStatus: 'unlinked',
           sessions: [],
         })),
+        finishAfterTurn: jest.fn(async (taskId, sessionId) => ({
+          taskId,
+          finishScheduled: true,
+          afterSessionId: sessionId,
+        })),
+        cancelScheduledFinish: jest.fn(async (taskId) => ({
+          taskId,
+          cancelled: true,
+          finishScheduled: false,
+        })),
       },
       scratchpad: {
         findByProject: jest.fn(async () => []),
@@ -392,6 +402,76 @@ describe('coding session identity and default scopes', () => {
       (await bag.call('finish_task', { taskId: 17 })).isError,
     ).toBeUndefined();
     expect(bag.services.tasks.finish).toHaveBeenCalledWith(17, false);
+  });
+
+  it('allows an explicit user-requested self-finish while preserving destructive capability checks', async () => {
+    const bag = setup();
+    expect(
+      parse(await bag.call('finish_task', { taskId: 9, userRequested: true })),
+    ).toMatchObject({
+      data: { taskId: 9, finishScheduled: true, afterSessionId: 42 },
+    });
+    expect(bag.services.tasks.finishAfterTurn).toHaveBeenCalledWith(
+      9,
+      42,
+      false,
+    );
+    expect(bag.services.tasks.finish).not.toHaveBeenCalled();
+    expect(
+      parse(
+        await bag.call(
+          'finish_task',
+          { taskId: 9, userRequested: true },
+          'unknown',
+        ),
+      ),
+    ).toMatchObject({ error: { code: 'destructive_not_allowed' } });
+  });
+
+  it('allows callers to cancel their scheduled finish using current-task defaults and rejects anonymous cancellation', async () => {
+    const bag = setup();
+    expect(parse(await bag.call('cancel_finish_task'))).toMatchObject({
+      data: { taskId: 9, cancelled: true, finishScheduled: false },
+    });
+    expect(bag.services.tasks.cancelScheduledFinish).toHaveBeenCalledWith(
+      9,
+      42,
+    );
+    expect(
+      parse(await bag.call('cancel_finish_task', { taskId: 9 }, 'unknown')),
+    ).toMatchObject({ error: { code: 'requires_agent_session' } });
+    expect(bag.services.tasks.cancelScheduledFinish).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not request an additional approval to cancel a queued finish in plan autonomy', async () => {
+    const bag = setup('agent');
+    Object.assign(bag.services.sessions, {
+      findOne: jest.fn(async () => ({
+        ...bag.session,
+        agentAutonomyMode: 'plan',
+      })),
+    });
+    const approve = jest.fn(async () => ({ decision: 'deny' }));
+    const registry = new ToolRegistryService(
+      bag.services,
+      new DeltaCursorStore(),
+      new DeepLinkBuilder(),
+      { bindFor: () => ({ requestApproval: approve }) } as never,
+      { resolveSessionId: async () => 42 } as never,
+      new McpConnectionRegistryService(),
+      { invalidate: jest.fn() } as never,
+    );
+    const server = new FakeServer();
+    registry.registerAll(server as never);
+    expect(
+      parse(
+        await server.tools.get('cancel_finish_task')!(
+          { taskId: 9 },
+          extraFor('agent-token'),
+        ),
+      ),
+    ).toMatchObject({ data: { cancelled: true } });
+    expect(approve).not.toHaveBeenCalled();
   });
 
   it('preserves an explicit worktree even when the caller is authenticated', async () => {

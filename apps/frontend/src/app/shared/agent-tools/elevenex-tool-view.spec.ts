@@ -150,6 +150,15 @@ describe('Elevenex chat receipts', () => {
   it('distinguishes accepted setup from actual readiness and completion', () => {
     expect(
       buildElevenexToolView(
+        call('finish_task'),
+        result({ taskId: 9, finishScheduled: true, afterSessionId: 42 }),
+      ),
+    ).toMatchObject({
+      summary: { text: 'Finish scheduled', tone: 'warn' },
+      notice: expect.stringContaining('after the requesting agent replies'),
+    });
+    expect(
+      buildElevenexToolView(
         call('create_task'),
         result({ taskId: 9, state: 'preparing', preparationStage: 'preparing_checkout' }),
       ),
@@ -175,6 +184,20 @@ describe('Elevenex chat receipts', () => {
       summary: { tone: 'warn' },
       notice: expect.stringContaining('continues in the background'),
     });
+  });
+  it('shows cancelled and absent finish schedules as an open task', () => {
+    for (const cancelled of [true, false]) {
+      expect(
+        buildElevenexToolView(
+          call('cancel_finish_task'),
+          result({ taskId: 9, cancelled, finishScheduled: false }),
+        ),
+      ).toMatchObject({
+        title: 'Cancel scheduled task finish',
+        summary: { text: cancelled ? 'Finish cancelled' : 'Nothing scheduled', tone: 'neutral' },
+        notice: expect.stringContaining('task stays open'),
+      });
+    }
   });
   it('shows an execution failure even after an approved permission request', () => {
     const failed = {

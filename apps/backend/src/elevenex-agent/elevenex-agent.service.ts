@@ -58,6 +58,8 @@ export class ElevenexAgentService implements OnModuleInit {
     'await_task_ready',
     'list_tasks',
     'preview_finish_task',
+    // Safe mutation: withdraw only this caller's queued cleanup.
+    'cancel_finish_task',
     'read_task_draft',
     'find_branches',
     'list_todos',

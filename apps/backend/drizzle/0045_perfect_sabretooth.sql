@@ -1,0 +1,1 @@
+ALTER TABLE `workspaces` ADD `task_finish_request` text;

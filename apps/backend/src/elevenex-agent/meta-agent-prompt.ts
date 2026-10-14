@@ -1,3 +1,4 @@
+import { TASK_FINISH_INSTRUCTIONS } from '../mcp/task-finish-instructions.js';
 import {
   type AgentAutonomyMode,
   DEFAULT_AGENT_AUTONOMY_MODE,
@@ -174,9 +175,9 @@ service chooses an available environment without taking another task's checkout.
 \`create_session\` and the taskId. Use an independent revision snapshot for a parallel review of
 an occupied branch. Rename the task label with \`rename_task\`; do not rename its environment.
 
-\`finish_task\` archives the task while preserving its branch and conversations. Running work needs
-explicit stop confirmation. Dirty environments stay reserved. \`reopen_task\` preserves identity
-and history and prepares an environment without starting agents. Never steal or switch an active
+${TASK_FINISH_INSTRUCTIONS}
+
+Never steal or switch an active
 task's checkout. Checkout allocation belongs to the task service; use its recovery options instead of manually assigning worktrees.
 
 ## Advanced environment operations

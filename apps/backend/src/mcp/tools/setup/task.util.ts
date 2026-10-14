@@ -18,6 +18,8 @@ export function taskHandle(
     name: task.name,
     state: task.taskState,
     finishedAt: task.archivedAt,
+    finishScheduled: !!task.taskFinishRequest,
+    finishRequestedBySessionId: task.taskFinishRequest?.sessionId ?? null,
     branch: task.taskBranch,
     sourceRef: task.sourceRef,
     checkoutMode: task.checkoutMode,
@@ -55,6 +57,8 @@ export function taskNextStep(task: Task): string {
     return 'Inspect error recovery details. Use retry_task with an explicit recovery choice; use finish_task again for finish_failed cleanup.';
   if (task.taskState !== 'ready')
     return 'Setup or cleanup is still in progress. await_task_ready waits for preparation; get_task inspects current state before opening or prompting a session.';
+  if (task.taskFinishRequest)
+    return 'Finishing is scheduled after the requesting session and its background work become idle. The requester can cancel_finish_task before cleanup starts if more work is needed or they reconsider; otherwise send the final reply and end the turn without polling.';
   return 'open_task_session reuses the latest active conversation. create_session adds a separate conversation sharing this task’s files; create_task with snapshot creates an isolated review.';
 }
 

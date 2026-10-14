@@ -95,6 +95,7 @@ describe('setup tool group', () => {
         'retry_task',
         'preview_finish_task',
         'finish_task',
+        'cancel_finish_task',
         'reopen_task',
         'read_task_draft',
         'set_task_draft',

@@ -316,6 +316,13 @@
       "when": 1791884132826,
       "tag": "0044_lean_captain_midlands",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1791986488295,
+      "tag": "0045_perfect_sabretooth",
+      "breakpoints": true
     }
   ]
 }

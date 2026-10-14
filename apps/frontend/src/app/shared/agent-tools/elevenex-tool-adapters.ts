@@ -15,6 +15,7 @@ const taskResults = new Set([
   'reopen_task',
   'rename_task',
   'finish_task',
+  'cancel_finish_task',
   'await_task_ready',
 ]);
 const commandResults = new Set([
@@ -43,6 +44,14 @@ export function adaptElevenexResult(tool: string, data: Receipt): ResultAdapter 
       notice: 'Saving a command does not run it. Its previous run status is separate.',
     };
   if (taskResults.has(tool)) {
+    if (tool === 'cancel_finish_task')
+      return {
+        summary: {
+          text: data['cancelled'] === true ? 'Finish cancelled' : 'Nothing scheduled',
+          tone: 'neutral',
+        },
+        notice: 'This task stays open. You can continue working.',
+      };
     if (data['finishedAt'])
       return {
         summary: { text: 'Finished', tone: 'ok' },
@@ -50,6 +59,12 @@ export function adaptElevenexResult(tool: string, data: Receipt): ResultAdapter 
           data['linkStatus'] === 'unlinked'
             ? 'Checkout released. Branch and conversation history are preserved.'
             : 'Checkout retained. Branch and conversation history are preserved.',
+      };
+    if (data['finishScheduled'] === true)
+      return {
+        summary: { text: 'Finish scheduled', tone: 'warn' },
+        notice:
+          'This task will finish after the requesting agent replies and its background work completes.',
       };
     if (data['timedOut'] === true)
       return {

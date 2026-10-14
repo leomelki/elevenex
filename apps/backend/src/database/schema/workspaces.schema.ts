@@ -29,6 +29,12 @@ export const workspaces = sqliteTable(
     finalCommit: text('final_commit'),
     taskConfig: text('task_config'),
     taskError: text('task_error'),
+    taskFinishRequest: text('task_finish_request', { mode: 'json' }).$type<{
+      // Optional for finish requests saved before cancellation was introduced.
+      requestId?: string;
+      sessionId: number;
+      confirmStop: boolean;
+    }>(),
     taskDraft: text('task_draft').notNull().default(''),
     taskRequestId: text('task_request_id').unique(),
     linkStatus: text('link_status').notNull().default('linked'),
@@ -48,6 +54,9 @@ export const workspaces = sqliteTable(
   },
   (table) => [
     index('workspaces_repo_lifecycle_idx').on(table.repoId, table.archivedAt),
-    index('workspaces_assignment_idx').on(table.poolWorktreeId, table.linkStatus),
+    index('workspaces_assignment_idx').on(
+      table.poolWorktreeId,
+      table.linkStatus,
+    ),
   ],
 );

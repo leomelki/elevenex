@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import {
   mkdtemp,
   mkdir,
@@ -48,7 +49,13 @@ describe('Task lifecycle with real Git and migrations', () => {
   let gitService: TaskGitService;
   let worktreeContext: WorktreeContextService;
   let repo: typeof schema.repos.$inferSelect;
-  const hooks = { getStatus: jest.fn(() => 'idle') };
+  const hooks = Object.assign(new EventEmitter(), {
+    getStatus: jest.fn(() => 'idle'),
+    getActivity: jest.fn(() => ({
+      activityStatus: hooks.getStatus(),
+      backgroundActive: false,
+    })),
+  });
   const terminals = {
     isAlive: jest.fn(() => false),
     hasTmuxSessionForTerminal: jest.fn(async () => false),
@@ -85,6 +92,10 @@ describe('Task lifecycle with real Git and migrations', () => {
       .values({ projectId: project.id, name: 'repo', path: repoPath })
       .returning();
     hooks.getStatus.mockReturnValue('idle');
+    hooks.getActivity.mockImplementation(() => ({
+      activityStatus: hooks.getStatus(),
+      backgroundActive: false,
+    }));
     terminals.isAlive.mockReturnValue(false);
     terminals.hasTmuxSessionForTerminal.mockResolvedValue(false);
     gitService = new TaskGitService();
@@ -166,10 +177,15 @@ describe('Task lifecycle with real Git and migrations', () => {
       actions as unknown as ActionsService,
       worktreeContext,
     );
+    service.onModuleInit();
   });
   afterEach(async () => {
+    service?.onModuleDestroy();
     if (service)
-      await Promise.allSettled([...(service as any).operations.values()]);
+      await Promise.allSettled([
+        ...(service as any).operations.values(),
+        ...(service as any).deferredFinishes.values(),
+      ]);
     sqlite?.close();
     if (root) await rm(root, { recursive: true, force: true });
   });
@@ -946,6 +962,412 @@ describe('Task lifecycle with real Git and migrations', () => {
     hooks.getStatus.mockReturnValue('idle');
     await service.finish(task.id, true);
     expect(await db.select().from(schema.taskReservations)).toHaveLength(0);
+  });
+
+  async function drainFinishes() {
+    while ((service as any).deferredFinishes.size)
+      await Promise.all([...(service as any).deferredFinishes.values()]);
+  }
+
+  function gate() {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { promise, release };
+  }
+
+  it('cancels a durable scheduled finish without changing the checkout or stopping processes', async () => {
+    const task = await create('cancel-self-finish');
+    const sessionId = task.sessions[0].id;
+    await writeFile(join(task.path, 'notes.txt'), 'More work to do');
+    await service.finishAfterTurn(task.id, sessionId);
+    expect(await service.cancelScheduledFinish(task.id, sessionId)).toEqual({
+      taskId: task.id,
+      cancelled: true,
+      finishScheduled: false,
+    });
+    expect(
+      await service.cancelScheduledFinish(task.id, sessionId),
+    ).toMatchObject({ cancelled: false, finishScheduled: false });
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    service.onModuleDestroy();
+    service.onModuleInit();
+    await (service as any).recover();
+    await drainFinishes();
+    expect(await service.record(task.id)).toMatchObject({
+      taskFinishRequest: null,
+      archivedAt: null,
+      taskState: 'ready',
+      linkStatus: 'linked',
+    });
+    expect(stopSession).not.toHaveBeenCalled();
+    expect(await readFile(join(task.path, 'notes.txt'), 'utf8')).toBe(
+      'More work to do',
+    );
+    expect(await db.select().from(schema.taskReservations)).toHaveLength(1);
+  });
+
+  it('cancels a finish already dispatched to the event loop', async () => {
+    const task = await create('cancel-dispatched-finish');
+    const sessionId = task.sessions[0].id;
+    await service.finishAfterTurn(task.id, sessionId);
+    hooks.emit('status-changed', { sessionId });
+    expect((service as any).deferredFinishes.size).toBe(1);
+    await service.cancelScheduledFinish(task.id, sessionId);
+    await drainFinishes();
+    expect(stopSession).not.toHaveBeenCalled();
+    expect((await service.record(task.id)).archivedAt).toBeNull();
+  });
+
+  it('cancels a worker waiting on a repository lock before the lock is released', async () => {
+    const task = await create('cancel-locked-finish');
+    const sessionId = task.sessions[0].id;
+    await service.finishAfterTurn(task.id, sessionId);
+    const key = await gitService.repositoryKey(repoPath);
+    const blocker = gate();
+    const entered = gate();
+    const blocked = gitService.exclusive(key, async () => {
+      entered.release();
+      await blocker.promise;
+    });
+    await entered.promise;
+    const queued = gate();
+    const original = gitService.exclusive.bind(gitService);
+    const exclusive = jest
+      .spyOn(gitService, 'exclusive')
+      .mockImplementation((lockKey, operation) => {
+        queued.release();
+        return original(lockKey, operation);
+      });
+    try {
+      hooks.emit('status-changed', { sessionId });
+      await queued.promise;
+      expect(
+        await service.cancelScheduledFinish(task.id, sessionId),
+      ).toMatchObject({ cancelled: true });
+      expect((await service.record(task.id)).taskFinishRequest).toBeNull();
+    } finally {
+      exclusive.mockRestore();
+      blocker.release();
+      await blocked;
+      await drainFinishes();
+    }
+    expect(stopSession).not.toHaveBeenCalled();
+    expect((await service.record(task.id)).archivedAt).toBeNull();
+  });
+
+  it('honours cancellation during a slow process preview', async () => {
+    const task = await create('cancel-preview-finish');
+    const sessionId = task.sessions[0].id;
+    await service.finishAfterTurn(task.id, sessionId, true);
+    const entered = gate();
+    const previewGate = gate();
+    const preview = jest
+      .spyOn(service, 'finishPreview')
+      .mockImplementationOnce(async () => {
+        entered.release();
+        await previewGate.promise;
+        return { agents: 0, terminals: 0, actions: 0 };
+      });
+    try {
+      hooks.emit('status-changed', { sessionId });
+      await entered.promise;
+      await service.cancelScheduledFinish(task.id, sessionId);
+    } finally {
+      previewGate.release();
+      await drainFinishes();
+      preview.mockRestore();
+    }
+    expect(stopSession).not.toHaveBeenCalled();
+    expect(await service.record(task.id)).toMatchObject({
+      archivedAt: null,
+      taskFinishRequest: null,
+      taskError: null,
+    });
+  });
+
+  it('ignores late preview failures from a cancelled job', async () => {
+    const task = await create('cancel-late-preview-error');
+    const sessionId = task.sessions[0].id;
+    await service.finishAfterTurn(task.id, sessionId);
+    const entered = gate();
+    const previewGate = gate();
+    const preview = jest
+      .spyOn(service, 'finishPreview')
+      .mockImplementationOnce(async () => {
+        entered.release();
+        await previewGate.promise;
+        throw new Error('Preview failed after cancellation');
+      });
+    try {
+      hooks.emit('status-changed', { sessionId });
+      await entered.promise;
+      await service.cancelScheduledFinish(task.id, sessionId);
+    } finally {
+      previewGate.release();
+      await drainFinishes();
+      preview.mockRestore();
+    }
+    expect(stopSession).not.toHaveBeenCalled();
+    expect(await service.record(task.id)).toMatchObject({
+      taskFinishRequest: null,
+      taskError: null,
+      taskState: 'ready',
+      archivedAt: null,
+    });
+  });
+
+  it('does not let an old cancelled job finish a new schedule or reuse its stop consent', async () => {
+    const task = await create('reschedule-cancelled-finish');
+    const sessionId = task.sessions[0].id;
+    await service.finishAfterTurn(task.id, sessionId, true);
+    const oldRequest = (await service.record(task.id)).taskFinishRequest!;
+    await service.cancelScheduledFinish(task.id, sessionId);
+    await service.finishAfterTurn(task.id, sessionId);
+    const newRequest = (await service.record(task.id)).taskFinishRequest!;
+    expect(newRequest.requestId).not.toBe(oldRequest.requestId);
+    expect(newRequest.confirmStop).toBe(false);
+    await service.finish(task.id, oldRequest.confirmStop, oldRequest);
+    expect(stopSession).not.toHaveBeenCalled();
+    expect((await service.record(task.id)).taskFinishRequest).toEqual(
+      newRequest,
+    );
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    expect(stopSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects cancellation by another conversation and after cleanup starts', async () => {
+    const task = await create('cancel-finish-boundary');
+    const sessionId = task.sessions[0].id;
+    await service.finishAfterTurn(task.id, sessionId);
+    await expect(
+      service.cancelScheduledFinish(task.id, sessionId + 100),
+    ).rejects.toMatchObject({ response: { code: 'finish_request_not_owned' } });
+    expect((await service.record(task.id)).taskFinishRequest).not.toBeNull();
+    const cleanupStarted = gate();
+    const cleanupGate = gate();
+    const originalStop = stopSession.getMockImplementation()!;
+    stopSession.mockImplementationOnce(async (id: number) => {
+      cleanupStarted.release();
+      await cleanupGate.promise;
+      await originalStop(id);
+    });
+    try {
+      hooks.emit('status-changed', { sessionId });
+      await cleanupStarted.promise;
+      await expect(
+        service.cancelScheduledFinish(task.id, sessionId),
+      ).rejects.toMatchObject({ response: { code: 'finish_already_started' } });
+    } finally {
+      cleanupGate.release();
+      await drainFinishes();
+    }
+    await expect(
+      service.cancelScheduledFinish(task.id, sessionId),
+    ).rejects.toMatchObject({ response: { code: 'finish_already_started' } });
+    expect((await service.record(task.id)).archivedAt).not.toBeNull();
+  });
+
+  it('keeps the caller alive until its final reply and background work finish, then closes once', async () => {
+    const task = await create('self-finish');
+    const sessionId = task.sessions[0].id;
+    hooks.getStatus.mockReturnValue('running');
+    expect(await service.finishAfterTurn(task.id, sessionId)).toEqual({
+      taskId: task.id,
+      finishScheduled: true,
+      afterSessionId: sessionId,
+    });
+    expect(stopSession).not.toHaveBeenCalled();
+    expect((await service.record(task.id)).taskFinishRequest).toEqual({
+      requestId: expect.any(String),
+      sessionId,
+      confirmStop: false,
+    });
+    hooks.getStatus.mockReturnValue('idle');
+    hooks.getActivity.mockReturnValue({
+      activityStatus: 'idle',
+      backgroundActive: true,
+    });
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    expect(stopSession).not.toHaveBeenCalled();
+    hooks.getActivity.mockReturnValue({
+      activityStatus: 'idle',
+      backgroundActive: false,
+    });
+    hooks.emit('status-changed', { sessionId });
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    expect(stopSession).toHaveBeenCalledTimes(1);
+    expect(await service.get(task.id)).toMatchObject({
+      linkStatus: 'unlinked',
+      taskFinishRequest: null,
+      archivedAt: expect.any(String),
+    });
+    await service.reopen(task.id);
+    await settled(task.id);
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    expect((await service.record(task.id)).archivedAt).toBeNull();
+  });
+
+  it('does not finish from the tool handler even when caller status is idle', async () => {
+    const task = await create('idle-tool');
+    await service.finishAfterTurn(task.id, task.sessions[0].id);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(stopSession).not.toHaveBeenCalled();
+    expect((await service.record(task.id)).archivedAt).toBeNull();
+  });
+
+  it('rechecks caller activity under the lock if a new turn starts before cleanup', async () => {
+    const task = await create('resume-before-finish');
+    const sessionId = task.sessions[0].id;
+    await service.finishAfterTurn(task.id, sessionId);
+    hooks.emit('status-changed', { sessionId });
+    hooks.getStatus.mockReturnValue('running');
+    await drainFinishes();
+    expect(stopSession).not.toHaveBeenCalled();
+    hooks.getStatus.mockReturnValue('idle');
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    expect((await service.record(task.id)).archivedAt).not.toBeNull();
+  });
+
+  it('does not use stop consent to interrupt a caller that resumes during a slow preview', async () => {
+    const task = await create('slow-finish-preview');
+    const sessionId = task.sessions[0].id;
+    await service.finishAfterTurn(task.id, sessionId, true);
+    const preview = jest.spyOn(service, 'finishPreview');
+    preview.mockImplementationOnce(async () => {
+      hooks.getStatus.mockReturnValue('running');
+      return { agents: 1, terminals: 0, actions: 0 };
+    });
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    expect(stopSession).not.toHaveBeenCalled();
+    expect((await service.record(task.id)).taskFinishRequest).not.toBeNull();
+    preview.mockRestore();
+    hooks.getStatus.mockReturnValue('idle');
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    expect((await service.record(task.id)).archivedAt).not.toBeNull();
+  });
+
+  it('requires separate stop consent for other agents', async () => {
+    const task = await create('other-work');
+    const sessionId = task.sessions[0].id;
+    await db.insert(schema.sessions).values({
+      repoId: repo.id,
+      workspaceId: task.id,
+      worktreePath: task.path,
+      branchName: task.taskBranch!,
+    });
+    hooks.getStatus.mockReturnValue('running');
+    await expect(
+      service.finishAfterTurn(task.id, sessionId),
+    ).rejects.toMatchObject({ response: { code: 'running_work', agents: 1 } });
+    expect((await service.record(task.id)).taskFinishRequest).toBeNull();
+    expect(stopSession).not.toHaveBeenCalled();
+    await service.finishAfterTurn(task.id, sessionId, true);
+    hooks.getActivity.mockImplementation((id?: number) => ({
+      activityStatus: id === sessionId ? 'idle' : 'running',
+      backgroundActive: false,
+    }));
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    expect(stopSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('coalesces retries and accepts later explicit stop consent without losing it', async () => {
+    const task = await create('retry-self-finish');
+    const sessionId = task.sessions[0].id;
+    await service.finishAfterTurn(task.id, sessionId);
+    await service.finishAfterTurn(task.id, sessionId, true);
+    await service.finishAfterTurn(task.id, sessionId);
+    expect((await service.record(task.id)).taskFinishRequest).toEqual({
+      requestId: expect.any(String),
+      sessionId,
+      confirmStop: true,
+    });
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    expect(stopSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires stop consent for a live terminal even though the caller will finish naturally', async () => {
+    const task = await create('terminal-self-finish');
+    await db.insert(schema.userTerminals).values({
+      workspaceId: task.id,
+      worktreePath: task.path,
+      name: 'Shell',
+      shell: '/bin/sh',
+    });
+    terminals.isAlive.mockReturnValue(true);
+    await expect(
+      service.finishAfterTurn(task.id, task.sessions[0].id),
+    ).rejects.toMatchObject({
+      response: { code: 'running_work', terminals: 1 },
+    });
+    expect((await service.record(task.id)).taskFinishRequest).toBeNull();
+  });
+
+  it('rejects a foreign requester and clears a request if its caller moves out of the task', async () => {
+    const task = await create('membership');
+    await expect(service.finishAfterTurn(task.id, 99999)).rejects.toThrow(
+      'caller no longer belongs',
+    );
+    const sessionId = task.sessions[0].id;
+    await service.finishAfterTurn(task.id, sessionId);
+    await db
+      .update(schema.sessions)
+      .set({ workspaceId: null })
+      .where(eq(schema.sessions.id, sessionId));
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    expect(stopSession).not.toHaveBeenCalled();
+    expect(await service.record(task.id)).toMatchObject({
+      taskFinishRequest: null,
+      archivedAt: null,
+    });
+  });
+
+  it('recovers durable finish requests and retains dirty checkouts', async () => {
+    const task = await create('recover-self-finish');
+    await writeFile(join(task.path, 'notes.txt'), 'Keep these edits');
+    await service.finishAfterTurn(task.id, task.sessions[0].id);
+    service.onModuleDestroy();
+    service.onModuleInit();
+    await (service as any).recover();
+    await drainFinishes();
+    expect(await service.record(task.id)).toMatchObject({
+      archivedAt: expect.any(String),
+      taskFinishRequest: null,
+      linkStatus: 'linked',
+    });
+    expect(await readFile(join(task.path, 'notes.txt'), 'utf8')).toBe(
+      'Keep these edits',
+    );
+    expect(await db.select().from(schema.taskReservations)).toHaveLength(1);
+  });
+
+  it('records deferred cleanup failures and retains the checkout for explicit retry', async () => {
+    const task = await create('failed-self-finish');
+    const sessionId = task.sessions[0].id;
+    await service.finishAfterTurn(task.id, sessionId);
+    stopSession.mockRejectedValueOnce(new Error('Cleanup failed'));
+    hooks.emit('status-changed', { sessionId });
+    await drainFinishes();
+    expect(await service.get(task.id)).toMatchObject({
+      taskFinishRequest: null,
+      archivedAt: null,
+      linkStatus: 'linked',
+      error: { code: 'finish_failed' },
+    });
+    await service.finish(task.id);
+    expect((await service.record(task.id)).archivedAt).not.toBeNull();
   });
 
   it('restores a deleted branch from its saved final commit on an explicit retry', async () => {

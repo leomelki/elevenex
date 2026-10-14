@@ -19,6 +19,7 @@ import { normalizeAutonomyMode } from '../../elevenex-agent/meta-agent-prompt.js
 import {
   isDestructiveElevenexTool,
   ELEVENEX_MCP_TOOL_PREFIX,
+  CANCEL_FINISH_TASK_TOOL,
 } from '../agent-tool-policy.js';
 
 /** Hard ceiling the wrapper enforces on any `limit` field, regardless of tool. */
@@ -255,6 +256,10 @@ export class ToolRegistryService {
     args: Record<string, unknown>,
     ctx: ToolContext,
   ): Promise<void> {
+    // Cancellation only withdraws the authenticated caller's pending finish;
+    // it must remain available if the mission changes to plan autonomy.
+    if (`${ELEVENEX_MCP_TOOL_PREFIX}${tool.name}` === CANCEL_FINISH_TASK_TOOL)
+      return;
     const risky =
       tool.destructive ||
       isDestructiveElevenexTool(`${ELEVENEX_MCP_TOOL_PREFIX}${tool.name}`);

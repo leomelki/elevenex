@@ -27,7 +27,7 @@ commands, coordinate other sessions, and reach the human. It is the integration 
   scope: transcript/status tools use their session; file/diff/context/actions use its worktree;
   notes/todos use its project; task reads, labels, and drafts use its task; repository discovery and task creation use its repo. Explicit scopes take precedence.
   Missions and external clients must still scope calls explicitly. Session-control tools keep
-  required targets; `disallowSelfTarget` rejects self prompts/stops, finishing the caller’s task, and deleting or archiving containers that include the caller. File/command scope validates the session’s task checkout before using it, protecting historical paths after reuse.
+  required targets; `disallowSelfTarget` rejects self prompts/stops and deleting or archiving containers that include the caller. `finish_task` checks self-targets in its handler: `userRequested:true` attests that the user explicitly asked to finish, using the same agent-attested consent convention as `confirmStop`. Completing coding work is not consent. Self-finishing persists a request and returns `finishScheduled:true`; cleanup waits for caller/background idle after the final reply, and rechecks membership/activity under the repository lock. Restart recovery resumes pending requests. The requesting conversation can use `cancel_finish_task` without extra human approval before cleanup starts; cancellation atomically clears the saved request even while the worker waits for a repository lock or process preview. Once cleanup claims state `finishing`, cancellation cannot undo it. Generation IDs prevent cancelled workers from acting on later schedules. Shared task-finish instructions explain the full effects and cancellation window to coding sessions and missions. `confirmStop` remains a separate approval for stopping other running work. File/command scope validates the session’s task checkout before using it, protecting historical paths after reuse.
 - **Services reused in-process** (no loopback HTTP): see `tool-registry/mcp-tool-services.ts`.
 - **Downstream-only** module: it consumes domain modules and nothing consumes it (no new cycles).
 
@@ -88,7 +88,7 @@ guarantees so individual tools can't regress them:
 
 - **Session configuration**: `get_session_config` pages model IDs and reports the selected/default model, reasoning levels, provider capabilities, and provider-advertised permission modes. Use it before `set_model` or `set_permission_mode`; `session_status` remains a cheap liveness read.
 - **Task lifecycle**: `get_task_defaults`, `create_task`, `list_tasks`, `get_task`,
-  `await_task_ready`, `open_task_session`, `rename_task`, `move_task`, `retry_task`, `preview_finish_task`, `finish_task`,
+  `await_task_ready`, `open_task_session`, `rename_task`, `move_task`, `retry_task`, `preview_finish_task`, `finish_task`, `cancel_finish_task`,
   `reopen_task`, `read_task_draft`, `set_task_draft`.
 - **Creation**: `create_task` uses `TasksService` for branch/path reservations, remote refresh,
   clean checkout reuse, snapshot review, external checkout consent and quota recovery. taskId

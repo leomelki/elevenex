@@ -110,6 +110,7 @@ import {
 import {
   isElevenexTool,
   isDestructiveElevenexTool,
+  CANCEL_FINISH_TASK_TOOL,
 } from '../mcp/agent-tool-policy.js';
 import {
   ClaudeBackgroundWorkItem,
@@ -1806,6 +1807,8 @@ export class ClaudeRuntimeService
       if (state.surface === 'agent') {
         const autonomy = normalizeAutonomyMode(state.agentAutonomyMode);
         const autoAllow =
+          // Withdrawing one's own queued finish never needs a new approval.
+          toolName === CANCEL_FINISH_TASK_TOOL ||
           // full → trust the agent end-to-end (also the bypassPermissions default,
           // but canUseTool can still fire for some tools, so allow explicitly).
           autonomy === 'full' ||

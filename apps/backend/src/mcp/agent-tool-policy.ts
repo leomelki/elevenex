@@ -8,6 +8,8 @@
  * is registered as `elevenex`.
  */
 export const ELEVENEX_MCP_TOOL_PREFIX = 'mcp__elevenex__';
+/** Withdrawing one's own queued cleanup is safe even in plan autonomy. */
+export const CANCEL_FINISH_TASK_TOOL = `${ELEVENEX_MCP_TOOL_PREFIX}cancel_finish_task`;
 
 /**
  * Elevenex tools that perform a risky or irreversible action and therefore must

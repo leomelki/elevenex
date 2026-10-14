@@ -4,8 +4,28 @@ import {
   normalizeAutonomyMode,
   ELEVENEX_META_AGENT_SYSTEM_PROMPT,
 } from './meta-agent-prompt.js';
+import { SESSION_TOOL_INSTRUCTIONS } from '../mcp/session-tool-context.js';
+import { ELEVENEX_SERVER_INSTRUCTIONS } from '../mcp/server-instructions.js';
 
 describe('meta-agent-prompt', () => {
+  it.each([
+    ['coding session', SESSION_TOOL_INSTRUCTIONS],
+    ['MCP server', ELEVENEX_SERVER_INSTRUCTIONS],
+    ['mission', ELEVENEX_META_AGENT_SYSTEM_PROMPT],
+  ])('explains task finishing and cancellation to the %s', (_, prompt) => {
+    for (const instruction of [
+      'Finishing ends the whole task',
+      'does not commit edits, merge a branch, or push changes',
+      'userRequested:true',
+      'confirmStop:true',
+      'survives backend restarts',
+      'cancel_finish_task before becoming idle',
+      'without asking for extra permission',
+      'Once cleanup starts',
+      'without waiting or polling',
+    ])
+      expect(prompt).toContain(instruction);
+  });
   describe('buildMetaAgentPrompt', () => {
     it('substitutes every autonomy marker (no {{...}} left)', () => {
       for (const mode of ['full', 'review', 'plan'] as const) {
@@ -53,7 +73,14 @@ describe('meta-agent-prompt', () => {
       const prompt = buildMetaAgentPrompt('review');
       expect(prompt).toContain('get_task_defaults');
       expect(prompt).toContain('open_task_session');
-      for (const name of ['create_worktree', 'get_worktree_job', 'link_worktree', 'steal_worktree', 'switch_branch', 'rename_worktree']) {
+      for (const name of [
+        'create_worktree',
+        'get_worktree_job',
+        'link_worktree',
+        'steal_worktree',
+        'switch_branch',
+        'rename_worktree',
+      ]) {
         expect(prompt).not.toContain(name);
       }
     });

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineTool } from '../../tool-registry/tool.types.js';
+import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import { repoId, retryShape, setupShape, taskId } from './task-shapes.js';
 import { taskHandle, taskNextStep, taskOperation } from './task.util.js';
 
@@ -133,7 +133,7 @@ export const TASK_LIFECYCLE_TOOLS = [
       },
       deepLink: ctx.deepLink.task(args.taskId),
       nextStep:
-        'finish_task preserves history. confirmStop:true requires explicit human approval to stop running work. Ask the human to finish your own task from Elevenex after this turn.',
+        'finish_task preserves history. confirmStop:true requires explicit human approval to stop running work. For your own task, userRequested:true is allowed only when the user explicitly asked to finish it; cleanup waits for your final reply.',
     }),
   }),
   defineTool({
@@ -142,11 +142,16 @@ export const TASK_LIFECYCLE_TOOLS = [
     costClass: 'scoped',
     mutates: true,
     destructive: true,
-    disallowSelfTarget: 'task',
     description:
-      'Stop and archive an explicitly targeted task, preserving branch and conversations. Waits for process cleanup; clean managed worktrees are released, dirty/external ones remain reserved. Cannot finish the calling agent’s own task; use preview_finish_task first.',
+      'Finish the whole task: archive all conversations, stop agents/terminals/actions, preserve branch/history, and release clean managed checkouts (dirty/external stay reserved). Does not commit, merge, or push. Use preview_finish_task first. Self-finish requires userRequested:true and queues cleanup until your final reply and background work end; cancel_finish_task can cancel it before cleanup starts. Other tasks finish immediately.',
     inputShape: {
       taskId,
+      userRequested: z
+        .boolean()
+        .default(false)
+        .describe(
+          'True only when the user explicitly asked to finish this task. Required for finishing your own task; never infer consent from completing the coding work. Default false.',
+        ),
       confirmStop: z
         .boolean()
         .default(false)
@@ -155,6 +160,35 @@ export const TASK_LIFECYCLE_TOOLS = [
         ),
     },
     handler: async (args, ctx) => {
+      const caller =
+        ctx.agentSessionId === null
+          ? null
+          : await ctx.services.sessions.findOne(ctx.agentSessionId);
+      if (caller?.workspaceId === args.taskId) {
+        if (!args.userRequested) {
+          throw new ToolError({
+            code: 'self_target_not_allowed',
+            message:
+              'Finishing your own task requires an explicit user request.',
+            remediation:
+              'Continue working. Only when the user explicitly asks to finish this task, call finish_task with userRequested:true. confirmStop separately authorizes stopping other running work.',
+          });
+        }
+        const data = await taskOperation(() =>
+          ctx.services.tasks.finishAfterTurn(
+            args.taskId,
+            caller.id,
+            args.confirmStop,
+          ),
+        );
+        return {
+          data,
+          touched: { taskId: args.taskId },
+          deepLink: ctx.deepLink.task(args.taskId),
+          nextStep:
+            'Finishing is scheduled, not completed yet, and persists across backend restarts. If more work is needed or you reconsider, call cancel_finish_task before becoming idle; cancellation needs no further user approval. Otherwise send your final reply and end this turn without waiting or polling. Cleanup archives every task conversation, stops task processes, and may release the checkout.',
+        };
+      }
       const task = await taskOperation(() =>
         ctx.services.tasks.finish(args.taskId, args.confirmStop),
       );
@@ -165,6 +199,30 @@ export const TASK_LIFECYCLE_TOOLS = [
         nextStep: taskNextStep(task),
       };
     },
+  }),
+  defineTool({
+    name: 'cancel_finish_task',
+    title: 'Cancel scheduled task finish',
+    costClass: 'instant',
+    mutates: true,
+    requiresAgent: true,
+    currentSessionScope: 'task',
+    annotations: { idempotentHint: true },
+    description:
+      'Cancel your conversation’s queued task finish before cleanup starts, including a job waiting on a repository lock or process preview. Use when you reconsider, need more work, or the user withdraws the request; no extra human approval is needed. Clears the durable schedule without stopping processes or changing files. Repeating with no pending request is harmless; cannot cancel another conversation’s request or undo cleanup already started.',
+    inputShape: { taskId },
+    handler: async (args, ctx) => ({
+      data: await taskOperation(() =>
+        ctx.services.tasks.cancelScheduledFinish(
+          args.taskId,
+          ctx.agentSessionId!,
+        ),
+      ),
+      touched: { taskId: args.taskId },
+      deepLink: ctx.deepLink.task(args.taskId),
+      nextStep:
+        'There is no scheduled finish. Continue working normally. To schedule finishing again, use preview_finish_task then finish_task with userRequested:true only if the user still explicitly wants the task finished.',
+    }),
   }),
   defineTool({
     name: 'reopen_task',
