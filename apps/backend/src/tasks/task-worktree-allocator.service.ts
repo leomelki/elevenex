@@ -12,7 +12,7 @@ import * as schema from '../database/schema/index.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 import { WorktreesService } from '../worktrees/worktrees.service.js';
 import { WorktreePoolService } from '../worktrees/worktree-pool.service.js';
-import { TaskGitService } from './task-git.service.js';
+import { TaskGitService, WorktreeStatus } from './task-git.service.js';
 import { TaskSetup } from './task.types.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { UserPtyManager } from '../user-terminal/user-pty-manager.service.js';
@@ -20,6 +20,13 @@ import { ActionsService } from '../actions/actions.service.js';
 
 type Task = typeof schema.workspaces.$inferSelect;
 type Repo = typeof schema.repos.$inferSelect;
+type Allocation = {
+  path: string;
+  poolId: number;
+  managed: boolean;
+  /** Observed while allocating, so preparation need not rescan the checkout. */
+  status?: WorktreeStatus;
+};
 
 @Injectable()
 export class TaskWorktreeAllocator {
@@ -38,7 +45,7 @@ export class TaskWorktreeAllocator {
     task: Task,
     setup: TaskSetup,
     key: string,
-  ): Promise<{ path: string; poolId: number; managed: boolean }> {
+  ): Promise<Allocation> {
     const branch =
       setup.checkoutMode === 'snapshot' ? null : setup.localBranch!;
     const listed = await this.worktrees.listWorktrees(repo.path);
@@ -79,6 +86,14 @@ export class TaskWorktreeAllocator {
         (owner) =>
           owner.path === candidate && owner.id !== task.id && !owner.isDefault,
       );
+    // No task or process uses these, so status may save its index caches.
+    const unassignedManaged = (
+      candidate: string,
+      pool: (typeof pools)[number] | undefined,
+    ) =>
+      !!pool?.managed &&
+      candidate !== realRoot &&
+      !owners.some((owner) => owner.path === candidate);
     const matching = branch
       ? registered.find((entry) => entry.branch === branch)
       : undefined;
@@ -110,7 +125,9 @@ export class TaskWorktreeAllocator {
       }
       if (matching.isLocked || matching.isBare)
         throw new ConflictException('This checkout is locked or unavailable.');
-      const status = await this.git.status(realPath);
+      const status = await this.git.status(realPath, {
+        persistIndex: unassignedManaged(realPath, pool),
+      });
       if (
         status.dirty &&
         !setup.confirmExternal &&
@@ -137,7 +154,12 @@ export class TaskWorktreeAllocator {
             .returning()
         )[0].id;
       await this.reserve(task.id, key, branch, realPath);
-      return { path: realPath, poolId, managed: pool?.managed ?? false };
+      return {
+        path: realPath,
+        poolId,
+        managed: pool?.managed ?? false,
+        status,
+      };
     }
 
     // Reconcile a task's own interrupted assignment before selecting another slot.
@@ -169,12 +191,46 @@ export class TaskWorktreeAllocator {
           (setup.environment === 'existing'
             ? pool.id === setup.worktreeId
             : setup.environment !== 'new' && pool.managed),
-      )
-      .sort((a, b) => a.pool!.id - b.pool!.id);
+      );
+    // Checkout cost scales with the files it rewrites. In a fast-moving
+    // repository, a checkout a week behind can differ by tens of thousands
+    // of files, so prefer the one closest to the target revision. Measure
+    // each usable revision once; unreachable ones (Infinity) tie on pool id.
+    const heads = [
+      ...new Set(
+        candidates
+          .filter(({ pool }) => pool!.managed || setup.confirmExternal)
+          .map(({ entry }) => entry.head),
+      ),
+    ];
+    const distances = new Map(
+      heads.length > 1 && setup.resolvedCommit
+        ? await Promise.all(
+            heads.map(
+              async (head) =>
+                [
+                  head,
+                  await this.git.changedPathCount(
+                    repo.path,
+                    head,
+                    setup.resolvedCommit!,
+                  ),
+                ] as const,
+            ),
+          )
+        : [],
+    );
+    candidates.sort(
+      (a, b) =>
+        (distances.get(a.entry.head) ?? 0) -
+          (distances.get(b.entry.head) ?? 0) || a.pool!.id - b.pool!.id,
+    );
     for (const candidate of candidates) {
       if (!candidate.pool!.managed && !setup.confirmExternal) continue;
       if (await this.isBusy(candidate.realPath)) continue;
-      const status = await this.git.status(candidate.realPath);
+      const status = await this.git.status(candidate.realPath, {
+        persistIndex: unassignedManaged(candidate.realPath, candidate.pool),
+      });
       if (status.dirty || status.conflicts) continue;
       try {
         await this.reserve(task.id, key, branch, candidate.realPath);
@@ -191,6 +247,7 @@ export class TaskWorktreeAllocator {
         path: candidate.realPath,
         poolId: candidate.pool!.id,
         managed: candidate.pool!.managed,
+        status,
       };
     }
     if (setup.environment === 'existing')
@@ -242,6 +299,7 @@ export class TaskWorktreeAllocator {
     await fs.mkdir(path.dirname(worktreePath), { recursive: true });
     await this.reserve(task.id, key, branch, worktreePath);
     const git = worktreeSimpleGit(repo.path);
+    let status: WorktreeStatus | undefined;
     try {
       await git.raw([
         'worktree',
@@ -250,6 +308,14 @@ export class TaskWorktreeAllocator {
         worktreePath,
         setup.resolvedCommit!,
       ]);
+      // A checkout created just now is clean at its start point. Scanning it
+      // would cost as much as the checkout itself in a large repository.
+      status = {
+        dirty: false,
+        conflicts: false,
+        branch: null,
+        head: setup.resolvedCommit!,
+      };
     } catch (error) {
       // Recovery may find the already-created registration after an interrupted response.
       if (
@@ -278,7 +344,7 @@ export class TaskWorktreeAllocator {
         })
         .returning()
     )[0];
-    return { path: worktreePath, poolId: pool.id, managed: true };
+    return { path: worktreePath, poolId: pool.id, managed: true, status };
   }
 
   private async isBusy(worktreePath: string): Promise<boolean> {

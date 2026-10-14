@@ -467,6 +467,28 @@ describe('Task lifecycle with real Git and migrations', () => {
     expect(reactivateRuntime).toHaveBeenCalledWith(one.sessions[0].id);
   });
 
+  it('reuses the free worktree closest to the target revision and inspects it once', async () => {
+    const behind = await create('behind');
+    const ahead = await create('ahead');
+    const aheadGit = worktreeSimpleGit(ahead.path);
+    await writeFile(join(ahead.path, 'feature.txt'), 'ahead\n');
+    await aheadGit.add('feature.txt');
+    await aheadGit.commit('Ahead');
+    await service.finish(ahead.id);
+    await service.finish(behind.id);
+    expect(behind.poolWorktreeId).toBeLessThan(ahead.poolWorktreeId!);
+    const status = jest.spyOn(gitService, 'status');
+    const next = await create('next', { baseRef: 'ahead' });
+    expect(next).toMatchObject({ taskState: 'ready', path: ahead.path });
+    expect(
+      status.mock.calls.filter(([path]) => path === ahead.path),
+    ).toHaveLength(1);
+    expect(await gitService.status(next.path)).toMatchObject({
+      branch: 'next',
+      dirty: false,
+    });
+  });
+
   it('clears the previous task context before opening a conversation in a reused worktree', async () => {
     const one = await create('old-context');
     await db.insert(schema.worktreeContexts).values({
@@ -536,22 +558,26 @@ describe('Task lifecycle with real Git and migrations', () => {
       reportPaused = resolve;
     });
     const realStatus = gitService.status.bind(gitService);
+    const internals = service as unknown as {
+      update(id: number, values: { taskConfig?: string | null }): Promise<void>;
+    };
+    const realUpdate = internals.update.bind(service);
     let paused = false;
-    const statusSpy = jest
-      .spyOn(gitService, 'status')
-      .mockImplementation(async (path) => {
-        if (path === one.path && !paused) {
-          const [task] = await db
-            .select()
-            .from(schema.workspaces)
-            .where(eq(schema.workspaces.taskBranch, 'current-context-branch'));
-          if (task?.taskConfig && JSON.parse(task.taskConfig).branchPrepared) {
-            paused = true;
-            reportPaused();
-            await checkoutGate;
-          }
+    // Pause once the branch exists, immediately before the checkout changes.
+    const updateSpy = jest
+      .spyOn(internals, 'update')
+      .mockImplementation(async (id, values) => {
+        await realUpdate(id, values);
+        if (
+          !paused &&
+          values.taskConfig &&
+          (JSON.parse(values.taskConfig) as TaskSetup).branchPrepared &&
+          (await service.record(id)).taskBranch === 'current-context-branch'
+        ) {
+          paused = true;
+          reportPaused();
+          await checkoutGate;
         }
-        return realStatus(path);
       });
     const collect = jest.spyOn(worktreeContext as any, 'collectBranchContext');
     const generateSentence = jest
@@ -592,7 +618,7 @@ describe('Task lifecycle with real Git and migrations', () => {
       releaseCheckout();
     }
     const ready = await settled(task.id);
-    statusSpy.mockRestore();
+    updateSpy.mockRestore();
     expect(ready).toMatchObject({ taskState: 'ready', path: one.path });
     expect(await realStatus(ready.path)).toMatchObject({
       branch: 'current-context-branch',

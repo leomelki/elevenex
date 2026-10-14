@@ -11,6 +11,13 @@ import {
 } from '../config/system-paths.js';
 import { execFileAsync } from '../terminal/async-process.js';
 
+export interface WorktreeStatus {
+  dirty: boolean;
+  conflicts: boolean;
+  branch: string | null;
+  head: string;
+}
+
 export function taskBranchSlug(name: string): string {
   return (
     name
@@ -231,13 +238,44 @@ export class TaskGitService {
     return present.some(Boolean);
   }
 
-  async status(worktreePath: string): Promise<{
-    dirty: boolean;
-    conflicts: boolean;
-    branch: string | null;
-    head: string;
-  }> {
+  /** Count the tracked paths a checkout from one commit to another rewrites.
+   * Tree comparison reads no blobs, so it stays cheap even in large monorepos.
+   */
+  async changedPathCount(
+    repoPath: string,
+    from: string,
+    to: string,
+  ): Promise<number> {
+    if (from === to) return 0;
+    try {
+      const output = await worktreeSimpleGit(repoPath).raw([
+        'diff-tree',
+        '-r',
+        '-z',
+        '--name-only',
+        '--no-renames',
+        from,
+        to,
+      ]);
+      return output.split('\0').filter(Boolean).length;
+    } catch {
+      return Number.POSITIVE_INFINITY;
+    }
+  }
+
+  /**
+   * `persistIndex` is only for idle checkouts no task or process is using.
+   * The backend disables optional index locks so its reads never race a
+   * foreground write, but then Git cannot save refreshed stat data or the
+   * untracked cache, and every status rescans the whole tree (seconds in
+   * large repositories). Persisting once keeps later lock-free reads fast.
+   */
+  async status(
+    worktreePath: string,
+    options: { persistIndex?: boolean } = {},
+  ): Promise<WorktreeStatus> {
     const git = worktreeSimpleGit(worktreePath);
+    if (options.persistIndex) git.env('GIT_OPTIONAL_LOCKS', '1');
     const [status, branch, head] = await Promise.all([
       git.raw(['status', '--porcelain=v1', '--untracked-files=normal']),
       git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),

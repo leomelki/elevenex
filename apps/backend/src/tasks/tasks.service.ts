@@ -835,7 +835,10 @@ export class TasksService implements OnApplicationBootstrap {
             setup.branchPrepared = true;
             await this.update(id, { taskConfig: JSON.stringify(setup) });
           }
-          const status = await this.git.status(environment.path);
+          // Allocation just checked this reserved checkout; a second full
+          // scan would double the slowest step in a large repository.
+          const status =
+            environment.status ?? (await this.git.status(environment.path));
           const alreadyCorrect =
             setup.checkoutMode === 'snapshot'
               ? !status.branch && status.head === setup.resolvedCommit
@@ -983,7 +986,11 @@ export class TasksService implements OnApplicationBootstrap {
               )[0]
             : null;
           try {
-            const status = await this.git.status(current.path);
+            // Task processes are stopped, so a managed checkout can save its
+            // index caches and stay fast to inspect for the next task.
+            const status = await this.git.status(current.path, {
+              persistIndex: !!pool?.managed,
+            });
             // Tasks own a worktree, not a fixed branch. Save the state the
             // user/agent left behind so reopening resumes that work.
             finalCommit = status.head;
