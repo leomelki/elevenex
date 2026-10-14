@@ -11,6 +11,63 @@ afterEach(() => {
 });
 describe('Elevenex tool result UI', () => {
   it.each(['light', 'dark'])(
+    'renders port routes, failures, attribution and working Ports navigation in %s mode',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      await TestBed.configureTestingModule({
+        imports: [ElevenexToolResultComponent],
+        providers: [provideRouter([])],
+      }).compileComponents();
+      const fixture = TestBed.createComponent(ElevenexToolResultComponent);
+      fixture.componentRef.setInput(
+        'view',
+        buildElevenexToolView(
+          { toolName: 'mcp__elevenex__create_port_forward', toolInput: { remotePort: 5173 } },
+          {
+            content: {
+              data: {
+                projectId: 5,
+                forwards: [
+                  {
+                    id: 12,
+                    name: 'Preview',
+                    bindAddress: '127.0.0.1',
+                    localPort: 5174,
+                    remoteHost: 'localhost',
+                    remotePort: 5173,
+                    connectionLabel: 'Dev server',
+                    status: 'error',
+                    running: false,
+                    lastError: 'Local port is occupied',
+                    localUrl: 'http://127.0.0.1:5174',
+                    createdBySession: { sessionId: 42, sessionName: 'Preview agent' },
+                  },
+                ],
+              },
+              deepLink: '/projects/5#ssh-forwarding',
+            },
+          },
+        ),
+      );
+      fixture.detectChanges();
+      const el = fixture.nativeElement as HTMLElement;
+      expect(el.querySelector('[data-port-forwarding-result]')).not.toBeNull();
+      expect(el.textContent).toContain('127.0.0.1:5174');
+      expect(el.textContent).toContain('localhost:5173');
+      expect(el.textContent).toContain('Could not start');
+      expect(el.querySelector('[role="alert"]')?.textContent).toContain('Local port is occupied');
+      expect(el.querySelector('a[href="/projects/5#ssh-forwarding"]')?.textContent).toContain(
+        'Open Ports',
+      );
+      expect(el.querySelector('a[href="/sessions/42"]')?.textContent).toContain('Preview agent');
+      expect(el.querySelector('a[href^="http:"]')).toBeNull();
+      expect(
+        el.querySelector('button[aria-label="Copy desktop address for Preview"]'),
+      ).not.toBeNull();
+      fixture.destroy();
+    },
+  );
+  it.each(['light', 'dark'])(
     'renders task identities, semantic states and expandable details in %s mode',
     async (theme) => {
       document.documentElement.classList.toggle('dark', theme === 'dark');

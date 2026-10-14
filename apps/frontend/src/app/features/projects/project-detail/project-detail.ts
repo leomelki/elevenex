@@ -1,6 +1,6 @@
 import { TaskUiService } from '@/features/tasks/task-ui.service';
 import { Component, inject, OnInit, OnDestroy, signal, viewChild, computed } from '@angular/core';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideArchive, lucideArrowLeft, lucideCheckSquare, lucideFileText, lucideGitBranch, lucideGlobe, lucidePlus, lucidePlay, lucideRotateCcw, lucideServer, lucideShield, lucideSparkles, lucideSquare, lucideTrash2, lucideX, lucideMessageSquare } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
@@ -37,6 +37,7 @@ type ProjectDetailSection = 'repos' | 'ssh' | 'browser' | 'instructions';
   imports: [
     NgIcon,
     ZardButtonComponent,
+    RouterLink,
     ZardInputDirective,
     PathAutocompleteInputComponent,
     ZardSkeletonComponent,
@@ -143,6 +144,10 @@ export class ProjectDetail implements OnInit, OnDestroy {
   private routeSubscription: Subscription | null = null;
   private fragmentSubscription: Subscription | null = null;
   private querySubscription: Subscription | null = null;
+  private forwardChangesSubscription: Subscription | null = null;
+  private sshProjectId: number | null = null;
+  private sshGeneration = 0;
+  private sshRefresh: { generation: number; promise: Promise<void> } | null = null;
 
   activeForwardCount = computed(() =>
     this.sshForwards().filter(forward => forward.status === 'active').length,
@@ -164,9 +169,14 @@ export class ProjectDetail implements OnInit, OnDestroy {
         this.loadProjectSettings(this.project()!.id);
       }
     });
+    this.forwardChangesSubscription = this.sshForwardsService.changes.subscribe(() => {
+      if (this.sshProjectId !== null) void this.refreshSshForwards(this.sshProjectId, this.sshGeneration);
+    });
     this.routeSubscription = this.route.paramMap.subscribe((paramMap) => {
       const id = Number(paramMap.get('id'));
       if (!Number.isFinite(id) || id <= 0) {
+        this.sshProjectId = null;
+        this.sshGeneration++;
         this.loading.set(false);
         this.sshForwardsLoading.set(false);
         return;
@@ -181,6 +191,9 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    this.sshProjectId = null;
+    this.sshGeneration++;
+    this.forwardChangesSubscription?.unsubscribe();
     this.routeSubscription?.unsubscribe();
     this.fragmentSubscription?.unsubscribe();
     this.querySubscription?.unsubscribe();
@@ -786,6 +799,8 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   private loadProject(projectId: number) {
+    this.sshProjectId = projectId;
+    this.sshGeneration++;
     this.resetProjectViewState();
 
     this.projectsService.getOne(projectId).subscribe({
@@ -844,26 +859,32 @@ export class ProjectDetail implements OnInit, OnDestroy {
   }
 
   private async loadSshForwards(projectId: number) {
-    this.sshForwardingSupported.set(await this.sshForwardsService.isSupported());
-
-    this.sshForwardsService.getByProject(projectId).subscribe({
-      next: (forwards) => {
-        this.sshForwards.set(forwards);
-        this.sshForwardsLoading.set(false);
-      },
-      error: (err: unknown) => {
-        toast.error(this.getErrorMessage(err, 'Could not load SSH forwards.'));
-        this.sshForwardsLoading.set(false);
-      },
-    });
+    const generation = this.sshGeneration;
+    const supported = await this.sshForwardsService.isSupported();
+    if (generation !== this.sshGeneration || this.sshProjectId !== projectId) return;
+    this.sshForwardingSupported.set(supported);
+    await this.refreshSshForwards(projectId, generation, true);
+    if (generation !== this.sshGeneration || this.sshProjectId !== projectId) return;
 
     if (this.sshForwardingSupported() && this.sshRefreshTimer === null) {
       this.sshRefreshTimer = window.setInterval(() => {
-        this.sshForwardsService.getByProject(projectId).subscribe({
-          next: (forwards) => this.sshForwards.set(forwards),
-        });
+        void this.refreshSshForwards(projectId, generation);
       }, 3000);
     }
+  }
+
+  private refreshSshForwards(projectId: number, generation: number, reportError = false): Promise<void> {
+    if (this.sshRefresh?.generation === generation) return this.sshRefresh.promise;
+    const promise = firstValueFrom(this.sshForwardsService.getByProject(projectId)).then(forwards => {
+      if (generation === this.sshGeneration && this.sshProjectId === projectId) this.sshForwards.set(forwards);
+    }).catch((error: unknown) => {
+      if (reportError && generation === this.sshGeneration) toast.error(this.getErrorMessage(error, 'Could not load port forwards.'));
+    }).finally(() => {
+      if (generation === this.sshGeneration) this.sshForwardsLoading.set(false);
+      if (this.sshRefresh?.promise === promise) this.sshRefresh = null;
+    });
+    this.sshRefresh = { generation, promise };
+    return promise;
   }
 
   private loadBrowserIsolation(projectId: number) {

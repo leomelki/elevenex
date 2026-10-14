@@ -12,11 +12,19 @@ import {
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ToolOutputComponent } from '../tool-output.component';
 import { type ElevenexToolView } from '@/shared/agent-tools/elevenex-tool-view';
+import { PortForwardingResultComponent } from '../port-forwarding-result/port-forwarding-result.component';
 
 @Component({
   selector: 'elevenex-tool-result',
   standalone: true,
-  imports: [RouterLink, ClipboardModule, NgIcon, ZardButtonComponent, ToolOutputComponent],
+  imports: [
+    RouterLink,
+    ClipboardModule,
+    NgIcon,
+    ZardButtonComponent,
+    ToolOutputComponent,
+    PortForwardingResultComponent,
+  ],
   viewProviders: [
     provideIcons({
       lucideArrowUpRight,

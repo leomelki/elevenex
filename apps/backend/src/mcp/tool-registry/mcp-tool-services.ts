@@ -21,6 +21,7 @@ import { WorktreeContextService } from '../../worktree-context/worktree-context.
 import { AgentRuntimeRegistryService } from '../../agent-runtime/agent-runtime-registry.service.js';
 import { ConversationExportService } from '../../agent-runtime/conversation-export.service.js';
 import { AgentFocusService } from '../../agent-focus/agent-focus.service.js';
+import { DesktopPortForwardingGateway } from '../port-forwarding/desktop-port-forwarding.gateway.js';
 
 /**
  * Injectable bag of the existing domain services the MCP tools reuse
@@ -52,5 +53,6 @@ export class McpToolServices {
     readonly agentFocus: AgentFocusService,
     readonly tasks: TasksService,
     readonly branches: BranchesService,
+    readonly portForwarding: DesktopPortForwardingGateway,
   ) {}
 }

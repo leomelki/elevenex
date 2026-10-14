@@ -26,6 +26,7 @@ import { McpAgentTokenService } from './identity/mcp-agent-token.service.js';
 import { McpConnectionRegistryService } from './connection/mcp-connection-registry.service.js';
 import { McpServerFactory } from './transport/mcp-server.factory.js';
 import { ElevenexMcpHttpTransport } from './transport/elevenex-mcp-http.transport.js';
+import { DesktopPortForwardingGateway } from './port-forwarding/desktop-port-forwarding.gateway.js';
 
 /**
  * In-process Elevenex MCP server. Downstream-only: it consumes the domain
@@ -63,6 +64,7 @@ import { ElevenexMcpHttpTransport } from './transport/elevenex-mcp-http.transpor
     McpServerFactory,
     ElevenexMcpHttpTransport,
     AgentChannelGateway,
+    DesktopPortForwardingGateway,
   ],
   exports: [
     // main.ts mounts the transport + the agent-channel gateway; the token
@@ -70,6 +72,7 @@ import { ElevenexMcpHttpTransport } from './transport/elevenex-mcp-http.transpor
     // ELEVENEX_AGENT_TOKEN.
     ElevenexMcpHttpTransport,
     AgentChannelGateway,
+    DesktopPortForwardingGateway,
     McpAgentTokenService,
     AgentHumanChannelService,
     McpConnectionRegistryService,

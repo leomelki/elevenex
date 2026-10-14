@@ -3,6 +3,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { ClaudeTurnSummaryComponent } from './claude-turn-summary.component';
 
 describe('ClaudeTurnSummaryComponent agents', () => {
+  it('shows port-forwarding attention even while activity is collapsed', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ClaudeTurnSummaryComponent],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeTurnSummaryComponent);
+    fixture.componentRef.setInput('durationLabel', '1s');
+    fixture.componentRef.setInput('stepCount', 2);
+    fixture.componentRef.setInput('portForwardingAttention', 1);
+    fixture.detectChanges();
+    expect(
+      fixture.nativeElement.querySelector('[data-port-forwarding-attention]')?.textContent,
+    ).toContain('reported an issue');
+    expect(fixture.nativeElement.querySelector('button')?.getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+    fixture.destroy();
+  });
   it('hides finished rows until expanded while keeping active agents and inspection visible', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeTurnSummaryComponent],

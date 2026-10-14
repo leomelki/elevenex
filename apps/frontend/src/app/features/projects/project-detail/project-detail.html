@@ -282,11 +282,16 @@
                       </span>
                     </div>
                     <p class="forward-row__route">{{ forward.destinationLabel }}</p>
+                    @if (forward.createdBySession; as creator) {
+                      <p class="mt-1 mb-0 text-xs text-muted-foreground">Created by
+                        <a [routerLink]="['/sessions', creator.sessionId]" class="rounded-sm text-primary underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-ring">{{ creator.sessionName }}</a>
+                      </p>
+                    }
                   </div>
 
                   <div class="forward-row__meta">
                     <div><span>{{ forward.pairedDeviceId ? 'Desktop' : 'SSH' }}</span><strong>{{ forward.connectionLabel }}</strong></div>
-                    <div><span>Local</span><strong>{{ forward.bindAddress }}:{{ forward.localPort }}</strong></div>
+                    <div><span>On this desktop</span><strong>{{ forward.bindAddress }}:{{ forward.localPort }}</strong></div>
                     <div><span>Remote</span><strong>{{ forward.remoteHost }}:{{ forward.remotePort }}</strong></div>
                     @if (!forward.pairedDeviceId) {
                       <div><span>Process</span><strong>{{ forward.pid ?? 'Not running' }}</strong></div>

@@ -11,7 +11,9 @@
       <span>{{
         view().tool === 'await_task_ready'
           ? 'Waiting for task setup to finish…'
-          : 'Waiting for the tool response…'
+          : view().portForwarding
+            ? 'Waiting for the desktop to finish the port-forwarding request…'
+            : 'Waiting for the tool response…'
       }}</span>
     </div>
   }
@@ -76,12 +78,17 @@
     </dl>
   }
 
-  @if (view().notice) {
+  @if (view().notice && !view().portForwarding) {
     <p
       class="m-0 rounded-md border border-border bg-muted/40 px-3 py-2 leading-relaxed text-muted-foreground"
     >
       {{ view().notice }}
     </p>
+  }
+
+  @if (view().portForwarding; as forwarding) {
+    <port-forwarding-result [receipt]="forwarding" />
+    @if (view().notice) { <p class="m-0 text-[11px] leading-relaxed text-muted-foreground">{{ view().notice }}</p> }
   }
 
   @if (view().rows.length) {

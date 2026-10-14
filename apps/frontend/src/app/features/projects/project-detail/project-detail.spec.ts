@@ -3,7 +3,7 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { ActivatedRoute, convertToParamMap, Router } from '@angular/router';
-import { BehaviorSubject, of } from 'rxjs';
+import { BehaviorSubject, of, Subject } from 'rxjs';
 import { describe, beforeEach, afterEach, expect, it, vi } from 'vitest';
 
 import { ProjectDetail } from './project-detail';
@@ -93,6 +93,7 @@ describe('ProjectDetail', () => {
     ),
   };
   const sshForwardsServiceMock = {
+    changes: new Subject<void>(),
     isSupported: vi.fn(() => Promise.resolve(true)),
     getByProject: vi.fn(() => of(forwards)),
     getLastDefaults: vi.fn(() => null),
@@ -117,6 +118,8 @@ describe('ProjectDetail', () => {
     fragment.next(null);
     queryParamMap.next(convertToParamMap({}));
     vi.clearAllMocks();
+    sshForwardsServiceMock.getByProject.mockReturnValue(of(forwards));
+    sshForwardsServiceMock.isSupported.mockResolvedValue(true);
     onboardingSnapshot.set({ mode: 'local', paired: null, remoteConnectionReady: false });
 
     originalLocalStorage = globalThis.localStorage;
@@ -209,6 +212,7 @@ describe('ProjectDetail', () => {
   async function render() {
     const fixture = TestBed.createComponent(ProjectDetail);
     fixture.detectChanges();
+    await vi.waitFor(() => expect(fixture.componentInstance.sshForwardsLoading()).toBe(false));
     await fixture.whenStable();
     fixture.detectChanges();
     return fixture;
@@ -259,6 +263,35 @@ describe('ProjectDetail', () => {
     expect(fixture.nativeElement.textContent).toContain('Port forwarding');
     expect(fixture.nativeElement.textContent).toContain('App');
     expect(fixture.nativeElement.textContent).toContain('Live');
+  });
+
+  it('refreshes agent changes immediately and coalesces simultaneous refreshes', async () => {
+    const fixture = await render();
+    const pending = new Subject<SshForward[]>();
+    const initialCalls = sshForwardsServiceMock.getByProject.mock.calls.length;
+    sshForwardsServiceMock.getByProject.mockReturnValue(pending.asObservable());
+    sshForwardsServiceMock.changes.next();
+    sshForwardsServiceMock.changes.next();
+    expect(sshForwardsServiceMock.getByProject.mock.calls.length).toBe(initialCalls + 1);
+    pending.next([{ ...forwards[0], status: 'inactive' }]);
+    pending.complete();
+    await vi.waitFor(() => expect(fixture.componentInstance.sshForwards()[0]?.status).toBe('inactive'));
+    fixture.destroy();
+  });
+
+  it('ignores a previous project’s delayed forwarding response after navigation', async () => {
+    const fixture = await render();
+    const oldResponse = new Subject<SshForward[]>();
+    sshForwardsServiceMock.getByProject.mockReturnValueOnce(oldResponse.asObservable());
+    sshForwardsServiceMock.changes.next();
+    sshForwardsServiceMock.getByProject.mockReturnValue(of([{ ...forwards[0], projectId: 2, name: 'Other project' }]));
+    paramMap.next(convertToParamMap({ id: '2' }));
+    await vi.waitFor(() => expect(fixture.componentInstance.sshForwards()[0]?.projectId).toBe(2));
+    oldResponse.next(forwards);
+    oldResponse.complete();
+    await Promise.resolve();
+    expect(fixture.componentInstance.sshForwards()[0]?.projectId).toBe(2);
+    fixture.destroy();
   });
 
   it('opens the app-wide global agent drawer', async () => {

@@ -64,6 +64,28 @@ guarantees so individual tools can't regress them:
 
 ## Tasks and tools
 
+- **Desktop port forwarding**: `list_port_forwards`, `get_port_forward`, `create_port_forward`,
+  `start_port_forward`, `stop_port_forward`, `remove_port_forward`. Authenticated callers default
+  to their project. These tools use the `/desktop-port-forwarding` WebSocket bridge, because the
+  user’s local listeners, SSH configuration, pairing credentials and saved definitions live on
+  the desktop even when the backend/agent runs remotely. The Angular root starts the bridge
+  independently of the visible task. Browser-only clients do not register a forwarding bridge.
+  Each request targets one registered desktop window. Windows on one desktop share a persistent
+  desktop ID; distinct desktops require explicit selection. Requests time out after 45 seconds,
+  reject on disconnect, and are never replayed onto another window. Cancellation stops queued
+  mutations; accepted runtime work may complete, so inspect state before retrying.
+  Creation reuses matching project/connection/bind/destination definitions; UI and agent mutations
+  share per-environment Web Locks. Lists query live runtime state only for the requested page.
+  Agent creation binds to loopback and does not accept credentials. Saved private keys or desktop
+  SSH config/agent authenticate SSH; password/passphrase entry remains a desktop concern.
+  Results omit debug command/config data, include `running`, `status`, `lastError`, and a desktop-local
+  HTTP convenience URL. An active listener does not prove target service readiness. Forwards persist
+  until stopped/removed, following existing project UI behavior rather than task lifetime.
+  Creation records the authenticated agent conversation in the desktop definition. The Ports
+  view links back to its creator and refreshes after local mutations or shared storage changes.
+  Chat receipts show destination, listener state, reuse, errors and direct Ports navigation;
+  collapsed activity retains an issue badge, while recorded state is kept distinct from live state.
+
 - **Session configuration**: `get_session_config` pages model IDs and reports the selected/default model, reasoning levels, provider capabilities, and provider-advertised permission modes. Use it before `set_model` or `set_permission_mode`; `session_status` remains a cheap liveness read.
 - **Task lifecycle**: `get_task_defaults`, `create_task`, `list_tasks`, `get_task`,
   `await_task_ready`, `open_task_session`, `rename_task`, `move_task`, `retry_task`, `preview_finish_task`, `finish_task`,

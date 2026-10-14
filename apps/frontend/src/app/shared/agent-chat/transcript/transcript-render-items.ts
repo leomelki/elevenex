@@ -17,6 +17,8 @@ import type {
   AgentTranscriptItem,
 } from '@/shared/models/agent-runtime.model';
 import { isUserPrompt } from '@/shared/utils/user-message-display';
+import { buildElevenexToolView, elevenexToolName } from '@/shared/agent-tools/elevenex-tool-view';
+import { PORT_FORWARDING_TOOL_NAMES } from '@/shared/agent-tools/port-forwarding-receipt';
 
 export type TranscriptRenderItem =
   | { kind: 'unit'; id: string; unit: PairedTranscriptUnit }
@@ -30,6 +32,7 @@ export type TranscriptRenderItem =
       changeDetails: TurnChangeDetails | null;
       stepCount: number;
       agentSummary: TurnAgentSummary | null;
+      portForwardingAttention?: number;
     };
 
 export interface TranscriptRenderOptions {
@@ -178,6 +181,16 @@ export function buildTranscriptRenderItems(
           ? changeCache.compute(unit.id, changeUnits)
           : computeTurnChangeDetails(changeUnits),
         stepCount,
+        portForwardingAttention: collapsibleUnits.filter((entry) => {
+          if (
+            entry.kind !== 'tool' ||
+            !entry.result ||
+            !PORT_FORWARDING_TOOL_NAMES.has(elevenexToolName(entry.call) ?? '')
+          )
+            return false;
+          const view = buildElevenexToolView(entry.call, entry.result);
+          return !!view?.error || view?.portForwarding?.needsAttention === true;
+        }).length,
         agentSummary: buildTurnAgentSummary(
           unit.id,
           getItemStartTimestamp(unit.item),

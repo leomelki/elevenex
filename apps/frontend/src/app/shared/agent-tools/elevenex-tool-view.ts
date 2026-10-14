@@ -1,5 +1,10 @@
 import type { ResultSummary, ToolLike } from './agent-tool-format';
 import { adaptElevenexResult, adaptElevenexRow } from './elevenex-tool-adapters';
+import {
+  PORT_FORWARDING_TOOL_NAMES,
+  portForwardingReceipt,
+  type PortForwardingReceipt,
+} from './port-forwarding-receipt';
 
 type RecordValue = Record<string, unknown>;
 export type ElevenexActionCategory = 'observe' | 'setup' | 'drive' | 'communicate' | 'work';
@@ -21,6 +26,7 @@ export interface ElevenexRow {
   status?: ResultSummary;
 }
 export interface ElevenexToolView {
+  portForwarding?: PortForwardingReceipt;
   tool: string;
   title: string;
   target: string;
@@ -130,6 +136,14 @@ group('work', 'lucideTerminal', {
   read_action_output: 'Read command output',
   poll_action_status: 'Wait for command',
 });
+group('work', 'lucidePlugZap', {
+  list_port_forwards: 'List port forwards',
+  get_port_forward: 'Inspect port forward',
+  create_port_forward: 'Create port forward',
+  start_port_forward: 'Start port forward',
+  stop_port_forward: 'Stop port forward',
+  remove_port_forward: 'Remove port forward',
+});
 group('setup', 'lucideTrash2', {
   delete_project: 'Delete project',
   remove_repo: 'Remove repository',
@@ -186,7 +200,9 @@ export function elevenexArguments(input: unknown): RecordValue {
 /** Only app routes returned by trusted tool primitives become navigation links. */
 export function elevenexLink(value: unknown): string | undefined {
   return typeof value === 'string' &&
-    /^\/(?:tasks|sessions|projects)\/\d+(?:\?[^\s]*)?$/.test(value)
+    /^\/(?:tasks|sessions|projects)\/\d+(?:\?[^\s#]*)?(?:#(?:ssh-forwarding|browser-settings|agent-instructions))?$/.test(
+      value,
+    )
     ? value
     : undefined;
 }
@@ -377,6 +393,15 @@ function rowView(row: unknown, kind: string): ElevenexRow {
   };
 }
 const recovery: Record<string, string> = {
+  desktop_unavailable:
+    'Open the Elevenex desktop on the backend where this agent is working, then retry.',
+  desktop_required: 'Several desktops are connected. Choose where the local port should be opened.',
+  desktop_timeout:
+    'The desktop did not respond in time. Check Ports before retrying; a forward may already have been saved or started.',
+  desktop_disconnected:
+    'Reconnect the desktop and check Ports before retrying; accepted work may have completed.',
+  port_forward_failed:
+    'Check the connection and Ports error. If the local port is occupied, choose another local port or stop its existing forward.',
   active_tasks:
     'Finish the active tasks first so their agents, commands, terminals, and checkout preparation can be cleaned up safely.',
   branch_in_use:
@@ -597,7 +622,14 @@ export function buildElevenexToolView(
           ? args['question']
           : undefined),
   );
-  const link = elevenexLink(envelope?.['deepLink']);
+  const portProjectId = id(
+    data['projectId'] ?? record(error?.['details'])?.['projectId'] ?? args['projectId'],
+  );
+  const link =
+    elevenexLink(envelope?.['deepLink']) ??
+    (PORT_FORWARDING_TOOL_NAMES.has(tool) && portProjectId
+      ? `/projects/${portProjectId}#ssh-forwarding`
+      : undefined);
   if (tool === 'move_task')
     fields.push({
       label: 'Position',
@@ -605,15 +637,28 @@ export function buildElevenexToolView(
         ? `Before task #${args['beforeTaskId']}`
         : 'End of the task list',
     });
+  const portForwarding = PORT_FORWARDING_TOOL_NAMES.has(tool)
+    ? portForwardingReceipt(tool, args, {
+        ...data,
+        ...(record(error?.['details']) ?? {}),
+        ...(error?.['code'] === 'desktop_required' ? { selectionRequired: true } : {}),
+      })
+    : undefined;
   return {
     tool,
     title: meta.verb,
-    target,
-    summary: result ? summary : null,
+    target: portForwarding?.target ?? target,
+    summary: result ? (!errorView && portForwarding ? portForwarding.summary : summary) : null,
     fields,
     rows,
     listLabel,
-    notice,
+    notice: portForwarding
+      ? errorView
+        ? ''
+        : result
+          ? portForwarding.notice
+          : 'The local listener runs on the selected desktop.'
+      : notice,
     content,
     contentLabel:
       tool === 'set_action'
@@ -635,11 +680,14 @@ export function buildElevenexToolView(
     toolFailed,
     listEmpty: !!result && !!listKey && collection.length === 0,
     link,
-    linkLabel: link?.startsWith('/tasks/')
-      ? 'Open task'
-      : link?.startsWith('/sessions/')
-        ? 'Open conversation'
-        : 'Open project',
-    more,
+    linkLabel: portForwarding
+      ? 'Open Ports'
+      : link?.startsWith('/tasks/')
+        ? 'Open task'
+        : link?.startsWith('/sessions/')
+          ? 'Open conversation'
+          : 'Open project',
+    more: more || portForwarding?.more === true,
+    portForwarding,
   };
 }

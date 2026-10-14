@@ -1,0 +1,327 @@
+{
+  "sessionId": 864,
+  "responses": {
+    "/api/sessions/864": {
+      "id": 864,
+      "repoId": 1,
+      "projectId": 1,
+      "branchName": "feat/port-forwarding-tool",
+      "worktreePath": "/Users/leomelki/Documents/git/elevenex/.worktrees/elevenex/elevenex-1",
+      "name": "Port-forwarding receipts preview",
+      "surface": "session",
+      "status": "active",
+      "activeAgentProvider": "claude",
+      "claudeSessionId": "claude-recorded-preview",
+      "codexSessionId": "-1",
+      "hasInjectedWorktreeContext": true,
+      "hasUnreviewedCompletion": false,
+      "lastCompletionAt": null,
+      "lastCompletionKind": null,
+      "lastStateChangeAt": null,
+      "createdAt": "2026-10-12T16:00:00.000Z",
+      "updatedAt": "2026-10-12T16:01:00.000Z"
+    },
+    "/api/sessions/864/agents/claude/history": [
+      {
+        "id": "forward-user",
+        "kind": "user",
+        "content": "Forward the app preview and database so I can reach them from my desktop.",
+        "timestamp": "2026-10-14T13:00:00.000Z",
+        "transcriptMessageId": "forward-user"
+      },
+      {
+        "id": "forward-create",
+        "kind": "tool_use",
+        "toolUseId": "forward-create",
+        "toolName": "mcp__elevenex__create_port_forward",
+        "toolKind": "mcp",
+        "toolInput": {
+          "remotePort": 5173,
+          "localPort": 5174,
+          "name": "App preview"
+        },
+        "timestamp": "2026-10-14T13:00:00.000Z"
+      },
+      {
+        "id": "forward-create-result",
+        "kind": "tool_result",
+        "toolUseId": "forward-create",
+        "content": "{\"data\": {\"projectId\": 1, \"desktop\": {\"desktopId\": \"recorded-desktop\", \"windowId\": \"w1\", \"mode\": \"ssh\", \"connectionLabel\": \"Development server\", \"defaultConnection\": \"ssh\"}, \"forwards\": [{\"id\": 12, \"projectId\": 1, \"name\": \"App preview\", \"transport\": \"ssh\", \"connectionLabel\": \"deploy@devbox:22\", \"bindAddress\": \"127.0.0.1\", \"localPort\": 5174, \"remoteHost\": \"localhost\", \"remotePort\": 5173, \"status\": \"active\", \"running\": true, \"localUrl\": \"http://127.0.0.1:5174\", \"lastError\": null, \"createdBySession\": {\"sessionId\": 864, \"sessionName\": \"Preview agent\"}}], \"total\": 1, \"nextOffset\": null, \"reused\": true, \"projectName\": \"elevenex\"}, \"deepLink\": \"/projects/1#ssh-forwarding\"}",
+        "isError": false,
+        "timestamp": "2026-10-14T13:00:00.000Z"
+      },
+      {
+        "id": "forward-start",
+        "kind": "tool_use",
+        "toolUseId": "forward-start",
+        "toolName": "mcp__elevenex__start_port_forward",
+        "toolKind": "mcp",
+        "toolInput": {
+          "forwardId": 13
+        },
+        "timestamp": "2026-10-14T13:00:00.000Z"
+      },
+      {
+        "id": "forward-start-result",
+        "kind": "tool_result",
+        "toolUseId": "forward-start",
+        "content": "{\"data\": {\"projectId\": 1, \"desktop\": {\"desktopId\": \"recorded-desktop\", \"windowId\": \"w1\", \"mode\": \"ssh\", \"connectionLabel\": \"Development server\", \"defaultConnection\": \"ssh\"}, \"forwards\": [{\"id\": 13, \"projectId\": 1, \"name\": \"Database\", \"transport\": \"ssh\", \"connectionLabel\": \"deploy@devbox:22\", \"bindAddress\": \"127.0.0.1\", \"localPort\": 5432, \"remoteHost\": \"localhost\", \"remotePort\": 5432, \"status\": \"error\", \"running\": false, \"localUrl\": \"http://127.0.0.1:5432\", \"lastError\": \"Local port 5432 is already in use. Choose another local port, such as 5433.\", \"createdBySession\": {\"sessionId\": 864, \"sessionName\": \"Preview agent\"}}], \"total\": 1, \"nextOffset\": null, \"projectName\": \"elevenex\"}, \"deepLink\": \"/projects/1#ssh-forwarding\"}",
+        "isError": false,
+        "timestamp": "2026-10-14T13:00:00.000Z"
+      },
+      {
+        "id": "forward-reply",
+        "kind": "assistant",
+        "content": "The app preview listener is active on desktop port 5174. Database port 5432 is occupied; its saved forward is available in Ports for retry.",
+        "timestamp": "2026-10-14T13:00:00.000Z",
+        "transcriptMessageId": "forward-reply"
+      }
+    ],
+    "/api/sessions/864/agents/claude/runtime-state": {
+      "sessionId": 864,
+      "claudeSessionId": "claude-recorded-preview",
+      "runPhase": "idle",
+      "sessionState": "idle",
+      "canInterrupt": false,
+      "backgroundWork": [],
+      "backgroundRunActive": false,
+      "nativeSteering": true,
+      "pendingPermissionRequest": null,
+      "pendingUserInputRequest": null,
+      "pendingPrompts": [],
+      "queuePaused": false,
+      "liveItems": [],
+      "lastError": null,
+      "selectedModel": "sonnet",
+      "reasoningEffort": "medium",
+      "fastMode": false,
+      "permissionMode": "default",
+      "planMode": false,
+      "availableModels": [
+        {
+          "id": "sonnet",
+          "displayName": "Claude Sonnet",
+          "supportsEffort": true
+        }
+      ],
+      "contextUsage": null,
+      "sessionMetadata": {
+        "cwd": "/Users/leomelki/Documents/git/elevenex",
+        "model": "sonnet",
+        "permissionMode": "default",
+        "claudeCodeVersion": "2.1.296",
+        "outputStyle": "default",
+        "apiKeySource": "oauth",
+        "tools": [
+          "Agent",
+          "Read",
+          "SendMessage",
+          "TaskStop"
+        ],
+        "slashCommands": [],
+        "skills": [],
+        "agents": [
+          "general-purpose",
+          "code-reviewer"
+        ],
+        "mcpServers": [],
+        "plugins": [],
+        "fastModeState": null
+      },
+      "runtimeStatus": null,
+      "authStatus": {
+        "installed": true,
+        "authenticated": true,
+        "version": "2.1.296",
+        "isAuthenticating": false,
+        "output": []
+      },
+      "rateLimit": null,
+      "notifications": [],
+      "hooks": [],
+      "recentHookEvents": [],
+      "tasks": [],
+      "taskLifecycle": [],
+      "subagents": [],
+      "latestToolProgress": null,
+      "latestToolSummary": null,
+      "latestApiRetry": null,
+      "latestPluginInstall": null,
+      "latestMemoryRecall": null,
+      "latestFilesPersisted": null,
+      "latestElicitationCompletion": null,
+      "latestPromptSuggestion": null,
+      "latestCompactBoundary": null,
+      "latestMirrorError": null,
+      "warmState": "warm",
+      "lastWarmedAt": "2026-10-12T16:00:00.000Z",
+      "lastPromptTiming": null
+    },
+    "/api/sessions/864/agents/claude/autocomplete": [
+      {
+        "id": "agent:reviewer",
+        "kind": "agent",
+        "trigger": "@",
+        "label": "code-reviewer",
+        "insertText": "Use the code-reviewer agent to ",
+        "description": "Review code changes and test coverage",
+        "detail": "Model: sonnet",
+        "source": "runtime"
+      }
+    ],
+    "/api/agent-providers/claude/auth/status": {
+      "installed": true,
+      "authenticated": true,
+      "version": "2.1.296",
+      "isAuthenticating": false,
+      "output": []
+    }
+  },
+  "events": [
+    {
+      "type": "runtime_snapshot",
+      "payload": {
+        "sessionId": 864,
+        "claudeSessionId": "claude-recorded-preview",
+        "runPhase": "idle",
+        "sessionState": "idle",
+        "canInterrupt": false,
+        "backgroundWork": [],
+        "backgroundRunActive": false,
+        "nativeSteering": true,
+        "pendingPermissionRequest": null,
+        "pendingUserInputRequest": null,
+        "pendingPrompts": [],
+        "queuePaused": false,
+        "liveItems": [],
+        "lastError": null,
+        "selectedModel": "sonnet",
+        "reasoningEffort": "medium",
+        "fastMode": false,
+        "permissionMode": "default",
+        "planMode": false,
+        "availableModels": [
+          {
+            "id": "sonnet",
+            "displayName": "Claude Sonnet",
+            "supportsEffort": true
+          }
+        ],
+        "contextUsage": null,
+        "sessionMetadata": {
+          "cwd": "/Users/leomelki/Documents/git/elevenex",
+          "model": "sonnet",
+          "permissionMode": "default",
+          "claudeCodeVersion": "2.1.296",
+          "outputStyle": "default",
+          "apiKeySource": "oauth",
+          "tools": [
+            "Agent",
+            "Read",
+            "SendMessage",
+            "TaskStop"
+          ],
+          "slashCommands": [],
+          "skills": [],
+          "agents": [
+            "general-purpose",
+            "code-reviewer"
+          ],
+          "mcpServers": [],
+          "plugins": [],
+          "fastModeState": null
+        },
+        "runtimeStatus": null,
+        "authStatus": {
+          "installed": true,
+          "authenticated": true,
+          "version": "2.1.296",
+          "isAuthenticating": false,
+          "output": []
+        },
+        "rateLimit": null,
+        "notifications": [],
+        "hooks": [],
+        "recentHookEvents": [],
+        "tasks": [],
+        "taskLifecycle": [],
+        "subagents": [],
+        "latestToolProgress": null,
+        "latestToolSummary": null,
+        "latestApiRetry": null,
+        "latestPluginInstall": null,
+        "latestMemoryRecall": null,
+        "latestFilesPersisted": null,
+        "latestElicitationCompletion": null,
+        "latestPromptSuggestion": null,
+        "latestCompactBoundary": null,
+        "latestMirrorError": null,
+        "warmState": "warm",
+        "lastWarmedAt": "2026-10-12T16:00:00.000Z",
+        "lastPromptTiming": null
+      }
+    },
+    {
+      "type": "history_snapshot",
+      "payload": {
+        "sessionId": 864,
+        "history": [
+          {
+            "id": "forward-user",
+            "kind": "user",
+            "content": "Forward the app preview and database so I can reach them from my desktop.",
+            "timestamp": "2026-10-14T13:00:00.000Z",
+            "transcriptMessageId": "forward-user"
+          },
+          {
+            "id": "forward-create",
+            "kind": "tool_use",
+            "toolUseId": "forward-create",
+            "toolName": "mcp__elevenex__create_port_forward",
+            "toolKind": "mcp",
+            "toolInput": {
+              "remotePort": 5173,
+              "localPort": 5174,
+              "name": "App preview"
+            },
+            "timestamp": "2026-10-14T13:00:00.000Z"
+          },
+          {
+            "id": "forward-create-result",
+            "kind": "tool_result",
+            "toolUseId": "forward-create",
+            "content": "{\"data\": {\"projectId\": 1, \"desktop\": {\"desktopId\": \"recorded-desktop\", \"windowId\": \"w1\", \"mode\": \"ssh\", \"connectionLabel\": \"Development server\", \"defaultConnection\": \"ssh\"}, \"forwards\": [{\"id\": 12, \"projectId\": 1, \"name\": \"App preview\", \"transport\": \"ssh\", \"connectionLabel\": \"deploy@devbox:22\", \"bindAddress\": \"127.0.0.1\", \"localPort\": 5174, \"remoteHost\": \"localhost\", \"remotePort\": 5173, \"status\": \"active\", \"running\": true, \"localUrl\": \"http://127.0.0.1:5174\", \"lastError\": null, \"createdBySession\": {\"sessionId\": 864, \"sessionName\": \"Preview agent\"}}], \"total\": 1, \"nextOffset\": null, \"reused\": true, \"projectName\": \"elevenex\"}, \"deepLink\": \"/projects/1#ssh-forwarding\"}",
+            "isError": false,
+            "timestamp": "2026-10-14T13:00:00.000Z"
+          },
+          {
+            "id": "forward-start",
+            "kind": "tool_use",
+            "toolUseId": "forward-start",
+            "toolName": "mcp__elevenex__start_port_forward",
+            "toolKind": "mcp",
+            "toolInput": {
+              "forwardId": 13
+            },
+            "timestamp": "2026-10-14T13:00:00.000Z"
+          },
+          {
+            "id": "forward-start-result",
+            "kind": "tool_result",
+            "toolUseId": "forward-start",
+            "content": "{\"data\": {\"projectId\": 1, \"desktop\": {\"desktopId\": \"recorded-desktop\", \"windowId\": \"w1\", \"mode\": \"ssh\", \"connectionLabel\": \"Development server\", \"defaultConnection\": \"ssh\"}, \"forwards\": [{\"id\": 13, \"projectId\": 1, \"name\": \"Database\", \"transport\": \"ssh\", \"connectionLabel\": \"deploy@devbox:22\", \"bindAddress\": \"127.0.0.1\", \"localPort\": 5432, \"remoteHost\": \"localhost\", \"remotePort\": 5432, \"status\": \"error\", \"running\": false, \"localUrl\": \"http://127.0.0.1:5432\", \"lastError\": \"Local port 5432 is already in use. Choose another local port, such as 5433.\", \"createdBySession\": {\"sessionId\": 864, \"sessionName\": \"Preview agent\"}}], \"total\": 1, \"nextOffset\": null, \"projectName\": \"elevenex\"}, \"deepLink\": \"/projects/1#ssh-forwarding\"}",
+            "isError": false,
+            "timestamp": "2026-10-14T13:00:00.000Z"
+          },
+          {
+            "id": "forward-reply",
+            "kind": "assistant",
+            "content": "The app preview listener is active on desktop port 5174. Database port 5432 is occupied; its saved forward is available in Ports for retry.",
+            "timestamp": "2026-10-14T13:00:00.000Z",
+            "transcriptMessageId": "forward-reply"
+          }
+        ]
+      }
+    }
+  ]
+}

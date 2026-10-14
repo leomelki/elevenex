@@ -31,6 +31,14 @@
           {{ summary.agents.length }} agent{{ summary.agents.length === 1 ? '' : 's' }}
         </span>
       }
+      @if (portForwardingAttention()) {
+        <span
+          class="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] text-warning"
+          data-port-forwarding-attention
+        >
+          Port forwarding reported an issue
+        </span>
+      }
     </span>
     <span class="flex-1 min-w-6 h-px cw-turn-line"></span>
   </button>

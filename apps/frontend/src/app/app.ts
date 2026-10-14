@@ -42,6 +42,7 @@ import { AgentCommandBarComponent } from './features/agent-control/agent-command
 import { ZardButtonComponent } from './shared/components/button';
 import { ZardInputDirective } from './shared/components/input';
 import { SidebarStateService } from '@/shared/services/sidebar-state.service';
+import { AgentPortForwardingService } from './shared/services/agent-port-forwarding.service';
 
 @Component({
   selector: 'app-root',
@@ -82,6 +83,7 @@ import { SidebarStateService } from '@/shared/services/sidebar-state.service';
 export class App implements OnInit, OnDestroy {
   private readonly router = inject(Router);
   private readonly startupService = inject(OnboardingStartupService);
+  private readonly agentPortForwarding = inject(AgentPortForwardingService);
   private readonly sshRuntimeRecovery = inject(SshRuntimeRecoveryService);
   private readonly connectionManager = inject(EnvironmentConnectionManagerService);
   private readonly backendLogs = inject(BackendLogsWebsocketService);
@@ -156,6 +158,7 @@ export class App implements OnInit, OnDestroy {
   async ngOnInit() {
     this.theme.mode();
     this.serverConnection.start();
+    this.agentPortForwarding.start();
     this.backendLogs.start();
     const subscription = this.router.events.subscribe((event) => {
       if (event instanceof NavigationEnd) {

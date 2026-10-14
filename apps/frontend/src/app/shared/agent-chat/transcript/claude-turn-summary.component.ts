@@ -26,6 +26,7 @@ export class ClaudeTurnSummaryComponent {
   readonly agentSummary = input<TurnAgentSummary | null>(null);
   readonly changeDetails = input<TurnChangeDetails | null>(null);
   readonly expanded = input(false);
+  readonly portForwardingAttention = input(0);
   readonly changesExpanded = input(false);
   readonly canInspect = input(false);
   readonly agentsExpanded = signal(false);

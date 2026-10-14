@@ -30,6 +30,39 @@ function render(items: ClaudeTranscriptItem[], settled = true) {
 }
 
 describe('buildTranscriptRenderItems final outputs', () => {
+  it('keeps failed port-forwarding requests visible in the collapsed activity summary', () => {
+    const rendered = render([
+      item('prompt', 'user'),
+      item('port', 'tool_use', {
+        toolUseId: 'port',
+        toolName: 'mcp__elevenex__create_port_forward',
+        toolInput: { remotePort: 5432 },
+      }),
+      item('port-result', 'tool_result', {
+        toolUseId: 'port',
+        isError: false,
+        content: JSON.stringify({
+          data: {
+            forwards: [
+              {
+                id: 12,
+                name: 'Database',
+                status: 'error',
+                running: false,
+                localPort: 5432,
+                remotePort: 5432,
+                lastError: 'Port occupied',
+              },
+            ],
+          },
+        }),
+      }),
+      item('answer', 'assistant'),
+    ]);
+    expect(rendered.find((entry) => entry.kind === 'collapsed-turn')).toMatchObject({
+      portForwardingAttention: 1,
+    });
+  });
   it('keeps empty messages inside the active work turn without counting them as steps', () => {
     const rendered = render([
       ...work,

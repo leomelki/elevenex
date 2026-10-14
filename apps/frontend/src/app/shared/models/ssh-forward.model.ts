@@ -1,6 +1,11 @@
 export type SshForwardStatus = 'inactive' | 'connecting' | 'active' | 'stopping' | 'error';
+export interface PortForwardCreator {
+  sessionId: number;
+  sessionName: string;
+}
 
 export interface SshForward {
+  createdBySession?: PortForwardCreator;
   id: number;
   projectId: number;
   pairedDeviceId?: number;

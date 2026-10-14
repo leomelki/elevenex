@@ -1,0 +1,109 @@
+<div class="space-y-3">
+  @if (receipt().desktopLabel) {
+    <p class="m-0 text-muted-foreground">
+      Desktop connection:
+      <span class="font-medium text-foreground">{{ receipt().desktopLabel }}</span>
+    </p>
+  }
+  @if (receipt().reused) {
+    <p class="m-0 text-muted-foreground">Used the existing saved forward.</p>
+  }
+  @for (forward of receipt().forwards; track forward.id) {
+    <article
+      class="space-y-2 rounded-md border border-border bg-card p-3"
+      [attr.data-forward-id]="forward.id"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <span class="font-medium">{{ forward.name }}</span>
+        @if (!receipt().removed) {
+          <span
+            class="rounded-full px-2 py-0.5 text-[11px]"
+            [class.bg-success/10]="forward.status.tone === 'ok'"
+            [class.text-success]="forward.status.tone === 'ok'"
+            [class.bg-warning/10]="forward.status.tone === 'warn'"
+            [class.text-warning]="forward.status.tone === 'warn'"
+            [class.bg-destructive/10]="forward.status.tone === 'error'"
+            [class.text-destructive]="forward.status.tone === 'error'"
+            [class.bg-muted]="forward.status.tone === 'neutral'"
+            [class.text-muted-foreground]="forward.status.tone === 'neutral'"
+            >{{ forward.status.text }}</span
+          >
+        }
+      </div>
+      <dl class="grid gap-2 sm:grid-cols-2">
+        <div class="min-w-0">
+          <dt class="text-[11px] text-muted-foreground">On the selected desktop</dt>
+          <dd class="m-0 break-words font-mono">{{ forward.localAddress }}</dd>
+        </div>
+        <div class="min-w-0">
+          <dt class="text-[11px] text-muted-foreground">Remote service</dt>
+          <dd class="m-0 break-words font-mono">{{ forward.remoteAddress }}</dd>
+        </div>
+      </dl>
+      @if (forward.connection) {
+        <p class="m-0 break-words text-[11px] text-muted-foreground">
+          Via {{ forward.connection }}
+        </p>
+      }
+      @if (forward.creator; as creator) {
+        <p class="m-0 text-[11px] text-muted-foreground">
+          Created by
+          <a
+            [routerLink]="creator.link"
+            class="rounded-sm text-primary underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
+            >{{ creator.name }}</a
+          >
+        </p>
+      }
+      @if (forward.error && !receipt().removed) {
+        <p
+          class="m-0 whitespace-pre-wrap break-words rounded-md border border-destructive/25 bg-destructive/5 px-2 py-1.5 text-destructive"
+          role="alert"
+        >
+          {{ forward.error }}
+        </p>
+      }
+      @if (!receipt().removed) {
+        <div class="flex flex-wrap gap-2">
+          <button
+            z-button
+            zType="outline"
+            zSize="xs"
+            type="button"
+            [cdkCopyToClipboard]="forward.localAddress"
+            (cdkCopyToClipboardCopied)="copiedForward.set($event ? forward.id : null)"
+            [attr.aria-label]="'Copy desktop address for ' + forward.name"
+          >
+            {{ copiedForward() === forward.id ? 'Copied' : 'Copy address' }}
+          </button>
+          @if (forward.httpUrl; as url) {
+            <a
+              z-button
+              zType="ghost"
+              zSize="xs"
+              [href]="url"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Use this link for HTTP services on the selected desktop"
+              >Open HTTP link</a
+            >
+          }
+        </div>
+      }
+    </article>
+  }
+  @if (receipt().emptyText) {
+    <p class="m-0 rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
+      {{ receipt().emptyText }}
+    </p>
+  }
+  @for (desktop of receipt().desktops; track desktop.id) {
+    <div class="rounded-md border border-border bg-card px-3 py-2">
+      <div class="font-medium">{{ desktop.label }}</div>
+      <div class="text-[11px] text-muted-foreground">{{ desktop.mode }}</div>
+      <button z-button zType="ghost" zSize="xs" type="button" [cdkCopyToClipboard]="desktop.id" (cdkCopyToClipboardCopied)="copiedDesktop.set($event ? desktop.id : null)">
+        {{ copiedDesktop() === desktop.id ? 'Copied' : 'Copy desktop ID' }}
+      </button>
+    </div>
+  }
+</div>
