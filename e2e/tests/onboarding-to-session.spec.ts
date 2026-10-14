@@ -95,6 +95,10 @@ test('first run: onboarding through to a live session in the sidebar', async ({ 
   // ---------------------------------------------------------------------------
   // 3. Create a task with an isolated environment on a brand-new branch.
   // ---------------------------------------------------------------------------
+  // Sidebar refreshes preserve expansion choices rather than opening new nodes.
+  // Open the repository explicitly so the task will be visible once it is ready.
+  const repoRow = page.locator('[data-repo-row-id]', { hasText: 'test-repo' });
+  await repoRow.getByRole('button', { name: 'test-repo', exact: true }).click();
   await page.getByRole('button', { name: 'New task', exact: true }).first().click();
 
   const taskDialog = page.getByRole('dialog', { name: 'New task', exact: true });
@@ -125,14 +129,17 @@ test('first run: onboarding through to a live session in the sidebar', async ({ 
   ).toBeVisible();
   // The worktree path is derived by the backend, so match on the row existing
   // and carrying the branch we created rather than a hard-coded path.
+  const taskRow = page.locator('[data-workspace-row]', { hasText: TASK_NAME });
   await expect(
-    page.locator('[data-workspace-row]', { hasText: TASK_NAME }),
+    taskRow,
     'task environment visible in sidebar',
   ).toBeVisible();
   await expect(
     page.locator('.sidebar-label--branch', { hasText: taskBranch }),
     'task branch label visible in sidebar',
   ).toBeVisible();
+  // Expand the task explicitly to reveal its auto-created session.
+  await taskRow.getByRole('button', { name: `Expand ${TASK_NAME}`, exact: true }).click();
   await expect(
     page.locator('[data-session-row-id]').first(),
     'session visible in sidebar',
