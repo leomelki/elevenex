@@ -70,6 +70,7 @@ describe('ProjectList', () => {
           provide: ReposService,
           useValue: {
             add: vi.fn(),
+            suggestRepositories: vi.fn(() => of([])),
           },
         },
         {
@@ -143,14 +144,18 @@ describe('ProjectList', () => {
     expect(fixture.nativeElement.textContent).toContain('No matching projects');
   });
 
-  it('renders the first-project prompt and asks the agent when submitted', async () => {
+  it('prioritizes opening a repository and keeps agent setup available on request', async () => {
     projectsServiceMock.getAll.mockReturnValue(of([]));
 
     const fixture = TestBed.createComponent(ProjectList);
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.textContent).toContain('Create your first project');
-    expect(fixture.nativeElement.textContent).toContain('Create project manually');
+    expect(fixture.nativeElement.textContent).toContain('Open your code');
+    expect(fixture.nativeElement.textContent).toContain('Open repository');
+    expect(fixture.nativeElement.querySelector('textarea')).toBeNull();
+    const help = fixture.nativeElement.querySelector('button[aria-controls="first-project-agent-help"]') as HTMLButtonElement;
+    help.click();
+    fixture.detectChanges();
     const input = fixture.nativeElement.querySelector('textarea') as HTMLTextAreaElement;
     input.value = 'Create my web app';
     input.dispatchEvent(new Event('input'));
@@ -170,7 +175,7 @@ describe('ProjectList', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    expect(fixture.nativeElement.textContent).toContain('Create a project');
+    expect(fixture.nativeElement.textContent).toContain('Select repositories');
   });
 
   it('navigates to the selected project', () => {

@@ -15,7 +15,7 @@
         <button class="sidebar-brand__action" aria-label="Open agent drawer" title="Agent" (click)="openAgentDrawer()">
           <ng-icon name="lucideSparkles" class="!w-4 !h-4" />
         </button>
-        <button class="sidebar-brand__action" aria-label="Create project" title="Create project" (click)="openCreateProjectWizard()">
+        <button class="sidebar-brand__action" aria-label="Open repository" title="Open repository" (click)="openCreateProjectWizard()">
           <ng-icon name="lucidePlus" class="!w-4 !h-4" />
         </button>
         <button class="sidebar-brand__refresh" aria-label="Refresh navigation tree" title="Refresh navigation tree" (click)="onRefresh()">
@@ -52,7 +52,7 @@
       <ng-icon name="lucideFolder" class="!w-8 !h-8 text-muted-foreground mb-4" />
       <p class="text-sm font-semibold text-foreground mb-1">No projects</p>
       <p class="text-sm text-muted-foreground mb-4">Create a project to see your repos, branches, and sessions here.</p>
-      <button type="button" class="sidebar-empty-create" (click)="openCreateProjectWizard()">Create project</button>
+      <button type="button" class="sidebar-empty-create" (click)="openCreateProjectWizard()">Open repository</button>
     </div>
   }
 
@@ -1060,15 +1060,7 @@
   <app-worktree-sheet #worktreeSheet />
 
   @if (showCreateWizard()) {
-    <app-project-onboarding-wizard
-      heading="Create a project from the sidebar"
-      [showPortForwardStep]="showPortForwardStep()"
-      [subheading]="
-        showPortForwardStep()
-          ? 'Add repositories now so the new project lands in the tree fully ready to use, with any optional port forwards.'
-          : 'Add repositories now so the new project lands in the tree fully ready to use.'
-      "
-      ctaLabel="Create project"
+    <app-project-create
       (cancelled)="closeCreateProjectWizard()"
       (completed)="handleProjectCreated($event)"
     />

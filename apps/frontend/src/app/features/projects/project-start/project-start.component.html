@@ -1,0 +1,45 @@
+<div class="flex min-h-[70vh] flex-col px-5 py-4" data-project-start>
+  <button z-button zType="ghost" zSize="sm" type="button" class="self-start" (click)="back.emit()">
+    <ng-icon name="lucideArrowLeft" size="15" /> Projects
+  </button>
+  <section class="mx-auto my-auto w-full max-w-md py-12">
+    <span
+      class="flex size-11 items-center justify-center rounded-xl border border-success/30 bg-success/10 text-success"
+    >
+      <ng-icon name="lucideCheck" size="22" />
+    </span>
+    <h1 class="mt-5 break-words text-2xl font-semibold tracking-tight">
+      {{ projectName() }} is ready
+    </h1>
+    <p class="mt-2 text-sm leading-6 text-muted-foreground">
+      Start a task to work with an agent on your code.
+    </p>
+    <div class="mt-6">
+      @if (repos().length > 1) {
+        <p class="mb-2 text-sm font-medium">Work in</p>
+        <app-option-select
+          ariaLabel="Repository for your first task"
+          [options]="repoOptions()"
+          [value]="selectedRepo() ? '' + selectedRepo()!.id : ''"
+          (valueChange)="selectedRepoId.set($event)"
+        />
+      } @else if (selectedRepo(); as repo) {
+        <div class="flex items-center gap-3 rounded-lg border border-border bg-card p-3">
+          <ng-icon name="lucideGitBranch" size="17" class="shrink-0 text-muted-foreground" />
+          <div class="min-w-0">
+            <p class="text-sm font-medium">{{ repo.name }}</p>
+            <p class="mt-0.5 break-all text-xs text-muted-foreground">{{ repo.path }}</p>
+          </div>
+        </div>
+      }
+    </div>
+    <div class="mt-5 flex flex-wrap items-center gap-2">
+      <button z-button type="button" [zDisabled]="!selectedRepo()" (click)="start()">
+        <ng-icon name="lucideGitBranch" size="15" /> New task
+      </button>
+      <button z-button zType="ghost" type="button" (click)="settings.emit()">
+        <ng-icon name="lucideSettings" size="15" /> Project settings
+      </button>
+    </div>
+  </section>
+</div>

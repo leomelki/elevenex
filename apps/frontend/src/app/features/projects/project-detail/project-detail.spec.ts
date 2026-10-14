@@ -77,6 +77,7 @@ describe('ProjectDetail', () => {
   const onboardingSnapshot = signal({ mode: 'local' as OnboardingMode, paired: null as PairedDeviceState | null, remoteConnectionReady: false });
   const paramMap = new BehaviorSubject(convertToParamMap({ id: '1' }));
   const fragment = new BehaviorSubject<string | null>(null);
+  const queryParamMap = new BehaviorSubject(convertToParamMap({}));
   const navigate = vi.fn(() => Promise.resolve(true));
   const navigateByUrl = vi.fn(() => Promise.resolve(true));
   const projectsServiceMock = {
@@ -114,6 +115,7 @@ describe('ProjectDetail', () => {
   beforeEach(async () => {
     paramMap.next(convertToParamMap({ id: '1' }));
     fragment.next(null);
+    queryParamMap.next(convertToParamMap({}));
     vi.clearAllMocks();
     onboardingSnapshot.set({ mode: 'local', paired: null, remoteConnectionReady: false });
 
@@ -163,6 +165,7 @@ describe('ProjectDetail', () => {
           useValue: {
             paramMap: paramMap.asObservable(),
             fragment: fragment.asObservable(),
+            queryParamMap: queryParamMap.asObservable(),
           },
         },
         {
@@ -210,6 +213,33 @@ describe('ProjectDetail', () => {
     fixture.detectChanges();
     return fixture;
   }
+
+  it('opens newly created projects on a focused first-task screen without loading optional setup', async () => {
+    queryParamMap.next(convertToParamMap({ created: '1' }));
+    const fixture = await render();
+    expect(fixture.nativeElement.querySelector('[data-project-start]')).not.toBeNull();
+    expect(fixture.nativeElement.textContent).toContain('Platform is ready');
+    expect(fixture.nativeElement.textContent).not.toContain('Port forwarding');
+    expect(sshForwardsServiceMock.getByProject).not.toHaveBeenCalled();
+    expect(browserIsolationServiceMock.get).not.toHaveBeenCalled();
+
+    const start = Array.from(fixture.nativeElement.querySelectorAll('button') as NodeListOf<HTMLButtonElement>)
+      .find(button => button.textContent?.includes('New task'))!;
+    start.click();
+    expect(TestBed.inject(TaskUiService).create).toHaveBeenCalledWith({ repoId: 10, repoName: 'api' });
+  });
+
+  it('makes project settings available from the first-task screen', async () => {
+    queryParamMap.next(convertToParamMap({ created: '1' }));
+    const fixture = await render();
+    fixture.componentInstance.openProjectSettings();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-project-start]')).toBeNull();
+    expect(sshForwardsServiceMock.getByProject).toHaveBeenCalledWith(1);
+    expect(navigate).toHaveBeenCalledWith([], expect.objectContaining({ queryParams: { created: null } }));
+  });
 
   it('loads the project, defaults to repositories, and omits GitHub diagnostics', async () => {
     const fixture = await render();

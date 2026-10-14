@@ -329,6 +329,7 @@ describe('Sidebar', () => {
 
   const reposServiceMock = {
     add: vi.fn(),
+    suggestRepositories: vi.fn(() => of([])),
   };
 
   const todosCounts = signal(new Map<number, number>());
@@ -1972,7 +1973,7 @@ describe('Sidebar', () => {
     component.handleProjectCreated(project);
 
     expect(component.showCreateWizard()).toBe(false);
-    expect(routerMock.navigate).toHaveBeenCalledWith(['/projects', 14]);
+    expect(routerMock.navigate).toHaveBeenCalledWith(['/projects', 14], { queryParams: { created: '1' } });
   });
 
   it('formats the live session last state-change time using claude status first', () => {

@@ -69,6 +69,96 @@ describe('ReposService', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  describe('validatePath', () => {
+    it('checks a repository without attaching it to a project', async () => {
+      expect(await service.validatePath(`${gitRepoDir}/`)).toEqual({
+        name: 'my-repo',
+        path: gitRepoDir,
+      });
+      expect(await service.findByProject(projectId)).toEqual([]);
+    });
+
+    it('expands home-relative input consistently for validation and creation', async () => {
+      const inputPath = `~/${path.relative(os.homedir(), gitRepoDir)}`;
+      expect((await service.validatePath(inputPath)).path).toBe(gitRepoDir);
+      expect((await service.addRepo(projectId, inputPath)).path).toBe(
+        gitRepoDir,
+      );
+    });
+
+    it('accepts the .git file used by linked worktrees', async () => {
+      fs.rmSync(path.join(gitRepoDir, '.git'), { recursive: true });
+      fs.writeFileSync(
+        path.join(gitRepoDir, '.git'),
+        'gitdir: /work/main/.git/worktrees/my-repo',
+      );
+      expect((await service.validatePath(gitRepoDir)).name).toBe('my-repo');
+    });
+
+    it('rejects empty and non-repository folders without adding a repository', async () => {
+      await expect(service.validatePath('  ')).rejects.toThrow(
+        'Choose a repository folder',
+      );
+      await expect(service.validatePath(nonGitDir)).rejects.toThrow(
+        'Not a git repository',
+      );
+      expect(await service.findByProject(projectId)).toEqual([]);
+    });
+  });
+
+  describe('suggestRepositories', () => {
+    it('deduplicates saved paths, includes archived projects and excludes hidden agent repositories', async () => {
+      const added = await db
+        .insert(schema.projects)
+        .values([
+          { name: 'Other project' },
+          { name: 'Archived project', archivedAt: '2026-01-01T00:00:00Z' },
+          { name: 'Agent', hidden: true },
+        ])
+        .returning();
+      await db.insert(schema.repos).values([
+        { projectId, name: 'api', path: '/work/api' },
+        { projectId: added[0].id, name: 'api', path: '/work/api' },
+        { projectId: added[1].id, name: 'frontend', path: '/work/frontend' },
+        { projectId: added[2].id, name: 'agent', path: '/work/agent' },
+      ]);
+      expect(await service.suggestRepositories()).toEqual([
+        { name: 'frontend', path: '/work/frontend' },
+        { name: 'api', path: '/work/api' },
+      ]);
+    });
+
+    it('searches names and paths case-insensitively, with literal wildcard characters', async () => {
+      await db.insert(schema.repos).values([
+        { projectId, name: 'API-core', path: '/missing/services/api' },
+        { projectId, name: 'literal%_repo', path: '/missing/literal%_repo' },
+        { projectId, name: 'literalXXrepo', path: '/missing/literalXXrepo' },
+      ]);
+      expect(
+        (await service.suggestRepositories('api')).map((repo) => repo.name),
+      ).toEqual(['API-core']);
+      expect(
+        (await service.suggestRepositories('services')).map(
+          (repo) => repo.name,
+        ),
+      ).toEqual(['API-core']);
+      expect(
+        (await service.suggestRepositories('%_')).map((repo) => repo.name),
+      ).toEqual(['literal%_repo']);
+    });
+
+    it('bounds the metadata response and returns the newest additions first', async () => {
+      await db.insert(schema.repos).values([
+        { projectId, name: 'old', path: '/work/old' },
+        { projectId, name: 'new', path: '/work/new' },
+        { projectId, name: 'latest', path: '/work/latest' },
+      ]);
+      expect(
+        (await service.suggestRepositories('', 2)).map((repo) => repo.name),
+      ).toEqual(['latest', 'new']);
+    });
+  });
+
   describe('addRepo', () => {
     it('should validate path exists, has .git, derive name from basename, and return repo', async () => {
       const result = await service.addRepo(projectId, gitRepoDir);

@@ -14,6 +14,11 @@
 }
 
 @if (!loading() && project()) {
+  @if (showStart() && !isArchived()) {
+    <app-project-start [projectName]="project()!.name" [repos]="repos()"
+      (startTask)="taskUi.create({ repoId: $event.id, repoName: $event.name })"
+      (settings)="openProjectSettings()" (back)="goBack()" />
+  } @else {
   <section class="project-detail-shell">
     <header class="project-detail-header">
       <div class="project-detail-header__top">
@@ -22,7 +27,7 @@
             <ng-icon name="lucideArrowLeft" size="15" />
           </button>
           <div class="min-w-0">
-            <div class="project-kicker">{{ isArchived() ? 'Archived project' : 'Project setup' }}</div>
+            <div class="project-kicker">{{ isArchived() ? 'Archived project' : 'Project settings' }}</div>
             <h1>{{ project()!.name }}</h1>
             <p>
               Updated {{ formatDate(project()!.updatedAt) }}
@@ -501,6 +506,7 @@
       }
     </main>
   </section>
+  }
 
   @if (showArchiveProjectDialog()) {
     <dialog #archiveProjectDialog="trackedNativeModal" trackNativeModal class="project-dialog" (close)="closeArchiveProjectDialog()">

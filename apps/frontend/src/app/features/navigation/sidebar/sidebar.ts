@@ -7,7 +7,7 @@ import { TaskHistoryComponent } from '@/features/tasks/task-history.component';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 import { PlannotatorStateService } from '@/features/plannotator';
 import { TodosService } from '@/features/productivity/todos.service';
-import { ProjectOnboardingWizard } from '@/features/projects/project-onboarding-wizard/project-onboarding-wizard';
+import { ProjectCreateComponent } from '@/features/projects/project-create/project-create.component';
 import {
   VSCodeWebStateService,
   buildVSCodeIframeKey,
@@ -134,7 +134,7 @@ import { TaskNavigationLabelComponent } from './task-navigation-label.component'
     ZardDropdownMenuItemComponent,
     ZardDropdownMenuLabelComponent,
     ZardDropdownMenuSeparatorComponent,
-    ProjectOnboardingWizard,
+    ProjectCreateComponent,
     PathAutocompleteInputComponent,
     TrackNativeModalDirective,
     EnvironmentSwitcherComponent,
@@ -306,10 +306,6 @@ export class Sidebar implements OnInit, OnDestroy {
   addRepoPath = signal('');
   addRepoSubmitting = signal(false);
   addRepoError = signal('');
-  // Only SSH backends run on a genuinely separate machine that needs a port
-  // forward to reach a project's dev server from this browser view. WSL
-  // shares localhost with Windows the same way Local does, so it doesn't.
-  showPortForwardStep = computed(() => this.onboardingState.snapshotState().mode === 'ssh');
 
   deleteWorktreeRepoId = signal(0);
   deleteWorktreePath = signal('');
@@ -439,7 +435,7 @@ export class Sidebar implements OnInit, OnDestroy {
 
   handleProjectCreated(project: Project) {
     this.showCreateWizard.set(false);
-    void this.router.navigate(['/projects', project.id]);
+    void this.router.navigate(['/projects', project.id], { queryParams: { created: '1' } });
   }
 
   openAddRepoWizard(project: NavigationProject, event: Event) {

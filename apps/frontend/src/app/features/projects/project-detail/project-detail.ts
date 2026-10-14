@@ -28,6 +28,7 @@ import { TodoPanelComponent } from '@/features/productivity/todo-panel/todo-pane
 import { TrackNativeModalDirective } from '@/shared/core/directives/track-native-modal.directive';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 import { WorktreeSheet } from '@/features/navigation/worktree-sheet/worktree-sheet';
+import { ProjectStartComponent } from '@/features/projects/project-start/project-start.component';
 
 type ProjectDetailSection = 'repos' | 'ssh' | 'browser' | 'instructions';
 
@@ -43,6 +44,7 @@ type ProjectDetailSection = 'repos' | 'ssh' | 'browser' | 'instructions';
     TodoPanelComponent,
     TrackNativeModalDirective,
     WorktreeSheet,
+    ProjectStartComponent,
   ],
   templateUrl: './project-detail.html',
   styleUrl: './project-detail.scss',
@@ -67,6 +69,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
   });
 
   activeSection = signal<ProjectDetailSection>('repos');
+  readonly showStart = signal(false);
   project = signal<Project | null>(null);
   repos = signal<Repo[]>([]);
   sshForwards = signal<SshForward[]>([]);
@@ -139,6 +142,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
   private sshRefreshTimer: number | null = null;
   private routeSubscription: Subscription | null = null;
   private fragmentSubscription: Subscription | null = null;
+  private querySubscription: Subscription | null = null;
 
   activeForwardCount = computed(() =>
     this.sshForwards().filter(forward => forward.status === 'active').length,
@@ -153,6 +157,13 @@ export class ProjectDetail implements OnInit, OnDestroy {
   isArchived = computed(() => Boolean(this.project()?.archivedAt));
 
   ngOnInit() {
+    this.querySubscription = this.route.queryParamMap.subscribe(params => {
+      const wasStart = this.showStart();
+      this.showStart.set(params.get('created') === '1');
+      if (wasStart && !this.showStart() && this.project()) {
+        this.loadProjectSettings(this.project()!.id);
+      }
+    });
     this.routeSubscription = this.route.paramMap.subscribe((paramMap) => {
       const id = Number(paramMap.get('id'));
       if (!Number.isFinite(id) || id <= 0) {
@@ -172,6 +183,7 @@ export class ProjectDetail implements OnInit, OnDestroy {
   ngOnDestroy() {
     this.routeSubscription?.unsubscribe();
     this.fragmentSubscription?.unsubscribe();
+    this.querySubscription?.unsubscribe();
     if (this.sshRefreshTimer !== null) {
       window.clearInterval(this.sshRefreshTimer);
     }
@@ -179,6 +191,17 @@ export class ProjectDetail implements OnInit, OnDestroy {
 
   goBack() {
     this.router.navigate(['/projects']);
+  }
+
+  openProjectSettings() {
+    this.showStart.set(false);
+    if (this.project()) this.loadProjectSettings(this.project()!.id);
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { created: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
   }
 
   openAgentDrawer() {
@@ -788,6 +811,10 @@ export class ProjectDetail implements OnInit, OnDestroy {
       },
     });
 
+    if (!this.showStart()) this.loadProjectSettings(projectId);
+  }
+
+  private loadProjectSettings(projectId: number) {
     void this.loadSshForwards(projectId);
     this.loadBrowserIsolation(projectId);
   }

@@ -1,80 +1,69 @@
-<div class="first-project">
-  <span class="first-project__badge" aria-hidden="true">
-    <ng-icon name="lucideSparkles" size="22" />
+<div class="mx-auto flex w-full max-w-lg flex-col items-center text-center">
+  <span
+    class="flex size-12 items-center justify-center rounded-xl border border-border bg-muted text-primary"
+    aria-hidden="true"
+  >
+    <ng-icon name="lucideFolderOpen" size="23" />
   </span>
-
-  <h2 class="first-project__title">Create your first project</h2>
-  <p class="first-project__subtitle">
-    Tell the Elevenex agent what you're building. It sets up the project,
-    attaches your repositories, and gets the workspace ready for you.
+  <h2 class="mt-4 text-2xl font-semibold tracking-tight text-foreground">Open your code</h2>
+  <p class="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+    Choose a Git repository. Elevenex groups your code into a project, ready for your first task.
   </p>
-
-  <form class="first-project__bar" (submit)="$event.preventDefault(); submit()">
-    <div class="first-project__glow" aria-hidden="true"></div>
-
-    <span class="first-project__leading" aria-hidden="true">
-      <ng-icon name="lucideSparkles" size="20" />
-    </span>
-
-    <textarea
-      #input
-      appDictateTarget
-      #dictate="dictateTarget"
-      (dictationSubmit)="submit()"
-      class="first-project__input"
-      rows="1"
-      autocomplete="off"
-      autocapitalize="off"
-      autocorrect="off"
-      spellcheck="false"
-      placeholder="e.g. Create a project for my web app and add the repo at ~/code/app"
-      aria-label="Describe your first project for the Elevenex agent"
-      [value]="query()"
-      [disabled]="submitting()"
-      (input)="query.set($any($event.target).value); autoGrow($any($event.target))"
-      (keydown)="onKeydown($event)"
-    ></textarea>
-
-    <app-dictation-button
-      size="md"
-      [target]="dictate"
-      [disabled]="submitting()"
-    />
-
-    <button
-      type="submit"
-      class="first-project__send"
-      aria-label="Ask the Elevenex agent to create your project"
-      [disabled]="!query().trim() || submitting()"
-    >
-      @if (submitting()) {
-        <ng-icon name="lucideLoader2" size="18" class="first-project__spin" />
-      } @else {
-        <ng-icon name="lucideArrowUp" size="18" />
-      }
-    </button>
-  </form>
-
-  <div class="first-project__hints">
-    <span class="first-project__hint">
-      <ng-icon name="lucideSparkles" size="13" />
-      Elevenex agent · runs in its own workspace
-    </span>
-    <span class="first-project__keys">
-      <kbd class="first-project__kbd">↵</kbd>
-      <span>to ask</span>
-      <span class="first-project__sep">·</span>
-      <kbd class="first-project__kbd">⌘K</kbd>
-      <span>anywhere</span>
-    </span>
-  </div>
-
-  <div class="first-project__divider" role="separator" aria-label="or">
-    <span>or</span>
-  </div>
-
-  <button z-button zType="outline" type="button" (click)="createManually.emit()">
-    <ng-icon name="lucidePlus" size="15" />
-    Create project manually
+  <button z-button type="button" class="mt-6" (click)="openRepository.emit()">
+    <ng-icon name="lucideFolderOpen" size="16" /> Open repository
   </button>
+
+  <div class="mt-8 w-full border-t border-border pt-5">
+    <button
+      z-button
+      zType="ghost"
+      type="button"
+      [attr.aria-expanded]="showAgentHelp()"
+      aria-controls="first-project-agent-help"
+      (click)="toggleAgentHelp()"
+    >
+      <ng-icon name="lucideSparkles" size="15" /> Ask the agent to help set up a project
+    </button>
+    @if (showAgentHelp()) {
+      <form
+        id="first-project-agent-help"
+        class="mt-3 space-y-3 text-left"
+        (submit)="$event.preventDefault(); submit()"
+      >
+        <p class="text-xs leading-5 text-muted-foreground">
+          Describe your app or tell the agent where to find your repositories.
+        </p>
+        <textarea
+          #input
+          appDictateTarget
+          #dictate="dictateTarget"
+          (dictationSubmit)="submit()"
+          z-input
+          class="min-h-24 w-full resize-none"
+          rows="3"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="e.g. Help me set up my web app at ~/code/app"
+          aria-label="Describe your project for the Elevenex agent"
+          [value]="query()"
+          [disabled]="submitting()"
+          (input)="query.set($any($event.target).value); autoGrow($any($event.target))"
+          (keydown)="onKeydown($event)"
+        ></textarea>
+        <div class="flex items-center justify-end gap-2">
+          <app-dictation-button size="md" [target]="dictate" [disabled]="submitting()" />
+          <button
+            z-button
+            type="submit"
+            [zDisabled]="!query().trim() || submitting()"
+            [zLoading]="submitting()"
+          >
+            <ng-icon name="lucideArrowUp" size="15" /> Ask the agent
+          </button>
+        </div>
+      </form>
+    }
+  </div>
 </div>

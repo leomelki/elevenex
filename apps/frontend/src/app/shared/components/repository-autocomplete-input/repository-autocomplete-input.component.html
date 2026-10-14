@@ -1,0 +1,16 @@
+<app-path-autocomplete-input
+  [inputId]="inputId()"
+  [describedBy]="describedBy()"
+  [invalid]="invalid()"
+  placeholder="Search repositories or enter a folder path"
+  pathKind="directory"
+  browseLabel="Browse"
+  loadingLabel="Looking for repositories…"
+  emptyLabel="No saved repositories match. Enter a folder path to add one."
+  [value]="value()"
+  [disabled]="disabled()"
+  [suggestionsProvider]="fetchSuggestions"
+  (browse)="browse()"
+  (valueChange)="valueChange.emit($event)"
+  (commit)="commit.emit($event)"
+/>

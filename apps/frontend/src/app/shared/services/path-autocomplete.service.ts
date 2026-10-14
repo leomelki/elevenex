@@ -10,20 +10,17 @@ export interface PathSuggestion {
   kind: PathSuggestionKind;
   isExactParent: boolean;
   trailingSlashHint: boolean;
+  /** Complete this directory selection instead of browsing inside it. */
+  commitOnSelect?: boolean;
+  badge?: string;
 }
 
 @Injectable({ providedIn: 'root' })
 export class PathAutocompleteService {
   private readonly http = inject(HttpClient);
 
-  suggestPaths(
-    input: string,
-    targetKind: PathAutocompleteKind,
-    preferredStartDirectory?: string,
-  ) {
-    let params = new HttpParams()
-      .set('input', input)
-      .set('targetKind', targetKind);
+  suggestPaths(input: string, targetKind: PathAutocompleteKind, preferredStartDirectory?: string) {
+    let params = new HttpParams().set('input', input).set('targetKind', targetKind);
 
     if (preferredStartDirectory?.trim()) {
       params = params.set('preferredStartDirectory', preferredStartDirectory.trim());

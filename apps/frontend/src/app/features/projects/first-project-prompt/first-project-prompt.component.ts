@@ -8,42 +8,36 @@ import {
   signal,
 } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideArrowUp, lucideLoader2, lucidePlus, lucideSparkles } from '@ng-icons/lucide';
+import { lucideArrowUp, lucideFolderOpen, lucideLoader2, lucideSparkles } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 
 import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardInputDirective } from '@/shared/components/input';
 import { DictateTargetDirective } from '@/shared/speech/dictate-target.directive';
 import { DictationButtonComponent } from '@/shared/speech/dictation-button.component';
 import { AgentControlStateService } from '@/features/agent-control/agent-control-state.service';
 
-/**
- * Centered, Cmd/Ctrl+K-style call-to-action shown in the no-projects empty
- * state. Submitting it asks the Elevenex agent to create the first project
- * (via {@link AgentControlStateService.createMission}, which opens the agent
- * drawer and starts the mission). The manual "Create project" wizard remains
- * available through the {@link createManually} output.
- */
+/** Repository-first entry point with optional agent assistance for new projects. */
 @Component({
   selector: 'app-first-project-prompt',
   standalone: true,
   imports: [
     NgIcon,
     ZardButtonComponent,
+    ZardInputDirective,
     DictateTargetDirective,
     DictationButtonComponent,
   ],
   templateUrl: './first-project-prompt.component.html',
   styleUrl: './first-project-prompt.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  viewProviders: [
-    provideIcons({ lucideArrowUp, lucideLoader2, lucidePlus, lucideSparkles }),
-  ],
+  viewProviders: [provideIcons({ lucideArrowUp, lucideFolderOpen, lucideLoader2, lucideSparkles })],
 })
 export class FirstProjectPromptComponent {
   private readonly agent = inject(AgentControlStateService);
 
-  /** Asks the host to open the manual project-creation wizard. */
-  readonly createManually = output<void>();
+  readonly openRepository = output<void>();
+  readonly showAgentHelp = signal(false);
 
   readonly query = signal('');
   readonly submitting = signal(false);
@@ -51,8 +45,7 @@ export class FirstProjectPromptComponent {
   @ViewChild('input')
   set inputRef(ref: ElementRef<HTMLTextAreaElement> | undefined) {
     if (ref) {
-      // Focus the prompt as soon as it mounts so the user can type their first
-      // project straight away — this is the primary call to action.
+      // Focus the prompt when the user opens optional agent assistance.
       queueMicrotask(() => ref.nativeElement.focus());
     }
   }
@@ -60,6 +53,10 @@ export class FirstProjectPromptComponent {
   autoGrow(textarea: HTMLTextAreaElement): void {
     textarea.style.height = 'auto';
     textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+  }
+
+  toggleAgentHelp() {
+    this.showAgentHelp.update((value) => !value);
   }
 
   onKeydown(event: KeyboardEvent): void {

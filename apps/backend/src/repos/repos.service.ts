@@ -6,9 +6,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { eq, count } from 'drizzle-orm';
+import { and, desc, eq, count, or, sql } from 'drizzle-orm';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import { homedir } from 'node:os';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { ProjectsService } from '../projects/projects.service.js';
@@ -43,9 +44,18 @@ export class ReposService {
       .where(eq(schema.repos.projectId, projectId));
   }
 
-  async addRepo(projectId: number, repoPath: string) {
-    await this.projectsService.assertProjectIsActive(projectId);
-
+  async validatePath(inputPath: string) {
+    const trimmed = inputPath.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Choose a repository folder.');
+    }
+    const expanded =
+      trimmed === '~'
+        ? homedir()
+        : /^~[\\/]/.test(trimmed)
+          ? path.join(homedir(), trimmed.slice(2))
+          : trimmed;
+    const repoPath = path.resolve(expanded);
     let stat;
     try {
       stat = await fs.stat(repoPath);
@@ -63,11 +73,47 @@ export class ReposService {
       await fs.access(path.join(repoPath, '.git'));
     } catch {
       throw new BadRequestException(
-        'Not a git repository. Verify the folder contains a .git directory.',
+        'Not a git repository. Choose the root folder of a Git repository.',
       );
     }
 
-    const name = path.basename(repoPath);
+    return { name: path.basename(repoPath), path: repoPath };
+  }
+
+  async suggestRepositories(query = '', limit = 20) {
+    // Search saved metadata only: opening the picker must not scan repositories
+    // or launch git processes. Group paths shared by multiple projects.
+    const term = query.trim();
+    const pattern = `%${term.replace(/[\\%_]/g, '\\$&')}%`;
+    return this.db
+      .select({
+        name: sql<string>`max(${schema.repos.name})`,
+        path: schema.repos.path,
+      })
+      .from(schema.repos)
+      .innerJoin(
+        schema.projects,
+        eq(schema.projects.id, schema.repos.projectId),
+      )
+      .where(
+        and(
+          eq(schema.projects.hidden, false),
+          term
+            ? or(
+                sql`${schema.repos.name} like ${pattern} escape '\\'`,
+                sql`${schema.repos.path} like ${pattern} escape '\\'`,
+              )
+            : undefined,
+        ),
+      )
+      .groupBy(schema.repos.path)
+      .orderBy(desc(sql`max(${schema.repos.id})`))
+      .limit(Math.max(1, Math.min(50, limit)));
+  }
+
+  async addRepo(projectId: number, inputPath: string) {
+    await this.projectsService.assertProjectIsActive(projectId);
+    const { name, path: repoPath } = await this.validatePath(inputPath);
     const color = await this.assignColor(projectId);
 
     try {

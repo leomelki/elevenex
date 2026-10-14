@@ -1,0 +1,314 @@
+<div [class]="embedded() ? 'block' : 'fixed inset-0 z-60 flex items-center justify-center p-4'">
+  @if (!embedded()) {
+    <button
+      type="button"
+      class="project-create-backdrop absolute inset-0 border-0"
+      aria-label="Close project creation"
+      [disabled]="submitting() || !allowCancel()"
+      (click)="close()"
+    ></button>
+  }
+  <section
+    class="project-create-panel relative flex w-full max-w-xl flex-col overflow-hidden rounded-xl border border-border bg-background text-foreground"
+    [class.project-create-panel--embedded]="embedded()"
+    [attr.role]="embedded() ? null : 'dialog'"
+    [attr.aria-modal]="embedded() ? null : true"
+    aria-labelledby="project-create-heading"
+    aria-describedby="project-create-description"
+    cdkTrapFocus
+    [cdkTrapFocus]="!embedded()"
+    [cdkTrapFocusAutoCapture]="!embedded()"
+    (keydown.escape)="close($event)"
+    data-project-create
+    [attr.data-project-step]="step()"
+  >
+    <header class="flex items-start justify-between gap-4 border-b border-border p-5">
+      <div>
+        <h2 id="project-create-heading" class="text-lg font-semibold tracking-tight">
+          {{ step() === 'repos' ? heading() : 'Name your project' }}
+        </h2>
+        <p id="project-create-description" class="mt-1 text-sm text-muted-foreground">
+          {{
+            step() === 'repos' ? subheading() : 'Give your selected repositories a project name.'
+          }}
+        </p>
+        @if (!existingProject()) {
+          <ol class="mt-3 flex items-center gap-3 text-xs" aria-label="Project creation steps">
+            <li
+              class="flex items-center gap-1.5"
+              [attr.aria-current]="step() === 'repos' ? 'step' : null"
+              [class.text-muted-foreground]="step() !== 'repos'"
+            >
+              <span
+                class="flex size-5 items-center justify-center rounded-full bg-muted"
+                [class.bg-primary]="step() === 'repos'"
+                [class.text-primary-foreground]="step() === 'repos'"
+                >1</span
+              >
+              Repositories
+            </li>
+            <li aria-hidden="true" class="text-muted-foreground">
+              <ng-icon name="lucideArrowRight" size="12" />
+            </li>
+            <li
+              class="flex items-center gap-1.5"
+              [attr.aria-current]="step() === 'name' ? 'step' : null"
+              [class.text-muted-foreground]="step() !== 'name'"
+            >
+              <span
+                class="flex size-5 items-center justify-center rounded-full bg-muted"
+                [class.bg-primary]="step() === 'name'"
+                [class.text-primary-foreground]="step() === 'name'"
+                >2</span
+              >
+              Name
+            </li>
+          </ol>
+        }
+      </div>
+      @if (allowCancel()) {
+        <button
+          z-button
+          zType="ghost"
+          zSize="icon-sm"
+          type="button"
+          aria-label="Close project creation"
+          [zDisabled]="submitting()"
+          (click)="close()"
+        >
+          <ng-icon name="lucideX" size="18" />
+        </button>
+      }
+    </header>
+
+    <form class="flex min-h-0 flex-col" (submit)="$event.preventDefault(); submitStep()">
+      <div class="space-y-5 overflow-y-auto p-5">
+        @if (step() === 'repos') {
+          <p class="flex items-center gap-2 text-xs text-muted-foreground">
+            <ng-icon name="lucideServer" size="14" />
+            Folders on <span class="font-medium text-foreground">{{ locationLabel() }}</span>
+          </p>
+          <div class="space-y-3">
+            @for (repo of repos(); track repo.id; let i = $index) {
+              <div class="space-y-2">
+                <div class="flex items-center justify-between gap-3">
+                  <label [for]="'project-repository-' + repo.id" class="text-sm font-medium">
+                    {{ repos().length === 1 ? 'Repository' : 'Repository ' + (i + 1) }}
+                  </label>
+                  @if (repos().length > 1) {
+                    <button
+                      z-button
+                      zType="ghost"
+                      zSize="icon-sm"
+                      type="button"
+                      [attr.aria-label]="'Remove repository ' + (i + 1)"
+                      [zDisabled]="submitting() || !!repo.repo"
+                      (click)="removeRepoRow(repo.id)"
+                    >
+                      <ng-icon name="lucideTrash2" size="14" />
+                    </button>
+                  }
+                </div>
+                <app-repository-autocomplete-input
+                  [inputId]="'project-repository-' + repo.id"
+                  [describedBy]="'project-repository-status-' + repo.id"
+                  [invalid]="!!repoError(repo)"
+                  [value]="repo.path"
+                  [disabled]="submitting() || !!repo.repo"
+                  [excludedPaths]="excludedPaths(repo.id)"
+                  (valueChange)="updateRepoPath(repo.id, $event)"
+                  (commit)="validateRepo(repo.id)"
+                />
+                <div
+                  [id]="'project-repository-status-' + repo.id"
+                  class="min-h-5 text-xs"
+                  aria-live="polite"
+                >
+                  @if (repoError(repo)) {
+                    <p class="text-destructive">{{ repoError(repo) }}</p>
+                    @if (repo.validation === 'error') {
+                      <button
+                        z-button
+                        zType="link"
+                        zSize="sm"
+                        type="button"
+                        class="h-auto p-0"
+                        [zDisabled]="submitting()"
+                        (click)="validateRepo(repo.id)"
+                      >
+                        Check again
+                      </button>
+                    }
+                  } @else if (repo.repo) {
+                    <p class="flex items-center gap-1.5 text-success">
+                      <ng-icon name="lucideCheck" size="14" /> Added {{ repo.repo.name }}
+                    </p>
+                  } @else if (repo.validation === 'checking') {
+                    <p class="flex items-center gap-1.5 text-muted-foreground">
+                      <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" /> Checking
+                      folder…
+                    </p>
+                  } @else if (repo.validation === 'valid') {
+                    <p class="flex items-center gap-1.5 text-success">
+                      <ng-icon name="lucideCheck" size="14" /> Git repository found
+                    </p>
+                  } @else {
+                    <p class="text-muted-foreground">
+                      Search previously used repositories by name, or browse for a folder.
+                    </p>
+                  }
+                </div>
+              </div>
+            }
+            <button
+              z-button
+              zType="ghost"
+              zSize="sm"
+              type="button"
+              [zDisabled]="submitting()"
+              (click)="addRepoRow()"
+            >
+              <ng-icon name="lucidePlus" size="14" /> Add another repository
+            </button>
+          </div>
+
+          @if (previouslyUsedLoading()) {
+            <p class="flex items-center gap-2 text-xs text-muted-foreground" role="status">
+              <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" /> Loading
+              previously used repositories…
+            </p>
+          } @else if (previouslyUsedError()) {
+            <button z-button zType="ghost" zSize="sm" type="button" (click)="loadPreviouslyUsed()">
+              Retry loading previously used repositories
+            </button>
+          } @else if (availablePreviouslyUsed().length) {
+            <section class="space-y-2" aria-label="Previously used repositories">
+              <h3 class="text-xs font-medium text-muted-foreground">Previously used</h3>
+              <div class="grid gap-2 sm:grid-cols-2">
+                @for (repo of availablePreviouslyUsed(); track repo.path) {
+                  <button
+                    z-button
+                    zType="outline"
+                    type="button"
+                    class="h-auto justify-start gap-2 px-3 py-2 text-left"
+                    [zDisabled]="submitting()"
+                    [attr.aria-label]="'Select ' + repo.name + ' at ' + repo.path"
+                    (click)="selectPreviouslyUsed(repo)"
+                  >
+                    <ng-icon
+                      name="lucideFolderOpen"
+                      size="15"
+                      class="shrink-0 text-muted-foreground"
+                    />
+                    <span class="min-w-0">
+                      <span class="block truncate text-xs font-medium">{{ repo.name }}</span>
+                      <span
+                        class="mt-0.5 block truncate text-[11px] font-normal text-muted-foreground"
+                        [title]="repo.path"
+                        >{{ repo.path }}</span
+                      >
+                    </span>
+                  </button>
+                }
+              </div>
+            </section>
+          }
+        } @else {
+          <div class="space-y-2">
+            <label for="project-create-name" class="text-sm font-medium">Project name</label>
+            <input
+              #nameInput
+              z-input
+              id="project-create-name"
+              type="text"
+              [placeholder]="readyRepos().length === 1 ? 'Repository name' : 'e.g. Storefront'"
+              [value]="projectDisplayName()"
+              [disabled]="submitting() || !!createdProject()"
+              (input)="updateProjectName($any($event.target).value)"
+            />
+            <p class="text-xs text-muted-foreground">
+              {{
+                readyRepos().length === 1
+                  ? 'Suggested from your repository. You can change it.'
+                  : 'Choose a name for this group of repositories.'
+              }}
+            </p>
+          </div>
+          <section class="space-y-2" aria-label="Selected repositories">
+            <h3 class="text-xs font-medium text-muted-foreground">Selected repositories</h3>
+            <div class="divide-y divide-border rounded-lg border border-border bg-card">
+              @for (repo of readyRepos(); track repo.id) {
+                <div class="flex items-start gap-2.5 p-3">
+                  <ng-icon
+                    name="lucideFolderOpen"
+                    size="15"
+                    class="mt-0.5 shrink-0 text-muted-foreground"
+                  />
+                  <div class="min-w-0">
+                    <p class="text-sm font-medium">{{ repo.name }}</p>
+                    <p class="mt-0.5 break-all text-xs text-muted-foreground">
+                      {{ repo.validatedPath }}
+                    </p>
+                    @if (repoError(repo)) {
+                      <p class="mt-1 text-xs text-destructive">{{ repoError(repo) }}</p>
+                    }
+                  </div>
+                </div>
+              }
+            </div>
+          </section>
+        }
+
+        @if (submissionError()) {
+          <div
+            class="space-y-1 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm"
+            role="alert"
+          >
+            <p class="text-destructive">{{ submissionError() }}</p>
+            @if (createdProject()) {
+              <p class="text-foreground">
+                {{ createdProject()!.name }} was created. Retry adding the remaining repositories.
+              </p>
+            }
+          </div>
+        }
+      </div>
+
+      <footer
+        class="flex items-center justify-end gap-2 border-t border-border bg-muted/20 px-5 py-4"
+      >
+        @if (step() === 'name') {
+          <button
+            z-button
+            zType="ghost"
+            type="button"
+            class="mr-auto"
+            [zDisabled]="submitting()"
+            (click)="previousStep()"
+          >
+            <ng-icon name="lucideArrowLeft" size="15" /> Back
+          </button>
+        }
+        @if (allowCancel()) {
+          <button z-button zType="ghost" type="button" [zDisabled]="submitting()" (click)="close()">
+            Cancel
+          </button>
+        }
+        <button
+          z-button
+          type="submit"
+          [zLoading]="submitting()"
+          [zDisabled]="step() === 'repos' && !existingProject() ? !canContinue() : !canSubmit()"
+        >
+          @if (step() === 'repos' && !existingProject()) {
+            Continue <ng-icon name="lucideArrowRight" size="15" />
+          } @else {
+            {{
+              submissionError() && createdProject() ? 'Retry remaining repositories' : ctaLabel()
+            }}
+          }
+        </button>
+      </footer>
+    </form>
+  </section>
+</div>

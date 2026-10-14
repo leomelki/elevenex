@@ -49,19 +49,27 @@ describe('PathAutocompleteInputComponent', () => {
         },
       ],
     }).compileComponents();
-    
+
     overlayContainer = TestBed.inject(OverlayContainer);
     overlayContainerElement = overlayContainer.getContainerElement();
   });
-  
+
   afterEach(() => {
     overlayContainer.ngOnDestroy();
   });
 
   it('opens suggestions after focus and keyboard-selects an item', async () => {
-    suggestPaths.mockReturnValue(of([
-      { path: '/tmp/file.txt', name: 'file.txt', kind: 'file', isExactParent: true, trailingSlashHint: false },
-    ]));
+    suggestPaths.mockReturnValue(
+      of([
+        {
+          path: '/tmp/file.txt',
+          name: 'file.txt',
+          kind: 'file',
+          isExactParent: true,
+          trailingSlashHint: false,
+        },
+      ]),
+    );
 
     const fixture = TestBed.createComponent(HostComponent);
     fixture.detectChanges();
@@ -69,21 +77,36 @@ describe('PathAutocompleteInputComponent', () => {
     const input = fixture.debugElement.query(By.css('input')).nativeElement as HTMLInputElement;
     input.dispatchEvent(new FocusEvent('focus'));
     fixture.detectChanges();
-    await new Promise(resolve => setTimeout(resolve, 160));
+    await new Promise((resolve) => setTimeout(resolve, 160));
     fixture.detectChanges();
 
+    expect(overlayContainerElement.textContent).toContain('file.txt');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
     fixture.detectChanges();
 
     expect(fixture.componentInstance.onCommit).toHaveBeenCalledWith('/tmp/file.txt');
-    expect(overlayContainerElement.textContent).toContain('file.txt');
+    expect(overlayContainerElement.querySelector('.pac__panel')).toBeNull();
   });
 
   it('supports arrow navigation, tab completion, and escape dismissal', async () => {
-    suggestPaths.mockReturnValue(of([
-      { path: '/tmp/alpha', name: 'alpha', kind: 'directory', isExactParent: true, trailingSlashHint: true },
-      { path: '/tmp/beta', name: 'beta', kind: 'directory', isExactParent: true, trailingSlashHint: true },
-    ]));
+    suggestPaths.mockReturnValue(
+      of([
+        {
+          path: '/tmp/alpha',
+          name: 'alpha',
+          kind: 'directory',
+          isExactParent: true,
+          trailingSlashHint: true,
+        },
+        {
+          path: '/tmp/beta',
+          name: 'beta',
+          kind: 'directory',
+          isExactParent: true,
+          trailingSlashHint: true,
+        },
+      ]),
+    );
 
     const fixture = TestBed.createComponent(HostComponent);
     fixture.detectChanges();
@@ -91,7 +114,7 @@ describe('PathAutocompleteInputComponent', () => {
     const input = fixture.debugElement.query(By.css('input')).nativeElement as HTMLInputElement;
     input.dispatchEvent(new FocusEvent('focus'));
     fixture.detectChanges();
-    await new Promise(resolve => setTimeout(resolve, 160));
+    await new Promise((resolve) => setTimeout(resolve, 160));
     fixture.detectChanges();
 
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
@@ -108,9 +131,17 @@ describe('PathAutocompleteInputComponent', () => {
   });
 
   it('opens suggestions for Windows drive paths and preserves backslashes on completion', async () => {
-    suggestPaths.mockReturnValue(of([
-      { path: 'C:\\Users\\melki\\Documents', name: 'Documents', kind: 'directory', isExactParent: true, trailingSlashHint: true },
-    ]));
+    suggestPaths.mockReturnValue(
+      of([
+        {
+          path: 'C:\\Users\\melki\\Documents',
+          name: 'Documents',
+          kind: 'directory',
+          isExactParent: true,
+          trailingSlashHint: true,
+        },
+      ]),
+    );
 
     const fixture = TestBed.createComponent(HostComponent);
     fixture.componentInstance.value = 'C:\\Users\\melki\\Doc';
@@ -119,20 +150,30 @@ describe('PathAutocompleteInputComponent', () => {
     const input = fixture.debugElement.query(By.css('input')).nativeElement as HTMLInputElement;
     input.dispatchEvent(new FocusEvent('focus'));
     fixture.detectChanges();
-    await new Promise(resolve => setTimeout(resolve, 160));
+    await new Promise((resolve) => setTimeout(resolve, 160));
     fixture.detectChanges();
 
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
     fixture.detectChanges();
 
     expect(suggestPaths).toHaveBeenCalledWith('C:\\Users\\melki\\Doc', 'either', undefined);
-    expect(fixture.componentInstance.onValueChange).toHaveBeenLastCalledWith('C:\\Users\\melki\\Documents\\');
+    expect(fixture.componentInstance.onValueChange).toHaveBeenLastCalledWith(
+      'C:\\Users\\melki\\Documents\\',
+    );
   });
 
   it('keeps forward slashes when completing Windows paths typed with forward slashes', async () => {
-    suggestPaths.mockReturnValue(of([
-      { path: 'C:\\Users\\melki\\Documents', name: 'Documents', kind: 'directory', isExactParent: true, trailingSlashHint: true },
-    ]));
+    suggestPaths.mockReturnValue(
+      of([
+        {
+          path: 'C:\\Users\\melki\\Documents',
+          name: 'Documents',
+          kind: 'directory',
+          isExactParent: true,
+          trailingSlashHint: true,
+        },
+      ]),
+    );
 
     const fixture = TestBed.createComponent(HostComponent);
     fixture.componentInstance.value = 'C:/Users/melki/Doc';
@@ -141,13 +182,15 @@ describe('PathAutocompleteInputComponent', () => {
     const input = fixture.debugElement.query(By.css('input')).nativeElement as HTMLInputElement;
     input.dispatchEvent(new FocusEvent('focus'));
     fixture.detectChanges();
-    await new Promise(resolve => setTimeout(resolve, 160));
+    await new Promise((resolve) => setTimeout(resolve, 160));
     fixture.detectChanges();
 
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
     fixture.detectChanges();
 
-    expect(fixture.componentInstance.onValueChange).toHaveBeenLastCalledWith('C:/Users/melki/Documents/');
+    expect(fixture.componentInstance.onValueChange).toHaveBeenLastCalledWith(
+      'C:/Users/melki/Documents/',
+    );
   });
 
   it('shows loading and empty states', async () => {
@@ -160,7 +203,7 @@ describe('PathAutocompleteInputComponent', () => {
     const input = fixture.debugElement.query(By.css('input')).nativeElement as HTMLInputElement;
     input.dispatchEvent(new FocusEvent('focus'));
     fixture.detectChanges();
-    await new Promise(resolve => setTimeout(resolve, 160));
+    await new Promise((resolve) => setTimeout(resolve, 160));
     fixture.detectChanges();
 
     expect(overlayContainerElement.textContent).toContain('Looking for paths');
@@ -172,13 +215,30 @@ describe('PathAutocompleteInputComponent', () => {
     expect(overlayContainerElement.textContent).toContain('No matching paths');
   });
 
+  it('keeps suggestions dismissed when a pending response arrives after Escape', async () => {
+    const pending = new Subject<any[]>();
+    suggestPaths.mockReturnValue(pending.asObservable());
+    const fixture = TestBed.createComponent(HostComponent);
+    fixture.detectChanges();
+    const input = fixture.debugElement.query(By.css('input')).nativeElement as HTMLInputElement;
+    input.dispatchEvent(new FocusEvent('focus'));
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    fixture.detectChanges();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    pending.next([{ path: '/tmp/file.txt', name: 'file.txt', kind: 'file' }]);
+    pending.complete();
+    fixture.detectChanges();
+    expect(overlayContainerElement.querySelector('.pac__panel')).toBeNull();
+  });
+
   it('keeps the browse action working', () => {
     suggestPaths.mockReturnValue(of([]));
 
     const fixture = TestBed.createComponent(HostComponent);
     fixture.detectChanges();
 
-    const button = fixture.debugElement.query(By.css('.pac__browse')).nativeElement as HTMLButtonElement;
+    const button = fixture.debugElement.query(By.css('.pac__browse'))
+      .nativeElement as HTMLButtonElement;
     button.click();
 
     expect(fixture.componentInstance.onBrowse).toHaveBeenCalled();

@@ -1,0 +1,18 @@
+:host {
+  display: block;
+}
+
+.project-create-backdrop {
+  background: color-mix(in oklch, var(--surface-shade) 48%, transparent);
+}
+
+.project-create-panel {
+  max-height: calc(100dvh - 2rem);
+  box-shadow: 0 22px 64px color-mix(in oklch, var(--surface-shade) 24%, transparent);
+}
+
+.project-create-panel--embedded {
+  max-width: none;
+  max-height: none;
+  box-shadow: none;
+}

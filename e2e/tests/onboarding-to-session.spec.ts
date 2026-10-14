@@ -60,9 +60,7 @@ test('first run: onboarding through to a live session in the sidebar', async ({ 
 
   // Onboarding complete → projects view with the sidebar.
   await expect(page).toHaveURL(/\/projects$/);
-  // The sidebar header's "Create project" action (aria-label) — distinct from
-  // the empty-state button and the wizard's submit CTA that share the label.
-  const createProjectAction = page.locator('button[aria-label="Create project"]');
+  const createProjectAction = page.locator('button[aria-label="Open repository"]');
   await expect(createProjectAction).toBeVisible();
 
   // ---------------------------------------------------------------------------
@@ -70,26 +68,22 @@ test('first run: onboarding through to a live session in the sidebar', async ({ 
   // ---------------------------------------------------------------------------
   await createProjectAction.click();
 
-  const wizard = page.locator('.project-wizard-panel');
+  const wizard = page.locator('[data-project-create]');
   await expect(wizard).toBeVisible();
 
-  // Step: project name.
-  await wizard
-    .getByPlaceholder('Infra platform, storefront, mobile app...')
-    .fill(PROJECT_NAME);
-  await clickWizardNext(page);
-
-  // Step: repositories. Target the inner <input> of the path autocomplete
-  // (its host element also carries the placeholder attribute).
+  // Select a repository, then name the project on the second step.
   const repoInput = wizard.locator('input.pac__input');
   await repoInput.fill(TEST_REPO_PATH);
-  // Dismiss the path-autocomplete overlay so it can't intercept the Next click.
+  // Dismiss suggestions so they cannot intercept the submit click.
   await repoInput.press('Escape');
-  await clickWizardNext(page);
+  const continueCta = wizard.getByRole('button', { name: 'Continue', exact: true });
+  await expect(continueCta).toBeEnabled();
+  await continueCta.click();
+  await wizard.getByLabel('Project name', { exact: true }).fill(PROJECT_NAME);
 
-  // Local backend has no port-forward step, so we're now on the review step.
-  const createCta = wizard.getByRole('button', { name: 'Create project' });
+  const createCta = wizard.getByRole('button', { name: 'Open project' });
   await expect(createCta).toBeVisible();
+  await expect(createCta).toBeEnabled();
   await createCta.click();
 
   // Wizard closes; the new project + repo land in the sidebar tree.
@@ -152,10 +146,3 @@ test('first run: onboarding through to a live session in the sidebar', async ({ 
     contentType: 'image/png',
   });
 });
-
-/** Click the wizard's "Next" button and wait for it to advance. */
-async function clickWizardNext(page: import('@playwright/test').Page) {
-  const next = page.locator('.project-wizard-footer').getByRole('button', { name: 'Next' });
-  await expect(next).toBeEnabled();
-  await next.click();
-}

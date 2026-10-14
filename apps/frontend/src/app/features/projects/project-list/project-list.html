@@ -15,7 +15,7 @@
 
       <button z-button type="button" (click)="openCreateWizard()">
         <ng-icon name="lucidePlus" size="15" />
-        Create project
+        Open repository
       </button>
     </div>
 
@@ -72,7 +72,7 @@
 
     @if (!loading() && projects().length === 0 && listState() === 'active') {
       <div class="flex min-h-[60vh] items-center justify-center px-4 py-10">
-        <app-first-project-prompt (createManually)="openCreateWizard()" />
+        <app-first-project-prompt (openRepository)="openCreateWizard()" />
       </div>
     }
 
@@ -172,13 +172,7 @@
 </section>
 
 @if (showCreateWizard()) {
-  <app-project-onboarding-wizard
-    heading="Create a project"
-    [showPortForwardStep]="showPortForwardStep()"
-    [subheading]="showPortForwardStep()
-      ? 'Attach repositories and optional port forwards before opening the project.'
-      : 'Attach repositories before opening the project.'"
-    ctaLabel="Create project"
+  <app-project-create
     (cancelled)="closeCreateWizard()"
     (completed)="handleWizardCompleted($event)"
   />

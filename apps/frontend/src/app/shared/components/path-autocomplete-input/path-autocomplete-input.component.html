@@ -1,0 +1,91 @@
+<div class="pac" cdkOverlayOrigin #origin="cdkOverlayOrigin">
+  <div
+    class="pac__field"
+    [class.pac__field--attached]="showBrowse()"
+    [class.pac__field--disabled]="disabled()"
+  >
+    <input
+      #inputEl
+      z-input
+      zBorderless
+      type="text"
+      [id]="inputId()"
+      [attr.aria-describedby]="describedBy()"
+      [attr.aria-invalid]="invalid() || null"
+      role="combobox"
+      aria-autocomplete="list"
+      [attr.aria-expanded]="open()"
+      [attr.aria-controls]="open() ? listId : null"
+      [attr.aria-activedescendant]="
+        open() && suggestions().length ? listId + '-' + activeIndex() : null
+      "
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
+      class="pac__input font-mono"
+      [placeholder]="placeholder()"
+      [disabled]="disabled()"
+      [value]="draftValue()"
+      (focus)="onFocus()"
+      (click)="showSuggestions()"
+      (input)="onInput(($any($event.target).value || '').toString())"
+      (keydown)="onKeydown($event)"
+    />
+
+    @if (showBrowse()) {
+      <button type="button" class="pac__browse" [disabled]="disabled()" (click)="browse.emit()">
+        {{ browseLabel() }}
+      </button>
+    }
+  </div>
+
+  <ng-template
+    cdkConnectedOverlay
+    [cdkConnectedOverlayOpen]="open()"
+    [cdkConnectedOverlayOrigin]="origin"
+    [cdkConnectedOverlayHasBackdrop]="false"
+    [cdkConnectedOverlayPush]="true"
+    [cdkConnectedOverlayMinWidth]="overlayWidth()"
+    [cdkConnectedOverlayOffsetY]="6"
+  >
+    <div class="pac__panel" role="listbox" [id]="listId" aria-label="Suggestions">
+      @if (loading()) {
+        <div class="pac__state">
+          <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" />
+          <span>{{ loadingLabel() }}</span>
+        </div>
+      } @else if (error()) {
+        <div class="pac__state pac__state--muted">{{ error() }}</div>
+      } @else if (suggestions().length) {
+        @for (item of suggestions(); track item.path; let index = $index) {
+          <button
+            type="button"
+            class="pac__item"
+            role="option"
+            [id]="listId + '-' + index"
+            [attr.aria-selected]="index === activeIndex()"
+            [class.pac__item--active]="index === activeIndex()"
+            (mouseenter)="activeIndex.set(index)"
+            (mousedown)="$event.preventDefault(); applySuggestion(item)"
+          >
+            <ng-icon [name]="item.kind === 'directory' ? 'lucideFolder' : 'lucideFile'" size="14" />
+            <span class="pac__item-name">{{ item.name }}</span>
+            @if (item.trailingSlashHint) {
+              <span class="pac__item-tail">/</span>
+            }
+            <span class="pac__item-path" [title]="item.path">{{ item.path }}</span>
+            @if (item.badge) {
+              <span
+                class="shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                >{{ item.badge }}</span
+              >
+            }
+          </button>
+        }
+      } @else {
+        <div class="pac__state pac__state--muted">{{ emptyLabel() }}</div>
+      }
+    </div>
+  </ng-template>
+</div>

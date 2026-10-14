@@ -8,10 +8,9 @@ import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { ZardSkeletonComponent } from '@/shared/components/skeleton';
 import { Project } from '@/shared/models/project.model';
-import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
 import { NavigationService } from '@/shared/services/navigation.service';
 import { ProjectListState, ProjectsService } from '@/shared/services/projects.service';
-import { ProjectOnboardingWizard } from '@/features/projects/project-onboarding-wizard/project-onboarding-wizard';
+import { ProjectCreateComponent } from '@/features/projects/project-create/project-create.component';
 import { FirstProjectPromptComponent } from '@/features/projects/first-project-prompt/first-project-prompt.component';
 
 @Component({
@@ -21,7 +20,7 @@ import { FirstProjectPromptComponent } from '@/features/projects/first-project-p
     ZardButtonComponent,
     ZardInputDirective,
     ZardSkeletonComponent,
-    ProjectOnboardingWizard,
+    ProjectCreateComponent,
     FirstProjectPromptComponent,
   ],
   templateUrl: './project-list.html',
@@ -32,18 +31,13 @@ export class ProjectList implements OnInit {
   private projectsService = inject(ProjectsService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
-  private onboardingState = inject(OnboardingStateService);
   private navigationService = inject(NavigationService);
-projects = signal<Project[]>([]);
+  projects = signal<Project[]>([]);
   loading = signal(true);
   showCreateWizard = signal(false);
   searchTerm = signal('');
   listState = signal<Exclude<ProjectListState, 'all'>>('active');
   busyProjectId = signal<number | null>(null);
-  // Only SSH backends run on a genuinely separate machine that needs a port
-  // forward to reach a project's dev server from this browser view. WSL
-  // shares localhost with Windows the same way Local does, so it doesn't.
-  showPortForwardStep = computed(() => ['ssh', 'paired'].includes(this.onboardingState.snapshotState().mode ?? ''));
   projectCountLabel = computed(() => {
     const count = this.projects().length;
     const stateLabel = this.listState() === 'archived' ? 'archived' : 'active';
@@ -123,7 +117,7 @@ projects = signal<Project[]>([]);
       this.projects.update(list => list.some(entry => entry.id === project.id) ? list : [...list, project]);
     }
     this.showCreateWizard.set(false);
-    void this.router.navigate(['/projects', project.id]);
+    void this.router.navigate(['/projects', project.id], { queryParams: { created: '1' } });
   }
 
   navigateToProject(id: number) {

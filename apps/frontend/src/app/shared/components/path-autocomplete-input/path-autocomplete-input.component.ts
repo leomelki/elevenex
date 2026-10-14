@@ -18,7 +18,7 @@ import { FormsModule } from '@angular/forms';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideFile, lucideFolder, lucideLoaderCircle } from '@ng-icons/lucide';
-import { debounceTime, distinctUntilChanged, of, Subject, switchMap, tap, catchError } from 'rxjs';
+import { debounceTime, map, Observable, of, Subject, switchMap, tap, catchError } from 'rxjs';
 
 import { ZardInputDirective } from '@/shared/components/input';
 import {
@@ -39,188 +39,12 @@ import {
       lucideLoaderCircle,
     }),
   ],
-  template: `
-    <div class="pac" cdkOverlayOrigin #origin="cdkOverlayOrigin">
-      <div class="pac__field" [class.pac__field--attached]="showBrowse()" [class.pac__field--disabled]="disabled()">
-        <input
-          #inputEl
-          z-input
-          zBorderless
-          type="text"
-          [id]="inputId()"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="none"
-          spellcheck="false"
-          class="pac__input font-mono"
-          [placeholder]="placeholder()"
-          [disabled]="disabled()"
-          [value]="draftValue()"
-          (focus)="onFocus()"
-          (input)="onInput(($any($event.target).value || '').toString())"
-          (keydown)="onKeydown($event)" />
-
-        @if (showBrowse()) {
-          <button
-            type="button"
-            class="pac__browse"
-            [disabled]="disabled()"
-            (click)="browse.emit()"
-          >
-            {{ browseLabel() }}
-          </button>
-        }
-      </div>
-
-      <ng-template
-        cdkConnectedOverlay
-        [cdkConnectedOverlayOpen]="open()"
-        [cdkConnectedOverlayOrigin]="origin"
-        [cdkConnectedOverlayHasBackdrop]="false"
-        [cdkConnectedOverlayPush]="true"
-        [cdkConnectedOverlayMinWidth]="overlayWidth()"
-        [cdkConnectedOverlayOffsetY]="6">
-        <div class="pac__panel" role="listbox">
-          @if (loading()) {
-            <div class="pac__state">
-              <ng-icon name="lucideLoaderCircle" size="14" class="animate-spin" />
-              <span>Looking for paths…</span>
-            </div>
-          } @else if (error()) {
-            <div class="pac__state pac__state--muted">{{ error() }}</div>
-          } @else if (suggestions().length) {
-            @for (item of suggestions(); track item.path; let index = $index) {
-              <button
-                type="button"
-                class="pac__item"
-                [class.pac__item--active]="index === activeIndex()"
-                (mouseenter)="activeIndex.set(index)"
-                (mousedown)="$event.preventDefault(); applySuggestion(item)"
-              >
-                <ng-icon [name]="item.kind === 'directory' ? 'lucideFolder' : 'lucideFile'" size="14" />
-                <span class="pac__item-name">{{ item.name }}</span>
-                @if (item.trailingSlashHint) {
-                  <span class="pac__item-tail">/</span>
-                }
-                <span class="pac__item-path">{{ item.path }}</span>
-              </button>
-            }
-          } @else {
-            <div class="pac__state pac__state--muted">No matching paths</div>
-          }
-        </div>
-      </ng-template>
-    </div>
-  `,
-  styles: [`
-    :host {
-      display: block;
-      min-width: 0;
-    }
-    .pac {
-      position: relative;
-      min-width: 0;
-    }
-    .pac__field {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      width: 100%;
-      min-width: 0;
-      border: 1px solid var(--input, var(--border));
-      border-radius: 0.375rem;
-      background: transparent;
-      transition: box-shadow 120ms ease, border-color 120ms ease;
-    }
-    .pac__field:focus-within {
-      border-color: var(--ring);
-      box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent);
-    }
-    .pac__field--disabled {
-      opacity: 0.5;
-    }
-    .pac__field--attached {
-      gap: 0;
-    }
-    .pac__input {
-      min-width: 0;
-      padding-inline: 0.75rem;
-    }
-    .pac__browse {
-      flex: 0 0 auto;
-      align-self: stretch;
-      padding: 0 0.875rem;
-      border: 0;
-      border-left: 1px solid var(--border);
-      background: transparent;
-      color: inherit;
-      font: inherit;
-      font-size: 0.875rem;
-      cursor: pointer;
-    }
-    .pac__browse:disabled {
-      cursor: not-allowed;
-    }
-    .pac__panel {
-      max-height: 18rem;
-      overflow: auto;
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
-      background: var(--popover);
-      color: var(--popover-foreground);
-      box-shadow: 0 14px 32px -16px color-mix(in oklab, #000 28%, transparent);
-      padding: 0.375rem;
-      z-index: 40;
-    }
-    .pac__item {
-      display: grid;
-      grid-template-columns: auto auto auto 1fr;
-      align-items: center;
-      gap: 0.5rem;
-      width: 100%;
-      min-width: 30rem;
-      padding: 0.5rem 0.625rem;
-      border: 0;
-      border-radius: 0.5rem;
-      background: transparent;
-      color: inherit;
-      text-align: left;
-      cursor: pointer;
-      font: inherit;
-      font-size: 0.8125rem;
-    }
-    .pac__item:hover,
-    .pac__item--active {
-      background: color-mix(in oklab, var(--foreground) 6%, transparent);
-    }
-    .pac__item-name {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-weight: 600;
-    }
-    .pac__item-tail {
-      color: var(--muted-foreground);
-    }
-    .pac__item-path {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      color: var(--muted-foreground);
-      font-size: 0.75rem;
-    }
-    .pac__state {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.625rem 0.75rem;
-      font-size: 0.8125rem;
-    }
-    .pac__state--muted {
-      color: var(--muted-foreground);
-    }
-  `],
+  templateUrl: './path-autocomplete-input.component.html',
+  styleUrl: './path-autocomplete-input.component.scss',
 })
 export class PathAutocompleteInputComponent implements OnChanges {
+  private static nextId = 0;
+  readonly listId = `path-suggestions-${++PathAutocompleteInputComponent.nextId}`;
   private readonly pathAutocomplete = inject(PathAutocompleteService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly host = inject(ElementRef<HTMLElement>);
@@ -233,9 +57,16 @@ export class PathAutocompleteInputComponent implements OnChanges {
   readonly pathKind = input<PathAutocompleteKind>('either');
   readonly placeholder = input('');
   readonly inputId = input<string | null>(null);
+  readonly describedBy = input<string | null>(null);
+  readonly invalid = input(false);
   readonly disabled = input(false);
   readonly preferredStartDirectory = input<string | undefined>(undefined);
   readonly browseLabel = input<string | null>(null);
+  readonly suggestionsProvider = input<((query: string) => Observable<PathSuggestion[]>) | null>(
+    null,
+  );
+  readonly loadingLabel = input('Looking for paths…');
+  readonly emptyLabel = input('No matching paths');
 
   readonly valueChange = output<string>();
   readonly commit = output<string>();
@@ -247,7 +78,7 @@ export class PathAutocompleteInputComponent implements OnChanges {
   readonly error = signal('');
   readonly open = signal(false);
   readonly activeIndex = signal(0);
-  readonly overlayWidth = computed(() => this.originEl?.nativeElement.getBoundingClientRect().width ?? 320);
+  readonly overlayWidth = signal(320);
   readonly showBrowse = computed(() => Boolean(this.browseLabel()));
 
   constructor() {
@@ -256,26 +87,33 @@ export class PathAutocompleteInputComponent implements OnChanges {
     this.query$
       .pipe(
         debounceTime(120),
-        distinctUntilChanged(),
         tap(() => {
           this.loading.set(true);
           this.error.set('');
         }),
-        switchMap(query =>
-          this.pathAutocomplete.suggestPaths(query, this.pathKind(), this.preferredStartDirectory()).pipe(
+        switchMap((query) =>
+          (
+            this.suggestionsProvider()?.(query) ??
+            this.pathAutocomplete.suggestPaths(
+              query,
+              this.pathKind(),
+              this.preferredStartDirectory(),
+            )
+          ).pipe(
             catchError(() => {
-              this.error.set('Suggestions are unavailable');
+              if (query === this.draftValue()) this.error.set('Suggestions are unavailable');
               return of([]);
             }),
+            map((items) => ({ items, query })),
           ),
         ),
         takeUntilDestroyed(this.destroyRef),
       )
-      .subscribe(items => {
+      .subscribe(({ items, query }) => {
+        if (query !== this.draftValue()) return;
         this.suggestions.set(items);
         this.activeIndex.set(0);
         this.loading.set(false);
-        this.open.set(this.isPathLike(this.draftValue()));
       });
   }
 
@@ -298,18 +136,28 @@ export class PathAutocompleteInputComponent implements OnChanges {
   }
 
   onFocus() {
-    if (!this.isPathLike(this.draftValue())) {
+    // Keep quick picks visible when the repository picker first focuses an empty field.
+    if (this.suggestionsProvider() && !this.draftValue().trim()) return;
+    if (!this.suggestionsProvider() && !this.isPathLike(this.draftValue())) {
       return;
     }
 
     this.fetchSuggestions(this.draftValue());
   }
 
+  showSuggestions() {
+    if (this.suggestionsProvider()) this.fetchSuggestions(this.draftValue());
+  }
+
+  focus() {
+    this.inputEl?.nativeElement.focus();
+  }
+
   onInput(nextValue: string) {
     this.draftValue.set(nextValue);
     this.valueChange.emit(nextValue);
 
-    if (!this.isPathLike(nextValue)) {
+    if (!this.suggestionsProvider() && !this.isPathLike(nextValue)) {
       this.open.set(false);
       this.suggestions.set([]);
       this.loading.set(false);
@@ -327,6 +175,17 @@ export class PathAutocompleteInputComponent implements OnChanges {
       return;
     }
 
+    if (event.key === 'Enter' && this.open() && this.loading()) {
+      event.preventDefault();
+      return;
+    }
+
+    if (event.key === 'ArrowDown' && !this.open() && this.suggestionsProvider()) {
+      event.preventDefault();
+      this.fetchSuggestions(this.draftValue());
+      return;
+    }
+
     if (!this.open() || !this.suggestions().length) {
       if (event.key === 'Enter') {
         this.commit.emit(this.draftValue());
@@ -336,13 +195,13 @@ export class PathAutocompleteInputComponent implements OnChanges {
 
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      this.activeIndex.update(index => Math.min(index + 1, this.suggestions().length - 1));
+      this.activeIndex.update((index) => Math.min(index + 1, this.suggestions().length - 1));
       return;
     }
 
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      this.activeIndex.update(index => Math.max(index - 1, 0));
+      this.activeIndex.update((index) => Math.max(index - 1, 0));
       return;
     }
 
@@ -359,21 +218,22 @@ export class PathAutocompleteInputComponent implements OnChanges {
   applySuggestion(item: PathSuggestion) {
     const separator = this.completionSeparator(this.draftValue(), item.path);
     const itemPath = this.formatPathWithSeparator(item.path, separator);
-    const nextValue = item.kind === 'directory'
-      ? `${this.trimTrailingSeparators(itemPath)}${item.trailingSlashHint ? separator : ''}`
-      : itemPath;
+    const nextValue =
+      item.kind === 'directory'
+        ? `${this.trimTrailingSeparators(itemPath)}${item.trailingSlashHint ? separator : ''}`
+        : itemPath;
     this.draftValue.set(nextValue);
     this.valueChange.emit(nextValue);
 
-    if (item.kind === 'directory') {
+    if (item.kind === 'directory' && !item.commitOnSelect) {
       this.fetchSuggestions(nextValue);
       this.focusInputAtEnd(nextValue);
       return;
     }
 
+    this.focusInputAtEnd(nextValue);
     this.open.set(false);
     this.commit.emit(nextValue);
-    this.focusInputAtEnd(nextValue);
   }
 
   private focusInputAtEnd(nextValue: string) {
@@ -395,18 +255,24 @@ export class PathAutocompleteInputComponent implements OnChanges {
   }
 
   private fetchSuggestions(query: string) {
+    this.overlayWidth.set(this.originEl?.nativeElement.getBoundingClientRect().width || 320);
     this.open.set(true);
+    this.loading.set(true);
+    this.suggestions.set([]);
+    this.error.set('');
     this.query$.next(query);
   }
 
   private isPathLike(query: string): boolean {
     const trimmed = query.trim();
-    return /^[a-zA-Z]:(?:[\\/]|$)/.test(trimmed)
-      || trimmed.startsWith('\\\\')
-      || trimmed.startsWith('//')
-      || /^[~](?:[\\/]|$)/.test(trimmed)
-      || trimmed.startsWith('/')
-      || trimmed.startsWith('\\');
+    return (
+      /^[a-zA-Z]:(?:[\\/]|$)/.test(trimmed) ||
+      trimmed.startsWith('\\\\') ||
+      trimmed.startsWith('//') ||
+      /^[~](?:[\\/]|$)/.test(trimmed) ||
+      trimmed.startsWith('/') ||
+      trimmed.startsWith('\\')
+    );
   }
 
   private completionSeparator(query: string, suggestedPath: string): '/' | '\\' {
@@ -425,9 +291,7 @@ export class PathAutocompleteInputComponent implements OnChanges {
   }
 
   private formatPathWithSeparator(pathValue: string, separator: '/' | '\\'): string {
-    return separator === '/'
-      ? pathValue.replace(/\\/g, '/')
-      : pathValue.replace(/\//g, '\\');
+    return separator === '/' ? pathValue.replace(/\\/g, '/') : pathValue.replace(/\//g, '\\');
   }
 
   private trimTrailingSeparators(pathValue: string): string {
