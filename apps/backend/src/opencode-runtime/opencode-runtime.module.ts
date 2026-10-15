@@ -6,9 +6,11 @@ import { SettingsModule } from '../settings/settings.module.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { OpenCodeCatalogService } from './opencode-catalog.service.js';
 import { OpenCodeAgentRuntimeProvider } from './opencode-agent-runtime.provider.js';
+import { TurnChangesModule } from '../agent-runtime/turn-changes.module.js';
 
 @Module({
   imports: [
+    TurnChangesModule,
     forwardRef(() => SessionsModule),
     ClaudeHooksModule,
     SessionTitleModule,

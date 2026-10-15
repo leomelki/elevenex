@@ -7,9 +7,11 @@ import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js
 import { PiAgentRuntimeProvider } from './pi-agent-runtime.provider.js';
 import { PiAuthService } from './pi-auth.service.js';
 import { PiRuntimeService } from './pi-runtime.service.js';
+import { TurnChangesModule } from '../agent-runtime/turn-changes.module.js';
 
 @Module({
   imports: [
+    TurnChangesModule,
     forwardRef(() => SessionsModule),
     ClaudeHooksModule,
     SessionTitleModule,

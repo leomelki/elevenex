@@ -1,5 +1,5 @@
 import { pairTranscript } from '@/shared/agent-chat/transcript/paired-transcript';
-import { buildTranscriptRenderItems } from '@/shared/agent-chat/transcript/transcript-render-items';
+import { buildTranscriptRenderItems, TurnChangeCache } from '@/shared/agent-chat/transcript/transcript-render-items';
 import type { ClaudeTranscriptItem } from '@/shared/models/claude-runtime.model';
 import { describe, expect, it } from 'vitest';
 
@@ -30,6 +30,27 @@ function render(items: ClaudeTranscriptItem[], settled = true) {
 }
 
 describe('buildTranscriptRenderItems final outputs', () => {
+  it('renders a late filesystem capture after the final response without adding a blank system row', () => {
+    const capture = item('capture', 'system', { content: undefined, turnChanges: {
+      files: 1, additions: 1, deletions: 0, capture: { root: '/repo', complete: true, shared: false },
+      filesChanged: [{ path: 'python.ts', status: 'created', additions: 1, deletions: 0, hunks: [] }],
+    } });
+    const rendered = render([...work, item('final', 'assistant'), capture]);
+    expect(rendered.some(entry => entry.kind === 'unit' && entry.id === 'capture')).toBe(false);
+    expect(rendered.find(entry => entry.kind === 'collapsed-turn')).toMatchObject({ changeDetails: { files: 1 } });
+    const cache = new TurnChangeCache();
+    const tools = pairTranscript(work);
+    expect(cache.compute('prompt', tools)).toBeNull();
+    expect(cache.compute('prompt', [...tools, ...pairTranscript([capture])])?.files).toBe(1);
+  });
+
+  it('shows captured changes for an interrupted turn without an assistant final response', () => {
+    const rendered = render([item('prompt', 'user'), item('capture', 'system', { content: undefined, turnChanges: {
+      files: 1, additions: 0, deletions: 0, filesChanged: [{ path: 'binary', status: 'modified', additions: 0, deletions: 0, hunks: [] }],
+    } })]);
+    expect(rendered.find(entry => entry.kind === 'collapsed-turn')).toMatchObject({ changeDetails: { files: 1 } });
+  });
+
   it('keeps failed port-forwarding requests visible in the collapsed activity summary', () => {
     const rendered = render([
       item('prompt', 'user'),

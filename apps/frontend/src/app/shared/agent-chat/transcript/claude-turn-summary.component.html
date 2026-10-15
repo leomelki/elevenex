@@ -58,6 +58,12 @@
           class="inline-flex items-baseline gap-1 text-muted-foreground text-[0.68rem] font-semibold whitespace-nowrap"
         >
           {{ details.files }} file{{ details.files === 1 ? '' : 's' }}
+          @if (details.capture?.shared) {
+            <span class="text-warning">· Shared checkout</span>
+          }
+          @if (details.capture && !details.capture.complete) {
+            <span class="text-warning">· Partial capture</span>
+          }
           <span class="text-[color-mix(in_oklab,var(--success)_82%,var(--foreground))]"
             >+{{ details.additions }}</span
           >

@@ -1,8 +1,32 @@
-import { computeTurnChangeDetails } from '@/shared/agent-chat/tools/turn-change-stats';
+import { computeTurnChangeDetails, computeTurnChangeDetailsFromItems, type TurnChangeDetails } from '@/shared/agent-chat/tools/turn-change-stats';
 import type { PairedTranscriptUnit } from '@/shared/agent-chat/transcript/paired-transcript';
 import { describe, expect, it } from 'vitest';
 
 describe('turn-change-stats', () => {
+  it('prefers captured net changes over overlapping native edit events and retains shell-only files', () => {
+    const capture: TurnChangeDetails = { files: 2, additions: 4, deletions: 1,
+      capture: { root: '/repo', complete: true, shared: true }, filesChanged: [
+        { path: 'a.ts', status: 'modified', additions: 3, deletions: 1, hunks: [], attribution: 'shared' },
+        { path: 'from-python.ts', status: 'created', additions: 1, deletions: 0, hunks: [], attribution: 'shared' },
+      ] };
+    const details = computeTurnChangeDetailsFromItems([
+      { id: 'edit', kind: 'tool_use', toolName: 'Edit', toolUseId: 'edit', timestamp: '', toolInput: { file_path: '/repo/a.ts', old_string: 'a', new_string: 'b' } },
+      { id: 'capture', kind: 'system', timestamp: '', turnChanges: capture },
+    ]);
+    expect(details).toEqual(capture);
+  });
+
+  it('reads native Claude shell diffs when replaying a historical turn', () => {
+    const details = computeTurnChangeDetailsFromItems([
+      { id: 'bash', kind: 'tool_use', toolName: 'Bash', toolUseId: 'bash', timestamp: '' },
+      { id: 'result', kind: 'tool_result', toolUseId: 'bash', timestamp: '', providerToolResult: { bashEditDiff: {
+        shared: true, files: [{ filePath: 'a.ts', hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-old', '+new'] }] }],
+      } } },
+    ]);
+    expect(details).toMatchObject({ files: 1, additions: 1, deletions: 1 });
+    expect(details?.filesChanged[0].attribution).toBe('shared');
+  });
+
   it('infers edit hunk start lines from numbered tool results', () => {
     const units: PairedTranscriptUnit[] = [
       {

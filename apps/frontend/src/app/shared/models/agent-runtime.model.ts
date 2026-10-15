@@ -179,6 +179,7 @@ export interface AgentToolInteractionSummary {
 }
 
 export interface AgentTranscriptItem {
+  turnChanges?: import('../agent-chat/tools/turn-change-stats').TurnChangeDetails;
   agentId?: string;
   id: string;
   kind: AgentTranscriptItemKind;

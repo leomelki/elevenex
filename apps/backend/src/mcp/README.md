@@ -20,6 +20,9 @@ commands, coordinate other sessions, and reach the human. It is the integration 
   and non-destructive mutations; destructive operations and human-channel tools require identity.
 - **Coding session context**: `get_current_session` returns live session/project/repo/workspace
   ids (including taskId/worktreeId), names, task lifecycle, branch, checkout, provider, and plan mode without a transcript or git scan.
+  Use it only when an operation needs unknown Elevenex IDs or the current task/checkout assignment
+  is uncertain. Coding agents work directly with their supplied directory and current-session
+  defaults; this lookup is not a startup or per-turn prerequisite.
   Coding sessions retain their native tools and coding prompts. Missions keep their orchestration
   mandate and autonomy policy. Existing sessions receive the connection when their runtime next
   starts or resumes a turn.

@@ -5,6 +5,7 @@ import {
 } from '../mcp/session-tool-context.js';
 import { contextPercentage } from '../agent-runtime/context-usage.js';
 import { TranscriptFileCache } from '../agent-runtime/transcript-file-cache.js';
+import { TurnChangesService, type TurnChangeCapture } from '../agent-runtime/turn-changes.service.js';
 import {
   BadRequestException,
   ConflictException,
@@ -14,6 +15,7 @@ import {
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
@@ -637,6 +639,7 @@ export class ClaudeRuntimeService
     private readonly titleService: SessionTitleService,
     private readonly settingsService: SettingsService,
     private readonly mcpAgentTokens: McpAgentTokenService,
+    @Optional() private readonly turnChanges?: TurnChangesService,
   ) {
     super();
     if (this.claudeCliOverride) {
@@ -676,6 +679,13 @@ export class ClaudeRuntimeService
   }
 
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
+    const history = await this.loadProviderHistory(sessionId);
+    if (!this.turnChanges) return history;
+    const session = await this.sessionsService.findOne(sessionId);
+    return this.turnChanges.attachHistory(sessionId, 'claude', session.claudeSessionId, history);
+  }
+
+  private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
     if (!session.claudeSessionId || session.claudeSessionId === '-1') {
       const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
@@ -1253,6 +1263,7 @@ export class ClaudeRuntimeService
   }
 
   async cleanupSession(sessionId: number): Promise<void> {
+    this.turnChanges?.cancelSession(sessionId);
     this.invalidatedSessions.add(sessionId);
     this.sessionGenerations.set(
       sessionId,
@@ -2696,11 +2707,13 @@ export class ClaudeRuntimeService
       }
 
       this.emitRunState(sessionId);
+      let changeCapture: TurnChangeCapture | undefined;
       try {
         await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
         const run = this.activeRuns.get(sessionId);
         if (run && run.runId === runId && !run.interruptRequested) {
-          await runtime.submitTurn(
+          changeCapture = await this.turnChanges?.begin(sessionId, 'claude', session.worktreePath);
+          if (!run.interruptRequested && this.activeRuns.get(sessionId) === run) await runtime.submitTurn(
             this.buildSdkUserMessage(
               trimmedPrompt,
               validatedImages,
@@ -2733,6 +2746,8 @@ export class ClaudeRuntimeService
       } finally {
         // Keep the initialization guard clear across normal, interrupted, and
         // runtime-error paths after activeRuns registration.
+        const changes = await this.turnChanges?.finish(changeCapture, state.claudeSessionId);
+        if (changes && !this.invalidatedSessions.has(sessionId)) this.pushItem(sessionId, changes);
         this.initializingRuns.delete(sessionId);
         const run = this.activeRuns.get(sessionId);
         const interrupted = Boolean(run?.interruptRequested);

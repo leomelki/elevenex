@@ -11,6 +11,7 @@ import {
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import type {
   ApprovalMode,
@@ -22,6 +23,7 @@ import type {
 import { EventEmitter } from 'events';
 import { codexContextUsage } from './codex-context-usage.js';
 import { codexWebSearchInput } from './codex-web-search.js';
+import { TurnChangesService, type TurnChangeCapture } from '../agent-runtime/turn-changes.service.js';
 import { randomUUID } from 'crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
@@ -256,6 +258,7 @@ export class CodexRuntimeService
     private readonly settingsService: SettingsService,
     private readonly mcpAgentTokens: McpAgentTokenService,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    @Optional() private readonly turnChanges?: TurnChangesService,
   ) {
     super();
   }
@@ -381,6 +384,13 @@ export class CodexRuntimeService
   }
 
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
+    const history = await this.loadProviderHistory(sessionId);
+    if (!this.turnChanges) return history;
+    const session = await this.sessionsService.findOne(sessionId);
+    return this.turnChanges.attachHistory(sessionId, 'codex', session.codexSessionId, history);
+  }
+
+  private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
     const codexSessionId = session.codexSessionId ?? null;
     if (!codexSessionId || codexSessionId === '-1') {
@@ -1636,7 +1646,10 @@ export class CodexRuntimeService
     });
 
     let stagedImageDir: string | null = null;
+    let changeCapture: TurnChangeCapture | undefined;
     try {
+      changeCapture = await this.turnChanges?.begin(sessionId, 'codex', resolvedWorktreePath);
+      if (abortController.signal.aborted || this.activeRuns.get(sessionId)?.interruptRequested) return;
       const built = await this.buildCodexInput(trimmedPrompt, validatedImages);
       stagedImageDir = built.tempDir;
       const turnInput: Array<
@@ -1682,6 +1695,8 @@ export class CodexRuntimeService
       this.emitRunState(sessionId);
       this.logger.error(`Codex run failed session=${sessionId}: ${message}`);
     } finally {
+      const changes = await this.turnChanges?.finish(changeCapture, state.codexSessionId);
+      if (changes && !this.invalidatedSessions.has(sessionId)) this.pushItem(sessionId, changes);
       const run = this.activeRuns.get(sessionId);
       this.activeRuns.delete(sessionId);
       run?.resolveTurnReady();
@@ -2179,6 +2194,7 @@ export class CodexRuntimeService
   }
 
   async cleanupSession(sessionId: number): Promise<void> {
+    this.turnChanges?.cancelSession(sessionId);
     this.invalidatedSessions.add(sessionId);
     this.sessionGenerations.set(
       sessionId,

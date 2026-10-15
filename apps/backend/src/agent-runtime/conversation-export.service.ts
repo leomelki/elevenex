@@ -407,7 +407,7 @@ function buildTurn(group: ClaudeTranscriptItem[]): ConversationExportTurn {
     }
   }
   const finalResponse = finalIndex === -1 ? null : rest[finalIndex];
-  const steps = rest.filter((_, i) => i !== finalIndex);
+  const steps = rest.filter((item, i) => i !== finalIndex && !item.turnChanges);
 
   // Changes are derived from the full turn items regardless of precision, so a
   // small/medium export still reports accurate per-response change counts.
@@ -582,11 +582,14 @@ function renderChanges(changes: TurnChangeDetails, withHunks: boolean): string {
     `${changes.files} ${changes.files === 1 ? 'file' : 'files'} ` +
       `(${signed(changes.additions, '+')} ${signed(changes.deletions, '−')})`,
   ];
+  if (changes.capture?.shared) lines.push('Shared checkout: these observations may include other agents’ changes.');
+  if (changes.capture && !changes.capture.complete) lines.push(changes.capture.message ?? 'Change capture was incomplete.');
   for (const file of changes.filesChanged) {
     lines.push(
       `- ${statusLetter(file.status)} ${file.path} ` +
         `(${signed(file.additions, '+')} ${signed(file.deletions, '−')})`,
     );
+    if (file.diffUnavailable) lines.push(`  ${file.diffUnavailable}; line counts may be incomplete.`);
     if (withHunks) {
       for (const hunk of file.hunks) {
         const patch = hunk.patch ?? buildHunkPatch(hunk);

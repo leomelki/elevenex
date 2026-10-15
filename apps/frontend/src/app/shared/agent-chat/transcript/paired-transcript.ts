@@ -77,7 +77,7 @@ export function pairTranscript(items: readonly AgentTranscriptItem[]): PairedTra
   for (const item of normalizedItems) {
     if (dedupedItems.has(item) || seenItemIds.has(item.id)) continue;
     seenItemIds.add(item.id);
-    if (item.kind === 'system' && !item.content?.trim()) continue;
+    if (item.kind === 'system' && !item.content?.trim() && !item.turnChanges) continue;
 
     if (item.kind === 'tool_use') {
       const toolUseId = item.toolUseId || item.id;

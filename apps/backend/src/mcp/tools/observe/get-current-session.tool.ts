@@ -6,7 +6,7 @@ export const getCurrentSessionTool = defineTool({
   costClass: 'instant',
   requiresAgent: true,
   description:
-    'Get the calling session’s live identity and working context: sessionId, projectId, repoId, taskId/workspaceId, worktreeId, folderId, worktreePath, branch, and provider. Instant DB reads, no transcript or git scan. Use to orient inside your own coding session; get_focused_session instead identifies the human’s UI focus for missions.',
+    'Get the calling session’s live identity and working context: sessionId, projectId, repoId, taskId/workspaceId, worktreeId, folderId, worktreePath, branch, and provider. Instant DB reads, no transcript or git scan. Use only when an operation needs unknown Elevenex IDs or the current task/checkout assignment is uncertain. Current-session defaults work without this lookup; do not call routinely at startup or on each turn. get_focused_session identifies the human’s UI focus for missions.',
   annotations: { readOnlyHint: true },
   inputShape: {},
   handler: async (_args, ctx) => {

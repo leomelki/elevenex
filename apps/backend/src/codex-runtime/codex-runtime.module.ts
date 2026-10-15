@@ -10,9 +10,11 @@ import { CodexAuthService } from './codex-auth.service.js';
 import { CodexHistoryService } from './codex-history.service.js';
 import { CodexMcpService } from './codex-mcp.service.js';
 import { CodexRuntimeService } from './codex-runtime.service.js';
+import { TurnChangesModule } from '../agent-runtime/turn-changes.module.js';
 
 @Module({
   imports: [
+    TurnChangesModule,
     forwardRef(() => SessionsModule),
     ClaudeHooksModule,
     SessionTitleModule,

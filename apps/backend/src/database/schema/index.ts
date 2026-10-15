@@ -18,3 +18,4 @@ export * from './actions.schema.js';
 export * from './claude-tool-interactions.schema.js';
 export * from './worktree-context.schema.js';
 export * from './app-settings.schema.js';
+export * from './turn-changes.schema.js';

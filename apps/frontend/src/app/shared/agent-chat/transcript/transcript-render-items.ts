@@ -48,16 +48,22 @@ export interface TranscriptRenderOptions {
 export class TurnChangeCache {
   private readonly entries = new Map<
     string,
-    { tools: Extract<PairedTranscriptUnit, { kind: 'tool' }>[]; details: TurnChangeDetails | null }
+    { tools: Extract<PairedTranscriptUnit, { kind: 'tool' }>[]; snapshot?: TurnChangeDetails; details: TurnChangeDetails | null }
   >();
 
   compute(turnId: string, units: PairedTranscriptUnit[]): TurnChangeDetails | null {
+    let snapshot: TurnChangeDetails | undefined;
+    for (let i = units.length - 1; i >= 0; i--) {
+      const unit = units[i];
+      if (isChangeCapture(unit)) { snapshot = unit.item.turnChanges; break; }
+    }
     const tools = units.filter(
       (unit): unit is Extract<PairedTranscriptUnit, { kind: 'tool' }> => unit.kind === 'tool',
     );
     const previous = this.entries.get(turnId);
     if (
       previous &&
+      previous.snapshot === snapshot &&
       previous.tools.length === tools.length &&
       tools.every(
         (tool, index) =>
@@ -66,8 +72,8 @@ export class TurnChangeCache {
     ) {
       return previous.details;
     }
-    const details = computeTurnChangeDetails(tools);
-    this.entries.set(turnId, { tools, details });
+    const details = computeTurnChangeDetails(units);
+    this.entries.set(turnId, { tools, snapshot, details });
     return details;
   }
 
@@ -98,6 +104,7 @@ export function buildTranscriptRenderItems(
 
   for (let i = 0; i < units.length; ) {
     const unit = units[i];
+    if (isChangeCapture(unit)) { i += 1; continue; }
     if (!isUserMessageUnit(unit)) {
       out.push({ kind: 'unit', id: unit.id, unit });
       i += 1;
@@ -112,7 +119,20 @@ export function buildTranscriptRenderItems(
     const turnUnits = units.slice(i, nextUserIndex);
     const lastAssistantIndex = findLastAssistantIndex(turnUnits);
     if (lastAssistantIndex === -1) {
+      const changes = settled ? computeTurnChangeDetails(turnUnits) : null;
+      if (changes) {
+        const activity = turnUnits.slice(1).filter(entry => !isChangeCapture(entry));
+        const last = turnUnits.at(-1)!;
+        const lastItem = last.kind === 'tool' ? last.result ?? last.call : last.item;
+        out.push({ kind: 'unit', id: unit.id, unit });
+        out.push({ kind: 'collapsed-turn', id: `collapsed-${unit.id}`, turnId: unit.id,
+          hiddenUnits: activity, durationLabel: formatTurnDuration(getItemStartTimestamp(unit.item), getItemCompletionTimestamp(lastItem)),
+          changeDetails: changes, stepCount: activity.length, agentSummary: null });
+        i = nextUserIndex;
+        continue;
+      }
       for (const turnUnit of turnUnits) {
+        if (isChangeCapture(turnUnit)) continue;
         out.push({ kind: 'unit', id: turnUnit.id, unit: turnUnit });
       }
       i = nextUserIndex;
@@ -137,7 +157,7 @@ export function buildTranscriptRenderItems(
     //     the turn settles it collapses into the "Worked for X" pill in natural
     //     order; expanding the pill replays the work as it actually happened.
     const firstFinalAssistantSourceId = firstFinalAssistantUnit.item.sourceMessageId;
-    const intermediateUnits = turnUnits.slice(1, firstFinalAssistantIndex);
+    const intermediateUnits = turnUnits.slice(1, firstFinalAssistantIndex).filter(entry => !isChangeCapture(entry));
     const siblingThinkingUnits: PairedTranscriptUnit[] = [];
     const collapsibleUnits: PairedTranscriptUnit[] = [];
     let stepCount = 0;
@@ -157,15 +177,15 @@ export function buildTranscriptRenderItems(
       if (intermediate.kind !== 'message' || intermediate.item.kind !== 'user') stepCount += 1;
       if (intermediate.kind === 'tool') hasToolCalls = true;
     }
-    const finalUnits = turnUnits.slice(firstFinalAssistantIndex);
+    const finalUnits = turnUnits.slice(firstFinalAssistantIndex).filter(entry => !isChangeCapture(entry));
     const isCurrentTurn = nextUserIndex === units.length;
-    const canCollapse = hasToolCalls && (!isCurrentTurn || settled);
+    const canCollapse = (hasToolCalls || turnUnits.some(isChangeCapture)) && (!isCurrentTurn || settled);
 
     out.push({ kind: 'unit', id: unit.id, unit });
 
     if (canCollapse) {
       const changeUnits = collectTurnChangeUnits(
-        collapsibleUnits,
+        [...collapsibleUnits, ...turnUnits.filter(isChangeCapture)],
         options.childItemsByParentToolUseId,
       );
       out.push({
@@ -269,6 +289,10 @@ export function buildTranscriptRenderItems(
 }
 
 /** Subagent work counts towards its parent turn's diff stats, so recurse into children. */
+function isChangeCapture(unit: PairedTranscriptUnit): unit is Extract<PairedTranscriptUnit, { kind: 'system' }> {
+  return unit.kind === 'system' && !!unit.item.turnChanges;
+}
+
 function collectTurnChangeUnits(
   units: PairedTranscriptUnit[],
   childItemsByParent: Record<string, AgentTranscriptItem[]>,

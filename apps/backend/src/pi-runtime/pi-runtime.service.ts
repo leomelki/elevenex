@@ -2,6 +2,7 @@ import type { PiMcpStatus } from './pi-mcp-bridge.js';
 import type { ClaudeMcpSnapshot } from '../claude-runtime/claude-runtime.types.js';
 import { elevenexMcpUrl } from '../mcp/session-tool-context.js';
 import { contextPercentage } from '../agent-runtime/context-usage.js';
+import { TurnChangesService, type TurnChangeCapture } from '../agent-runtime/turn-changes.service.js';
 import {
   BadRequestException,
   ConflictException,
@@ -10,6 +11,7 @@ import {
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
@@ -122,6 +124,7 @@ export class PiRuntimeService
     private readonly titleService: SessionTitleService,
     private readonly settingsService: SettingsService,
     private readonly mcpAgentTokens: McpAgentTokenService,
+    @Optional() private readonly turnChanges?: TurnChangesService,
   ) {
     super();
     this.authService.on('status', (status: PiAuthStatus) => {
@@ -217,6 +220,13 @@ export class PiRuntimeService
   }
 
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
+    const history = await this.loadProviderHistory(sessionId);
+    if (!this.turnChanges) return history;
+    const session = await this.sessionsService.findOne(sessionId);
+    return this.turnChanges.attachHistory(sessionId, 'pi', session.piSessionPath, history);
+  }
+
+  private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
 
@@ -567,7 +577,10 @@ export class PiRuntimeService
       runRegistered = true;
       this.initializingRuns.delete(sessionId);
 
+      let changeCapture: TurnChangeCapture | undefined;
       try {
+        changeCapture = await this.turnChanges?.begin(sessionId, 'pi', session.worktreePath);
+        if (this.activeRuns.get(sessionId)?.interruptRequested) return;
         await this.sessionsService.updateStatus(sessionId, 'active');
         await runtime.send({
           type: 'prompt',
@@ -594,6 +607,8 @@ export class PiRuntimeService
         this.emitEvent({ type: 'error', payload: { sessionId, message } });
         this.emitRunState(sessionId);
       } finally {
+        const changes = await this.turnChanges?.finish(changeCapture, state.piSessionPath);
+        if (changes) this.pushItem(sessionId, changes);
         this.activeRuns.delete(sessionId);
         this.scheduleIdleShutdown(sessionId);
         if (
@@ -773,6 +788,7 @@ export class PiRuntimeService
   }
 
   async cleanupSession(sessionId: number): Promise<void> {
+    this.turnChanges?.cancelSession(sessionId);
     await this.stopRuntime(sessionId);
     this.runtimeStates.delete(sessionId);
     this.clientCounts.delete(sessionId);

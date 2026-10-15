@@ -5,12 +5,14 @@ import {
 import type { OpenCodeClient } from './opencode-client.js';
 import { OpenCodeTranscriptStore } from './opencode-transcript-store.js';
 import { OpenCodeSessionTree } from './opencode-session-tree.js';
+import { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 import {
   BadRequestException,
   ConflictException,
   Injectable,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
@@ -123,6 +125,7 @@ export class OpenCodeAgentRuntimeProvider
     private readonly titles: SessionTitleService,
     private readonly catalog: OpenCodeCatalogService,
     private readonly tokens: McpAgentTokenService,
+    @Optional() private readonly turnChanges?: TurnChangesService,
   ) {
     super();
   }
@@ -249,7 +252,8 @@ export class OpenCodeAgentRuntimeProvider
     if (!state.claudeSessionId) return [];
     const entry = await this.ensure(sessionId);
     if (!entry.historyLoaded) await this.restore(entry);
-    return this.history(entry);
+    const history = this.history(entry);
+    return this.turnChanges?.attachHistory(sessionId, 'opencode', state.claudeSessionId, history) ?? history;
   }
   async getSnapshot(sessionId: number) {
     const history = await this.getHistory(sessionId);
@@ -932,6 +936,8 @@ export class OpenCodeAgentRuntimeProvider
   ): Promise<void> {
     const state = entry.state;
     const client = entry.client!;
+    const sessionContext = this.turnChanges ? await this.sessions.findOne(state.sessionId) : undefined;
+    const changeCapture = sessionContext ? await this.turnChanges?.begin(state.sessionId, 'opencode', sessionContext.worktreePath) : undefined;
     try {
       if (!state.claudeSessionId) {
         const session = (
@@ -1069,6 +1075,12 @@ export class OpenCodeAgentRuntimeProvider
       }
     } catch (error) {
       if (!entry.controller.signal.aborted) this.fail(entry, error);
+    } finally {
+      const changes = await this.turnChanges?.finish(changeCapture, state.claudeSessionId);
+      if (changes && !entry.controller.signal.aborted) {
+        state.liveItems = [...state.liveItems, changes];
+        this.emit('event', { type: 'message_start', payload: { sessionId: state.sessionId, item: changes } });
+      }
     }
   }
   private async generateTitle(
@@ -1578,6 +1590,7 @@ export class OpenCodeAgentRuntimeProvider
     if (entry.state.runPhase !== 'error') entry.state.runPhase = 'idle';
   }
   async cleanupSession(sessionId: number): Promise<void> {
+    this.turnChanges?.cancelSession(sessionId);
     this.generations.set(sessionId, (this.generations.get(sessionId) ?? 0) + 1);
     this.stop(sessionId);
     await this.starts.get(sessionId)?.catch(() => undefined);

@@ -82,6 +82,7 @@ export interface ClaudeToolInteractionSummary {
 }
 
 export interface ClaudeTranscriptItem {
+  turnChanges?: import('../agent-runtime/turn-change-stats.js').TurnChangeDetails;
   agentId?: string;
   id: string;
   kind: ClaudeTranscriptItemKind;

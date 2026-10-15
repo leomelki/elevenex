@@ -64,6 +64,19 @@
     </div>
   </header>
 
+  @if (details().capture; as capture) {
+    <p class="border-b border-border px-3 py-2 text-xs text-muted-foreground" role="status">
+      @if (capture.shared) {
+        <span class="text-warning">Shared checkout:</span> multiple agents were active. These changes may include other agents' work.
+      } @else {
+        Changes observed in the checkout during this turn. Edits from other writers may be included.
+      }
+      @if (!capture.complete) {
+        <span class="text-warning">{{ capture.message }}</span>
+      }
+    </p>
+  }
+
   <div class="cw-turn-changes__files flex flex-col divide-y divide-border">
     @for (file of renderedFiles(); track file.path; let i = $index) {
       <article class="cw-turn-changes__file" [attr.data-status]="file.status">
@@ -123,6 +136,12 @@
 
         @if (isFileOpen(file.path, i)) {
           <div class="cw-turn-changes__file-body flex flex-col gap-2 pr-3 pb-3 pl-10">
+            @if (file.attribution === 'shared' && !details().capture?.shared) {
+              <p class="text-xs text-warning">Shared checkout change; the writer could not be identified.</p>
+            }
+            @if (file.diffUnavailable) {
+              <p class="text-xs text-muted-foreground">{{ file.diffUnavailable }}. Line counts may be incomplete.</p>
+            }
             @for (hunk of file.hunks; track hunk.id) {
               <cw-inline-diff
                 [html]="hunk.html"

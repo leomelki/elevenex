@@ -8,8 +8,8 @@ import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.type
  * Only the items-based path is ported here — the export feature feeds raw
  * `ClaudeTranscriptItem[]` (the normalized history shared by claude/codex/pi), so
  * the `PairedTranscriptUnit` dependency from the frontend is not needed. Changes are
- * derived from successful file-writing tool calls, exactly like the transcript's
- * per-turn "changes" pill — never from git diffs.
+ * derived from persisted turn snapshots, with successful native tool edits as
+ * fallback for older history and files outside the captured scope.
  */
 
 export interface TurnChangeSummary {
@@ -38,10 +38,13 @@ export interface TurnChangedFile {
   additions: number;
   deletions: number;
   hunks: TurnChangeHunk[];
+  attribution?: 'tool' | 'observed' | 'shared';
+  diffUnavailable?: string;
 }
 
 export interface TurnChangeDetails extends TurnChangeSummary {
   filesChanged: TurnChangedFile[];
+  capture?: { root: string; complete: boolean; shared: boolean; message?: string; unchangedPaths?: string[]; aliases?: string[] };
 }
 
 interface EditOp {
@@ -381,7 +384,14 @@ function computeTurnChangeDetails(units: ToolUnit[]): TurnChangeDetails | null {
   const files = new Map<string, TurnChangedFile>();
 
   for (const unit of units) {
-    const toolName = unit.call.toolName ?? '';
+    const toolName = unit.call.toolKind && unit.call.toolKind !== 'unknown' ? unit.call.toolKind : unit.call.toolName ?? '';
+    if (normalizeToolName(toolName) === 'bash' && !unit.result?.isError) {
+      for (const file of nativeBashChanges(unit.result?.providerToolResult, unit.toolUseId)) {
+        const previous = files.get(file.path);
+        files.set(file.path, previous ? { ...file, additions: previous.additions + file.additions,
+          deletions: previous.deletions + file.deletions, hunks: [...previous.hunks, ...file.hunks] } : file);
+      }
+    }
     if (!FILE_WRITING_TOOLS.has(normalizeToolName(toolName))) continue;
     if (unit.result?.isError) continue;
     const resultContent =
@@ -474,5 +484,122 @@ export function computeTurnChangeDetailsFromItems(
       toolUseId,
     });
   }
-  return computeTurnChangeDetails(units);
+  return reconcileCapturedChanges(computeTurnChangeDetails(units), items);
+}
+
+/** Filesystem net changes replace overlapping tool payloads, while edits outside
+ * the observed scope (for example explicitly edited ignored files) survive. */
+export function reconcileCapturedChanges(
+  native: TurnChangeDetails | null,
+  items: ClaudeTranscriptItem[],
+): TurnChangeDetails | null {
+  const snapshot = items.findLast((item) => item.turnChanges)?.turnChanges;
+  if (!snapshot) return native;
+  const roots = [snapshot.capture?.root, ...(snapshot.capture?.aliases ?? [])]
+    .filter((root): root is string => !!root)
+    .map((root) => root.replaceAll('\\', '/').replace(/\/$/, ''));
+  const key = (path: string) => {
+    const normalized = path.replaceAll('\\', '/');
+    const root = roots.find((root) => normalized.startsWith(`${root}/`));
+    return root
+      ? normalized.slice(root.length + 1)
+      : normalized.replace(/^\.\//, '');
+  };
+  const unchanged = new Set(snapshot.capture?.unchangedPaths ?? []);
+  const files = new Map(
+    (native?.filesChanged ?? [])
+      .filter((file) => !unchanged.has(key(file.path)))
+      .map((file) => [key(file.path), file]),
+  );
+  for (const file of snapshot.filesChanged) files.set(key(file.path), file);
+  const filesChanged = [...files.values()];
+  if (
+    !filesChanged.length &&
+    snapshot.capture?.complete &&
+    !snapshot.capture.message
+  )
+    return null;
+  return {
+    ...snapshot,
+    files: filesChanged.length,
+    filesChanged,
+    additions: filesChanged.reduce((n, file) => n + file.additions, 0),
+    deletions: filesChanged.reduce((n, file) => n + file.deletions, 0),
+  };
+}
+
+/** Older/replayed Claude turns can already contain shell diffs even when no
+ * Elevenex snapshot exists. Preserve the provider's shared-ownership marker. */
+function nativeBashChanges(input: unknown, toolUseId: string): TurnChangedFile[] {
+  const diff = asRecord(asRecord(input)?.['bashEditDiff']);
+  if (!diff || diff['skipped']) return [];
+  const files = new Map<string, TurnChangedFile>();
+  const entries = Array.isArray(diff['files'])
+    ? diff['files'].slice(0, 200)
+    : [];
+  for (const entry of entries) {
+    const record = asRecord(entry);
+    const path = asString(record?.['filePath']);
+    if (!path) continue;
+    let additions = 0;
+    let deletions = 0;
+    const hunks: TurnChangeHunk[] = [];
+    for (const raw of Array.isArray(record?.['hunks'])
+      ? record['hunks'].slice(0, 1000)
+      : []) {
+      const hunk = asRecord(raw);
+      const lines = Array.isArray(hunk?.['lines'])
+        ? hunk['lines']
+            .filter((line): line is string => typeof line === 'string')
+            .slice(0, 10_000)
+        : [];
+      const added = lines.filter((line) => line.startsWith('+')).length;
+      const removed = lines.filter((line) => line.startsWith('-')).length;
+      additions += added;
+      deletions += removed;
+      hunks.push({
+        id: `${toolUseId}:bash:${path}:${hunks.length}`,
+        toolName: 'Bash',
+        label: 'Shell changes',
+        oldString: '',
+        newString: '',
+        additions: added,
+        deletions: removed,
+        patch: `@@ -${asNumber(hunk?.['oldStart']) ?? 1},${asNumber(hunk?.['oldLines']) ?? 0} +${asNumber(hunk?.['newStart']) ?? 1},${asNumber(hunk?.['newLines']) ?? 0} @@\n${lines.join('\n')}`,
+      });
+    }
+    files.set(path, {
+      path,
+      status: record?.['created']
+        ? 'created'
+        : record?.['deleted']
+          ? 'deleted'
+          : 'modified',
+      additions,
+      deletions,
+      attribution: diff['shared'] ? 'shared' : 'observed',
+      hunks,
+      ...(!hunks.length
+        ? {
+            diffUnavailable:
+              'The provider reported a change without an inline diff',
+          }
+        : {}),
+    });
+  }
+  for (const path of Array.isArray(diff['changedFiles'])
+    ? diff['changedFiles'].slice(0, 200)
+    : []) {
+    if (typeof path !== 'string' || files.has(path)) continue;
+    files.set(path, {
+      path,
+      status: 'modified',
+      additions: 0,
+      deletions: 0,
+      hunks: [],
+      attribution: diff['shared'] ? 'shared' : 'observed',
+      diffUnavailable: 'The provider reported a change without an inline diff',
+    });
+  }
+  return [...files.values()];
 }

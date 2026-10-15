@@ -10,9 +10,11 @@ import { ClaudeHooksModule } from '../claude-hooks/claude-hooks.module.js';
 import { TerminalModule } from '../terminal/terminal.module.js';
 import { SessionTitleModule } from '../session-title/session-title.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
+import { TurnChangesModule } from '../agent-runtime/turn-changes.module.js';
 
 @Module({
   imports: [
+    TurnChangesModule,
     forwardRef(() => SessionsModule),
     forwardRef(() => ClaudeHooksModule),
     forwardRef(() => TerminalModule),
