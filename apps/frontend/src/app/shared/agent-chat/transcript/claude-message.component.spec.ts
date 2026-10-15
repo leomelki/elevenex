@@ -114,7 +114,7 @@ describe('ClaudeMessageComponent', () => {
   );
 
   it.each(['light', 'dark'])(
-    'renders normalized agent hand-backs as collapsible system entries in %s mode',
+    'renders agent hand-backs with readable sender, result label and expandable Markdown in %s mode',
     async (theme) => {
       document.documentElement.classList.toggle('dark', theme === 'dark');
       await TestBed.configureTestingModule({
@@ -132,14 +132,19 @@ describe('ClaudeMessageComponent', () => {
       fixture.componentRef.setInput('showEdit', true);
       fixture.detectChanges();
       const element = fixture.nativeElement as HTMLElement;
-      const details = element.querySelector('details') as HTMLDetailsElement;
-      expect(details.open).toBe(false);
-      expect(details.querySelector('summary')?.textContent).toContain('Received a final response');
-      expect(details.querySelector('pre')?.textContent).toBe(content);
+      const toggle = element.querySelector('[aria-expanded]') as HTMLButtonElement;
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(element.querySelector('[data-agent-message]')?.textContent).toContain('Final result');
+      expect(element.textContent).toContain('af8cdb1911fc5f307');
+      expect(element.textContent).not.toContain('[Subagent hand-back]');
       expect(element.querySelector('.cw-msg--user')).toBeNull();
       expect(element.querySelector('[aria-label="Edit message"]')).toBeNull();
-      details.querySelector('summary')!.click();
-      expect(details.open).toBe(true);
+      toggle.click();
+      fixture.detectChanges();
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(element.querySelector('agent-markdown')?.textContent).toContain(
+        'Full details remain available.',
+      );
     },
   );
 

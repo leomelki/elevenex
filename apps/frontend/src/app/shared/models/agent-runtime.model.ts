@@ -185,6 +185,13 @@ export interface AgentTranscriptItem {
   kind: AgentTranscriptItemKind;
   contentType?: 'message' | 'plan';
   content?: string;
+  agentMessage?: {
+    sender: string;
+    recipient?: string;
+    messageType: 'message' | 'result';
+    body?: string;
+    bodyUnavailable: boolean;
+  };
   images?: AgentTranscriptImage[];
   toolUseId?: string;
   parentToolUseId?: string;

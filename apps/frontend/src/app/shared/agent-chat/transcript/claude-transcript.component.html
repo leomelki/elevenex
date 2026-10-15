@@ -63,6 +63,9 @@
     @case ('system') {
       <cw-message
         [item]="unit.item"
+        [agents]="agentList()"
+        [canInspectAgents]="canInspectAgents()"
+        (inspectAgent)="openAgent.emit($event)"
         [worktreePath]="worktreePath()"
         (openLocalFile)="openLocalFile.emit($event)"
       />

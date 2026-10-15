@@ -4,6 +4,51 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 describe('CodexHistoryService', () => {
+  it('restores incoming agent routing and readable bodies after reload', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-agent-messages-'));
+    try {
+      await writeFile(
+        join(root, 'messages.jsonl'),
+        [
+          { type: 'session_meta', payload: { id: 'messages', cwd: '/repo' } },
+          ...['', '**Ready** for review.'].map((body, index) => ({
+            type: 'response_item',
+            timestamp: '2026-10-15T19:48:55.375Z',
+            payload: {
+              id: `incoming-${index}`,
+              type: 'agent_message',
+              author: '/root/item_artwork',
+              recipient: '/root',
+              content: [
+                {
+                  type: 'input_text',
+                  text: `Message Type: MESSAGE\nTask name: /root\nSender: /root/item_artwork\nPayload:\n${body}`,
+                },
+                { type: 'encrypted_content', encrypted_content: 'unreadable' },
+              ],
+            },
+          })),
+        ]
+          .map((row) => JSON.stringify(row))
+          .join('\n'),
+      );
+      const history = await new CodexHistoryService(root).getHistory(
+        'messages',
+      );
+      expect(history).toHaveLength(2);
+      expect(history[0].agentMessage).toMatchObject({
+        sender: '/root/item_artwork',
+        bodyUnavailable: true,
+      });
+      expect(history[1].agentMessage).toMatchObject({
+        body: '**Ready** for review.',
+        bodyUnavailable: false,
+      });
+      expect(history.every((item) => item.kind === 'system')).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it.each(['user_message', 'item_completed'])(
     'restores async replies from %s as question receipts, including after a reload',
     async (format) => {

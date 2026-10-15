@@ -1,5 +1,7 @@
 import { AgentMarkdownComponent } from '@/shared/agent-chat/markdown/agent-markdown.component';
-import type { AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
+import type { AgentSubagentState, AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
+import { AgentMessageComponent } from './agent-message.component';
+import { incomingAgentMessage } from './agent-message';
 import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import type { PlanReviewRequest } from '@/shared/models/plan-review.model';
 import type { SessionFork } from '@/shared/models/session.model';
@@ -34,6 +36,7 @@ import { formatMessageTimestamp } from './message-timestamp';
     NgIcon,
     MessageActionsComponent,
     MessageDiagnosticComponent,
+    AgentMessageComponent,
     MessageForksComponent,
     MessageMentionsComponent,
     MessageLoadsComponent,
@@ -50,6 +53,10 @@ export class ClaudeMessageComponent {
   private readonly elementRef = inject<ElementRef<HTMLElement>>(ElementRef);
 
   readonly item = input.required<AgentTranscriptItem>();
+  readonly agents = input<readonly AgentSubagentState[]>([]);
+  readonly canInspectAgents = input(false);
+  readonly inspectAgent = output<string>();
+  readonly agentMessage = computed(() => incomingAgentMessage(this.item()));
   readonly worktreePath = input<string | null>(null);
   readonly streaming = input<boolean>(false);
 

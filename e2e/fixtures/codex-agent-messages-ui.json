@@ -1,0 +1,369 @@
+{
+  "sessionId": 893,
+  "responses": {
+    "/api/sessions/893": {
+      "id": 893,
+      "repoId": 1,
+      "projectId": 1,
+      "branchName": "master",
+      "worktreePath": "/Users/leomelki/Documents/git/elevenex",
+      "name": "WebMC \u00b7 Recorded agent messages",
+      "surface": "session",
+      "status": "active",
+      "activeAgentProvider": "codex",
+      "claudeSessionId": "-1",
+      "codexSessionId": "recorded-webmc",
+      "hasInjectedWorktreeContext": true,
+      "hasUnreviewedCompletion": false,
+      "lastCompletionAt": null,
+      "lastCompletionKind": null,
+      "lastStateChangeAt": null,
+      "createdAt": "2026-10-12T16:00:00.000Z",
+      "updatedAt": "2026-10-12T16:01:00.000Z"
+    },
+    "/api/sessions/893/agents/codex/history": [
+      {
+        "id": "recorded-preview",
+        "kind": "user",
+        "content": "Recorded WebMC messages \u00b7 Fix Missing HUD Fonts",
+        "timestamp": "2026-10-15T19:48:55.384Z"
+      },
+      {
+        "id": "amsg_01a1411c-49d8-7243-8a64-f5ab799c111d",
+        "kind": "system",
+        "timestamp": "2026-10-15T19:48:55.384Z",
+        "receivedAt": "2026-10-15T19:48:55.384Z",
+        "content": "Message Type: MESSAGE\nTask name: /root\nSender: /root/item_artwork\nPayload:\n",
+        "agentMessage": {
+          "sender": "/root/item_artwork",
+          "recipient": "/root",
+          "messageType": "message",
+          "bodyUnavailable": true
+        }
+      },
+      {
+        "id": "amsg_01a1411c-d949-7600-af35-aa2653800fc0",
+        "kind": "system",
+        "timestamp": "2026-10-15T19:49:32.105Z",
+        "receivedAt": "2026-10-15T19:49:32.105Z",
+        "content": "Message Type: MESSAGE\nTask name: /root\nSender: /root/gl_world\nPayload:\n",
+        "agentMessage": {
+          "sender": "/root/gl_world",
+          "recipient": "/root",
+          "messageType": "message",
+          "bodyUnavailable": true
+        }
+      },
+      {
+        "id": "amsg_01a1411d-027b-7660-90f4-8f4ad5e4a6f5",
+        "kind": "system",
+        "timestamp": "2026-10-15T19:49:42.651Z",
+        "receivedAt": "2026-10-15T19:49:42.651Z",
+        "content": "Message Type: MESSAGE\nTask name: /root\nSender: /root/remaining_draws\nPayload:\n",
+        "agentMessage": {
+          "sender": "/root/remaining_draws",
+          "recipient": "/root",
+          "messageType": "message",
+          "bodyUnavailable": true
+        }
+      }
+    ],
+    "/api/sessions/893/agents/codex/runtime-state": {
+      "sessionId": 893,
+      "claudeSessionId": null,
+      "runPhase": "idle",
+      "sessionState": "idle",
+      "canInterrupt": false,
+      "backgroundWork": [],
+      "backgroundRunActive": false,
+      "nativeSteering": true,
+      "pendingPermissionRequest": null,
+      "pendingUserInputRequest": null,
+      "pendingPrompts": [],
+      "queuePaused": false,
+      "liveItems": [],
+      "lastError": null,
+      "selectedModel": "gpt-6.1",
+      "reasoningEffort": "medium",
+      "fastMode": false,
+      "permissionMode": "default",
+      "planMode": false,
+      "availableModels": [
+        {
+          "id": "sonnet",
+          "displayName": "Claude Sonnet",
+          "supportsEffort": true
+        }
+      ],
+      "contextUsage": null,
+      "sessionMetadata": null,
+      "runtimeStatus": null,
+      "authStatus": {
+        "installed": true,
+        "authenticated": true,
+        "version": "2.1.296",
+        "isAuthenticating": false,
+        "output": []
+      },
+      "rateLimit": null,
+      "notifications": [],
+      "hooks": [],
+      "recentHookEvents": [],
+      "tasks": [],
+      "taskLifecycle": [],
+      "subagents": [
+        {
+          "agentId": "recorded-child-0",
+          "agentPath": "/root/item_artwork",
+          "agentType": "item_artwork",
+          "status": "started",
+          "executionStatus": "running",
+          "timestamp": "2026-10-15T19:48:55.384Z",
+          "startedAt": "2026-10-15T19:48:55.384Z",
+          "canStop": false,
+          "canFollowUp": false
+        },
+        {
+          "agentId": "recorded-child-1",
+          "agentPath": "/root/gl_world",
+          "agentType": "gl_world",
+          "status": "started",
+          "executionStatus": "running",
+          "timestamp": "2026-10-15T19:49:32.105Z",
+          "startedAt": "2026-10-15T19:49:32.105Z",
+          "canStop": false,
+          "canFollowUp": false
+        },
+        {
+          "agentId": "recorded-child-2",
+          "agentPath": "/root/remaining_draws",
+          "agentType": "remaining_draws",
+          "status": "started",
+          "executionStatus": "running",
+          "timestamp": "2026-10-15T19:49:42.651Z",
+          "startedAt": "2026-10-15T19:49:42.651Z",
+          "canStop": false,
+          "canFollowUp": false
+        }
+      ],
+      "latestToolProgress": null,
+      "latestToolSummary": null,
+      "latestApiRetry": null,
+      "latestPluginInstall": null,
+      "latestMemoryRecall": null,
+      "latestFilesPersisted": null,
+      "latestElicitationCompletion": null,
+      "latestPromptSuggestion": null,
+      "latestCompactBoundary": null,
+      "latestMirrorError": null,
+      "warmState": "warm",
+      "lastWarmedAt": "2026-10-12T16:00:00.000Z",
+      "lastPromptTiming": null,
+      "codexSessionId": "recorded-webmc"
+    },
+    "/api/sessions/893/agents/codex/autocomplete": [],
+    "/api/agent-providers/codex/auth/status": {
+      "installed": true,
+      "authenticated": true,
+      "version": "2.1.296",
+      "isAuthenticating": false,
+      "output": []
+    },
+    "/api/sessions/893/agents/codex/subagents/recorded-child-0/history": {
+      "subagent": {
+        "agentId": "recorded-child-0",
+        "agentPath": "/root/item_artwork",
+        "agentType": "item_artwork",
+        "status": "started",
+        "executionStatus": "running",
+        "timestamp": "2026-10-15T19:48:55.384Z",
+        "startedAt": "2026-10-15T19:48:55.384Z",
+        "canStop": false,
+        "canFollowUp": false
+      },
+      "history": [],
+      "transcriptAvailable": false
+    },
+    "/api/sessions/893/agents/codex/subagents/recorded-child-1/history": {
+      "subagent": {
+        "agentId": "recorded-child-1",
+        "agentPath": "/root/gl_world",
+        "agentType": "gl_world",
+        "status": "started",
+        "executionStatus": "running",
+        "timestamp": "2026-10-15T19:49:32.105Z",
+        "startedAt": "2026-10-15T19:49:32.105Z",
+        "canStop": false,
+        "canFollowUp": false
+      },
+      "history": [],
+      "transcriptAvailable": false
+    },
+    "/api/sessions/893/agents/codex/subagents/recorded-child-2/history": {
+      "subagent": {
+        "agentId": "recorded-child-2",
+        "agentPath": "/root/remaining_draws",
+        "agentType": "remaining_draws",
+        "status": "started",
+        "executionStatus": "running",
+        "timestamp": "2026-10-15T19:49:42.651Z",
+        "startedAt": "2026-10-15T19:49:42.651Z",
+        "canStop": false,
+        "canFollowUp": false
+      },
+      "history": [],
+      "transcriptAvailable": false
+    }
+  },
+  "events": [
+    {
+      "type": "runtime_snapshot",
+      "payload": {
+        "sessionId": 893,
+        "claudeSessionId": null,
+        "runPhase": "idle",
+        "sessionState": "idle",
+        "canInterrupt": false,
+        "backgroundWork": [],
+        "backgroundRunActive": false,
+        "nativeSteering": true,
+        "pendingPermissionRequest": null,
+        "pendingUserInputRequest": null,
+        "pendingPrompts": [],
+        "queuePaused": false,
+        "liveItems": [],
+        "lastError": null,
+        "selectedModel": "gpt-6.1",
+        "reasoningEffort": "medium",
+        "fastMode": false,
+        "permissionMode": "default",
+        "planMode": false,
+        "availableModels": [
+          {
+            "id": "sonnet",
+            "displayName": "Claude Sonnet",
+            "supportsEffort": true
+          }
+        ],
+        "contextUsage": null,
+        "sessionMetadata": null,
+        "runtimeStatus": null,
+        "authStatus": {
+          "installed": true,
+          "authenticated": true,
+          "version": "2.1.296",
+          "isAuthenticating": false,
+          "output": []
+        },
+        "rateLimit": null,
+        "notifications": [],
+        "hooks": [],
+        "recentHookEvents": [],
+        "tasks": [],
+        "taskLifecycle": [],
+        "subagents": [
+          {
+            "agentId": "recorded-child-0",
+            "agentPath": "/root/item_artwork",
+            "agentType": "item_artwork",
+            "status": "started",
+            "executionStatus": "running",
+            "timestamp": "2026-10-15T19:48:55.384Z",
+            "startedAt": "2026-10-15T19:48:55.384Z",
+            "canStop": false,
+            "canFollowUp": false
+          },
+          {
+            "agentId": "recorded-child-1",
+            "agentPath": "/root/gl_world",
+            "agentType": "gl_world",
+            "status": "started",
+            "executionStatus": "running",
+            "timestamp": "2026-10-15T19:49:32.105Z",
+            "startedAt": "2026-10-15T19:49:32.105Z",
+            "canStop": false,
+            "canFollowUp": false
+          },
+          {
+            "agentId": "recorded-child-2",
+            "agentPath": "/root/remaining_draws",
+            "agentType": "remaining_draws",
+            "status": "started",
+            "executionStatus": "running",
+            "timestamp": "2026-10-15T19:49:42.651Z",
+            "startedAt": "2026-10-15T19:49:42.651Z",
+            "canStop": false,
+            "canFollowUp": false
+          }
+        ],
+        "latestToolProgress": null,
+        "latestToolSummary": null,
+        "latestApiRetry": null,
+        "latestPluginInstall": null,
+        "latestMemoryRecall": null,
+        "latestFilesPersisted": null,
+        "latestElicitationCompletion": null,
+        "latestPromptSuggestion": null,
+        "latestCompactBoundary": null,
+        "latestMirrorError": null,
+        "warmState": "warm",
+        "lastWarmedAt": "2026-10-12T16:00:00.000Z",
+        "lastPromptTiming": null,
+        "codexSessionId": "recorded-webmc"
+      }
+    },
+    {
+      "type": "history_snapshot",
+      "payload": {
+        "sessionId": 893,
+        "history": [
+          {
+            "id": "recorded-preview",
+            "kind": "user",
+            "content": "Recorded WebMC messages \u00b7 Fix Missing HUD Fonts",
+            "timestamp": "2026-10-15T19:48:55.384Z"
+          },
+          {
+            "id": "amsg_01a1411c-49d8-7243-8a64-f5ab799c111d",
+            "kind": "system",
+            "timestamp": "2026-10-15T19:48:55.384Z",
+            "receivedAt": "2026-10-15T19:48:55.384Z",
+            "content": "Message Type: MESSAGE\nTask name: /root\nSender: /root/item_artwork\nPayload:\n",
+            "agentMessage": {
+              "sender": "/root/item_artwork",
+              "recipient": "/root",
+              "messageType": "message",
+              "bodyUnavailable": true
+            }
+          },
+          {
+            "id": "amsg_01a1411c-d949-7600-af35-aa2653800fc0",
+            "kind": "system",
+            "timestamp": "2026-10-15T19:49:32.105Z",
+            "receivedAt": "2026-10-15T19:49:32.105Z",
+            "content": "Message Type: MESSAGE\nTask name: /root\nSender: /root/gl_world\nPayload:\n",
+            "agentMessage": {
+              "sender": "/root/gl_world",
+              "recipient": "/root",
+              "messageType": "message",
+              "bodyUnavailable": true
+            }
+          },
+          {
+            "id": "amsg_01a1411d-027b-7660-90f4-8f4ad5e4a6f5",
+            "kind": "system",
+            "timestamp": "2026-10-15T19:49:42.651Z",
+            "receivedAt": "2026-10-15T19:49:42.651Z",
+            "content": "Message Type: MESSAGE\nTask name: /root\nSender: /root/remaining_draws\nPayload:\n",
+            "agentMessage": {
+              "sender": "/root/remaining_draws",
+              "recipient": "/root",
+              "messageType": "message",
+              "bodyUnavailable": true
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

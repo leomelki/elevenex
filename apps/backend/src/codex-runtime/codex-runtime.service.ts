@@ -84,6 +84,7 @@ import {
   record,
   textValue,
 } from './codex-subagents.js';
+import { codexAgentMessage } from './codex-agent-message.js';
 import type {
   ClaudeSubagentState,
   ClaudeSubagentHistoryPayload,
@@ -1100,6 +1101,15 @@ export class CodexRuntimeService
               const result = this.toToolResultItem(translated, timestamp);
               if (result) storeItem(result);
             }
+          } else if (record(translated).type === 'collaboration_message') {
+            const incoming = translated as unknown as ClaudeTranscriptItem;
+            storeItem({
+              id: incoming.id,
+              kind: 'system',
+              content: incoming.content,
+              agentMessage: incoming.agentMessage,
+              timestamp,
+            });
           } else if (
             translated.type === 'agent_message' ||
             translated.type === 'reasoning'
@@ -2270,6 +2280,23 @@ export class CodexRuntimeService
     terminal: boolean,
   ): void {
     const timestamp = new Date().toISOString();
+    const incoming = item as unknown as ClaudeTranscriptItem & { type: string };
+    if (incoming.type === 'collaboration_message' && incoming.agentMessage) {
+      this.upsertLiveItem(
+        sessionId,
+        {
+          id: incoming.id,
+          kind: 'system',
+          content: incoming.content,
+          agentMessage: incoming.agentMessage,
+          timestamp,
+          receivedAt: timestamp,
+        },
+        'message_start',
+        terminal,
+      );
+      return;
+    }
     const planItem = item as unknown as {
       id: string;
       type: string;
@@ -2875,6 +2902,11 @@ export class CodexRuntimeService
     state.liveItems = state.liveItems.map((live) =>
       live.id === item.id ? { ...live, ...item } : live,
     );
+    if (item.agentMessage) {
+      // Routing and payload may arrive together only on the completed item.
+      this.emitEvent({ type: 'message_start', payload: { sessionId, item } });
+      return;
+    }
     if (
       eventType === 'tool_use' &&
       (item.toolKind === 'web_search' ||
@@ -4367,12 +4399,32 @@ export class CodexRuntimeService
     const status = normalizeStatus(raw.status);
 
     switch (raw.type) {
+      case 'agent_message': {
+        const message = codexAgentMessage(raw);
+        return message
+          ? ({
+              id,
+              type: 'collaboration_message',
+              ...message,
+            } as unknown as ThreadItem)
+          : null;
+      }
       case 'collabAgentToolCall':
         return {
           ...raw,
           type: 'collab_agent_tool_call',
         } as unknown as ThreadItem;
       case 'agentMessage': {
+        if (raw.author) {
+          const message = codexAgentMessage(raw);
+          return message
+            ? ({
+                id,
+                type: 'collaboration_message',
+                ...message,
+              } as unknown as ThreadItem)
+            : null;
+        }
         // Native async questions are rendered by receiveCodexAsyncUserInput.
         if (
           raw.delivery === 'async' &&

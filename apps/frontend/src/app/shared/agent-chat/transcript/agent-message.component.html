@@ -1,0 +1,96 @@
+<section
+  class="rounded-xl border border-border bg-card text-xs"
+  data-agent-message
+  [attr.data-message-type]="message().messageType"
+>
+  <div class="flex min-w-0 items-start gap-1 p-1">
+    <button
+      z-button
+      zType="ghost"
+      type="button"
+      class="h-auto min-w-0 flex-1 items-start justify-start gap-2.5 rounded-lg px-2 py-2 text-left font-normal"
+      [attr.aria-expanded]="expanded()"
+      [attr.aria-label]="(expanded() ? 'Collapse' : 'Expand') + ' message from ' + sender()"
+      (click)="expanded.set(!expanded())"
+    >
+      <span
+        class="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"
+        ><ng-icon name="lucideBot" size="16"
+      /></span>
+      <span class="flex min-w-0 flex-1 flex-col gap-1.5">
+        <span class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span class="truncate font-semibold text-foreground" [title]="message().sender">{{
+            sender()
+          }}</span>
+          <span
+            class="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+          >
+            <ng-icon
+              [name]="message().messageType === 'result' ? 'lucideFlag' : 'lucideMessageSquare'"
+              size="11"
+            />
+            {{ message().messageType === 'result' ? 'Final result' : 'Message' }}
+          </span>
+          @if (recipient(); as target) {
+            <span class="text-[11px] text-muted-foreground" [title]="message().recipient"
+              >to {{ target }}</span
+            >
+          }
+        </span>
+        @if (!expanded()) {
+          <span
+            class="line-clamp-2 w-full whitespace-normal leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
+          >
+            {{ preview() || 'Message content unavailable in the saved transcript.' }}
+          </span>
+        }
+      </span>
+      @if (timestamp(); as label) {
+        <span class="mt-0.5 shrink-0 text-[10px] text-muted-foreground">{{ label }}</span>
+      }
+      <ng-icon
+        name="lucideChevronDown"
+        size="14"
+        class="mt-1 shrink-0 text-muted-foreground transition-transform"
+        [class.rotate-180]="expanded()"
+      />
+    </button>
+    @if (canInspect() && agent(); as source) {
+      <button
+        z-button
+        zType="ghost"
+        zSize="sm"
+        type="button"
+        class="mt-1 shrink-0 gap-1 px-2 text-[11px] text-muted-foreground"
+        [attr.aria-label]="'Inspect ' + sender()"
+        (click)="inspect.emit(source.agentId)"
+      >
+        Inspect <ng-icon name="lucideArrowUpRight" size="12" />
+      </button>
+    }
+  </div>
+  @if (expanded()) {
+    <div class="border-t border-border px-4 py-3">
+      @if (message().body; as body) {
+        <agent-markdown
+          [content]="body"
+          [worktreePath]="worktreePath()"
+          (openLocalFile)="openLocalFile.emit($event)"
+        />
+      } @else {
+        <p class="m-0 leading-relaxed text-muted-foreground">
+          The provider saved the message routing information without a readable body. Its content
+          cannot be displayed from this transcript.
+        </p>
+      }
+      <div
+        class="mt-3 flex flex-wrap gap-x-2 gap-y-1 border-t border-border/60 pt-2 font-mono text-[10px] text-muted-foreground [overflow-wrap:anywhere]"
+      >
+        <span>{{ message().sender }}</span>
+        @if (message().recipient) {
+          <span>→ {{ message().recipient }}</span>
+        }
+      </div>
+    </div>
+  }
+</section>

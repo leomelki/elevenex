@@ -88,6 +88,14 @@ export interface ClaudeTranscriptItem {
   kind: ClaudeTranscriptItemKind;
   contentType?: 'message' | 'plan';
   content?: string;
+  /** Routing and readable payload of an incoming agent message, not assistant output. */
+  agentMessage?: {
+    sender: string;
+    recipient?: string;
+    messageType: 'message' | 'result';
+    body?: string;
+    bodyUnavailable: boolean;
+  };
   images?: ClaudeTranscriptImage[];
   toolUseId?: string;
   parentToolUseId?: string;

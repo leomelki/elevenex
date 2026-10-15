@@ -9,6 +9,91 @@ import { CodexRuntimeService } from './codex-runtime.service.js';
 import { CodexAppServerClient } from './codex-app-server.js';
 
 describe('CodexRuntimeService', () => {
+  it('publishes authoritative routing and payload updates without duplicating incoming messages', () => {
+    const { service } = createService();
+    const runtime = service as any;
+    const events: any[] = [];
+    service.on('event', (event: any) => events.push(event));
+    const item = {
+      id: 'incoming-update',
+      kind: 'system',
+      timestamp: '2026-10-15T19:48:55.375Z',
+      agentMessage: {
+        sender: '/root/review',
+        messageType: 'message',
+        bodyUnavailable: true,
+      },
+    };
+    runtime.upsertLiveItem(7, item, 'message_start', false);
+    runtime.upsertLiveItem(
+      7,
+      {
+        ...item,
+        content: 'Ready.',
+        agentMessage: {
+          ...item.agentMessage,
+          body: 'Ready.',
+          bodyUnavailable: false,
+        },
+      },
+      'message_start',
+      true,
+    );
+    expect(runtime.ensureRuntimeState(7).liveItems).toHaveLength(1);
+    expect(
+      events.filter((event) => event.type === 'message_start').at(-1).payload.item.agentMessage,
+    ).toMatchObject({ body: 'Ready.', bodyUnavailable: false });
+    expect(events.some((event) => event.type === 'message_delta')).toBe(false);
+  });
+  it('renders incoming live agent messages as routed system events while preserving assistant output', () => {
+    const { service } = createService();
+    const runtime = service as any;
+    const raw = {
+      id: 'incoming',
+      type: 'agent_message',
+      author: '/root/review',
+      recipient: '/root',
+      content: [
+        {
+          type: 'input_text',
+          text: 'Message Type: FINAL_ANSWER\nTask name: /root\nSender: /root/review\nPayload:\nAll checks passed.',
+        },
+      ],
+    };
+    const translated = runtime.translateAppServerItem(
+      raw,
+      new Map(),
+      new Map(),
+      new Map(),
+    );
+    const publish = jest
+      .spyOn(runtime, 'upsertLiveItem')
+      .mockImplementation(() => {});
+    runtime.handleItemEvent(7, translated, true);
+    expect(publish).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        kind: 'system',
+        agentMessage: expect.objectContaining({
+          sender: '/root/review',
+          messageType: 'result',
+          body: 'All checks passed.',
+        }),
+      }),
+      'message_start',
+      true,
+    );
+    const assistant = runtime.translateAppServerItem(
+      { id: 'reply', type: 'agentMessage', text: 'My reply.' },
+      new Map(),
+      new Map(),
+      new Map(),
+    );
+    expect(assistant).toMatchObject({
+      type: 'agent_message',
+      text: 'My reply.',
+    });
+  });
   it('publishes live context only for owned children, independently of the idle parent and lifecycle', () => {
     const { service } = createService();
     const runtime = service as any;

@@ -17,7 +17,7 @@ import type { ReviewChat } from '@/shared/models/review-chat.model';
 import type { SessionFork } from '@/shared/models/session.model';
 import { isUserPrompt } from '@/shared/utils/user-message-display';
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { TranscriptUnitTemplateDirective } from './transcript-unit-template.directive';
 import {
   EMPTY_TRANSCRIPT_TOOLS,
@@ -121,6 +121,7 @@ export class ClaudeTranscriptComponent {
   readonly pendingReply = input(false);
 
   readonly toolState = input<TranscriptToolState>(EMPTY_TRANSCRIPT_TOOLS);
+  readonly agentList = computed(() => [...(this.toolState().agents?.values() ?? [])]);
   readonly turnExpansion = input<TranscriptTurnExpansion>(EMPTY_TURN_EXPANSION);
   readonly canInspectAgents = input(false);
   readonly canReviewChanges = input(false);

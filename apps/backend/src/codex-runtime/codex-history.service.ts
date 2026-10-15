@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { codexWebSearchInput } from './codex-web-search.js';
+import { codexAgentMessage } from './codex-agent-message.js';
 import { promises as fs } from 'fs';
 import { createReadStream } from 'fs';
 import { homedir } from 'os';
@@ -777,19 +778,15 @@ export class CodexHistoryService {
     const id =
       stringValue(item.id) ?? `codex-history:${index}:${type ?? 'item'}`;
     if (type === 'agent_message') {
-      const content = readableText(this.contentToText(item.content));
-      const author = stringValue(item.author);
-      const routeOnly = content?.match(
-        /^Message Type: (MESSAGE|FINAL_ANSWER)\s+Task name: [^\n]+\s+Sender: [^\n]+\s+Payload\s*$/,
-      );
-      const rendered = routeOnly
-        ? `Received ${routeOnly[1] === 'FINAL_ANSWER' ? 'a final response' : 'a message'} from ${author?.split('/').at(-1)?.replace(/[_-]+/g, ' ') ?? 'another agent'}. The message body was not included in the saved transcript.`
-        : content;
-      return rendered
+      const message = codexAgentMessage(item);
+      const content =
+        message?.content ?? readableText(this.contentToText(item.content));
+      return content
         ? {
             id,
             kind: 'system',
-            content: rendered,
+            ...message,
+            content,
             timestamp,
             receivedAt: timestamp,
           }
