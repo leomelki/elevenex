@@ -123,7 +123,7 @@ describe('FileWatcherService', () => {
       );
     });
 
-    it('should exclude hidden files and directories', () => {
+    it('watches project dotfiles while excluding Git internals and generated directories', () => {
       const worktreePath = '/test/worktree';
 
       service.watchWorktree(worktreePath, jest.fn());
@@ -131,10 +131,12 @@ describe('FileWatcherService', () => {
       const watchConfig = (chokidar.watch as jest.Mock).mock.calls[0][1];
       const ignoredFn = watchConfig.ignored;
 
-      // Test hidden files/dirs (starting with .)
+      // Configuration must update in the editor just like other source files.
       expect(ignoredFn('/test/worktree/.git')).toBe(true);
-      expect(ignoredFn('/test/worktree/.env')).toBe(true);
-      expect(ignoredFn('/test/worktree/src/.hidden')).toBe(true);
+      expect(ignoredFn('/test/worktree/.env')).toBe(false);
+      expect(ignoredFn('/test/worktree/.agents/skills/SKILL.md')).toBe(false);
+      expect(ignoredFn('/test/worktree/.next/cache')).toBe(true);
+      expect(ignoredFn('/test/worktree/src/.hidden')).toBe(false);
     });
 
     it('should exclude dependency and build output directories', () => {

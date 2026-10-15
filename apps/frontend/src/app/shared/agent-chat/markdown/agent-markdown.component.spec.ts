@@ -117,3 +117,39 @@ describe('AgentMarkdownComponent image preview', () => {
     },
   );
 });
+
+
+describe('AgentMarkdownComponent dot directory file links', () => {
+  afterEach(() => document.documentElement.classList.remove('dark'));
+
+  it.each(['light', 'dark'])('opens agent file links in %s mode', async (theme) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    await TestBed.configureTestingModule({
+      imports: [AgentMarkdownComponent],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(AgentMarkdownComponent);
+    fixture.componentRef.setInput('worktreePath', '/tmp/repo/');
+    fixture.componentRef.setInput('content', [
+      '[Skill](/tmp/repo/.agents/skills/example/SKILL.md:12:3)',
+      '[Settings](.vscode/settings.json#L5)',
+      '[Environment](.env)',
+    ].join('\n\n'));
+    const openFile = vi.fn();
+    fixture.componentInstance.openLocalFile.subscribe(openFile);
+    fixture.detectChanges();
+
+    const anchors = fixture.nativeElement.querySelectorAll('a');
+    expect(anchors).toHaveLength(3);
+    for (const anchor of anchors) {
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+      anchor.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    expect(openFile.mock.calls).toEqual([
+      [{ path: '.agents/skills/example/SKILL.md', line: 12, column: 3 }],
+      [{ path: '.vscode/settings.json', line: 5 }],
+      [{ path: '.env' }],
+    ]);
+    fixture.destroy();
+  });
+});

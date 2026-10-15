@@ -266,15 +266,25 @@ describe('FilesService', () => {
       expect(srcResult[0].leaf).toBe(true);
     });
 
-    it('should exclude hidden files', async () => {
+    it('includes dotfiles and dot directories while excluding Git internals', async () => {
       fs.writeFileSync(path.join(tmpDir, '.gitignore'), 'content');
       fs.mkdirSync(path.join(tmpDir, '.hidden'));
+      fs.mkdirSync(path.join(tmpDir, '.git'));
+      fs.writeFileSync(path.join(tmpDir, '.hidden', '.config.json'), '{}');
       fs.writeFileSync(path.join(tmpDir, 'visible.txt'), 'content');
 
       const result = await service.listFiles(tmpDir);
 
-      expect(result).toHaveLength(1);
-      expect(result[0].label).toBe('visible.txt');
+      expect(result.map((node) => node.label)).toEqual([
+        '.hidden',
+        '.gitignore',
+        'visible.txt',
+      ]);
+      const nested = await service.listFiles(tmpDir, '.hidden');
+      expect(nested[0].data.path).toBe('.hidden/.config.json');
+      await expect(
+        service.readFile(path.join(tmpDir, '.hidden', '.config.json'), tmpDir),
+      ).resolves.toMatchObject({ content: '{}' });
     });
 
     it('should exclude node_modules', async () => {
@@ -510,13 +520,19 @@ describe('FilesService', () => {
       fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
       fs.mkdirSync(path.join(tmpDir, '.hidden'), { recursive: true });
       fs.writeFileSync(path.join(tmpDir, 'src', 'plain-file.ts'), 'plain');
-      fs.writeFileSync(path.join(tmpDir, '.hidden', 'plain-hidden.ts'), 'hidden');
+      fs.writeFileSync(
+        path.join(tmpDir, '.hidden', 'plain-hidden.ts'),
+        'hidden',
+      );
 
       const result = await service.searchFiles(tmpDir, 'plain');
 
-      expect(result).toEqual([
-        { path: 'src/plain-file.ts', name: 'plain-file.ts' },
-      ]);
+      expect(result).toEqual(
+        expect.arrayContaining([
+          { path: 'src/plain-file.ts', name: 'plain-file.ts' },
+          { path: '.hidden/plain-hidden.ts', name: 'plain-hidden.ts' },
+        ]),
+      );
     });
 
     it('rejects missing or non-directory worktree paths', async () => {

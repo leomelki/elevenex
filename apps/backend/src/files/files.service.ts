@@ -948,8 +948,7 @@ export class FilesService {
       for (const entry of entries) {
         if (
           entry.name === '.git' ||
-          entry.name === 'node_modules' ||
-          entry.name.startsWith('.')
+          entry.name === 'node_modules'
         ) {
           continue;
         }
@@ -1094,7 +1093,7 @@ export class FilesService {
 
   /**
    * List files in a worktree at a specific directory level (non-recursive).
-   * Excludes hidden files (starting with .) and node_modules.
+   * Includes dotfiles and dot directories; excludes Git internals and node_modules.
    * Directories are sorted before files, both alphabetically.
    * @param worktreePath - Absolute path to the worktree root
    * @param dirPath - Relative path from worktree root to the directory to list
@@ -1138,8 +1137,8 @@ export class FilesService {
     const nodes: FileTreeNode[] = [];
 
     for (const entry of entries) {
-      // Skip hidden files and node_modules
-      if (entry.name.startsWith('.') || entry.name === 'node_modules') {
+      // Keep project configuration visible without listing Git internals or dependencies.
+      if (entry.name === '.git' || entry.name === 'node_modules') {
         continue;
       }
 

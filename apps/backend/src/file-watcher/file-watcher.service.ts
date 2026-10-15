@@ -82,6 +82,13 @@ const POLLING_INTERVAL_MS = 300;
  * descriptor) without hiding actual source files.
  */
 const IGNORED_DIRECTORIES = new Set([
+  '.git',
+  '.next',
+  '.nuxt',
+  '.cache',
+  '.angular',
+  '.turbo',
+  '.venv',
   'node_modules',
   'vendor',
   'dist',
@@ -115,8 +122,8 @@ function supportsRecursiveWatch(): boolean {
  * Matches on individual path segments (never substrings) so a file such as
  * `src/checkout/build.ts` is not ignored merely because it contains "out" or
  * "build". Ignores the generated/dependency directories listed in
- * {@link IGNORED_DIRECTORIES} and any hidden file or directory (a segment
- * starting with `.`, e.g. `.git`, `.env`, `.next`).
+ * {@link IGNORED_DIRECTORIES}, including Git internals and generated dot directories.
+ * Project dotfiles and configuration directories remain watchable.
  *
  * @param filePath - The absolute file path to check
  * @returns true if the path should be ignored, false otherwise
@@ -124,9 +131,7 @@ function supportsRecursiveWatch(): boolean {
 function shouldIgnorePath(filePath: string): boolean {
   const pathParts = filePath.split('/');
 
-  return pathParts.some(
-    (part) => IGNORED_DIRECTORIES.has(part) || part.startsWith('.'),
-  );
+  return pathParts.some((part) => IGNORED_DIRECTORIES.has(part));
 }
 
 /**
@@ -140,7 +145,7 @@ function shouldIgnorePath(filePath: string): boolean {
  * Features:
  * - Monitors worktree directories for file changes
  * - Handles atomic writes and chunked writes correctly
- * - Excludes node_modules, build/dependency directories, and hidden files
+ * - Excludes Git internals and build/dependency/cache directories
  * - Provides lifecycle management (OnModuleInit, OnModuleDestroy)
  * - Validates paths to prevent traversal outside worktree
  *
