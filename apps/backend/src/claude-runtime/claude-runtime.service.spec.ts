@@ -2788,6 +2788,48 @@ describe('ClaudeRuntimeService', () => {
     );
   });
 
+  it.each(['string', 'blocks'])(
+    'normalizes live and saved Claude agent messages consistently from %s content',
+    async (format) => {
+      const timestamp = '2026-04-24T08:00:00.000Z';
+      const text =
+        'Another Claude session sent a message:\n<agent-message from="af8cdb1911fc5f307">\n[Subagent hand-back] All checks passed.\n</agent-message>';
+      const message = {
+        type: 'user',
+        uuid: 'agent-message-1',
+        parent_tool_use_id: 'parent-tool',
+        timestamp,
+        message: {
+          content: format === 'string' ? text : [{ type: 'text', text }],
+        },
+      };
+      const emitted: any[] = [];
+      service.on('event', (event) => emitted.push(event));
+      (service as any).handleUserMessage(7, message);
+      (getSessionMessages as jest.Mock).mockResolvedValue([message]);
+      const history = await service.getHistory(7);
+
+      expect(history).toEqual([
+        expect.objectContaining({
+          id: 'agent-message-1:user:0',
+          kind: 'system',
+          content:
+            'Received a final response from af8cdb1911fc5f307.\n\n[Subagent hand-back] All checks passed.',
+          parentToolUseId: 'parent-tool',
+          sourceMessageId: 'agent-message-1',
+          transcriptMessageId: 'agent-message-1',
+          timestamp,
+        }),
+      ]);
+      expect(emitted).toContainEqual(
+        expect.objectContaining({
+          type: 'message_start',
+          payload: expect.objectContaining({ item: history[0] }),
+        }),
+      );
+    },
+  );
+
   it('preserves authored and received timestamps when hydrating history', async () => {
     (getSessionMessages as jest.Mock).mockResolvedValue([
       {

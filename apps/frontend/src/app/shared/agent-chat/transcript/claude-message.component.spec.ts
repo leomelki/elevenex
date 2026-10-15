@@ -113,6 +113,36 @@ describe('ClaudeMessageComponent', () => {
     },
   );
 
+  it.each(['light', 'dark'])(
+    'renders normalized agent hand-backs as collapsible system entries in %s mode',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      await TestBed.configureTestingModule({
+        imports: [ClaudeMessageComponent],
+      }).compileComponents();
+      const fixture = TestBed.createComponent(ClaudeMessageComponent);
+      const content =
+        'Received a final response from af8cdb1911fc5f307.\n\n[Subagent hand-back] All checks passed.\n\nFull details remain available.';
+      fixture.componentRef.setInput('item', {
+        id: 'agent-message-1:user:0',
+        kind: 'system',
+        content,
+        timestamp: '',
+      });
+      fixture.componentRef.setInput('showEdit', true);
+      fixture.detectChanges();
+      const element = fixture.nativeElement as HTMLElement;
+      const details = element.querySelector('details') as HTMLDetailsElement;
+      expect(details.open).toBe(false);
+      expect(details.querySelector('summary')?.textContent).toContain('Received a final response');
+      expect(details.querySelector('pre')?.textContent).toBe(content);
+      expect(element.querySelector('.cw-msg--user')).toBeNull();
+      expect(element.querySelector('[aria-label="Edit message"]')).toBeNull();
+      details.querySelector('summary')!.click();
+      expect(details.open).toBe(true);
+    },
+  );
+
   it('renders configured copy, edit, and fork actions', async () => {
     await TestBed.configureTestingModule({
       imports: [ClaudeMessageComponent],

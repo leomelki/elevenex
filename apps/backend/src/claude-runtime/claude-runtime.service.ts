@@ -5,6 +5,7 @@ import {
 } from '../mcp/session-tool-context.js';
 import { contextPercentage } from '../agent-runtime/context-usage.js';
 import { TranscriptFileCache } from '../agent-runtime/transcript-file-cache.js';
+import { claudeAgentMessageContent } from './claude-agent-message.js';
 import { TurnChangesService, type TurnChangeCapture } from '../agent-runtime/turn-changes.service.js';
 import {
   BadRequestException,
@@ -4322,11 +4323,12 @@ export class ClaudeRuntimeService
         // persisted history item once the transcript reloads.
         const messageId = message.uuid ?? randomUUID();
         const strippedText = this.stripInjectedWorktreeContext(part.text);
+        const agentMessage = claudeAgentMessageContent(strippedText);
         const item: ClaudeTranscriptItem = {
           id: `${messageId}:user:${partIndex}`,
-          kind: 'user',
+          kind: agentMessage ? 'system' : 'user',
           agentId: message.agent_id,
-          content: strippedText,
+          content: agentMessage ?? strippedText,
           parentToolUseId: message.parent_tool_use_id ?? undefined,
           isSynthetic: this.isSyntheticUserMessage(strippedText) || undefined,
           sourceMessageId: message.uuid,
@@ -7110,10 +7112,11 @@ export class ClaudeRuntimeService
             this.stripInjectedWorktreeContext(part.text).trim()
           ) {
             const normalizedText = this.stripInjectedWorktreeContext(part.text);
+            const agentMessage = claudeAgentMessageContent(normalizedText);
             normalized.push({
               id: `${message.uuid}:user:${index}`,
-              kind: 'user',
-              content: normalizedText,
+              kind: agentMessage ? 'system' : 'user',
+              content: agentMessage ?? normalizedText,
               parentToolUseId,
               isSynthetic:
                 this.isSyntheticUserMessage(normalizedText) || undefined,
