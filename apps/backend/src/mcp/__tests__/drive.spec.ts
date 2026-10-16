@@ -8,6 +8,7 @@ import { ToolError } from '../tool-registry/tool.types.js';
 import type { ToolContext } from '../tool-registry/tool.types.js';
 import { promptSessionTool } from '../tools/drive/prompt-session.tool.js';
 import { interruptSessionTool } from '../tools/drive/interrupt-session.tool.js';
+import { stopBackgroundTaskTool } from '../tools/drive/stop-background-task.tool.js';
 import { forkSessionTool } from '../tools/drive/fork-session.tool.js';
 import { archiveSessionTool } from '../tools/drive/archive-session.tool.js';
 import { resetSessionTool } from '../tools/drive/reset-session.tool.js';
@@ -46,6 +47,7 @@ function makeRuntime(overrides: Record<string, unknown> = {}) {
   return Object.assign(new EventEmitter(), {
     submitPrompt: jest.fn().mockResolvedValue(undefined),
     interrupt: jest.fn().mockResolvedValue(undefined),
+    stopBackgroundTask: jest.fn().mockResolvedValue(undefined),
     setSelectedModel: jest.fn().mockResolvedValue({ selectedModel: null }),
     getRuntimeState: jest.fn().mockResolvedValue({
       sessionState: 'idle',
@@ -139,6 +141,7 @@ describe('Drive tool group', () => {
         'set_model',
         'set_permission_mode',
         'set_provider',
+        'stop_background_task',
       ].sort(),
     );
     const byName = Object.fromEntries(DRIVE_TOOLS.map((t) => [t.name, t]));
@@ -574,6 +577,22 @@ describe('Drive tool group', () => {
       );
       expect(runtime.interrupt).toHaveBeenCalledWith(7);
       expect(res.data).toMatchObject({ sessionId: 7, interrupted: true });
+    });
+  });
+
+  describe('stop_background_task', () => {
+    it('stops the task through the provider feature', async () => {
+      const { services, runtime } = makeServices({});
+      const res = await stopBackgroundTaskTool.handler(
+        { sessionId: 7, taskId: 'bbj09f25r' },
+        makeCtx(services),
+      );
+      expect(services.agentRuntime.getProviderFeature).toHaveBeenCalledWith(
+        'claude',
+        'stopBackgroundTask',
+      );
+      expect(runtime.stopBackgroundTask).toHaveBeenCalledWith(7, 'bbj09f25r');
+      expect(res.data).toMatchObject({ stopped: true, taskId: 'bbj09f25r' });
     });
   });
 

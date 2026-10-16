@@ -5,7 +5,18 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZard } from '@/shared/core/provider/providezard';
 import { describe, expect, it } from 'vitest';
+import type { AgentBackgroundWorkItem } from '@/shared/models/agent-runtime.model';
 import { ClaudeStatusBarComponent } from './claude-status-bar.component';
+
+function backgroundItems(count: number): AgentBackgroundWorkItem[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `task:${index + 1}`,
+    kind: 'task',
+    label: `Job ${index + 1}`,
+    startedAt: '2026-10-15T13:00:00.000Z',
+    updatedAt: '2026-10-15T13:00:00.000Z',
+  }));
+}
 
 describe('ClaudeStatusBarComponent', () => {
   async function render() {
@@ -129,11 +140,23 @@ describe('ClaudeStatusBarComponent', () => {
   it('keeps background agents visible without claiming they block Codex follow-ups', async () => {
     const fixture = await render();
     fixture.componentRef.setInput('currentProvider', 'codex');
-    fixture.componentRef.setInput('backgroundWorkCount', 3);
+    fixture.componentRef.setInput('backgroundWork', backgroundItems(3));
     fixture.detectChanges();
     const indicator = fixture.nativeElement.querySelector('.cw-sb__bg') as HTMLElement;
     expect(indicator.textContent).toContain('3 in background');
     expect(indicator.title).toContain('you can send follow-ups');
+    expect(indicator.title).not.toContain('queued behind');
+  });
+
+  it('names Claude background jobs without claiming they queue new messages', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('currentProvider', 'claude');
+    fixture.componentRef.setInput('backgroundWork', backgroundItems(1));
+    fixture.detectChanges();
+    const indicator = fixture.nativeElement.querySelector('.cw-sb__bg') as HTMLElement;
+    expect(indicator.textContent).toContain('1 in background');
+    expect(indicator.title).toContain('new messages still start right away');
+    expect(indicator.title).toContain('• Job 1');
     expect(indicator.title).not.toContain('queued behind');
   });
 

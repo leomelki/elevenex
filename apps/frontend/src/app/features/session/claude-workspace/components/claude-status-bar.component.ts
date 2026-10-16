@@ -12,6 +12,7 @@ import {
 import { ZardPopoverComponent, ZardPopoverDirective } from '@/shared/components/popover';
 import { ZardProgressBarComponent } from '@/shared/components/progress-bar';
 import {
+  AgentBackgroundWorkItem,
   AgentPlanUsage,
   AgentPlanUsageWindow,
   AgentProviderId,
@@ -159,8 +160,22 @@ export class ClaudeStatusBarComponent {
   readonly contextUsage = input<ClaudeContextUsage | null>(null);
   readonly planUsage = input<AgentPlanUsage | null>(null);
   readonly tasks = input<ClaudeTaskState[]>([]);
-  /** Count of background jobs still running; shown as a persistent chip. */
-  readonly backgroundWorkCount = input<number>(0);
+  /** Background jobs still running; shown as a persistent chip. */
+  readonly backgroundWork = input<AgentBackgroundWorkItem[]>([]);
+  readonly backgroundWorkCount = computed(() => this.backgroundWork().length);
+  readonly backgroundWorkTitle = computed(() => {
+    const items = this.backgroundWork();
+    const count = items.length;
+    const summary =
+      this.currentProvider() === 'codex'
+        ? `${count} agent(s) working in background — you can send follow-ups to Codex`
+        : this.currentProvider() === 'claude'
+          ? `${count} background job(s) still running — Claude reports back when they finish; new messages still start right away`
+          : `${count} background job(s) still running — new messages are queued behind them`;
+    const shown = items.slice(0, 5).map((item) => `• ${item.label}`);
+    if (count > shown.length) shown.push(`• ${count - shown.length} more`);
+    return [summary, ...shown].join('\n');
+  });
   /** True when the current run was resumed by background work, not a prompt. */
   readonly backgroundRunActive = input<boolean>(false);
   readonly permissionMode = input<ClaudePermissionMode>('default');

@@ -178,6 +178,85 @@ describe('observe tool group', () => {
       expect(res.nextStep).toContain('Not actually idle');
     });
 
+    it('names background work and flags a shell left behind by a finished subagent', async () => {
+      const startedAt = new Date(Date.now() - 31 * 60_000).toISOString();
+      const services = {
+        sessions: sessionsMock(),
+        agentRuntime: {
+          getProvider: () => ({
+            getRuntimeState: jest.fn().mockResolvedValue({
+              sessionState: 'idle',
+              runPhase: 'idle',
+              backgroundWork: [
+                {
+                  id: 'task:bbj09f25r',
+                  kind: 'task',
+                  label: 'Diff commits',
+                  startedAt,
+                },
+              ],
+              tasks: [
+                {
+                  taskId: 'bbj09f25r',
+                  status: 'running',
+                  parentTaskId: 'agent-1',
+                  canStop: true,
+                },
+                { taskId: 'agent-1', status: 'completed' },
+              ],
+              pendingPrompts: [],
+            }),
+          }),
+        },
+      };
+      const res = await sessionStatusTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
+      expect(res.data).toMatchObject({
+        hasQueuedWork: true,
+        backgroundWork: [
+          {
+            kind: 'task',
+            label: 'Diff commits',
+            taskId: 'bbj09f25r',
+            canStop: true,
+            orphaned: true,
+          },
+        ],
+      });
+      expect(res.nextStep).toContain(
+        '"Diff commits" (task bbj09f25r, running 31m, left behind by a finished subagent)',
+      );
+      expect(res.nextStep).toContain('stop_background_task');
+    });
+
+    it('does not flag background work whose launcher is still running', async () => {
+      const services = {
+        sessions: sessionsMock(),
+        agentRuntime: {
+          getProvider: () => ({
+            getRuntimeState: jest.fn().mockResolvedValue({
+              sessionState: 'idle',
+              runPhase: 'idle',
+              backgroundWork: [{ id: 'task:b1', kind: 'task', label: 'tests' }],
+              tasks: [
+                { taskId: 'b1', status: 'running', parentTaskId: 'agent-1' },
+                { taskId: 'agent-1', status: 'running' },
+              ],
+            }),
+          }),
+        },
+      };
+      const res = await sessionStatusTool.handler(
+        { sessionId: 7 },
+        makeCtx(services),
+      );
+      const [item] = (res.data as { backgroundWork: object[] }).backgroundWork;
+      expect(item).not.toHaveProperty('orphaned');
+      expect(res.nextStep).not.toContain('stop_background_task');
+    });
+
     it('reports hasQueuedWork:false and plain idle when truly settled', async () => {
       const services = {
         sessions: sessionsMock(),
@@ -1010,6 +1089,24 @@ describe('observe tool group', () => {
         event: 'completed',
         status: 'completed',
       });
+    });
+
+    it('explains what it is still waiting on when it times out', async () => {
+      const { sessions, agentRuntime } = makeAwaitServices({
+        sessionState: 'idle',
+        runPhase: 'idle',
+        backgroundWork: [{ id: 'task:b1', kind: 'task', label: 'git scan' }],
+        pendingPrompts: [],
+      });
+      const res = await awaitSessionEventTool.handler(
+        { sessionId: 7, timeoutMs: 20 },
+        makeCtx({ sessions, agentRuntime }),
+      );
+      expect(res.data).toMatchObject({
+        event: 'timeout',
+        backgroundWork: [{ label: 'git scan', taskId: 'b1' }],
+      });
+      expect(res.nextStep).toContain('Its turn has ended. Waiting on "git scan"');
     });
 
     it('resolves when the runtime emits a requires_action run_state', async () => {

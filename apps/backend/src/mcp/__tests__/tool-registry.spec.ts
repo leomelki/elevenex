@@ -395,6 +395,11 @@ describe('coding session identity and default scopes', () => {
       ),
     ).toMatchObject({ error: { code: 'self_target_not_allowed' } });
     expect(
+      parse(
+        await bag.call('stop_background_task', { sessionId: 42, taskId: 't1' }),
+      ),
+    ).toMatchObject({ error: { code: 'self_target_not_allowed' } });
+    expect(
       parse(await bag.call('finish_task', { taskId: 9, confirmStop: true })),
     ).toMatchObject({ error: { code: 'self_target_not_allowed' } });
     expect(bag.services.tasks.finish).not.toHaveBeenCalled();
@@ -621,6 +626,7 @@ describe('coding session identity and default scopes', () => {
     for (const name of [
       'prompt_session',
       'interrupt_session',
+      'stop_background_task',
       'reset_session',
       'archive_session',
     ]) {

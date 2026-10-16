@@ -3,7 +3,10 @@ import { z } from 'zod';
 import { defineTool, ToolError, type ToolContext } from '../../tool-registry/tool.types.js';
 import { renderMarkdown } from '../../../agent-runtime/conversation-export.service.js';
 import {
+  describeQueuedWork,
+  hasQueuedWork,
   isSessionSettled,
+  summarizeBackgroundWork,
   type SessionRuntimeSnapshot,
 } from '../session-runtime-state.util.js';
 
@@ -102,11 +105,30 @@ export const pollSessionStatusTool = defineTool({
         cleanup();
 
         if (status === 'timeout' || status === 'aborted') {
+          // Say what the wait is blocked on: a visible turn ending long ago
+          // with only background work left reads very differently from a
+          // turn that is still producing output.
+          const state =
+            status === 'timeout'
+              ? ((await runtime
+                  .getRuntimeState(args.sessionId)
+                  .catch(() => null)) as SessionRuntimeSnapshot | null)
+              : null;
+          const backgroundWork = summarizeBackgroundWork(state);
+          const turnEnded =
+            state?.sessionState === 'idle' && state.runPhase === 'idle';
           resolve({
-            data: { sessionId: args.sessionId, stillRunning: true },
+            data: {
+              sessionId: args.sessionId,
+              stillRunning: true,
+              ...(backgroundWork.length ? { backgroundWork } : {}),
+            },
             deepLink: ctx.deepLink.session(args.sessionId),
-            nextStep:
-              'Session still running. Call poll_session_status again immediately — each call already waits 170 s, no sleep needed.',
+            nextStep: `Session still running. Call poll_session_status again immediately — each call already waits 170 s, no sleep needed.${
+              turnEnded && hasQueuedWork(state)
+                ? ` Its turn has ended. ${describeQueuedWork(backgroundWork, state.pendingPrompts?.length ?? 0)}`
+                : ''
+            }`,
           });
           return;
         }

@@ -126,6 +126,8 @@ function describeElevenexTool(
       return { icon: 'lucideHelpCircle', verb: 'Ask', target: sessionRef };
     case 'interrupt_session':
       return { icon: 'lucideStopCircle', verb: 'Interrupt', target: sessionRef };
+    case 'stop_background_task':
+      return { icon: 'lucideStopCircle', verb: 'Stop background task', target: sessionRef };
     case 'reset_session':
       return { icon: 'lucideRotateCcw', verb: 'Reset session', target: sessionRef };
     case 'archive_session':

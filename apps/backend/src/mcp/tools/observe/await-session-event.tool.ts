@@ -2,7 +2,10 @@ import type { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import {
+  describeQueuedWork,
+  hasQueuedWork,
   isSessionSettled,
+  summarizeBackgroundWork,
   type SessionRuntimeSnapshot,
 } from '../session-runtime-state.util.js';
 
@@ -69,16 +72,35 @@ export const awaitSessionEventTool = defineTool({
       args.events && args.events.length > 0 ? args.events : DEFAULT_EVENTS,
     );
 
-    const makeResult = (event: string, status: string) => ({
-      data: { sessionId: session.id, event, status },
-      deepLink: ctx.deepLink.session(session.id),
-      nextStep:
-        event === 'timeout'
-          ? 'Still waiting — re-call await_session_event immediately with the same arguments, no sleep needed.'
-          : status === 'requires_action'
-            ? 'get_pending_action to inspect the block, then resolve it.'
-            : 'read_session for the delta.',
-    });
+    const makeResult = (
+      event: string,
+      status: string,
+      state?: SessionRuntimeSnapshot | null,
+    ) => {
+      // On timeout, say what the wait is blocked on (see poll_session_status).
+      const backgroundWork = summarizeBackgroundWork(state);
+      const turnEnded =
+        state?.sessionState === 'idle' && state.runPhase === 'idle';
+      return {
+        data: {
+          sessionId: session.id,
+          event,
+          status,
+          ...(backgroundWork.length ? { backgroundWork } : {}),
+        },
+        deepLink: ctx.deepLink.session(session.id),
+        nextStep:
+          event === 'timeout'
+            ? `Still waiting — re-call await_session_event immediately with the same arguments, no sleep needed.${
+                turnEnded && hasQueuedWork(state)
+                  ? ` Its turn has ended. ${describeQueuedWork(backgroundWork, state.pendingPrompts?.length ?? 0)}`
+                  : ''
+              }`
+            : status === 'requires_action'
+              ? 'get_pending_action to inspect the block, then resolve it.'
+              : 'read_session for the delta.',
+      };
+    };
 
     // Map runtime state to a logical event name the caller cares about.
     // idle+idle alone is NOT "completed": a live background task or a prompt
@@ -125,7 +147,16 @@ export const awaitSessionEventTool = defineTool({
         if (settled) return;
         settled = true;
         cleanup();
-        resolve(makeResult(event, status));
+        if (event !== 'timeout') {
+          resolve(makeResult(event, status));
+          return;
+        }
+        void runtime
+          .getRuntimeState(session.id)
+          .catch(() => null)
+          .then((s) =>
+            resolve(makeResult(event, status, s as SessionRuntimeSnapshot | null)),
+          );
       };
 
       // DB status listener: handles external kills (archived/stopped).

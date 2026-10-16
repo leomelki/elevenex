@@ -117,7 +117,7 @@ guarantees so individual tools can't regress them:
 - **Folders**: `list_session_folders`, `create_session_folder`, `rename_session_folder`,
   `move_session_to_folder`, `archive_session_folder`, `unarchive_session_folder`,
   `delete_session_folder`.
-- **Drive**: `prompt_session`, `interrupt_session`, `fork_session`, `archive_session`,
+- **Drive**: `prompt_session`, `interrupt_session`, `stop_background_task`, `fork_session`, `archive_session`,
   `reset_session`, `rename_session`, `unarchive_session`, `get_pending_action`, `resolve_action`, `set_provider`, `set_model`,
   `set_permission_mode`.
   `prompt_session` accepts optional `mentionSessionIds` (up to 10; deduplicated), attaching the same

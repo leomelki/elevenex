@@ -51,6 +51,7 @@ const ELEVENEX_ACTIONS: Record<string, { icon: string; category: ActionCategory 
   prompt_session: { icon: 'lucideSend', category: 'drive' },
   ask_session: { icon: 'lucideMessageCircle', category: 'drive' },
   interrupt_session: { icon: 'lucideSquare', category: 'drive' },
+  stop_background_task: { icon: 'lucideSquare', category: 'drive' },
   fork_session: { icon: 'lucideGitFork', category: 'drive' },
   archive_session: { icon: 'lucideArchive', category: 'drive' },
   reset_session: { icon: 'lucideRotateCcw', category: 'drive' },

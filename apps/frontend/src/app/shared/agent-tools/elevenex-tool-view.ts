@@ -123,6 +123,7 @@ group('drive', 'lucideMessageSquare', {
 });
 group('drive', 'lucideSettings', {
   interrupt_session: 'Stop conversation',
+  stop_background_task: 'Stop background task',
   reset_session: 'Reset conversation',
   get_pending_action: 'Pending decision',
   resolve_action: 'Resolve decision',

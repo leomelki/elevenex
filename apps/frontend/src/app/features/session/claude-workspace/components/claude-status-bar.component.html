@@ -295,12 +295,7 @@
       @if (backgroundWorkCount() > 0) {
         <span
           class="cw-sb__bg inline-flex items-center gap-1.5 whitespace-nowrap text-success"
-          [title]="
-            backgroundWorkCount() +
-            (currentProvider() === 'codex'
-              ? ' agent(s) working in background — you can send follow-ups to Codex'
-              : ' background job(s) still running — new messages are queued behind them')
-          "
+          [title]="backgroundWorkTitle()"
         >
           <span
             class="size-1.5 rounded-full bg-current motion-safe:animate-pulse"
