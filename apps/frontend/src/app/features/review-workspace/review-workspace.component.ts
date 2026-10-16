@@ -32,6 +32,7 @@ import type {
 } from '@/shared/models/review-preview-bridge.model';
 import type { ReviewAnchor } from '@/shared/models/review-chat.model';
 import type { CreateSessionForkResponse } from '@/shared/models/session.model';
+import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import { appendDiffSelectionMentions } from '@/shared/utils/diff-selection-mention';
 import {
   ZardResizableComponent,
@@ -94,6 +95,7 @@ export class ReviewWorkspaceComponent {
 
   readonly exit = output<void>();
   readonly promoted = output<CreateSessionForkResponse>();
+  readonly openLocalFile = output<LocalFileTarget>();
 
   readonly state = inject(ReviewWorkspaceStateService);
   private readonly diffPanel = viewChild(ChangeReviewPanelComponent);
