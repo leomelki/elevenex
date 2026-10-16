@@ -1,13 +1,15 @@
+import { agentLabel } from '@/shared/agent-tools/agent-label';
+import { SubagentIdentityComponent } from '@/shared/agent-chat/activity/subagent-identity.component';
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideBot, lucideArrowUpRight } from '@ng-icons/lucide';
 import { ZardButtonComponent } from '@/shared/components/button';
 import type { AgentSubagentState } from '@/shared/models/agent-runtime.model';
-import { SubagentStatusComponent, agentLabel } from './subagent-status.component';
+import { SubagentStatusComponent } from './subagent-status.component';
 
 @Component({
   selector: 'cw-subagent-overview',
-  imports: [ZardButtonComponent, NgIcon, SubagentStatusComponent],
+  imports: [SubagentIdentityComponent, ZardButtonComponent, NgIcon, SubagentStatusComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [provideIcons({ lucideBot, lucideArrowUpRight })],
   templateUrl: './subagent-overview.component.html',

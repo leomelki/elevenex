@@ -48,7 +48,7 @@ describe('agent collaboration presentation', () => {
       agents,
     )!;
     expect(view.rows).toHaveLength(1);
-    expect(view.rows[0].label).toBe('Ada');
+    expect(view.rows[0].label).toBe('Reviewer');
   });
   it('does not reinterpret MCP tools or unsupported names as agent actions', () => {
     expect(
@@ -70,7 +70,7 @@ describe('agent collaboration presentation', () => {
       first.rows[0].label = 'Changed view';
       const next = collaborationView(call('list_agents'), receipt, agents)!;
       expect(parse).toHaveBeenCalledTimes(1);
-      expect(next.rows[0].label).toBe('Ada');
+      expect(next.rows[0].label).toBe('Reviewer');
     } finally {
       parse.mockRestore();
     }
@@ -92,7 +92,8 @@ describe('agent collaboration presentation', () => {
       metadata: ['gpt-5.4-mini', 'Full conversation context'],
     });
     expect(view.rows[0]).toMatchObject({
-      label: 'Ada',
+      label: 'Reviewer',
+      nickname: 'Ada',
       agentId: 'child-1',
       status: { executionStatus: 'running' },
     });
@@ -146,11 +147,16 @@ describe('agent collaboration presentation', () => {
     expect(view.outcome).toBe('3 agents · 1 active · 1 need attention');
     expect(view.rows[0].label).toBe('Main agent');
     expect(view.rows[1]).toMatchObject({
-      label: 'Ada',
+      label: 'Reviewer',
+      nickname: 'Ada',
       agentId: 'child-1',
       status: { executionStatus: 'completed' },
     });
-    expect(view.rows[2]).toMatchObject({ label: 'Grace', status: { executionStatus: 'error' } });
+    expect(view.rows[2]).toMatchObject({
+      label: 'Foreign',
+      nickname: 'Grace',
+      status: { executionStatus: 'error' },
+    });
     expect(view.rows[2].agentId).toBeUndefined();
   });
   it('does not guess which agent owns an ambiguous short task name', () => {

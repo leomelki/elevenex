@@ -1,3 +1,5 @@
+import { agentLabel } from '@/shared/agent-tools/agent-label';
+import { SubagentIdentityComponent } from '@/shared/agent-chat/activity/subagent-identity.component';
 import { BreakpointObserver } from '@angular/cdk/layout';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ClaudePermissionInlineComponent } from '../requests/claude-permission-inline.component';
@@ -45,7 +47,7 @@ import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
 import { ZardSkeletonComponent } from '@/shared/components/skeleton';
 import { AgentMarkdownComponent } from '../markdown/agent-markdown.component';
-import { SubagentStatusComponent, agentLabel } from './subagent-status.component';
+import { SubagentStatusComponent } from './subagent-status.component';
 import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
 import { buildSubagentIndex } from '@/shared/agent-tools/agent-collaboration-format';
 import { ContextUsageComponent } from '../context-usage/context-usage.component';
@@ -67,6 +69,7 @@ function agentGroup(agent: TurnAgentRun): 'active' | 'completed' | 'inactive' {
   selector: 'cw-agent-inspector',
   standalone: true,
   imports: [
+    SubagentIdentityComponent,
     CommonModule,
     ClaudePermissionInlineComponent,
     NgIcon,
@@ -181,9 +184,15 @@ export class ClaudeAgentInspectorComponent {
     const filtered = ordered.filter(
       ({ agent }) =>
         (!search ||
-          [agentLabel(agent), agent.agentType, agent.prompt, agent.summary, agent.agentId].some(
-            (value) => value?.toLowerCase().includes(search),
-          )) &&
+          [
+            agentLabel(agent),
+            agent.displayName,
+            agent.agentPath,
+            agent.agentType,
+            agent.prompt,
+            agent.summary,
+            agent.agentId,
+          ].some((value) => value?.toLowerCase().includes(search))) &&
         (filter === 'all' ||
           (filter === 'active'
             ? agent.status === 'started'

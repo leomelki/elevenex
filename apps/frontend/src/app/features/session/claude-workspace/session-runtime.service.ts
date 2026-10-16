@@ -1,3 +1,4 @@
+import { agentLabel } from '@/shared/agent-tools/agent-label';
 import { AgentConversation } from '@/shared/agent-chat/agent-conversation';
 import { transcriptToolState } from '@/shared/agent-chat/transcript/transcript-view-state';
 import {
@@ -175,7 +176,7 @@ export class SessionRuntime {
   readonly requestingAgentName = computed(() => {
     const id = this.pendingPermissionRequest()?.agentId;
     const agent = this.subagents().find((item) => item.agentId === id);
-    return agent?.displayName ?? agent?.agentType ?? null;
+    return agent ? agentLabel(agent) : null;
   });
 
   readonly pendingUserInputRequest = this.conversation.pendingUserInputRequest.asReadonly();

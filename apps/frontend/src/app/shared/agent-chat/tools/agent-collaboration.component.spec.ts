@@ -13,7 +13,7 @@ async function render(known = true) {
     id: 'call',
     kind: 'tool_use',
     toolName: 'send_message',
-    toolInput: { target: '/root/reviewer', message: 'Inspect **caching** and reconnects.' },
+    toolInput: { target: '/root/worker_transport', message: 'Inspect **caching** and reconnects.' },
     timestamp,
   });
   fixture.componentRef.setInput('result', {
@@ -30,7 +30,7 @@ async function render(known = true) {
         ? [
             {
               agentId: 'child',
-              agentPath: '/root/reviewer',
+              agentPath: '/root/worker_transport',
               agentType: 'explorer',
               displayName: 'Ada',
               status: 'started',
@@ -53,10 +53,15 @@ describe('AgentCollaborationComponent', () => {
         const fixture = await render();
         expect(fixture.nativeElement.textContent).toContain('Message sent');
         expect(fixture.nativeElement.textContent).toContain('Running');
+        const identity = fixture.nativeElement.querySelector('cw-subagent-identity');
+        expect(identity.querySelector('span:first-child').textContent).toBe('Worker Transport');
+        expect(identity.querySelector('.text-muted-foreground').textContent).toBe('Ada');
         const inspect = vi.fn();
         fixture.componentInstance.inspectAgent.subscribe(inspect);
         (
-          fixture.nativeElement.querySelector('[aria-label="Inspect Ada"]') as HTMLButtonElement
+          fixture.nativeElement.querySelector(
+            '[aria-label="Inspect Worker Transport"]',
+          ) as HTMLButtonElement
         ).click();
         expect(inspect).toHaveBeenCalledExactlyOnceWith('child');
         expect(fixture.componentInstance.expanded()).toBe(false);
@@ -74,7 +79,7 @@ describe('AgentCollaborationComponent', () => {
   it('does not offer a dead inspector link for an unknown recipient', async () => {
     const fixture = await render(false);
     expect(fixture.nativeElement.querySelector('[aria-label^="Inspect"]')).toBeNull();
-    expect(fixture.nativeElement.textContent).toContain('Reviewer');
+    expect(fixture.nativeElement.textContent).toContain('Worker Transport');
   });
   it('collapses a finished agent and keeps its inspector available after expansion', async () => {
     const fixture = await render();
@@ -83,7 +88,7 @@ describe('AgentCollaborationComponent', () => {
       buildSubagentIndex([
         {
           agentId: 'child',
-          agentPath: '/root/reviewer',
+          agentPath: '/root/worker_transport',
           agentType: 'explorer',
           displayName: 'Ada',
           status: 'stopped',
@@ -96,11 +101,15 @@ describe('AgentCollaborationComponent', () => {
     expect(fixture.nativeElement.querySelector('article').getAttribute('data-compact')).toBe(
       'true',
     );
-    expect(fixture.nativeElement.querySelector('[aria-label="Inspect Ada"]')).toBeNull();
+    expect(
+      fixture.nativeElement.querySelector('[aria-label="Inspect Worker Transport"]'),
+    ).toBeNull();
     expect(fixture.nativeElement.textContent).toContain('1 agent');
     fixture.nativeElement.querySelector('[aria-expanded]').click();
     fixture.detectChanges();
-    expect(fixture.nativeElement.querySelector('[aria-label="Inspect Ada"]')).not.toBeNull();
+    expect(
+      fixture.nativeElement.querySelector('[aria-label="Inspect Worker Transport"]'),
+    ).not.toBeNull();
     expect(fixture.nativeElement.textContent).toContain('Completed');
   });
   it('collapses an old running status when the agent has since stopped', async () => {
@@ -153,7 +162,7 @@ describe('AgentCollaborationComponent', () => {
       buildSubagentIndex([
         {
           agentId: 'child',
-          agentPath: '/root/reviewer',
+          agentPath: '/root/worker_transport',
           agentType: 'explorer',
           displayName: 'Ada',
           status: 'stopped',
@@ -164,7 +173,9 @@ describe('AgentCollaborationComponent', () => {
     );
     fixture.detectChanges();
     expect(fixture.componentInstance.compact()).toBe(false);
-    expect(fixture.nativeElement.querySelector('[aria-label="Inspect Ada"]')).not.toBeNull();
+    expect(
+      fixture.nativeElement.querySelector('[aria-label="Inspect Worker Transport"]'),
+    ).not.toBeNull();
     expect(fixture.nativeElement.textContent).toContain('Failed');
   });
   it('copies the readable message rather than its JSON envelope', async () => {

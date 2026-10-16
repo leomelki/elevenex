@@ -21,13 +21,6 @@ export function agentStatusLabel(agent: Status): string {
       ? 'Status unavailable'
       : 'Running';
 }
-export function agentLabel(agent: Pick<AgentSubagentState, 'agentType' | 'displayName'>): string {
-  return (
-    agent.displayName ??
-    agent.agentType.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
-  );
-}
-
 @Component({
   selector: 'cw-subagent-status',
   changeDetection: ChangeDetectionStrategy.OnPush,

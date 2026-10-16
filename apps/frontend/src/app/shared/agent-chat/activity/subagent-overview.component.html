@@ -40,7 +40,11 @@
             [attr.aria-label]="'Inspect ' + agentLabel(agent)"
             (click)="inspect.emit(agent.agentId)"
           >
-            <span class="max-w-40 truncate text-xs">{{ agentLabel(agent) }}</span>
+            <cw-subagent-identity
+              class="max-w-48 text-xs"
+              [label]="agentLabel(agent)"
+              [nickname]="agent.displayName"
+            />
             <cw-subagent-status [agent]="agent" />
           </button>
         }

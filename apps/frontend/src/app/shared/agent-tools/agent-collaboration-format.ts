@@ -1,3 +1,4 @@
+import { agentLabel, agentReferenceLabel, formatAgentTask } from './agent-label';
 import type { AgentSubagentState, AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
 
 export type CollaborationAction =
@@ -231,19 +232,12 @@ export function buildSubagentIndex(
   for (const [alias, agent] of aliases) if (agent && !index.has(alias)) index.set(alias, agent);
   return index;
 }
-function referenceLabel(value: string): string {
-  if (value === '/root' || value === 'root') return 'Main agent';
-  if (/^[\da-f]{8}-[\da-f-]+$/i.test(value)) return `Agent ${value.slice(0, 8)}`;
-  return value
-    .replace(/^\/root\//, '')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
 export interface CollaborationAgentRow {
   key: string;
   reference: string;
   agentId?: string;
   label: string;
+  nickname?: string;
   role?: string;
   model?: string;
   reasoningEffort?: string;
@@ -312,26 +306,39 @@ export function collaborationView(
         stateRecord['completed'] ??
         stateRecord['errored'],
     );
+    const path =
+      agent?.agentPath ??
+      readableCollaborationText(
+        data['task_name'] ?? data['agent_name'] ?? data['canonical_name'],
+      ) ??
+      (action === 'spawn' ? readableCollaborationText(input['task_name']) : undefined) ??
+      (reference.startsWith('/') ? reference : undefined) ??
+      old?.path;
+    const role =
+      agent?.agentType ??
+      readableCollaborationText(data['agent_type'] ?? data['agent_role']) ??
+      old?.role;
     rows.set(key, {
       ...old,
       key,
       reference,
       agentId: agent?.agentId,
-      label:
+      label: path
+        ? agentReferenceLabel(path)
+        : role
+          ? formatAgentTask(role)
+          : (old?.label ?? agentReferenceLabel(reference)),
+      nickname:
         agent?.displayName ??
         readableCollaborationText(data['nickname'] ?? data['agent_nickname']) ??
-        old?.label ??
-        referenceLabel(agent?.agentPath ?? reference),
-      role:
-        agent?.agentType ??
-        readableCollaborationText(data['agent_type'] ?? data['agent_role']) ??
-        old?.role,
+        old?.nickname,
+      role: role ? formatAgentTask(role) : undefined,
       model: agent?.model ?? readableCollaborationText(data['model']) ?? old?.model,
       reasoningEffort:
         agent?.reasoningEffort ??
         readableCollaborationText(data['reasoning_effort'] ?? data['reasoningEffort']) ??
         old?.reasoningEffort,
-      path: agent?.agentPath ?? (reference.startsWith('/') ? reference : undefined),
+      path,
       ...(response ? { response } : {}),
       ...(resolvedState ? { status: statusView(resolvedState) } : {}),
       ...(currentState ? { currentStatus: statusView(currentState) } : {}),
@@ -440,7 +447,7 @@ export function collaborationView(
     payload,
     payloadLabel: action === 'message' || action === 'input' ? 'Message' : 'Assignment',
     payloadUnavailable: !payload && ['spawn', 'message', 'input', 'followup'].includes(action),
-    sender: sender?.displayName ?? sender?.agentType,
+    sender: sender ? agentLabel(sender) : undefined,
     rows: [...rows.values()],
     metadata,
   };

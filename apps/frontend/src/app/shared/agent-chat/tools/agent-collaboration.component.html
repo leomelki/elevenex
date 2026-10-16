@@ -86,17 +86,19 @@
                     [attr.aria-label]="'Inspect ' + row.label"
                     (click)="inspectAgent.emit(row.agentId)"
                   >
-                    <span class="truncate">{{ row.label }}</span
-                    ><ng-icon
+                    <cw-subagent-identity [label]="row.label" [nickname]="row.nickname" />
+                    <ng-icon
                       name="lucideArrowUpRight"
                       size="11"
                       class="shrink-0 text-muted-foreground"
                     />
                   </button>
                 } @else {
-                  <span class="truncate text-xs font-semibold text-foreground">{{
-                    row.label
-                  }}</span>
+                  <cw-subagent-identity
+                    class="text-xs text-foreground"
+                    [label]="row.label"
+                    [nickname]="row.nickname"
+                  />
                 }
                 @if (row.status; as status) {
                   <cw-subagent-status [agent]="status" />
@@ -106,9 +108,9 @@
                   ><cw-subagent-status [agent]="current" />
                 }
               </div>
-              @if (row.role || (expanded() && row.path)) {
+              @if (expanded() && (row.role || row.path)) {
                 <div class="mt-0.5 truncate text-[11px] text-muted-foreground">
-                  {{ row.role?.replaceAll('_', ' ')
+                  {{ row.role
                   }}{{ expanded() && row.path ? (row.role ? ' · ' : '') + row.path : '' }}
                 </div>
               }

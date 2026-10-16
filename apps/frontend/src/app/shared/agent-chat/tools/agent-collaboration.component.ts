@@ -1,3 +1,4 @@
+import { SubagentIdentityComponent } from '@/shared/agent-chat/activity/subagent-identity.component';
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
@@ -26,7 +27,13 @@ import { toast } from 'ngx-sonner';
 
 @Component({
   selector: 'cw-agent-collaboration',
-  imports: [ZardButtonComponent, NgIcon, AgentMarkdownComponent, SubagentStatusComponent],
+  imports: [
+    SubagentIdentityComponent,
+    ZardButtonComponent,
+    NgIcon,
+    AgentMarkdownComponent,
+    SubagentStatusComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   viewProviders: [
     provideIcons({

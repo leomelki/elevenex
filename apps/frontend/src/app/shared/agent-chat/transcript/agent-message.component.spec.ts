@@ -24,7 +24,8 @@ describe('agent messages', () => {
         {
           agentId: 'child-123',
           agentPath: '/root/item_artwork',
-          agentType: 'item_artwork',
+          agentType: 'worker',
+          displayName: 'Ada',
           status: 'started',
         },
       ]);
@@ -34,6 +35,9 @@ describe('agent messages', () => {
       fixture.detectChanges();
       const element = fixture.nativeElement as HTMLElement;
       expect(element.textContent).toContain('Item Artwork');
+      expect(
+        element.querySelector('cw-subagent-identity .text-muted-foreground')?.textContent,
+      ).toContain('Ada');
       expect(element.textContent).toContain('to Coordinator');
       expect(element.textContent).toContain('Message content unavailable');
       expect(element.textContent).not.toContain('Payload:');

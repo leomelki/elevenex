@@ -1,3 +1,4 @@
+import { agentReferenceLabel } from '@/shared/agent-tools/agent-label';
 import type { AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
 
 /** Only system entries may be interpreted as provider envelopes; quoted user text stays intact. */
@@ -37,12 +38,5 @@ export function incomingAgentMessage(
 export function agentRouteLabel(path: string): string {
   if (path === '/root') return 'Coordinator';
   if (/^[\da-f-]{16,}$/i.test(path)) return path;
-  return (
-    path
-      .split('/')
-      .filter(Boolean)
-      .at(-1)
-      ?.replace(/[_-]+/g, ' ')
-      .replace(/\b\w/g, (c) => c.toUpperCase()) ?? path
-  );
+  return agentReferenceLabel(path);
 }

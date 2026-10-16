@@ -132,7 +132,7 @@ describe('ClaudeAgentInspectorComponent', () => {
           'cw-context-usage button',
         ) as HTMLButtonElement;
         expect(button.textContent).toContain('Context 47%');
-        expect(button.getAttribute('aria-label')).toContain('Ada context: 47% used');
+        expect(button.getAttribute('aria-label')).toContain('Explorer context: 47% used');
         expect(
           fixture.nativeElement.querySelector('.cw-agent-dive__rail').textContent,
         ).not.toContain('Context');

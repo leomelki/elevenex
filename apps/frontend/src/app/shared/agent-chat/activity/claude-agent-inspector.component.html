@@ -142,9 +142,11 @@
                       "
                       (click)="selectAgent.emit(agent.agentId)"
                     >
-                      <span class="w-full truncate text-xs font-medium">{{
-                        agentLabel(agent)
-                      }}</span>
+                      <cw-subagent-identity
+                        class="w-full text-xs"
+                        [label]="agentLabel(agent)"
+                        [nickname]="agent.displayName"
+                      />
                       <cw-subagent-status [agent]="agent" />
                       <span
                         class="line-clamp-2 w-full whitespace-normal text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
@@ -168,9 +170,11 @@
               class="cw-agent-dive__hero flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3"
             >
               <div class="min-w-0">
-                <div class="cw-agent-dive__hero-title truncate text-sm font-semibold">
-                  {{ agentLabel(agent) }}
-                </div>
+                <cw-subagent-identity
+                  class="cw-agent-dive__hero-title text-sm"
+                  [label]="agentLabel(agent)"
+                  [nickname]="agent.displayName"
+                />
                 <div
                   class="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground"
                 >

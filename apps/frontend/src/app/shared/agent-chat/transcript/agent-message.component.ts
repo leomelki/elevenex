@@ -1,3 +1,5 @@
+import { agentLabel } from '@/shared/agent-tools/agent-label';
+import { SubagentIdentityComponent } from '@/shared/agent-chat/activity/subagent-identity.component';
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
@@ -11,12 +13,11 @@ import { ZardButtonComponent } from '@/shared/components/button';
 import { AgentMarkdownComponent } from '../markdown/agent-markdown.component';
 import type { AgentSubagentState, AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
 import type { LocalFileTarget } from '@/shared/models/local-file-target.model';
-import { agentLabel } from '../activity/subagent-status.component';
 import { agentRouteLabel } from './agent-message';
 
 @Component({
   selector: 'cw-agent-message',
-  imports: [NgIcon, ZardButtonComponent, AgentMarkdownComponent],
+  imports: [SubagentIdentityComponent, NgIcon, ZardButtonComponent, AgentMarkdownComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './agent-message.component.html',
   viewProviders: [

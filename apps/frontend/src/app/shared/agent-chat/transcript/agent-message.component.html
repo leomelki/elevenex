@@ -19,9 +19,11 @@
       /></span>
       <span class="flex min-w-0 flex-1 flex-col gap-1.5">
         <span class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <span class="truncate font-semibold text-foreground" [title]="message().sender">{{
-            sender()
-          }}</span>
+          <cw-subagent-identity
+            class="text-foreground"
+            [label]="sender()"
+            [nickname]="agent()?.displayName"
+          />
           <span
             class="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
           >

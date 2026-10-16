@@ -124,9 +124,11 @@
               [disabled]="!canInspect()"
               (click)="inspectAgent.emit(agent.agentId)"
             >
-              <span class="text-[0.8125rem] font-semibold capitalize shrink-0">{{
-                agentLabel(agent)
-              }}</span>
+              <cw-subagent-identity
+                class="text-[0.8125rem]"
+                [label]="agentLabel(agent)"
+                [nickname]="agent.displayName"
+              />
               <cw-subagent-status [agent]="agent" />
               @if (agent.summary) {
                 <span
