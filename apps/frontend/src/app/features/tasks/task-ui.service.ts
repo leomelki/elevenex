@@ -45,9 +45,12 @@ export class TaskUiService {
           zAriaLabel: 'Finish task',
           zWidth: 'min(460px, calc(100vw - 2rem))',
           zMaskClosable: false,
-          zOnCancel: (instance) => (instance.busy() ? false : undefined),
         });
-        await firstValueFrom(ref.afterClosed());
+        const confirmed = await firstValueFrom(ref.afterClosed());
+        if (confirmed !== true) return;
+        // Keep the operation owned by the service after the dialog is dismissed.
+        await this.editors.checkTaskEditors(task.path, true);
+        await this.completion.finish(task, true);
       } else await this.completion.finish(task, false);
     } catch (error) {
       toast.error('Could not finish task', { description: taskError(error) });
