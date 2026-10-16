@@ -1,3 +1,4 @@
+import { NgTemplateOutlet } from '@angular/common';
 import { InlineActionConfirmationComponent } from '@/shared/components/inline-action-confirmation/inline-action-confirmation.component';
 import { Directive, NO_ERRORS_SCHEMA, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
@@ -459,7 +460,7 @@ describe('Sidebar', () => {
     TestBed.resetTestingModule();
     TestBed.overrideComponent(Sidebar, {
       set: {
-        imports: [NgIcon, InlineActionConfirmationComponent, TaskNavigationLabelComponent, MockTrackNativeModalDirective, ...ZardDropdownImports],
+        imports: [NgTemplateOutlet, NgIcon, InlineActionConfirmationComponent, TaskNavigationLabelComponent, MockTrackNativeModalDirective, ...ZardDropdownImports],
         schemas: [NO_ERRORS_SCHEMA],
       },
     });
@@ -711,6 +712,46 @@ describe('Sidebar', () => {
     fixture.componentInstance.collapseSessionList(1, 2);
     fixture.detectChanges();
     expect(visibleIds()).toEqual(sessions.slice(-8).map((session) => session.id));
+  });
+
+  it.each(['light', 'dark'])('paginates folders independently in %s mode', (theme) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    try {
+      showPersistedWorkspace();
+      const workspace = tree()[0].repos[0].workspaces![0];
+      const sessions = Array.from({ length: 35 }, (_, index) => ({
+        ...workspace.sessions[0], id: index + 100, name: `Session ${index + 100}`,
+      }));
+      workspace.sessions = sessions;
+      workspace.sessionFolders = [7, 8].map((id) => ({
+        id, repoId: 1, workspaceId: 2, name: `Folder ${id}`, archivedAt: null,
+        sessions: sessions.map((session) => ({ ...session, id: session.id + id * 100, folderId: id })),
+        archivedSessions: [],
+      }));
+      expandedKeys.update((keys) => new Set([...keys, 'session-folder-7', 'session-folder-8']));
+      const fixture = createSidebar();
+      const container = fixture.nativeElement as HTMLElement;
+      const rows = () => container.querySelectorAll('[data-session-row-id]');
+      const older = () => container.querySelectorAll<HTMLButtonElement>('.session-show-more-btn');
+
+      expect(rows()).toHaveLength(24);
+      expect(Array.from(older(), (button) => button.textContent?.trim())).toEqual(['27 older', '27 older', '27 older']);
+      older()[0].click();
+      fixture.detectChanges();
+      expect(rows()).toHaveLength(44);
+      expect(Array.from(older(), (button) => button.textContent?.trim())).toEqual(['7 older', '27 older', '27 older']);
+      expect(container.querySelector('[data-session-row-id="800"]')).toBeNull();
+      older()[0].click();
+      fixture.detectChanges();
+      expect(rows()).toHaveLength(51);
+      expect(container.querySelector('[data-session-row-id="800"]')).toBeTruthy();
+      container.querySelector<HTMLButtonElement>('.session-collapse-btn')!.click();
+      fixture.detectChanges();
+      expect(rows()).toHaveLength(24);
+      expect(container.querySelector('.session-collapse-btn')).toBeNull();
+    } finally {
+      document.documentElement.classList.remove('dark');
+    }
   });
 
   it('toggles finished task history through remembered navigation keys', () => {

@@ -1,3 +1,4 @@
+import { NgTemplateOutlet } from '@angular/common';
 import { SessionArchiveUiService } from '@/shared/services/session-archive-ui.service';
 import { InlineActionConfirmationComponent } from '@/shared/components/inline-action-confirmation/inline-action-confirmation.component';
 import { TaskUiService } from '@/features/tasks/task-ui.service';
@@ -121,6 +122,7 @@ import { TaskNavigationLabelComponent } from './task-navigation-label.component'
 @Component({
   selector: 'app-sidebar',
   imports: [
+    NgTemplateOutlet,
     NgIcon,
     RouterLink,
     TaskHistoryComponent,
@@ -799,25 +801,25 @@ export class Sidebar implements OnInit, OnDestroy {
     return this.navService.isExpanded(key);
   }
 
-  isSessionListExpanded(repoId: number, workspaceId: number): boolean {
-    return this.getSessionListVisibleLimit(repoId, workspaceId) > Sidebar.SESSION_LIST_MAX_VISIBLE;
+  isSessionListExpanded(repoId: number, workspaceId: number, folderId?: number): boolean {
+    return this.getSessionListVisibleLimit(repoId, workspaceId, folderId) > Sidebar.SESSION_LIST_MAX_VISIBLE;
   }
 
-  showMoreSessions(repoId: number, workspaceId: number): void {
-    const key = `${repoId}-${workspaceId}`;
+  showMoreSessions(repoId: number, workspaceId: number, folderId?: number): void {
+    const key = this.sessionListKey(repoId, workspaceId, folderId);
     this.sidebarState.setSessionListVisibleLimit(
       key,
-      this.getSessionListVisibleLimit(repoId, workspaceId) + this.SESSION_LIST_PAGE_SIZE,
+      this.getSessionListVisibleLimit(repoId, workspaceId, folderId) + this.SESSION_LIST_PAGE_SIZE,
     );
   }
 
-  collapseSessionList(repoId: number, workspaceId: number): void {
-    this.sidebarState.setSessionListVisibleLimit(`${repoId}-${workspaceId}`, null);
+  collapseSessionList(repoId: number, workspaceId: number, folderId?: number): void {
+    this.sidebarState.setSessionListVisibleLimit(this.sessionListKey(repoId, workspaceId, folderId), null);
   }
 
-  private getSessionListVisibleLimit(repoId: number, workspaceId: number): number {
+  private getSessionListVisibleLimit(repoId: number, workspaceId: number, folderId?: number): number {
     return (
-      this.sessionListVisibleLimits().get(`${repoId}-${workspaceId}`) ??
+      this.sessionListVisibleLimits().get(this.sessionListKey(repoId, workspaceId, folderId)) ??
       Sidebar.SESSION_LIST_MAX_VISIBLE
     );
   }
@@ -826,16 +828,21 @@ export class Sidebar implements OnInit, OnDestroy {
     sessions: SessionInTree[],
     repoId: number,
     workspaceId: number,
+    folderId?: number,
   ): SessionInTree[] {
-    const limit = this.getSessionListVisibleLimit(repoId, workspaceId);
+    const limit = this.getSessionListVisibleLimit(repoId, workspaceId, folderId);
     if (sessions.length <= limit) {
       return sessions;
     }
     return sessions.slice(sessions.length - limit);
   }
 
-  getHiddenSessionCount(sessions: SessionInTree[], repoId: number, workspaceId: number): number {
-    return Math.max(0, sessions.length - this.getSessionListVisibleLimit(repoId, workspaceId));
+  getHiddenSessionCount(sessions: SessionInTree[], repoId: number, workspaceId: number, folderId?: number): number {
+    return Math.max(0, sessions.length - this.getSessionListVisibleLimit(repoId, workspaceId, folderId));
+  }
+
+  private sessionListKey(repoId: number, workspaceId: number, folderId?: number): string {
+    return folderId === undefined ? `${repoId}-${workspaceId}` : `${repoId}-${workspaceId}-folder-${folderId}`;
   }
 
   getProjectSshStats(projectId: number) {
