@@ -29,6 +29,8 @@ interface RenderedHunk extends TurnChangeHunk {
 }
 
 interface RenderedFile extends TurnChangedFile {
+  source: TurnChangedFile;
+  deferred: boolean;
   basename: string;
   folder: string;
   statusLabel: string;
@@ -63,20 +65,30 @@ export class ClaudeTurnChangesComponent {
 
   private readonly sanitizer = inject(DomSanitizer);
   private readonly openFiles = signal<Record<string, boolean>>({});
+  private readonly loadedFiles = signal(new Set<TurnChangedFile>());
 
   readonly renderedFiles = computed<RenderedFile[]>(() =>
     this.details().filesChanged.map((file, index) => {
       const pathParts = file.path.split(/[\\/]/).filter(Boolean);
       const basename = pathParts.pop() ?? file.path;
+      const deferred = !this.loadedFiles().has(file) && (
+        file.additions + file.deletions > 1_000 ||
+        file.hunks.reduce((size, hunk) =>
+          size + (hunk.patch?.length ?? hunk.oldString.length + hunk.newString.length), 0,
+        ) > 64 * 1024
+      );
       return {
         ...file,
+        source: file,
+        deferred,
         basename,
         folder: pathParts.length ? pathParts.join('/') : '',
         statusLabel: this.statusLabel(file.status),
         statusGlyph: this.statusGlyph(file.status),
         hunks: file.hunks.map((hunk) => ({
           ...hunk,
-          html: this.isFileOpen(file.path, index) ? this.renderHunkHtml(file.path, hunk) : null,
+          html: this.isFileOpen(file.path, index) && !deferred
+            ? this.renderHunkHtml(file.path, hunk) : null,
         })),
       };
     }),
@@ -92,6 +104,10 @@ export class ClaudeTurnChangesComponent {
       ...current,
       [path]: !(current[path] ?? index === 0),
     }));
+  }
+
+  loadDiff(file: RenderedFile): void {
+    this.loadedFiles.update((current) => new Set([...current, file.source]));
   }
 
   private renderHunkHtml(filePath: string, hunk: TurnChangeHunk): SafeHtml | null {

@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import { promises as mutableFs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { applyPatch } from 'diff';
 import { execFileAsync } from '../terminal/async-process.js';
 import {
   ChangeContentBudget,
@@ -224,6 +225,42 @@ describe('WorktreeChangeTracker (real git and filesystem)', () => {
     expect(result.filesChanged).toHaveLength(1);
     expect(result.filesChanged[0].diffUnavailable).toMatch(/memory limit/);
     expect(budget.usedBytes).toBeLessThanOrEqual(10);
+  });
+
+  it('keeps complete patches when a turn exceeds the former 1 MiB rendering budget', async () => {
+    tracker = await WorktreeChangeTracker.create(directory, budget);
+    const turn = await tracker.begin();
+    const content = 'a'.repeat(200) + '\n';
+    await Promise.all(Array.from({ length: 6 }, (_, index) =>
+      write(`large-${index}.txt`, content.repeat(1_000)),
+    ));
+    const result = await tracker.finish(turn);
+    expect(result.filesChanged).toHaveLength(6);
+    expect(result.additions).toBe(6_000);
+    expect(result.filesChanged.reduce((size, file) =>
+      size + Buffer.byteLength(file.hunks[0].patch ?? ''), 0,
+    )).toBeGreaterThan(1024 * 1024);
+    for (const file of result.filesChanged) {
+      expect(file.diffUnavailable).toBeUndefined();
+      expect(file.hunks[0].patch).toContain('+' + 'a'.repeat(200));
+    }
+  });
+
+  it('generates an exact patch for a rewrite beyond the fast diff edit limit', async () => {
+    const before = Array.from({ length: 6_000 }, (_, index) => `old-${index}\n`).join('');
+    const after = Array.from({ length: 6_000 }, (_, index) => `new-${index}\n`).join('');
+    await write('source.ts', before);
+    tracker = await WorktreeChangeTracker.create(directory, budget);
+    const turn = await tracker.begin();
+    await write('source.ts', after);
+    const result = await tracker.finish(turn);
+    expect(result.filesChanged[0]).toMatchObject({ additions: 6_000, deletions: 6_000 });
+    expect(result.filesChanged[0].diffUnavailable).toBeUndefined();
+    const patch = result.filesChanged[0].hunks[0].patch!;
+    expect(patch).toContain('-old-5999');
+    expect(patch).toContain('+new-5999');
+    expect(patch).toContain('source.ts');
+    expect(applyPatch(before, patch)).toBe(after);
   });
 
   it('includes ignored source/configuration files, without treating generated dependencies as source', async () => {

@@ -142,14 +142,23 @@
             @if (file.diffUnavailable) {
               <p class="text-xs text-muted-foreground">{{ file.diffUnavailable }}. Line counts may be incomplete.</p>
             }
-            @for (hunk of file.hunks; track hunk.id) {
-              <cw-inline-diff
-                [html]="hunk.html"
-                [label]="hunk.label"
-                [additions]="hunk.additions"
-                [deletions]="hunk.deletions"
-                emptyText="Inline diff was not captured for this file."
-              />
+            @if (file.deferred) {
+              <div class="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
+                <p class="text-xs text-muted-foreground">Large diff. Load it to view all changes.</p>
+                <button z-button zType="outline" zSize="sm" type="button" (click)="loadDiff(file)">
+                  Load diff
+                </button>
+              </div>
+            } @else {
+              @for (hunk of file.hunks; track hunk.id) {
+                <cw-inline-diff
+                  [html]="hunk.html"
+                  [label]="hunk.label"
+                  [additions]="hunk.additions"
+                  [deletions]="hunk.deletions"
+                  emptyText="Inline diff was not captured for this file."
+                />
+              }
             }
           </div>
         }

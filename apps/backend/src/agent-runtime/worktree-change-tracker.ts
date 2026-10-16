@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { constants, watch } from 'node:fs';
-import { lstat, open, readlink, realpath } from 'node:fs/promises';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { lstat, mkdtemp, open, readlink, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import chokidar from 'chokidar';
-import { formatPatch, structuredPatch } from 'diff';
+import { formatPatch, parsePatch, structuredPatch } from 'diff';
 import { buildAugmentedEnv } from '../config/system-paths.js';
 import type {
   TurnChangeDetails,
@@ -12,7 +13,6 @@ import type {
 
 const FILE_BYTES = 256 * 1024;
 const BOUNDARY_BYTES = 8 * 1024 * 1024;
-const PATCH_BYTES = 1024 * 1024;
 const OUTPUT_BYTES = 32 * 1024 * 1024;
 const JOURNAL_PATHS = 20_000;
 const CONCURRENCY = 8;
@@ -229,11 +229,9 @@ export class WorktreeChangeTracker {
         : new Map<string, SavedFile>();
       const filesChanged: TurnChangedFile[] = [];
       const unchangedPaths: string[] = [];
-      let patchBytes = 0;
-      const deadline = performance.now() + 1000;
       try {
-        // Batch reads, then render in deterministic order. Never launch one git
-        // process per file or diff all historical files again after each tool.
+        // Batch inventory reads, then render in deterministic order. Simple
+        // comparisons stay in process; only expensive ones need a Git fallback.
         for (
           let offset = 0;
           offset < candidates.length;
@@ -288,29 +286,17 @@ export class WorktreeChangeTracker {
               if (oldContent && newContent) {
                 if (oldContent.includes(0) || newContent.includes(0))
                   reason = 'Binary file changed';
-                else if (
-                  patchBytes >= PATCH_BYTES ||
-                  performance.now() >= deadline
-                )
-                  reason =
-                    'Diff omitted because the turn reached its rendering limit';
                 else {
                   const rendered = await renderPatch(
                     path,
                     oldContent.toString('utf8'),
                     newContent.toString('utf8'),
-                    Math.min(50, Math.max(1, deadline - performance.now())),
                   );
-                  if (
-                    rendered &&
-                    patchBytes + Buffer.byteLength(rendered.patch) <=
-                      PATCH_BYTES
-                  ) {
+                  if (rendered) {
                     ({ patch, additions, deletions } = rendered);
-                    patchBytes += Buffer.byteLength(patch);
                   } else
                     reason =
-                      'Diff omitted because it exceeded its rendering limit';
+                      'The diff could not be generated from the captured contents';
                 }
               }
               filesChanged.push({
@@ -864,18 +850,19 @@ function git(
   });
 }
 
-function renderPatch(
+async function renderPatch(
   path: string,
   before: string,
   after: string,
-  timeout: number,
 ): Promise<
   { patch: string; additions: number; deletions: number } | undefined
 > {
-  return new Promise((done) => {
+  const rendered = await new Promise<
+    { patch: string; additions: number; deletions: number } | undefined
+  >((done) => {
     structuredPatch(path, path, before, after, undefined, undefined, {
       context: 3,
-      timeout,
+      timeout: 50,
       maxEditLength: 10_000,
       callback: (diff) => {
         if (!diff) return done(undefined);
@@ -890,4 +877,35 @@ function renderPatch(
       },
     });
   });
+  if (rendered) return rendered;
+
+  // Keep expensive comparisons off the backend event loop. Use the captured
+  // bytes, never the live checkout, so later edits cannot change this turn's diff.
+  const directory = await mkdtemp(join(tmpdir(), 'elevenex-turn-diff-'));
+  try {
+    await Promise.all([
+      writeFile(join(directory, 'before'), before, { mode: 0o600 }),
+      writeFile(join(directory, 'after'), after, { mode: 0o600 }),
+    ]);
+    const output = await git(directory, [
+      'diff', '--no-index', '--no-ext-diff', '--no-textconv', '--text',
+      '--no-color', '--diff-algorithm=myers', '--unified=3', '--', 'before', 'after',
+    ], undefined, [0, 1]);
+    const diff = parsePatch(output.toString('utf8'))[0];
+    if (!diff) return undefined;
+    diff.oldFileName = path;
+    diff.newFileName = path;
+    let additions = 0;
+    let deletions = 0;
+    for (const hunk of diff.hunks)
+      for (const line of hunk.lines) {
+        if (line.startsWith('+')) additions++;
+        else if (line.startsWith('-')) deletions++;
+      }
+    return { patch: formatPatch(diff), additions, deletions };
+  } catch {
+    return undefined;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
