@@ -2597,6 +2597,41 @@ describe('ClaudeWorkspaceComponent', () => {
     });
   });
 
+  it.each([true, false])(
+    'generates context from a saved task baseline only when it has changes (%s)',
+    async (hasChanges) => {
+      vi.useFakeTimers();
+      try {
+        worktreeContextServiceMock.get.mockReturnValue(
+          of({
+            ...readyWorktreeContext(),
+            rootRef: 'task-start-commit',
+            contextSentence: null,
+            generationStatus: 'idle',
+            generatedAt: null,
+            hasRecord: true,
+            hasChanges,
+          }),
+        );
+        worktreeContextServiceMock.generate.mockReturnValue(of(readyWorktreeContext()));
+        const fixture = createWorkspace();
+        fixture.componentRef.setInput('hasStartedAgentRuntime', true);
+        fixture.detectChanges();
+        await flushPromises();
+        fixture.componentInstance.draft.scheduleDeferredContextGeneration();
+        await vi.advanceTimersByTimeAsync(1500);
+
+        expect(worktreeContextServiceMock.generate).toHaveBeenCalledTimes(hasChanges ? 1 : 0);
+        if (hasChanges)
+          expect(fixture.componentInstance.draft.worktreeContext()?.contextSentence).toBe(
+            readyWorktreeContext().contextSentence,
+          );
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('coalesces repeated context refreshes while a cached read is pending', async () => {
     const response = new Subject<ReturnType<typeof readyWorktreeContext>>();
     worktreeContextServiceMock.get.mockReturnValue(response);

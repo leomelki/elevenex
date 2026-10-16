@@ -95,7 +95,11 @@ export class WorktreeContextService {
   ) {}
 
   /** Reset task-scoped context without waiting for an old LLM request to finish. */
-  resetForTask(repoId: number, worktreePath: string): Promise<void> {
+  resetForTask(
+    repoId: number,
+    worktreePath: string,
+    rootRef: string | null = null,
+  ): Promise<void> {
     const key = this.cacheKey(repoId, worktreePath);
     this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
     this.snapshotLocks.delete(key);
@@ -110,6 +114,14 @@ export class WorktreeContextService {
         ),
       )
       .run();
+    if (rootRef) {
+      // A new branch starts here even when local main is ahead of origin.
+      // Seed the comparison before exposing this checkout to conversations.
+      this.db
+        .insert(schema.worktreeContexts)
+        .values({ repoId, worktreePath, rootRef })
+        .run();
+    }
     return Promise.resolve();
   }
 
@@ -118,11 +130,12 @@ export class WorktreeContextService {
     repoId: number,
     worktreePath: string,
     prepare: () => Promise<T>,
+    rootRef: string | null = null,
   ): Promise<T> {
     const key = this.cacheKey(repoId, worktreePath);
     this.preparingWorktrees.add(key);
     try {
-      await this.resetForTask(repoId, worktreePath);
+      await this.resetForTask(repoId, worktreePath, rootRef);
       return await prepare();
     } finally {
       this.preparingWorktrees.delete(key);
