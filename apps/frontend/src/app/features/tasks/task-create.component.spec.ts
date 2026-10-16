@@ -11,12 +11,14 @@ import { BranchInfo } from '@/shared/models/branch.model';
 import { TaskCreateComponent } from './task-create.component';
 import { TasksApiService } from './tasks-api.service';
 import { TaskOperationsService } from './task-operations.service';
+import { NavigationService } from '@/shared/services/navigation.service';
 import { taskSlug } from './task.model';
 
 describe('Task creation', () => {
   const api = { defaults: vi.fn(), create: vi.fn() };
   const close = vi.fn();
   const worktrees = { getPoolByRepoStream: vi.fn() };
+  const navigation = { expandTask: vi.fn() };
   afterEach(() => vi.useRealTimers());
   beforeEach(() => {
     vi.clearAllMocks();
@@ -29,6 +31,7 @@ describe('Task creation', () => {
         { provide: ZardDialogRef, useValue: { close } },
         { provide: TasksApiService, useValue: api },
         { provide: TaskOperationsService, useValue: { track: vi.fn() } },
+        { provide: NavigationService, useValue: navigation },
         { provide: Router, useValue: { navigate: vi.fn() } },
         { provide: WorktreesService, useValue: worktrees },
         {
@@ -45,6 +48,7 @@ describe('Task creation', () => {
     api.create.mockReturnValue(of({ id: 86 }));
     const component = TestBed.createComponent(TaskCreateComponent).componentInstance;
     component.create();
+    expect(navigation.expandTask).toHaveBeenCalledWith(1, 86);
     expect(router.navigate).toHaveBeenCalledWith(['/tasks', 86]);
     expect(close).not.toHaveBeenCalled();
     finishNavigation(true);

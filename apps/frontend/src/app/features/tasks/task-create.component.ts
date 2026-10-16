@@ -18,6 +18,7 @@ import { ZardInputDirective } from '@/shared/components/input';
 import { Z_MODAL_DATA } from '@/shared/components/dialog/dialog.service';
 import { ZardDialogRef } from '@/shared/components/dialog/dialog-ref';
 import { WorktreesService } from '@/shared/services/worktrees.service';
+import { NavigationService } from '@/shared/services/navigation.service';
 import { WorktreePoolItem } from '@/shared/models/worktree.model';
 import { BranchInfo } from '@/shared/models/branch.model';
 import { OptionSelectComponent, OptionSelectItem } from '@/shared/components/option-select';
@@ -52,6 +53,7 @@ export class TaskCreateComponent {
   readonly data: TaskCreateData = inject(Z_MODAL_DATA);
   private readonly api = inject(TasksApiService);
   private readonly operations = inject(TaskOperationsService);
+  private readonly navigation = inject(NavigationService);
   private readonly router = inject(Router);
   private readonly dialog = inject(ZardDialogRef);
   private readonly worktrees = inject(WorktreesService);
@@ -326,6 +328,7 @@ export class TaskCreateComponent {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: async (task) => {
+          this.navigation.expandTask(this.data.repoId, task.id);
           this.operations.track(task);
           // Keep the destination covered until Angular has activated it.
           // Closing first reveals the previous session during lazy loading.
