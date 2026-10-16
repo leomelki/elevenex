@@ -202,24 +202,33 @@ function normalizeLocalFilePath(segments: readonly string[]): string | null {
   return resolved.join('/') || null;
 }
 
-/** Resolve a Markdown href to a location inside the current worktree. */
+/** Resolve file links on the backend host, preserving editor positions. */
 export function resolveLocalFileTarget(
   href: string,
   worktreePath: string,
   sourcePath?: string | null,
 ): LocalFileTarget | null {
-  if (!href || href.startsWith('#') || href.startsWith('//')) return null;
-
-  let rawTarget = href;
-  if (rawTarget.startsWith('file://')) {
+  let rawTarget = href.trim();
+  if (!rawTarget || rawTarget.startsWith('#') || rawTarget.startsWith('//')) return null;
+  const explicitFileUrl = /^(?:file|vscode|vscode-insiders|cursor):/i.test(rawTarget);
+  if (explicitFileUrl) {
     try {
-      rawTarget = new URL(rawTarget).pathname;
+      const url = new URL(rawTarget);
+      if (url.protocol.toLowerCase() === 'file:') {
+        if (url.hostname && url.hostname !== 'localhost') return null;
+        rawTarget = url.pathname + url.search + url.hash;
+      } else {
+        if (url.hostname !== 'file') return null;
+        rawTarget = url.pathname + url.search + url.hash;
+      }
     } catch {
       return null;
     }
   } else if (HAS_URL_SCHEME.test(rawTarget) && !WINDOWS_ABSOLUTE_PATH.test(rawTarget)) {
     return null;
   }
+  // Tool deep links are application destinations, never repository files.
+  if (!sourcePath && !explicitFileUrl && /^\/?(?:sessions|tasks|projects)(?:\/|[?#]|$)/i.test(rawTarget)) return null;
 
   const hashIndex = rawTarget.indexOf('#');
   const fragment = hashIndex >= 0 ? rawTarget.slice(hashIndex + 1) : '';
@@ -228,36 +237,36 @@ export function resolveLocalFileTarget(
 
   let line: number | undefined;
   let column: number | undefined;
+  const suffixLocation = /:(\d+)(?::(\d+))?$/.exec(rawTarget);
+  if (suffixLocation) {
+    line = Number(suffixLocation[1]);
+    column = suffixLocation[2] ? Number(suffixLocation[2]) : undefined;
+    rawTarget = rawTarget.slice(0, suffixLocation.index);
+  }
   const fragmentLocation = /^L(\d+)(?:C(\d+))?(?:-L\d+(?:C\d+)?)?$/i.exec(fragment);
   if (fragmentLocation) {
     line = Number(fragmentLocation[1]);
     column = fragmentLocation[2] ? Number(fragmentLocation[2]) : undefined;
-  } else {
-    const suffixLocation = /:(\d+)(?::(\d+))?$/.exec(rawTarget);
-    if (suffixLocation) {
-      line = Number(suffixLocation[1]);
-      column = suffixLocation[2] ? Number(suffixLocation[2]) : undefined;
-      rawTarget = rawTarget.slice(0, suffixLocation.index);
-    }
   }
 
   let decodedPath = decodePath(rawTarget).replace(/\\/g, '/');
   const root = worktreePath.replace(/\\/g, '/').replace(/\/+$/, '');
-  if (WINDOWS_ABSOLUTE_PATH.test(root) && /^\/[a-z]:\//i.test(decodedPath)) {
+  if (/^\/[a-z]:\//i.test(decodedPath)) {
     decodedPath = decodedPath.slice(1);
   }
   const pathIsInsideRoot = WINDOWS_ABSOLUTE_PATH.test(root)
     ? decodedPath.toLowerCase().startsWith(`${root.toLowerCase()}/`)
     : decodedPath.startsWith(`${root}/`);
   let segments: string[];
+  let rootPath: string | undefined;
   if (pathIsInsideRoot) {
     segments = decodedPath.slice(root.length + 1).split('/');
-  } else if (WINDOWS_ABSOLUTE_PATH.test(decodedPath)) {
-    return null;
+  } else if (WINDOWS_ABSOLUTE_PATH.test(decodedPath) || (decodedPath.startsWith('/') && (!sourcePath || explicitFileUrl))) {
+    const absolutePath = normalizeSegments(decodedPath.split('/'));
+    const slash = absolutePath.lastIndexOf('/');
+    rootPath = (WINDOWS_ABSOLUTE_PATH.test(decodedPath) ? '' : '/') + (slash < 0 ? '' : absolutePath.slice(0, slash));
+    segments = [absolutePath.slice(slash + 1)];
   } else if (decodedPath.startsWith('/')) {
-    // Root-relative links make sense in repository documents. Agent links with
-    // unrelated absolute paths must not be allowed to escape the worktree.
-    if (!sourcePath) return null;
     segments = decodedPath.slice(1).split('/');
   } else {
     segments = [...baseDirSegments(sourcePath), ...decodedPath.split('/')];
@@ -265,7 +274,7 @@ export function resolveLocalFileTarget(
 
   const path = normalizeLocalFilePath(segments);
   if (!path) return null;
-  return { path, ...(line ? { line } : {}), ...(column ? { column } : {}) };
+  return { path, ...(rootPath ? { rootPath } : {}), ...(line ? { line } : {}), ...(column ? { column } : {}) };
 }
 
 function annotateLocalFileLinks(
@@ -278,13 +287,22 @@ function annotateLocalFileLinks(
   for (const anchor of Array.from(
     template.content.querySelectorAll<HTMLAnchorElement>('a[href]'),
   )) {
-    const target = resolveLocalFileTarget(
+    const target = worktreePath && resolveLocalFileTarget(
       anchor.getAttribute('href') ?? '',
       worktreePath,
       sourcePath,
     );
-    if (!target) continue;
-    anchor.classList.add('cw-local-file-link');
+    if (target) {
+      anchor.classList.add('cw-local-file-link');
+      // Rewrite before either sanitizer strips file:/editor:/Windows schemes.
+      // Absolute canonical hrefs also avoid resolving document paths twice.
+      const root = (target.rootPath || worktreePath).replace(/\\/g, '/').replace(/\/+$/, '');
+      const path = `${root}/${target.path}`.split('/').map(encodeURIComponent).join('/');
+      const location = target.line ? `#L${target.line}${target.column ? `C${target.column}` : ''}` : '';
+      anchor.setAttribute('href', `${path.startsWith('/') ? '' : '/'}${path}${location}`);
+    }
+    anchor.setAttribute('target', '_blank');
+    anchor.setAttribute('rel', 'noopener noreferrer');
   }
   return template.innerHTML;
 }
@@ -332,12 +350,10 @@ export class MarkdownPipe implements PipeTransform {
       baseDirSegments(sourcePath),
       !!sourcePath,
     );
-    let clean = DOMPurify.sanitize(resolved, { USE_PROFILES: { html: true } });
-    if (worktreePath) {
-      if (clean.includes('<a')) {
-        clean = annotateLocalFileLinks(clean, worktreePath, sourcePath);
-      }
-    }
+    const linked = resolved.includes('<a')
+      ? annotateLocalFileLinks(resolved, worktreePath || '', sourcePath)
+      : resolved;
+    const clean = DOMPurify.sanitize(linked, { USE_PROFILES: { html: true }, ADD_ATTR: ['target'] });
     return sanitizeWithVideos(
       makeImagesInteractive(clean, mediaRevision),
       this.sanitizer,

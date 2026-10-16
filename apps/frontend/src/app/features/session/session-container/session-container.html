@@ -314,6 +314,7 @@
           [focusFilePath]="reviewFileParam()"
           (exit)="closeReviewWorkspace()"
           (promoted)="onConversationForkCreated($event)"
+          (openLocalFile)="closeReviewWorkspace(); openFileInEditor($event)"
         />
       }
     </div>
