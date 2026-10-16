@@ -74,13 +74,7 @@
     border-bottom: 1px solid var(--border);
   }
   .cw-agent-dive__agent-list {
-    flex-direction: row;
-    overflow-x: auto;
-    max-height: 7rem;
-  }
-  .cw-agent-dive__agent {
-    min-width: 13rem;
-    max-width: 16rem;
-    margin-left: 0 !important;
+    overflow-y: auto;
+    max-height: min(18rem, 35vh);
   }
 }

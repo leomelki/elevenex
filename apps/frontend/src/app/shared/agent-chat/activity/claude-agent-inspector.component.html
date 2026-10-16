@@ -104,33 +104,58 @@
               }
             </div>
           </div>
-          <div class="cw-agent-dive__agent-list flex min-h-0 flex-col gap-1">
-            @for (row of visibleAgents(); track row.agent.agentId) {
-              @let agent = row.agent;
-              <button
-                z-button
-                zType="ghost"
-                type="button"
-                class="cw-agent-dive__agent h-auto w-full flex-col items-start gap-1 rounded-lg px-3 py-2.5 text-left font-normal hover:bg-accent data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
-                [attr.data-selected]="agent.agentId === selectedAgentId()"
-                [attr.aria-pressed]="agent.agentId === selectedAgentId()"
-                [style.margin-left.rem]="row.depth > 3 ? 1.5 : row.depth * 0.5"
-                [style.width]="
-                  row.depth
-                    ? 'calc(100% - ' + (row.depth > 3 ? 1.5 : row.depth * 0.5) + 'rem)'
-                    : null
-                "
-                (click)="selectAgent.emit(agent.agentId)"
+          <div class="cw-agent-dive__agent-list flex min-h-0 flex-col gap-4">
+            @for (group of agentGroups(); track group.id) {
+              <section
+                class="cw-agent-dive__group flex flex-col gap-1 border-t border-border pt-3 first:border-0 first:pt-0"
+                [attr.aria-labelledby]="'agent-group-' + group.id"
+                [attr.data-agent-group]="group.id"
               >
-                <div class="flex w-full min-w-0 items-center justify-between gap-2">
-                  <span class="min-w-0 truncate text-xs font-medium">{{ agentLabel(agent) }}</span>
-                  <cw-subagent-status [agent]="agent" />
-                </div>
-                <span
-                  class="line-clamp-2 w-full whitespace-normal text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
-                  >{{ agent.prompt || agent.summary || humanizeAgentType(agent.agentType) }}</span
+                <h4
+                  [id]="'agent-group-' + group.id"
+                  class="m-0 flex items-center justify-between gap-2 px-2 pb-1 text-[11px] font-semibold text-muted-foreground"
+                  [class.text-success]="group.id === 'active'"
                 >
-              </button>
+                  {{ group.label }}
+                  <span class="rounded-md bg-muted px-1.5 py-0.5 text-muted-foreground">{{
+                    group.rows.length
+                  }}</span>
+                </h4>
+                <div class="cw-agent-dive__group-rows flex flex-col gap-1">
+                  @for (row of group.rows; track row.agent.agentId) {
+                    @let agent = row.agent;
+                    <button
+                      z-button
+                      zType="ghost"
+                      type="button"
+                      class="cw-agent-dive__agent h-auto w-full flex-col items-start gap-1.5 rounded-lg border border-transparent px-3 py-2.5 text-left font-normal hover:bg-accent data-[selected=true]:border-primary/40 data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+                      [class.bg-card]="group.id === 'active'"
+                      [class.text-muted-foreground]="group.id !== 'active'"
+                      [attr.data-selected]="agent.agentId === selectedAgentId()"
+                      [attr.data-agent-id]="agent.agentId"
+                      [attr.aria-pressed]="agent.agentId === selectedAgentId()"
+                      [style.margin-left.rem]="row.depth > 3 ? 1.5 : row.depth * 0.5"
+                      [style.width]="
+                        row.depth
+                          ? 'calc(100% - ' + (row.depth > 3 ? 1.5 : row.depth * 0.5) + 'rem)'
+                          : null
+                      "
+                      (click)="selectAgent.emit(agent.agentId)"
+                    >
+                      <span class="w-full truncate text-xs font-medium">{{
+                        agentLabel(agent)
+                      }}</span>
+                      <cw-subagent-status [agent]="agent" />
+                      <span
+                        class="line-clamp-2 w-full whitespace-normal text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]"
+                        >{{
+                          agent.prompt || agent.summary || humanizeAgentType(agent.agentType)
+                        }}</span
+                      >
+                    </button>
+                  }
+                </div>
+              </section>
             }
             @if (!visibleAgents().length) {
               <p class="p-3 text-xs text-muted-foreground">No agents match this filter.</p>

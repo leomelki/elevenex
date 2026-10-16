@@ -58,6 +58,11 @@ export interface ClaudeSubagentHistoryState {
   error: string | null;
 }
 
+function agentGroup(agent: TurnAgentRun): 'active' | 'completed' | 'inactive' {
+  if (agent.status === 'started') return 'active';
+  return agent.executionStatus === 'completed' ? 'completed' : 'inactive';
+}
+
 @Component({
   selector: 'cw-agent-inspector',
   standalone: true,
@@ -142,15 +147,19 @@ export class ClaudeAgentInspectorComponent {
   readonly visibleAgents = computed(() => {
     const agents = this.turn()?.agents ?? [];
     const byParent = new Map<string | undefined, TurnAgentRun[]>();
-    const ids = new Set(agents.map((agent) => agent.agentId));
+    const byId = new Map(agents.map((agent) => [agent.agentId, agent]));
     for (const agent of agents) {
+      const parentAgent = agent.parentAgentId ? byId.get(agent.parentAgentId) : undefined;
+      // Keep nesting within a status section; a finished parent must not bury a live child.
       const parent =
-        agent.parentAgentId && ids.has(agent.parentAgentId) ? agent.parentAgentId : undefined;
+        parentAgent && agentGroup(parentAgent) === agentGroup(agent)
+          ? parentAgent.agentId
+          : undefined;
       const siblings = byParent.get(parent) ?? [];
       siblings.push(agent);
       byParent.set(parent, siblings);
     }
-    // Usage notifications arrive independently; keep the rail in launch order.
+    // Keep launch order stable within each section as usage notifications arrive.
     for (const siblings of byParent.values())
       siblings.sort(
         (a, b) =>
@@ -169,7 +178,7 @@ export class ClaudeAgentInspectorComponent {
     for (const agent of agents) if (!seen.has(agent.agentId)) visit(agent, 0);
     const search = this.search().trim().toLowerCase();
     const filter = this.filter();
-    return ordered.filter(
+    const filtered = ordered.filter(
       ({ agent }) =>
         (!search ||
           [agentLabel(agent), agent.agentType, agent.prompt, agent.summary, agent.agentId].some(
@@ -182,6 +191,22 @@ export class ClaudeAgentInspectorComponent {
                 agent.executionStatus ?? '',
               ))),
     );
+    return ['active', 'completed', 'inactive'].flatMap((group) =>
+      filtered.filter(({ agent }) => agentGroup(agent) === group),
+    );
+  });
+  readonly agentGroups = computed(() => {
+    const rows = this.visibleAgents();
+    return [
+      { id: 'active', label: 'Running' },
+      { id: 'completed', label: 'Completed' },
+      { id: 'inactive', label: 'Not running' },
+    ]
+      .map((group) => ({
+        ...group,
+        rows: rows.filter(({ agent }) => agentGroup(agent) === group.id),
+      }))
+      .filter((group) => group.rows.length);
   });
 
   readonly selectedAgent = computed<TurnAgentRun | null>(() => {

@@ -202,13 +202,13 @@ describe('ClaudeAgentInspectorComponent', () => {
     fixture.detectChanges();
     expect(fixture.componentInstance.selectedAgent()?.contextUsage).toBeNull();
   });
-  it('orders nested agents below their parent and supports search and attention filters', async () => {
+  it('keeps inactive children in their own section and supports search and attention filters', async () => {
     const fixture = await setup();
     const component = fixture.componentInstance;
     expect(component.visibleAgents().map(({ agent, depth }) => [agent.displayName, depth])).toEqual(
       [
         ['Ada', 0],
-        ['Grace', 1],
+        ['Grace', 0],
       ],
     );
     component.filter.set('attention');
@@ -220,6 +220,100 @@ describe('ClaudeAgentInspectorComponent', () => {
       'true',
     );
     expect(fixture.nativeElement.textContent).not.toContain('Hooks');
+  });
+  it.each(['light', 'dark'])(
+    'puts running agents ahead of completed parents and keeps every status inspectable in %s mode',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      try {
+        const fixture = await setup();
+        const completed: AgentSubagentState = {
+          ...agents[0],
+          agentId: 'completed',
+          displayName: 'Completed parent',
+          status: 'stopped',
+          executionStatus: 'completed',
+        };
+        const running = { ...agents[0], parentAgentId: 'completed' };
+        fixture.componentRef.setInput(
+          'turn',
+          buildSessionAgentSummary([completed, agents[1], running]),
+        );
+        fixture.detectChanges();
+        const element: HTMLElement = fixture.nativeElement;
+        const sections = Array.from(element.querySelectorAll('[data-agent-group]'));
+        expect(sections.map((section) => section.getAttribute('data-agent-group'))).toEqual([
+          'active',
+          'completed',
+          'inactive',
+        ]);
+        expect(
+          sections.map((section) =>
+            section.querySelector('h4')?.textContent?.replace(/\s+/g, ' ').trim(),
+          ),
+        ).toEqual(['Running 1', 'Completed 1', 'Not running 1']);
+        expect(sections[0].textContent).toContain('Ada');
+        expect(sections[1].textContent).toContain('Completed parent');
+        expect(sections[2].textContent).toContain('Failed');
+        expect(
+          fixture.componentInstance
+            .visibleAgents()
+            .map(({ agent, depth }) => [agent.agentId, depth]),
+        ).toEqual([
+          ['child', 0],
+          ['completed', 0],
+          ['nested', 0],
+        ]);
+        const select = vi.fn();
+        fixture.componentInstance.selectAgent.subscribe(select);
+        element.querySelector<HTMLButtonElement>('[data-agent-id="completed"]')!.click();
+        expect(select).toHaveBeenLastCalledWith('completed');
+        element.querySelector<HTMLButtonElement>('[data-agent-id="nested"]')!.click();
+        expect(select).toHaveBeenLastCalledWith('nested');
+
+        // A live update moves the row without losing the selected agent's detail.
+        fixture.componentRef.setInput(
+          'turn',
+          buildSessionAgentSummary([
+            completed,
+            agents[1],
+            { ...running, status: 'stopped', executionStatus: 'completed' },
+          ]),
+        );
+        fixture.detectChanges();
+        expect(element.querySelector('[data-agent-group="active"]')).toBeNull();
+        expect(
+          element.querySelectorAll('[data-agent-group="completed"] [data-agent-id]'),
+        ).toHaveLength(2);
+        expect(fixture.componentInstance.selectedAgent()?.agentId).toBe('child');
+        fixture.destroy();
+      } finally {
+        document.documentElement.classList.remove('dark');
+      }
+    },
+  );
+  it('keeps nested running agents below their parent within the running section', async () => {
+    const fixture = await setup();
+    fixture.componentRef.setInput(
+      'turn',
+      buildSessionAgentSummary([
+        agents[0],
+        { ...agents[1], status: 'started', executionStatus: 'running' },
+      ]),
+    );
+    fixture.detectChanges();
+    expect(
+      fixture.componentInstance.visibleAgents().map(({ agent, depth }) => [agent.agentId, depth]),
+    ).toEqual([
+      ['child', 0],
+      ['nested', 1],
+    ]);
+    fixture.componentInstance.filter.set('active');
+    fixture.detectChanges();
+    expect(fixture.componentInstance.agentGroups().map((group) => group.id)).toEqual(['active']);
+    fixture.componentInstance.search.set('no such agent');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('No agents match this filter.');
   });
   it('shows a retry action for transcript failures while retaining the assignment', async () => {
     const fixture = await setup();
