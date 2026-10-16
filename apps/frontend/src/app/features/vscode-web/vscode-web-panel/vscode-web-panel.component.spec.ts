@@ -59,4 +59,24 @@ describe('VSCodeWebPanelComponent startup priority', () => {
     expect(panel.currentIframeKey).toBeNull();
     expect(fixture.componentInstance.isLoading()).toBe(true);
   });
+
+  it('queues file links with their directory and position until the editor is ready', () => {
+    const { fixture } = setup(true);
+    const panel = fixture.componentInstance as any;
+    panel.currentIframeKey = 'workbench';
+    const postMessage = vi.fn();
+    const ready = vi.fn(() => false);
+    Object.assign(state, {
+      isReady: ready,
+      getIframe: () => ({ contentWindow: { postMessage } }),
+    });
+    const target = { path: 'notes.md', rootPath: '/tmp', line: 12, column: 3 };
+    fixture.componentInstance.openFile(target);
+    expect(postMessage).not.toHaveBeenCalled();
+    ready.mockReturnValue(true);
+    panel.flushPendingFileReveal('workbench');
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'elevenex-open-file', ...target, preserveFocus: false,
+    }, '*');
+  });
 });

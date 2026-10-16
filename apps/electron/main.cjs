@@ -50,6 +50,7 @@ const { rewriteLocalhostToProxy: rewriteMcpCallbackToProxy } = require('./mcp-pr
 const { shouldGrantAppPermission } = require('./permission-policy.cjs');
 const { createWindowRegistry } = require('./window-manager.cjs');
 const { installImageContextMenu } = require('./image-context-menu.cjs');
+const { installAppNavigation } = require('./app-navigation.cjs');
 const {
   DEFAULT_WINDOW_BOUNDS,
   MIN_WINDOW_SIZE,
@@ -3913,28 +3914,7 @@ async function createAppWindow(options = {}) {
     win.loadURL(frontendTarget.value);
   }
 
-  // Intercept all new-window requests (target="_blank" links) and open them in
-  // the system browser instead of a new Electron window.
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url).catch(() => {});
-    return { action: 'deny' };
-  });
-
-  // Determine the app's own origin so we can allow SPA navigations while
-  // redirecting any external link clicks to the system browser.
-  const appOrigin =
-    frontendTarget.kind === 'file' ? null : new URL(frontendTarget.value).origin;
-
-  win.webContents.on('will-navigate', (event, url) => {
-    if (frontendTarget.kind === 'file' && url.startsWith('file://')) {
-      return;
-    }
-    if (appOrigin && url.startsWith(appOrigin)) {
-      return;
-    }
-    event.preventDefault();
-    shell.openExternal(url).catch(() => {});
-  });
+  installAppNavigation(win.webContents, frontendTarget, (url) => shell.openExternal(url));
 
   if (debugFrontend) {
     win.webContents.openDevTools({ mode: 'detach' });

@@ -133,13 +133,16 @@ describe('AgentMarkdownComponent dot directory file links', () => {
       '[Skill](/tmp/repo/.agents/skills/example/SKILL.md:12:3)',
       '[Settings](.vscode/settings.json#L5)',
       '[Environment](.env)',
+      '[File URI](file:///tmp/repo/src/app.ts#L9C2)',
+      '[Editor URI](vscode://file/tmp/repo/src/app.ts:10)',
+      '[Outside checkout](file:///tmp/notes.md:4)',
     ].join('\n\n'));
     const openFile = vi.fn();
     fixture.componentInstance.openLocalFile.subscribe(openFile);
     fixture.detectChanges();
 
     const anchors = fixture.nativeElement.querySelectorAll('a');
-    expect(anchors).toHaveLength(3);
+    expect(anchors).toHaveLength(6);
     for (const anchor of anchors) {
       const event = new MouseEvent('click', { bubbles: true, cancelable: true });
       anchor.dispatchEvent(event);
@@ -149,7 +152,71 @@ describe('AgentMarkdownComponent dot directory file links', () => {
       [{ path: '.agents/skills/example/SKILL.md', line: 12, column: 3 }],
       [{ path: '.vscode/settings.json', line: 5 }],
       [{ path: '.env' }],
+      [{ path: 'src/app.ts', line: 9, column: 2 }],
+      [{ path: 'src/app.ts', line: 10 }],
+      [{ path: 'notes.md', rootPath: '/tmp', line: 4 }],
     ]);
+    fixture.destroy();
+  });
+});
+
+describe('AgentMarkdownComponent browser links', () => {
+  afterEach(() => {
+    delete window.__ELEVENEX_ELECTRON__;
+    delete window.__ELEVENEX_RUNTIME__;
+    vi.restoreAllMocks();
+  });
+
+  it.each(['click', 'auxclick'])('opens session and unknown links externally on %s', async (type) => {
+    const open = vi.fn().mockResolvedValue(undefined);
+    window.__ELEVENEX_ELECTRON__ = { externalLinks: { open } };
+    await TestBed.configureTestingModule({ imports: [AgentMarkdownComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(AgentMarkdownComponent);
+    fixture.componentRef.setInput('worktreePath', '/tmp/repo');
+    fixture.componentRef.setInput('content', [
+      '[Session](/sessions/921)',
+      '[Unknown](https://example.com/sessions/921)',
+      '[Remote file](file://other-host/tmp/file.ts)',
+    ].join('\n\n'));
+    const openFile = vi.fn();
+    fixture.componentInstance.openLocalFile.subscribe(openFile);
+    fixture.detectChanges();
+    // file URLs with remote hosts are left to sanitization, not interpreted as local files.
+    const anchors = Array.from(fixture.nativeElement.querySelectorAll('a[href]')) as HTMLAnchorElement[];
+    expect(anchors).toHaveLength(2);
+    for (const anchor of anchors) {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, button: type === 'auxclick' ? 1 : 0 });
+      anchor.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(open).toHaveBeenLastCalledWith(anchor.href);
+    }
+    expect(openFile).not.toHaveBeenCalled();
+    fixture.destroy();
+  });
+
+  it('opens browser links in a new tab when running without Electron', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    await TestBed.configureTestingModule({ imports: [AgentMarkdownComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(AgentMarkdownComponent);
+    fixture.componentRef.setInput('content', '[Session](/sessions/921)');
+    fixture.detectChanges();
+    const anchor = fixture.nativeElement.querySelector('a') as HTMLAnchorElement;
+    anchor.click();
+    expect(open).toHaveBeenCalledWith(anchor.href, '_blank', 'noopener,noreferrer');
+    fixture.destroy();
+  });
+
+  it('uses the backend HTTP origin for relative session links in the packaged app', async () => {
+    const open = vi.fn().mockResolvedValue(undefined);
+    window.__ELEVENEX_ELECTRON__ = { externalLinks: { open } };
+    window.__ELEVENEX_RUNTIME__ = { mode: 'electron-local', backendOrigin: 'http://127.0.0.1:11111' };
+    await TestBed.configureTestingModule({ imports: [AgentMarkdownComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(AgentMarkdownComponent);
+    fixture.componentRef.setInput('worktreePath', '/tmp/repo');
+    fixture.componentRef.setInput('content', '[Session](/sessions/921)');
+    fixture.detectChanges();
+    fixture.nativeElement.querySelector('a').click();
+    expect(open).toHaveBeenCalledWith('http://127.0.0.1:11111/sessions/921');
     fixture.destroy();
   });
 });

@@ -220,9 +220,11 @@ describe('MarkdownPipe', () => {
     expect(resolveLocalFileTarget('src/app.ts', WORKTREE)).toEqual({ path: 'src/app.ts' });
   });
 
-  it('does not turn external or out-of-worktree absolute links into editor targets', () => {
+  it('keeps web URLs and traversal out of worktree-relative editor targets', () => {
     expect(resolveLocalFileTarget('https://example.com/file.ts', WORKTREE)).toBeNull();
-    expect(resolveLocalFileTarget('/tmp/another-repo/file.ts:4', WORKTREE)).toBeNull();
+    expect(resolveLocalFileTarget('/tmp/another-repo/file.ts:4', WORKTREE)).toEqual({
+      rootPath: '/tmp/another-repo', path: 'file.ts', line: 4,
+    });
     expect(resolveLocalFileTarget('../../outside.ts', WORKTREE, 'docs/guide.md')).toBeNull();
   });
 
@@ -231,7 +233,49 @@ describe('MarkdownPipe', () => {
       path: 'src/app.ts',
       line: 9,
     });
-    expect(resolveLocalFileTarget('D:\\other\\app.ts:9', 'C:\\repo')).toBeNull();
+    expect(resolveLocalFileTarget('D:\\other\\app.ts:9', 'C:\\repo')).toEqual({
+      rootPath: 'D:/other', path: 'app.ts', line: 9,
+    });
+  });
+
+  it.each([
+    'file:///tmp/repo/src/my%20file.ts#L12C3',
+    'FILE:///tmp/repo/src/my%20file.ts:12:3',
+    'file:/tmp/repo/src/my%20file.ts:12:3',
+    'vscode://file/tmp/repo/src/my%20file.ts:12:3',
+    'vscode-insiders://file/tmp/repo/src/my%20file.ts:12:3',
+    'cursor://file/tmp/repo/src/my%20file.ts:12:3',
+  ])('preserves file URI %s through sanitization', (href) => {
+    const host = document.createElement('div');
+    host.innerHTML = render(`[File](${href})`, WORKTREE);
+    const anchor = host.querySelector('a')!;
+    expect(anchor.classList.contains('cw-local-file-link')).toBe(true);
+    expect(resolveLocalFileTarget(anchor.getAttribute('href')!, WORKTREE)).toEqual({
+      path: 'src/my file.ts', line: 12, column: 3,
+    });
+  });
+
+  it('normalizes raw HTML file links and Windows drive URLs before sanitizing', () => {
+    const host = document.createElement('div');
+    host.innerHTML = render('<a href="file:///C:/repo/src/app.ts#L9">App</a>', 'C:/repo');
+    expect(resolveLocalFileTarget(host.querySelector('a')!.getAttribute('href')!, 'C:/repo')).toEqual({
+      path: 'src/app.ts', line: 9,
+    });
+  });
+
+  it.each(['/sessions/921', 'sessions/921', '/tasks/95', '/projects/1'])('leaves %s for the browser', (href) => {
+    expect(resolveLocalFileTarget(href, WORKTREE)).toBeNull();
+    const host = document.createElement('div');
+    host.innerHTML = render(`[Session](${href})`, WORKTREE);
+    expect(host.querySelector('a')!.getAttribute('target')).toBe('_blank');
+  });
+
+  it('does not preserve executable hrefs as file links', () => {
+    for (const href of ['javascript:alert(1)', 'data:text/html,hello', 'vbscript:msgbox(1)']) {
+      const host = document.createElement('div');
+      host.innerHTML = render(`<a href="${href}">Unsafe</a>`, WORKTREE);
+      expect(host.querySelector('a')!.hasAttribute('href')).toBe(false);
+    }
   });
 
   it('strips scripts', () => {

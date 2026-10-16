@@ -13,6 +13,8 @@ import {
 import { MarkdownPipe, resolveLocalFileTarget } from './markdown.pipe';
 import { splitMarkdownVisualizations } from './markdown-visualization';
 import { AgentVisualizationComponent } from './agent-visualization.component';
+import { getElectronExternalLinksApi } from '@/shared/runtime/electron-external-links';
+import { getBackendOrigin, shouldUseHashLocation } from '@/shared/runtime/runtime-config';
 
 /** Sanitized agent Markdown with consistent document styling and local-file navigation. */
 @Component({
@@ -37,16 +39,31 @@ export class AgentMarkdownComponent {
   protected openLink(event: MouseEvent): void {
     if (event.type === 'auxclick' && event.button !== 1) return;
     const element = event.target instanceof Element ? event.target : null;
-    const anchor = element?.closest<HTMLAnchorElement>('a.cw-local-file-link');
+    const anchor = element?.closest<HTMLAnchorElement>('a[href]');
     const worktree = this.worktreePath();
-    if (!anchor || !worktree || !this.host.nativeElement.contains(anchor)) return;
-    const target = resolveLocalFileTarget(
-      anchor.getAttribute('href') ?? '',
+    if (!anchor || !this.host.nativeElement.contains(anchor)) return;
+    const href = anchor.getAttribute('href') ?? '';
+    if (!href || href.startsWith('#')) return;
+    const target = worktree && resolveLocalFileTarget(
+      href,
       worktree,
-      this.sourcePath(),
+      anchor.classList.contains('cw-local-file-link') ? null : this.sourcePath(),
     );
-    if (!target) return;
     event.preventDefault();
-    this.openLocalFile.emit(target);
+    if (target) {
+      this.openLocalFile.emit(target);
+      return;
+    }
+    // Packaged renderers have a file: base URL. Relative application links
+    // need an HTTP origin when handed to the system browser.
+    const url = shouldUseHashLocation()
+      ? new URL(href, `${getBackendOrigin()}/`).href
+      : anchor.href;
+    const externalLinks = getElectronExternalLinksApi();
+    if (externalLinks) {
+      void externalLinks.open(url);
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
   }
 }

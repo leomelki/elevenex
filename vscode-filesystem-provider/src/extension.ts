@@ -29,6 +29,7 @@ interface ElevenExOpenFileMessage {
   preserveFocus?: boolean;
   line?: number;
   column?: number;
+  rootPath?: string;
 }
 
 interface FileSearchQuickPickItem extends QuickPickItem {
@@ -55,7 +56,7 @@ async function openOrRevealFile(worktreePath: string, message: ElevenExOpenFileM
     return;
   }
 
-  const uri = toWorkspaceVfsUri(worktreePath, normalizedRelativePath);
+  const uri = toWorkspaceVfsUri(message.rootPath || worktreePath, normalizedRelativePath);
 
   const preserveFocus = message.preserveFocus ?? true;
   const existingEditor = vscodeWindow.visibleTextEditors.find(editor => editor.document.uri.toString() === uri.toString());
@@ -336,6 +337,7 @@ export async function activate(context: ExtensionContext): Promise<WorkspaceVfsP
         preserveFocus: data.preserveFocus,
         line: data.line,
         column: data.column,
+        rootPath: typeof data.rootPath === 'string' ? data.rootPath : undefined,
       }).catch(error => {
         console.error('Failed to open or reveal file from parent bridge', error);
       });
