@@ -25,6 +25,10 @@ export class ClaudeTurnSummaryComponent {
   readonly stepCount = input.required<number>();
   readonly agentSummary = input<TurnAgentSummary | null>(null);
   readonly changeDetails = input<TurnChangeDetails | null>(null);
+  readonly visibleChangeDetails = computed(() => {
+    const details = this.changeDetails();
+    return details && details.files > 0 ? details : null;
+  });
   readonly expanded = input(false);
   readonly portForwardingAttention = input(0);
   readonly changesExpanded = input(false);

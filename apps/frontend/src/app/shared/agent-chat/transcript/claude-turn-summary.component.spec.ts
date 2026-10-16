@@ -2,6 +2,70 @@ import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { ClaudeTurnSummaryComponent } from './claude-turn-summary.component';
 
+describe('ClaudeTurnSummaryComponent changes', () => {
+  it.each(['light', 'dark'])(
+    'hides empty changes in %s mode, including capture metadata',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      try {
+        await TestBed.configureTestingModule({
+          imports: [ClaudeTurnSummaryComponent],
+        }).compileComponents();
+        const fixture = TestBed.createComponent(ClaudeTurnSummaryComponent);
+        fixture.componentRef.setInput('durationLabel', '1s');
+        fixture.componentRef.setInput('stepCount', 2);
+
+        for (const capture of [
+          undefined,
+          { root: '/repo', complete: true, shared: false },
+          { root: '/repo', complete: false, shared: true, message: 'Capture unavailable' },
+        ]) {
+          fixture.componentRef.setInput('changeDetails', {
+            files: 0,
+            additions: 0,
+            deletions: 0,
+            filesChanged: [],
+            capture,
+          });
+          fixture.detectChanges();
+          expect(fixture.nativeElement.querySelector('.cw-turn-gap__changes-button')).toBeNull();
+          expect(fixture.nativeElement.textContent).toContain('Worked for 1s');
+        }
+
+        // Binary and metadata-only changes still have files worth inspecting.
+        fixture.componentRef.setInput('changeDetails', {
+          files: 1,
+          additions: 0,
+          deletions: 0,
+          filesChanged: [
+            { path: 'image.png', status: 'modified', additions: 0, deletions: 0, hunks: [] },
+          ],
+        });
+        fixture.detectChanges();
+        const button = fixture.nativeElement.querySelector('.cw-turn-gap__changes-button');
+        expect(button?.textContent).toContain('View changes');
+        expect(button?.textContent).toContain('1 file');
+        const toggleChanges = vi.fn();
+        fixture.componentInstance.toggleChanges.subscribe(toggleChanges);
+        button.click();
+        expect(toggleChanges).toHaveBeenCalledOnce();
+
+        fixture.componentRef.setInput('changeDetails', {
+          files: 0,
+          additions: 0,
+          deletions: 0,
+          filesChanged: [],
+        });
+        fixture.detectChanges();
+        expect(fixture.nativeElement.querySelector('.cw-turn-gap__changes-button')).toBeNull();
+        fixture.destroy();
+      } finally {
+        document.documentElement.classList.remove('dark');
+      }
+    },
+  );
+});
+
 describe('ClaudeTurnSummaryComponent agents', () => {
   it('shows port-forwarding attention even while activity is collapsed', async () => {
     await TestBed.configureTestingModule({
