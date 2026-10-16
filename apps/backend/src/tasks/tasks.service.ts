@@ -921,6 +921,8 @@ export class TasksService
           });
         }
       }
+      if (setup.mode === 'new')
+        setup.contextRootRef ??= current.startingCommit ?? setup.resolvedCommit;
       setup.preparationStage = 'preparing_checkout';
       await this.update(id, { taskConfig: JSON.stringify(setup) });
       const environment = await this.allocator.allocate(
@@ -987,6 +989,10 @@ export class TasksService
             current.startingCommit ?? setup.resolvedCommit!,
           ]);
         },
+        // New tasks must exclude work already present in their base, including
+        // local merges not yet pushed to the repository's comparison ref.
+        // Existing branches still need their earlier branch work summarized.
+        setup.contextRootRef ?? null,
       );
       setup.preparationStage = 'restoring_sessions';
       await this.update(id, { taskConfig: JSON.stringify(setup) });
@@ -1367,6 +1373,9 @@ export class TasksService
           branchName:
             task.taskBranch || task.desiredBranch || task.createdFromRef || '',
         };
+    // Preserve the original scope before reopening switches checkout mode.
+    if (setup.mode === 'new')
+      setup.contextRootRef ??= task.startingCommit ?? undefined;
     setup.mode = 'existing';
     setup.branchPrepared = true;
     setup.environment = 'automatic';

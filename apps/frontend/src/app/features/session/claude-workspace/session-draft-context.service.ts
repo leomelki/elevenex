@@ -645,7 +645,8 @@ export class SessionDraftContext {
       const shouldAutoGenerate =
         triggerGenerate &&
         !deferGeneration &&
-        !snapshot.hasRecord &&
+        // Task preparation may have saved only the comparison baseline.
+        (!snapshot.hasRecord || (snapshot.generationStatus === 'idle' && snapshot.hasChanges)) &&
         snapshot.canGenerate &&
         snapshot.generationStatus !== 'generating';
       if (shouldAutoGenerate) {

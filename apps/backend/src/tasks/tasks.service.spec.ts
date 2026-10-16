@@ -507,16 +507,17 @@ describe('Task lifecycle with real Git and migrations', () => {
 
   it('clears the previous task context before opening a conversation in a reused worktree', async () => {
     const one = await create('old-context');
-    await db.insert(schema.worktreeContexts).values({
-      repoId: repo.id,
-      worktreePath: one.path,
-      rootRef: 'old-comparison-root',
-      contextSentence: 'This context belongs to the previous task.',
-      generationStatus: 'ready',
-      contextEnabled: false,
-      generatedAt: '2026-04-24T08:00:00.000Z',
-      lastUsedAt: '2026-04-24T09:00:00.000Z',
-    });
+    await db
+      .update(schema.worktreeContexts)
+      .set({
+        rootRef: 'old-comparison-root',
+        contextSentence: 'This context belongs to the previous task.',
+        generationStatus: 'ready',
+        contextEnabled: false,
+        generatedAt: '2026-04-24T08:00:00.000Z',
+        lastUsedAt: '2026-04-24T09:00:00.000Z',
+      })
+      .where(eq(schema.worktreeContexts.worktreePath, one.path));
     await service.finish(one.id);
     const reset = jest.spyOn(worktreeContext, 'resetForTask');
     const openConversation = jest.spyOn(service, 'openConversation');
@@ -524,7 +525,7 @@ describe('Task lifecycle with real Git and migrations', () => {
     const two = await create('fresh-context');
 
     expect(two).toMatchObject({ taskState: 'ready', path: one.path });
-    expect(reset).toHaveBeenCalledWith(repo.id, one.path);
+    expect(reset).toHaveBeenCalledWith(repo.id, one.path, two.startingCommit);
     expect(reset.mock.invocationCallOrder[0]).toBeLessThan(
       openConversation.mock.invocationCallOrder[0],
     );
@@ -533,12 +534,83 @@ describe('Task lifecycle with real Git and migrations', () => {
       await worktreeContext.getCachedSnapshot(repo.id, two.path),
     ).toMatchObject({
       contextSentence: null,
-      rootRef: null,
+      rootRef: two.startingCommit,
       generationStatus: 'idle',
       generatedAt: null,
       lastUsedAt: null,
-      hasRecord: false,
+      hasRecord: true,
       contextEnabled: true,
+    });
+  });
+
+  it('summarizes only new task work when local main includes an unpushed previous task', async () => {
+    const git = worktreeSimpleGit(repoPath);
+    await git.raw(['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    await db
+      .update(schema.repos)
+      .set({ preferredContextRootRef: 'origin/main' })
+      .where(eq(schema.repos.id, repo.id));
+    await writeFile(
+      join(repoPath, 'previous-task.txt'),
+      'Already merged locally',
+    );
+    await git.add('previous-task.txt');
+    await git.commit('Merge previous task');
+
+    const task = await create('new-task-context');
+    const generate = jest
+      .spyOn(worktreeContext as any, 'generateSentence')
+      .mockResolvedValue('We are fixing the current task.');
+    const clean = await worktreeContext.generate(repo.id, task.path, {
+      provider: 'codex',
+    });
+    expect(clean).toMatchObject({
+      rootRef: task.startingCommit,
+      contextSentence: null,
+      hasChanges: false,
+    });
+    expect(generate).not.toHaveBeenCalled();
+
+    const taskGit = worktreeSimpleGit(task.path);
+    await writeFile(join(task.path, 'current-task.txt'), 'Current task work');
+    await taskGit.add('current-task.txt');
+    await taskGit.commit('Current task changes');
+    // Later base-branch changes must not alter the saved comparison either.
+    await git.raw(['merge', '--ff-only', 'new-task-context']);
+    await service.finish(task.id);
+    await service.reopen(task.id);
+    const reopened = await settled(task.id);
+    await worktreeContext.generate(repo.id, reopened.path, {
+      provider: 'codex',
+    });
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate.mock.calls[0][1]).toMatchObject({
+      resolvedRootRef: task.startingCommit,
+      changedFiles: ['current-task.txt'],
+      commits: [expect.objectContaining({ message: 'Current task changes' })],
+    });
+  });
+
+  it('keeps existing branch work in context when adopting a branch', async () => {
+    const git = worktreeSimpleGit(repoPath);
+    await git.raw(['checkout', '-b', 'existing-work']);
+    await writeFile(join(repoPath, 'existing.txt'), 'Existing work');
+    await git.add('existing.txt');
+    await git.commit('Existing branch changes');
+    await git.raw(['checkout', 'main']);
+
+    const task = await create('existing-work', { mode: 'existing' });
+    const generate = jest
+      .spyOn(worktreeContext as any, 'generateSentence')
+      .mockResolvedValue('We are continuing existing work.');
+    await worktreeContext.generate(repo.id, task.path, { provider: 'codex' });
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate.mock.calls[0][1]).toMatchObject({
+      resolvedRootRef: 'main',
+      changedFiles: ['existing.txt'],
+      commits: [
+        expect.objectContaining({ message: 'Existing branch changes' }),
+      ],
     });
   });
 
@@ -549,13 +621,14 @@ describe('Task lifecycle with real Git and migrations', () => {
     await oldGit.raw(['add', 'previous-task.txt']);
     await oldGit.raw(['commit', '-m', 'Previous task changes']);
     const oldHead = await gitService.resolve(one.path, 'HEAD');
-    await db.insert(schema.worktreeContexts).values({
-      repoId: repo.id,
-      worktreePath: one.path,
-      rootRef: 'main',
-      contextSentence: 'Previous task context.',
-      generationStatus: 'ready',
-    });
+    await db
+      .update(schema.worktreeContexts)
+      .set({
+        rootRef: 'main',
+        contextSentence: 'Previous task context.',
+        generationStatus: 'ready',
+      })
+      .where(eq(schema.worktreeContexts.worktreePath, one.path));
     await service.finish(one.id);
 
     const rootGit = worktreeSimpleGit(repoPath);

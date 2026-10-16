@@ -16,6 +16,8 @@ export interface TaskSetup {
   useSavedRef?: boolean;
   // Recorded before filesystem changes so retries use the same resolved revision.
   resolvedCommit?: string;
+  // New branches summarize changes since creation, also after reopening.
+  contextRootRef?: string;
   branchPrepared?: boolean;
   localBranch?: string;
   preparationStage?:
