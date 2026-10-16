@@ -239,129 +239,77 @@ describe('NavigationService', () => {
     expect(localStorageMock.setItem).not.toHaveBeenCalled();
   });
 
-  it('keeps newly added projects, repositories, workspaces, and sessions collapsed on refresh', () => {
-    service.tree.set([
-      {
-        id: 1,
-        name: 'Project',
-        repos: [
-          {
-            id: 2,
-            name: 'Repo',
-            path: '/tmp/repo',
-            branches: [],
-            workspaces: [
-              {
-                id: 3,
-                repoId: 2,
-                name: 'Default',
-                path: '/tmp/repo',
-                isDefault: true,
-                createdFromRef: 'main',
-                currentBranch: 'main',
-                head: 'abc123',
-                isDetached: false,
-                isBare: false,
-                isLocked: false,
-                lockReason: null,
-                isMissing: false,
-                isDirty: false,
-                branchCheckedOutElsewhere: false,
-                checkedOutElsewherePath: null,
-                sessions: [],
-                archivedSessions: [],
-              },
-            ],
-          },
-        ],
-      },
-    ]);
-    httpGetMock.mockReturnValue(
-      of([
-        {
-          id: 1,
-          name: 'Project',
-          repos: [
-            {
-              id: 2,
-              name: 'Repo',
-              path: '/tmp/repo',
-              branches: [],
-              workspaces: [
-                {
-                  id: 3,
-                  repoId: 2,
-                  name: 'Default',
-                  path: '/tmp/repo',
-                  isDefault: true,
-                  createdFromRef: 'main',
-                  currentBranch: 'main',
-                  head: 'abc123',
-                  isDetached: false,
-                  isBare: false,
-                  isLocked: false,
-                  lockReason: null,
-                  isMissing: false,
-                  isDirty: false,
-                  branchCheckedOutElsewhere: false,
-                  checkedOutElsewherePath: null,
-                  sessions: [
-                    {
-                      id: 42,
-                      repoId: 2,
-                      branchName: 'main',
-                      name: 'Session 42',
-                      status: 'active',
-                      hasUnreviewedCompletion: false,
-                      lastCompletionAt: null,
-                      lastCompletionKind: null,
-                      lastStateChangeAt: null,
-                    },
-                  ],
-                  archivedSessions: [],
-                },
-                {
-                  id: 4,
-                  repoId: 2,
-                  name: 'Feature',
-                  path: '/tmp/repo-feature',
-                  isDefault: false,
-                  createdFromRef: 'feature',
-                  currentBranch: 'feature',
-                  head: 'def456',
-                  isDetached: false,
-                  isBare: false,
-                  isLocked: false,
-                  lockReason: null,
-                  isMissing: false,
-                  isDirty: false,
-                  branchCheckedOutElsewhere: false,
-                  checkedOutElsewherePath: null,
-                  sessions: [],
-                  archivedSessions: [],
-                },
-              ],
-            },
-            {
-              id: 3,
-              name: 'New Repo',
-              path: '/tmp/new-repo',
-              branches: [],
-            },
-          ],
-        },
-        {
-          id: 4,
-          name: 'New Project',
-          repos: [],
-        },
-      ]),
-    );
+  function makeTaskTree(taskIds: number[]): NavigationProject[] {
+    const tree = makeTree([]);
+    const repo = tree[0].repos[0];
+    const workspace = repo.workspaces![0];
+    repo.workspaces!.push(...taskIds.map((id) => ({
+      ...workspace,
+      id,
+      name: `Task ${id}`,
+      isDefault: false,
+      taskState: 'preparing' as const,
+    })));
+    return tree;
+  }
 
+  it('restores existing task expansion choices on startup', () => {
+    httpGetMock.mockReturnValue(of(makeTaskTree([4])));
     service.loadTree();
 
-    expect(service.expandedKeys()).toEqual(new Set());
+    expect(service.expandedKeys().size).toBe(0);
     expect(localStorageMock.setItem).not.toHaveBeenCalled();
+  });
+
+  it.each(['light', 'full'])('expands new tasks and their parents from a %s refresh', (phase) => {
+    httpGetMock.mockReturnValue(of(makeTaskTree([4])));
+    service.loadTree();
+    const light$ = new Subject<NavigationProject[]>();
+    const full$ = new Subject<NavigationProject[]>();
+    httpGetMock.mockReturnValueOnce(light$).mockReturnValueOnce(full$);
+
+    service.loadTree();
+    light$.next(makeTaskTree(phase === 'light' ? [4, 5] : [4]));
+    full$.next(makeTaskTree([4, 5]));
+
+    expect(service.expandedKeys()).toEqual(new Set(['project-1', 'repo-2', 'workspace-2-5']));
+    expect(service.isExpanded('workspace-2-4')).toBe(false);
+    expect(service.isExpanded('workspace-2-3')).toBe(false);
+  });
+
+  it('keeps a manually collapsed task closed through preparation and temporary removal', () => {
+    httpGetMock.mockReturnValue(of(makeTaskTree([])));
+    service.loadTree();
+    httpGetMock.mockReturnValue(of(makeTaskTree([4])));
+    service.refreshTree();
+    service.toggleExpand('workspace-2-4');
+
+    httpGetMock.mockReturnValue(of(makeTaskTree([])));
+    service.refreshTree();
+    const ready = makeTaskTree([4]);
+    ready[0].repos[0].workspaces![1].taskState = 'ready';
+    httpGetMock.mockReturnValue(of(ready));
+    service.refreshTree();
+
+    expect(service.isExpanded('workspace-2-4')).toBe(false);
+  });
+
+  it('expands a created task explicitly before the next tree refresh', () => {
+    service.tree.set(makeTree([]));
+    service.expandTask(2, 4);
+
+    expect(service.expandedKeys()).toEqual(new Set(['workspace-2-4', 'repo-2', 'project-1']));
+  });
+
+  it('expands new tasks after an empty initial tree without opening archived tasks', () => {
+    httpGetMock.mockReturnValue(of([]));
+    service.loadTree();
+    const tree = makeTaskTree([4, 5]);
+    tree[0].repos[0].workspaces![2].archivedAt = '2026-10-16T10:00:00Z';
+    httpGetMock.mockReturnValue(of(tree));
+    service.refreshTree();
+
+    expect(service.expandedKeys()).toEqual(new Set(['project-1', 'repo-2', 'workspace-2-4']));
   });
 
   it('preserves selected expansions through light and full refreshes without opening new nodes', () => {

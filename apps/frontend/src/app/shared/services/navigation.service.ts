@@ -29,6 +29,8 @@ export class NavigationService {
   private fullRefreshQueued = false;
   private cachedSessionNames = new Map<number, string>();
   private pendingTaskOrders = new Map<number, { origin: string; taskIds: number[] }>();
+  private taskExpansionOrigin: string | null = null;
+  private seenTaskKeys = new Set<string>();
 
   constructor() {
     const claudeStatus = inject(ClaudeStatusService);
@@ -56,6 +58,7 @@ export class NavigationService {
           return;
         }
         const patched = this.applyCachedSessionNames(data);
+        this.expandNewTasks(patched);
         this.tree.set(patched);
         this.loading.set(false);
         this.refreshFullTree(version);
@@ -78,6 +81,38 @@ export class NavigationService {
     }
 
     this.sidebarState.setExpanded(key, true);
+  }
+
+  expandTask(repoId: number, taskId: number): void {
+    this.expandKey(`workspace-${repoId}-${taskId}`);
+    this.expandKey(`repo-${repoId}`);
+    const project = this.tree().find((item) => item.repos.some((repo) => repo.id === repoId));
+    if (project) this.expandKey(`project-${project.id}`);
+  }
+
+  private expandNewTasks(projects: NavigationProject[]): void {
+    const origin = getBackendOrigin();
+    const initialLoad = this.taskExpansionOrigin !== origin;
+    if (initialLoad) {
+      this.taskExpansionOrigin = origin;
+      this.seenTaskKeys.clear();
+    }
+    for (const project of projects) {
+      for (const repo of project.repos) {
+        for (const task of repo.workspaces ?? []) {
+          if (task.isDefault) continue;
+          const key = `workspace-${repo.id}-${task.id}`;
+          if (!initialLoad && !this.seenTaskKeys.has(key) && !task.archivedAt) {
+            this.expandKey(`project-${project.id}`);
+            this.expandKey(`repo-${repo.id}`);
+            this.expandKey(key);
+          }
+          // Remember tasks even if they disappear temporarily, so a refresh
+          // never reopens a task the user has explicitly collapsed.
+          this.seenTaskKeys.add(key);
+        }
+      }
+    }
   }
 
   revealProject(projectId: number) {
@@ -313,6 +348,7 @@ export class NavigationService {
             return;
           }
           const patched = this.applyCachedSessionNames(data);
+          this.expandNewTasks(patched);
           this.tree.set(patched);
         },
         error: () => {

@@ -754,6 +754,45 @@ describe('Sidebar', () => {
     }
   });
 
+  it.each(['light', 'dark'])('shows archived folder sessions only in the task archive in %s mode', (theme) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    try {
+      showPersistedWorkspace();
+      const workspace = tree()[0].repos[0].workspaces![0];
+      const archived = { ...workspace.sessions[0], id: 801, name: 'Archived folder session', status: 'archived' as const, folderId: 7 };
+      workspace.sessionFolders = [{
+        id: 7, repoId: 1, workspaceId: 2, name: 'Folder', archivedAt: null,
+        sessions: [], archivedSessions: [archived],
+      }];
+      workspace.archivedSessions = [{ ...archived, id: 802, folderId: null, name: 'Ungrouped archived session' }];
+      expandedKeys.update((keys) => new Set([...keys, 'session-folder-7']));
+      const fixture = createSidebar();
+      const container = fixture.nativeElement as HTMLElement;
+      const archivedRow = () => container.querySelector<HTMLElement>('[data-session-row-id="801"]');
+
+      expect(container.textContent).not.toContain('Archived folder session');
+      expect(container.querySelector('.session-folder-empty')).toBeTruthy();
+      expect(container.querySelector('.sidebar-archive-toggle .sidebar-archive-count')?.textContent).toBe('2');
+      expect(container.querySelector('.session-folder-toggle .sidebar-archive-count')?.textContent).toBe('0');
+      container.querySelector<HTMLButtonElement>('.sidebar-archive-toggle')!.click();
+      fixture.detectChanges();
+      expect(archivedRow()).toBeTruthy();
+      expect(container.querySelector('[data-session-row-id="802"]')).toBeTruthy();
+      expect(archivedRow()!.querySelector('[data-session-unarchive-trigger-id="801"]')).toBeTruthy();
+      expect(archivedRow()!.querySelector('[data-session-delete-trigger-id="801"]')).toBeTruthy();
+
+      container.querySelector<HTMLButtonElement>('.session-folder-toggle')!.click();
+      fixture.detectChanges();
+      expect(archivedRow()).toBeTruthy();
+      container.querySelector<HTMLButtonElement>('.sidebar-archive-toggle')!.click();
+      fixture.detectChanges();
+      expect(archivedRow()).toBeNull();
+      expect(container.textContent).not.toContain('Archived folder session');
+    } finally {
+      document.documentElement.classList.remove('dark');
+    }
+  });
+
   it('toggles finished task history through remembered navigation keys', () => {
     showPersistedWorkspace();
     const fixture = createSidebar();

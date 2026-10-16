@@ -441,7 +441,7 @@
                         } @else {
                           <span class="session-folder-label truncate" (dblclick)="startEditFolder(folder, $event)">{{ folder.name }}</span>
                         }
-                        <span class="sidebar-archive-count">{{ folderSessionCount(folder) }}</span>
+                        <span class="sidebar-archive-count">{{ folder.sessions.length }}</span>
                       </button>
                       <span class="sidebar-actions session-folder-actions" [class.sidebar-actions--visible]="isFolderArchiveArmed(folder.id)">
                         @if (isFolderArchiveArmed(folder.id)) {
@@ -483,7 +483,7 @@
                     </div>
 
                     @if (isExpanded('session-folder-' + folder.id)) {
-                      @if (folderSessionCount(folder) === 0) {
+                      @if (folder.sessions.length === 0) {
                         <div class="session-folder-empty" [style.padding-left]="'100px'">Drop a session here</div>
                       }
                       <ng-container *ngTemplateOutlet="sessionListControls; context: { $implicit: folder.sessions, folderId: folder.id, indent: '82px' }" />
@@ -571,45 +571,6 @@
                               </button>
                               <button data-session-archive-controls="true" [attr.data-session-archive-trigger-id]="session.id" class="session-folder-action" title="Archive session" aria-label="Archive session" (click)="archiveSession(session, $event)">
                                 <ng-icon name="lucideArchive" class="!w-3.5 !h-3.5" />
-                              </button>
-                              <button
-                                class="session-folder-action session-folder-action--danger"
-                                title="Delete session"
-                                aria-label="Delete session"
-                                data-session-delete-controls="true"
-                                (click)="armDeleteSession(session, $event)"
-                              >
-                                <ng-icon name="lucideTrash2" class="!w-3.5 !h-3.5" />
-                              </button>
-                            }
-                          </span>
-                        </div>
-                      }
-                      @for (session of folder.archivedSessions; track session.id) {
-                        <div class="sidebar-tree-row sidebar-tree-row--archived w-full cursor-pointer group" [style.padding-left]="'82px'" (click)="onSessionClick(session)">
-                          <ng-icon name="lucideArchive" class="!w-3 !h-3 text-muted-foreground shrink-0" />
-                          <span class="sidebar-label--session sidebar-label--session-archived text-sm truncate flex-1">{{ session.name || 'Session ' + session.id }}</span>
-                          <span class="sidebar-actions session-actions" data-session-delete-controls="true" [class.sidebar-actions--visible]="isSessionDeleteArmed(session.id)">
-                            @if (isSessionArchiveArmed(session.id) || isArchivingSession(session.id)) {
-                              <app-inline-action-confirmation
-                                [targetId]="session.id"
-                                [ready]="archiveConfirmReady()"
-                                [busy]="isArchivingSession(session.id)"
-                                (confirm)="confirmArchive($event)"
-                                (cancel)="cancelArchive($event)"
-                              />
-                            } @else if (isSessionDeleteArmed(session.id)) {
-                              <app-inline-action-confirmation
-                                action="delete"
-                                [targetId]="session.id"
-                                [ready]="isSessionDeleteConfirmReady(session.id)"
-                                [busy]="isDeletingSession(session.id)"
-                                (confirm)="confirmDeleteSession(session, $event)"
-                                (cancel)="cancelDeleteSession($event)"
-                              />
-                            } @else {
-                              <button class="session-folder-action" title="Restore session" aria-label="Restore session" (click)="unarchiveSession(session, $event)">
-                                <ng-icon name="lucideArchiveRestore" class="!w-3.5 !h-3.5" />
                               </button>
                               <button
                                 class="session-folder-action session-folder-action--danger"
@@ -948,7 +909,7 @@
                           }
                         }
                       }
-                      @for (session of workspace.archivedSessions ?? []; track session.id) {
+                      @for (session of getArchivedSessions(workspace); track session.id) {
                         <div
                           class="sidebar-tree-row sidebar-tree-row--archived w-full cursor-pointer group"
                           [class.opacity-60]="isWorkspaceUnlinked(workspace)"

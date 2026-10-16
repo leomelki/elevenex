@@ -1383,9 +1383,18 @@ export class Sidebar implements OnInit, OnDestroy {
     return folder.sessions.length + folder.archivedSessions.length;
   }
 
+  getArchivedSessions(workspace: NavigationWorkspace): SessionInTree[] {
+    return [
+      ...(workspace.archivedSessions ?? []),
+      ...(workspace.sessionFolders ?? []).flatMap((folder) => folder.archivedSessions),
+    ];
+  }
+
   archivedItemCount(workspace: NavigationWorkspace): number {
     return (
-      (workspace.archivedSessions?.length ?? 0) + (workspace.archivedSessionFolders?.length ?? 0)
+      (workspace.archivedSessions?.length ?? 0) +
+      (workspace.sessionFolders ?? []).reduce((count, folder) => count + folder.archivedSessions.length, 0) +
+      (workspace.archivedSessionFolders?.length ?? 0)
     );
   }
 
@@ -1778,7 +1787,7 @@ export class Sidebar implements OnInit, OnDestroy {
           for (const folder of workspace.sessionFolders ?? []) {
             if (
               this.navService.isExpanded(`session-folder-${folder.id}`) &&
-              [...folder.sessions, ...folder.archivedSessions].some(
+              folder.sessions.some(
                 (session) => session.id === sessionId,
               )
             )
@@ -1788,7 +1797,7 @@ export class Sidebar implements OnInit, OnDestroy {
           const archiveKey = `archive-${repo.id}-${workspace.id}`;
           if (
             this.navService.isExpanded(archiveKey) &&
-            workspace.archivedSessions?.some((session) => session.id === sessionId)
+            this.getArchivedSessions(workspace).some((session) => session.id === sessionId)
           ) {
             return true;
           }
