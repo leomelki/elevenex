@@ -571,6 +571,14 @@ describe('SessionsService', () => {
   });
 
   describe('archive', () => {
+    it('stops task processes without archiving a conversation on worktree release', async () => {
+      const created = await service.create({ repoId, branchName: 'main', worktreePath: '/tmp/wt' });
+      await service.stopForWorktreeRelease(created.id);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(created.id);
+      expect(ptyManagerMock.stopForTask).toHaveBeenCalledWith(created.id);
+      expect(await service.findOne(created.id)).toMatchObject({ status: 'stopped', archivedByTask: false });
+    });
+
     it('uses strict terminal shutdown when finishing a task and propagates failure', async () => {
       const created = await service.create({
         repoId,

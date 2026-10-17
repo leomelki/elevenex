@@ -235,7 +235,7 @@ export class SessionContainer implements OnInit, OnDestroy {
   worktreePath = computed(() => {
     const activeId = this.activeSessionId();
     const tab = this.tabs().find((t) => t.sessionId === activeId);
-    return tab?.workspaceArchivedAt || tab?.status === 'archived' ? null : tab?.worktreePath ?? null;
+    return tab?.workspaceArchivedAt || this.taskWorktreeUnavailable(tab) || tab?.status === 'archived' ? null : tab?.worktreePath ?? null;
   });
 
   // Computed projectId from active session
@@ -268,7 +268,10 @@ export class SessionContainer implements OnInit, OnDestroy {
   // Only these are persisted to localStorage so that changing the global default resets auto-applied sessions.
   private userSetTerminalSessions = new Set<number>(this.claudeSurfaceModes().keys());
   private claudeTerminalMirrorModes = signal<ReadonlyMap<number, boolean>>(new Map());
-  activeSessionArchived = computed(() => this.activeTab()?.status === 'archived');
+  activeSessionArchived = computed(() => this.activeTab()?.status === 'archived' || this.taskWorktreeUnavailable(this.activeTab()));
+  taskWorktreeUnavailable(tab: Tab | null | undefined): boolean {
+    return !!tab?.workspaceTaskState && tab.workspaceTaskState !== 'ready';
+  }
   showFilesPanel = computed(() => this.sidePanelMode() === 'files');
   showBrowserPanel = computed(() => this.sidePanelMode() === 'browser');
   showChangesPanel = computed(() => {
@@ -917,6 +920,17 @@ export class SessionContainer implements OnInit, OnDestroy {
     // Use untracked() for tab reads/writes to avoid infinite effect cycle
     // (updateTabStatus writes _tabs, which would re-trigger this effect).
     effect(() => {
+      const tree = this.navService.tree();
+      untracked(() => {
+        const openTasks = new Set(this.tabs().map(tab => tab.workspaceId));
+        for (const project of tree)
+          for (const repo of project.repos)
+            for (const task of repo.workspaces ?? [])
+              if (openTasks.has(task.id)) this.tabService.updateTaskAssignment(task);
+      });
+    });
+
+    effect(() => {
       const sessionStatuses = this.claudeStatusService.sessionStatuses();
       untracked(() => {
         for (const [sessionId, status] of sessionStatuses) {
@@ -1059,14 +1073,15 @@ export class SessionContainer implements OnInit, OnDestroy {
       tabsList.map((t) => ({ id: t.sessionId, wt: t.worktreePath })),
     );
     for (const tab of tabsList) {
-      if (tab.worktreePath && tab.status !== 'archived') {
+      if (tab.worktreePath && tab.status !== 'archived' && !this.taskWorktreeUnavailable(tab)) {
         this.plannotatorService.registerWorktree(tab.worktreePath, tab.sessionId);
       }
     }
   }
 
   private getWorktreePathForSession(sessionId: number): string | null {
-    return this.tabs().find((tab) => tab.sessionId === sessionId)?.worktreePath ?? null;
+    const tab = this.tabs().find((tab) => tab.sessionId === sessionId);
+    return this.taskWorktreeUnavailable(tab) ? null : tab?.worktreePath ?? null;
   }
 
   private getProjectIdForSession(sessionId: number): number | null {
@@ -1262,7 +1277,7 @@ export class SessionContainer implements OnInit, OnDestroy {
       .subscribe((session) => {
         if (!session || this.tabService.getOpenSessionIds().includes(session.id)) return;
         this.openTabWithDefaultClaudeSurface(session, false, saved.sessionIds);
-        if (session.worktreePath && session.status !== 'archived')
+        if (session.worktreePath && session.status !== 'archived' && (!session.workspaceTaskState || session.workspaceTaskState === 'ready'))
           this.plannotatorService.registerWorktree(session.worktreePath, session.id);
       });
   }
@@ -1285,7 +1300,7 @@ export class SessionContainer implements OnInit, OnDestroy {
         if (session.status !== 'archived') {
           this.clearCompletionMarkerForOpenSession(session.id, session);
         }
-        if (session.worktreePath) {
+        if (session.worktreePath && (!session.workspaceTaskState || session.workspaceTaskState === 'ready')) {
           this.plannotatorService.registerWorktree(session.worktreePath, session.id);
         }
         this.plannotatorService.requestActivePanels();
@@ -1459,7 +1474,8 @@ export class SessionContainer implements OnInit, OnDestroy {
       const sessionId = openIds[index];
 
       if (result.status === 'fulfilled' && result.value) {
-        this.tabService.updateTabStatus(sessionId, result.value.status);
+        if (this.tabService.getOpenSessionIds().includes(sessionId))
+          this.tabService.openTab(result.value, false);
       } else if (result.status === 'rejected') {
         const error = result.reason;
         if (error?.status === 404) {
@@ -1638,7 +1654,7 @@ export class SessionContainer implements OnInit, OnDestroy {
 
   onTabUnarchiveRequest(sessionId: number): void {
     const tab = this.tabs().find(tab => tab.sessionId === sessionId);
-    if (tab?.workspaceArchivedAt && tab.workspaceId) { void this.router.navigate(['/tasks', tab.workspaceId]); return; }
+    if ((tab?.workspaceArchivedAt || this.taskWorktreeUnavailable(tab)) && tab?.workspaceId) { void this.router.navigate(['/tasks', tab.workspaceId]); return; }
     if (this.unarchivingSessionId() !== null) {
       return;
     }

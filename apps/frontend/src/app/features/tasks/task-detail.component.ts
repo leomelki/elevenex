@@ -81,6 +81,7 @@ export class TaskDetailComponent {
                     !!task &&
                     (task.taskState === 'preparing' ||
                       task.taskState === 'finishing' ||
+                      task.taskState === 'releasing' ||
                       (task.taskState === 'ready' && !task.archivedAt && !task.sessions.length)),
                   true,
                 ),

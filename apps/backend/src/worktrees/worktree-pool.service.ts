@@ -661,9 +661,11 @@ export class WorktreePoolService {
       ...worktrees.map((worktree) => worktree.path),
       ...poolRows.map((pool) => pool.path),
       ...workspaceRows
-        // Tasks have no checkout until allocation finishes. An empty path is
-        // pending setup, not evidence that a worktree was deleted.
-        .filter((workspace) => !workspace.isDefault && workspace.path)
+        // Unassigned tasks retain historical paths. Only inspect directories
+        // that are still assigned, so removed pool entries do not fail released tasks.
+        .filter((workspace) =>
+          !workspace.isDefault && workspace.path && workspace.linkStatus === 'linked',
+        )
         .map((workspace) => workspace.path),
     ]);
     const missingPaths = new Set<string>();
@@ -684,8 +686,10 @@ export class WorktreePoolService {
       for (const workspace of workspaceRows) {
         if (
           !workspace.isDefault &&
+          workspace.linkStatus === 'linked' &&
           workspace.taskState !== 'preparing' &&
           workspace.taskState !== 'finishing' &&
+          workspace.taskState !== 'releasing' &&
           missingPaths.has(workspace.path)
         ) {
           tx.update(schema.workspaces)

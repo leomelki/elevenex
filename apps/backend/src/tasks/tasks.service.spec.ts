@@ -11,6 +11,7 @@ import {
   readFile,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -67,6 +68,7 @@ describe('Task lifecycle with real Git and migrations', () => {
     stop: jest.fn(),
   };
   let stopSession: jest.Mock;
+  let releaseSession: jest.Mock;
   let reactivateRuntime: jest.Mock;
   let assertWithinWorktreeLimit: jest.Mock;
 
@@ -127,6 +129,19 @@ describe('Task lifecycle with real Git and migrations', () => {
           .set({ status: 'archived' })
           .where(eq(schema.sessions.id, id));
       }),
+      stopForWorktreeRelease: jest.fn(async (id: number) => {
+        const session = (
+          await db
+            .select()
+            .from(schema.sessions)
+            .where(eq(schema.sessions.id, id))
+        )[0];
+        if (session.status !== 'archived')
+          await db
+            .update(schema.sessions)
+            .set({ status: 'stopped' })
+            .where(eq(schema.sessions.id, id));
+      }),
       reactivateRuntime: jest.fn(async (id: number) => {
         const session = (
           await db
@@ -140,10 +155,11 @@ describe('Task lifecycle with real Git and migrations', () => {
             .from(schema.workspaces)
             .where(eq(schema.workspaces.id, session.workspaceId!))
         )[0];
-        expect(task.taskState).toBe('preparing');
+        expect(['preparing', 'releasing']).toContain(task.taskState);
       }),
     };
     stopSession = sessions.archiveAndStop;
+    releaseSession = sessions.stopForWorktreeRelease;
     reactivateRuntime = sessions.reactivateRuntime;
     assertWithinWorktreeLimit = jest.fn();
     const allocator = new TaskWorktreeAllocator(
@@ -212,6 +228,457 @@ describe('Task lifecycle with real Git and migrations', () => {
     });
     return settled(task.id);
   }
+
+  it('previews release without changing ownership or stopping processes, and reports actual local edits', async () => {
+    const task = await create('release-preview');
+    const preview = await service.releasePreview(task.id);
+    expect(preview).toMatchObject({
+      alreadyReleased: false,
+      cleanupRequired: false,
+      task: { id: task.id },
+      agents: 0,
+    });
+    expect(preview.checkoutToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(releaseSession).not.toHaveBeenCalled();
+    expect((await service.record(task.id)).linkStatus).toBe('linked');
+    await writeFile(join(task.path, 'new-edit.txt'), 'local edit');
+    await expect(service.releasePreview(task.id)).rejects.toMatchObject({
+      response: {
+        code: 'worktree_not_clean',
+        message: expect.stringContaining('local changes'),
+      },
+    });
+    expect(releaseSession).not.toHaveBeenCalled();
+  });
+
+  it('coalesces slow preview scans and leaves the repository operation lock available', async () => {
+    const task = await create('release-slow-preview');
+    const originalStatus = gitService.status.bind(gitService);
+    let finishScan!: () => void;
+    const scan = new Promise<void>((resolve) => (finishScan = resolve));
+    const status = jest
+      .spyOn(gitService, 'status')
+      .mockImplementationOnce(async (...args) => {
+        await scan;
+        return originalStatus(...args);
+      });
+    const first = service.releasePreview(task.id);
+    const second = service.releasePreview(task.id);
+    for (let attempt = 0; attempt < 100 && !status.mock.calls.length; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(status).toHaveBeenCalledTimes(1);
+    await expect(
+      gitService.exclusive(
+        await gitService.repositoryKey(repoPath),
+        async () => 'available',
+      ),
+    ).resolves.toBe('available');
+    finishScan();
+    expect(await first).toEqual(await second);
+    status.mockRestore();
+  });
+
+  it('rejects an old confirmation after the task releases and reacquires a checkout', async () => {
+    const task = await create('release-old-confirmation');
+    const preview = await service.releasePreview(task.id);
+    await service.releaseWorktree(task.id);
+    await service.retry(task.id);
+    await settled(task.id);
+    releaseSession.mockClear();
+    await expect(
+      service.releaseWorktree(task.id, true, preview.checkoutToken),
+    ).rejects.toMatchObject({ response: { code: 'checkout_changed' } });
+    expect(releaseSession).not.toHaveBeenCalled();
+    expect(await service.get(task.id)).toMatchObject({
+      taskState: 'ready',
+      linkStatus: 'linked',
+    });
+  });
+
+  it('still blocks new local edits after a successful preview', async () => {
+    const task = await create('release-preview-race');
+    const preview = await service.releasePreview(task.id);
+    await writeFile(join(task.path, 'late-edit.txt'), 'keep');
+    await expect(
+      service.releaseWorktree(task.id, true, preview.checkoutToken),
+    ).rejects.toMatchObject({ response: { code: 'worktree_not_clean' } });
+    expect(releaseSession).not.toHaveBeenCalled();
+  });
+
+  it('allows retrying failed cleanup even when shutdown left local edits', async () => {
+    const task = await create('release-preview-cleanup');
+    releaseSession.mockRejectedValueOnce(new Error('shutdown failed'));
+    await expect(service.releaseWorktree(task.id)).rejects.toThrow(
+      'shutdown failed',
+    );
+    await writeFile(join(task.path, 'last-write.txt'), 'keep');
+    const preview = await service.releasePreview(task.id);
+    expect(preview.cleanupRequired).toBe(true);
+    await expect(
+      service.releaseWorktree(task.id, true, preview.checkoutToken),
+    ).rejects.toMatchObject({ response: { code: 'worktree_not_clean' } });
+    expect(await service.get(task.id)).toMatchObject({
+      taskState: 'ready',
+      linkStatus: 'linked',
+    });
+  });
+
+  it('reports an already released task without scanning its former checkout', async () => {
+    const task = await create('release-preview-already');
+    await service.releaseWorktree(task.id);
+    const status = jest.spyOn(gitService, 'status');
+    expect(await service.releasePreview(task.id)).toMatchObject({
+      alreadyReleased: true,
+    });
+    expect(status).not.toHaveBeenCalled();
+    status.mockRestore();
+  });
+
+  it('releases and reuses a checkout while preserving active task history, then resumes elsewhere', async () => {
+    const task = await create('release-one');
+    const sessionId = task.sessions[0].id;
+    const released = await service.releaseWorktree(task.id);
+    expect(released).toMatchObject({
+      taskState: 'released',
+      linkStatus: 'unlinked',
+      archivedAt: null,
+      taskBranch: 'release-one',
+    });
+    expect(released.sessions[0]).toMatchObject({
+      id: sessionId,
+      status: 'stopped',
+      archivedByTask: false,
+    });
+    expect(stopSession).not.toHaveBeenCalled();
+    expect(await db.select().from(schema.taskReservations)).toEqual([]);
+    await expect(assertWorkspaceCanExecute(db, task.id)).rejects.toThrow();
+    expect(await service.releaseWorktree(task.id)).toMatchObject({
+      taskState: 'released',
+    });
+    const other = await create('release-two');
+    expect(other.path).toBe(task.path);
+    await service.retry(task.id);
+    const resumed = await settled(task.id);
+    expect(resumed).toMatchObject({
+      taskState: 'ready',
+      taskBranch: 'release-one',
+    });
+    expect(resumed.path).not.toBe(other.path);
+    expect(resumed.sessions[0].id).toBe(sessionId);
+    expect(resumed.sessions[0].worktreePath).toBe(resumed.path);
+    expect(resumed.sessions[0].transcriptWorktreePath).toBe(task.path);
+    expect(reactivateRuntime).toHaveBeenCalledWith(sessionId);
+  });
+
+  it('releases a missing directory without running Git in a replacement directory', async () => {
+    const task = await create('release-missing');
+    await rm(task.path, { recursive: true, force: true });
+    expect(await service.releaseWorktree(task.id)).toMatchObject({
+      taskState: 'released',
+      linkStatus: 'unlinked',
+      archivedAt: null,
+    });
+    expect(await db.select().from(schema.taskReservations)).toEqual([]);
+  });
+
+  it('does not restore manually archived conversations after release', async () => {
+    const task = await create('release-archived');
+    await db
+      .update(schema.sessions)
+      .set({ status: 'archived' })
+      .where(eq(schema.sessions.id, task.sessions[0].id));
+    await service.releaseWorktree(task.id);
+    await service.retry(task.id);
+    const resumed = await settled(task.id);
+    expect(resumed.sessions[0]).toMatchObject({
+      status: 'archived',
+      archivedByTask: false,
+    });
+    expect(reactivateRuntime).not.toHaveBeenCalled();
+  });
+
+  it('rejects release when another conversation is working in the checkout', async () => {
+    const task = await create('release-foreign');
+    const [foreign] = await db
+      .insert(schema.sessions)
+      .values({
+        repoId: repo.id,
+        worktreePath: task.path,
+        branchName: 'release-foreign',
+      })
+      .returning();
+    hooks.getActivity.mockImplementation((...args: unknown[]) => ({
+      activityStatus: args[0] === foreign.id ? 'working' : 'idle',
+      backgroundActive: false,
+    }));
+    await expect(service.releaseWorktree(task.id, true)).rejects.toThrow(
+      'another task or conversation',
+    );
+    expect(releaseSession).not.toHaveBeenCalled();
+    expect(await service.get(task.id)).toMatchObject({
+      taskState: 'ready',
+      linkStatus: 'linked',
+    });
+  });
+
+  it('keeps a scheduled finish distinct from release', async () => {
+    const task = await create('release-scheduled');
+    await service.finishAfterTurn(task.id, task.sessions[0].id);
+    await expect(service.releaseWorktree(task.id)).rejects.toThrow(
+      'Cancel the scheduled task finish',
+    );
+    expect(releaseSession).not.toHaveBeenCalled();
+    expect((await service.record(task.id)).taskFinishRequest).toBeTruthy();
+    await service.cancelScheduledFinish(task.id, task.sessions[0].id);
+  });
+
+  it('does not let an unassigned idle conversation retain access to a released managed checkout', async () => {
+    const task = await create('release-unassigned');
+    await db.insert(schema.sessions).values({
+      repoId: repo.id,
+      worktreePath: task.path,
+      branchName: 'release-unassigned',
+    });
+    await expect(service.releaseWorktree(task.id, true)).rejects.toThrow(
+      'another task or conversation',
+    );
+    expect(releaseSession).not.toHaveBeenCalled();
+  });
+
+  it('recovers blocked release cleanup into an actionable failure after restart', async () => {
+    const task = await create('release-restart');
+    await db
+      .update(schema.workspaces)
+      .set({ taskState: 'releasing' })
+      .where(eq(schema.workspaces.id, task.id));
+    jest
+      .spyOn(service, 'releaseWorktree')
+      .mockRejectedValueOnce(new Error('Could not inspect checkout'));
+    await (service as any).recover();
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await service.record(task.id)).taskState !== 'releasing') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(await service.get(task.id)).toMatchObject({
+      taskState: 'failed',
+      linkStatus: 'linked',
+      error: { code: 'release_failed' },
+    });
+    jest.restoreAllMocks();
+  });
+
+  it('does not stop processes or release ownership with untracked local edits', async () => {
+    const task = await create('release-dirty');
+    await writeFile(join(task.path, 'unsaved.txt'), 'keep me');
+    await expect(service.releaseWorktree(task.id, true)).rejects.toMatchObject({
+      response: { code: 'worktree_not_clean' },
+    });
+    expect(releaseSession).not.toHaveBeenCalled();
+    expect(await service.get(task.id)).toMatchObject({
+      taskState: 'ready',
+      linkStatus: 'linked',
+      archivedAt: null,
+    });
+    expect(await readFile(join(task.path, 'unsaved.txt'), 'utf8')).toBe(
+      'keep me',
+    );
+  });
+
+  it('never detaches a parent repository after a checkout loses its Git metadata', async () => {
+    const task = await create('release-parent');
+    const nested = join(repoPath, 'empty-checkout');
+    await mkdir(nested);
+    await db
+      .update(schema.workspaces)
+      .set({ path: nested })
+      .where(eq(schema.workspaces.id, task.id));
+    await db
+      .update(schema.repoWorktrees)
+      .set({ path: nested })
+      .where(eq(schema.repoWorktrees.id, task.poolWorktreeId!));
+    await expect(service.releaseWorktree(task.id)).rejects.toMatchObject({
+      response: { code: 'checkout_changed' },
+    });
+    expect(
+      (
+        await worktreeSimpleGit(repoPath).revparse(['--abbrev-ref', 'HEAD'])
+      ).trim(),
+    ).toBe('main');
+    expect(releaseSession).not.toHaveBeenCalled();
+  });
+
+  it('never detaches a different repository that replaced a checkout at the same path', async () => {
+    const task = await create('release-replaced');
+    await rm(task.path, { recursive: true, force: true });
+    await mkdir(task.path);
+    const replacement = worktreeSimpleGit(task.path);
+    await replacement.raw(['init', '--initial-branch=unrelated']);
+    await replacement.addConfig('user.name', 'Task tests');
+    await replacement.addConfig('user.email', 'tasks@example.test');
+    await replacement.raw(['commit', '--allow-empty', '-m', 'Replacement']);
+    await expect(service.releaseWorktree(task.id)).rejects.toMatchObject({
+      response: { code: 'checkout_changed' },
+    });
+    expect((await replacement.revparse(['--abbrev-ref', 'HEAD'])).trim()).toBe(
+      'unrelated',
+    );
+    expect(releaseSession).not.toHaveBeenCalled();
+  });
+
+  it('never follows a managed checkout replaced by a symlink to the main checkout', async () => {
+    const task = await create('release-symlink');
+    await rm(task.path, { recursive: true, force: true });
+    await symlink(repoPath, task.path, 'dir');
+    await expect(service.releaseWorktree(task.id)).rejects.toMatchObject({
+      response: { code: 'checkout_changed' },
+    });
+    expect(
+      (
+        await worktreeSimpleGit(repoPath).revparse(['--abbrev-ref', 'HEAD'])
+      ).trim(),
+    ).toBe('main');
+    expect(releaseSession).not.toHaveBeenCalled();
+  });
+
+  it('requires explicit approval for running agents and preserves conversations when stopped', async () => {
+    const task = await create('release-running');
+    hooks.getStatus.mockReturnValue('working');
+    await expect(service.releaseWorktree(task.id)).rejects.toMatchObject({
+      response: { code: 'running_work', agents: 1 },
+    });
+    expect(releaseSession).not.toHaveBeenCalled();
+    expect(await service.releaseWorktree(task.id, true)).toMatchObject({
+      taskState: 'released',
+      archivedAt: null,
+    });
+    expect(releaseSession).toHaveBeenCalledWith(task.sessions[0].id);
+  });
+
+  it('retains ownership and blocks execution when cleanup fails, then supports retry', async () => {
+    const task = await create('release-cleanup');
+    releaseSession.mockRejectedValueOnce(new Error('cleanup failed'));
+    await expect(service.releaseWorktree(task.id)).rejects.toThrow(
+      'cleanup failed',
+    );
+    expect(await service.get(task.id)).toMatchObject({
+      taskState: 'failed',
+      linkStatus: 'linked',
+      error: { code: 'release_failed' },
+    });
+    await expect(assertWorkspaceCanExecute(db, task.id)).rejects.toThrow();
+    await expect(service.retry(task.id)).rejects.toThrow(
+      'Release this worktree again',
+    );
+    expect(await service.releaseWorktree(task.id)).toMatchObject({
+      taskState: 'released',
+    });
+  });
+
+  it('checks for edits written during shutdown and keeps the checkout', async () => {
+    const task = await create('release-last-write');
+    releaseSession.mockImplementationOnce(async () => {
+      await writeFile(join(task.path, 'last-write.txt'), 'keep');
+    });
+    await expect(service.releaseWorktree(task.id)).rejects.toMatchObject({
+      response: { code: 'worktree_not_clean' },
+    });
+    expect(await service.get(task.id)).toMatchObject({
+      taskState: 'ready',
+      linkStatus: 'linked',
+    });
+    expect(reactivateRuntime).toHaveBeenCalledWith(task.sessions[0].id);
+  });
+
+  it('blocks release during a Git operation even when the working tree is clean', async () => {
+    const task = await create('release-operation');
+    const gitDir = (
+      await worktreeSimpleGit(task.path).revparse(['--absolute-git-dir'])
+    ).trim();
+    await mkdir(join(gitDir, 'rebase-merge'));
+    await expect(service.releaseWorktree(task.id)).rejects.toMatchObject({
+      response: { code: 'worktree_not_clean' },
+    });
+    expect(releaseSession).not.toHaveBeenCalled();
+  });
+
+  it('resumes a released detached commit and preserves it with a Git ref', async () => {
+    const task = await create('release-snapshot');
+    const git = worktreeSimpleGit(task.path);
+    await git.raw(['checkout', '--detach']);
+    await git.raw(['commit', '--allow-empty', '-m', 'Detached work']);
+    const head = await git.revparse(['HEAD']);
+    const released = await service.releaseWorktree(task.id);
+    expect(released).toMatchObject({
+      checkoutMode: 'snapshot',
+      taskBranch: null,
+      finalCommit: head,
+    });
+    expect(
+      await worktreeSimpleGit(repoPath).revparse([
+        `refs/elevenex/tasks/${task.id}/finish`,
+      ]),
+    ).toBe(head);
+    await service.retry(task.id);
+    const resumed = await settled(task.id);
+    expect(resumed).toMatchObject({
+      taskState: 'ready',
+      checkoutMode: 'snapshot',
+    });
+    expect(await worktreeSimpleGit(resumed.path).revparse(['HEAD'])).toBe(head);
+  });
+
+  it('unassigns an external main checkout without detaching it', async () => {
+    const task = await create('refs/heads/main', {
+      mode: 'existing',
+      confirmExternal: true,
+    });
+    expect(task.path).toBe(repoPath);
+    expect(await service.releaseWorktree(task.id)).toMatchObject({
+      taskState: 'released',
+      linkStatus: 'unlinked',
+    });
+    expect(
+      (
+        await worktreeSimpleGit(repoPath).revparse(['--abbrev-ref', 'HEAD'])
+      ).trim(),
+    ).toBe('main');
+  });
+
+  it('recovers an interrupted release after detaching without losing the branch', async () => {
+    const task = await create('release-recovery');
+    const head = await worktreeSimpleGit(task.path).revparse(['HEAD']);
+    await db
+      .update(schema.workspaces)
+      .set({ taskState: 'releasing', finalCommit: head })
+      .where(eq(schema.workspaces.id, task.id));
+    await worktreeSimpleGit(task.path).raw(['checkout', '--detach', head]);
+    await (service as any).recover();
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await service.record(task.id)).taskState !== 'releasing') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(await service.get(task.id)).toMatchObject({
+      taskState: 'released',
+      taskBranch: 'release-recovery',
+    });
+  });
+
+  it('can finish a released task without touching its reused checkout', async () => {
+    const task = await create('release-finish');
+    await service.releaseWorktree(task.id);
+    const other = await create('release-new-owner');
+    const finished = await service.finish(task.id);
+    expect(finished.archivedAt).toBeTruthy();
+    expect(await service.get(other.id)).toMatchObject({
+      taskState: 'ready',
+      linkStatus: 'linked',
+    });
+    expect(
+      (
+        await worktreeSimpleGit(other.path).revparse(['--abbrev-ref', 'HEAD'])
+      ).trim(),
+    ).toBe('release-new-owner');
+  });
 
   it.each([undefined, null])(
     'preserves saved setup when a validated confirmation retry contains absent fields (%s)',

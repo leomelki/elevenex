@@ -1,0 +1,91 @@
+<div
+  class="space-y-5"
+  cdkTrapFocus
+  [cdkTrapFocusAutoCapture]="true"
+  [attr.aria-busy]="checking() || busy()"
+>
+  <header>
+    <h2 class="text-xl font-semibold">Release worktree</h2>
+    @if (taskName()) {
+      <p class="mt-1 break-words text-sm text-muted-foreground">{{ taskName() }}</p>
+    }
+  </header>
+  @if (checking() || busy()) {
+    <div role="status" class="flex items-start gap-3" data-release-loading>
+      <span
+        class="mt-0.5 size-5 shrink-0 animate-spin rounded-full border-2 border-muted border-t-primary"
+        aria-hidden="true"
+      ></span>
+      <div>
+        <p class="text-sm font-medium">
+          {{ busy() ? 'Releasing worktree…' : 'Checking worktree…' }}
+        </p>
+        <p class="mt-1 text-sm text-muted-foreground">
+          {{
+            busy()
+              ? 'Stopping task processes and verifying the checkout. This may take a moment.'
+              : 'Checking local changes, Git operations, and running work. This may take a moment.'
+          }}
+        </p>
+      </div>
+    </div>
+  } @else if (error()) {
+    <div
+      role="alert"
+      class="rounded-lg border border-destructive/30 bg-destructive/5 p-4"
+      data-release-error
+    >
+      <h3 class="text-sm font-medium">Cannot release worktree</h3>
+      <p class="mt-1 break-words text-sm text-muted-foreground">{{ error() }}</p>
+    </div>
+  } @else if (preview(); as preview) {
+    @if (preview.alreadyReleased) {
+      <p role="status" class="text-sm">This task’s worktree has already been released.</p>
+    } @else {
+      <p class="text-sm" data-release-ready>
+        Your task stays open and your conversations and branch are preserved. Prepare a worktree
+        again when you want to continue.
+      </p>
+      @if (preview.cleanupRequired) {
+        <p class="text-sm text-muted-foreground">
+          Previous cleanup did not complete. Release will retry stopping task processes.
+        </p>
+      }
+      @if (preview.agents || preview.terminals || preview.actions) {
+        <div class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">
+          <p class="font-medium">Running work will be stopped</p>
+          <p class="mt-1 text-muted-foreground">
+            {{ preview.agents }} {{ preview.agents === 1 ? 'agent' : 'agents' }} ·
+            {{ preview.terminals }} {{ preview.terminals === 1 ? 'terminal' : 'terminals' }} ·
+            {{ preview.actions }} {{ preview.actions === 1 ? 'action' : 'actions' }}
+          </p>
+        </div>
+      }
+    }
+  }
+  <footer class="flex justify-end gap-2 border-t border-border pt-4">
+    <button z-button zType="ghost" [zDisabled]="busy()" (click)="cancel()" cdkFocusInitial>
+      {{ preview()?.alreadyReleased ? 'Close' : 'Cancel' }}
+    </button>
+    @if (error()) {
+      <button z-button (click)="check()">Check again</button>
+    } @else if (!preview()?.alreadyReleased) {
+      <button
+        z-button
+        [zDisabled]="checking() || busy() || !preview()"
+        [zLoading]="busy()"
+        (click)="release()"
+      >
+        {{
+          checking()
+            ? 'Checking…'
+            : busy()
+              ? 'Releasing…'
+              : preview()!.agents || preview()!.terminals || preview()!.actions
+                ? 'Stop and release'
+                : 'Release worktree'
+        }}
+      </button>
+    }
+  </footer>
+</div>

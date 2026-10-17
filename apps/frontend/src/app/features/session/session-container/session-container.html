@@ -88,7 +88,7 @@
                       [attr.inert]="tab.sessionId !== activeSessionId() ? '' : null"
                       [attr.aria-hidden]="tab.sessionId !== activeSessionId() ? 'true' : null"
                     >
-                      @if (tab.status !== 'archived' && usesClaudeTerminalFallback(tab.sessionId)) {
+                      @if (tab.status !== 'archived' && !taskWorktreeUnavailable(tab) && usesClaudeTerminalFallback(tab.sessionId)) {
                         <z-resizable zLayout="vertical" class="h-full">
                           @if (usesClaudeTerminalTranscriptMirror(tab.sessionId)) {
                             <z-resizable-panel [zDefaultSize]="67" [zMin]="30" [zMax]="85">
@@ -136,6 +136,8 @@
                           [hasStartedAgentRuntime]="tab.hasStartedAgentRuntime"
                           [isVisible]="tab.sessionId === activeSessionId()"
                           [archived]="tab.status === 'archived'"
+                          [readOnlyTranscript]="taskWorktreeUnavailable(tab)"
+                          [worktreeUnavailable]="taskWorktreeUnavailable(tab)"
                           [sessionName]="tab.sessionName"
                           [unarchiveBusy]="unarchivingSessionId() === tab.sessionId"
                           (openTerminalFallback)="showClaudeTerminal()"

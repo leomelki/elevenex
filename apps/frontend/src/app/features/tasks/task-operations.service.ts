@@ -18,7 +18,7 @@ export class TaskOperationsService {
         .flatMap((project) =>
           project.repos.flatMap((repo) =>
             (repo.workspaces ?? [])
-              .filter((task) => task.taskState === 'preparing' || task.taskState === 'finishing')
+              .filter((task) => task.taskState === 'preparing' || task.taskState === 'finishing' || task.taskState === 'releasing')
               .map((task) => task.id),
           ),
         );
@@ -46,7 +46,7 @@ export class TaskOperationsService {
       .subscribe((tasks) => {
         let changed = false;
         for (const task of tasks) {
-          if (task && task.taskState !== 'preparing' && task.taskState !== 'finishing') {
+          if (task && task.taskState !== 'preparing' && task.taskState !== 'finishing' && task.taskState !== 'releasing') {
             this.pending.delete(task.id);
             changed = true;
           }

@@ -292,6 +292,19 @@ describe('WorktreePoolService', () => {
     },
   );
 
+  it.each(['releasing', 'released'])(
+    'preserves a task with a %s checkout when its former directory disappears', async (taskState) => {
+      const [task] = await db.insert(schema.workspaces).values({
+        repoId: repo.id, name: 'Preserved task', path: DETACHED_PATH,
+        linkStatus: taskState === 'released' ? 'unlinked' : 'linked', taskState,
+      }).returning();
+      jest.mocked(isMissingWorktreePath).mockImplementation(async value => value === DETACHED_PATH);
+      await service.reconcileRepo(repo);
+      expect((await db.select().from(schema.workspaces).where(eq(schema.workspaces.id, task.id)))[0])
+        .toMatchObject({ taskState, linkStatus: task.linkStatus, taskError: null });
+    },
+  );
+
   it('ignores a missing-checkout result if the task was reassigned during the filesystem check', async () => {
     const [task] = await db
       .insert(schema.workspaces)

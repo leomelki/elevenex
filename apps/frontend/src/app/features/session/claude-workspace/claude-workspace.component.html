@@ -4,7 +4,12 @@
     [zDefaultSize]="actions.selectedAgentInspectorTurn() ? 55 : 100"
     [zMin]="30"
   >
-    @if (archived()) {
+    @if (worktreeUnavailable()) {
+      <header class="flex shrink-0 items-center justify-between gap-4 border-b border-border bg-background px-4 py-3">
+        <p class="text-sm text-muted-foreground">Worktree unavailable. You can read this conversation.</p>
+        <button z-button zType="outline" class="shrink-0" (click)="unarchive.emit()">Open task</button>
+      </header>
+    } @else if (archived()) {
       <header
         class="flex shrink-0 items-center justify-between gap-4 border-b border-border bg-background px-4 py-3"
       >

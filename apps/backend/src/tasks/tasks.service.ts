@@ -24,7 +24,8 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
@@ -63,6 +64,10 @@ export class TasksService
   implements OnApplicationBootstrap, OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(TasksService.name);
+  private readonly releasePreviews = new Map<
+    number,
+    ReturnType<TasksService['checkReleasePreview']>
+  >();
   private readonly operations = new Map<number, Promise<void>>();
   private readonly finishRequests = new Map<
     number,
@@ -211,6 +216,29 @@ export class TasksService
         void this.finish(task.id, true).catch((error) =>
           this.logger.error(`Could not finish task ${task.id}`, error),
         );
+      else if (task.taskState === 'releasing')
+        void this.releaseWorktree(task.id, true)
+          .catch(async (error) => {
+            this.logger.error(`Could not release task ${task.id}`, error);
+            await this.update(
+              task.id,
+              {
+                taskState: 'failed',
+                taskError: JSON.stringify({
+                  code: 'release_failed',
+                  message:
+                    'Worktree release was interrupted. The checkout remains reserved. Release it again to retry cleanup.',
+                }),
+              },
+              'releasing',
+            );
+          })
+          .catch((error) =>
+            this.logger.error(
+              `Could not record release recovery failure for task ${task.id}`,
+              error,
+            ),
+          );
       else if (
         task.taskState === 'ready' &&
         task.taskConfig &&
@@ -587,6 +615,37 @@ export class TasksService
       throw new ConflictException(
         'Reopen this task before preparing its worktree.',
       );
+    if (task.taskState === 'released') {
+      const repo = await this.repo(task.repoId);
+      const key = await this.git.repositoryKey(repo.path);
+      return this.git.exclusive(key, async () => {
+        const current = await this.record(id);
+        if (current.taskState !== 'released' || current.archivedAt)
+          return this.get(id);
+        await this.projects.assertProjectIsActive(repo.projectId);
+        const saved = this.resumeSetup(current);
+        const setup = { ...saved, ...patch };
+        if (
+          (patch.branchName && patch.branchName !== saved.branchName) ||
+          (patch.checkoutMode && patch.checkoutMode !== saved.checkoutMode) ||
+          (patch.mode && patch.mode !== saved.mode) ||
+          (patch.baseRef && patch.baseRef !== saved.baseRef)
+        ) {
+          setup.resolvedCommit = undefined;
+          setup.branchPrepared = undefined;
+          setup.localBranch = undefined;
+        }
+        await this.update(id, {
+          name: patch.name?.trim() || current.name,
+          taskState: 'preparing',
+          taskError: null,
+          taskConfig: JSON.stringify(setup),
+          checkoutMode: setup.checkoutMode,
+        });
+        this.schedule(id);
+        return this.get(id);
+      });
+    }
     if (
       task.taskState !== 'failed' &&
       !(task.taskState === 'ready' && task.linkStatus === 'unlinked')
@@ -595,6 +654,10 @@ export class TasksService
     if (task.taskError && JSON.parse(task.taskError).code === 'finish_failed')
       throw new ConflictException(
         'Finish this task again to complete process cleanup.',
+      );
+    if (task.taskError && JSON.parse(task.taskError).code === 'release_failed')
+      throw new ConflictException(
+        'Release this worktree again to complete process cleanup.',
       );
     // Old branch-mismatch failures recover without checking out or changing files.
     const checked = await refreshWorkspaceCheckout(this.db, task);
@@ -1360,11 +1423,404 @@ export class TasksService
     });
   }
 
-  async reopen(id: number) {
+  private assertReleaseAllowed(current: Task) {
+    if (current.archivedAt)
+      throw new ConflictException(
+        'Reopen this task before releasing its worktree.',
+      );
+    if (
+      current.linkStatus !== 'linked' ||
+      !['ready', 'failed', 'releasing'].includes(current.taskState)
+    )
+      throw new ConflictException(
+        'Wait for task setup or cleanup before releasing its worktree.',
+      );
+    if (current.taskFinishRequest)
+      throw new ConflictException(
+        'Cancel the scheduled task finish before releasing its worktree.',
+      );
+    if (
+      current.taskError &&
+      JSON.parse(current.taskError).code === 'finish_failed'
+    )
+      throw new ConflictException(
+        'Finish this task again to complete process cleanup.',
+      );
+  }
+
+  private releaseCheckoutToken(task: Task): string {
+    return createHash('sha256')
+      .update(
+        JSON.stringify([
+          task.id,
+          task.path,
+          task.poolWorktreeId,
+          task.unlinkedAt,
+          task.taskConfig,
+          task.archivedAt,
+        ]),
+      )
+      .digest('hex');
+  }
+
+  private async releaseChecks(current: Task, repo: Repo, key: string) {
+    const id = current.id;
+    const pool = current.poolWorktreeId
+      ? (
+          await this.db
+            .select()
+            .from(schema.repoWorktrees)
+            .where(eq(schema.repoWorktrees.id, current.poolWorktreeId))
+        )[0]
+      : null;
+    const managed =
+      !!pool?.managed &&
+      pool.path === current.path &&
+      current.path !== (await realpath(repo.path));
+    const assertOwnership = async () => {
+      const owners = await this.db
+        .select({ id: schema.workspaces.id })
+        .from(schema.workspaces)
+        .where(
+          and(
+            eq(schema.workspaces.path, current.path),
+            eq(schema.workspaces.linkStatus, 'linked'),
+            eq(schema.workspaces.isDefault, false),
+            ne(schema.workspaces.id, id),
+          ),
+        )
+        .limit(1);
+      const foreignSessions = await this.db
+        .select()
+        .from(schema.sessions)
+        .where(
+          and(
+            eq(schema.sessions.worktreePath, current.path),
+            or(
+              ne(schema.sessions.workspaceId, id),
+              isNull(schema.sessions.workspaceId),
+            ),
+            ne(schema.sessions.status, 'archived'),
+          ),
+        );
+      if (
+        owners.length ||
+        foreignSessions.some(
+          (session) =>
+            (managed && session.workspaceId === null) ||
+            !this.sessionIsIdle(session.id),
+        )
+      )
+        throw new ConflictException(
+          'This checkout is also used by another task or conversation. Stop or archive the other conversation, or release the other task’s assignment, before trying again.',
+        );
+    };
+    const inspect = async (persistIndex = false) => {
+      if (await isMissingWorktreePath(current.path)) return null;
+      // Git walks up to a parent repository when a checkout loses its .git
+      // file. Never let a stale task path detach that parent (or a replacement repo).
+      const [topLevel, checkoutKey, checkoutPath] = await Promise.all([
+        worktreeSimpleGit(current.path)
+          .revparse(['--show-toplevel'])
+          .then((value) => realpath(value.trim())),
+        this.git.repositoryKey(current.path),
+        realpath(current.path),
+      ]);
+      if (
+        topLevel !== checkoutPath ||
+        checkoutKey !== key ||
+        (managed && checkoutPath !== current.path)
+      )
+        throw new ConflictException({
+          code: 'checkout_changed',
+          message:
+            'This directory is no longer the task’s Git worktree. Restore its Git metadata before releasing it.',
+        });
+      const status = await this.git.status(current.path, {
+        persistIndex: managed && persistIndex,
+      });
+      const operationInProgress = await this.git.hasOperationInProgress(
+        current.path,
+      );
+      if (status.dirty || status.conflicts || operationInProgress)
+        throw new ConflictException({
+          code: 'worktree_not_clean',
+          message: status.conflicts
+            ? 'This worktree has merge conflicts. Resolve the conflicts or abort the Git operation before releasing it.'
+            : operationInProgress
+              ? 'A Git operation is in progress. Complete or abort it before releasing this worktree.'
+              : 'This worktree has local changes. Commit, stash, or move them before releasing it.',
+        });
+      return status;
+    };
+    return { managed, assertOwnership, inspect };
+  }
+
+  /** Read-only and coalesced: checking a large checkout never owns the Git operation lock. */
+  async releasePreview(id: number) {
+    const pending = this.releasePreviews.get(id);
+    if (pending) return pending;
+    const operation = this.checkReleasePreview(id)
+      .catch((error: unknown) => {
+        if (error instanceof HttpException) throw error;
+        this.logger.warn(
+          `Could not check task ${id} for worktree release: ${String(error)}`,
+        );
+        throw new ConflictException({
+          code: 'release_check_failed',
+          message:
+            'Could not check this worktree. Check that the repository is accessible and try again.',
+        });
+      })
+      .finally(() => {
+        if (this.releasePreviews.get(id) === operation)
+          this.releasePreviews.delete(id);
+      });
+    this.releasePreviews.set(id, operation);
+    return operation;
+  }
+
+  private async checkReleasePreview(id: number) {
+    const current = await this.record(id);
+    if (current.taskState === 'released' && !current.archivedAt)
+      return {
+        task: await this.get(id),
+        alreadyReleased: true,
+        cleanupRequired: false,
+        checkoutToken: this.releaseCheckoutToken(current),
+        agents: 0,
+        terminals: 0,
+        actions: 0,
+      };
+    this.assertReleaseAllowed(current);
+    if (current.taskState === 'releasing')
+      throw new ConflictException(
+        'Worktree release is already in progress. Wait for it to complete.',
+      );
+    const repo = await this.repo(current.repoId);
+    await this.projects.assertProjectIsActive(repo.projectId);
+    const key = await this.git.repositoryKey(repo.path);
+    const checks = await this.releaseChecks(current, repo, key);
+    await checks.assertOwnership();
+    const cleanupRequired =
+      !!current.taskError &&
+      JSON.parse(current.taskError).code === 'release_failed';
+    // Failed shutdown must be retried before treating its last writes as a setup error.
+    const [running, inspection] = await Promise.allSettled([
+      this.finishPreview(id),
+      cleanupRequired ? Promise.resolve() : checks.inspect(),
+    ]);
+    if (inspection.status === 'rejected') throw inspection.reason;
+    if (running.status === 'rejected') throw running.reason;
+    const latest = await this.record(id);
+    if (
+      latest.taskState !== current.taskState ||
+      this.releaseCheckoutToken(latest) !== this.releaseCheckoutToken(current)
+    )
+      throw new ConflictException({
+        code: 'checkout_changed',
+        message: 'The task checkout changed while checking it. Check again.',
+      });
+    this.assertReleaseAllowed(latest);
+    const task = await this.get(id);
+    if (
+      task.taskState !== latest.taskState ||
+      this.releaseCheckoutToken(task) !== this.releaseCheckoutToken(latest)
+    )
+      throw new ConflictException({
+        code: 'checkout_changed',
+        message: 'The task checkout changed while checking it. Check again.',
+      });
+    return {
+      task,
+      alreadyReleased: false,
+      cleanupRequired,
+      checkoutToken: this.releaseCheckoutToken(latest),
+      ...running.value,
+    };
+  }
+
+  /** Releasing never discards files, archives history, or deletes a Git worktree. */
+  async releaseWorktree(
+    id: number,
+    confirmStop = false,
+    checkoutToken?: string,
+  ) {
     const task = await this.record(id);
     const repo = await this.repo(task.repoId);
     await this.projects.assertProjectIsActive(repo.projectId);
-    if (!task.archivedAt) return this.get(id);
+    const key = await this.git.repositoryKey(repo.path);
+    return this.git.exclusive(key, async () => {
+      const current = await this.record(id);
+      if (checkoutToken && checkoutToken !== this.releaseCheckoutToken(current))
+        throw new ConflictException({
+          code: 'checkout_changed',
+          message:
+            'The task checkout changed. Check again before releasing it.',
+        });
+      if (current.taskState === 'released' && !current.archivedAt)
+        return this.get(id);
+      this.assertReleaseAllowed(current);
+      const { managed, assertOwnership, inspect } = await this.releaseChecks(
+        current,
+        repo,
+        key,
+      );
+      await assertOwnership();
+
+      const running = await this.finishPreview(id);
+      if (
+        !confirmStop &&
+        (running.agents || running.terminals || running.actions)
+      )
+        throw new ConflictException({
+          code: 'running_work',
+          message:
+            'Confirm stopping running work before releasing this worktree.',
+          ...running,
+        });
+      // A missing directory can be unassigned without touching another checkout.
+      // Fail without stopping work when it is already clear that release is unsafe.
+      if (
+        current.taskState !== 'releasing' &&
+        !(
+          current.taskError &&
+          JSON.parse(current.taskError).code === 'release_failed'
+        )
+      )
+        await inspect();
+      await this.update(id, { taskState: 'releasing', taskError: null });
+      let stopped = false;
+      try {
+        const sessions = await this.db
+          .select()
+          .from(schema.sessions)
+          .where(eq(schema.sessions.workspaceId, id));
+        // Check again after blocking execution: a turn may have started during preview.
+        const latestRunning = await this.finishPreview(id);
+        if (
+          !confirmStop &&
+          (latestRunning.agents ||
+            latestRunning.terminals ||
+            latestRunning.actions)
+        ) {
+          stopped = true; // No cleanup began; execution can safely be enabled again.
+          throw new ConflictException({
+            code: 'running_work',
+            message: 'Running work started. Confirm stopping it and try again.',
+            ...latestRunning,
+          });
+        }
+        for (const session of sessions)
+          await this.sessions.stopForWorktreeRelease(session.id);
+        for (const terminal of await this.db
+          .select()
+          .from(schema.userTerminals)
+          .where(eq(schema.userTerminals.worktreePath, current.path)))
+          await this.terminals.destroy(terminal.id, true);
+        for (const action of await this.actions.listByWorktree(current.path))
+          await this.actions.stop(action.id, true);
+        stopped = true;
+        // Agents/actions may have written files while stopping. Recheck before detach.
+        await assertOwnership();
+        const status = await inspect(true);
+        const branch =
+          current.taskState === 'releasing' &&
+          status &&
+          !status.branch &&
+          status.head === current.finalCommit
+            ? current.taskBranch
+            : status
+              ? status.branch
+              : current.taskBranch;
+        const saved = {
+          finalCommit:
+            status?.head ?? current.finalCommit ?? current.startingCommit,
+          taskBranch: branch,
+          checkoutMode: branch ? 'branch' : 'snapshot',
+          sourceRef: current.sourceRef ?? branch,
+        };
+        // Persist identity before detach so a crash cannot lose the task branch.
+        await this.update(id, saved);
+        if (saved.finalCommit)
+          await worktreeSimpleGit(repo.path).raw([
+            'update-ref',
+            `refs/elevenex/tasks/${id}/finish`,
+            saved.finalCommit,
+          ]);
+        if (status && managed)
+          await worktreeSimpleGit(current.path).raw([
+            'checkout',
+            '--detach',
+            status.head,
+          ]);
+        // The reservation and owner must disappear together for pool reuse.
+        this.db.transaction((tx) => {
+          tx.delete(schema.taskReservations)
+            .where(eq(schema.taskReservations.taskId, id))
+            .run();
+          tx.update(schema.workspaces)
+            .set({
+              ...saved,
+              taskState: 'released',
+              taskError: null,
+              linkStatus: 'unlinked',
+              poolWorktreeId: null,
+              desiredBranch: branch,
+              unlinkedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(schema.workspaces.id, id))
+            .run();
+        });
+        this.navigationEvents?.invalidate();
+        this.branches.invalidateCache(repo.path);
+        return this.get(id);
+      } catch (error) {
+        // Failed process cleanup retains ownership and keeps execution blocked.
+        // After successful cleanup, allow the user to fix Git/files and retry.
+        if (stopped)
+          try {
+            const sessions = await this.db
+              .select()
+              .from(schema.sessions)
+              .where(
+                and(
+                  eq(schema.sessions.workspaceId, id),
+                  ne(schema.sessions.status, 'archived'),
+                ),
+              );
+            for (const session of sessions)
+              await this.sessions.reactivateRuntime(session.id);
+          } catch (reactivationError) {
+            stopped = false;
+            this.logger.error(
+              `Could not reactivate task ${id} after release failure`,
+              reactivationError,
+            );
+          }
+        const restoreFailure =
+          current.taskState === 'failed' &&
+          current.taskError &&
+          JSON.parse(current.taskError).code !== 'release_failed';
+        await this.update(id, {
+          taskState: stopped && !restoreFailure ? 'ready' : 'failed',
+          taskError: stopped
+            ? restoreFailure
+              ? current.taskError
+              : null
+            : JSON.stringify({
+                code: 'release_failed',
+                message:
+                  'Worktree release could not complete. The checkout remains reserved. Release it again to retry cleanup.',
+              }),
+        });
+        throw error;
+      }
+    });
+  }
+
+  private resumeSetup(task: Task): TaskSetup {
     const setup: TaskSetup = task.taskConfig
       ? JSON.parse(task.taskConfig)
       : {
@@ -1380,6 +1836,9 @@ export class TasksService
     setup.branchPrepared = true;
     setup.environment = 'automatic';
     setup.worktreeId = undefined;
+    if (task.linkStatus !== 'linked') setup.confirmExternal = false;
+    setup.confirmOverLimit = false;
+    setup.useSavedRef = false;
     setup.checkoutMode =
       task.checkoutMode === 'snapshot' ? 'snapshot' : 'branch';
     setup.branchName = task.taskBranch
@@ -1391,11 +1850,20 @@ export class TasksService
       setup.checkoutMode === 'snapshot'
         ? task.finalCommit || task.startingCommit || undefined
         : undefined;
+    setup.preparationStage = undefined;
+    return setup;
+  }
+
+  async reopen(id: number) {
+    const task = await this.record(id);
+    const repo = await this.repo(task.repoId);
+    await this.projects.assertProjectIsActive(repo.projectId);
+    if (!task.archivedAt) return this.get(id);
     await this.update(id, {
       archivedAt: null,
       taskState: 'preparing',
       taskError: null,
-      taskConfig: JSON.stringify(setup),
+      taskConfig: JSON.stringify(this.resumeSetup(task)),
     });
     this.schedule(id);
     return this.get(id);
@@ -1412,7 +1880,10 @@ export class TasksService
       .where(
         and(
           eq(schema.sessions.workspaceId, id),
-          eq(schema.sessions.archivedByTask, true),
+          or(
+            eq(schema.sessions.archivedByTask, true),
+            ne(schema.sessions.status, 'archived'),
+          ),
         ),
       );
     for (const session of restored)

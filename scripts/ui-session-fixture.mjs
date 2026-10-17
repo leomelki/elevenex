@@ -14,8 +14,20 @@ export async function installSessionFixture(page, fixture) {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     if (Object.hasOwn(fixture.responses, pathname)) {
+      const { status = 200, delayMs = 0 } = fixture.responseOptions?.[pathname] ?? {};
+      if (!Number.isInteger(status) || status < 100 || status > 599 ||
+          !Number.isInteger(delayMs) || delayMs < 0 || delayMs > 30_000)
+        throw new Error('Fixture response needs a valid HTTP status and a delay of 0–30000 ms.');
+      if (delayMs) {
+        await new Promise(resolve => {
+          const done = () => { clearTimeout(timer); page.off('close', done); resolve(); };
+          const timer = setTimeout(done, delayMs);
+          page.once('close', done);
+        });
+        if (page.isClosed()) return;
+      }
       await route.fulfill({
-        status: 200,
+        status,
         contentType: "application/json",
         body: JSON.stringify(fixture.responses[pathname]),
       });

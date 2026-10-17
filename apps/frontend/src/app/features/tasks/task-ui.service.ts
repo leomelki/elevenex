@@ -5,6 +5,7 @@ import { ZardDialogService } from '@/shared/components/dialog/dialog.service';
 import { VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.service';
 import { TaskCreateComponent, TaskCreateData } from './task-create.component';
 import { TaskFinishComponent } from './task-finish.component';
+import { TaskReleaseComponent } from './task-release.component';
 import { TaskCompletionService } from './task-completion.service';
 import { TasksApiService } from './tasks-api.service';
 import { taskError } from './task.model';
@@ -16,6 +17,7 @@ export class TaskUiService {
   private readonly editors = inject(VSCodeWebStateService);
   private readonly completion = inject(TaskCompletionService);
   readonly finishing = signal(new Set<number>());
+  readonly releasing = signal(new Set<number>());
   create(data: TaskCreateData) {
     return this.dialog.create({
       zContent: TaskCreateComponent,
@@ -29,13 +31,15 @@ export class TaskUiService {
     });
   }
   async finish(id: number) {
-    if (this.finishing().has(id)) return;
+    if (this.finishing().has(id) || this.releasing().has(id)) return;
     this.finishing.update((ids) => new Set(ids).add(id));
     try {
       const task = await firstValueFrom(this.api.get(id));
       const [counts, dirtyEditors] = await Promise.all([
         firstValueFrom(this.api.preview(id)),
-        this.editors.checkTaskEditors(task.path),
+        task.linkStatus === 'linked'
+          ? this.editors.checkTaskEditors(task.path)
+          : Promise.resolve(0),
       ]);
       if (counts.agents || counts.terminals || counts.actions || dirtyEditors) {
         const ref = this.dialog.create({
@@ -49,13 +53,37 @@ export class TaskUiService {
         const confirmed = await firstValueFrom(ref.afterClosed());
         if (confirmed !== true) return;
         // Keep the operation owned by the service after the dialog is dismissed.
-        await this.editors.checkTaskEditors(task.path, true);
+        if (task.linkStatus === 'linked') await this.editors.checkTaskEditors(task.path, true);
         await this.completion.finish(task, true);
       } else await this.completion.finish(task, false);
     } catch (error) {
       toast.error('Could not finish task', { description: taskError(error) });
     } finally {
       this.finishing.update((ids) => {
+        const next = new Set(ids);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+  async releaseWorktree(id: number, taskName?: string) {
+    if (this.releasing().has(id) || this.finishing().has(id)) return;
+    this.releasing.update((ids) => new Set(ids).add(id));
+    try {
+      const ref = this.dialog.create({
+        zContent: TaskReleaseComponent,
+        zData: { taskId: id, taskName },
+        zHideFooter: true,
+        zAriaLabel: 'Release worktree',
+        zWidth: 'min(460px, calc(100vw - 2rem))',
+        zMaskClosable: false,
+        zOnCancel: (instance) => (instance.busy() ? false : undefined),
+      });
+      await firstValueFrom(ref.afterClosed());
+    } catch (error) {
+      toast.error('Could not open release dialog', { description: taskError(error) });
+    } finally {
+      this.releasing.update((ids) => {
         const next = new Set(ids);
         next.delete(id);
         return next;

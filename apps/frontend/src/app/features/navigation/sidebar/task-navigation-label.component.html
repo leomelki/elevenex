@@ -10,6 +10,10 @@
     <span class="truncate">Preparing…</span>
   } @else if (item.taskState === 'finishing') {
     <span class="truncate">Finishing…</span>
+  } @else if (item.taskState === 'releasing') {
+    <span class="truncate">Releasing…</span>
+  } @else if (item.taskState === 'released') {
+    <span class="truncate">Worktree released</span>
   } @else if (item.taskState === 'failed' || item.linkStatus === 'unlinked') {
     <span class="truncate text-warning">{{ item.taskState === 'failed' ? 'Needs attention' : 'Worktree needed' }}</span>
   } @else {

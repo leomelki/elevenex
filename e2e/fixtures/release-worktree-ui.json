@@ -1,0 +1,277 @@
+{
+  "sessionId": 900004,
+  "events": [],
+  "responses": {
+    "/api/tasks/900002": {
+      "id": 900002,
+      "repoId": 900001,
+      "name": "Improve repository navigation",
+      "path": "/recorded/worktrees/task-900002",
+      "taskState": "released",
+      "taskBranch": "feat/task-navigation",
+      "sourceRef": "refs/heads/feat/task-navigation",
+      "startingCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "finalCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "archivedAt": null,
+      "linkStatus": "unlinked",
+      "checkoutMode": "branch",
+      "taskConfig": "{}",
+      "taskDraft": "",
+      "error": null,
+      "sessions": [
+        {
+          "id": 900004,
+          "name": "Repository navigation",
+          "status": "stopped"
+        }
+      ],
+      "isDefault": false,
+      "currentBranch": "feat/task-navigation",
+      "isMissing": false,
+      "isDirty": false,
+      "hasConflicts": false,
+      "isDetached": false,
+      "isLocked": false,
+      "archivedSessions": [],
+      "temporarySessions": [],
+      "sessionFolders": [],
+      "archivedSessionFolders": []
+    },
+    "/api/tasks/900003": {
+      "id": 900003,
+      "repoId": 900001,
+      "name": "Add release worktree",
+      "path": "/recorded/worktrees/task-900003",
+      "taskState": "ready",
+      "taskBranch": "feat/task-navigation",
+      "sourceRef": "refs/heads/feat/task-navigation",
+      "startingCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "finalCommit": null,
+      "archivedAt": null,
+      "linkStatus": "linked",
+      "checkoutMode": "branch",
+      "taskConfig": "{}",
+      "taskDraft": "",
+      "error": null,
+      "sessions": [],
+      "isDefault": false,
+      "currentBranch": "feat/task-navigation",
+      "isMissing": false,
+      "isDirty": false,
+      "hasConflicts": false,
+      "isDetached": false,
+      "isLocked": false,
+      "archivedSessions": [],
+      "temporarySessions": [],
+      "sessionFolders": [],
+      "archivedSessionFolders": []
+    },
+    "/api/tasks/900003/finish-preview": {
+      "agents": 1,
+      "terminals": 1,
+      "actions": 0
+    },
+    "/api/navigation/tree/light": [
+      {
+        "id": 900001,
+        "name": "Elevenex preview",
+        "repos": [
+          {
+            "id": 900001,
+            "name": "elevenex",
+            "path": "/recorded/repo",
+            "branches": [],
+            "workspaces": [
+              {
+                "id": 900002,
+                "repoId": 900001,
+                "name": "Improve repository navigation",
+                "path": "/recorded/worktrees/task-900002",
+                "taskState": "released",
+                "taskBranch": "feat/task-navigation",
+                "sourceRef": "refs/heads/feat/task-navigation",
+                "startingCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "finalCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "archivedAt": null,
+                "linkStatus": "unlinked",
+                "checkoutMode": "branch",
+                "taskConfig": "{}",
+                "taskDraft": "",
+                "error": null,
+                "sessions": [
+                  {
+                    "id": 900004,
+                    "name": "Repository navigation",
+                    "status": "stopped"
+                  }
+                ],
+                "isDefault": false,
+                "currentBranch": "feat/task-navigation",
+                "isMissing": false,
+                "isDirty": false,
+                "hasConflicts": false,
+                "isDetached": false,
+                "isLocked": false,
+                "archivedSessions": [],
+                "temporarySessions": [],
+                "sessionFolders": [],
+                "archivedSessionFolders": []
+              },
+              {
+                "id": 900003,
+                "repoId": 900001,
+                "name": "Add release worktree",
+                "path": "/recorded/worktrees/task-900003",
+                "taskState": "ready",
+                "taskBranch": "feat/task-navigation",
+                "sourceRef": "refs/heads/feat/task-navigation",
+                "startingCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "finalCommit": null,
+                "archivedAt": null,
+                "linkStatus": "linked",
+                "checkoutMode": "branch",
+                "taskConfig": "{}",
+                "taskDraft": "",
+                "error": null,
+                "sessions": [],
+                "isDefault": false,
+                "currentBranch": "feat/task-navigation",
+                "isMissing": false,
+                "isDirty": false,
+                "hasConflicts": false,
+                "isDetached": false,
+                "isLocked": false,
+                "archivedSessions": [],
+                "temporarySessions": [],
+                "sessionFolders": [],
+                "archivedSessionFolders": []
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "/api/navigation/tree": [
+      {
+        "id": 900001,
+        "name": "Elevenex preview",
+        "repos": [
+          {
+            "id": 900001,
+            "name": "elevenex",
+            "path": "/recorded/repo",
+            "branches": [],
+            "workspaces": [
+              {
+                "id": 900002,
+                "repoId": 900001,
+                "name": "Improve repository navigation",
+                "path": "/recorded/worktrees/task-900002",
+                "taskState": "released",
+                "taskBranch": "feat/task-navigation",
+                "sourceRef": "refs/heads/feat/task-navigation",
+                "startingCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "finalCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "archivedAt": null,
+                "linkStatus": "unlinked",
+                "checkoutMode": "branch",
+                "taskConfig": "{}",
+                "taskDraft": "",
+                "error": null,
+                "sessions": [
+                  {
+                    "id": 900004,
+                    "name": "Repository navigation",
+                    "status": "stopped"
+                  }
+                ],
+                "isDefault": false,
+                "currentBranch": "feat/task-navigation",
+                "isMissing": false,
+                "isDirty": false,
+                "hasConflicts": false,
+                "isDetached": false,
+                "isLocked": false,
+                "archivedSessions": [],
+                "temporarySessions": [],
+                "sessionFolders": [],
+                "archivedSessionFolders": []
+              },
+              {
+                "id": 900003,
+                "repoId": 900001,
+                "name": "Add release worktree",
+                "path": "/recorded/worktrees/task-900003",
+                "taskState": "ready",
+                "taskBranch": "feat/task-navigation",
+                "sourceRef": "refs/heads/feat/task-navigation",
+                "startingCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "finalCommit": null,
+                "archivedAt": null,
+                "linkStatus": "linked",
+                "checkoutMode": "branch",
+                "taskConfig": "{}",
+                "taskDraft": "",
+                "error": null,
+                "sessions": [],
+                "isDefault": false,
+                "currentBranch": "feat/task-navigation",
+                "isMissing": false,
+                "isDirty": false,
+                "hasConflicts": false,
+                "isDetached": false,
+                "isLocked": false,
+                "archivedSessions": [],
+                "temporarySessions": [],
+                "sessionFolders": [],
+                "archivedSessionFolders": []
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "/api/tasks/900003/release-preview": {
+      "task": {
+        "id": 900003,
+        "repoId": 900001,
+        "name": "Add release worktree",
+        "path": "/recorded/worktrees/task-900003",
+        "taskState": "ready",
+        "taskBranch": "feat/task-navigation",
+        "sourceRef": "refs/heads/feat/task-navigation",
+        "startingCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "finalCommit": null,
+        "archivedAt": null,
+        "linkStatus": "linked",
+        "checkoutMode": "branch",
+        "taskConfig": "{}",
+        "taskDraft": "",
+        "error": null,
+        "sessions": [],
+        "isDefault": false,
+        "currentBranch": "feat/task-navigation",
+        "isMissing": false,
+        "isDirty": false,
+        "hasConflicts": false,
+        "isDetached": false,
+        "isLocked": false,
+        "archivedSessions": [],
+        "temporarySessions": [],
+        "sessionFolders": [],
+        "archivedSessionFolders": []
+      },
+      "alreadyReleased": false,
+      "cleanupRequired": false,
+      "checkoutToken": "recorded-checkout",
+      "agents": 1,
+      "terminals": 1,
+      "actions": 0
+    }
+  },
+  "responseOptions": {
+    "/api/tasks/900003/release-preview": {
+      "delayMs": 2000
+    }
+  }
+}

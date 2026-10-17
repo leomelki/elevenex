@@ -119,6 +119,7 @@ describe('SessionContainer modal browser gating', () => {
   };
 
   const navigationServiceMock = {
+    tree: signal([]),
     patchSessionCompletion: vi.fn(),
     refreshTree: vi.fn(),
   };
@@ -336,6 +337,15 @@ describe('SessionContainer modal browser gating', () => {
         { provide: ModalOverlayStateService, useValue: modalOverlayStateMock },
       ],
     }).compileComponents();
+  });
+
+  it('hides checkout panels for a released task while preserving the conversation tab', () => {
+    tabsSignal.update(tabs => tabs.map(tab => ({ ...tab, workspaceId: 7, workspaceTaskState: 'released' })));
+    const component = TestBed.createComponent(SessionContainer).componentInstance;
+    expect(component.worktreePath()).toBeNull();
+    expect(component.activeSessionArchived()).toBe(true);
+    expect(component.taskWorktreeUnavailable(tabsSignal()[0])).toBe(true);
+    expect(tabsSignal()[0].status).toBe('active');
   });
 
   it.each([true, false])('only archives a running tab session after confirmation (confirmed=%s)', (confirmed) => {

@@ -42,13 +42,42 @@
             <p class="text-sm text-muted-foreground">No conversations yet.</p>
           }
         </div>
+      } @else if (task.taskState === 'released') {
+        <p class="text-sm text-muted-foreground" data-worktree-released>
+          Worktree released. Your task, conversations, and branch are preserved. Prepare a worktree
+          when you’re ready to continue.
+        </p>
+        <div class="flex flex-wrap gap-2">
+          <button z-button [zDisabled]="busy()" (click)="retry()">
+            {{ busy() ? 'Preparing…' : 'Prepare worktree' }}
+          </button>
+          <button z-button zType="ghost" [zDisabled]="busy()" (click)="taskUi.finish(task.id)">
+            Finish task
+          </button>
+        </div>
+        <div class="space-y-2 border-t border-border pt-4">
+          <h2 class="text-sm font-medium">Conversations</h2>
+          @for (session of task.sessions; track session.id) {
+            <a
+              [routerLink]="['/sessions', session.id]"
+              class="flex items-center justify-between rounded-lg border border-border px-3 py-3 text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span>{{ session.name || 'Session ' + session.id }}</span>
+              <span class="text-xs text-muted-foreground">Read history →</span>
+            </a>
+          } @empty {
+            <p class="text-sm text-muted-foreground">No conversations yet.</p>
+          }
+        </div>
       } @else if (task.taskState === 'failed') {
         <div role="alert" class="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
           <h2 class="font-medium">
             {{
               task.error?.code === 'finish_failed'
                 ? 'Finish needs your attention'
-                : 'Setup needs your attention'
+                : task.error?.code === 'release_failed'
+                  ? 'Release needs your attention'
+                  : 'Setup needs your attention'
             }}
           </h2>
           <p class="mt-1 text-sm text-muted-foreground">
@@ -129,7 +158,15 @@
               Restore branch from saved commit
             </button>
           }
-          @if (task.error?.code !== 'finish_failed') {
+          @if (task.error?.code === 'release_failed') {
+            <button
+              z-button
+              [zDisabled]="taskUi.releasing().has(task.id)"
+              (click)="taskUi.releaseWorktree(task.id, task.name)"
+            >
+              Retry release
+            </button>
+          } @else if (task.error?.code !== 'finish_failed') {
             <button z-button zType="outline" [zDisabled]="busy()" (click)="retry()">
               {{ task.error?.code === 'branch_changed' ? 'Restore task checkout' : 'Try again' }}
             </button>
@@ -138,7 +175,11 @@
             Finish task
           </button>
         </div>
-        @if (task.error?.code !== 'finish_failed' && task.error?.code !== 'branch_changed') {
+        @if (
+          task.error?.code !== 'finish_failed' &&
+          task.error?.code !== 'release_failed' &&
+          task.error?.code !== 'branch_changed'
+        ) {
           <details class="rounded-lg border border-border p-3">
             <summary class="cursor-pointer text-sm font-medium">Change setup</summary>
             <div class="mt-3 space-y-3">
@@ -192,11 +233,13 @@
           >{{
             task.taskState === 'finishing'
               ? 'Finishing your task…'
-              : task.preparationStage === 'refreshing_ref'
-                ? 'Refreshing the selected branch…'
-                : task.preparationStage === 'restoring_sessions'
-                  ? 'Restoring your conversations…'
-                  : 'Preparing your checkout…'
+              : task.taskState === 'releasing'
+                ? 'Releasing your worktree…'
+                : task.preparationStage === 'refreshing_ref'
+                  ? 'Refreshing the selected branch…'
+                  : task.preparationStage === 'restoring_sessions'
+                    ? 'Restoring your conversations…'
+                    : 'Preparing your checkout…'
           }}
         </div>
         <p class="text-sm text-muted-foreground">You can leave this screen. Setup will continue.</p>
@@ -211,7 +254,7 @@
           </button>
         }
       }
-      @if (!task.archivedAt && task.taskState !== 'finishing') {
+      @if (!task.archivedAt && task.taskState !== 'finishing' && task.taskState !== 'releasing') {
         <div class="space-y-2 border-t border-border pt-4">
           <label for="task-draft" class="text-sm font-medium">Draft your first message</label>
           <textarea

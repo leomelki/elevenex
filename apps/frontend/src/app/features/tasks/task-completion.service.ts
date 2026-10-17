@@ -23,7 +23,7 @@ export class TaskCompletionService {
     const wasActive = ids.has(this.tabs.activeSessionId() ?? -1);
     for (const tab of [...this.tabs.tabs()])
       if (ids.has(tab.sessionId) || tab.workspaceId === task.id) this.tabs.closeTab(tab.sessionId);
-    this.editors.destroyForPath(task.path);
+    if (task.linkStatus === 'linked') this.editors.destroyForPath(task.path);
     this.navigation.refreshTree();
     if (wasActive || this.router.url.startsWith(`/tasks/${task.id}`))
       await this.router.navigate(['/tasks', task.id], {
@@ -43,5 +43,21 @@ export class TaskCompletionService {
     const task = await firstValueFrom(this.api.reopen(id));
     this.operations.track(task);
     await this.router.navigate(['/tasks', id]);
+  }
+  async releaseWorktree(task: Task, confirmStop: boolean, checkoutToken: string) {
+    const released = await firstValueFrom(this.api.releaseWorktree(task.id, confirmStop, checkoutToken));
+    const ids = new Set(released.sessions.map((session) => session.id));
+    const wasActive = ids.has(this.tabs.activeSessionId() ?? -1);
+    for (const tab of [...this.tabs.tabs()])
+      if (ids.has(tab.sessionId) || tab.workspaceId === task.id) this.tabs.closeTab(tab.sessionId);
+    this.editors.destroyForPath(task.path);
+    this.navigation.refreshTree();
+    if (wasActive || this.router.url.startsWith(`/tasks/${task.id}`))
+      await this.router.navigate(['/tasks', task.id], {
+        queryParams: { released: true },
+        replaceUrl: true,
+      });
+    toast.success('Worktree released', { description: 'Task and conversations preserved.' });
+    return released;
   }
 }

@@ -1,6 +1,6 @@
 import { inject, Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Task, TaskSetup } from './task.model';
+import { Task, TaskReleasePreview, TaskSetup } from './task.model';
 import { Session } from '@/shared/models/session.model';
 
 @Injectable({ providedIn: 'root' })
@@ -48,6 +48,12 @@ export class TasksApiService {
   }
   finish(id: number, confirmStop = false) {
     return this.http.post<Task>(`/api/tasks/${id}/finish`, { confirmStop });
+  }
+  releasePreview(id: number) {
+    return this.http.get<TaskReleasePreview>(`/api/tasks/${id}/release-preview`);
+  }
+  releaseWorktree(id: number, confirmStop = false, checkoutToken?: string) {
+    return this.http.post<Task>(`/api/tasks/${id}/release-worktree`, { confirmStop, checkoutToken });
   }
   reopen(id: number) {
     return this.http.post<Task>(`/api/tasks/${id}/reopen`, {});

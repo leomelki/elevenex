@@ -1,7 +1,7 @@
 export interface Workspace {
   sortOrder?: number | null;
   archivedAt?: string | null;
-  taskState?: 'preparing' | 'ready' | 'failed' | 'finishing';
+  taskState?: 'preparing' | 'ready' | 'failed' | 'finishing' | 'releasing' | 'released';
   taskBranch?: string | null;
   sourceRef?: string | null;
   checkoutMode?: 'branch' | 'snapshot';

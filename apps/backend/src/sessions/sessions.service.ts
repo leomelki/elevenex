@@ -392,6 +392,7 @@ export class SessionsService extends EventEmitter {
         repoColor: schema.repos.color,
         workspaceName: schema.workspaces.name,
         workspaceArchivedAt: schema.workspaces.archivedAt,
+        workspaceTaskState: schema.workspaces.taskState,
       })
       .from(schema.sessions)
       .innerJoin(schema.repos, eq(schema.sessions.repoId, schema.repos.id))
@@ -411,6 +412,7 @@ export class SessionsService extends EventEmitter {
       repoColor,
       workspaceName,
       workspaceArchivedAt,
+      workspaceTaskState,
     } = rows[0];
     return this.withInferredActiveAgentProvider({
       ...session,
@@ -418,6 +420,7 @@ export class SessionsService extends EventEmitter {
       repoColor,
       workspaceName,
       workspaceArchivedAt,
+      workspaceTaskState,
     });
   }
 
@@ -1019,6 +1022,13 @@ export class SessionsService extends EventEmitter {
 
     await this.cleanupArchivedSessionProcesses(id, requireCleanup);
     return archived;
+  }
+
+  /** Retire processes while preserving the conversation in the active task. */
+  async stopForWorktreeRelease(id: number) {
+    await this.cleanupArchivedSessionProcesses(id, true);
+    const session = await this.findOne(id);
+    if (session.status !== 'archived') await this.updateStatus(id, 'stopped');
   }
 
   async archiveAndStopByRepoAndWorktreePath(

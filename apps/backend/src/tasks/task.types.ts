@@ -1,6 +1,12 @@
 export type TaskMode = 'new' | 'existing';
 export type TaskCheckoutMode = 'branch' | 'snapshot';
-export type TaskState = 'preparing' | 'ready' | 'failed' | 'finishing';
+export type TaskState =
+  | 'preparing'
+  | 'ready'
+  | 'failed'
+  | 'finishing'
+  | 'releasing'
+  | 'released';
 
 export interface TaskSetup {
   requestId: string;

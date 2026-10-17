@@ -19,7 +19,7 @@ export interface Task {
   repoId: number;
   name: string;
   path: string;
-  taskState: 'preparing' | 'ready' | 'failed' | 'finishing';
+  taskState: 'preparing' | 'ready' | 'failed' | 'finishing' | 'releasing' | 'released';
   taskBranch: string | null;
   sourceRef: string | null;
   startingCommit: string | null;
@@ -39,6 +39,16 @@ export interface Task {
     canSnapshot?: boolean;
   } | null;
   sessions: Session[];
+}
+
+export interface TaskReleasePreview {
+  task: Task;
+  alreadyReleased: boolean;
+  cleanupRequired: boolean;
+  checkoutToken: string;
+  agents: number;
+  terminals: number;
+  actions: number;
 }
 
 export function taskSlug(name: string): string {

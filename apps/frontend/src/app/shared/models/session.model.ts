@@ -11,6 +11,7 @@ export interface Session {
   isTemporary?: boolean;
   workspaceName?: string | null;
   workspaceArchivedAt?: string | null;
+  workspaceTaskState?: string | null;
   status: 'created' | 'active' | 'archived' | 'stopped';
   archivedByFolder?: boolean;
   activeAgentProvider: string;

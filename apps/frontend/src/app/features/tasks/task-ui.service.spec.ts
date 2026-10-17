@@ -7,15 +7,16 @@ import { ZardDialogRef } from '@/shared/components/dialog/dialog-ref';
 import { VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.service';
 import { TaskCompletionService } from './task-completion.service';
 import { TaskFinishComponent } from './task-finish.component';
+import { TaskReleaseComponent } from './task-release.component';
 import { Task } from './task.model';
 import { TasksApiService } from './tasks-api.service';
 import { TaskUiService } from './task-ui.service';
 
 describe('Task finish confirmation', () => {
-  const task = { id: 7, name: 'Example', path: '/repo/task' } as Task;
+  const task = { id: 7, name: 'Example', path: '/repo/task', linkStatus: 'linked' } as Task;
   const api = { get: vi.fn(), preview: vi.fn() };
   const editors = { checkTaskEditors: vi.fn() };
-  const completion = { finish: vi.fn() };
+  const completion = { finish: vi.fn(), releaseWorktree: vi.fn() };
   const dialog = { create: vi.fn() };
   let closed: Subject<boolean | undefined>;
   let service: TaskUiService;
@@ -27,6 +28,7 @@ describe('Task finish confirmation', () => {
     api.preview.mockReturnValue(of({ agents: 0, terminals: 1, actions: 0 }));
     editors.checkTaskEditors.mockResolvedValue(0);
     completion.finish.mockResolvedValue(task);
+    completion.releaseWorktree.mockResolvedValue(task);
     dialog.create.mockReturnValue({ afterClosed: () => closed });
     TestBed.configureTestingModule({
       imports: [TaskFinishComponent],
@@ -102,6 +104,44 @@ describe('Task finish confirmation', () => {
     expect(completion.finish).not.toHaveBeenCalled();
     expect(service.finishing().has(task.id)).toBe(false);
   });
+
+  it('opens release immediately, owns it until close, and prevents duplicate task operations', async () => {
+    const pending = service.releaseWorktree(task.id);
+    expect(dialog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        zContent: TaskReleaseComponent,
+        zData: { taskId: task.id, taskName: undefined },
+        zAriaLabel: 'Release worktree',
+      }),
+    );
+    expect(api.get).not.toHaveBeenCalled();
+    await service.releaseWorktree(task.id);
+    await service.finish(task.id);
+    expect(dialog.create).toHaveBeenCalledOnce();
+    const config = dialog.create.mock.calls[0][0];
+    expect(config.zOnCancel({ busy: () => true })).toBe(false);
+    expect(config.zOnCancel({ busy: () => false })).toBeUndefined();
+    closed.next(undefined);
+    await pending;
+    expect(service.releasing().size).toBe(0);
+    expect(completion.finish).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 1])(
+    'does not inspect editors in a released checkout when finishing its former task (%s agents)',
+    async (agents) => {
+      api.get.mockReturnValue(of({ ...task, taskState: 'released', linkStatus: 'unlinked' }));
+      api.preview.mockReturnValue(of({ agents, terminals: 0, actions: 0 }));
+      const pending = service.finish(task.id);
+      if (agents) {
+        await vi.waitFor(() => expect(dialog.create).toHaveBeenCalledOnce());
+        closed.next(true);
+      }
+      await pending;
+      expect(editors.checkTaskEditors).not.toHaveBeenCalled();
+      expect(completion.finish).toHaveBeenCalled();
+    },
+  );
 
   it.each(['save', 'finish'])('reports a background %s failure and allows retry', async (step) => {
     const errorToast = vi.spyOn(toast, 'error').mockReturnValue('error');

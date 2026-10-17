@@ -7,6 +7,14 @@ import { windowScopedKey } from '@/shared/services/scoped-storage';
 describe('TabService', () => {
   let service: TabService;
 
+  it('updates an open conversation after its task releases and reallocates a checkout', () => {
+    service.openTab({ ...mockSession(1), workspaceId: 7, workspaceTaskState: 'ready' });
+    service.updateTaskAssignment({ id: 7, taskState: 'released', path: '/old', name: 'Kept task' });
+    expect(service.activeTab()).toMatchObject({ workspaceTaskState: 'released', workspaceName: 'Kept task' });
+    service.updateTaskAssignment({ id: 7, taskState: 'ready', path: '/new', name: 'Kept task' });
+    expect(service.activeTab()).toMatchObject({ workspaceTaskState: 'ready', worktreePath: '/new' });
+  });
+
   const mockSession = (id: number, name?: string, status: Session['status'] = 'active'): Session => ({
     id,
     repoId: 1,

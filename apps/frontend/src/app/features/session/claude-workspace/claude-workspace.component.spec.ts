@@ -555,6 +555,20 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(actions.turnReviews().unreadIds.size).toBe(0);
   });
 
+  it('shows a released-task history banner with a route back to the task', () => {
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('readOnlyTranscript', true);
+    fixture.componentRef.setInput('worktreeUnavailable', true);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Worktree unavailable. You can read this conversation.');
+    const openTask = [...fixture.nativeElement.querySelectorAll('button')].find((button: any) => button.textContent.includes('Open task')) as HTMLButtonElement;
+    const requested = vi.fn();
+    fixture.componentInstance.unarchive.subscribe(requested);
+    openTask.click();
+    expect(requested).toHaveBeenCalledOnce();
+    expect(fixture.componentInstance.runtime.isTranscriptReadOnly()).toBe(true);
+  });
+
   it('keeps reconnect monitoring attached after consecutive reconnects', () => {
     vi.useFakeTimers();
     try {

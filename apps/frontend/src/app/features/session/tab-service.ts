@@ -47,6 +47,7 @@ export interface Tab {
   workspaceName?: string | null;
   workspaceId?: number | null;
   workspaceArchivedAt?: string | null;
+  workspaceTaskState?: string | null;
   branchName: string;
   worktreePath: string;
   status: Session['status'];
@@ -106,6 +107,7 @@ export class TabService {
                 ...t,
                 workspaceId: session.workspaceId,
                 workspaceArchivedAt: session.workspaceArchivedAt,
+                workspaceTaskState: session.workspaceTaskState,
                 workspaceName: session.workspaceName,
                 worktreePath: session.worktreePath,
                 branchName: session.branchName,
@@ -130,6 +132,7 @@ export class TabService {
       sessionName: session.name ?? `Session ${session.id}`,
       workspaceId: session.workspaceId,
       workspaceArchivedAt: session.workspaceArchivedAt,
+      workspaceTaskState: session.workspaceTaskState,
       workspaceName: session.workspaceName,
       branchName: session.branchName,
       worktreePath: session.worktreePath,
@@ -337,6 +340,19 @@ export class TabService {
       )
     );
     this.persistState();
+  }
+
+  updateTaskAssignment(task: { id: number; taskState?: string; path: string; name: string }) {
+    if (!this._tabs().some(tab => tab.workspaceId === task.id && (
+      tab.workspaceTaskState !== task.taskState || tab.workspaceName !== task.name ||
+      (task.taskState === 'ready' && tab.worktreePath !== task.path)
+    ))) return;
+    this._tabs.update(tabs => tabs.map(tab => tab.workspaceId === task.id ? {
+      ...tab,
+      workspaceTaskState: task.taskState,
+      workspaceName: task.name,
+      ...(task.taskState === 'ready' ? { worktreePath: task.path } : {}),
+    } : tab));
   }
 
   updateTabCompletion(

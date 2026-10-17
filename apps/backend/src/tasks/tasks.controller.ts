@@ -27,6 +27,9 @@ class RenameTaskDto {
 class FinishTaskDto {
   @IsBoolean() @IsOptional() confirmStop?: boolean;
 }
+class ReleaseWorktreeDto extends FinishTaskDto {
+  @IsString() @IsOptional() @MaxLength(64) checkoutToken?: string;
+}
 class TaskDraftDto {
   @IsString() @MaxLength(100000) text!: string;
 }
@@ -118,6 +121,19 @@ export class TasksController {
     @Body() input: FinishTaskDto,
   ) {
     return this.tasks.finish(+id, input.confirmStop);
+  }
+  @Post('tasks/:id/release-worktree') releaseWorktree(
+    @Param('id') id: string,
+    @Body() input: ReleaseWorktreeDto,
+  ) {
+    return this.tasks.releaseWorktree(
+      +id,
+      input.confirmStop,
+      input.checkoutToken,
+    );
+  }
+  @Get('tasks/:id/release-preview') releasePreview(@Param('id') id: string) {
+    return this.tasks.releasePreview(+id);
   }
   @Post('tasks/:id/reopen') @HttpCode(HttpStatus.ACCEPTED) reopen(
     @Param('id') id: string,

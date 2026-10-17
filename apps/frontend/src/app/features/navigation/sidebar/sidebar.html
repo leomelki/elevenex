@@ -203,10 +203,12 @@
                     [attr.aria-label]="workspace.isDefault ? 'Main checkout' : workspace.name"
                     (click)="onWorkspaceClick(repo, workspace)"
                   >
-                    @if (isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace) || workspace.taskState === 'preparing' || workspace.taskState === 'finishing') {
+                    @if (isOpeningWorkspace(repo) || isSwitchingWorkspace(repo, workspace) || workspace.taskState === 'preparing' || workspace.taskState === 'finishing' || workspace.taskState === 'releasing') {
                       <span
                         class="inline-block w-4 h-4 shrink-0 rounded-full border-2 border-muted-foreground/50 border-t-transparent animate-spin"
                       ></span>
+                    } @else if (workspace.taskState === 'released') {
+                      <ng-icon name="lucideUnlink" class="!size-4 shrink-0 text-muted-foreground" />
                     } @else if (workspace.isMissing || isWorkspaceUnlinked(workspace)) {
                       <ng-icon
                         name="lucideAlertCircle"
@@ -267,6 +269,8 @@
                       >
                         <ng-icon name="lucidePlus" class="!w-3.5 !h-3.5" />
                       </button>
+                    }
+                    @if ((!isWorkspaceUnlinked(workspace) || workspace.taskState === 'released') && !isOpeningWorkspace(repo) && !isSwitchingWorkspace(repo, workspace) && editingWorkspaceId() !== workspace.id) {
                       <button
                         type="button"
                         z-dropdown
@@ -354,13 +358,13 @@
                           workspace.isMissing ||
                           workspace.id <= 0 ||
                           workspaceRenameBusyId() !== null ||
-                          isWorkspaceUnlinked(workspace)
+                          (isWorkspaceUnlinked(workspace) && workspace.taskState !== 'released')
                         "
                         [attr.disabled]="
                           workspace.isMissing ||
                           workspace.id <= 0 ||
                           workspaceRenameBusyId() !== null ||
-                          isWorkspaceUnlinked(workspace)
+                          (isWorkspaceUnlinked(workspace) && workspace.taskState !== 'released')
                             ? ''
                             : null
                         "
@@ -378,7 +382,13 @@
                         <button type="button" z-dropdown-menu-item class="w-full text-left" [disabled]="!canMoveTask(repo, workspace, 1)" (click)="moveTask(repo, workspace, 1)"><ng-icon name="lucideChevronDown" class="!size-4" />Move down</button>
                       </z-dropdown-menu-group>
                       <z-dropdown-menu-separator />
-                      <z-dropdown-menu-group aria-label="Task lifecycle"><button type="button" z-dropdown-menu-item class="w-full text-left" [disabled]="workspace.taskState === 'preparing' || workspace.taskState === 'finishing'" (click)="taskUi.finish(workspace.id)"><ng-icon name="lucideCheckSquare" class="!size-4" />Finish task</button></z-dropdown-menu-group>
+                      <z-dropdown-menu-group aria-label="Task lifecycle">
+                        @if (workspace.linkStatus !== 'unlinked') {
+                          <button type="button" z-dropdown-menu-item class="w-full text-left"
+                            [disabled]="workspace.taskState === 'preparing' || workspace.taskState === 'finishing' || workspace.taskState === 'releasing' || taskUi.releasing().has(workspace.id) || taskUi.finishing().has(workspace.id)"
+                            (click)="taskUi.releaseWorktree(workspace.id, workspace.name)"><ng-icon name="lucideUnlink" class="!size-4" />Release worktree</button>
+                        }
+                        <button type="button" z-dropdown-menu-item class="w-full text-left" [disabled]="workspace.taskState === 'preparing' || workspace.taskState === 'finishing' || workspace.taskState === 'releasing'" (click)="taskUi.finish(workspace.id)"><ng-icon name="lucideCheckSquare" class="!size-4" />Finish task</button></z-dropdown-menu-group>
                     }
                   </z-dropdown-menu-content>
                 </div>

@@ -154,6 +154,7 @@ export class ClaudeWorkspaceComponent implements OnInit, OnChanges {
   readonly isVisible = input(true);
   readonly archived = input(false);
   readonly readOnlyTranscript = input(false);
+  readonly worktreeUnavailable = input(false);
   readonly terminalTranscriptMirror = input(false);
   readonly sessionName = input<string | null>(null);
   readonly unarchiveBusy = input(false);

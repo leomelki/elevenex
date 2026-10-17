@@ -62,7 +62,7 @@ class MockTrackNativeModalDirective {
 }
 
 describe('Sidebar', () => {
-  const taskUiMock = { create: vi.fn(), finish: vi.fn(), finishing: signal(new Set<number>()) };
+  const taskUiMock = { create: vi.fn(), finish: vi.fn(), releaseWorktree: vi.fn(), finishing: signal(new Set<number>()), releasing: signal(new Set<number>()) };
   const tasksApiMock = { rename: vi.fn(() => of({})), move: vi.fn(() => of({ taskIds: [] as number[] })) };
 
   const defaultWorkspaceKey = 'workspace-1--1169402078';
@@ -453,6 +453,7 @@ describe('Sidebar', () => {
 
     taskUiMock.create.mockClear();
     taskUiMock.finish.mockClear();
+    taskUiMock.releaseWorktree.mockClear();
     tasksApiMock.rename.mockClear();
     tasksApiMock.move.mockReset().mockReturnValue(of({ taskIds: [] }));
     navigationServiceMock.previewTaskOrder.mockClear();
@@ -1381,6 +1382,7 @@ describe('Sidebar', () => {
     const el = openWorkspaceMenu(fixture);
 
     expect(el.textContent).toContain('Finish task');
+    expect(el.textContent).toContain('Release worktree');
     expect(getWorktreeRemoveTrigger(el, '/tmp/repo-one-main')).toBeNull();
     expect(getWorktreeDeleteTrigger(el, '/tmp/repo-one-main')).toBeNull();
   });

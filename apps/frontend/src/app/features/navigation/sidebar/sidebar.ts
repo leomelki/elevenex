@@ -73,6 +73,7 @@ import {
   lucideArchive,
   lucideArchiveRestore,
   lucideCheckSquare,
+  lucideUnlink,
   lucideChevronDown,
   lucideChevronRight,
   lucideChevronUp,
@@ -169,6 +170,7 @@ import { TaskNavigationLabelComponent } from './task-navigation-label.component'
       lucideServer,
       lucideSquareArrowOutUpRight,
       lucideCheckSquare,
+      lucideUnlink,
       lucideSettings,
       lucideMoon,
       lucideSun,
@@ -1174,7 +1176,7 @@ export class Sidebar implements OnInit, OnDestroy {
       workspace.isDefault ||
       workspace.id <= 0 ||
       workspace.isMissing ||
-      this.isWorkspaceUnlinked(workspace)
+      (this.isWorkspaceUnlinked(workspace) && workspace.taskState !== 'released')
     ) {
       return;
     }

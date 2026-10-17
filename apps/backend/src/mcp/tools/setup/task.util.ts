@@ -53,6 +53,10 @@ export function taskHandle(
 export function taskNextStep(task: Task): string {
   if (task.archivedAt)
     return 'Read preserved conversations with read_session. To work again, reopen_task, then get_task until ready.';
+  if (task.taskState === 'released')
+    return 'This task is still open and its worktree has been released. Read preserved conversations with read_session. Use retry_task to prepare a worktree, then get_task until ready before opening or prompting a conversation.';
+  if (task.error?.code === 'release_failed')
+    return 'Worktree release cleanup failed and the checkout remains reserved. Open the task in Elevenex and use Retry release to complete cleanup.';
   if (task.taskState === 'failed' || task.error)
     return 'Inspect error recovery details. Use retry_task with an explicit recovery choice; use finish_task again for finish_failed cleanup.';
   if (task.taskState !== 'ready')
