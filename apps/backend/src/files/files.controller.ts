@@ -13,10 +13,12 @@ import {
   Post,
   Put,
   Query,
+  Req,
   Res,
   StreamableFile,
+  UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { FilesService } from './files.service.js';
 import * as path from 'node:path';
 import { GetPathSuggestionsDto } from './dto/get-path-suggestions.dto.js';
@@ -410,6 +412,29 @@ export class FilesController {
       absolutePath,
       body.content,
       decodedWorktree,
+    );
+    return { success: true };
+  }
+
+  /** Binary uploads bypass the JSON parser and its body-size limit. */
+  @Put(':worktreePath/raw')
+  async writeFileRaw(
+    @Param('worktreePath') worktreePath: string,
+    @Query('path') filePath: string,
+    @Req() req: Request,
+    @Headers('x-elevenex-task-id') taskId?: string,
+  ) {
+    if (!req.is('application/octet-stream')) {
+      throw new UnsupportedMediaTypeException('Expected application/octet-stream');
+    }
+    // Express already decodes route and query parameters. Preserve literal %.
+    await this.assertTaskWrite(worktreePath, taskId);
+    await this.filesService.writeFileStream(
+      path.join(worktreePath, filePath ?? ''),
+      req,
+      worktreePath,
+      // A long upload may outlive the task's assignment to this checkout.
+      () => this.assertTaskWrite(worktreePath, taskId),
     );
     return { success: true };
   }

@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { Readable } from 'node:stream';
 import {
   FilesService,
   detectLanguage,
@@ -855,6 +856,71 @@ describe('FilesService', () => {
 
       expect(fs.existsSync(filePath)).toBe(false);
       fs.rmSync(otherDir, { recursive: true, force: true });
+    });
+  });
+
+  describe('writeFileStream', () => {
+    it('preserves binary bytes and creates parent directories', async () => {
+      const file = path.join(tmpDir, 'nested', 'trace.json.gz');
+      const bytes = Buffer.from([0x1f, 0x8b, 0, 0xff, 0x80]);
+      await service.writeFileStream(file, Readable.from([bytes]), tmpDir);
+      expect(await fs.promises.readFile(file)).toEqual(bytes);
+      expect(await fs.promises.readdir(path.dirname(file))).toEqual(['trace.json.gz']);
+    });
+
+    it('writes an empty file and preserves existing executable permissions', async () => {
+      const file = path.join(tmpDir, 'script.sh');
+      await fs.promises.writeFile(file, 'original', { mode: 0o755 });
+      await service.writeFileStream(file, Readable.from([]), tmpDir);
+      expect((await fs.promises.stat(file)).mode & 0o777).toBe(0o755);
+      expect(await fs.promises.readFile(file)).toHaveLength(0);
+    });
+
+    it('cleans up an interrupted upload and preserves the original file', async () => {
+      const file = path.join(tmpDir, 'trace.gz');
+      await fs.promises.writeFile(file, 'original');
+      const content = Readable.from((async function* () {
+        yield Buffer.from('partial');
+        throw new Error('upload disconnected');
+      })());
+      await expect(service.writeFileStream(file, content, tmpDir)).rejects.toThrow('upload disconnected');
+      expect(await fs.promises.readFile(file, 'utf8')).toBe('original');
+      expect(await fs.promises.readdir(tmpDir)).toEqual(['trace.gz']);
+    });
+
+    it('discards uploads when the task becomes inactive before commit', async () => {
+      const file = path.join(tmpDir, 'trace.gz');
+      await fs.promises.writeFile(file, 'original');
+      await expect(service.writeFileStream(file, Readable.from(['replacement']), tmpDir, async () => {
+        throw new Error('inactive task');
+      })).rejects.toThrow('inactive task');
+      expect(await fs.promises.readFile(file, 'utf8')).toBe('original');
+      expect(await fs.promises.readdir(tmpDir)).toEqual(['trace.gz']);
+    });
+
+    it('rejects paths outside the worktree', async () => {
+      await expect(service.writeFileStream(path.join(tmpDir, '../outside.gz'), Readable.from([]), tmpDir)).rejects.toThrow('outside worktree');
+    });
+
+    it('preserves symlinks when overwriting a file inside the worktree', async () => {
+      const target = path.join(tmpDir, 'target.txt');
+      const link = path.join(tmpDir, 'link.txt');
+      await fs.promises.writeFile(target, 'original');
+      await fs.promises.symlink(target, link);
+      await service.writeFileStream(link, Readable.from(['replacement']), tmpDir);
+      expect((await fs.promises.lstat(link)).isSymbolicLink()).toBe(true);
+      expect(await fs.promises.readFile(target, 'utf8')).toBe('replacement');
+    });
+
+    it('rejects symlinks pointing outside the worktree', async () => {
+      const root = path.join(tmpDir, 'checkout');
+      await fs.promises.mkdir(root);
+      const target = path.join(tmpDir, 'outside.txt');
+      await fs.promises.writeFile(target, 'original');
+      const link = path.join(root, 'link.txt');
+      await fs.promises.symlink(target, link);
+      await expect(service.writeFileStream(link, Readable.from(['replacement']), root)).rejects.toThrow('outside worktree');
+      expect(await fs.promises.readFile(target, 'utf8')).toBe('original');
     });
   });
 

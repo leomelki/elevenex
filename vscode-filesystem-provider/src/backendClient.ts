@@ -6,7 +6,6 @@ import {
   BackendTextSearchOptions,
   BackendTextSearchResult,
   BackendTextSearchSummary,
-  BackendWriteRequest,
 } from './types';
 import { toWorkspaceVfsUri } from './workspaceUri';
 
@@ -36,7 +35,6 @@ function getBrowserLocation(): BrowserLocationLike | undefined {
  */
 export class BackendClient {
   private baseUrl: string;
-  private decoder = new TextDecoder();
 
   /**
    * Create BackendClient instance
@@ -48,8 +46,8 @@ export class BackendClient {
     this.baseUrl = baseUrl;
   }
 
-  private mutationHeaders(): Record<string, string> {
-    return { 'Content-Type': 'application/json', ...(this.taskId ? { 'x-elevenex-task-id': String(this.taskId) } : {}) };
+  private mutationHeaders(contentType = 'application/json'): Record<string, string> {
+    return { 'Content-Type': contentType, ...(this.taskId ? { 'x-elevenex-task-id': String(this.taskId) } : {}) };
   }
 
   /**
@@ -72,7 +70,7 @@ export class BackendClient {
     return `${this.baseUrl}/${encodedWorktreePath}/${endpoint}${suffix}`;
   }
 
-  private buildQueryUrl(worktreePath: string, endpoint: 'stat' | 'file', path: string): string {
+  private buildQueryUrl(worktreePath: string, endpoint: 'stat' | 'file' | 'raw', path: string): string {
     const encodedWorktreePath = encodeURIComponent(worktreePath);
     const params = new URLSearchParams();
     if (path) {
@@ -400,15 +398,13 @@ export class BackendClient {
   /**
    * Write file content to backend
    * 
-   * Backend endpoint: POST /api/files/:worktreeId/write
-   * Request body: { path, content: number[] }
+   * Backend endpoint: PUT /api/worktrees/:worktreePath/raw?path=...
+   * Request body: raw bytes, streamed to disk by the backend.
    * 
    * Security:
    * - Extension-side path traversal check (prevents '..')
    * - Backend also validates (Phase 08 FILESYSTEM-07)
    * - Extension-side check prevents unnecessary network call
-   * 
-   * Note: Uint8Array serialized to number array for JSON transport
    * 
    * @param worktreeId - Worktree identifier
    * @param path - File path
@@ -417,17 +413,14 @@ export class BackendClient {
    * @throws FileSystemError if backend returns error
    */
   async writeFile(worktreePath: string, path: string, content: Uint8Array): Promise<void> {
-    const url = this.buildQueryUrl(worktreePath, 'file', path);
+    const url = this.buildQueryUrl(worktreePath, 'raw', path);
     const uri = this.assertSafePath(worktreePath, path);
-
-    const payload: BackendWriteRequest = {
-      content: this.decoder.decode(content)
-    };
 
     const response = await fetch(url, {
       method: 'PUT',
-      headers: this.mutationHeaders(),
-      body: JSON.stringify(payload)
+      headers: this.mutationHeaders('application/octet-stream'),
+      // Copy only this view, including when VS Code supplies a sliced buffer.
+      body: new Uint8Array(content).buffer
     });
 
     if (!response.ok) {

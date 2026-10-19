@@ -222,10 +222,30 @@ suite('BackendClient', () => {
     await client.writeFile(worktreePath, 'newfile.txt', new TextEncoder().encode('new file content'));
 
     const call = getLastCall();
-    assert.strictEqual(String(call.input), `${baseUrl}/${encodeURIComponent(worktreePath)}/file?path=newfile.txt`);
+    assert.strictEqual(String(call.input), `${baseUrl}/${encodeURIComponent(worktreePath)}/raw?path=newfile.txt`);
     assert.strictEqual(call.init?.method, 'PUT');
-    assert.deepStrictEqual(call.init?.headers, { 'Content-Type': 'application/json' });
-    assert.strictEqual(call.init?.body, JSON.stringify({ content: 'new file content' }));
+    assert.deepStrictEqual(call.init?.headers, { 'Content-Type': 'application/octet-stream' });
+    assert.deepStrictEqual(new Uint8Array(call.init?.body as ArrayBuffer), new TextEncoder().encode('new file content'));
+  });
+
+  test('writeFile preserves binary bytes, sliced buffers, encoded paths and task identity', async () => {
+    stubFetch({ ok: true, status: 200 });
+    const content = Uint8Array.from([42, 0x1f, 0x8b, 0, 0xff, 0x80, 42]).subarray(1, 6);
+    await new BackendClient(baseUrl, 108).writeFile(worktreePath, 'traces/été #1%.json.gz', content);
+
+    const call = getLastCall();
+    assert.strictEqual(String(call.input), `${baseUrl}/${encodeURIComponent(worktreePath)}/raw?path=traces%2F%C3%A9t%C3%A9+%231%25.json.gz`);
+    assert.deepStrictEqual(call.init?.headers, {
+      'Content-Type': 'application/octet-stream',
+      'x-elevenex-task-id': '108',
+    });
+    assert.deepStrictEqual(new Uint8Array(call.init?.body as ArrayBuffer), content);
+  });
+
+  test('writeFile sends empty bytes for an empty file', async () => {
+    stubFetch({ ok: true, status: 200 });
+    await new BackendClient(baseUrl).writeFile(worktreePath, 'empty.txt', new Uint8Array());
+    assert.strictEqual((getLastCall().init?.body as ArrayBuffer).byteLength, 0);
   });
 
   test('writeFile rejects path traversal', async () => {

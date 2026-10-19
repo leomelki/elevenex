@@ -1,9 +1,11 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { spawn } from 'node:child_process';
-import { promises as fs, Dirent } from 'node:fs';
+import { promises as fs, createWriteStream, Dirent } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 export interface FileTreeNode {
   key: string; // Relative path from worktree root
@@ -1318,6 +1320,50 @@ export class FilesService {
 
     // Write the file
     await fs.writeFile(filePath, content, 'utf-8');
+  }
+
+  /** Stream without buffering the upload or exposing partially written files. */
+  async writeFileStream(
+    filePath: string,
+    content: Readable,
+    worktreePath: string,
+    beforeCommit?: () => Promise<void>,
+  ): Promise<void> {
+    if (!isWithinWorktree(worktreePath, filePath)) {
+      throw new BadRequestException('Access denied: path outside worktree');
+    }
+    if (path.resolve(filePath) === path.resolve(worktreePath)) {
+      throw new BadRequestException('A file path within the worktree is required');
+    }
+
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    const realWorktree = await fs.realpath(worktreePath);
+    const realParent = await fs.realpath(path.dirname(filePath));
+    // Save through existing symlinks instead of replacing the link itself.
+    const destination = await fs.realpath(filePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      return path.join(realParent, path.basename(filePath));
+    });
+    if (!isWithinWorktree(realWorktree, destination)) {
+      throw new BadRequestException('Access denied: path outside worktree');
+    }
+    if (destination === realWorktree) {
+      throw new BadRequestException('A file path within the worktree is required');
+    }
+    const temporary = path.join(path.dirname(destination), `.elevenex-upload-${randomUUID()}.tmp`);
+    try {
+      await pipeline(content, createWriteStream(temporary, { flags: 'wx' }));
+      // Preserve executable bits when uploading over an existing file.
+      const existing = await fs.stat(destination).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+        return undefined;
+      });
+      if (existing) await fs.chmod(temporary, existing.mode);
+      await beforeCommit?.();
+      await fs.rename(temporary, destination);
+    } finally {
+      await fs.rm(temporary, { force: true });
+    }
   }
 
   async createDirectory(dirPath: string, worktreePath: string): Promise<void> {

@@ -27,15 +27,6 @@ export interface BackendDirectoryEntry {
   type: 'file' | 'directory';
 }
 
-/**
- * Write request payload for backend write endpoint
- * 
- * Backend endpoint: PUT /api/worktrees/:worktreePath/files/*path
- */
-export interface BackendWriteRequest {
-  content: string;
-}
-
 export interface BackendFileSearchResult {
   path: string;
   name: string;
