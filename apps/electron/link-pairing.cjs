@@ -13,14 +13,17 @@
 
 const { randomBytes, timingSafeEqual } = require('node:crypto');
 
+const { normalizeSshEndpoint } = require('./link-ssh.cjs');
+
 const CODE_PREFIX = 'EX1-';
 const PAIRING_KEY_BYTES = 32;
 const PAIR_ID_BYTES = 16;
 
 // 'p2p' needs no endpoint: the two ends find each other through public
 // rendezvous brokers keyed by the pairing key itself, so there is no address to
-// carry and nothing for the user to configure.
-const TRANSPORTS = new Set(['relay', 'direct', 'p2p']);
+// carry and nothing for the user to configure. 'ssh' relays through an SSH
+// server both machines can log in to (see link-ssh.cjs).
+const TRANSPORTS = new Set(['relay', 'direct', 'p2p', 'ssh']);
 
 function toBase64Url(buffer) {
   return buffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -64,6 +67,8 @@ function normalizeEndpoint(transport, endpoint) {
       return assertRelayUrl(endpoint);
     case 'direct':
       return assertDirectEndpoint(endpoint);
+    case 'ssh':
+      return normalizeSshEndpoint(endpoint);
     default:
       // 'p2p' addresses nothing, so an endpoint would only be a field to keep
       // consistent with itself.

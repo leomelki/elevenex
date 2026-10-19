@@ -23,6 +23,7 @@ const {
   createDirectServer,
 } = require('./link-transport.cjs');
 const { parseDirectEndpoint } = require('./link-pairing.cjs');
+const { openSshTunnel, parseSshEndpoint, reserveLoopbackPort } = require('./link-ssh.cjs');
 const { DEFAULT_STRATEGIES } = require('./link-rendezvous.cjs');
 
 const RECONNECT_BASE_DELAY_MS = 500;
@@ -141,6 +142,9 @@ class LinkHost extends EventEmitter {
     bindHost = '0.0.0.0',
     createPeer = null,
     openRendezvous = null,
+    // Local SSH settings for an ssh pairing — never part of the code.
+    ssh = {},
+    openTunnel = openSshTunnel,
   }) {
     super();
     this.pairing = pairing;
@@ -148,6 +152,9 @@ class LinkHost extends EventEmitter {
     this.bindHost = bindHost;
     this.createPeer = createPeer;
     this.openRendezvous = openRendezvous;
+    this.ssh = ssh || {};
+    this.openTunnel = openTunnel;
+    this.sshTunnel = null;
     this.controller = null;
     this.directServer = null;
     this.rendezvous = null;
@@ -191,6 +198,8 @@ class LinkHost extends EventEmitter {
 
     if (this.pairing.transport === 'direct') {
       await this.#startDirect();
+    } else if (this.pairing.transport === 'ssh') {
+      await this.#startSsh(signal);
     } else if (this.pairing.transport === 'p2p') {
       this.#startRendezvous(signal);
     } else {
@@ -264,6 +273,56 @@ class LinkHost extends EventEmitter {
       this.directServer = null;
       this.#setStatus('error', error.message);
       throw error;
+    }
+  }
+
+  // Listens on loopback only — the SSH server is the one exposing the port, and
+  // only to its own loopback — then keeps a reverse forward to it up.
+  async #startSsh(signal) {
+    this.directServer = createDirectServer({
+      host: '127.0.0.1',
+      port: 0,
+      onChannel: (channel) => {
+        this.#adoptChannel(channel).catch(() => channel.close());
+      },
+      onError: (error) => this.emit('forward-error', error),
+    });
+    let localPort;
+    try {
+      localPort = await this.directServer.listen();
+    } catch (error) {
+      this.directServer = null;
+      this.#setStatus('error', error.message);
+      throw error;
+    }
+    this.loop = this.#runSshLoop(signal, localPort);
+  }
+
+  async #runSshLoop(signal, localPort) {
+    const target = parseSshEndpoint(this.pairing.endpoint);
+    let attempt = 0;
+    while (!signal.aborted) {
+      const tunnel = this.openTunnel({
+        ...target,
+        identityFile: this.ssh.identityFile || '',
+        mode: 'remote',
+        targetPort: localPort,
+        signal,
+      });
+      this.sshTunnel = tunnel;
+      try {
+        await tunnel.ready;
+        attempt = 0;
+        if (this.sessions.size === 0) this.#setStatus('waiting');
+        await tunnel.whenClosed;
+      } catch {
+        // Reported below from the tunnel's own summary.
+      }
+      if (this.sshTunnel === tunnel) this.sshTunnel = null;
+      if (signal.aborted) break;
+      this.#setStatus('reconnecting', tunnel.error?.message || 'The SSH connection closed.');
+      attempt += 1;
+      await sleep(backoffDelay(attempt), signal);
     }
   }
 
@@ -388,6 +447,10 @@ class LinkHost extends EventEmitter {
     }
     this.sessions.clear();
 
+    if (this.sshTunnel) {
+      await this.sshTunnel.close();
+      this.sshTunnel = null;
+    }
     if (this.directServer) {
       await this.directServer.close();
       this.directServer = null;
@@ -413,6 +476,8 @@ class LinkClient extends EventEmitter {
     localHost = '127.0.0.1',
     createPeer = null,
     openRendezvous = null,
+    ssh = {},
+    openTunnel = openSshTunnel,
   }) {
     super();
     this.pairing = pairing;
@@ -420,6 +485,10 @@ class LinkClient extends EventEmitter {
     this.localHost = localHost;
     this.createPeer = createPeer;
     this.openRendezvous = openRendezvous;
+    this.ssh = ssh || {};
+    this.openTunnel = openTunnel;
+    this.sshTunnel = null;
+    this.sshTunnelPort = null;
     this.rendezvous = null;
     this.rendezvousAttempt = 0;
     this.localPort = null;
@@ -451,9 +520,9 @@ class LinkClient extends EventEmitter {
       localPort: this.localPort,
       backendUrl: this.localPort ? `http://127.0.0.1:${this.localPort}` : null,
       // How traffic is actually flowing right now, as opposed to how the two
-      // ends found each other. Only a relay pairing can be on a relay: the other
-      // two transports carry traffic between the machines from the start.
-      path: this.pairing.transport !== 'relay' || this.directSession?.isOpen()
+      // ends found each other. Relay and SSH pairings go through a server;
+      // the other two carry traffic between the machines from the start.
+      path: !['relay', 'ssh'].includes(this.pairing.transport) || this.directSession?.isOpen()
         ? 'direct'
         : 'relay',
       error: this.lastError,
@@ -545,12 +614,49 @@ class LinkClient extends EventEmitter {
     if (this.pairing.transport === 'p2p') {
       return this.#openRendezvousChannel(signal);
     }
+    if (this.pairing.transport === 'ssh') {
+      return this.#openSshChannel(signal);
+    }
     return awaitRelayPeer({
       endpoint: this.pairing.endpoint,
       pairId: this.pairing.pairId,
       role: 'client',
       signal,
     });
+  }
+
+  // One `ssh -L` serves every attempt until it dies; each attempt is then a
+  // plain dial of its local end, which sshd carries to the sharing side.
+  async #openSshChannel(signal) {
+    if (!this.sshTunnel || this.sshTunnel.closed) {
+      const target = parseSshEndpoint(this.pairing.endpoint);
+      this.sshTunnelPort = await reserveLoopbackPort();
+      this.sshTunnel = this.openTunnel({
+        ...target,
+        user: this.ssh.user || target.user,
+        identityFile: this.ssh.identityFile || '',
+        mode: 'local',
+        listenPort: this.sshTunnelPort,
+        signal,
+      });
+    }
+    await this.sshTunnel.ready;
+    return connectDirect({ host: '127.0.0.1', port: this.sshTunnelPort, signal });
+  }
+
+  // sshd accepts the local end even when nothing listens on the relay port and
+  // then drops it, which surfaces as a failed handshake. Its log says why.
+  #describeSshFailure(error) {
+    const tunnel = this.sshTunnel;
+    if (this.pairing.transport !== 'ssh' || !tunnel) return { message: error.message, rejected: false };
+    // ssh itself gave up (login refused, host unknown, …): a definite answer, so
+    // connect() reports it now while the loop keeps retrying in the background.
+    if (tunnel.closed) return { message: tunnel.error?.message || error.message, rejected: true };
+    if (tunnel.stderr.slice(-5).some((line) => /open failed|connect failed/i.test(line))) {
+      const { host } = parseSshEndpoint(this.pairing.endpoint);
+      return { message: `Nobody is sharing through ${host} with this code right now.`, rejected: true };
+    }
+    return { message: error.message, rejected: false };
   }
 
   // The room has to stay joined for the life of the connection — Trystero owns
@@ -621,8 +727,9 @@ class LinkClient extends EventEmitter {
         if (signal.aborted) {
           break;
         }
-        this.#setStatus('reconnecting', error.message, {
-          rejected: error.code === 'RELAY_REJECTED',
+        const failure = this.#describeSshFailure(error);
+        this.#setStatus('reconnecting', failure.message, {
+          rejected: error.code === 'RELAY_REJECTED' || failure.rejected,
         });
       }
 
@@ -688,6 +795,10 @@ class LinkClient extends EventEmitter {
     if (this.rendezvous) {
       this.rendezvous.close();
       this.rendezvous = null;
+    }
+    if (this.sshTunnel) {
+      await this.sshTunnel.close();
+      this.sshTunnel = null;
     }
     if (this.listener) {
       await this.listener.close();

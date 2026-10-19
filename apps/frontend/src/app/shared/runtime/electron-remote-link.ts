@@ -12,7 +12,7 @@ declare global {
 
 export {};
 
-export type RemoteLinkTransport = 'relay' | 'direct' | 'p2p';
+export type RemoteLinkTransport = 'relay' | 'direct' | 'p2p' | 'ssh';
 
 export type RemoteLinkStatus =
   | 'stopped'
@@ -59,11 +59,30 @@ export interface RemoteLinkDeviceState {
   error: string | null;
 }
 
+/**
+ * Sharing through an SSH server both machines can log in to. The relay port is
+ * a loopback port on that server; left out, one is picked and kept.
+ */
+export interface RemoteLinkSshSharingOptions {
+  host: string;
+  port?: number;
+  user?: string;
+  relayPort?: number;
+  identityFile?: string;
+}
+
+/** This machine's own login for an SSH-relayed device, when it differs from the sharer's. */
+export interface RemoteLinkSshLoginOverride {
+  user?: string;
+  identityFile?: string;
+}
+
 export interface RemoteLinkEnableSharingPayload {
   transport: RemoteLinkTransport;
   relayUrl?: string;
   directPort?: number;
   label?: string;
+  ssh?: RemoteLinkSshSharingOptions;
 }
 
 export interface ElectronRemoteLinkApi {
@@ -79,7 +98,7 @@ export interface ElectronRemoteLinkApi {
   regenerateCode(): Promise<string | null>;
   suggestedHost(): Promise<string>;
   list(): Promise<RemoteLinkDeviceState[]>;
-  add(payload: { code: string; name?: string }): Promise<RemoteLinkDeviceState>;
+  add(payload: { code: string; name?: string; ssh?: RemoteLinkSshLoginOverride }): Promise<RemoteLinkDeviceState>;
   rename(payload: { id: number; name: string }): Promise<RemoteLinkDeviceState | null>;
   remove(id: number): Promise<boolean>;
   connect(id: number): Promise<RemoteLinkDeviceState>;
@@ -87,6 +106,24 @@ export interface ElectronRemoteLinkApi {
   getState(id: number): Promise<RemoteLinkDeviceState | null>;
   onSharingChanged(callback: (state: RemoteLinkSharingState) => void): () => void;
   onStatusChanged(callback: (state: RemoteLinkDeviceState) => void): () => void;
+}
+
+/**
+ * Reads only the transport out of a pasted code, so the form can ask for an SSH
+ * login before the code is saved. The code itself is decoded in the main process.
+ */
+export function pairingCodeTransport(code: string): RemoteLinkTransport | null {
+  const text = code.trim();
+  if (!text.startsWith('EX1-')) {
+    return null;
+  }
+  try {
+    const base64 = text.slice(4).replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='))) as { t?: unknown };
+    return payload.t === 'relay' || payload.t === 'direct' || payload.t === 'p2p' || payload.t === 'ssh' ? payload.t : null;
+  } catch {
+    return null;
+  }
 }
 
 export function getElectronRemoteLinkApi(): ElectronRemoteLinkApi | null {

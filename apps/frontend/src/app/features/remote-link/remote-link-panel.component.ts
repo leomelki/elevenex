@@ -9,13 +9,18 @@ import {
   lucidePlug,
   lucideRefreshCw,
   lucideServer,
+  lucideTerminal,
   lucideTrash2,
   lucideTriangleAlert,
 } from '@ng-icons/lucide';
 
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardInputDirective } from '@/shared/components/input';
-import type { RemoteLinkDeviceState, RemoteLinkTransport } from '@/shared/runtime/electron-remote-link';
+import {
+  pairingCodeTransport,
+  type RemoteLinkDeviceState,
+  type RemoteLinkTransport,
+} from '@/shared/runtime/electron-remote-link';
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
 
 import { RemoteLinkService } from './remote-link.service';
@@ -41,6 +46,7 @@ import { RemoteLinkService } from './remote-link.service';
       lucidePlug,
       lucideRefreshCw,
       lucideServer,
+      lucideTerminal,
       lucideTrash2,
       lucideTriangleAlert,
     }),
@@ -68,10 +74,20 @@ export class RemoteLinkPanelComponent {
   protected readonly transport = signal<RemoteLinkTransport>('p2p');
   protected readonly relayUrl = signal('');
   protected readonly directPort = signal(11123);
+  protected readonly sshHost = signal('');
+  protected readonly sshUser = signal('');
+  protected readonly sshPort = signal(22);
+  // Null picks a free-looking port on the server and keeps it across restarts.
+  protected readonly sshRelayPort = signal<number | null>(null);
+  protected readonly sshIdentityFile = signal('');
   protected readonly pairingCode = signal<string | null>(null);
   protected readonly codeCopied = signal(false);
   protected readonly enteredCode = signal('');
   protected readonly deviceName = signal('');
+  protected readonly deviceSshUser = signal('');
+  protected readonly deviceSshIdentityFile = signal('');
+  /** An SSH-relayed code needs a login on this side too, so the form asks for one. */
+  protected readonly enteredCodeIsSsh = computed(() => pairingCodeTransport(this.enteredCode()) === 'ssh');
   protected readonly error = signal<string | null>(null);
   protected readonly connectingId = signal<number | null>(null);
 
@@ -120,6 +136,9 @@ export class RemoteLinkPanelComponent {
       case 'waiting':
         return 'Waiting for a device to connect.';
       case 'reconnecting':
+        if (sharing.transport === 'ssh') {
+          return sharing.error ? `Reconnecting to the SSH server — ${sharing.error}` : 'Reconnecting to the SSH server…';
+        }
         return sharing.transport === 'relay' ? 'Reconnecting to the relay…' : 'Reconnecting…';
       case 'error':
         return sharing.error ?? 'Sharing hit an error.';
@@ -132,7 +151,7 @@ export class RemoteLinkPanelComponent {
     this.transport.set(value);
   }
 
-  // A hand-rolled 3-way segmented control (rather than a variable-length row of
+  // A hand-rolled 4-way segmented control (rather than a variable-length row of
   // buttons) so it can never wrap unpredictably in the narrow sidebar popover
   // this panel is embedded in.
   protected transportOptionClass(value: RemoteLinkTransport): string {
@@ -151,8 +170,43 @@ export class RemoteLinkPanelComponent {
         return `Via relay · ${device.endpoint}`;
       case 'direct':
         return `Direct · ${device.endpoint}`;
+      case 'ssh':
+        return `Via SSH · ${this.sshServerLabel(device.endpoint)}`;
       default:
         return 'Peer-to-peer';
+    }
+  }
+
+  protected connectedPathLabel(device: RemoteLinkDeviceState): string {
+    if (device.path === 'direct') {
+      return 'Peer-to-peer';
+    }
+    return device.transport === 'ssh' ? 'Via SSH' : 'Via relay';
+  }
+
+  // `ssh://user@host:22/40000` → `user@host`: the relay port is plumbing.
+  private sshServerLabel(endpoint: string): string {
+    try {
+      const url = new URL(endpoint);
+      const user = url.username ? `${decodeURIComponent(url.username)}@` : '';
+      const port = url.port && url.port !== '22' ? `:${url.port}` : '';
+      return `${user}${url.hostname}${port}`;
+    } catch {
+      return endpoint;
+    }
+  }
+
+  protected async pickSharingIdentityFile(): Promise<void> {
+    const path = await this.service.pickIdentityFile();
+    if (path) {
+      this.sshIdentityFile.set(path);
+    }
+  }
+
+  protected async pickDeviceIdentityFile(): Promise<void> {
+    const path = await this.service.pickIdentityFile();
+    if (path) {
+      this.deviceSshIdentityFile.set(path);
     }
   }
 
@@ -163,6 +217,17 @@ export class RemoteLinkPanelComponent {
         transport: this.transport(),
         relayUrl: this.relayUrl().trim(),
         directPort: this.directPort(),
+        ...(this.transport() === 'ssh'
+          ? {
+              ssh: {
+                host: this.sshHost().trim(),
+                port: Number(this.sshPort()) || 22,
+                user: this.sshUser().trim(),
+                relayPort: Number(this.sshRelayPort()) || undefined,
+                identityFile: this.sshIdentityFile().trim(),
+              },
+            }
+          : {}),
       });
       await this.revealCode();
     } catch (error) {
@@ -215,9 +280,14 @@ export class RemoteLinkPanelComponent {
       return;
     }
     try {
-      await this.service.addDevice(code, this.deviceName().trim());
+      const ssh = this.enteredCodeIsSsh()
+        ? { user: this.deviceSshUser().trim(), identityFile: this.deviceSshIdentityFile().trim() }
+        : undefined;
+      await this.service.addDevice(code, this.deviceName().trim(), ssh);
       this.enteredCode.set('');
       this.deviceName.set('');
+      this.deviceSshUser.set('');
+      this.deviceSshIdentityFile.set('');
     } catch (error) {
       this.error.set(this.messageFor(error));
     }

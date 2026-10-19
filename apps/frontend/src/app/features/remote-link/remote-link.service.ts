@@ -3,9 +3,11 @@ import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } f
 import {
   getElectronRemoteLinkApi,
   type RemoteLinkDeviceState,
+  type RemoteLinkEnableSharingPayload,
   type RemoteLinkSharingState,
-  type RemoteLinkTransport,
+  type RemoteLinkSshLoginOverride,
 } from '@/shared/runtime/electron-remote-link';
+import { getElectronSshForwardingApi } from '@/shared/runtime/electron-ssh-forwarding';
 import { awaitConnectionOperation } from '@/shared/runtime/connection-operation';
 import { ServerConnectionService } from '@/shared/services/server-connection.service';
 import { OnboardingStateService } from '@/shared/services/onboarding-state.service';
@@ -133,11 +135,12 @@ export class RemoteLinkService {
     return this.api?.suggestedHost() ?? '127.0.0.1';
   }
 
-  async enableSharing(payload: {
-    transport: RemoteLinkTransport;
-    relayUrl?: string;
-    directPort?: number;
-  }): Promise<void> {
+  /** Opens the native file dialog — key paths are on this machine, whatever backend the window uses. */
+  async pickIdentityFile(): Promise<string | null> {
+    return (await getElectronSshForwardingApi()?.pickIdentityFile?.()) ?? null;
+  }
+
+  async enableSharing(payload: RemoteLinkEnableSharingPayload): Promise<void> {
     if (!this.api) {
       return;
     }
@@ -164,11 +167,11 @@ export class RemoteLinkService {
     return code;
   }
 
-  async addDevice(code: string, name = ''): Promise<RemoteLinkDeviceState> {
+  async addDevice(code: string, name = '', ssh?: RemoteLinkSshLoginOverride): Promise<RemoteLinkDeviceState> {
     if (!this.api) {
       throw new Error('Remote links are only available in the desktop app.');
     }
-    const device = await this.api.add({ code, name });
+    const device = await this.api.add({ code, name, ...(ssh ? { ssh } : {}) });
     await this.refresh();
     return device;
   }

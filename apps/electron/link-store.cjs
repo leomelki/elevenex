@@ -25,6 +25,14 @@ function encodeKey(buffer) {
   return Buffer.from(buffer).toString('base64');
 }
 
+// This machine's own SSH settings for an ssh pairing. Kept beside the pairing,
+// never in the code: the other machine logs in with its own account.
+function sanitizeSsh(ssh) {
+  const user = `${ssh?.user || ''}`.trim().slice(0, 128);
+  const identityFile = `${ssh?.identityFile || ''}`.trim().slice(0, 1024);
+  return user || identityFile ? { user, identityFile } : null;
+}
+
 function createLinkStore({ filePath, onError = () => {} }) {
   let state = { version: FILE_VERSION, sharing: null, links: [] };
 
@@ -85,10 +93,11 @@ function createLinkStore({ filePath, onError = () => {} }) {
       label: sharing.label || '',
       enabled: Boolean(sharing.enabled),
       createdAt: sharing.createdAt,
+      ssh: sanitizeSsh(sharing.ssh),
     };
   }
 
-  function setSharing(pairing, { enabled }) {
+  function setSharing(pairing, { enabled, ssh = pairing.ssh }) {
     state.sharing = {
       transport: pairing.transport,
       endpoint: pairing.endpoint,
@@ -97,6 +106,7 @@ function createLinkStore({ filePath, onError = () => {} }) {
       label: pairing.label || '',
       enabled: Boolean(enabled),
       createdAt: state.sharing?.createdAt || nowIso(),
+      ssh: sanitizeSsh(ssh),
     };
     save();
     return getSharing();
@@ -135,6 +145,7 @@ function createLinkStore({ filePath, onError = () => {} }) {
           pairingKey,
           createdAt: link.createdAt,
           lastConnectedAt: link.lastConnectedAt || '',
+          ssh: sanitizeSsh(link.ssh),
         };
       })
       .filter(Boolean);
@@ -144,7 +155,7 @@ function createLinkStore({ filePath, onError = () => {} }) {
     return listLinks().find((link) => link.id === Number(id)) || null;
   }
 
-  function addLink({ name, pairing }) {
+  function addLink({ name, pairing, ssh = null }) {
     // Ids are Date.now()-based and positive, matching the saved-SSH-server
     // convention so environment keys never collide across modes.
     let id = Date.now();
@@ -161,6 +172,7 @@ function createLinkStore({ filePath, onError = () => {} }) {
       pairingKey: encodeKey(pairing.pairingKey),
       createdAt: nowIso(),
       lastConnectedAt: '',
+      ssh: sanitizeSsh(ssh),
     });
     save();
     return getLink(id);

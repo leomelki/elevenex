@@ -4849,6 +4849,13 @@ ipcMain.handle('elevenex-remote-link:enable-sharing', (_event, payload) => linkM
   relayUrl: `${payload?.relayUrl || ''}`.trim(),
   directPort: Number(payload?.directPort) || 0,
   label: `${payload?.label || ''}`.trim(),
+  ssh: payload?.ssh ? {
+    host: `${payload.ssh.host || ''}`.trim(),
+    port: Number(payload.ssh.port) || 22,
+    user: `${payload.ssh.user || ''}`.trim(),
+    relayPort: Number(payload.ssh.relayPort) || 0,
+    identityFile: `${payload.ssh.identityFile || ''}`.trim(),
+  } : null,
 }));
 
 ipcMain.handle('elevenex-remote-link:disable-sharing', () => linkManager.disableSharing());
@@ -4862,6 +4869,10 @@ ipcMain.handle('elevenex-remote-link:list', () => linkManager.listLinks());
 ipcMain.handle('elevenex-remote-link:add', (_event, payload) => linkManager.addLink({
   code: `${payload?.code || ''}`.trim(),
   name: `${payload?.name || ''}`.trim(),
+  ssh: payload?.ssh ? {
+    user: `${payload.ssh.user || ''}`.trim(),
+    identityFile: `${payload.ssh.identityFile || ''}`.trim(),
+  } : null,
 }));
 
 ipcMain.handle('elevenex-remote-link:rename', (_event, payload) => linkManager.renameLink(

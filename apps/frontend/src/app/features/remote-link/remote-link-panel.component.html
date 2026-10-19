@@ -45,6 +45,37 @@
             Add
           </button>
         </div>
+
+        @if (enteredCodeIsSsh()) {
+          <div class="flex min-w-0 flex-col gap-1.5 rounded-md border border-border bg-muted/40 p-2">
+            <p class="text-[11px] leading-4 text-muted-foreground">
+              This code relays through an SSH server. Leave these empty to log in as the sharer's user with your SSH agent and config.
+            </p>
+            <input
+              z-input
+              zSize="sm"
+              class="w-full min-w-0"
+              placeholder="SSH user (optional)"
+              autocomplete="off"
+              spellcheck="false"
+              [ngModel]="deviceSshUser()"
+              (ngModelChange)="deviceSshUser.set($event)"
+            />
+            <div class="flex min-w-0 gap-2">
+              <input
+                z-input
+                zSize="sm"
+                class="min-w-0 flex-1 font-mono"
+                placeholder="Private key (optional)"
+                autocomplete="off"
+                spellcheck="false"
+                [ngModel]="deviceSshIdentityFile()"
+                (ngModelChange)="deviceSshIdentityFile.set($event)"
+              />
+              <button z-button type="button" zType="outline" zSize="sm" class="shrink-0" (click)="pickDeviceIdentityFile()">Browse</button>
+            </div>
+          </div>
+        }
       </div>
 
       @if (devices().length > 0) {
@@ -62,7 +93,7 @@
                     @case ('connected') {
                       <span class="text-success">Connected</span>
                       ·
-                      {{ device.path === 'direct' ? 'Peer-to-peer' : 'Via relay' }}
+                      {{ connectedPathLabel(device) }}
                     }
                     @case ('reconnecting') {
                       <span class="text-warning">Reconnecting…</span>
@@ -125,7 +156,7 @@
 
       @if (!sharing().enabled) {
         <div class="flex min-w-0 flex-col gap-3">
-          <div class="grid grid-cols-3 gap-1 rounded-lg border border-border bg-muted/40 p-1" role="radiogroup" aria-label="Sharing method">
+          <div class="grid grid-cols-4 gap-1 rounded-lg border border-border bg-muted/40 p-1" role="radiogroup" aria-label="Sharing method">
             <button type="button" role="radio" [attr.aria-checked]="transport() === 'p2p'" [class]="transportOptionClass('p2p')" (click)="setTransport('p2p')">
               <ng-icon name="lucideGlobe" size="14" />
               <span>Peer-to-peer</span>
@@ -133,6 +164,10 @@
             <button type="button" role="radio" [attr.aria-checked]="transport() === 'relay'" [class]="transportOptionClass('relay')" (click)="setTransport('relay')">
               <ng-icon name="lucideServer" size="14" />
               <span>Relay</span>
+            </button>
+            <button type="button" role="radio" [attr.aria-checked]="transport() === 'ssh'" [class]="transportOptionClass('ssh')" (click)="setTransport('ssh')">
+              <ng-icon name="lucideTerminal" size="14" />
+              <span>SSH</span>
             </button>
             <button type="button" role="radio" [attr.aria-checked]="transport() === 'direct'" [class]="transportOptionClass('direct')" (click)="setTransport('direct')">
               <ng-icon name="lucidePlug" size="14" />
@@ -163,6 +198,85 @@
                 <code class="break-all rounded bg-muted px-1 py-0.5">node apps/relay/server.cjs</code>.
               </p>
             </div>
+          } @else if (transport() === 'ssh') {
+            <div class="flex min-w-0 flex-col gap-2">
+              <div class="flex min-w-0 flex-col gap-1.5">
+                <label class="text-xs font-medium text-foreground" for="ssh-relay-host">SSH server</label>
+                <input
+                  id="ssh-relay-host"
+                  z-input
+                  zSize="sm"
+                  class="w-full min-w-0 font-mono"
+                  placeholder="bastion.example.com"
+                  autocomplete="off"
+                  spellcheck="false"
+                  [ngModel]="sshHost()"
+                  (ngModelChange)="sshHost.set($event)"
+                />
+              </div>
+              <div class="flex min-w-0 gap-2">
+                <div class="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <label class="text-xs font-medium text-foreground" for="ssh-relay-user">User</label>
+                  <input
+                    id="ssh-relay-user"
+                    z-input
+                    zSize="sm"
+                    class="w-full min-w-0"
+                    placeholder="Default"
+                    autocomplete="off"
+                    spellcheck="false"
+                    [ngModel]="sshUser()"
+                    (ngModelChange)="sshUser.set($event)"
+                  />
+                </div>
+                <div class="flex w-20 shrink-0 flex-col gap-1.5">
+                  <label class="text-xs font-medium text-foreground" for="ssh-relay-port">Port</label>
+                  <input
+                    id="ssh-relay-port"
+                    z-input
+                    zSize="sm"
+                    type="number"
+                    class="w-full"
+                    [ngModel]="sshPort()"
+                    (ngModelChange)="sshPort.set($event)"
+                  />
+                </div>
+              </div>
+              <div class="flex min-w-0 flex-col gap-1.5">
+                <label class="text-xs font-medium text-foreground" for="ssh-relay-key">Private key <span class="font-normal text-muted-foreground">(optional)</span></label>
+                <div class="flex min-w-0 gap-2">
+                  <input
+                    id="ssh-relay-key"
+                    z-input
+                    zSize="sm"
+                    class="min-w-0 flex-1 font-mono"
+                    placeholder="SSH agent / config"
+                    autocomplete="off"
+                    spellcheck="false"
+                    [ngModel]="sshIdentityFile()"
+                    (ngModelChange)="sshIdentityFile.set($event)"
+                  />
+                  <button z-button type="button" zType="outline" zSize="sm" class="shrink-0" (click)="pickSharingIdentityFile()">Browse</button>
+                </div>
+              </div>
+              <div class="flex min-w-0 flex-col gap-1.5">
+                <label class="text-xs font-medium text-foreground" for="ssh-relay-remote-port">Relay port on the server <span class="font-normal text-muted-foreground">(optional)</span></label>
+                <input
+                  id="ssh-relay-remote-port"
+                  z-input
+                  zSize="sm"
+                  type="number"
+                  class="w-24"
+                  placeholder="Auto"
+                  [ngModel]="sshRelayPort()"
+                  (ngModelChange)="sshRelayPort.set($event)"
+                />
+              </div>
+              <p class="text-[11px] leading-4 text-muted-foreground">
+                For closed networks: both machines only need SSH access to this server — nothing is installed on it.
+                Use an address the other machine can reach too. Logins use your SSH agent, config, or the key above; password prompts aren't supported.
+              </p>
+            </div>
           } @else {
             <div class="flex min-w-0 flex-col gap-1.5">
               <label class="text-xs font-medium text-foreground" for="direct-port">Port</label>
@@ -181,7 +295,7 @@
             </div>
           }
 
-          <button z-button type="button" zSize="sm" [disabled]="busy()" (click)="enableSharing()">Start sharing</button>
+          <button z-button type="button" zSize="sm" [disabled]="busy() || (transport() === 'ssh' && !sshHost().trim())" (click)="enableSharing()">Start sharing</button>
         </div>
       } @else {
         <div class="flex min-w-0 flex-col gap-2">

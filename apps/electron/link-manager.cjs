@@ -20,6 +20,7 @@ const {
   decodePairingCode,
   encodePairingCode,
 } = require('./link-pairing.cjs');
+const { formatSshEndpoint, openSshTunnel, parseSshEndpoint, randomRelayPort } = require('./link-ssh.cjs');
 
 function defaultHostLabel() {
   try {
@@ -38,6 +39,8 @@ function createLinkManager({
   // Joins the public-broker rendezvous. Optional for the same reason, and its
   // absence is what makes the p2p transport unavailable outside Electron.
   openRendezvous = null,
+  // Spawns the ssh tunnels behind ssh pairings; replaced by tests.
+  openTunnel = openSshTunnel,
   onSharingStatus = () => {},
   onLinkStatus = () => {},
   onError = () => {},
@@ -106,6 +109,8 @@ function createLinkManager({
       bindHost: '0.0.0.0',
       createPeer,
       openRendezvous,
+      ssh: sharing.ssh,
+      openTunnel,
     });
 
     const running = host;
@@ -120,7 +125,10 @@ function createLinkManager({
     emitSharing();
   }
 
-  async function enableSharing({ transport = 'relay', relayUrl = '', directPort = 0, label = '' } = {}) {
+  async function enableSharing({ transport = 'relay', relayUrl = '', directPort = 0, label = '', ssh = null } = {}) {
+    if (transport === 'ssh' && !`${ssh?.host || ''}`.trim()) {
+      throw new Error('An SSH host is required to share through an SSH relay.');
+    }
     if (transport === 'relay' && !`${relayUrl}`.trim()) {
       throw new Error('A relay URL is required to share over a relay.');
     }
@@ -143,6 +151,14 @@ function createLinkManager({
     }
 
     const existing = store.getSharing();
+    if (transport === 'ssh') {
+      endpoint = formatSshEndpoint({
+        host: ssh.host,
+        port: Number(ssh.port) || 22,
+        user: ssh.user,
+        relayPort: Number(ssh.relayPort) || reusableRelayPort(existing, ssh) || randomRelayPort(),
+      });
+    }
     // Reuse the pairing when nothing addressable changed, so turning sharing off
     // and on again does not invalidate a code the user already saved on their
     // other machine.
@@ -158,9 +174,27 @@ function createLinkManager({
         label: label || defaultHostLabel(),
       });
 
-    const saved = store.setSharing(pairing, { enabled: true });
+    const saved = store.setSharing(pairing, {
+      enabled: true,
+      ssh: transport === 'ssh' ? { identityFile: ssh.identityFile } : null,
+    });
     await startHost(saved);
     return sharingView();
+  }
+
+  // Without an explicit relay port, sharing through the same SSH login again
+  // keeps the old one, so the code saved on the other machine stays valid.
+  function reusableRelayPort(existing, ssh) {
+    if (existing?.transport !== 'ssh') return 0;
+    try {
+      const previous = parseSshEndpoint(existing.endpoint);
+      const same = previous.host === `${ssh.host}`.trim()
+        && previous.port === (Number(ssh.port) || 22)
+        && previous.user === `${ssh.user || ''}`.trim();
+      return same ? previous.relayPort : 0;
+    } catch {
+      return 0;
+    }
   }
 
   // For a direct pairing the code has to carry an address the *other* machine
@@ -195,7 +229,7 @@ function createLinkManager({
       endpoint: existing.endpoint,
       label: existing.label || defaultHostLabel(),
     });
-    const saved = store.setSharing(pairing, { enabled: existing.enabled });
+    const saved = store.setSharing(pairing, { enabled: existing.enabled, ssh: existing.ssh });
     if (existing.enabled) {
       await startHost(saved);
     }
@@ -254,13 +288,15 @@ function createLinkManager({
     return link ? linkView(link) : null;
   }
 
-  function addLink({ code, name = '' }) {
+  // `ssh` overrides the login the code carries, for a machine that reaches the
+  // SSH server under a different account or key.
+  function addLink({ code, name = '', ssh = null }) {
     const pairing = decodePairingCode(code);
     const existing = store.listLinks().find((link) => link.pairId === pairing.pairId);
     if (existing) {
       throw new Error(`This device is already saved as “${existing.name}”.`);
     }
-    return linkView(store.addLink({ name, pairing }));
+    return linkView(store.addLink({ name, pairing, ssh: pairing.transport === 'ssh' ? ssh : null }));
   }
 
   function renameLink(id, name) {
@@ -281,7 +317,9 @@ function createLinkManager({
 
     let runtime = clients.get(link.id);
     if (!runtime) {
-      const client = createLinkClient({ pairing: link, localPort: 0, createPeer, openRendezvous });
+      const client = createLinkClient({
+        pairing: link, localPort: 0, createPeer, openRendezvous, ssh: link.ssh, openTunnel,
+      });
       runtime = { client, status: client.toStatus(), connectPromise: null,
         forwards: createPortForwards({ getSession: () => client.activeSession(), getStatus: () => client.status }),
       };

@@ -26,6 +26,15 @@ else's. It is not a trusted component.
 What it *can* do is refuse service, and observe that two devices are talking and
 how much. If that matters, run your own.
 
+## No server you can run software on?
+
+If both machines can SSH into the same host, pick **SSH** as the sharing method
+instead. Nothing is installed there: the sharing desktop reverse-forwards its
+link to a loopback port on that host (`ssh -R`) and the connecting desktop
+forwards to the same port (`ssh -L`). The same end-to-end handshake applies, so
+other users of the host gain nothing from reaching that port. Logins use each
+machine's SSH agent, config, or a chosen private key.
+
 ## Running it
 
 ```sh
