@@ -31,7 +31,7 @@ import { BranchesService } from '../branches/branches.service.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { UserPtyManager } from '../user-terminal/user-pty-manager.service.js';
 import { ActionsService } from '../actions/actions.service.js';
-import { TasksService } from './tasks.service.js';
+import { TasksService, conciseFailureMessage } from './tasks.service.js';
 import { TasksController } from './tasks.controller.js';
 import { TaskGitService, taskBranchSlug } from './task-git.service.js';
 import { TaskWorktreeAllocator } from './task-worktree-allocator.service.js';
@@ -40,6 +40,28 @@ import { assertWorkspaceCanExecute } from '../workspaces/workspace-ownership.js'
 import { compareWorkspaceOrder } from '../workspaces/workspace-order.js';
 
 jest.setTimeout(60000);
+
+describe('conciseFailureMessage', () => {
+  it('drops git progress output and keeps the actual failure', () => {
+    const progress = Array.from(
+      { length: 500 },
+      (_, index) => `Updating files:  ${index % 100}% (${index}/450446)`,
+    ).join('\r');
+    expect(
+      conciseFailureMessage(
+        `Preparing worktree (detached HEAD 2c550b233f9a)\n${progress}\nerror: unable to write file a.txt: No space left on device\nfatal: cannot create directory`,
+      ),
+    ).toBe(
+      'Preparing worktree (detached HEAD 2c550b233f9a)\nerror: unable to write file a.txt: No space left on device\nfatal: cannot create directory',
+    );
+  });
+
+  it('keeps the tail of very long messages', () => {
+    const message = conciseFailureMessage(`${'x'.repeat(5000)}\nfatal: end`);
+    expect(message.length).toBeLessThanOrEqual(2001);
+    expect(message.endsWith('fatal: end')).toBe(true);
+  });
+});
 
 describe('Task lifecycle with real Git and migrations', () => {
   let root: string;

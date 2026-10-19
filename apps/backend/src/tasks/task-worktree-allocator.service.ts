@@ -304,6 +304,7 @@ export class TaskWorktreeAllocator {
       await git.raw([
         'worktree',
         'add',
+        '--quiet',
         '--detach',
         worktreePath,
         setup.resolvedCommit!,

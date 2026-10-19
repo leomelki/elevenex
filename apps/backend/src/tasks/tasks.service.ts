@@ -59,6 +59,27 @@ function sameFinishRequest(
   );
 }
 
+const MAX_FAILURE_MESSAGE_LENGTH = 2000;
+
+/**
+ * Git failures carry progress output (`Updating files: 12% (…)`) ahead of the
+ * real cause. Keep only meaningful lines, and keep the tail where git reports
+ * the fatal error when the result is still too long.
+ */
+export function conciseFailureMessage(message: string): string {
+  const lines = message
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line && !/^[\w ]+:\s+\d{1,3}% \(\d+\/\d+\)(, done\.)?$/.test(line),
+    );
+  const text = lines.join('\n');
+  return text.length > MAX_FAILURE_MESSAGE_LENGTH
+    ? `…${text.slice(-MAX_FAILURE_MESSAGE_LENGTH)}`
+    : text || message.slice(-MAX_FAILURE_MESSAGE_LENGTH);
+}
+
 @Injectable()
 export class TasksService
   implements OnApplicationBootstrap, OnModuleInit, OnModuleDestroy
@@ -840,7 +861,7 @@ export class TasksService
             : {
                 message:
                   error instanceof Error
-                    ? error.message
+                    ? conciseFailureMessage(error.message)
                     : 'Could not prepare the task.',
               };
         await this.update(id, {
