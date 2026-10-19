@@ -6,7 +6,6 @@ import { ZardButtonComponent } from '@/shared/components/button/button.component
 import { Z_MODAL_DATA } from '@/shared/components/dialog/dialog.service';
 import { ZardDialogRef } from '@/shared/components/dialog/dialog-ref';
 import { VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.service';
-import { TaskCompletionService } from './task-completion.service';
 import { TasksApiService } from './tasks-api.service';
 import { TaskReleasePreview, taskError } from './task.model';
 
@@ -20,7 +19,6 @@ export class TaskReleaseComponent {
   private readonly data: { taskId: number; taskName?: string } = inject(Z_MODAL_DATA);
   private readonly dialog = inject(ZardDialogRef);
   private readonly api = inject(TasksApiService);
-  private readonly completion = inject(TaskCompletionService);
   private readonly editors = inject(VSCodeWebStateService);
   private readonly destroyRef = inject(DestroyRef);
   private closed = false;
@@ -53,12 +51,10 @@ export class TaskReleaseComponent {
       );
   }
 
-  private errorMessage(error: unknown, releasing = false) {
+  private errorMessage(error: unknown) {
     const status = (error as { status?: number })?.status;
     if (status === 0 || (status && status >= 500))
-      return releasing
-        ? 'Could not confirm the release with the server. Check again to see whether the worktree was released.'
-        : 'Could not check the worktree. Check your connection and try again.';
+      return 'Could not check the worktree. Check your connection and try again.';
     return taskError(error);
   }
 
@@ -95,16 +91,12 @@ export class TaskReleaseComponent {
       // Editors can become dirty while confirmation is open. Never save them implicitly.
       await this.checkEditors(preview.task.path);
       if (this.closed || this.destroyRef.destroyed) return;
-      await this.completion.releaseWorktree(
-        preview.task,
-        !!(preview.agents || preview.terminals || preview.actions),
-        preview.checkoutToken,
-      );
-      if (!this.closed && !this.destroyRef.destroyed) this.dialog.close(true);
+      // The task service owns cleanup after the confirmation is dismissed.
+      this.dialog.close(preview);
     } catch (error) {
       if (!this.closed && !this.destroyRef.destroyed) {
         this.preview.set(null);
-        this.error.set(this.errorMessage(error, true));
+        this.error.set(this.errorMessage(error));
       }
     } finally {
       if (!this.closed && !this.destroyRef.destroyed) this.busy.set(false);

@@ -5,7 +5,6 @@ import { Z_MODAL_DATA } from '@/shared/components/dialog/dialog.service';
 import { ZardDialogRef } from '@/shared/components/dialog/dialog-ref';
 import { VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.service';
 import { TasksApiService } from './tasks-api.service';
-import { TaskCompletionService } from './task-completion.service';
 import { TaskReleasePreview } from './task.model';
 import { TaskReleaseComponent } from './task-release.component';
 
@@ -21,8 +20,7 @@ describe('Worktree release dialog', () => {
   } as TaskReleasePreview;
   const api = { releasePreview: vi.fn() };
   const editors = { checkTaskEditors: vi.fn() };
-  const completion = { releaseWorktree: vi.fn() };
-  let closed: Subject<boolean | undefined>;
+  let closed: Subject<TaskReleasePreview | undefined>;
   let close: ReturnType<typeof vi.fn>;
   beforeEach(() => {
     vi.resetAllMocks();
@@ -30,7 +28,6 @@ describe('Worktree release dialog', () => {
     close = vi.fn((result) => closed.next(result));
     api.releasePreview.mockReturnValue(of(preview));
     editors.checkTaskEditors.mockResolvedValue(0);
-    completion.releaseWorktree.mockResolvedValue({});
     TestBed.configureTestingModule({
       imports: [TaskReleaseComponent],
       providers: [
@@ -38,7 +35,6 @@ describe('Worktree release dialog', () => {
         { provide: ZardDialogRef, useValue: { afterClosed: () => closed, close } },
         { provide: TasksApiService, useValue: api },
         { provide: VSCodeWebStateService, useValue: editors },
-        { provide: TaskCompletionService, useValue: completion },
       ],
     });
   });
@@ -78,7 +74,7 @@ describe('Worktree release dialog', () => {
       'local changes',
     );
     expect(fixture.nativeElement.textContent).toContain('Check again');
-    expect(completion.releaseWorktree).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
     await fixture.componentInstance.check();
     expect(fixture.componentInstance.error()).toBe('');
     expect(fixture.componentInstance.preview()).toEqual(preview);
@@ -90,7 +86,7 @@ describe('Worktree release dialog', () => {
     await vi.waitFor(() => expect(fixture.componentInstance.checking()).toBe(false));
     expect(fixture.componentInstance.error()).toContain('2 unsaved editor documents');
     await fixture.componentInstance.release();
-    expect(completion.releaseWorktree).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
     expect(editors.checkTaskEditors).toHaveBeenCalledExactlyOnceWith('/checkout');
   });
 
@@ -106,7 +102,7 @@ describe('Worktree release dialog', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(fixture.componentInstance.preview()).toBeNull();
-    expect(completion.releaseWorktree).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledExactlyOnceWith();
   });
 
   it('cancels an in-flight HTTP check when dismissed', async () => {
@@ -120,29 +116,36 @@ describe('Worktree release dialog', () => {
     expect(editors.checkTaskEditors).not.toHaveBeenCalled();
   });
 
-  it('keeps release progress visible, prevents duplicate requests, and closes only after success', async () => {
-    api.releasePreview.mockReturnValue(of({ ...preview, agents: 1 }));
-    let finish!: () => void;
-    completion.releaseWorktree.mockReturnValue(new Promise<void>((resolve) => (finish = resolve)));
+  it.each(['light', 'dark'])(
+    'returns confirmation and dismisses before cleanup in %s mode',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      const running = { ...preview, agents: 1 };
+      api.releasePreview.mockReturnValue(of(running));
+      const fixture = TestBed.createComponent(TaskReleaseComponent);
+      await vi.waitFor(() => expect(fixture.componentInstance.checking()).toBe(false));
+      await fixture.componentInstance.release();
+      expect(close).toHaveBeenCalledExactlyOnceWith(running);
+      await fixture.componentInstance.release();
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('prevents duplicate confirmation while rechecking editors', async () => {
     const fixture = TestBed.createComponent(TaskReleaseComponent);
     await vi.waitFor(() => expect(fixture.componentInstance.checking()).toBe(false));
+    let finish!: (count: number) => void;
+    editors.checkTaskEditors.mockReturnValue(new Promise<number>((resolve) => (finish = resolve)));
     const operation = fixture.componentInstance.release();
-    await vi.waitFor(() =>
-      expect(completion.releaseWorktree).toHaveBeenCalledWith(
-        preview.task,
-        true,
-        preview.checkoutToken,
-      ),
-    );
     fixture.detectChanges();
-    expect(fixture.nativeElement.textContent).toContain('Releasing worktree…');
+    expect(fixture.nativeElement.textContent).toContain('Checking editors…');
     fixture.componentInstance.cancel();
     await fixture.componentInstance.release();
     expect(close).not.toHaveBeenCalled();
-    expect(completion.releaseWorktree).toHaveBeenCalledOnce();
-    finish();
+    expect(editors.checkTaskEditors).toHaveBeenCalledTimes(2);
+    finish(0);
     await operation;
-    expect(close).toHaveBeenCalledWith(true);
+    expect(close).toHaveBeenCalledExactlyOnceWith(preview);
   });
 
   it('checks for newly unsaved documents at confirmation', async () => {
@@ -151,23 +154,8 @@ describe('Worktree release dialog', () => {
     editors.checkTaskEditors.mockResolvedValue(1);
     await fixture.componentInstance.release();
     expect(fixture.componentInstance.error()).toContain('unsaved editor document');
-    expect(completion.releaseWorktree).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
     expect(fixture.componentInstance.busy()).toBe(false);
-  });
-
-  it('keeps backend race errors in the dialog and requires a fresh check before retry', async () => {
-    completion.releaseWorktree.mockRejectedValueOnce({
-      error: { message: 'Running work started. Check again.' },
-    });
-    const fixture = TestBed.createComponent(TaskReleaseComponent);
-    await vi.waitFor(() => expect(fixture.componentInstance.checking()).toBe(false));
-    await fixture.componentInstance.release();
-    expect(fixture.componentInstance.error()).toContain('Running work started');
-    expect(fixture.componentInstance.preview()).toBeNull();
-    await fixture.componentInstance.release();
-    expect(completion.releaseWorktree).toHaveBeenCalledOnce();
-    await fixture.componentInstance.check();
-    expect(fixture.componentInstance.error()).toBe('');
   });
 
   it('shows already released without accessing the former checkout', async () => {
@@ -178,18 +166,6 @@ describe('Worktree release dialog', () => {
     expect(fixture.nativeElement.textContent).toContain('already been released');
     expect(editors.checkTaskEditors).not.toHaveBeenCalled();
     await fixture.componentInstance.release();
-    expect(completion.releaseWorktree).not.toHaveBeenCalled();
-  });
-
-  it('checks server state after a lost release response instead of submitting again', async () => {
-    completion.releaseWorktree.mockRejectedValueOnce({ status: 0 });
-    const fixture = TestBed.createComponent(TaskReleaseComponent);
-    await vi.waitFor(() => expect(fixture.componentInstance.checking()).toBe(false));
-    await fixture.componentInstance.release();
-    expect(fixture.componentInstance.error()).toContain('see whether the worktree was released');
-    api.releasePreview.mockReturnValue(of({ ...preview, alreadyReleased: true }));
-    await fixture.componentInstance.check();
-    expect(fixture.componentInstance.preview()?.alreadyReleased).toBe(true);
-    expect(completion.releaseWorktree).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
   });
 });

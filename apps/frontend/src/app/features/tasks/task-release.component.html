@@ -18,12 +18,12 @@
       ></span>
       <div>
         <p class="text-sm font-medium">
-          {{ busy() ? 'Releasing worktree…' : 'Checking worktree…' }}
+          {{ busy() ? 'Checking editors…' : 'Checking worktree…' }}
         </p>
         <p class="mt-1 text-sm text-muted-foreground">
           {{
             busy()
-              ? 'Stopping task processes and verifying the checkout. This may take a moment.'
+              ? 'Checking for unsaved documents before releasing in the background.'
               : 'Checking local changes, Git operations, and running work. This may take a moment.'
           }}
         </p>
@@ -44,7 +44,7 @@
     } @else {
       <p class="text-sm" data-release-ready>
         Your task stays open and your conversations and branch are preserved. Prepare a worktree
-        again when you want to continue.
+        again when you want to continue. Release runs in the background so you can keep working.
       </p>
       @if (preview.cleanupRequired) {
         <p class="text-sm text-muted-foreground">
@@ -80,7 +80,7 @@
           checking()
             ? 'Checking…'
             : busy()
-              ? 'Releasing…'
+              ? 'Checking…'
               : preview()!.agents || preview()!.terminals || preview()!.actions
                 ? 'Stop and release'
                 : 'Release worktree'

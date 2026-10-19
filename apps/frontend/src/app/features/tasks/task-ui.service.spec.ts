@@ -8,17 +8,17 @@ import { VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.se
 import { TaskCompletionService } from './task-completion.service';
 import { TaskFinishComponent } from './task-finish.component';
 import { TaskReleaseComponent } from './task-release.component';
-import { Task } from './task.model';
+import { Task, TaskReleasePreview } from './task.model';
 import { TasksApiService } from './tasks-api.service';
 import { TaskUiService } from './task-ui.service';
 
 describe('Task finish confirmation', () => {
   const task = { id: 7, name: 'Example', path: '/repo/task', linkStatus: 'linked' } as Task;
-  const api = { get: vi.fn(), preview: vi.fn() };
+  const api = { get: vi.fn(), preview: vi.fn(), releasePreview: vi.fn() };
   const editors = { checkTaskEditors: vi.fn() };
   const completion = { finish: vi.fn(), releaseWorktree: vi.fn() };
   const dialog = { create: vi.fn() };
-  let closed: Subject<boolean | undefined>;
+  let closed: Subject<boolean | TaskReleasePreview | undefined>;
   let service: TaskUiService;
 
   beforeEach(() => {
@@ -31,7 +31,7 @@ describe('Task finish confirmation', () => {
     completion.releaseWorktree.mockResolvedValue(task);
     dialog.create.mockReturnValue({ afterClosed: () => closed });
     TestBed.configureTestingModule({
-      imports: [TaskFinishComponent],
+      imports: [TaskFinishComponent, TaskReleaseComponent],
       providers: [
         { provide: TasksApiService, useValue: api },
         { provide: VSCodeWebStateService, useValue: editors },
@@ -39,11 +39,14 @@ describe('Task finish confirmation', () => {
         { provide: ZardDialogService, useValue: dialog },
         {
           provide: Z_MODAL_DATA,
-          useValue: { task, agents: 0, terminals: 1, actions: 0, dirtyEditors: 1 },
+          useValue: { task, taskId: task.id, agents: 0, terminals: 1, actions: 0, dirtyEditors: 1 },
         },
         {
           provide: ZardDialogRef,
-          useValue: { close: (result?: boolean) => closed.next(result) },
+          useValue: {
+            close: (result?: boolean | TaskReleasePreview) => closed.next(result),
+            afterClosed: () => closed,
+          },
         },
       ],
     });
@@ -126,6 +129,86 @@ describe('Task finish confirmation', () => {
     expect(service.releasing().size).toBe(0);
     expect(completion.finish).not.toHaveBeenCalled();
   });
+
+  it.each(['light', 'dark'])(
+    'continues releasing after the dialog is destroyed in %s mode',
+    async (theme) => {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      const preview = {
+        task,
+        agents: 1,
+        terminals: 0,
+        actions: 0,
+        checkoutToken: 'checkout-1',
+        alreadyReleased: false,
+        cleanupRequired: false,
+      } satisfies TaskReleasePreview;
+      const loading = vi.spyOn(toast, 'loading').mockReturnValue('release-progress');
+      const dismiss = vi.spyOn(toast, 'dismiss');
+      let finish!: () => void;
+      completion.releaseWorktree.mockReturnValue(
+        new Promise<void>((resolve) => (finish = resolve)),
+      );
+      api.releasePreview.mockReturnValue(of(preview));
+      const pending = service.releaseWorktree(task.id);
+      const fixture = TestBed.createComponent(TaskReleaseComponent);
+      await vi.waitFor(() => expect(fixture.componentInstance.checking()).toBe(false));
+      closed.subscribe(() => fixture.destroy());
+      await fixture.componentInstance.release();
+      await vi.waitFor(() =>
+        expect(completion.releaseWorktree).toHaveBeenCalledWith(task, true, 'checkout-1'),
+      );
+      expect(loading).toHaveBeenCalledWith('Releasing worktree…', {
+        description: task.name,
+        duration: Infinity,
+      });
+      expect(service.releasing().has(task.id)).toBe(true);
+      await service.releaseWorktree(task.id);
+      await service.finish(task.id);
+      expect(dialog.create).toHaveBeenCalledOnce();
+      expect(completion.releaseWorktree).toHaveBeenCalledOnce();
+      expect(completion.finish).not.toHaveBeenCalled();
+      expect(dismiss).not.toHaveBeenCalled();
+      finish();
+      await pending;
+      expect(service.releasing().has(task.id)).toBe(false);
+      expect(dismiss).toHaveBeenCalledWith('release-progress');
+    },
+  );
+
+  it.each([undefined, 0, 500])(
+    'reports a background release failure (%s status) and allows retry',
+    async (status) => {
+      const errorToast = vi.spyOn(toast, 'error').mockReturnValue('error');
+      vi.spyOn(toast, 'loading').mockReturnValue('release-progress');
+      const dismiss = vi.spyOn(toast, 'dismiss');
+      completion.releaseWorktree.mockRejectedValueOnce({
+        status,
+        error: { message: 'Running work started. Check again.' },
+      });
+      const pending = service.releaseWorktree(task.id);
+      closed.next({
+        task,
+        agents: 0,
+        terminals: 0,
+        actions: 0,
+        checkoutToken: 'checkout-1',
+      } as TaskReleasePreview);
+      await pending;
+      expect(errorToast).toHaveBeenCalledWith('Could not release worktree', {
+        description:
+          status === undefined
+            ? 'Running work started. Check again.'
+            : 'Could not confirm the release with the server. Check again to see whether the worktree was released.',
+      });
+      expect(dismiss).toHaveBeenCalledWith('release-progress');
+      expect(service.releasing().has(task.id)).toBe(false);
+      const retry = service.releaseWorktree(task.id);
+      expect(dialog.create).toHaveBeenCalledTimes(2);
+      closed.next(undefined);
+      await retry;
+    },
+  );
 
   it.each([0, 1])(
     'does not inspect editors in a released checkout when finishing its former task (%s agents)',

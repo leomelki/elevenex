@@ -8,7 +8,7 @@ import { TaskFinishComponent } from './task-finish.component';
 import { TaskReleaseComponent } from './task-release.component';
 import { TaskCompletionService } from './task-completion.service';
 import { TasksApiService } from './tasks-api.service';
-import { taskError } from './task.model';
+import { TaskReleasePreview, taskError } from './task.model';
 
 @Injectable({ providedIn: 'root' })
 export class TaskUiService {
@@ -69,6 +69,8 @@ export class TaskUiService {
   async releaseWorktree(id: number, taskName?: string) {
     if (this.releasing().has(id) || this.finishing().has(id)) return;
     this.releasing.update((ids) => new Set(ids).add(id));
+    let progress: string | number | undefined;
+    let confirmed: TaskReleasePreview | undefined;
     try {
       const ref = this.dialog.create({
         zContent: TaskReleaseComponent,
@@ -79,10 +81,27 @@ export class TaskUiService {
         zMaskClosable: false,
         zOnCancel: (instance) => (instance.busy() ? false : undefined),
       });
-      await firstValueFrom(ref.afterClosed());
+      confirmed = await firstValueFrom(ref.afterClosed());
+      if (!confirmed) return;
+      progress = toast.loading('Releasing worktree…', {
+        description: confirmed.task.name,
+        duration: Infinity,
+      });
+      await this.completion.releaseWorktree(
+        confirmed.task,
+        !!(confirmed.agents || confirmed.terminals || confirmed.actions),
+        confirmed.checkoutToken,
+      );
     } catch (error) {
-      toast.error('Could not open release dialog', { description: taskError(error) });
+      const status = (error as { status?: number })?.status;
+      toast.error(confirmed ? 'Could not release worktree' : 'Could not open release dialog', {
+        description:
+          confirmed && (status === 0 || (status && status >= 500))
+            ? 'Could not confirm the release with the server. Check again to see whether the worktree was released.'
+            : taskError(error),
+      });
     } finally {
+      if (progress !== undefined) toast.dismiss(progress);
       this.releasing.update((ids) => {
         const next = new Set(ids);
         next.delete(id);
