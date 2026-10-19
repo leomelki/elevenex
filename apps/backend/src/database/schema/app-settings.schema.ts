@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export const appSettings = sqliteTable('app_settings', {
   id: integer('id').primaryKey(),
@@ -20,6 +20,8 @@ export const appSettings = sqliteTable('app_settings', {
   // Worktrees a single repo may hold before creating another one has to be
   // confirmed by the human. 0 disables the cap.
   maxWorktreesPerRepo: integer('max_worktrees_per_repo').notNull().default(5),
+  // Elapsed hours per response, including tools and input waits. 0 is unlimited.
+  runTimeLimitHours: real('run_time_limit_hours').notNull().default(0),
   // Non-secret dictation config as a single JSON object, for the same reason as
   // the maps above: adding a knob or a new STT provider needs no migration.
   speechToText: text('speech_to_text'),

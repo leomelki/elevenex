@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
+import { AgentRunTimeLimitService } from './agent-run-time-limit.service.js';
 import type { AgentRuntimeCleanup } from './agent-runtime.types.js';
 
 @Injectable()
@@ -23,6 +24,9 @@ export class AgentRuntimeCleanupService implements AgentRuntimeCleanup {
   }
 
   async cleanupSession(sessionId: number): Promise<void> {
+    this.moduleRef
+      .get(AgentRunTimeLimitService, { strict: false })
+      .cancelSession(sessionId);
     const registry = this.moduleRef.get(AgentRuntimeRegistryService, {
       strict: false,
     });

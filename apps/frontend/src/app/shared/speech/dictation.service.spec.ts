@@ -26,6 +26,7 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     defaultReasoningEffortByProvider: {},
     agentModelPresets: [],
     maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
+    runTimeLimitHours: 0,
     // These cases are about the cloud path; the local engine has its own
     // block below, since its readiness is a download rather than a key.
     speechToText: {

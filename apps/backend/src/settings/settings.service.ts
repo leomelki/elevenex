@@ -21,6 +21,8 @@ import {
   DEFAULT_AGENT_PROVIDERS,
   DEFAULT_CLAUDE_SESSION_SURFACE,
   DEFAULT_MAX_WORKTREES_PER_REPO,
+  DEFAULT_RUN_TIME_LIMIT_HOURS,
+  MAX_RUN_TIME_LIMIT_HOURS,
   DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
@@ -92,6 +94,13 @@ const NO_PROVIDER_DEFAULTS: AgentProviderDefaults = {
 
 @Injectable()
 export class SettingsService implements OnModuleInit {
+  private runTimeLimitHours = DEFAULT_RUN_TIME_LIMIT_HOURS;
+
+  /** Cached for run-state events; changes apply to the next response. */
+  getRunTimeLimitHours(): number {
+    return this.runTimeLimitHours;
+  }
+
   /**
    * Last known per-provider defaults, kept in memory so agent runtimes can seed
    * a new session's model/thinking level synchronously while building runtime
@@ -132,6 +141,7 @@ export class SettingsService implements OnModuleInit {
         defaultReasoningEffortByProvider: {},
         agentModelPresets: [],
         maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
+        runTimeLimitHours: DEFAULT_RUN_TIME_LIMIT_HOURS,
         speechToText,
         speechToTextApiKeyConfigured: envKey !== null,
         speechToTextApiKeyFromEnv: envKey !== null,
@@ -298,11 +308,17 @@ export class SettingsService implements OnModuleInit {
       input.speechToText,
     );
 
+    const runTimeLimitHours =
+      input.runTimeLimitHours === undefined
+        ? current.runTimeLimitHours
+        : this.assertRunTimeLimitHours(input.runTimeLimitHours);
+
     const timestamp = new Date().toISOString();
     const row = {
       defaultClaudeSessionSurface,
       defaultAgentProvider,
       maxWorktreesPerRepo,
+      runTimeLimitHours,
       sessionToolbarButtons: this.serializeSessionToolbarButtons(
         sessionToolbarButtons,
       ),
@@ -360,6 +376,7 @@ export class SettingsService implements OnModuleInit {
       defaultClaudeSessionSurface,
       defaultAgentProvider: input.defaultAgentProvider,
       maxWorktreesPerRepo: current.maxWorktreesPerRepo,
+      runTimeLimitHours: current.runTimeLimitHours,
       sessionToolbarButtons: this.serializeSessionToolbarButtons(
         current.sessionToolbarButtons,
       ),
@@ -451,6 +468,12 @@ export class SettingsService implements OnModuleInit {
     const speechToText = this.parseSpeechToTextSettings(row.speechToText);
     const envKey = this.resolveApiKeyFromEnv(speechToText.provider);
 
+    this.runTimeLimitHours = this.isValidRunTimeLimitHours(
+      row.runTimeLimitHours,
+    )
+      ? row.runTimeLimitHours
+      : DEFAULT_RUN_TIME_LIMIT_HOURS;
+
     return {
       defaultClaudeSessionSurface,
       defaultAgentProvider,
@@ -463,6 +486,7 @@ export class SettingsService implements OnModuleInit {
       maxWorktreesPerRepo: this.parseMaxWorktreesPerRepo(
         row.maxWorktreesPerRepo,
       ),
+      runTimeLimitHours: this.runTimeLimitHours,
       speechToText,
       // Only ever a boolean — `row.speechToTextApiKey` must not appear in the
       // response. See the column comment in app-settings.schema.ts.
@@ -761,6 +785,24 @@ export class SettingsService implements OnModuleInit {
     ) {
       throw new BadRequestException(
         `Worktree limit must be a whole number between 0 and ${MAX_WORKTREES_PER_REPO_CEILING} (0 disables the limit).`,
+      );
+    }
+    return value;
+  }
+
+  private isValidRunTimeLimitHours(value: unknown): value is number {
+    return (
+      typeof value === 'number' &&
+      Number.isFinite(value) &&
+      value >= 0 &&
+      value <= MAX_RUN_TIME_LIMIT_HOURS
+    );
+  }
+
+  private assertRunTimeLimitHours(value: number): number {
+    if (!this.isValidRunTimeLimitHours(value)) {
+      throw new BadRequestException(
+        `Run time limit must be between 0 and ${MAX_RUN_TIME_LIMIT_HOURS} hours (0 disables the limit).`,
       );
     }
     return value;

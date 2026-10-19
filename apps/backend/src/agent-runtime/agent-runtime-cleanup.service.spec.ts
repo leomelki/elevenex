@@ -2,6 +2,7 @@ import { ModuleRef } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 import { AgentRuntimeCleanupService } from './agent-runtime-cleanup.service.js';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
+import { AgentRunTimeLimitService } from './agent-run-time-limit.service.js';
 import type { AgentRuntimeProvider } from './agent-runtime.types.js';
 
 const createProvider = (
@@ -65,7 +66,10 @@ describe('AgentRuntimeCleanupService', () => {
   it('reactivates providers that retain session lifecycle state', async () => {
     const claude = createProvider('claude');
     claude.reactivateSession = jest.fn();
-    await createService([claude, createProvider('stateless')]).reactivateSession(42);
+    await createService([
+      claude,
+      createProvider('stateless'),
+    ]).reactivateSession(42);
     expect(claude.reactivateSession).toHaveBeenCalledWith(42);
   });
 });
@@ -74,6 +78,8 @@ function createService(providers: AgentRuntimeProvider[]) {
   const registry = new AgentRuntimeRegistryService(providers);
   const moduleRef = {
     get: jest.fn((token) => {
+      if (token === AgentRunTimeLimitService)
+        return { cancelSession: jest.fn() };
       if (token === AgentRuntimeRegistryService) {
         return registry;
       }

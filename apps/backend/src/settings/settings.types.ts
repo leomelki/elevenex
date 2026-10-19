@@ -1,6 +1,10 @@
 export const DEFAULT_CLAUDE_SESSION_SURFACE = 'claude-ui';
 export const DEFAULT_AGENT_PROVIDER = 'claude';
 
+/** Elapsed hours per response; zero disables the limit. */
+export const DEFAULT_RUN_TIME_LIMIT_HOURS = 0;
+export const MAX_RUN_TIME_LIMIT_HOURS = 168;
+
 export const CLAUDE_SESSION_SURFACES = ['claude-ui', 'tui'] as const;
 
 export const DEFAULT_AGENT_PROVIDERS = [
@@ -238,6 +242,7 @@ export interface AppSettings {
   agentModelPresets: AgentModelPreset[];
   /** Worktrees allowed per repo before creation needs confirming; 0 = no cap. */
   maxWorktreesPerRepo: number;
+  runTimeLimitHours: number;
   speechToText: SpeechToTextSettings;
   /**
    * Whether a dictation key is available (from the database or the
@@ -265,6 +270,7 @@ export interface UpdateAppSettingsInput {
   agentModelPresets?: AgentModelPreset[];
   /** `0` clears the cap; omitted keeps the stored value. */
   maxWorktreesPerRepo?: number;
+  runTimeLimitHours?: number;
   /** Partial patch; omitted keys keep their stored value. */
   speechToText?: Partial<SpeechToTextSettings> | null;
   /** `undefined` keeps the stored key, `null`/`''` clears it. */

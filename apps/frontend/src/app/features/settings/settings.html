@@ -74,6 +74,47 @@
       </div>
     </section>
 
+    <section class="rounded-lg border border-border bg-card" aria-labelledby="run-time-limit-heading">
+      <div class="border-b border-border px-5 py-4">
+        <h2 id="run-time-limit-heading" class="text-sm font-semibold text-foreground">Run time limit</h2>
+        <p class="mt-1 text-sm text-muted-foreground">
+          Automatically stop an agent that spends too long responding to one message.
+        </p>
+      </div>
+      <div class="grid gap-4 p-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+        <div class="min-w-0">
+          <label for="run-time-limit-hours" class="text-sm font-medium text-foreground">Maximum runtime per response</label>
+          <p id="run-time-limit-description" class="mt-1 text-sm text-muted-foreground">
+            Applies to new responses for every agent, even with the browser closed. Elapsed time includes
+            tools, retries, and waiting for input. Queued messages pause when the limit is reached.
+            Use decimals such as 0.5 for 30 minutes, or 0 for unlimited.
+          </p>
+          @if (runTimeLimitError()) {
+            <p id="run-time-limit-error" class="mt-2 text-sm text-destructive" role="alert">{{ runTimeLimitError() }}</p>
+          }
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            z-input
+            #runTimeLimitInput
+            id="run-time-limit-hours"
+            type="number"
+            inputmode="decimal"
+            min="0"
+            [max]="maxRunTimeLimitHours"
+            step="any"
+            class="w-24 text-center"
+            [disabled]="appSettings.saving()"
+            [ngModel]="runTimeLimitHours()"
+            (change)="onRunTimeLimitChange(runTimeLimitInput.value)"
+            [attr.aria-invalid]="runTimeLimitError() ? 'true' : null"
+            [attr.aria-describedby]="runTimeLimitError() ? 'run-time-limit-description run-time-limit-error' : 'run-time-limit-description'"
+          />
+          <span class="text-sm text-muted-foreground">hours</span>
+        </div>
+      </div>
+    </section>
+
     <section class="rounded-lg border border-border bg-card">
       <div class="border-b border-border px-5 py-4">
         <h2 class="text-sm font-semibold text-foreground">Worktrees</h2>

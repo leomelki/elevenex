@@ -330,6 +330,13 @@
       "when": 1792060820150,
       "tag": "0046_easy_mathemanic",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1792393577358,
+      "tag": "0047_keen_sprite",
+      "breakpoints": true
     }
   ]
 }

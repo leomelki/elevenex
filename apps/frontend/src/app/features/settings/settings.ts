@@ -31,6 +31,7 @@ import { AppSettingsService } from '@/shared/services/app-settings.service';
 import {
   DefaultClaudeSessionSurface,
   MAX_WORKTREES_PER_REPO_CEILING,
+  MAX_RUN_TIME_LIMIT_HOURS,
 } from '@/shared/models/app-settings.model';
 import { ZardButtonComponent } from '@/shared/components/button';
 import { ZardCheckboxComponent } from '@/shared/components/checkbox';
@@ -102,6 +103,9 @@ export class Settings {
    * reads as feedback on this field rather than as a failed save.
    */
   readonly maxWorktreesError = signal<string | null>(null);
+  readonly maxRunTimeLimitHours = MAX_RUN_TIME_LIMIT_HOURS;
+  readonly runTimeLimitHours = computed(() => this.appSettings.settings().runTimeLimitHours);
+  readonly runTimeLimitError = signal<string | null>(null);
   readonly toolbarButtons = this.appSettings.normalizedSessionToolbarButtons;
   readonly visibleToolbarButtons = computed(() =>
     this.toolbarButtons().filter((button) => button.visible),
@@ -145,6 +149,20 @@ export class Settings {
       return;
     }
     void this.saveMaxWorktrees(parsed);
+  }
+
+  async onRunTimeLimitChange(value: string): Promise<void> {
+    if (this.appSettings.saving()) return;
+    const hours = value.trim() ? Number(value) : NaN;
+    if (!Number.isFinite(hours) || hours < 0 || hours > this.maxRunTimeLimitHours) {
+      this.runTimeLimitError.set(`Enter hours between 0 and ${this.maxRunTimeLimitHours} (0 removes the limit).`);
+      return;
+    }
+    this.runTimeLimitError.set(null);
+    if (hours === this.runTimeLimitHours()) return;
+    await this.appSettings.saveRunTimeLimitHours(hours).catch(() => {
+      toast.error('Could not save the run time limit.');
+    });
   }
 
   toolbarButtonLabel(id: string): string {

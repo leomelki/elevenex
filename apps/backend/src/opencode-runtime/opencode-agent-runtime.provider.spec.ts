@@ -139,6 +139,29 @@ function fixture(nativeSessionId = '-1') {
 
 describe('OpenCode runtime lifecycle', () => {
   afterEach(() => jest.clearAllMocks());
+  it('reports a running turn before cold initialization finishes and honors a stop during startup', async () => {
+    const f = fixture();
+    const startup = deferred<OpenCodeClient>();
+    f.server.start.mockImplementation(() => startup.promise);
+    const observed: unknown[] = [];
+    f.provider.on('event', (event: ClaudeRuntimeEvent) => {
+      if (event.type === 'run_state') observed.push({ ...event.payload });
+    });
+    try {
+      const submitting = f.provider.submitPrompt(1, 'first');
+      await tick();
+      expect(observed).toContainEqual(expect.objectContaining({ sessionId: 1, runPhase: 'running', canInterrupt: true }));
+      const stopping = f.provider.interrupt(1);
+      await tick();
+      startup.resolve(f.client as unknown as OpenCodeClient);
+      await Promise.all([submitting, stopping]);
+      expect(f.client.session.prompt).not.toHaveBeenCalled();
+      expect(await f.provider.getRuntimeState(1)).toMatchObject({ runPhase: 'idle', canInterrupt: false });
+    } finally {
+      f.provider.onModuleDestroy();
+    }
+  });
+
   it('connects coding sessions to Elevenex and adds current-session instructions', async () => {
     const f = fixture('s');
     try {

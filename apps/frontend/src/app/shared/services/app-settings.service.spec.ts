@@ -53,6 +53,7 @@ describe('AppSettingsService', () => {
       defaultReasoningEffortByProvider: {},
       agentModelPresets: [],
       maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
+      runTimeLimitHours: 0,
       speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
       speechToTextApiKeyConfigured: false,
       speechToTextApiKeyFromEnv: false,
@@ -358,6 +359,26 @@ describe('AppSettingsService', () => {
 
     await save;
     expect(service.settings().onboardingCompletedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  describe('run time limit', () => {
+    it('saves fractional hours and restores the previous value on a failed save', async () => {
+      const save = service.saveRunTimeLimitHours(0.5);
+      expect(service.settings().runTimeLimitHours).toBe(0.5);
+      const request = httpMock.expectOne('/api/settings');
+      expect(request.request.body).toEqual({ runTimeLimitHours: 0.5 });
+      request.flush({ runTimeLimitHours: 0.5 });
+      await save;
+      const failedSave = service.saveRunTimeLimitHours(2);
+      httpMock.expectOne('/api/settings').flush({}, { status: 500, statusText: 'Error' });
+      await expect(failedSave).rejects.toBeDefined();
+      expect(service.settings().runTimeLimitHours).toBe(0.5);
+    });
+
+    it.each([-1, 169, NaN, Infinity])('rejects invalid hours %s without a request', async (value) => {
+      await expect(service.saveRunTimeLimitHours(value)).rejects.toThrow();
+      httpMock.expectNone('/api/settings');
+    });
   });
 
   describe('worktree limit', () => {

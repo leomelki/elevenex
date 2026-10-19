@@ -14,6 +14,8 @@ import { AgentRuntimeController } from './agent-runtime.controller.js';
 import { AgentRuntimeCleanupService } from './agent-runtime-cleanup.service.js';
 import { AgentRuntimeGateway } from './agent-runtime.gateway.js';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
+import { AgentRunTimeLimitService } from './agent-run-time-limit.service.js';
+import { SettingsModule } from '../settings/settings.module.js';
 import { ConversationExportService } from './conversation-export.service.js';
 import { ClaudeAgentRuntimeProvider } from './claude-agent-runtime.provider.js';
 import { SessionsModule } from '../sessions/sessions.module.js';
@@ -24,6 +26,7 @@ import {
 
 @Module({
   imports: [
+    SettingsModule,
     forwardRef(() => SessionsModule),
     forwardRef(() => ClaudeRuntimeModule),
     forwardRef(() => CodexRuntimeModule),
@@ -49,6 +52,7 @@ import {
       ],
     },
     AgentRuntimeRegistryService,
+    AgentRunTimeLimitService,
     McpManagementService,
     McpConfigFileService,
     ConversationExportService,

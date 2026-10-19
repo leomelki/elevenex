@@ -136,6 +136,37 @@ describe('Settings', () => {
     );
   });
 
+  it('saves a fractional runtime limit and rejects empty or invalid input', async () => {
+    const fixture = TestBed.createComponent(Settings);
+    fixture.detectChanges();
+    httpMock.expectOne('/api/settings').flush(APP_SETTINGS_RESPONSE);
+    httpMock.expectOne('/api/agent-providers/models').flush(MODEL_CATALOG_RESPONSE);
+    httpMock.expectOne('/api/info').flush({ backendSha: 'abcdef1234567890' });
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    const input = fixture.nativeElement.querySelector('#run-time-limit-hours') as HTMLInputElement;
+    input.value = '0.5';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new Event('change'));
+    const patch = httpMock.expectOne('/api/settings');
+    expect(patch.request.body).toEqual({ runTimeLimitHours: 0.5 });
+    patch.flush({ ...APP_SETTINGS_RESPONSE, runTimeLimitHours: 0.5 });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(fixture.componentInstance.runTimeLimitHours()).toBe(0.5);
+
+    for (const value of ['', '-1', '169']) {
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+      input.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+      httpMock.expectNone('/api/settings');
+      expect(input.getAttribute('aria-invalid')).toBe('true');
+      expect(fixture.nativeElement.querySelector('#run-time-limit-error')?.textContent).toContain('Enter hours');
+    }
+  });
+
   it('saves the selected Claude surface and rolls back on failure', async () => {
     const fixture = TestBed.createComponent(Settings);
     fixture.detectChanges();

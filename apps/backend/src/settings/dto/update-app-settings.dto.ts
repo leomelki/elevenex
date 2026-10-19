@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsNumber,
   IsObject,
   IsOptional,
   IsString,
@@ -15,6 +16,7 @@ import { CLAUDE_SESSION_SURFACES } from '../settings.types.js';
 import {
   DEFAULT_AGENT_PROVIDERS,
   MAX_WORKTREES_PER_REPO_CEILING,
+  MAX_RUN_TIME_LIMIT_HOURS,
 } from '../settings.types.js';
 import type {
   AgentModelPreset,
@@ -83,6 +85,12 @@ export class UpdateAppSettingsDto {
   @Min(0)
   @Max(MAX_WORKTREES_PER_REPO_CEILING)
   maxWorktreesPerRepo?: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(0)
+  @Max(MAX_RUN_TIME_LIMIT_HOURS)
+  runTimeLimitHours?: number;
 
   // Per-provider patches (`{"claude":"opus"}`, `null` value clears one entry).
   // Keys and values stay open-ended so a new provider or a model released

@@ -6,6 +6,8 @@ import {
   AgentModelPreset,
   AppSettings,
   DEFAULT_MAX_WORKTREES_PER_REPO,
+  DEFAULT_RUN_TIME_LIMIT_HOURS,
+  MAX_RUN_TIME_LIMIT_HOURS,
   DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   DefaultAgentProvider,
   DefaultClaudeSessionSurface,
@@ -35,6 +37,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultReasoningEffortByProvider: {},
   agentModelPresets: [],
   maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
+  runTimeLimitHours: DEFAULT_RUN_TIME_LIMIT_HOURS,
   speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
   speechToTextApiKeyConfigured: false,
   speechToTextApiKeyFromEnv: false,
@@ -138,6 +141,13 @@ export class AppSettingsService {
     }
 
     return this.saveSettings({ maxWorktreesPerRepo });
+  }
+
+  saveRunTimeLimitHours(runTimeLimitHours: number): Promise<AppSettings> {
+    if (!this.isValidRunTimeLimitHours(runTimeLimitHours)) {
+      return Promise.reject(new Error('Unsupported run time limit.'));
+    }
+    return this.saveSettings({ runTimeLimitHours });
   }
 
   /**
@@ -337,6 +347,9 @@ export class AppSettingsService {
       maxWorktreesPerRepo: this.normalizeMaxWorktreesPerRepo(
         settings?.maxWorktreesPerRepo,
       ),
+      runTimeLimitHours: this.isValidRunTimeLimitHours(settings?.runTimeLimitHours)
+        ? settings!.runTimeLimitHours
+        : DEFAULT_RUN_TIME_LIMIT_HOURS,
       speechToText: this.normalizeSpeechToText(settings?.speechToText),
       speechToTextApiKeyConfigured:
         settings?.speechToTextApiKeyConfigured === true,
@@ -366,6 +379,11 @@ export class AppSettingsService {
       return DEFAULT_MAX_WORKTREES_PER_REPO;
     }
     return value;
+  }
+
+  private isValidRunTimeLimitHours(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value)
+      && value >= 0 && value <= MAX_RUN_TIME_LIMIT_HOURS;
   }
 
   private normalizeAgentModelPresets(value: unknown): AgentModelPreset[] {

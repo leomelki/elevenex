@@ -886,6 +886,7 @@ export class OpenCodeAgentRuntimeProvider
     state.canInterrupt = true;
     state.runPhase = 'running';
     state.lastError = null;
+    this.emit('event', { type: 'run_state', payload: state });
     const interruption = this.interruptions.get(sessionId) ?? 0;
     let entry: RuntimeEntry;
     try {
@@ -904,6 +905,7 @@ export class OpenCodeAgentRuntimeProvider
     ) {
       state.canInterrupt = false;
       state.runPhase = 'idle';
+      this.emitState(entry);
       return;
     }
     entry.interruptRequested = false;

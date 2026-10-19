@@ -43,6 +43,7 @@ function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     defaultReasoningEffortByProvider: {},
     agentModelPresets: [],
     maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
+    runTimeLimitHours: 0,
     speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
     speechToTextApiKeyConfigured: false,
     speechToTextApiKeyFromEnv: false,

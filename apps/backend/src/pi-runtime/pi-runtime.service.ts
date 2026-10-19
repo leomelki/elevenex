@@ -92,6 +92,7 @@ export class PiRuntimeService
   private readonly mcpStatuses = new Map<number, PiMcpStatus[]>();
   private readonly activeRuns = new Map<number, PiActiveRun>();
   private readonly initializingRuns = new Set<number>();
+  private readonly interruptedInitializations = new Set<number>();
   private readonly runtimeStates = new Map<number, PiRuntimeState>();
   private readonly runtimes = new Map<number, PiRuntimeEntry>();
   private readonly runtimeStarts = new Map<number, Promise<PiSessionRuntime>>();
@@ -544,6 +545,15 @@ export class PiRuntimeService
 
       const runtime = await this.ensureRuntime(sessionId);
 
+      // A runtime deadline (or manual stop) can arrive before a cold runtime
+      // is ready. Do not dispatch its prompt after that stop has been requested.
+      if (this.interruptedInitializations.delete(sessionId)) {
+        this.initializingRuns.delete(sessionId);
+        this.finalizeInterruptedRun(sessionId);
+        this.scheduleIdleShutdown(sessionId);
+        return;
+      }
+
       if (isNewSession) {
         const effectiveTitlePrompt = (titlePrompt ?? trimmedPrompt).trim();
         if (effectiveTitlePrompt) {
@@ -635,6 +645,7 @@ export class PiRuntimeService
       }
     } catch (error) {
       this.initializingRuns.delete(sessionId);
+      this.interruptedInitializations.delete(sessionId);
       if (!runRegistered && state) {
         const message = error instanceof Error ? error.message : String(error);
         state.lastError = message;
@@ -663,7 +674,10 @@ export class PiRuntimeService
         ...(images?.length ? { images } : {}),
       },
     ];
-    if (this.activeRuns.get(sessionId)?.interruptRequested) {
+    if (
+      this.activeRuns.get(sessionId)?.interruptRequested ||
+      this.interruptedInitializations.has(sessionId)
+    ) {
       state.queuePaused = true;
     }
     this.emitRunState(sessionId);
@@ -676,7 +690,12 @@ export class PiRuntimeService
       this.emitRunState(sessionId);
     }
     const run = this.activeRuns.get(sessionId);
-    if (!run) return;
+    if (!run) {
+      if (this.initializingRuns.has(sessionId)) {
+        this.interruptedInitializations.add(sessionId);
+      }
+      return;
+    }
     run.interruptRequested = true;
     const runtime = this.runtimes.get(sessionId)?.runtime;
     for (const request of run.userInputRequests.values()) {

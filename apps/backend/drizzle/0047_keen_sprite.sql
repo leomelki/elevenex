@@ -1,0 +1,1 @@
+ALTER TABLE `app_settings` ADD `run_time_limit_hours` real DEFAULT 0 NOT NULL;

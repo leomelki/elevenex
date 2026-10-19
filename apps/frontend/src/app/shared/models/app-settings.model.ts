@@ -11,6 +11,9 @@ export const DEFAULT_MAX_WORKTREES_PER_REPO = 5;
 export const UNLIMITED_WORKTREES_PER_REPO = 0;
 export const MAX_WORKTREES_PER_REPO_CEILING = 100;
 
+export const DEFAULT_RUN_TIME_LIMIT_HOURS = 0;
+export const MAX_RUN_TIME_LIMIT_HOURS = 168;
+
 /**
  * Per-provider preferences keyed by agent provider id. Values are opaque
  * provider-defined identifiers, so a model released tomorrow is storable
@@ -117,6 +120,7 @@ export interface AppSettings {
   agentModelPresets: AgentModelPreset[];
   /** Worktrees allowed per repo before creation needs confirming; 0 = no cap. */
   maxWorktreesPerRepo: number;
+  runTimeLimitHours: number;
   speechToText: SpeechToTextSettings;
   speechToTextApiKeyConfigured: boolean;
   speechToTextApiKeyFromEnv: boolean;

@@ -669,6 +669,31 @@ describe('PiRuntimeService lifecycle', () => {
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
   });
 
+  it('honors a stop requested during cold initialization and pauses queued prompts', async () => {
+    const child = createPiProcess('/tmp/pi-session-1.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    const env = createDeferred<NodeJS.ProcessEnv>();
+    const envStarted = createDeferred<void>();
+    mockBuildAugmentedEnv.mockImplementationOnce(() => {
+      envStarted.resolve();
+      return env.promise;
+    });
+    const { service } = createService({ idleMs: '60000' });
+    const first = service.submitPrompt(1, 'first');
+    await envStarted.promise;
+    await service.interrupt(1);
+    await service.submitPrompt(1, 'second');
+    env.resolve({ PATH: '/mock/bin' });
+    await first;
+    expect(child.stdin.writes.map((write) => JSON.parse(write)).filter((command) => command.type === 'prompt')).toEqual([]);
+    expect(await service.getRuntimeState(1)).toMatchObject({
+      runPhase: 'idle',
+      queuePaused: true,
+      pendingPrompts: [expect.objectContaining({ prompt: 'second' })],
+    });
+    await service.onModuleDestroy();
+  });
+
   it('queues prompts submitted while the Pi run is still initializing', async () => {
     const child = createPiProcess('/tmp/pi-session-1.jsonl');
     mockSpawn.mockReturnValue(child as never);

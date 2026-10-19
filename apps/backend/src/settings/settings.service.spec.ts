@@ -100,6 +100,7 @@ describe('SettingsService', () => {
       defaultReasoningEffortByProvider: {},
       agentModelPresets: [],
       maxWorktreesPerRepo: DEFAULT_MAX_WORKTREES_PER_REPO,
+      runTimeLimitHours: 0,
       speechToText: DEFAULT_SPEECH_TO_TEXT_SETTINGS,
       speechToTextApiKeyConfigured: false,
       speechToTextApiKeyFromEnv: false,
@@ -840,6 +841,59 @@ describe('SettingsService', () => {
         sessionToolbarButtons: [{ id: 'terminal' }],
       } as Parameters<SettingsService['update']>[0]),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  describe('run time limit', () => {
+    it('persists fractional hours, warms the runtime cache, and preserves the value on unrelated updates', async () => {
+      const { db, getRows } = createDbMock();
+      const service = new SettingsService(db);
+      expect(service.getRunTimeLimitHours()).toBe(0);
+      await service.update({ runTimeLimitHours: 0.5 });
+      expect(getRows()[0]).toMatchObject({ runTimeLimitHours: 0.5 });
+      expect(service.getRunTimeLimitHours()).toBe(0.5);
+      await service.update({ defaultAgentProvider: 'codex' });
+      await service.completeOnboarding({ defaultAgentProvider: 'claude' });
+      const restarted = new SettingsService(db);
+      await restarted.onModuleInit();
+      expect(restarted.getRunTimeLimitHours()).toBe(0.5);
+      await expect(
+        service.update({ runTimeLimitHours: 0 }),
+      ).resolves.toMatchObject({ runTimeLimitHours: 0 });
+    });
+
+    it.each([-1, 169, NaN, Infinity, null, '1'])(
+      'rejects an invalid runtime limit %s',
+      async (value) => {
+        const { db } = createDbMock();
+        const service = new SettingsService(db);
+        await expect(
+          service.update({ runTimeLimitHours: value as number }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      },
+    );
+
+    it('validates limits at the API boundary', async () => {
+      const pipe = new ValidationPipe({ transform: true, whitelist: true });
+      const metadata = {
+        type: 'body' as const,
+        metatype: UpdateAppSettingsDto,
+      };
+      await expect(
+        pipe.transform({ runTimeLimitHours: 0.5 }, metadata),
+      ).resolves.toMatchObject({ runTimeLimitHours: 0.5 });
+      for (const value of [-1, 169, '1']) {
+        await expect(
+          pipe.transform({ runTimeLimitHours: value }, metadata),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      }
+    });
+
+    it('tolerates old or malformed stored settings', async () => {
+      const { db } = createDbMock([{ id: 1, runTimeLimitHours: -1 }]);
+      await expect(new SettingsService(db).findOne()).resolves.toMatchObject({
+        runTimeLimitHours: 0,
+      });
+    });
   });
 
   describe('worktree limit', () => {
