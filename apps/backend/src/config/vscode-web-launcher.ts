@@ -1,3 +1,5 @@
+import { buildVSCodeUploadProgressScript } from './vscode-web-upload.js';
+
 const WORKBENCH_BOOTSTRAP_MARKER = '<!-- elevenex:workbench-bootstrap -->';
 
 export function buildVSCodeWebLauncherHtml(): string {
@@ -171,7 +173,7 @@ export function renderVSCodeWorkbenchHtml(
   const baseUrl = options.baseUrl ?? '/vscode-static';
   const nlsBaseUrl = options.nlsBaseUrl ?? '';
 
-  const html = rawHtml
+  let html = rawHtml
     .replace(/\{\{WORKBENCH_WEB_BASE_URL\}\}/g, baseUrl)
     .replace(/\{\{WORKBENCH_WEB_CONFIGURATION\}\}/g, '{}')
     .replace(/\{\{WORKBENCH_AUTH_SESSION\}\}/g, '{}')
@@ -180,6 +182,13 @@ export function renderVSCodeWorkbenchHtml(
   if (html.includes(WORKBENCH_BOOTSTRAP_MARKER)) {
     return html;
   }
+
+  // Load the adapter after the AMD workbench modules are defined, before the
+  // entrypoint creates the workbench and can accept dropped files.
+  html = html.replace(
+    /<script\b[^>]*\bsrc="[^"]*\/vs\/code\/browser\/workbench\/workbench\.js"[^>]*>/,
+    (entrypoint) => buildVSCodeUploadProgressScript() + entrypoint,
+  );
 
   const headCloseIndex = html.indexOf('</head>');
   if (headCloseIndex === -1) {
