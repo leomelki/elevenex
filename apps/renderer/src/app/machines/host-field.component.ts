@@ -29,6 +29,7 @@ export class HostFieldComponent {
     this.queryChange.emit(value);
   }
   protected keydown(event: KeyboardEvent): void {
+    if (this.disabled() || this.picked() || event.isComposing) return;
     const matches = this.matches();
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();

@@ -26,8 +26,8 @@
   opacity: 1;
   transform: none;
   transition:
-    opacity var(--dur-base) var(--ease-out),
-    transform var(--dur-slow) var(--ease-in-out);
+    opacity var(--dur-base) var(--ease-out) 40ms,
+    transform var(--dur-slow) var(--ease-in-out) 40ms;
 }
 @media (prefers-reduced-motion: reduce) {
   :host,

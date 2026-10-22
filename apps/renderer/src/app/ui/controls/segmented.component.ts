@@ -5,6 +5,7 @@ import {
   ElementRef,
   afterNextRender,
   afterRenderEffect,
+  computed,
   inject,
   input,
   output,
@@ -33,6 +34,13 @@ export class SegmentedComponent {
   readonly label = input.required<string>();
   readonly size = input<"md" | "sm">("md");
   readonly changed = output<string>();
+  protected readonly focusable = computed(() => {
+    const options = this.options();
+    return (
+      options.find((option) => option.id === this.value() && !option.disabled) ??
+      options.find((option) => !option.disabled)
+    )?.id;
+  });
   private readonly buttons =
     viewChildren<ElementRef<HTMLButtonElement>>("option");
   protected readonly thumb = signal<{

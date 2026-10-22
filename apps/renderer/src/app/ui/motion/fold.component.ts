@@ -15,6 +15,7 @@ import {
     "[attr.aria-hidden]": "!open()",
     "(transitionrun)": "transition($event, false)",
     "(transitionend)": "transition($event, true)",
+    "(transitioncancel)": "transition($event, true)",
   },
   template: `<div class="clip">
     <div class="content"><ng-content /></div>

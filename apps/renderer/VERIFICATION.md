@@ -33,3 +33,40 @@ use live DOM animation handles to scrub the owned animations precisely.
 This verifies the unpackaged native app on macOS. Installer packaging and
 Windows/Linux runtime verification were not part of this component-only change.
 Repository/agent data integration remains a separate application layer.
+
+## Follow-up design audit, 2026-10-22
+
+The audit and outstanding parity work are recorded in [DESIGN_REVIEW.md](DESIGN_REVIEW.md).
+
+- `pnpm desktop:lint` passed.
+- `pnpm desktop:test` passed: 87 renderer tests across 23 files, 4
+  preload/security tests, and 7 capture-tool tests. IPC types were checked with
+  `tsc`.
+- `pnpm desktop:build` passed (238 kB initial renderer bundle).
+- `git diff --check` passed. No dependencies or lockfile changed.
+
+Native reports under `artifacts/desktop-capture/`:
+
+| Directory | Coverage |
+| --- | --- |
+| `design-audit-themes` | Ten light/dark workspace and component-family captures, including reduced-motion navigation and visible loading skeletons |
+| `design-audit-interaction-motion` | Keyboard Deny, tools-to-mention insertion/focus, island dialog Escape/focus, terminal Find/restore in both themes; panel 0/140/280 ms and launch 0/280/560 ms frames |
+| `design-audit-retained-exits` | Four light/dark captures asserting that departing toasts/tabs are inert and hidden from assistive technology; keyboard navigation skips retained closing tabs |
+| `design-audit-machine-focus` | Launch frames, hidden-view inertness and return focus after removing redundant `aria-hidden` bindings |
+| `design-audit-production` | Two production `app://` empty-workbench captures, native theme updates in light and dark |
+
+Each final report records `verified: true`; representative PNGs were inspected.
+The interaction/motion run exposed Chromium warnings from redundant
+`aria-hidden` on focused outgoing machine views. The final machine-focus run
+verifies the correction using `inert` alone. Preliminary failed runs are retained
+as diagnostics, not counted as successful verification.
+
+Capture setup uses full native Enter events for browser button activation,
+waits for route/entry animations before freezing, and seeks live DOM animation
+handles after media changes to avoid stale Chromium protocol animation IDs.
+The host's global pnpm version manager stalled; commands used the already cached
+repository-pinned pnpm 8.15.4 through a temporary PATH shim. A sandboxed Angular
+build aborted; its normal host retry passed. No toolchain upgrade was performed.
+
+This remains unpackaged macOS verification. The production route is the empty
+workbench; supplied-data preview captures exercise the reusable feature families.

@@ -6,6 +6,15 @@
   [attr.aria-label]="labels[status()]"
   [attr.data-status]="status()"
 >
+  <circle
+    class="burst"
+    cx="7"
+    cy="7"
+    r="5.25"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.5"
+  />
   @switch (status()) {
     @case ("running") {
       <circle
@@ -56,6 +65,8 @@
         stroke-width="1.5"
       />
       <path
+        class="check"
+        pathLength="1"
         d="M4.6 7.2l1.7 1.7 3.2-3.6"
         fill="none"
         stroke="currentColor"

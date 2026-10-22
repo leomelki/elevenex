@@ -41,12 +41,15 @@ export class ApprovalCardComponent {
   onKey(event: KeyboardEvent): void {
     if (
       this.status() !== "pending" ||
+      event.defaultPrevented ||
       event.metaKey ||
       event.ctrlKey ||
       event.isComposing
     )
       return;
     if (event.key === "Enter") {
+      // A focused button must keep its native action (especially Deny).
+      if (event.target !== event.currentTarget) return;
       event.preventDefault();
       this.resolve.emit(event.altKey ? "always" : "approved");
     } else if (event.key === "Escape") {

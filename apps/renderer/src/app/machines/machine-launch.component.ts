@@ -24,7 +24,15 @@ export class MachineLaunchComponent {
   private launchingCard?: HTMLElement;
 
   constructor() {
-    inject(DestroyRef).onDestroy(() => this.cancel());
+    const motion = matchMedia('(prefers-reduced-motion: reduce)');
+    const finishMotion = () => {
+      if (motion.matches) this.animations.forEach(animation => animation.finish());
+    };
+    motion.addEventListener('change', finishMotion);
+    inject(DestroyRef).onDestroy(() => {
+      this.cancel();
+      motion.removeEventListener('change', finishMotion);
+    });
     afterRenderEffect(() => {
       const opening = this.open();
       const machine = this.machineId();
@@ -54,10 +62,10 @@ export class MachineLaunchComponent {
     if (!host || !pane || !zoom || !home) return;
     const card = Array.from(home.querySelectorAll<HTMLElement>('[data-machine]')).find(element => element.dataset['machine'] === this.lastMachine);
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const duration = reduced ? 140 : opening ? 560 : 500;
+    const duration = reduced ? parseFloat(getComputedStyle(host).getPropertyValue('--dur-fast')) : opening ? 560 : 500;
     const options: KeyframeAnimationOptions = { duration, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' };
     if (!card || reduced) {
-      this.animations = [pane.animate(opening ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }], options)];
+      this.animations = [pane.animate(opening ? [{ opacity: 0, visibility: 'visible' }, { opacity: 1, visibility: 'visible' }] : [{ opacity: 1, visibility: 'visible' }, { opacity: 0, visibility: 'visible' }], options)];
     } else {
       // Cover-fit the view throughout: a non-uniform scale would stretch the app's text.
       const outer = host.getBoundingClientRect();
@@ -105,8 +113,13 @@ export class MachineLaunchComponent {
       this.faces()?.nativeElement.replaceChildren();
       if (this.launchingCard) this.launchingCard.style.visibility = '';
       this.launchingCard = undefined;
-      if (opening) pane.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]')?.focus({ preventScroll: true });
-      else (this.returnFocus?.isConnected ? this.returnFocus : card)?.focus({ preventScroll: true });
+      // Input remains live during the launch. Do not take focus back from a
+      // control the person already reached in the destination view.
+      const destination = opening ? pane : home;
+      if (!destination.contains(document.activeElement)) {
+        if (opening) pane.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]')?.focus({ preventScroll: true });
+        else (this.returnFocus?.isConnected ? this.returnFocus : card)?.focus({ preventScroll: true });
+      }
       this.transitionFinished.emit(opening);
     }).catch(() => { /* Reversing or destroying a launch cancels its owned animations. */ });
   }

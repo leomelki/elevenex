@@ -108,6 +108,25 @@
     @if (!toast()) {
       <button exButton (click)="toast.set(true)">Show notification</button>
     }
+    <div class="row">
+      <button exButton data-preview="add-stack-notice" (click)="addNotice()">
+        Add stacked notification
+      </button>
+      <button
+        exButton
+        data-preview="clear-stack-notices"
+        [disabled]="!notices().length"
+        (click)="notices.set([])"
+      >
+        Clear stacked notifications
+      </button>
+    </div>
+    <ex-toast-stack
+      data-preview="toast-stack"
+      [notices]="notices()"
+      (dismissed)="removeNotice($event)"
+      (actionSelected)="removeNotice($event)"
+    />
   </section>
   <section>
     <h2>In-place motion</h2>

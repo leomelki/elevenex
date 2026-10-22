@@ -1,4 +1,8 @@
-<section role="listbox" aria-label="Mention a session, task or file">
+<section
+  [id]="listId()"
+  role="listbox"
+  aria-label="Mention a session, task or file"
+>
   @for (item of matches(); track item.kind + ":" + item.id; let i = $index) {
     @if (i === 0 || matches()[i - 1]?.kind !== item.kind) {
       <h3>
@@ -14,6 +18,8 @@
     <button
       type="button"
       role="option"
+      [id]="listId() + '-' + i"
+      tabindex="-1"
       [attr.aria-selected]="highlighted() === i"
       (mouseenter)="highlighted.set(i)"
       (click)="selected.emit(item)"

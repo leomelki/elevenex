@@ -20,7 +20,7 @@ export class StatusGlyphComponent {
   readonly size = input(14);
   protected readonly labels = STATUS_LABELS;
   private previous?: Status;
-  private animation?: Animation;
+  private readonly animations = new Set<Animation>();
   private readonly element =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
 
@@ -29,7 +29,8 @@ export class StatusGlyphComponent {
       const status = this.status();
       const previous = this.previous;
       this.previous = status;
-      this.animation?.cancel();
+      for (const animation of this.animations) animation.cancel();
+      this.animations.clear();
       if (
         !previous ||
         previous === status ||
@@ -38,6 +39,34 @@ export class StatusGlyphComponent {
       )
         return;
       const style = getComputedStyle(this.element);
+      if (
+        previous === "running" &&
+        (status === "done" || status === "review")
+      ) {
+        this.play(
+          this.element.querySelector(".burst"),
+          [
+            { opacity: 0.7, transform: "scale(.8)" },
+            { opacity: 0, transform: "scale(1.6)" },
+          ],
+          {
+            duration: parseFloat(style.getPropertyValue("--dur-slow")),
+            easing: style.getPropertyValue("--ease-out").trim(),
+          },
+        );
+        this.play(
+          this.element.querySelector(".check"),
+          [
+            { strokeDasharray: "1", strokeDashoffset: "1" },
+            { strokeDasharray: "1", strokeDashoffset: "0" },
+          ],
+          {
+            duration: parseFloat(style.getPropertyValue("--dur-deliberate")),
+            easing: style.getPropertyValue("--ease-out").trim(),
+          },
+        );
+        return;
+      }
       const frames =
         status === "failed"
           ? [
@@ -52,14 +81,28 @@ export class StatusGlyphComponent {
                 { transform: "none" },
               ]
             : [
-                { opacity: 0.35, transform: "scale(.9)" },
+                { opacity: 0.35, transform: "rotate(-45deg) scale(.9)" },
                 { opacity: 1, transform: "none" },
               ];
-      this.animation = this.element.animate(frames, {
+      this.play(this.element, frames, {
         duration: parseFloat(style.getPropertyValue("--dur-deliberate")),
         easing: style.getPropertyValue("--ease-spring").trim(),
       });
     });
-    inject(DestroyRef).onDestroy(() => this.animation?.cancel());
+    inject(DestroyRef).onDestroy(() => {
+      for (const animation of this.animations) animation.cancel();
+    });
+  }
+
+  private play(
+    target: Element | null,
+    frames: Keyframe[],
+    options: KeyframeAnimationOptions,
+  ): void {
+    if (!target?.animate) return;
+    const animation = target.animate(frames, options);
+    this.animations.add(animation);
+    animation.onfinish = animation.oncancel = () =>
+      this.animations.delete(animation);
   }
 }

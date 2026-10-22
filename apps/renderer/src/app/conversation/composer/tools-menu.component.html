@@ -28,6 +28,7 @@
   ]"
   (backdropClick)="open.set(false)"
   (overlayKeydown)="$event.key === 'Escape' && open.set(false)"
+  (detach)="detached()"
   ><section
     class="picker"
     role="dialog"
@@ -42,11 +43,7 @@
     >
       <ex-icon name="attach" [size]="14" /><span>Attach files</span
       ><small>⌘U</small></button
-    ><button
-      type="button"
-      class="choice"
-      (click)="mention.emit(); open.set(false)"
-    >
+    ><button type="button" class="choice" (click)="requestMention()">
       <ex-icon name="at" [size]="14" />Mention a session, task or file
     </button>
     @if (servers().length) {

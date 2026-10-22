@@ -17,6 +17,8 @@ import {
   StatusGlyphComponent,
   SwitchComponent,
   ToastComponent,
+  ToastStackComponent,
+  type ToastNotice,
   TooltipComponent,
   TooltipDirective,
 } from "../src/app/ui";
@@ -40,6 +42,7 @@ import {
     StatusGlyphComponent,
     SwitchComponent,
     ToastComponent,
+    ToastStackComponent,
     TooltipComponent,
     TooltipDirective,
   ],
@@ -61,6 +64,8 @@ export class FoundationsDemoComponent {
   readonly open = signal(true);
   readonly visible = signal(true);
   readonly toast = signal(true);
+  readonly notices = signal<readonly ToastNotice[]>([]);
+  private nextNotice = 1;
   readonly label = signal("Commit 7");
   readonly progress = signal(0.48);
   readonly options = [
@@ -85,4 +90,23 @@ export class FoundationsDemoComponent {
     "shield",
     "plug",
   ];
+
+  addNotice(): void {
+    const number = this.nextNotice++;
+    this.notices.update((notices) => [
+      ...notices,
+      {
+        id: `preview-notice-${number}`,
+        title: `Notification ${number}`,
+        action: "Undo",
+        duration: 0,
+      },
+    ]);
+  }
+
+  removeNotice(id: string): void {
+    this.notices.update((notices) =>
+      notices.filter((notice) => notice.id !== id),
+    );
+  }
 }

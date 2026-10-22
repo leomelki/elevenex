@@ -46,10 +46,7 @@ void bootstrapApplication(PreviewComponent, {
       ],
       withViewTransitions({
         skipInitialTransition: true,
-        onViewTransitionCreated: ({ transition }) => {
-          if (matchMedia("(prefers-reduced-motion: reduce)").matches)
-            transition.skipTransition();
-        },
+        // Match production: reduced motion is handled by the global CSS.
       }),
     ),
   ],

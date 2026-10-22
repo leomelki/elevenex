@@ -17,7 +17,9 @@
         workLabel()
       }}</span>
       @if (status() === "live") {
-        <span>{{ steps().length }} steps</span>
+        <span
+          >{{ stepCount() }} {{ stepCount() === 1 ? "step" : "steps" }}</span
+        >
       }
       <ex-icon
         [name]="expanded() ? 'chevron-down' : 'chevron-right'"
@@ -30,16 +32,14 @@
       </button>
     }
     <div class="facts" [class.pinned]="expanded()">
-      @if (facts().files) {
-        <span>Edited {{ facts().files }} files</span>
-      }
-      @if (facts().results) {
-        <span>{{ facts().results }}</span>
+      @for (fact of facts(); track fact.kind; let i = $index) {
+        <span
+          [class.failure]="fact.kind === 'failure'"
+          [style.--fact-index]="i"
+          >{{ fact.label }}</span
+        >
       }
     </div>
-    @if (facts().failures) {
-      <span class="failure">{{ facts().failures }} failed</span>
-    }
   </div>
   <ex-fold [open]="expanded()"
     ><ex-work-timeline

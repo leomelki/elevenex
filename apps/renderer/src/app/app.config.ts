@@ -19,10 +19,9 @@ export const appConfig: ApplicationConfig = {
       ],
       withViewTransitions({
         skipInitialTransition: true,
-        onViewTransitionCreated: ({ transition }) => {
-          if (matchMedia("(prefers-reduced-motion: reduce)").matches)
-            transition.skipTransition();
-        },
+        // styles.css disables the transition pseudo-element animations for
+        // reduced motion. skipTransition() rejects ready, which this Angular
+        // version reports as a renderer error even for intentional skips.
       }),
     ),
   ],

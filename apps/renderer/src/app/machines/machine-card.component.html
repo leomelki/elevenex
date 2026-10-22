@@ -1,5 +1,5 @@
 <button type="button" class="card" [class.idle]="!connected()" [class.highlighted]="highlighted()" [class.pressed]="pressed()"
-  [disabled]="disabled()" [attr.data-machine]="machine().id" [style.--machine-color]="color()" (click)="open($event)">
+  [disabled]="disabled()" [attr.data-machine]="machine().id" [style.--machine-color]="color()" (click)="open($event)" (keydown)="keydown($event)">
   <span class="top">
     <span class="machine-icon"><ex-icon [name]="icons[machine().kind]" [size]="16" />
       <span class="presence" [class.live]="connected()" [class.failed]="machine().conn === 'fail'" [class.update]="machine().update" aria-hidden="true"></span>

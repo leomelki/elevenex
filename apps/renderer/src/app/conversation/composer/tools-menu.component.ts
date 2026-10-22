@@ -32,6 +32,19 @@ export class ToolsMenuComponent {
         .includes(this.query().toLocaleLowerCase()),
     ),
   );
+  private mentionAfterClose = false;
+  requestMention(): void {
+    this.mentionAfterClose = true;
+    this.open.set(false);
+  }
+  detached(): void {
+    this.open.set(false);
+    if (this.mentionAfterClose) {
+      this.mentionAfterClose = false;
+      // CDK has destroyed the focus trap and restored focus before detach emits.
+      this.mention.emit();
+    }
+  }
   search(event: Event): void {
     if (event.target instanceof HTMLInputElement)
       this.query.set(event.target.value);

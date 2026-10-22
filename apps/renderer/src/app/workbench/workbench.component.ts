@@ -52,10 +52,12 @@ export class WorkbenchComponent {
     readonly sessionId: string;
   } | null>(null);
   readonly panelOpen = model(false);
+  readonly wideReview = model(false);
   readonly panel = model("changes");
   readonly hasConversation = input(false);
   readonly projectAdded = output<void>();
   readonly taskRequested = output<void>();
+  readonly closedTasksRequested = output<void>();
   readonly sessionRequested = output<string>();
   readonly machineRequested = output<void>();
   protected readonly filter = signal<SummaryStatus | null>(null);

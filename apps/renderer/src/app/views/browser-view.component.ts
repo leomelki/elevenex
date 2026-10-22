@@ -1,12 +1,12 @@
 import { afterRenderEffect, ChangeDetectionStrategy, Component, computed, ElementRef, input, output, signal, viewChild } from '@angular/core';
-import { ButtonComponent, FoldComponent, IconComponent, IconButtonComponent } from '../ui';
+import { ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconButtonComponent } from '../ui';
 import { BrowserDriver, BrowserQuestion, BrowserStep, BrowserTab, BrowserTarget, ViewTab } from './view.models';
 import { ViewTabsComponent } from './view-tabs.component';
 
 /** A safe preview host. The owner supplies trusted rendered content, never an arbitrary iframe/webview. */
 @Component({
   selector: 'ex-browser-view',
-  imports: [ButtonComponent, FoldComponent, IconComponent, IconButtonComponent, ViewTabsComponent],
+  imports: [ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconButtonComponent, ViewTabsComponent],
   templateUrl: './browser-view.component.html',
   styleUrl: './browser-view.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,

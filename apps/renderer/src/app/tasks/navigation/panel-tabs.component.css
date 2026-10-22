@@ -57,6 +57,7 @@ button:focus-visible {
   display: none;
 }
 .label {
+  display: inline-block;
   min-width: 0;
   overflow: hidden;
 }
@@ -64,13 +65,14 @@ button[aria-selected='true'] .label-wrap,
 .labelled .label-wrap {
   display: block;
 }
-button[aria-selected='true'] .label {
+.animate-labels button[aria-selected='true'] .label {
   animation: label-in var(--dur-base) var(--ease-out) 40ms both;
 }
 @keyframes label-in {
   from {
     opacity: 0;
     transform: translateY(2px);
+    filter: blur(var(--space-1));
   }
 }
 .dot {

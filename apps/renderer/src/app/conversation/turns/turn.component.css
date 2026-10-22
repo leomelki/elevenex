@@ -65,15 +65,22 @@
 }
 .facts {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-3);
-  opacity: 0;
   color: var(--ink-muted);
   font-size: var(--text-caption-size);
+}
+.facts > span {
+  opacity: 0;
   transition: opacity var(--dur-fast) var(--ease-out);
 }
-:host:hover .facts,
-:host:focus-within .facts,
-.facts.pinned {
+:host:hover .facts > span,
+:host:focus-within .facts > span,
+.facts.pinned > span {
+  opacity: 1;
+  transition-delay: calc(var(--fact-index) * var(--dur-instant));
+}
+.facts > .failure {
   opacity: 1;
 }
 .failure,
@@ -130,7 +137,7 @@ footer ex-turn-acts {
 }
 @media (hover: none) {
   footer ex-turn-acts,
-  .facts {
+  .facts > span {
     opacity: 1;
   }
 }
@@ -138,7 +145,7 @@ footer ex-turn-acts {
   :host.live .mark {
     animation: none;
   }
-  .facts,
+  .facts > span,
   footer ex-turn-acts {
     transition: none;
   }

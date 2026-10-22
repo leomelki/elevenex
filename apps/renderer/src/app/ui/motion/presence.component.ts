@@ -8,6 +8,10 @@ import {
 @Component({
   selector: "ex-presence",
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {
+    "[attr.inert]": 'show() ? null : ""',
+    "[attr.aria-hidden]": "!show()",
+  },
   template: `@if (show()) {
     <div [animate.enter]="ready() ? 'enter' : ''" animate.leave="leave">
       <ng-content />

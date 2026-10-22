@@ -39,6 +39,10 @@ button {
 button:hover {
   color: var(--ink);
 }
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
 [aria-checked="true"] {
   color: var(--ink);
 }

@@ -17,7 +17,7 @@
       type="button"
       role="radio"
       [attr.aria-checked]="value() === item.id"
-      [attr.tabindex]="value() === item.id ? 0 : -1"
+      [attr.tabindex]="focusable() === item.id ? 0 : -1"
       [attr.title]="item.title || item.label"
       [disabled]="item.disabled"
       (click)="changed.emit(item.id)"

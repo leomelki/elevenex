@@ -15,7 +15,7 @@
     background-color var(--dur-fast),
     border-color var(--dur-fast),
     color var(--dur-fast),
-    transform var(--dur-fast) var(--ease-out);
+    transform var(--dur-glide) var(--ease-spring);
 }
 :host([data-size="sm"]) {
   height: var(--space-6);
@@ -26,7 +26,7 @@
   background: var(--accent);
   color: var(--on-accent);
 }
-:host([data-variant="primary"]:hover) {
+:host([data-variant="primary"]:hover:not(:disabled)) {
   background: color-mix(in oklab, var(--accent) 88%, var(--ink));
 }
 :host([data-variant="secondary"]) {
@@ -34,8 +34,8 @@
   color: var(--ink);
   border-color: var(--line-strong);
 }
-:host([data-variant="secondary"]:hover),
-:host([data-variant="ghost"]:hover) {
+:host([data-variant="secondary"]:hover:not(:disabled)),
+:host([data-variant="ghost"]:hover:not(:disabled)) {
   background: var(--surface-sunken);
 }
 :host([data-variant="ghost"]) {
@@ -46,11 +46,16 @@
   background: var(--danger-soft);
   color: var(--danger);
 }
-:host([data-variant="danger"]:hover) {
+:host([data-variant="danger"]:hover:not(:disabled)) {
   border-color: var(--danger);
 }
 :host(:active:not(:disabled)) {
   transform: scale(0.97);
+  transition-duration: var(--dur-instant);
+}
+:host(:focus-visible) {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 :host(:disabled) {
   opacity: 0.45;

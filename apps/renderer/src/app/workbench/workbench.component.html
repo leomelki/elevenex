@@ -1,4 +1,4 @@
-<ex-app-shell [panelOpen]="panelOpen()">
+<ex-app-shell [panelOpen]="panelOpen()" [wideReview]="wideReview()" (reviewExited)="wideReview.set(false)">
   <ex-title-island
     shellTitle
     label="Choose a machine"
@@ -40,6 +40,7 @@
       [showProjects]="activeProject() === 'all'"
       (selectSession)="selectedSession.set($event)"
       (addSession)="sessionRequested.emit($event)"
+      (closedRequested)="closedTasksRequested.emit()"
     />
   </div>
   <div shellMain class="main-content">

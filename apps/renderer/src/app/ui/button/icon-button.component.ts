@@ -41,9 +41,10 @@ import { TooltipDirective } from "../tooltip/tooltip.directive";
       cursor: pointer;
       transition:
         background var(--dur-fast),
-        color var(--dur-fast);
+        color var(--dur-fast),
+        transform var(--dur-glide) var(--ease-spring);
     }
-    button:hover {
+    button:hover:not(:disabled) {
       background: var(--surface-sunken);
       color: var(--ink);
     }
@@ -54,6 +55,14 @@ import { TooltipDirective } from "../tooltip/tooltip.directive";
     button.small {
       width: var(--space-6);
       height: var(--space-6);
+    }
+    button:active:not(:disabled) {
+      transform: scale(0.94);
+      transition-duration: var(--dur-instant);
+    }
+    button:focus-visible {
+      outline: none;
+      box-shadow: var(--focus-ring);
     }
     button:disabled {
       opacity: 0.45;

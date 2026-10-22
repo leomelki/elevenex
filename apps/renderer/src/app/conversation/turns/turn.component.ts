@@ -23,7 +23,7 @@ import { WorkTimelineComponent } from "./work-timeline.component";
 import { NowLineComponent } from "./now-line.component";
 import { OutcomeBarComponent } from "./outcome-bar.component";
 import { TurnActsComponent } from "./turn-acts.component";
-import { formatDuration } from "./work-summary";
+import { formatDuration, isProse, summarizeWork } from "./work-summary";
 @Component({
   selector: "ex-turn",
   imports: [
@@ -83,16 +83,10 @@ export class TurnComponent {
     () =>
       `${this.status() === "live" ? "Working" : this.status() === "stopped" ? "Stopped after" : this.status() === "failed" ? "Failed after" : "Worked"} ${formatDuration(this.status() === "live" ? this.elapsed() : this.duration())}`,
   );
-  readonly facts = computed(() => {
-    const failures = this.steps().filter(
-      (step) => step.status === "failed" && !step.recovered && !step.expected,
-    ).length;
-    const results = this.steps()
-      .filter((step) => !!step.result)
-      .map((step) => step.result)
-      .join(" · ");
-    return { failures, results, files: this.files().length };
-  });
+  readonly stepCount = computed(
+    () => this.steps().filter((step) => !isProse(step)).length,
+  );
+  readonly facts = computed(() => summarizeWork(this.steps(), this.files()));
   constructor() {
     effect((cleanup) => {
       const step = this.activeStep();

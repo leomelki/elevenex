@@ -1,8 +1,11 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
+  type AnimationCallbackEvent,
   afterNextRender,
   computed,
+  inject,
   input,
   output,
   signal,
@@ -35,7 +38,7 @@ export interface ToastNotice {
         [glyph]="notice.glyph ?? 'done'"
         [duration]="notice.duration ?? 5000"
         [animate.enter]="ready() ? 'enter' : ''"
-        animate.leave="leave"
+        (animate.leave)="leave($event)"
         (dismissed)="dismissed.emit(notice.id)"
         (actionSelected)="actionSelected.emit(notice.id)"
       />
@@ -91,7 +94,31 @@ export class ToastStackComponent {
   readonly actionSelected = output<string>();
   protected readonly visible = computed(() => this.notices().slice(-3));
   protected readonly ready = signal(false);
+  private readonly exits = new Set<Animation>();
   constructor() {
     afterNextRender(() => this.ready.set(true));
+    inject(DestroyRef).onDestroy(() => {
+      for (const animation of this.exits) animation.cancel();
+    });
+  }
+
+  protected leave(event: AnimationCallbackEvent): void {
+    // Pointer suppression alone still allows Tab and keyboard activation while
+    // Angular retains a dismissed notification for its exit animation.
+    event.target.setAttribute("inert", "");
+    event.target.setAttribute("aria-hidden", "true");
+    event.target.classList.add("leave");
+    const animations = event.target.getAnimations?.() ?? [];
+    if (!animations.length) {
+      event.animationComplete();
+      return;
+    }
+    for (const animation of animations) this.exits.add(animation);
+    void Promise.allSettled(
+      animations.map((animation) => animation.finished),
+    ).then(() => {
+      for (const animation of animations) this.exits.delete(animation);
+      event.animationComplete();
+    });
   }
 }

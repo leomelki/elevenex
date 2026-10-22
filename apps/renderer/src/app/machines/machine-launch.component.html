@@ -1,1 +1,3 @@
-<div #host class="launch" [class.open]="open()"><div #home class="home" [attr.inert]="open() ? '' : null" [attr.aria-hidden]="open() ? 'true' : null"><ng-content select="[machineHome]" /></div><div #pane class="pane" [attr.inert]="!open() ? '' : null" [attr.aria-hidden]="!open() ? 'true' : null"><div #zoom class="zoom"><ng-content select="[machineView]" /></div></div><div #faces class="faces" aria-hidden="true" inert></div></div>
+<!-- inert excludes the outgoing view from focus and the accessibility tree.
+     A redundant aria-hidden would race the browser's focused-descendant cleanup. -->
+<div #host class="launch" [class.open]="open()"><div #home class="home" [attr.inert]="open() ? '' : null"><ng-content select="[machineHome]" /></div><div #pane class="pane" [attr.inert]="!open() ? '' : null"><div #zoom class="zoom"><ng-content select="[machineView]" /></div></div><div #faces class="faces" aria-hidden="true" inert></div></div>

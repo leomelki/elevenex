@@ -23,6 +23,54 @@ describe('Side-view interactions', () => {
     expect(closed).toHaveBeenCalledWith('two');
   });
 
+  it('keeps keyboard focus on a surviving tab after closing, then on New tab when empty', async () => {
+    const fixture = TestBed.createComponent(ViewTabsComponent);
+    fixture.componentRef.setInput('items', [{ id: 'one', title: 'One' }, { id: 'two', title: 'Two' }]);
+    fixture.componentRef.setInput('active', 'two');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const closing = fixture.nativeElement.querySelector('[data-tab-id="two"]') as HTMLButtonElement;
+    closing.focus();
+    closing.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    fixture.componentRef.setInput('items', [{ id: 'one', title: 'One' }]);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const remaining = fixture.nativeElement.querySelector('[data-tab-id="one"]') as HTMLButtonElement;
+    expect(document.activeElement).toBe(remaining);
+    expect(remaining.getAttribute('aria-selected')).toBe('true');
+    expect(remaining.tabIndex).toBe(0);
+    remaining.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    fixture.componentRef.setInput('items', []);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('[aria-label="New tab"]'));
+  });
+
+  it('focuses terminal Find and clears hidden filtering when it closes', async () => {
+    const fixture = TestBed.createComponent(TerminalViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Shell', status: 'idle' }]);
+    fixture.componentRef.setInput('output', [{ id: 'one', kind: 'cmd', text: 'pnpm test' }, { id: 'two', kind: 'ok', text: 'Passed' }]);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const trigger = fixture.nativeElement.querySelector('[aria-label="Find in terminal (⌘F)"]') as HTMLButtonElement;
+    trigger.focus();
+    trigger.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const input = fixture.nativeElement.querySelector('input[type="search"]') as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    input.value = 'Passed';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true }));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(input.value).toBe('');
+    expect(document.activeElement).toBe(trigger);
+    expect(input.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
+  });
+
   it('reports a failed user command with its tab and refuses invalid ports', () => {
     const fixture = TestBed.createComponent(TerminalViewComponent);
     fixture.componentRef.setInput('tabs', [{ id: 'tests', title: 'Tests', status: 'serving', port: 90000 }]);

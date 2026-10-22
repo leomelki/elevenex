@@ -6,6 +6,11 @@
 svg {
   display: block;
   color: var(--ink-muted);
+  overflow: visible;
+}
+.burst {
+  opacity: 0;
+  transform-origin: center;
 }
 [data-status="running"] {
   color: var(--running);

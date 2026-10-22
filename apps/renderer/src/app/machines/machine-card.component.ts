@@ -24,6 +24,14 @@ export class MachineCardComponent {
   });
 
   protected open(event: MouseEvent): void {
+    if (this.disabled()) return;
     this.opened.emit({ machine: this.machine(), newWindow: event.metaKey || event.ctrlKey });
+  }
+
+  protected keydown(event: KeyboardEvent): void {
+    if (event.key !== 'Enter' || (!event.metaKey && !event.ctrlKey) || this.disabled()) return;
+    // Native keyboard-generated clicks do not preserve the modifier keys.
+    event.preventDefault();
+    this.opened.emit({ machine: this.machine(), newWindow: true });
   }
 }

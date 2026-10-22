@@ -3,8 +3,8 @@ import {
   Component,
   computed,
   input,
+  linkedSignal,
   output,
-  signal,
 } from "@angular/core";
 import { MentionComponent } from "./mention.component";
 import type { ConversationMention } from "../conversation.models";
@@ -18,10 +18,10 @@ import type { ConversationMention } from "../conversation.models";
 })
 export class MentionMenuComponent {
   readonly query = input("");
+  readonly listId = input(`mentions-${crypto.randomUUID()}`);
   readonly items = input<readonly ConversationMention[]>([]);
   readonly selected = output<ConversationMention>();
   readonly closed = output<void>();
-  readonly highlighted = signal(0);
   readonly matches = computed(() => {
     const query = this.query().toLocaleLowerCase();
     return [...this.items()]
@@ -31,6 +31,13 @@ export class MentionMenuComponent {
       .sort((a, b) => this.rank(a.kind) - this.rank(b.kind))
       .slice(0, 50);
   });
+  readonly highlighted = linkedSignal({
+    source: this.matches,
+    computation: () => 0,
+  });
+  readonly activeOptionId = computed(() =>
+    this.matches().length ? `${this.listId()}-${this.highlighted()}` : null,
+  );
   rank(kind: ConversationMention["kind"]): number {
     return kind === "session" ? 0 : kind === "task" ? 1 : 2;
   }

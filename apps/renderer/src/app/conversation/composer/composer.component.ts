@@ -113,14 +113,23 @@ export class ComposerComponent {
     this.mentionQuery.set(null);
   }
   insertMention(mention: ConversationMention): void {
-    this.mentionInserted.emit(mention);
     const element = this.textarea()?.nativeElement;
     if (element) {
       const before = this.draft().slice(0, element.selectionStart);
       const after = this.draft().slice(element.selectionEnd);
-      this.draft.set(before.replace(/@[^\s@]*$/, `@${mention.label} `) + after);
+      const query = /(?:^|\s)@[^\s@]*$/.exec(before);
+      const prefix = query
+        ? before.slice(0, before.lastIndexOf("@"))
+        : before + (before && !/\s$/.test(before) ? " " : "");
+      const inserted = `${prefix}@${mention.label} `;
+      const draft = inserted + after;
+      this.draft.set(draft);
+      // Set the value before the selection: a later value binding would move the caret.
+      element.value = draft;
       element.focus();
+      element.setSelectionRange(inserted.length, inserted.length);
     }
+    this.mentionInserted.emit(mention);
     this.mentionQuery.set(null);
   }
   openMentions(): void {
@@ -128,7 +137,7 @@ export class ComposerComponent {
     this.textarea()?.nativeElement.focus();
   }
   onKey(event: KeyboardEvent): void {
-    if (event.isComposing) return;
+    if (event.isComposing || this.disabled()) return;
     if (
       this.mentionQuery() !== null &&
       ["ArrowUp", "ArrowDown", "Enter", "Tab", "Escape"].includes(event.key)

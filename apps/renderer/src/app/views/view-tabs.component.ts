@@ -1,4 +1,4 @@
-import { afterNextRender, ChangeDetectionStrategy, Component, ElementRef, input, output, signal, viewChild } from '@angular/core';
+import { afterNextRender, afterRenderEffect, ChangeDetectionStrategy, Component, computed, DestroyRef, ElementRef, inject, input, output, signal, viewChild, type AnimationCallbackEvent } from '@angular/core';
 import { IconComponent, StatusGlyphComponent } from '../ui';
 import { ViewTab } from './view.models';
 
@@ -21,10 +21,57 @@ export class ViewTabsComponent {
   readonly added = output<void>();
   protected readonly animationsReady = signal(false);
   protected readonly list = viewChild<ElementRef<HTMLElement>>('list');
+  private readonly newButton = viewChild<ElementRef<HTMLButtonElement>>('newButton');
+  private pendingClose?: { id: string; index: number; focus: HTMLElement };
+  private readonly exits = new Set<Animation>();
+  protected readonly selectedId = computed(() => this.items().find(item => item.id === this.active())?.id ?? this.items()[0]?.id);
 
-  constructor() { afterNextRender(() => this.animationsReady.set(true)); }
+  constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      for (const animation of this.exits) animation.cancel();
+    });
+    afterNextRender(() => this.animationsReady.set(true));
+    afterRenderEffect(() => {
+      const items = this.items();
+      const pending = this.pendingClose;
+      if (!pending || items.some(item => item.id === pending.id)) return;
+      this.pendingClose = undefined;
+      // A delayed close must not steal focus if the person has moved elsewhere.
+      if (document.activeElement !== pending.focus && document.activeElement !== document.body) return;
+      const next = items[Math.min(pending.index, items.length - 1)];
+      const tab = Array.from(this.list()?.nativeElement.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
+        .find(button => button.dataset['tabId'] === next?.id);
+      (tab ?? this.newButton()?.nativeElement)?.focus({ preventScroll: true });
+    });
+  }
 
-  protected selectedId(): string | undefined { return this.active() ?? this.items()[0]?.id; }
+  protected leave(event: AnimationCallbackEvent): void {
+    // Angular retains the shell during its exit; remove its controls from keyboard navigation immediately.
+    event.target.setAttribute('inert', '');
+    event.target.setAttribute('aria-hidden', 'true');
+    event.target.classList.add('leave');
+    const animations = event.target.getAnimations?.() ?? [];
+    if (!animations.length) {
+      event.animationComplete();
+      return;
+    }
+    for (const animation of animations) this.exits.add(animation);
+    void Promise.allSettled(animations.map(animation => animation.finished)).then(() => {
+      for (const animation of animations) this.exits.delete(animation);
+      event.animationComplete();
+    });
+  }
+
+  protected close(id: string): void {
+    if (this.disabled() || !this.closable()) return;
+    const focus = document.activeElement;
+    const tab = Array.from(this.list()?.nativeElement.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
+      .find(button => button.dataset['tabId'] === id);
+    if (focus instanceof HTMLElement && tab?.parentElement?.contains(focus)) {
+      this.pendingClose = { id, index: this.items().findIndex(item => item.id === id), focus };
+    }
+    this.closed.emit(id);
+  }
   protected keydown(event: KeyboardEvent, id: string): void {
     if (this.disabled()) return;
     const items = this.items();
@@ -34,16 +81,17 @@ export class ViewTabsComponent {
     else if (event.key === 'ArrowLeft') next = (index - 1 + items.length) % items.length;
     else if (event.key === 'Home') next = 0;
     else if (event.key === 'End') next = items.length - 1;
-    else if (event.key === 'Delete' && this.closable()) { event.preventDefault(); this.closed.emit(id); return; }
+    else if (event.key === 'Delete' && this.closable()) { event.preventDefault(); this.close(id); return; }
     else return;
     const tab = items[next];
     if (!tab) return;
     event.preventDefault();
     this.selected.emit(tab.id);
-    this.list()?.nativeElement.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+    Array.from(this.list()?.nativeElement.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
+      .find(button => button.dataset['tabId'] === tab.id && !button.closest('[inert]'))?.focus();
   }
 
   protected middleClick(event: MouseEvent, id: string): void {
-    if (event.button === 1 && !this.disabled() && this.closable()) { event.preventDefault(); this.closed.emit(id); }
+    if (event.button === 1 && !this.disabled() && this.closable()) { event.preventDefault(); this.close(id); }
   }
 }

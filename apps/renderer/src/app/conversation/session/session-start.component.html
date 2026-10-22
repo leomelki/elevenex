@@ -11,7 +11,7 @@
 <div class="start">
   <h1>{{ title() }}</h1>
   <ng-content select="[sessionContext]" /><ex-preset-picker
-    [presets]="presets().slice(0, 6)"
+    [presets]="visiblePresets()"
     [value]="selected()"
     (selected)="select($event)"
   />

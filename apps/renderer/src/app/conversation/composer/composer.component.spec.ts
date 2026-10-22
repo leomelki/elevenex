@@ -100,4 +100,59 @@ describe("Composer public interactions", () => {
     );
     expect(stopped).toBe(1);
   });
+  it("hands focus from tools to the composer before inserting a mention at the caret", async () => {
+    fixture.componentRef.setInput("mentionItems", [
+      { id: "retry", kind: "file", label: "retry.ts" },
+    ]);
+    const textarea = type("Review then test");
+    textarea.setSelectionRange(7, 7);
+    const tools = fixture.nativeElement.querySelector(
+      'button[aria-label="Attachments and tools"]',
+    );
+    if (!(tools instanceof HTMLButtonElement)) throw new Error("Missing tools");
+    tools.focus();
+    tools.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const menuButtons = Array.from(document.querySelectorAll("button"));
+    const mention = menuButtons.find((button) =>
+      button.textContent?.includes("Mention a session, task or file"),
+    );
+    if (!mention) throw new Error("Missing mention action");
+    mention.focus();
+    mention.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(textarea);
+    expect(
+      document.querySelector('section[aria-label="Attachments and tools"]'),
+    ).toBeNull();
+    expect(document.querySelector('[role="listbox"]')).not.toBeNull();
+    press(textarea);
+    expect(fixture.componentInstance.draft()).toBe(
+      "Review @retry.ts then test",
+    );
+    expect(textarea.selectionStart).toBe("Review @retry.ts ".length);
+    expect(sent).toEqual([]);
+  });
+  it("resets the active mention when filtering and exposes it to assistive technology", () => {
+    fixture.componentRef.setInput("mentionItems", [
+      { id: "retry", kind: "file", label: "retry.ts" },
+      { id: "tests", kind: "file", label: "retry.spec.ts" },
+    ]);
+    const textarea = type("@");
+    press(textarea, { key: "ArrowDown" });
+    expect(
+      document.querySelector('[role="option"][aria-selected="true"]')
+        ?.textContent,
+    ).toContain("retry.spec.ts");
+    type("@retry.ts");
+    const selected = document.querySelector(
+      '[role="option"][aria-selected="true"]',
+    );
+    expect(selected?.textContent).toContain("retry.ts");
+    expect(textarea.getAttribute("aria-activedescendant")).toBe(selected?.id);
+    press(textarea);
+    expect(fixture.componentInstance.draft()).toBe("@retry.ts ");
+  });
 });

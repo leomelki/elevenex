@@ -2,6 +2,8 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  OnChanges,
+  SimpleChanges,
   afterRenderEffect,
   inject,
   input,
@@ -17,12 +19,13 @@ import type { PanelTab } from '../task.models';
   templateUrl: './panel-tabs.component.html',
   styleUrl: './panel-tabs.component.css',
 })
-export class PanelTabsComponent {
+export class PanelTabsComponent implements OnChanges {
   readonly tabs = input<readonly PanelTab[]>([]);
   readonly active = input.required<string>();
   readonly labelled = input(false);
   readonly label = input('Side views');
   readonly selectTab = output<string>();
+  protected readonly animateLabels = signal(false);
   protected readonly thumb = signal<{ left: number; width: number } | null>(
     null,
   );
@@ -33,6 +36,7 @@ export class PanelTabsComponent {
       earlyRead: () => {
         this.active();
         this.labelled();
+        this.tabs();
         const active = this.root.querySelector<HTMLElement>(
           '[aria-selected="true"]',
         );
@@ -44,6 +48,9 @@ export class PanelTabsComponent {
         this.thumb.set(box());
       },
     });
+  }
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['active'] && !changes['active'].firstChange) this.animateLabels.set(true);
   }
   protected onKey(event: KeyboardEvent, index: number): void {
     let next: number;

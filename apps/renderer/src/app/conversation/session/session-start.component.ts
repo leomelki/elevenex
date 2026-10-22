@@ -3,8 +3,8 @@ import {
   Component,
   computed,
   input,
+  linkedSignal,
   output,
-  signal,
 } from "@angular/core";
 import { TaskLineComponent } from "../../tasks/lifecycle/task-line.component";
 import type { TaskContext } from "../../tasks/task.models";
@@ -33,13 +33,13 @@ export class SessionStartComponent {
       ? { ...task, project: task.project ? { name: task.project } : undefined }
       : null;
   });
-  readonly localSelection = signal<string | null>(null);
+  readonly visiblePresets = computed(() => this.presets().slice(0, 6));
+  readonly localSelection = linkedSignal(() => this.value() ?? null);
   readonly selected = computed(
     () =>
       this.localSelection() ??
-      this.value() ??
-      this.presets()[0]?.preset ??
-      this.presets()[0]?.model ??
+      this.visiblePresets()[0]?.preset ??
+      this.visiblePresets()[0]?.model ??
       "custom",
   );
   select(value: string): void {
@@ -47,9 +47,16 @@ export class SessionStartComponent {
     this.presetSelected.emit(value);
   }
   onKey(event: KeyboardEvent): void {
-    if (event.defaultPrevented || !event.altKey || !/^[1-9]$/.test(event.key))
+    if (
+      event.defaultPrevented ||
+      event.isComposing ||
+      event.metaKey ||
+      event.ctrlKey ||
+      !event.altKey ||
+      !/^[1-9]$/.test(event.key)
+    )
       return;
-    const preset = this.presets()[Number(event.key) - 1];
+    const preset = this.visiblePresets()[Number(event.key) - 1];
     if (preset) {
       event.preventDefault();
       this.select(preset.preset || preset.model);

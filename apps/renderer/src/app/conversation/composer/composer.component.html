@@ -29,6 +29,9 @@
   <textarea
     #textarea
     aria-label="Message the agent"
+    aria-autocomplete="list"
+    [attr.aria-controls]="mentions()?.listId() || null"
+    [attr.aria-activedescendant]="mentions()?.activeOptionId() || null"
     rows="2"
     [disabled]="disabled()"
     [placeholder]="placeholder()"

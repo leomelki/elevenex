@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { HostKeyCheckComponent } from './host-key-check.component';
+import { HostFieldComponent } from './host-field.component';
 import { MachineCardComponent } from './machine-card.component';
 import { MachinePanelComponent } from './machine-panel.component';
 import { PairPasteComponent } from './pair-paste.component';
@@ -88,6 +89,46 @@ describe('Machine presentation boundaries', () => {
     fixture.detectChanges();
     button.click();
     expect(paired).toHaveBeenCalledWith({ id: 'peer', name: 'Studio Mac', detail: 'On your network' });
+  });
+
+  it('opens a machine in a new window with Command or Control Enter', () => {
+    const fixture = TestBed.createComponent(MachineCardComponent);
+    const machine = { id: 'remote', name: 'Dev box', kind: 'ssh', conn: 'idle' };
+    fixture.componentRef.setInput('machine', machine);
+    fixture.detectChanges();
+    const opened = vi.fn();
+    fixture.componentInstance.opened.subscribe(opened);
+    const button = fixture.nativeElement.querySelector('button') as HTMLButtonElement;
+    for (const modifiers of [{ metaKey: true }, { ctrlKey: true }]) {
+      const event = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, ...modifiers });
+      button.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    expect(opened).toHaveBeenCalledTimes(2);
+    expect(opened).toHaveBeenLastCalledWith({ machine, newWindow: true });
+    fixture.componentRef.setInput('disabled', true);
+    fixture.detectChanges();
+    button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true }));
+    expect(opened).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not select an SSH suggestion from a resolved field or an unfinished composition', () => {
+    const fixture = TestBed.createComponent(HostFieldComponent);
+    const host = { id: 'dev', name: 'dev-box', detail: 'leo@dev.internal' };
+    fixture.componentRef.setInput('hosts', [host]);
+    fixture.componentRef.setInput('picked', { name: host.name, user: 'leo' });
+    fixture.detectChanges();
+    const selected = vi.fn();
+    fixture.componentInstance.selected.subscribe(selected);
+    const input = fixture.nativeElement.querySelector('input') as HTMLInputElement;
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(selected).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('picked', null);
+    fixture.detectChanges();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true }));
+    expect(selected).not.toHaveBeenCalled();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(selected).toHaveBeenCalledExactlyOnceWith(host);
   });
 
   it('clamps overall progress and advances only the current readiness step', () => {

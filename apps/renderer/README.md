@@ -21,6 +21,8 @@ Use `pnpm desktop:dev` for the normal native application. Checks are
 Visual verification uses [the native capture runner](../../scripts/desktop-capture/README.md),
 with `--url http://127.0.0.1:4310` when reviewing the component preview.
 See [verification results](VERIFICATION.md) for checks and captured states.
+See [the design review](DESIGN_REVIEW.md) for corrected defects and remaining
+differences from the supplied component and motion specifications.
 
 ## Boundaries
 
@@ -75,6 +77,10 @@ region inert and restores focus when it exits. Rail and sidebar keep their place
 Use `workbenchConversation` and `workbenchPanel` slots, readonly `projects` and
 `tasks`, and its selection models. A platform container can replace this route
 without modifying the reusable component families.
+
+Bind `Workbench.wideReview` with the projected review's `wide` input/output to
+activate shell takeover; Escape resets it through the shell. Handle
+`closedTasksRequested` to open the closed-task list in the application owner.
 
 ## Motion and accessibility
 

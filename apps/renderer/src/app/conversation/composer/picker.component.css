@@ -12,7 +12,7 @@
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink);
   font: inherit;
   font-size: var(--text-caption-size);
   cursor: pointer;
@@ -39,7 +39,8 @@ input:focus-visible {
   color: var(--ink);
   box-shadow: var(--shadow-pop);
   font-family: var(--font-sans);
-  animation: arrive var(--dur-base) var(--ease-out) both;
+  transform-origin: bottom;
+  animation: arrive var(--dur-base) var(--ease-glide) both;
 }
 .choice {
   display: flex;
@@ -56,9 +57,12 @@ input:focus-visible {
   text-align: left;
   cursor: pointer;
 }
-.choice:hover,
+.choice:hover {
+  background: var(--surface-sunken);
+}
 .choice[aria-pressed="true"] {
   background: var(--accent-soft);
+  color: var(--accent);
 }
 .choice > span {
   display: flex;
@@ -120,6 +124,9 @@ input[type="checkbox"] {
 .name {
   color: var(--ink);
 }
+.trigger ex-icon[name="bolt"] {
+  color: var(--accent);
+}
 .error {
   color: var(--danger);
 }
@@ -131,7 +138,7 @@ input[type="checkbox"] {
 @keyframes arrive {
   from {
     opacity: 0;
-    transform: translateY(var(--space-1));
+    transform: translateY(var(--space-1)) scale(0.97);
   }
 }
 @media (prefers-reduced-motion: reduce) {

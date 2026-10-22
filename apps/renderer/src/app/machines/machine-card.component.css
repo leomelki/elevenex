@@ -4,10 +4,10 @@
 .card.highlighted { box-shadow: inset 0 0 0 2px var(--accent), var(--shadow-raised); }
 .card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .card:active, .card.pressed { transform: scale(.96); transition-duration: var(--dur-instant); }
-.card:disabled { cursor: default; opacity: .55; }
+.card:disabled { cursor: default; opacity: .45; pointer-events: none; }
 .card.idle { background: color-mix(in oklab, var(--surface-raised) 60%, transparent); }
 .top { display: flex; align-items: flex-start; gap: var(--space-1); margin-bottom: var(--space-2); }
-.machine-icon { position: relative; display: grid; place-items: center; width: var(--space-8); height: var(--space-8); border-radius: var(--radius-md); background: color-mix(in oklab, var(--machine-color) 14%, var(--surface-sunken)); }
+.machine-icon { position: relative; display: grid; place-items: center; width: var(--space-8); height: var(--space-8); border-radius: var(--radius-md); color: var(--machine-color); background: color-mix(in oklab, var(--machine-color) 14%, var(--surface-sunken)); }
 .presence { position: absolute; right: -2px; bottom: -2px; width: var(--space-2); height: var(--space-2); border-radius: var(--radius-full); background: var(--surface-raised); box-shadow: inset 0 0 0 1.5px var(--ink-muted), 0 0 0 2px var(--surface-raised); }
 .presence.live { background: var(--accent); box-shadow: 0 0 0 2px var(--surface-raised); }
 .presence.failed { background: var(--attention); box-shadow: 0 0 0 2px var(--surface-raised); }

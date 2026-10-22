@@ -1,4 +1,57 @@
-import type { TimelineEntry, WorkStep } from "../conversation.models";
+import type {
+  ChangedFile,
+  TimelineEntry,
+  WorkStep,
+} from "../conversation.models";
+export interface WorkFact {
+  readonly kind: "failure" | "files" | "tests" | "commands" | "reads";
+  readonly label: string;
+}
+/** Keep glanceable evidence bounded; details remain in the work timeline. */
+export function summarizeWork(
+  steps: readonly WorkStep[],
+  files: readonly ChangedFile[],
+): readonly WorkFact[] {
+  let failures = 0;
+  let commands = 0;
+  let reads = 0;
+  let testResult = "";
+  for (const step of steps) {
+    if (step.status === "failed" && !step.recovered && !step.expected)
+      failures++;
+    if (step.kind === "run") commands++;
+    if (step.kind === "read") reads++;
+    if (
+      step.kind === "test" &&
+      step.result &&
+      !step.recovered &&
+      !step.expected
+    )
+      testResult = step.result;
+  }
+  const facts: WorkFact[] = [];
+  if (failures) facts.push({ kind: "failure", label: `${failures} failed` });
+  if (files.length) {
+    const added = files.reduce((sum, file) => sum + (file.add ?? 0), 0);
+    const removed = files.reduce((sum, file) => sum + (file.del ?? 0), 0);
+    facts.push({
+      kind: "files",
+      label: `Edited ${files.length} ${files.length === 1 ? "file" : "files"}${added || removed ? ` +${added} −${removed}` : ""}`,
+    });
+  }
+  if (testResult) facts.push({ kind: "tests", label: testResult });
+  if (commands)
+    facts.push({
+      kind: "commands",
+      label: `Ran ${commands} ${commands === 1 ? "command" : "commands"}`,
+    });
+  if (reads)
+    facts.push({
+      kind: "reads",
+      label: `Read ${reads} ${reads === 1 ? "file" : "files"}`,
+    });
+  return facts.slice(0, 4);
+}
 export function formatDuration(seconds: number): string {
   const value = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
   return value >= 60
@@ -19,7 +72,29 @@ export function groupWorkSteps(
       groups.push({
         id: pending[0]!.id,
         kind: "group",
-        label: `${pending.filter((s) => s.kind === "read").length} reads · ${pending.filter((s) => s.kind === "search").length} searches · ${pending.filter((s) => s.kind === "list").length} listings`,
+        label: [
+          {
+            verb: "Read",
+            noun: "file",
+            count: pending.filter((s) => s.kind === "read").length,
+          },
+          {
+            verb: "Searched",
+            noun: "time",
+            count: pending.filter((s) => s.kind === "search").length,
+          },
+          {
+            verb: "Listed",
+            noun: "folder",
+            count: pending.filter((s) => s.kind === "list").length,
+          },
+        ]
+          .filter(({ count }) => count > 0)
+          .map(
+            ({ verb, noun, count }) =>
+              `${verb} ${count} ${noun}${count === 1 ? "" : "s"}`,
+          )
+          .join(" · "),
         items: pending,
       });
     else groups.push(...pending);

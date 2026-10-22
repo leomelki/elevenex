@@ -52,7 +52,7 @@ li {
 .group:focus-visible,
 .earlier:focus-visible {
   outline: 2px solid transparent;
-  box-shadow: inset 0 0 0 2px var(--accent);
+  box-shadow: var(--focus-ring);
 }
 .nested {
   margin-left: var(--space-4);

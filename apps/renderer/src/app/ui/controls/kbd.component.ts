@@ -9,9 +9,9 @@ import { ChangeDetectionStrategy, Component } from "@angular/core";
     }
     kbd {
       font-family: var(--font-mono);
-      font-size: 10.5px;
-      line-height: var(--text-caption-line);
-      font-weight: 500;
+      font-size: var(--text-mono-meta-size);
+      line-height: var(--text-mono-meta-line);
+      font-weight: var(--text-mono-meta-weight);
       padding: 0 var(--kbd-padding, var(--space-1));
       min-width: var(--space-4);
       text-align: center;
