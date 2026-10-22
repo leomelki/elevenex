@@ -22,6 +22,16 @@ The project must support repositories with thousands of files and folders, hundr
 - Document why a non-obvious constraint exists, especially security decisions and dependency overrides. Keep setup instructions accurate when commands or architecture change.
 - Run the checks appropriate to the changed area. Report what passed, what could not run, and why; distinguish a smoke test from a packaged-app launch or visual verification.
 
+### Modularity and maintainability
+
+- Organize code around cohesive responsibilities and domain ownership. Keep CLI entry points, Electron bootstrap, routes, and IPC adapters focused on composition; move substantial behavior into named modules with explicit inputs and outputs.
+- Keep feature orchestration and shared state separate from reusable presentational components. Components should expose small, typed inputs/outputs and own their local interaction state; platform calls belong behind the existing application boundaries.
+- Prefer composition and explicit dependencies. Make resource ownership visible: the creator of a process, observer, timer, subscription, or debugger attachment must provide and invoke its cleanup path. Avoid module-level mutable state for reusable behavior.
+- Reuse existing components and domain operations before duplicating them. Extract shared behavior when it has a clear responsibility or meaningful repeated use; keep feature-specific code near its feature. Do not create generic helpers, inheritance trees, or one-function services solely to increase the file count.
+- Split a module when it mixes unrelated reasons to change, rather than enforcing an arbitrary line limit. A stable public API may delegate to focused internal modules so callers do not need to know their implementation structure.
+- Keep substantial Angular behavior, templates, and styles in their respective component files. Document module boundaries and extension points when adding tooling or a feature, and keep that documentation current during refactors.
+- Validate refactors through public behavior and ownership boundaries, including cleanup and failure paths. Preserve supported APIs unless changing them is part of the task; avoid tests tied to private method names or file layout.
+
 ## New desktop foundation
 
 ### Ownership and dependency direction

@@ -17,7 +17,7 @@ export default tseslint.config(
   },
   {
     basePath,
-    files: ['scripts/desktop-capture/driver.mjs', 'scripts/desktop-capture/scenarios/**/*.mjs'],
+    files: ['scripts/desktop-capture/driver.mjs', 'scripts/desktop-capture/input.mjs', 'scripts/desktop-capture/inspection.mjs', 'scripts/desktop-capture/motion.mjs', 'scripts/desktop-capture/scenarios/**/*.mjs'],
     languageOptions: {
       globals: { window: 'readonly', document: 'readonly', requestAnimationFrame: 'readonly', getComputedStyle: 'readonly', matchMedia: 'readonly', innerWidth: 'readonly', innerHeight: 'readonly', location: 'readonly', HTMLInputElement: 'readonly', HTMLTextAreaElement: 'readonly' },
     },

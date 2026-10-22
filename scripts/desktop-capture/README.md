@@ -183,18 +183,38 @@ chat transcript into inspection output.
 
 ## Ownership and checks
 
-- `cli.mjs`: options, in-memory stdin, compilation cache, server reuse, process
-  ownership, timeout, isolated temporary profile and artifact directory.
+- `cli.mjs`: composition, options/stdin, cancellation, isolated temporary profile
+  and run-level results.
+- `processes.mjs`: owns launched child processes and idempotent shutdown. It never
+  registers global signal handlers or stops processes it did not launch.
+- `compilation.mjs`: main/preload/shared compilation and source freshness checks.
+- `renderer-server.mjs`: Angular startup/readiness, token synchronization and
+  explicit reuse of an existing server.
 - `apps/desktop/test/capture-runner.cjs`: tool-only Electron entry. Loads the
-  unchanged production main/preload and drives one window, saving diagnostics.
-- `driver.mjs`: page evaluation, Angular debug state, trusted input, media,
-  animation sampling and bounded inspection.
+  unchanged production main/preload, owns the capture lifetime and saves failures.
+- `scenario.mjs`: scenario iteration and checkpoint artifact writing.
+- `driver.mjs`: stable scenario API, renderer evaluation, Angular state and native
+  media settings. It composes capability modules and disposes them in order.
+- `connection.mjs`: debugger attachment and bounded renderer diagnostics.
+- `input.mjs`: trusted input, target validation and element geometry.
+- `motion.mjs`: owns animation subscriptions, playback and frame/layout probes.
+- `inspection.mjs`: self-contained renderer callback for bounded DOM snapshots.
 - `options.mjs` / `report.mjs`: validation and escaped standalone gallery.
 - `apps/renderer/capture/`: explicit Angular fixture configuration, outside the
   product source/build graph. No design-system implementation is implied.
 
+Extend the module that owns a behavior; keep browser input out of startup code
+and artifact writing out of page evaluation. Capability modules receive their
+page/connection dependencies explicitly and must not import the CLI or create a
+second window. Keep scenario-facing methods stable through `Capture`; its small
+delegations intentionally preserve the public API. Renderer callbacks are
+serialized into the page, so they must be self-contained and cannot close over
+module imports. Prefer extending a reusable scenario for feature-specific setup
+over adding feature-specific branches to the runner. The Angular fixture already
+separates its component behavior, template, and styles; keep it synthetic.
+
 `pnpm desktop:test` runs existing IPC/security/type/Angular tests and capture
-validation tests. `pnpm desktop:lint` includes this tool and fixture templates.
+validation/lifecycle tests. `pnpm desktop:lint` includes this tool and fixture templates.
 Run the native regression command above after changing automation behavior.
 It checks signal updates, trusted text and Tab focus, rejected interactions,
 CSS and WAAPI midpoint sampling, frozen frame stability, both themes, reduced
