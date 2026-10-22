@@ -1,12 +1,16 @@
-import { app, BrowserWindow, Menu, nativeTheme, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
+import { app, BrowserWindow, Menu, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
 import { readFile, realpath } from 'node:fs/promises';
 import { extname, join, relative, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { broadcast, handle } from './ipc';
+import { broadcast, handle, sendToWindow } from './ipc';
 import { APP_ORIGIN, contentSecurityPolicy, isAppUrl, isExternalUrl, rendererPath } from './security';
 import { WindowStateStore } from './window-state';
 import { createApplicationBackend } from './backend/application';
 import { registerBackendIpc } from './backend/ipc';
+import { RemoteManager } from './remote/manager';
+import { registerRemoteIpc } from './remote/ipc';
+import { readBackendRelease } from './backend/release';
+import { homedir } from 'node:os';
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true },
@@ -31,6 +35,12 @@ const rendererRoot = join(__dirname, '../renderer');
 const backend = createApplicationBackend(app.isPackaged
   ? join(process.resourcesPath, 'app.asar.unpacked/dist/backend/host.js')
   : join(__dirname, 'backend/host.js'));
+const remote = new RemoteManager({
+  root: join(homedir(), '.elevenex', 'desktop'),
+  settingsPath: join(app.getPath('userData'), 'remote-settings.json'),
+  helper: app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked/dist/remote/askpass-helper.js') : join(__dirname, 'remote/askpass-helper.js'),
+  release: () => readBackendRelease(__dirname),
+});
 
 // Several windows share one backend and database. A second application process
 // must hand control to the first instead of starting another database owner.
@@ -75,6 +85,9 @@ function createWindow(): BrowserWindow {
     },
   });
   state.attach(window);
+  remote.attach(window.webContents.id);
+  const windowId = window.webContents.id;
+  window.once('closed', () => { void remote.detach(windowId).catch(() => console.error('Remote window cleanup failed')); });
   window.once('ready-to-show', () => window.show());
   window.webContents.setWindowOpenHandler(({ url }) => {
     openExternal(url);
@@ -149,6 +162,12 @@ void app.whenReady().then(async () => {
   handle('app:version', trusted, () => app.getVersion());
   const unsubscribeBackend = registerBackendIpc(backend, trusted);
   app.once('will-quit', unsubscribeBackend);
+  const unregisterRemote = registerRemoteIpc(remote, backend, trusted);
+  const unsubscribeRemote = remote.subscribe((windowId, snapshot) => sendToWindow(windowId, 'environment:changed', snapshot));
+  const resumed = () => remote.networkChanged();
+  powerMonitor.on('resume', resumed);
+  powerMonitor.on('unlock-screen', resumed);
+  app.once('will-quit', () => { unregisterRemote(); unsubscribeRemote(); powerMonitor.removeListener('resume', resumed); powerMonitor.removeListener('unlock-screen', resumed); });
   handle('git:status', trusted, (path) => {
     if (typeof path !== 'string' || !path.trim() || path.length > 4096 || path.includes('\0')) {
       throw new Error('A nonempty workspace path is required');
@@ -171,7 +190,7 @@ void app.whenReady().then(async () => {
     ] },
     { role: 'windowMenu' },
   ]));
-  await state.load();
+  await Promise.all([state.load(), remote.load()]);
   createWindow();
   // Window creation is independent of downloading: a future frontend can read
   // the current snapshot and subscribe immediately, including after a reload.
@@ -181,7 +200,7 @@ void app.whenReady().then(async () => {
   });
 }).catch((error: unknown) => {
   console.error(error);
-  void backend.dispose().finally(() => app.exit(1));
+  void Promise.allSettled([backend.dispose(), remote.dispose()]).then(() => app.exit(1));
 });
 
 app.on('window-all-closed', () => {
@@ -192,5 +211,5 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  void Promise.allSettled([state.save(), backend.dispose()]).then(() => app.quit());
+  void Promise.allSettled([state.save(), backend.dispose(), remote.dispose()]).then(() => app.quit());
 });

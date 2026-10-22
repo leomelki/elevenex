@@ -161,7 +161,7 @@ try {
       break;
     case 'test':
       await compileMain();
-      await run(null, ['--test', 'test/preload.test.cjs', 'test/security.test.cjs', 'test/backend-install.test.cjs', 'test/backend-manager.test.cjs', 'test/backend-process.test.cjs', 'test/ipc.test.cjs'], desktop);
+      await run(null, ['--test', 'test/preload.test.cjs', 'test/security.test.cjs', 'test/backend-install.test.cjs', 'test/backend-manager.test.cjs', 'test/backend-process.test.cjs', 'test/ipc.test.cjs', 'test/remote.test.cjs'], desktop);
       await run(null, ['--test', 'scripts/desktop-capture/test/options.test.mjs', 'scripts/desktop-capture/test/lifecycle.test.mjs']);
       // ng test transpiles TypeScript; tsc also checks the negative IPC type cases.
       await run(tsc, ['-p', join(renderer, 'tsconfig.spec.json'), '--noEmit']);

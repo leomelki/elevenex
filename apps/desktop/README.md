@@ -184,6 +184,14 @@ process startup/shutdown, restart codes, crash cleanup, IPC validation and event
 cleanup. The native Electron smoke uses an isolated backend fixture for its IPC
 checks; it does not establish a live release download or packaged-app launch.
 
+## Remote development backend
+
+Saved SSH hosts, per-window local/remote selection, interactive challenges,
+resumable runtime setup, application readiness, coordinated recovery and managed
+loopback forwards are available through typed IPC, without frontend UI changes.
+See [remote development](REMOTE_DEVELOPMENT.md) for ownership, platform support,
+configuration overrides, integration, remote-work lifetime and validation limits.
+
 ## Agent UI captures
 
 Use `pnpm desktop:capture` for native Electron screenshots, precise Angular state,

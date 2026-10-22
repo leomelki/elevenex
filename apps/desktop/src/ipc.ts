@@ -22,3 +22,20 @@ export function broadcast<C extends keyof EventContracts>(channel: C, value: Eve
     }
   }
 }
+
+export function sendToWindow<C extends keyof EventContracts>(windowId: number, channel: C, value: EventContracts[C]): void {
+  const window = BrowserWindow.getAllWindows().find(window => !window.isDestroyed() && window.webContents.id === windowId);
+  if (window && !window.webContents.isDestroyed()) window.webContents.send(channel, value);
+}
+
+/** Window ownership is taken from the verified sender, never a renderer argument. */
+export function handleForWindow<C extends keyof InvokeContracts>(
+  channel: C, trusted: TrustedSender,
+  handler: (windowId: number, ...args: InvokeContracts[C]['args']) => InvokeContracts[C]['result'] | Promise<InvokeContracts[C]['result']>,
+): () => void {
+  ipcMain.handle(channel, (event, ...args: unknown[]) => {
+    if (!trusted(event.senderFrame, event.sender)) throw new Error('Untrusted IPC sender');
+    return handler(event.sender.id, ...(args as InvokeContracts[C]['args']));
+  });
+  return () => ipcMain.removeHandler(channel);
+}

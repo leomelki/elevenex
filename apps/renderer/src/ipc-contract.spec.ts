@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from 'vitest';
-import type { BackendStatus, ElevenexBridge, GitStatus, Invoke, Subscribe, Theme } from '@elevenex/shared';
+import type { BackendStatus, ElevenexBridge, EnvironmentSnapshot, RemoteHost, GitStatus, Invoke, Subscribe, Theme } from '@elevenex/shared';
 
 describe('IPC bridge contract', () => {
   it('keeps the public API arguments and replies typed', () => {
@@ -14,6 +14,9 @@ describe('IPC bridge contract', () => {
     expectTypeOf<ReturnType<ElevenexBridge['restartBackend']>>().toEqualTypeOf<Promise<BackendStatus>>();
     expectTypeOf<Parameters<Parameters<ElevenexBridge['onBackendChanged']>[0]>>().toEqualTypeOf<[status: BackendStatus]>();
     expectTypeOf<ReturnType<ElevenexBridge['onBackendChanged']>>().toEqualTypeOf<() => void>();
+    expectTypeOf<ReturnType<ElevenexBridge['remoteHosts']>>().toEqualTypeOf<Promise<readonly RemoteHost[]>>();
+    expectTypeOf<ReturnType<ElevenexBridge['environmentStatus']>>().toEqualTypeOf<Promise<EnvironmentSnapshot>>();
+    expectTypeOf<ReturnType<ElevenexBridge['onEnvironmentChanged']>>().toEqualTypeOf<() => void>();
   });
 });
 
@@ -23,6 +26,15 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   expectTypeOf(invoke('git:status', '/workspace')).toEqualTypeOf<Promise<GitStatus>>();
   expectTypeOf(invoke('app:version')).toEqualTypeOf<Promise<string>>();
   expectTypeOf(invoke('backend:status')).toEqualTypeOf<Promise<BackendStatus>>();
+  expectTypeOf(invoke('environment:select', { kind: 'remote', hostId: 'host-id' })).toEqualTypeOf<Promise<EnvironmentSnapshot>>();
+  // @ts-expect-error Window ownership comes from the sender, never a renderer id.
+  void invoke('remote:disconnect', 42);
+  // @ts-expect-error Trust replies do not accept arbitrary Electron objects.
+  void invoke('remote:answer', 'challenge-id', { sender: 'other-window' });
+  // @ts-expect-error Hosts have no saved credential field.
+  void invoke('remote:save-host', { name: 'dev', host: 'dev', forwardAgent: false, password: 'secret' }, null);
+  // @ts-expect-error Forwarded services cannot select a public bind address.
+  void invoke('remote:add-forward', { remotePort: 8000, localPort: 0, label: 'web', bind: '0.0.0.0' });
   // @ts-expect-error A renderer cannot choose a runtime URL or executable.
   void invoke('backend:retry', 'https://untrusted.test/backend');
   // @ts-expect-error Backend snapshots are serializable domain data.

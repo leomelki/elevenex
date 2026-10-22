@@ -8,6 +8,7 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { BackendManager } = require('../dist/backend/manager');
 const { backendRelease } = require('../dist/backend/release');
+const remoteContract = require('./remote-contract.cjs');
 
 // Replace only the composition boundary in this test process. Native IPC and
 // preload are real; download/process behavior has separate integration tests.
@@ -53,11 +54,19 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend']);
+  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', ...remoteContract.methods].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
   assert.deepEqual(bridge.backend, { phase: 'ready', version: revision, url: 'http://127.0.0.1:12345' });
+  const remote = await window.webContents.executeJavaScript(`(async () => {
+    const hosts = await window.elevenex.remoteHosts();
+    const state = await window.elevenex.environmentStatus();
+    const invalid = await window.elevenex.saveRemoteHost({name:'bad',host:'-oProxyCommand=evil',forwardAgent:false},null).then(()=>false,()=>true);
+    await window.elevenex.saveEnvironmentContext({projectId:null,taskId:2,sessionId:3,draft:'unsent',cursor:'cursor'});
+    return {hosts,state,invalid};
+  })()`);
+  assert.deepEqual(remote.hosts, []); assert.equal(remote.state.selection.kind, 'local'); assert.equal(remote.invalid, true);
   await window.webContents.executeJavaScript(`window.smokeBackendReady = new Promise(resolve => {
     window.smokeBackendUnsubscribe = window.elevenex.onBackendChanged(status => { if (status.phase === 'ready') resolve(status); });
   }); void 0;`);
@@ -80,6 +89,8 @@ void (async () => {
   newWindow.click();
   const second = await secondWindow;
   assert.equal(BrowserWindow.getAllWindows().length, 2);
+  assert.equal((await second.webContents.executeJavaScript('window.elevenex.environmentStatus()')).context.draft, '');
+  assert.equal((await window.webContents.executeJavaScript('window.elevenex.environmentStatus()')).context.draft, 'unsent');
   second.destroy();
 
   await window.loadURL('app://elevenex/smoke/history');

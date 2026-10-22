@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { fork } = require('node:child_process');
-const { mkdtemp, writeFile, mkdir, rm } = require('node:fs/promises');
+const { mkdtemp, writeFile, readFile, mkdir, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createServer } = require('node:net');
@@ -116,4 +116,29 @@ test('an Electron-equivalent parent crash disconnects the lease and removes back
   });
   parent.kill('SIGKILL');
   await until(() => !alive(info.pid) && !alive(info.worker));
+});
+
+test('a remote supervisor starts only after acquiring its kernel lock and holds it through cleanup', async t => {
+  const { root, installation } = await setup(t, 'setInterval(() => {}, 1000);');
+  const supervisor = require.resolve('../dist/backend/host');
+  const abandoned = fork(supervisor, [installation.entry, root, '--ownership'], { execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  let spawned = false; abandoned.on('message', () => { spawned = true; });
+  const abandonedExit = new Promise(resolve => abandoned.once('exit', resolve)); abandoned.disconnect(); await abandonedExit;
+  assert.equal(spawned, false);
+
+  const marker = join(root, 'started');
+  await writeFile(installation.entry, `require('fs').writeFileSync(${JSON.stringify(marker)},'started');setInterval(()=>{},1000);`);
+  const host = fork(supervisor, [installation.entry, root, '--ownership'], { execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  const exit = new Promise(resolve => host.once('exit', resolve));
+  t.after(() => host.kill('SIGTERM'));
+  const lock = createServer(); await new Promise(resolve => lock.listen(0, '127.0.0.1', resolve)); const port = lock.address().port;
+  const acquired = new Promise(resolve => host.once('message', resolve));
+  host.send({ type: 'ownership' }, lock, { keepOpen: true }); await acquired;
+  await until(async () => { try { return await readFile(marker, 'utf8') === 'started'; } catch { return false; } });
+  await new Promise(resolve => lock.close(resolve));
+  const conflict = createServer();
+  assert.equal((await new Promise(resolve => { conflict.once('error', resolve); conflict.listen(port, '127.0.0.1'); })).code, 'EADDRINUSE');
+  host.disconnect(); await exit;
+  const replacement = createServer(); await new Promise((resolve, reject) => { replacement.once('error', reject); replacement.listen(port, '127.0.0.1', resolve); });
+  await new Promise(resolve => replacement.close(resolve));
 });

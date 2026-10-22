@@ -4,7 +4,8 @@
   "asar": true,
   "asarUnpack": [
     "dist/backend/host.js",
-    "dist/backend/process-tree.js"
+    "dist/backend/process-tree.js",
+    "dist/remote/askpass-helper.js"
   ],
   "directories": {
     "output": "release"

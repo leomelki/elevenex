@@ -9,7 +9,7 @@ export async function signalBackendTree(pid: number, force: boolean): Promise<vo
   }
   // taskkill without /F gives console processes a chance to shut down first.
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('taskkill.exe', ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])], { windowsHide: true, stdio: 'ignore' });
+    const child = spawn('taskkill.exe', ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])], { windowsHide: true, stdio: 'ignore', timeout: 5000, killSignal: 'SIGKILL' });
     child.once('error', reject);
     child.once('exit', () => resolve());
   });

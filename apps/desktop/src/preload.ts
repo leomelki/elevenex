@@ -18,6 +18,23 @@ const bridge = Object.freeze<ElevenexBridge>({
   retryBackend: () => invoke('backend:retry'),
   restartBackend: () => invoke('backend:restart'),
   onBackendChanged: (listener) => subscribe('backend:changed', listener),
+  remoteHosts: () => invoke('remote:hosts'),
+  chooseRemoteSshFile: kind => invoke('remote:choose-file', kind),
+  saveRemoteHost: (host, id) => invoke('remote:save-host', host, id),
+  removeRemoteHost: id => invoke('remote:remove-host', id),
+  environmentStatus: () => invoke('environment:status'),
+  environmentBackendStatus: () => invoke('environment:backend-status'),
+  selectEnvironment: selection => invoke('environment:select', selection),
+  saveEnvironmentContext: context => invoke('environment:context', context),
+  retryRemote: () => invoke('remote:retry'),
+  pauseRemoteRecovery: () => invoke('remote:pause'),
+  disconnectRemote: () => invoke('remote:disconnect'),
+  answerRemoteChallenge: (id, answer) => invoke('remote:answer', id, answer),
+  addRemoteForward: forward => invoke('remote:add-forward', forward),
+  retryRemoteForward: id => invoke('remote:retry-forward', id),
+  removeRemoteForward: id => invoke('remote:remove-forward', id),
+  remoteDiagnostics: () => invoke('remote:diagnostics'),
+  onEnvironmentChanged: listener => subscribe('environment:changed', listener),
 });
 
 contextBridge.exposeInMainWorld('elevenex', bridge);
