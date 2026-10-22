@@ -11,7 +11,9 @@
     "build": "node ../../scripts/desktop-shell.mjs build",
     "package": "node ../../scripts/desktop-shell.mjs package",
     "test": "node ../../scripts/desktop-shell.mjs test",
-    "lint": "node ../../scripts/desktop-shell.mjs lint"
+    "lint": "node ../../scripts/desktop-shell.mjs lint",
+    "capture": "node ../../scripts/desktop-capture/cli.mjs",
+    "capture:serve": "node ../../scripts/desktop-capture/cli.mjs --serve"
   },
   "devDependencies": {
     "@elevenex/shared": "workspace:*",

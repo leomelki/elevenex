@@ -1,0 +1,2 @@
+/* Native system colors keep this test surface distinct from product design. */
+:root { color-scheme: light dark; }

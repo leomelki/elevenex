@@ -160,6 +160,7 @@ try {
     case 'test':
       await compileMain();
       await run(null, ['--test', 'test/preload.test.cjs', 'test/security.test.cjs'], desktop);
+      await run(null, ['--test', 'scripts/desktop-capture/test/options.test.mjs']);
       // ng test transpiles TypeScript; tsc also checks the negative IPC type cases.
       await run(tsc, ['-p', join(renderer, 'tsconfig.spec.json'), '--noEmit']);
       await run(ng, ['test', '--watch=false'], renderer);
@@ -167,7 +168,7 @@ try {
     case 'lint':
       await run(join(dirname(desktopRequire.resolve('eslint/package.json')), 'bin/eslint.js'), [
         '--config', 'apps/desktop/eslint.config.mjs', 'apps/desktop/src', 'apps/renderer/src', 'packages/shared/src', '--max-warnings', '0',
-        'scripts/desktop-shell.mjs', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
+        'scripts/desktop-shell.mjs', 'scripts/desktop-capture', 'apps/renderer/capture', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
       ]);
       break;
     default: throw new Error('Use dev, build, package, test or lint');

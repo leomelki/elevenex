@@ -71,6 +71,18 @@ Window state is saved asynchronously in `Elevenex Desktop/window-state.json`
 under Electron's application-data directory, separate from the existing app.
 Shift+Cmd+N on macOS, or Shift+Ctrl+N elsewhere, opens another window.
 
+## Agent UI captures
+
+Use `pnpm desktop:capture` for native Electron screenshots, precise Angular state,
+trusted input, layout/focus/accessibility inspection and animation filmstrips.
+See [the capture guide](../../scripts/desktop-capture/README.md) for inline scenarios
+and warm-server iteration. The shell is still pending; the tool's explicit
+`--fixture` mode verifies automation without pretending to be product UI:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/check.mjs --fixture
+```
+
 ## Add an IPC channel
 
 1. Add its argument tuple and serializable result to `InvokeContracts` in

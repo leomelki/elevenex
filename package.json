@@ -36,7 +36,9 @@
     "desktop:build": "pnpm --dir apps/desktop build",
     "desktop:package": "pnpm --dir apps/desktop package",
     "desktop:test": "pnpm --dir apps/desktop test",
-    "desktop:lint": "pnpm --dir apps/desktop lint"
+    "desktop:lint": "pnpm --dir apps/desktop lint",
+    "desktop:capture": "node scripts/desktop-capture/cli.mjs",
+    "desktop:capture:serve": "node scripts/desktop-capture/cli.mjs --serve"
   },
   "pnpm": {
     "overrides": {

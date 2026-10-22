@@ -32,6 +32,16 @@
             ]
           },
           "configurations": {
+            "capture-fixture": {
+              "browser": "capture/main.ts",
+              "index": "capture/index.html",
+              "tsConfig": "capture/tsconfig.json",
+              "outputPath": "out-tsc/capture-fixture",
+              "styles": ["capture/styles.css"],
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true
+            },
             "production": {
               "outputHashing": "all",
               "optimization": {

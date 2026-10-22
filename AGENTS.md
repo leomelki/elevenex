@@ -84,6 +84,8 @@ The project must support repositories with thousands of files and folders, hundr
 
 ### Validation and delivery
 
+- For the **new desktop**, use `pnpm desktop:capture` and read `scripts/desktop-capture/README.md` for precise state setup, trusted input, animation scrubbing, PNGs and layout/focus/accessibility diagnostics. Prefer disposable stdin async-generator scenarios; reuse a warm Angular server with `--url` for iteration. Await actual UI conditions, inspect the resulting PNGs, and require `report.json` to say `verified: true`. Use `--fixture` only to verify the tool, never as product visual evidence. Keep feature mocks isolated from production and never add capture capabilities to `window.elevenex`. The legacy `screenshot:ui` command targets `apps/frontend`, not this renderer.
+
 - From the repository root, use `pnpm desktop:lint`, `pnpm desktop:test`, and `pnpm desktop:build`. `pnpm desktop:dev` starts the new app; `pnpm desktop:package` packages it. The standard command names are also available in `apps/desktop`.
 - Keep Angular's default test runner. IPC type tests must also run through `tsc`; a transpile-only test runner cannot verify negative type assertions. Include runtime tests for security boundaries, payload handling, and event cleanup when changing them.
 - Add focused regression tests for meaningful behavior changes. Do not add brittle tests that mirror implementation details or unrelated tests for a documentation-only edit.

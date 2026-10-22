@@ -1,0 +1,5 @@
+/* Deliberately synthetic measurement values, not product design tokens. */
+:host { display: block; }
+#panel { width: 320px; height: 120px; opacity: 0; transform: translateX(-100px); transition: opacity 1000ms linear, transform 1000ms linear; }
+#panel.open { opacity: 1; transform: translateX(0); }
+@media (prefers-reduced-motion: reduce) { #panel { transition: none; } }
