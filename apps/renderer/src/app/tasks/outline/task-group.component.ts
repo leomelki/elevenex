@@ -22,10 +22,15 @@ import {
   type SessionStatus,
   type TaskOutline,
   type TaskStage,
+  type TaskSession,
 } from '../task.models';
+import { ListPresence } from '../../ui/motion/list-presence';
 import { ProjectMarkComponent } from '../projects/project-mark.component';
 import { LinkChipComponent } from '../lifecycle/link-chip.component';
 import { SessionRowComponent } from './session-row.component';
+type SessionOutlineRow =
+  | { readonly kind: 'session'; readonly key: string; readonly session: TaskSession; readonly visible: boolean }
+  | { readonly kind: 'finished'; readonly key: string; readonly visible: boolean; readonly count: number };
 @Component({
   selector: 'ex-task-group',
   imports: [
@@ -100,6 +105,13 @@ export class TaskGroupComponent implements OnChanges {
   private foldTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+  protected readonly sessionRows = computed<readonly SessionOutlineRow[]>(() => [
+    ...this.working().map(session => ({ kind: 'session' as const, key: `session:${session.id}`, session, visible: true })),
+    { kind: 'finished', key: 'summary:finished', count: this.finished().length, visible: this.finished().length > 0 },
+    ...this.finished().map(session => ({ kind: 'session' as const, key: `session:${session.id}`, session, visible: this.finishedOpen() })),
+  ]);
+  protected readonly presence = new ListPresence(this.sessionRows, row => row.key, this.root, inject(DestroyRef));
+  protected readonly motionOrder = computed(() => this.presence.rows().map(row => row.key).join('\n'));
   constructor() {
     inject(DestroyRef).onDestroy(() => clearTimeout(this.foldTimer));
   }

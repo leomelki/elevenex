@@ -8,6 +8,8 @@ void bootstrapApplication(PreviewComponent, {
     provideZonelessChangeDetection(),
     provideRouter(
       [
+        { path: 'sidebar-motion', loadComponent: () => import('./sidebar-motion-demo.component').then(module => module.SidebarMotionDemoComponent) },
+        { path: 'git-motion', loadComponent: () => import('./git-motion-demo.component').then(module => module.GitMotionDemoComponent) },
         {
           path: "",
           loadComponent: () =>

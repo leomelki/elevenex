@@ -16,6 +16,11 @@ Foundations, Tasks, Conversation, and Machines and views exercise their public
 APIs. Example data lives only in `preview/`, under a separate Angular build
 configuration. It is absent from the production entry graph and packaged app.
 
+The **Sidebar motion** and **Git motion** pages exercise repeated/bulk changes
+and interrupted transitions through the real components. Sidebar controls include
+keeping only the original fourth task, or the fourth and seventh, and 100-task
+batches. Git controls cover Commit → Committing → Push → Pushing → Up to date.
+
 Use `pnpm desktop:dev` for the normal native application. Checks are
 `pnpm desktop:lint`, `pnpm desktop:test`, and `pnpm desktop:build`.
 Visual verification uses [the native capture runner](../../scripts/desktop-capture/README.md),
@@ -88,9 +93,14 @@ activate shell takeover; Escape resets it through the shell. Handle
   releases clipping after settling, and makes closed descendants inert.
 - `AutoHeightDirective` observes one inner wrapper and eases meaningful height
   changes. Give that inner wrapper the same gap/direction as its content.
-- `FlipDirective` measures elements marked `data-flip="stable-id"` only after its
-  collection input changes. Existing rows animate from their former positions;
-  first render does not animate.
+- `FlipDirective` captures painted positions before keyed children update and
+  animates only elements in its own `data-flip-scope`. Nested session scopes do
+  not get transformed twice. Sidebar scopes use reordering only: Fold already
+  moves neighbours continuously when their space opens or closes.
+- `ListPresence` retains removed task/session identities until Fold closes their
+  space. Returning a key during its exit preserves that component's local state.
+  Gaps, stage headings, empty state and Closed count live inside folding rows.
+  The owner releases its scheduled frame, cleanup timer and media listener.
 - `PresenceComponent` uses Angular `animate.enter`/`animate.leave`; `EaseSwap`
   retains a control while its text fades and its width eases.
 - Keyed Angular `@for` blocks with entry/exit classes implement the design's

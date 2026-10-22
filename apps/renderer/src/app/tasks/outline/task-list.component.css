@@ -6,8 +6,10 @@ nav {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  /* Spacing is inside each folding row, so closed rows leave no empty gaps. */
+  gap: 0;
 }
+.row-content { padding-bottom: var(--space-1); min-width: 0; }
 h3 {
   display: flex;
   align-items: center;

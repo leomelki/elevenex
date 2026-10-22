@@ -44,7 +44,7 @@ IPC/security boundaries changed.
 | --- | --- | --- |
 | Changes review | The overview ruler and viewed-progress ring are missing. | `src/app/views/diff-review.component.html`, design `DiffReview` |
 | Diff content | Loading/content swaps and expanded context do not implement all specified height easing, line fade, and scroll-preservation choreography. | `src/app/views/diff-file.component.html`, design `DiffReview` |
-| Live lists | Task and work-timeline insertions/removals do not yet implement the full grow/fade/collapse sequence. Existing FLIP handles some movement. | `src/app/tasks/outline/task-list.component.html`, `src/app/conversation/turns/work-timeline.component.html`, design Motion |
+| Work timeline | Thread insertions/removals still lack the full grow/fade/collapse sequence. The sidebar now retains keyed rows and folds their complete occupied space, with separate reorder scopes. | `src/app/conversation/turns/work-timeline.component.html`, design Motion |
 | Composer popovers | Entry animation is present; CDK picker closure still removes the panel without the designed exit animation. | `src/app/conversation/composer/agent-picker.component.html` and sibling pickers, design Presence |
 | Streaming Markdown | Chat's Markdown answer path does not use the appended-chunk reveal available in standalone StreamText. | `src/app/conversation/chat/chat.component.html`, design StreamText/Motion |
 | Counts | Project badges update directly rather than using the specified count roll/pop. | `src/app/tasks/projects/project-rail.component.html`, design Motion |

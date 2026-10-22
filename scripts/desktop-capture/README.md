@@ -120,6 +120,23 @@ timeouts or screenshots of replacement HTML.
 
 ## Motion
 
+Two reusable component regressions run against `pnpm desktop:preview`:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/sidebar-motion.mjs --url http://127.0.0.1:4310 --timeout 180
+pnpm desktop:capture scripts/desktop-capture/scenarios/git-motion.mjs --url http://127.0.0.1:4310 --timeout 180
+```
+
+Run them sequentially so another Electron capture window does not throttle the
+one being measured. They sample in the renderer before mutation and at each real
+animation frame, then continue through retained-row and animation cleanup.
+Each final checkpoint includes the complete probe in its report metadata.
+They check both themes and reduced motion, first-paint/settled continuity, stable
+identities, and interrupted changes. Bulk sidebar travel can be large while
+remaining continuous; sampled frame times and speeds distinguish that movement
+from an abrupt boundary jump. A long frame interval is reported separately from
+the component's motion curve; these checks are not a general FPS benchmark.
+
 Freeze **before** triggering an action, then seek each CSS/WAAPI animation to a
 known age in milliseconds. Named screenshots preserve the frozen frame:
 

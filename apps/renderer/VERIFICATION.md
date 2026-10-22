@@ -70,3 +70,49 @@ build aborted; its normal host retry passed. No toolchain upgrade was performed.
 
 This remains unpackaged macOS verification. The production route is the empty
 workbench; supplied-data preview captures exercise the reusable feature families.
+
+## Git and sidebar motion, 2026-10-22
+
+Commit/Push now keeps its primary and menu buttons mounted throughout the cycle.
+Measured action/stat slots retain their outgoing content, labels leave before
+the next label arrives, counts roll, and interrupted widths resume from their
+painted value. The title, branch, links and right edge retain their positions.
+
+The sidebar retains removed task/session identities while their complete space
+folds closed. Stage headings, row spacing, empty state and Closed count use the
+same folding layout. Returning an identity during removal revives its existing
+component. Nested FLIP scopes own separate rows; reorders start from the current
+painted position. Reduced motion now removes transition durations and delays
+entirely, including the previous 40ms Fold ink delay.
+
+| Check | Result |
+| --- | --- |
+| `pnpm desktop:lint` | Passed |
+| `pnpm desktop:test` | 99 renderer tests across 25 files, 4 preload/security tests and 7 capture-tool tests passed; IPC types checked with `tsc` |
+| `pnpm desktop:build` | Passed; 239.6 kB initial renderer bundle |
+| `git diff --check` | Passed; no dependency or lockfile changes |
+| `sidebar-expanded-verified/report.json` | `verified: true`, 56 captures / 54 frame probes, no errors or warnings |
+| `git-motion-final/report.json` | `verified: true`, 60 captures / 56 frame probes, no errors or warnings |
+| `motion-preview-final/report.json` | Both themes; interactive target/session selectors agree with the fourth-task model selection |
+
+The reports above are under `artifacts/desktop-capture/`. Sidebar coverage
+includes additions/removals at the start, middle and end, adding 100 tasks,
+collapsing 110 tasks to two, retaining only original task 4 or tasks 4 and 7,
+empty/restore, reversal, interruption during reversal and removal, filtering,
+stage/session changes, middle/bottom scrolling, and reduced motion in both
+themes. Surviving task DOM identity remains stable; measured first-paint and
+settled boundary displacements were 0px in the non-reduced sidebar cases.
+
+Git coverage includes all nine demo states, full/compact controls, 80ms
+interruptions and reduced motion in both themes. Widths matched the live
+animation curves within 0.009px; keyframe endpoint mismatch, settled snap and
+title/branch/link/right-edge drift measured 0px. Outgoing/incoming labels did not
+overlap visibly. Long rAF sampling gaps are recorded separately from curve
+errors; the probe checks actual animation progress rather than assuming an
+uninterrupted frame interval.
+
+Representative light/dark PNGs were inspected. The separate **Sidebar motion**
+and **Git motion** preview pages expose the same operations for manual review.
+The reusable scenarios and invocation commands are documented in
+`scripts/desktop-capture/README.md`. These remain native unpackaged macOS checks,
+not packaged-app or cross-platform performance claims.

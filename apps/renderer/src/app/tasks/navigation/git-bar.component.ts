@@ -3,22 +3,43 @@ import {
   Component,
   DestroyRef,
   ElementRef,
+  type AnimationCallbackEvent,
   afterNextRender,
+  afterRenderEffect,
   computed,
   inject,
   input,
+  linkedSignal,
   output,
-} from '@angular/core';
-import { CdkMenuModule } from '@angular/cdk/menu';
+  signal,
+} from "@angular/core";
+import { CdkMenuModule } from "@angular/cdk/menu";
 import {
   ButtonComponent,
   IconComponent,
   KbdComponent,
   StatusGlyphComponent,
-} from '../../ui';
-import type { GitAction } from '../task.models';
+} from "../../ui";
+import type { GitAction } from "../task.models";
+import { GitBarMotion } from "./git-bar-motion";
+
+interface ActionContent {
+  readonly key: string;
+  readonly step: "commit" | "push";
+  readonly label: string;
+  readonly busy: boolean;
+  readonly count: number;
+  readonly shortcut: boolean;
+}
+interface StatContent {
+  readonly key: "changes" | "quiet";
+  readonly files: number;
+  readonly add: number;
+  readonly del: number;
+}
+
 @Component({
-  selector: 'ex-git-bar',
+  selector: "ex-git-bar",
   imports: [
     CdkMenuModule,
     ButtonComponent,
@@ -27,109 +48,123 @@ import type { GitAction } from '../task.models';
     StatusGlyphComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  templateUrl: './git-bar.component.html',
-  styleUrls: ['../tasks-menu.css', './git-bar.component.css'],
+  templateUrl: "./git-bar.component.html",
+  styleUrls: ["../tasks-menu.css", "./git-bar.component.css"],
 })
 export class GitBarComponent {
   readonly files = input(0);
   readonly add = input(0);
   readonly del = input(0);
   readonly ahead = input(0);
-  readonly busy = input<'commit' | 'push'>();
+  readonly busy = input<"commit" | "push">();
   readonly compact = input(false);
   readonly action = output<GitAction>();
   readonly changesRequested = output<void>();
+  protected readonly ready = signal(false);
   protected readonly step = computed(
     () =>
-      this.busy() ?? (this.files() ? 'commit' : this.ahead() ? 'push' : null),
+      this.busy() ?? (this.files() ? "commit" : this.ahead() ? "push" : null),
   );
-  protected readonly label = computed(() =>
-    this.busy() === 'commit'
-      ? 'Committing…'
-      : this.busy() === 'push'
-        ? 'Pushing…'
-        : this.step() === 'commit'
-          ? 'Commit'
-          : 'Push',
+  protected readonly actionContent = computed<ActionContent | null>(() => {
+    const step = this.step();
+    if (!step) return null;
+    const busy = !!this.busy();
+    const shortcut = !this.compact() && step === "commit" && !busy;
+    return {
+      key: `${step}:${busy}:${shortcut}`,
+      step,
+      label: busy
+        ? step === "commit"
+          ? "Committing…"
+          : "Pushing…"
+        : step === "commit"
+          ? "Commit"
+          : "Push",
+      busy,
+      count: busy ? 0 : step === "commit" ? this.files() : this.ahead(),
+      shortcut,
+    };
+  });
+  protected readonly statContent = computed<StatContent | null>(() =>
+    this.files()
+      ? {
+          key: "changes",
+          files: this.files(),
+          add: this.add(),
+          del: this.del(),
+        }
+      : !this.step()
+        ? { key: "quiet", files: 0, add: 0, del: 0 }
+        : null,
   );
-  protected readonly count = computed(() =>
-    this.busy() ? 0 : this.step() === 'commit' ? this.files() : this.ahead(),
-  );
+  // Closing slots retain the last content until they have no visible area.
+  protected readonly renderedAction = linkedSignal<
+    ActionContent | null,
+    ActionContent | null
+  >({
+    source: this.actionContent,
+    computation: (next, previous) => next ?? previous?.value ?? null,
+  });
+  protected readonly renderedStat = linkedSignal<
+    StatContent | null,
+    StatContent | null
+  >({
+    source: this.statContent,
+    computation: (next, previous) => next ?? previous?.value ?? null,
+  });
+  protected readonly actionLabel = computed(() => {
+    const content = this.actionContent();
+    return content
+      ? `${content.label}${content.count ? ` ${content.count}` : ""}`
+      : "No git action";
+  });
   protected readonly menuItems = computed<
     readonly { readonly action: GitAction; readonly label: string }[]
   >(() =>
-    this.step() === 'commit'
+    this.step() === "commit"
       ? [
-          { action: 'commit-push', label: 'Commit and push' },
+          { action: "commit-push", label: "Commit and push" },
           ...(this.ahead()
             ? [
                 {
-                  action: 'push' as const,
+                  action: "push" as const,
                   label: `Push the ${this.ahead()} waiting`,
                 },
               ]
             : []),
-          { action: 'commit-pr', label: 'Commit and open PR' },
-          { action: 'sync', label: 'Sync with main' },
+          { action: "commit-pr", label: "Commit and open PR" },
+          { action: "sync", label: "Sync with main" },
         ]
       : [
-          { action: 'push-pr', label: 'Push and open PR' },
-          { action: 'push-new-name', label: 'Push to a new name' },
-          { action: 'sync', label: 'Sync with main' },
+          { action: "push-pr", label: "Push and open PR" },
+          { action: "push-new-name", label: "Push to a new name" },
+          { action: "sync", label: "Sync with main" },
         ],
   );
-  private readonly root =
-    inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
-  private observer: ResizeObserver | undefined;
-  private labelAnimation: Animation | undefined;
+
+  private readonly motion = new GitBarMotion(
+    inject<ElementRef<HTMLElement>>(ElementRef).nativeElement,
+  );
 
   constructor() {
-    afterNextRender(() => this.observeActionWidth());
-    inject(DestroyRef).onDestroy(() => {
-      this.observer?.disconnect();
-      this.labelAnimation?.cancel();
+    afterRenderEffect(() =>
+      this.motion.update({
+        action: !!this.actionContent(),
+        stat: !!this.statContent(),
+      }),
+    );
+    afterNextRender(() => {
+      this.motion.initialize({
+        action: !!this.actionContent(),
+        stat: !!this.statContent(),
+      });
+      this.ready.set(true);
     });
+    inject(DestroyRef).onDestroy(() => this.motion.destroy());
   }
 
-  /** Observe only the action's intrinsic content, so busy/count changes never move the header. */
-  private observeActionWidth(): void {
-    const button = this.root.querySelector<HTMLButtonElement>('.primary');
-    const content = this.root.querySelector<HTMLElement>('.action-content');
-    if (!button || !content || typeof ResizeObserver === 'undefined') return;
-    let previousWidth: number | undefined;
-    const measure = (): void => {
-      const style = getComputedStyle(button);
-      const width =
-        content.getBoundingClientRect().width +
-        parseFloat(style.paddingLeft) +
-        parseFloat(style.paddingRight) +
-        parseFloat(style.borderLeftWidth) +
-        parseFloat(style.borderRightWidth);
-      if (width === previousWidth) return;
-      button.style.width = `${width}px`;
-      this.labelAnimation?.cancel();
-      if (
-        previousWidth !== undefined &&
-        this.step() &&
-        !matchMedia('(prefers-reduced-motion: reduce)').matches &&
-        content.animate
-      ) {
-        this.labelAnimation = content.animate(
-          [
-            { opacity: 0, transform: 'translateY(3px)' },
-            { opacity: 1, transform: 'none' },
-          ],
-          {
-            duration: parseFloat(style.getPropertyValue('--dur-base')) || 0,
-            easing: style.getPropertyValue('--ease-out').trim() || 'linear',
-          },
-        );
-      }
-      previousWidth = width;
-    };
-    measure();
-    this.observer = new ResizeObserver(measure);
-    this.observer.observe(content);
+  protected leaveInk(event: AnimationCallbackEvent): void {
+    this.motion.leaveInk(event);
   }
 
   protected primary(): void {

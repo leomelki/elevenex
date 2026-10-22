@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskOutline } from '../task.models';
 import { TaskListComponent } from './task-list.component';
 
@@ -34,6 +34,7 @@ describe('task outline ownership', () => {
       imports: [TaskListComponent],
     }).compileComponents();
   });
+  afterEach(() => vi.unstubAllGlobals());
   it('keeps order, folds finished sessions and exposes selection intents', () => {
     const fixture = TestBed.createComponent(TaskListComponent);
     fixture.componentRef.setInput('tasks', tasks);
@@ -94,5 +95,82 @@ describe('task outline ownership', () => {
     const row = fixture.nativeElement.querySelector('[aria-current="true"]');
     expect(row?.textContent).toContain('Finished work');
     expect(row?.closest('ex-fold')?.getAttribute('aria-hidden')).toBe('false');
+  });
+
+  it('makes an exiting task inert and revives its component and local fold state when it returns', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: () => undefined, removeEventListener: () => undefined }));
+    const fixture = TestBed.createComponent(TaskListComponent);
+    fixture.componentRef.setInput('tasks', tasks);
+    fixture.detectChanges();
+    const first = fixture.nativeElement.querySelector('[data-task-id="first"]') as HTMLElement;
+    const toggle = first.querySelector('header button') as HTMLButtonElement;
+    toggle.click();
+    fixture.detectChanges();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+    fixture.componentRef.setInput('tasks', [tasks[1]!]);
+    fixture.detectChanges();
+    expect(first.isConnected).toBe(true);
+    expect(first.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
+    expect(first.closest('ex-fold')?.getAttribute('aria-hidden')).toBe('true');
+
+    fixture.componentRef.setInput('tasks', [{ ...tasks[0]!, title: 'Returned task' }, tasks[1]!]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-task-id="first"]')).toBe(first);
+    expect(first.textContent).toContain('Returned task');
+    expect(first.closest('ex-fold')?.hasAttribute('inert')).toBe(false);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fixture.destroy();
+  });
+
+  it('reveals the empty state and retires Closed without exposing its hidden control after removing all tasks', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: () => undefined, removeEventListener: () => undefined }));
+    const fixture = TestBed.createComponent(TaskListComponent);
+    fixture.componentRef.setInput('tasks', [tasks[0]!, { ...tasks[1]!, stage: 'closed' }]);
+    fixture.detectChanges();
+    const closed = fixture.nativeElement.querySelector('button.closed') as HTMLButtonElement;
+    const empty = fixture.nativeElement.querySelector('p.empty') as HTMLElement;
+    const requested = vi.fn();
+    fixture.componentInstance.closedRequested.subscribe(requested);
+    closed.click();
+    expect(requested).toHaveBeenCalledOnce();
+    expect(closed.closest('[inert]')).toBeNull();
+    expect(empty.closest('[inert]')).not.toBeNull();
+
+    fixture.componentRef.setInput('tasks', []);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('p.empty')).toBe(empty);
+    expect(empty.textContent).toContain('Your tasks will appear here.');
+    expect(empty.closest('[inert]')).toBeNull();
+    expect(closed.closest('[inert]')).not.toBeNull();
+    const exiting = fixture.nativeElement.querySelector('[data-task-id="first"]') as HTMLElement;
+    expect(exiting.closest('[inert]')).not.toBeNull();
+    fixture.destroy();
+  });
+
+  it('preserves a selected session when it finishes, including IDs that resemble summary rows', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    const task: TaskOutline = {
+      id: 'task', title: 'Session identity', stage: 'active',
+      sessions: [{ id: 'finished-count', title: 'Selected work', status: 'running' }, { id: 'already-done', title: 'Earlier work', status: 'done' }],
+    };
+    fixture.componentRef.setInput('tasks', [task]);
+    fixture.componentRef.setInput('selected', 'finished-count');
+    fixture.detectChanges();
+    const selected = fixture.nativeElement.querySelector('[aria-current="true"]') as HTMLButtonElement;
+    const row = selected.closest('ex-session-row');
+    expect(fixture.nativeElement.querySelectorAll('ex-session-row')).toHaveLength(2);
+
+    fixture.componentRef.setInput('tasks', [{ ...task, sessions: task.sessions.map(session => ({ ...session, status: 'done' })) }]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[aria-current="true"]')).toBe(selected);
+    expect(selected.closest('ex-session-row')).toBe(row);
+    expect(selected.closest('[inert]')).toBeNull();
+    expect(fixture.nativeElement.querySelectorAll('ex-session-row')).toHaveLength(2);
+    expect(fixture.nativeElement.textContent).toContain('2 finished');
+    const activated = vi.fn();
+    fixture.componentInstance.selectSession.subscribe(activated);
+    selected.click();
+    expect(activated).toHaveBeenCalledWith({ taskId: 'task', sessionId: 'finished-count' });
   });
 });

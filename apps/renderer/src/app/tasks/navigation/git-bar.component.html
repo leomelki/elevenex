@@ -1,62 +1,150 @@
 <div class="git">
-  @if (files()) {
-    <button
-      class="stat"
-      type="button"
-      [attr.aria-label]="files() + ' changed files, open changes'"
-      (click)="changesRequested.emit()"
-    >
-      <ex-icon name="changes" [size]="15" /><span class="add">+{{ add() }}</span
-      ><span class="del">−{{ del() }}</span>
-    </button>
-  } @else if (!step()) {
-    <span class="stat quiet">Up to date</span>
-  }
   <span
-    class="action-slot"
-    [class.hidden]="!step()"
+    class="slot stat-slot"
+    [attr.inert]="!statContent() ? '' : null"
+    [attr.aria-hidden]="!statContent()"
+  >
+    <span class="stat-content">
+      @if (renderedStat(); as stat) {
+        @for (view of [stat]; track view.key) {
+          <span
+            class="stat-ink"
+            [animate.enter]="ready() ? 'ink-enter' : ''"
+            (animate.leave)="leaveInk($event)"
+          >
+            @if (view.key === "changes") {
+              <button
+                class="stat"
+                type="button"
+                [attr.aria-label]="view.files + ' changed files, open changes'"
+                (click)="changesRequested.emit()"
+              >
+                <ex-icon name="changes" [size]="15" />
+                <span class="add rolling">
+                  @for (count of [{ value: view.add }]; track count.value) {
+                    <span
+                      [animate.enter]="ready() ? 'count-enter' : ''"
+                      (animate.leave)="leaveInk($event)"
+                      >+{{ count.value }}</span
+                    >
+                  }
+                </span>
+                <span class="del rolling">
+                  @for (count of [{ value: view.del }]; track count.value) {
+                    <span
+                      [animate.enter]="ready() ? 'count-enter' : ''"
+                      (animate.leave)="leaveInk($event)"
+                      >−{{ count.value }}</span
+                    >
+                  }
+                </span>
+              </button>
+            } @else {
+              <span class="stat quiet">Up to date</span>
+            }
+          </span>
+        }
+      }
+    </span>
+  </span>
+  <span
+    class="slot action-slot"
     [attr.inert]="!step() ? '' : null"
     [attr.aria-hidden]="!step()"
-    ><span class="split">
+  >
+    <span class="split">
       <button
         exButton
         class="primary"
         [variant]="compact() ? 'secondary' : 'primary'"
-        [disabled]="!!busy()"
+        [disabled]="!!busy() || !step()"
         [attr.aria-busy]="!!busy()"
+        [attr.aria-label]="actionLabel()"
         (click)="primary()"
       >
-        <span class="action-content">
-          @if (busy()) {
-            <ex-status-glyph status="running" [size]="13" />
-          } @else {
-            <ex-icon
-              [name]="step() === 'commit' ? 'commit' : 'push'"
-              [size]="14"
-            />
-          }
-          <span>{{ label() }}</span>
-          @if (count()) {
-            <span class="count">{{ count() }}</span>
-          }
-          @if (!compact() && step() === 'commit' && !busy()) {
-            <ex-kbd>⌘↵</ex-kbd>
+        <span class="action-content" aria-hidden="true">
+          @if (renderedAction(); as content) {
+            @for (view of [content]; track view.key) {
+              <span
+                class="action-ink"
+                [animate.enter]="ready() ? 'ink-enter' : ''"
+                (animate.leave)="leaveInk($event)"
+              >
+                @if (view.busy) {
+                  <ex-status-glyph status="running" [size]="13" />
+                } @else {
+                  <ex-icon [name]="view.step" [size]="14" />
+                }
+                <span>{{ view.label }}</span>
+                @if (view.count) {
+                  <span class="count rolling">
+                    @for (count of [{ value: view.count }]; track count.value) {
+                      <span
+                        [animate.enter]="ready() ? 'count-enter' : ''"
+                        (animate.leave)="leaveInk($event)"
+                        >{{ count.value }}</span
+                      >
+                    }
+                  </span>
+                }
+                @if (view.shortcut) {
+                  <ex-kbd>⌘↵</ex-kbd>
+                }
+              </span>
+            }
           }
         </span>
       </button>
       <button
         exButton
+        class="more"
         [variant]="compact() ? 'secondary' : 'primary'"
-        [disabled]="!!busy()"
+        [disabled]="!!busy() || !step()"
         [cdkMenuTriggerFor]="menu"
         aria-label="More git actions"
       >
-        <ex-icon name="chevron-down" [size]="14" />
-      </button> </span
-  ></span>
+        <span class="chevron-ink"
+          ><ex-icon name="chevron-down" [size]="14"
+        /></span>
+      </button>
+    </span>
+  </span>
+  <!-- Intrinsic copies never take space, focus or animation; the live buttons remain mounted. -->
+  <span class="measurements" aria-hidden="true" inert>
+    <span class="measure action-measure">
+      @if (renderedAction(); as view) {
+        <span class="action-ink">
+          <span
+            class="measure-icon"
+            [style.width.px]="view.busy ? 13 : 14"
+          ></span>
+          <span>{{ view.label }}</span>
+          @if (view.count) {
+            <span class="count">{{ view.count }}</span>
+          }
+          @if (view.shortcut) {
+            <ex-kbd>⌘↵</ex-kbd>
+          }
+        </span>
+      }
+    </span>
+    <span class="measure stat-measure">
+      @if (renderedStat(); as view) {
+        @if (view.key === "changes") {
+          <span class="stat"
+            ><ex-icon name="changes" [size]="15" /><span class="add"
+              >+{{ view.add }}</span
+            ><span class="del">−{{ view.del }}</span></span
+          >
+        } @else {
+          <span class="stat quiet">Up to date</span>
+        }
+      }
+    </span>
+  </span>
 </div>
-<ng-template #menu
-  ><div class="menu" cdkMenu aria-label="Git actions">
+<ng-template #menu>
+  <div class="menu" cdkMenu aria-label="Git actions">
     @for (item of menuItems(); track item.action) {
       <button
         type="button"
@@ -66,5 +154,5 @@
         {{ item.label }}
       </button>
     }
-  </div></ng-template
->
+  </div>
+</ng-template>

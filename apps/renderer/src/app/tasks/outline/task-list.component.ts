@@ -1,7 +1,10 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
+  ElementRef,
   computed,
+  inject,
   input,
   output,
 } from '@angular/core';
@@ -14,6 +17,7 @@ import {
   type TaskStage,
 } from '../task.models';
 import { TaskGroupComponent } from './task-group.component';
+import { ListPresence } from '../../ui/motion/list-presence';
 type OutlineRow =
   | {
       readonly kind: 'stage';
@@ -27,7 +31,9 @@ type OutlineRow =
       readonly key: string;
       readonly task: TaskOutline;
       readonly visible: boolean;
-    };
+    }
+  | { readonly kind: 'empty'; readonly key: string; readonly visible: boolean }
+  | { readonly kind: 'closed'; readonly key: string; readonly visible: boolean; readonly count: number };
 @Component({
   selector: 'ex-task-list',
   imports: [FlipDirective, FoldComponent, TaskGroupComponent],
@@ -77,12 +83,13 @@ export class TaskListComponent {
           visible: visible(task),
         });
     }
+    const empty = !rows.some(row => row.kind === 'task' && row.visible);
+    const closed = this.tasks().filter(task => task.stage === 'closed').length;
+    rows.push({ kind: 'empty', key: 'empty', visible: empty });
+    rows.push({ kind: 'closed', key: 'closed', visible: closed > 0, count: closed });
     return rows;
   });
-  protected readonly hasVisible = computed(() =>
-    this.rows().some((row) => row.kind === 'task' && row.visible),
-  );
-  protected readonly closedCount = computed(
-    () => this.tasks().filter((task) => task.stage === 'closed').length,
-  );
+  protected readonly presence = new ListPresence(this.rows, row => row.key,
+    inject<ElementRef<HTMLElement>>(ElementRef).nativeElement, inject(DestroyRef));
+  protected readonly motionOrder = computed(() => this.presence.rows().map(row => row.key).join('\n'));
 }
