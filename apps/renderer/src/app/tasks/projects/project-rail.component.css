@@ -1,0 +1,105 @@
+:host {
+  display: block;
+  flex: none;
+  width: var(--rail-width);
+  border-radius: var(--radius-lg);
+  background: var(--glass);
+  backdrop-filter: blur(var(--blur-glass));
+  box-shadow: var(--shadow-glass);
+}
+nav {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.tile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-spring),
+    opacity var(--dur-fast) var(--ease-out);
+}
+.tile:hover {
+  transform: translateY(-1px);
+}
+.tile:active {
+  transform: scale(0.96);
+}
+.tile:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.all {
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+}
+.add {
+  color: var(--ink-muted);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.muted {
+  opacity: 0.45;
+}
+.separator {
+  width: 20px;
+  height: 1px;
+  margin: 2px 0;
+  background: var(--line);
+}
+.indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  height: 20px;
+  background: var(--ink);
+  border-radius: var(--radius-full);
+  transition: transform var(--dur-glide) var(--ease-glide);
+  pointer-events: none;
+}
+.pip {
+  position: absolute;
+  right: -5px;
+  top: -5px;
+  min-width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--attention);
+  color: var(--surface-raised);
+  box-shadow: 0 0 0 2px var(--surface);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.running {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile,
+  .indicator {
+    transition: none;
+  }
+}

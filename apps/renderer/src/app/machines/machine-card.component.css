@@ -1,0 +1,21 @@
+:host { display: block; min-width: 0; }
+.card { position: relative; display: flex; flex-direction: column; gap: var(--space-1); width: 100%; min-width: 0; padding: var(--space-4); border: 0; border-radius: var(--radius-lg); color: var(--ink); background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line), var(--shadow-raised); font: inherit; text-align: left; cursor: pointer; transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.card:hover { box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-raised); }
+.card.highlighted { box-shadow: inset 0 0 0 2px var(--accent), var(--shadow-raised); }
+.card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.card:active, .card.pressed { transform: scale(.96); transition-duration: var(--dur-instant); }
+.card:disabled { cursor: default; opacity: .55; }
+.card.idle { background: color-mix(in oklab, var(--surface-raised) 60%, transparent); }
+.top { display: flex; align-items: flex-start; gap: var(--space-1); margin-bottom: var(--space-2); }
+.machine-icon { position: relative; display: grid; place-items: center; width: var(--space-8); height: var(--space-8); border-radius: var(--radius-md); background: color-mix(in oklab, var(--machine-color) 14%, var(--surface-sunken)); }
+.presence { position: absolute; right: -2px; bottom: -2px; width: var(--space-2); height: var(--space-2); border-radius: var(--radius-full); background: var(--surface-raised); box-shadow: inset 0 0 0 1.5px var(--ink-muted), 0 0 0 2px var(--surface-raised); }
+.presence.live { background: var(--accent); box-shadow: 0 0 0 2px var(--surface-raised); }
+.presence.failed { background: var(--attention); box-shadow: 0 0 0 2px var(--surface-raised); }
+.presence.update { background: var(--review); box-shadow: 0 0 0 2px var(--surface-raised); }
+.spacer { flex: 1; }
+.tag { padding: 0 var(--space-2); border-radius: var(--radius-full); background: var(--surface-sunken); color: var(--ink-muted); font-size: var(--text-overline-size); line-height: var(--text-ui-line); white-space: nowrap; }
+.update-tag { color: var(--review); background: var(--review-soft); }
+.name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-ui-size); font-weight: 600; }
+.description { min-height: calc(var(--text-caption-line) * 2); color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-caption-line); }
+.failure { font-size: var(--text-caption-size); color: var(--attention); }
+@media (prefers-reduced-motion: reduce) { .card { transition: none; } .card:active, .card.pressed { transform: none; } }

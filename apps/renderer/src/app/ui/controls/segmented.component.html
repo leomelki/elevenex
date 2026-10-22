@@ -1,0 +1,32 @@
+<div
+  role="radiogroup"
+  [attr.aria-label]="label()"
+  [class.small]="size() === 'sm'"
+>
+  @if (thumb(); as box) {
+    <span
+      class="thumb"
+      aria-hidden="true"
+      [style.width.px]="box.width"
+      [style.transform]="'translateX(' + box.left + 'px)'"
+    ></span>
+  }
+  @for (item of options(); track item.id; let i = $index) {
+    <button
+      #option
+      type="button"
+      role="radio"
+      [attr.aria-checked]="value() === item.id"
+      [attr.tabindex]="value() === item.id ? 0 : -1"
+      [attr.title]="item.title || item.label"
+      [disabled]="item.disabled"
+      (click)="changed.emit(item.id)"
+      (keydown)="keydown($event, i)"
+    >
+      @if (item.icon) {
+        <ex-icon [name]="item.icon" [size]="14" />
+      }
+      {{ item.label }}
+    </button>
+  }
+</div>

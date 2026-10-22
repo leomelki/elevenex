@@ -1,0 +1,8 @@
+<section class="host-key" [class.changed]="changed()" [attr.role]="changed() ? 'alert' : null">
+  <h3><ex-icon name="shield" [size]="16" /><span>{{ changed() ? 'The host key changed for' : 'First time connecting to' }} <bdi>{{ host() }}</bdi></span></h3>
+  <div class="fingerprint"><span>{{ type() }}</span><code>{{ fingerprint() }}</code></div>
+  <p>@if (changed()) { This can mean the server was reinstalled, or that someone is in the middle. Confirm the new key with whoever runs the server before connecting. }
+    @else { Compare this key with <code>ssh-keygen -lf</code> on the server. Elevenex remembers it and warns you if it ever changes. }</p>
+  @if (changed()) { <label>After checking the key, type <b>{{ host() }}</b> to confirm<input #confirm type="text" autocomplete="off" spellcheck="false" [disabled]="disabled()" [value]="confirmation()" (input)="verify(confirm.value)" /></label> }
+  <footer><button exButton [variant]="changed() ? 'danger' : 'primary'" [disabled]="!canTrust()" (click)="trust()">{{ changed() ? 'Replace key and connect' : 'Trust and connect' }}</button><button exButton variant="ghost" [disabled]="disabled()" (click)="cancelled.emit()">Cancel</button></footer>
+</section>

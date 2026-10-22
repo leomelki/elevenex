@@ -1,0 +1,96 @@
+:host {
+  display: block;
+  height: 100%;
+}
+ex-app-shell {
+  height: 100%;
+}
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: var(--space-2);
+  gap: var(--space-2);
+}
+.sidebar-head,
+.sidebar-head strong,
+.sidebar-foot,
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.sidebar-head {
+  padding: var(--space-1);
+  justify-content: space-between;
+}
+.sidebar-head strong {
+  font-weight: 600;
+}
+ex-task-list {
+  flex: 1;
+  min-height: 0;
+}
+.sidebar-foot {
+  justify-content: space-between;
+  color: var(--ink-muted);
+  padding: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+.chat,
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-anchor: auto;
+  padding: var(--space-6);
+}
+.chat-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  margin: auto;
+  max-width: var(--chat-max);
+}
+.composer {
+  padding: var(--space-3) var(--space-6) var(--space-4);
+  display: flex;
+  justify-content: center;
+}
+.panel-head {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+.grow {
+  flex: 1;
+}
+ex-diff-review,
+ex-terminal-view,
+ex-browser-view {
+  flex: 1;
+  min-height: 0;
+}
+.wizard {
+  width: 540px;
+  max-width: calc(100vw - var(--space-8));
+}
+.machine-panel {
+  width: 320px;
+}
+.browser-page {
+  padding: var(--space-8);
+  text-align: center;
+  background: var(--surface-raised);
+  height: 100%;
+}
+p {
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}

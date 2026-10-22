@@ -1,0 +1,99 @@
+<article [class.fresh]="task().fresh" [attr.data-task-id]="task().id">
+  <header>
+    <button
+      class="toggle"
+      type="button"
+      [attr.aria-expanded]="!collapsed()"
+      (click)="toggle()"
+    >
+      <ex-icon
+        class="chevron"
+        name="chevron-down"
+        [size]="12"
+        [class.closed]="collapsed()"
+      />
+      @if (showProject() && task().project; as project) {
+        <ex-project-mark
+          [name]="project.name"
+          [logo]="project.logo"
+          [initials]="project.initials"
+          [hue]="project.hue ?? 'steel'"
+          [size]="18"
+          [decorative]="true"
+        />
+      }
+      <span class="title">{{ task().title }}</span>
+      @if (task().repo) {
+        <span class="repo">{{ task().repo }}</span>
+      }
+    </button>
+    @if (showLink() && leadLink(); as link) {
+      <ex-link-chip
+        [kind]="link.kind"
+        [label]="link.label"
+        [state]="link.state"
+        [compact]="true"
+      />
+    }
+    <span class="signal">
+      @if (attention()) {
+        <span class="ask" [title]="attention() + ' sessions need you'"
+          ><ex-status-glyph status="attention" [size]="12" />{{
+            attention()
+          }}</span
+        >
+      } @else if (running()) {
+        <span class="running" [title]="running() + ' working'"
+          ><ex-status-glyph status="running" [size]="12" />{{ running() }}</span
+        >
+      } @else if (collapsed()) {
+        <span class="count">{{ task().sessions.length }}</span>
+      }
+    </span>
+    @if (allowAdd()) {
+      <ex-icon-button
+        class="add"
+        icon="plus"
+        label="New session in this task"
+        size="sm"
+        (pressed)="addSession.emit(task().id)"
+      />
+    }
+  </header>
+  <ex-fold [open]="!collapsed()"
+    ><div class="tree" [exFlip]="task().sessions">
+      @for (session of working(); track session.id) {
+        <ex-session-row
+          [attr.data-flip]="session.id"
+          [session]="session"
+          [selected]="selected() === session.id"
+          (activated)="selectSession.emit($event)"
+        />
+      }
+      <ex-fold [open]="finished().length > 0"
+        ><div class="finished">
+          <button
+            class="finished-toggle"
+            type="button"
+            [attr.aria-expanded]="finishedOpen()"
+            (click)="finishedValue.set(!finishedOpen())"
+          >
+            <ex-icon
+              class="chevron"
+              name="chevron-down"
+              [size]="12"
+              [class.closed]="!finishedOpen()"
+            />{{ finished().length }} finished</button
+          ><ex-fold [open]="finishedOpen()">
+            @for (session of finished(); track session.id) {
+              <ex-session-row
+                [attr.data-flip]="session.id"
+                [session]="session"
+                [selected]="selected() === session.id"
+                (activated)="selectSession.emit($event)"
+              />
+            }
+          </ex-fold></div
+      ></ex-fold></div
+  ></ex-fold>
+</article>

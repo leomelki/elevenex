@@ -1,0 +1,86 @@
+<header>
+  <div class="row">
+    <div class="heading">
+      @if (project(); as mark) {
+        <ex-project-mark
+          [name]="mark.name"
+          [logo]="mark.logo"
+          [initials]="mark.initials"
+          [hue]="mark.hue ?? 'steel'"
+          [size]="20"
+          [decorative]="true"
+        />
+      }
+      <h1>{{ title() }}</h1>
+      <ex-task-stage
+        [stage]="stage()"
+        (stageChange)="stageChange.emit($event)"
+      />
+    </div>
+    <span class="grow"></span>
+    @if (closeSuggested()) {
+      <button
+        exButton
+        [variant]="git()?.files || git()?.ahead ? 'secondary' : 'primary'"
+        size="sm"
+        (click)="closeRequested.emit()"
+      >
+        <ex-icon name="archive" [size]="14" />Close task
+      </button>
+    } @else {
+      <ex-icon-button
+        icon="archive"
+        label="Close task"
+        (pressed)="closeRequested.emit()"
+      />
+    }
+    <ex-icon-button
+      icon="panel"
+      label="Toggle side panel"
+      [active]="panelOpen()"
+      (pressed)="panelToggle.emit()"
+    />
+  </div>
+  <div class="row">
+    <div class="metadata">
+      @if (branch(); as name) {
+        <ex-branch-chip
+          [name]="name"
+          [compact]="true"
+          [copied]="branchCopied()"
+          (renameRequested)="branchRename.emit($event)"
+          (copyRequested)="branchCopy.emit($event)"
+        />
+      }
+      @for (link of links(); track link.kind + link.label) {
+        <ex-link-chip
+          [kind]="link.kind"
+          [label]="link.label"
+          [state]="link.state"
+          [href]="link.href"
+          (activated)="linkActivated.emit(link)"
+        />
+      } @empty {
+        <button class="link" type="button" (click)="linkRequested.emit()">
+          <ex-icon name="link" [size]="12" />Link PR or ticket
+        </button>
+      }
+      @if (meta()) {
+        <span class="meta">{{ meta() }}</span>
+      }
+    </div>
+    <span class="grow"></span>
+    @if (git(); as state) {
+      <ex-git-bar
+        [files]="state.files ?? 0"
+        [add]="state.add ?? 0"
+        [del]="state.del ?? 0"
+        [ahead]="state.ahead ?? 0"
+        [busy]="state.busy"
+        [compact]="true"
+        (action)="gitAction.emit($event)"
+        (changesRequested)="changesRequested.emit()"
+      />
+    }
+  </div>
+</header>

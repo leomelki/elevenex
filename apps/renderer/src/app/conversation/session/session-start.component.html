@@ -1,0 +1,19 @@
+@if (taskContext(); as task) {
+  <header>
+    <ex-task-line
+      [task]="task"
+      (renameRequested)="renameTask.emit()"
+      (branchRename)="renameBranch.emit($event)"
+      (branchCopy)="copyBranch.emit($event)"
+    />
+  </header>
+}
+<div class="start">
+  <h1>{{ title() }}</h1>
+  <ng-content select="[sessionContext]" /><ex-preset-picker
+    [presets]="presets().slice(0, 6)"
+    [value]="selected()"
+    (selected)="select($event)"
+  />
+  <div class="composer"><ng-content /></div>
+</div>

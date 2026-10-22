@@ -1,0 +1,76 @@
+<ex-app-shell [panelOpen]="panelOpen()">
+  <ex-title-island
+    shellTitle
+    label="Choose a machine"
+    (pressed)="machineRequested.emit()"
+  >
+    @if (machine(); as current) {
+      <ex-island-name [machine]="current" />
+    } @else {
+      <span class="machine-name">Elevenex</span>
+    }
+  </ex-title-island>
+  <ex-project-rail
+    shellRail
+    [projects]="projects()"
+    [activeId]="activeProject()"
+    (selectProject)="activeProject.set($event)"
+    (addProject)="projectAdded.emit()"
+  />
+  <div shellSidebar class="sidebar-content">
+    <div class="sidebar-head">
+      <h1>{{ projectLabel() }}</h1>
+      <ex-icon-button
+        icon="plus"
+        label="New task"
+        [disabled]="projects().length === 0"
+        (pressed)="taskRequested.emit()"
+      />
+    </div>
+    <ex-status-summary
+      [counts]="counts()"
+      [active]="filter()"
+      (selectStatus)="filter.set($event)"
+    />
+    <ex-task-list
+      [tasks]="tasks()"
+      [selected]="selectedSession()?.sessionId ?? null"
+      [filter]="filter()"
+      [showProjects]="activeProject() === 'all'"
+      (selectSession)="selectedSession.set($event)"
+      (addSession)="sessionRequested.emit($event)"
+    />
+  </div>
+  <div shellMain class="main-content">
+    @if (hasConversation()) {
+      <ng-content select="[workbenchConversation]" />
+    } @else {
+      <div class="empty-state">
+        <ex-icon name="chat" [size]="28" />
+        <h2>Your next task starts here</h2>
+        <p>Choose a project and a task to start a conversation.</p>
+        <button
+          exButton
+          [disabled]="projects().length === 0"
+          (click)="taskRequested.emit()"
+        >
+          <ex-icon name="plus" />New task
+        </button>
+      </div>
+    }
+  </div>
+  <div shellPanel class="panel-content">
+    <div class="panel-head">
+      <ex-panel-tabs
+        [tabs]="tabs"
+        [active]="panel()"
+        (selectTab)="panel.set($event)"
+      /><ex-icon-button
+        icon="x"
+        label="Close side panel"
+        (pressed)="panelOpen.set(false)"
+      />
+    </div>
+    <ng-content select="[workbenchPanel]" />
+  </div>
+</ex-app-shell>

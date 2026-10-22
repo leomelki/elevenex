@@ -1,0 +1,68 @@
+<section exAutoHeight [class.resolved]="status() !== 'pending'">
+  <div>
+    @if (status() === "pending") {
+      <header>
+        <ex-icon name="shield" [size]="16" /><strong>{{
+          kind() === "command"
+            ? "Run this command?"
+            : kind() === "edit"
+              ? "Apply this edit?"
+              : "Allow this tool?"
+        }}</strong>
+      </header>
+      @if (reason()) {
+        <p>{{ reason() }}</p>
+      }
+      <div class="target">
+        <code>{{ target() }}</code>
+        @if (where()) {
+          <span>{{ where() }}</span>
+        }
+      </div>
+      <ng-content />
+      <footer>
+        <button
+          exButton
+          variant="primary"
+          size="sm"
+          (click)="resolve.emit('approved')"
+        >
+          Approve <ex-kbd>↵</ex-kbd></button
+        ><button
+          exButton
+          variant="secondary"
+          size="sm"
+          (click)="resolve.emit('always')"
+        >
+          Always allow <ex-kbd>⌥↵</ex-kbd></button
+        ><button
+          exButton
+          variant="ghost"
+          size="sm"
+          (click)="resolve.emit('denied')"
+        >
+          Deny <ex-kbd>Esc</ex-kbd>
+        </button>
+      </footer>
+    } @else {
+      <div class="summary">
+        <ex-icon
+          [name]="status() === 'denied' ? 'x' : 'check'"
+          [size]="14"
+        /><span>{{
+          status() === "denied"
+            ? "Denied"
+            : status() === "always"
+              ? "Always allowed"
+              : "Approved"
+        }}</span
+        ><code>{{ target() }}</code>
+        @if (undoable()) {
+          <button exButton variant="ghost" size="sm" (click)="undo.emit()">
+            Undo
+          </button>
+        }
+      </div>
+    }
+  </div>
+</section>

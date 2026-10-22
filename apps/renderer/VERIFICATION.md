@@ -1,0 +1,35 @@
+# Component system verification
+
+Checked on macOS, 2026-10-22, using the workspace's locked dependencies and the
+already installed Node 26 runtime. No dependency versions or lockfile changed.
+
+| Check | Result |
+| --- | --- |
+| `pnpm desktop:lint` | Passed, including production source and isolated previews |
+| `pnpm desktop:test` | 64 renderer tests across 16 files, 4 preload/security tests, 7 capture-tool tests passed; negative IPC types checked through `tsc` |
+| `pnpm desktop:build` | Passed; initial renderer bundle 236 kB, workbench loaded lazily |
+| Native Electron smoke | Passed sandbox, bridge validation, subscription cleanup, theme updates, multiple windows, history fallback, CSP and missing assets |
+| Production renderer capture | `app://` launch, nonce replacement, local fonts, shell layout, empty state, light/dark passed |
+| Interactive component capture | Typed example data, task wizard keyboard flow, inferred branch selection, CDK menu Escape/focus restoration, agent picker, review takeover, hidden-panel inertness, Browser and Terminal frames passed |
+| Motion frames | Panel widths sampled at 0/140/280 ms; rail stayed fixed. Machine launch sampled at 0/280/560 ms. Wider review sampled in both directions, preserving chat width throughout |
+| Preview command/HMR | `pnpm desktop:preview` started successfully; a temporary template update appeared in the live renderer and its original bytes were restored |
+| Source review | `git diff --check` passed; existing legacy app commands and dependencies retained |
+
+Native captures use the actual components in Electron, never `--fixture`.
+Reports under the ignored `artifacts/desktop-capture/` directory:
+
+- `component-system-initial`: ten light/dark family gallery captures.
+- `component-system-final`: eight corrected workspace/interaction captures.
+- `component-system-motion`: six panel and machine animation frames.
+- `component-system-takeover`: six review animation frames plus light workspace.
+- `component-system-production`: two production `app://` theme captures.
+- `component-system-hmr`: applied/restored live-template captures.
+
+Each listed report records `verified: true` and no renderer errors. Relevant
+PNGs were visually inspected. A preliminary interaction run hit a stale Chromium
+animation-tracker ID after changing reduced motion; the successful motion runs
+use live DOM animation handles to scrub the owned animations precisely.
+
+This verifies the unpackaged native app on macOS. Installer packaging and
+Windows/Linux runtime verification were not part of this component-only change.
+Repository/agent data integration remains a separate application layer.

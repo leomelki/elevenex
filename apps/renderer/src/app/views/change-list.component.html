@@ -1,0 +1,13 @@
+<cdk-virtual-scroll-viewport class="files" [itemSize]="32" [minBufferPx]="160" [maxBufferPx]="320" tabindex="0" role="listbox" [attr.aria-label]="label()" [attr.aria-activedescendant]="active() ? rowId(active()!) : null" (keydown)="keydown($event)">
+  <ng-container *cdkVirtualFor="let row of rows(); trackBy: trackRow">
+    @if (row.file; as file) {
+      <button type="button" class="file" role="option" [id]="rowId(file.id)" [class.viewed]="file.viewed && !file.changedSinceViewed" [class.current]="file.id === active()" [attr.aria-selected]="file.id === active()" [attr.aria-label]="statuses[file.status] + ' ' + file.path + (file.viewed ? ', viewed' : '')" [title]="file.path" [tabIndex]="-1" (click)="selected.emit(file.id)">
+        <span class="status" [attr.data-status]="file.status">{{ file.status }}</span><span class="path"><b>{{ names(file.path) }}</b>@if (!grouped() && folders(file.path)) { <small>{{ folders(file.path) }}</small> }</span>
+        @if (file.changedSinceViewed) { <span class="changed" aria-label="Changed since viewed"></span> }
+        <span class="counts"><span class="add">+{{ file.add }}</span><span class="del">−{{ file.del }}</span></span>
+        @if (file.viewed && !file.changedSinceViewed) { <ex-icon name="check" [size]="12" /> }
+      </button>
+    } @else { <div class="folder"><ex-icon name="folder" [size]="13" /><span>{{ row.label }}</span></div> }
+  </ng-container>
+</cdk-virtual-scroll-viewport>
+@if (!items().length) { <p>No changed files</p> }

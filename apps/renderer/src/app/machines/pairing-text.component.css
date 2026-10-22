@@ -1,0 +1,6 @@
+:host { display: block; }
+.pairing { display: flex; flex-direction: column; gap: var(--space-3); }
+.text { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface-sunken); box-shadow: inset 0 0 0 1px var(--line); }
+code { flex: 1; min-width: 0; max-height: calc(var(--text-code-line) * 4); overflow: auto; overflow-wrap: anywhere; color: var(--ink-muted); font: var(--text-mono-meta-size)/var(--text-code-line) var(--font-mono); }
+button { flex: none; }
+p { margin: 0; color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-ui-line); }

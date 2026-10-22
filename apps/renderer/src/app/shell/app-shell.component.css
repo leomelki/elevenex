@@ -1,0 +1,127 @@
+:host {
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-2) var(--space-2);
+  background: var(--canvas);
+}
+.title {
+  flex: none;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: drag;
+}
+.title > * {
+  -webkit-app-region: no-drag;
+}
+.regions {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  gap: var(--space-2);
+}
+.glass {
+  background: var(--glass);
+  backdrop-filter: blur(var(--blur-glass));
+  box-shadow: var(--shadow-glass);
+  border-radius: var(--radius-lg);
+}
+.surface {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-glass);
+}
+.rail {
+  flex: 0 0 var(--rail-width);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: clip;
+}
+.sidebar {
+  flex: 0 0 var(--sidebar-width);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.workspace {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  margin-right: 0;
+  view-transition-name: main-content;
+  transition: margin-right var(--dur-slow) var(--ease-in-out), opacity var(--dur-slow) var(--ease-in-out);
+}
+.panel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 0;
+  min-width: 0;
+  overflow: clip;
+  opacity: 0;
+  transition:
+    width var(--dur-slow) var(--ease-in-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.panel-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  width: var(--panel-width);
+}
+:host(.panel-open) .panel {
+  width: var(--panel-width);
+  opacity: 1;
+}
+:host(.panel-open) .main {
+  margin-right: calc(var(--panel-width) + var(--space-2));
+}
+:host(.wide-review) .main {
+  opacity: 0;
+  pointer-events: none;
+}
+:host(.wide-review) .panel {
+  width: 100%;
+}
+:host(.wide-review) .panel-inner {
+  width: 100%;
+}
+@media (max-width: 1000px) {
+  .sidebar {
+    flex-basis: min(var(--sidebar-width), 23vw);
+  }
+  :host(.panel-open) .panel {
+    width: min(var(--panel-width), 40vw);
+  }
+  :host(.panel-open) .main {
+    margin-right: calc(min(var(--panel-width), 40vw) + var(--space-2));
+  }
+  .panel-inner {
+    width: min(var(--panel-width), 40vw);
+  }
+  :host(.wide-review) .panel {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .main {
+    transition: none;
+  }
+}

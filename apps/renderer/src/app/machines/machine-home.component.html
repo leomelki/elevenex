@@ -1,0 +1,19 @@
+<section class="home" tabindex="-1" (keydown)="keydown($event)" aria-label="Machines">
+  <div class="column">
+    <header><div class="heading"><h1>{{ title() }}</h1><p>{{ subtitle() }}</p></div>
+      <label class="search"><ex-icon name="search" [size]="14" /><input #findInput type="search" aria-label="Find a machine" placeholder="Find a machine" [value]="query()" (input)="query.set(findInput.value)" /><ex-kbd>⌘O</ex-kbd></label>
+    </header>
+    @if (connected().length) {
+      <h2>Connected</h2><div class="grid">@for (machine of connected(); track machine.id) {
+        <ex-machine-card [machine]="machine" [highlighted]="highlighted() === machine.id" [pressed]="pressed() === machine.id" (opened)="opened.emit($event)" />
+      }</div>
+    }
+    @if (disconnected().length) {
+      <h2>Not connected <span>opening one connects to it</span></h2><div class="grid">@for (machine of disconnected(); track machine.id) {
+        <ex-machine-card [machine]="machine" [highlighted]="highlighted() === machine.id" [pressed]="pressed() === machine.id" (opened)="opened.emit($event)" />
+      }</div>
+    }
+    @if (!filtered().length) { <p class="empty">{{ query() ? 'No machines match your search.' : 'Choose where Elevenex runs to get started.' }}</p> }
+    <footer><button exButton variant="ghost" size="sm" (click)="addServer.emit()"><ex-icon name="plus" [size]="14" />Add a server</button><button exButton variant="ghost" size="sm" (click)="pairComputer.emit()">Pair a computer</button></footer>
+  </div>
+</section>

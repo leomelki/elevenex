@@ -1,0 +1,64 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+ol {
+  position: relative;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+ol::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--space-6));
+  top: 0;
+  bottom: var(--space-2);
+  width: 1px;
+  background: var(--line);
+}
+li {
+  position: relative;
+  min-width: 0;
+}
+.prose {
+  padding: var(--space-1) 0;
+}
+.prose ex-markdown {
+  font-size: var(--text-ui-size);
+}
+.group,
+.earlier {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--row-height);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  text-align: left;
+  cursor: pointer;
+  padding: 0 var(--space-2);
+}
+.group:hover,
+.earlier:hover {
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
+.group:focus-visible,
+.earlier:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.nested {
+  margin-left: var(--space-4);
+  border-left: 1px solid var(--line);
+}
+.recovered {
+  text-decoration: line-through;
+  text-decoration-color: var(--line-strong);
+}

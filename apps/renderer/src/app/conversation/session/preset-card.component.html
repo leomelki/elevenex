@@ -1,0 +1,40 @@
+<button
+  type="button"
+  [class.selected]="selected()"
+  [class.custom]="custom()"
+  [class.compact]="compact()"
+  [attr.aria-pressed]="selected()"
+  (click)="picked.emit()"
+>
+  <span class="top"
+    ><span class="mark">
+      @if (custom()) {
+        <ex-icon name="plus" [size]="14" />
+      } @else {
+        {{ preset()?.mark }}
+      }</span
+    ><span class="grow"></span>
+    @if (shortcut()) {
+      <ex-kbd>{{ shortcut() }}</ex-kbd>
+    }
+    @if (selected()) {
+      <span class="check"><ex-icon name="check" [size]="12" /></span>
+    }</span
+  ><span class="name"
+    >{{ custom() ? "Custom" : preset()?.preset || preset()?.model }}
+    @if (preset()?.fast) {
+      <ex-icon name="bolt" [size]="13" />
+    }
+  </span>
+  @if (!compact()) {
+    <span class="sub">{{
+      custom()
+        ? "Choose your own mix"
+        : preset()?.model +
+          (preset()?.thinking ? " · " + preset()?.thinking : "")
+    }}</span
+    ><span class="harness">{{
+      custom() ? "Adjust the agent" : preset()?.harness
+    }}</span>
+  }
+</button>

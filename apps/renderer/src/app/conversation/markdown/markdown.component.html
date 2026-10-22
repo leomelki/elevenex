@@ -1,0 +1,140 @@
+<ng-container *ngTemplateOutlet="render; context: { $implicit: blocks() }" />
+<ng-template #render let-blocks>
+  @for (block of blocks; track $index) {
+    @switch (block.kind) {
+      @case ("paragraph") {
+        <p>
+          <ex-markdown-inline
+            [nodes]="block.content"
+            (openFile)="openFile.emit($event)"
+            (openLink)="openLink.emit($event)"
+          />
+        </p>
+      }
+      @case ("heading") {
+        <h2 [attr.aria-level]="block.level" [class.small]="block.level > 1">
+          <ex-markdown-inline
+            [nodes]="block.content"
+            (openFile)="openFile.emit($event)"
+            (openLink)="openLink.emit($event)"
+          />
+        </h2>
+      }
+      @case ("code") {
+        <ex-markdown-code
+          [text]="block.text"
+          [language]="block.language"
+          [streaming]="!block.complete && streaming()"
+          [copied]="copiedCode() === block.text"
+          (copyRequested)="copyCode.emit($event)"
+        />
+      }
+      @case ("quote") {
+        <blockquote [attr.data-tone]="block.tone">
+          @if (block.tone) {
+            <strong class="callout-title">{{ block.tone }}</strong>
+          }
+          <ng-container
+            *ngTemplateOutlet="render; context: { $implicit: block.blocks }"
+          />
+        </blockquote>
+      }
+      @case ("embeds") {
+        <ex-markdown-media-group
+          [items]="block.items"
+          [resolve]="resolve()"
+          (openFile)="openFile.emit($event)"
+          (openPage)="openPage.emit($event)"
+        />
+      }
+      @case ("rule") {
+        <hr />
+      }
+      @case ("list") {
+        @if (block.ordered) {
+          <ol [start]="block.start">
+            @for (item of block.items; track $index) {
+              <li>
+                <ng-container
+                  *ngTemplateOutlet="
+                    render;
+                    context: { $implicit: item.blocks }
+                  "
+                />
+              </li>
+            }
+          </ol>
+        } @else {
+          <ul>
+            @for (item of block.items; track $index) {
+              <li [class.task]="item.checked !== null">
+                @if (item.checked !== null) {
+                  <input
+                    type="checkbox"
+                    [checked]="item.checked"
+                    disabled
+                    aria-label="Task complete"
+                  />
+                }
+                <div>
+                  <ng-container
+                    *ngTemplateOutlet="
+                      render;
+                      context: { $implicit: item.blocks }
+                    "
+                  />
+                </div>
+              </li>
+            }
+          </ul>
+        }
+      }
+      @case ("table") {
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Table">
+          <table>
+            <thead>
+              <tr>
+                @for (header of block.headers; track $index) {
+                  <th scope="col">
+                    <ex-markdown-inline
+                      [nodes]="header"
+                      (openFile)="openFile.emit($event)"
+                      (openLink)="openLink.emit($event)"
+                    />
+                  </th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of block.rows; track $index) {
+                <tr>
+                  @for (cell of row; track $index) {
+                    <td>
+                      <ex-markdown-inline
+                        [nodes]="cell"
+                        (openFile)="openFile.emit($event)"
+                        (openLink)="openLink.emit($event)"
+                      />
+                    </td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+      @case ("embed") {
+        <ex-markdown-media
+          [path]="block.path"
+          [caption]="block.caption"
+          [asset]="resolve()?.(block.path)"
+          (openFile)="openFile.emit($event)"
+          (openPage)="openPage.emit($event)"
+        />
+      }
+    }
+  }
+</ng-template>
+@if (streaming()) {
+  <span class="caret" aria-hidden="true"></span>
+}

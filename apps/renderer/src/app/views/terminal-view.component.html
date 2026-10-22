@@ -1,0 +1,21 @@
+<section class="terminal" tabindex="-1" aria-label="Your terminals" (keydown)="keydown($event)">
+  <ex-view-tabs label="Terminal tabs" newLabel="New terminal (⌘T)" [items]="tabs()" [active]="current()?.id" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()">
+    @if (scripts().length) { <select #scriptSelect aria-label="Run a project script" (change)="script(scriptSelect.value); scriptSelect.value = ''"><option value="">Run script…</option>@for (script of scripts(); track script.id) { <option [value]="script.id">{{ script.name }}</option> }</select> }
+  </ex-view-tabs>
+  <div class="toolbar"><ex-icon name="folder" [size]="13" /><span class="cwd" [title]="current()?.cwd ?? ''">{{ current()?.cwd ?? 'Workspace' }}</span>@if (current()?.branch; as branch) { <span class="branch"><ex-icon name="branch" [size]="12" />{{ branch }}</span> }
+    @if (current()?.status === 'serving') { <button exButton variant="ghost" size="sm" (click)="openPort()">Open :{{ current()?.port }}</button> }
+    @if (current()?.status === 'running' || current()?.status === 'serving') { <button exButton variant="ghost" size="sm" (click)="stopRequested.emit(current()!.id)">Stop</button> }
+    <ex-icon-button icon="search" label="Find in terminal (⌘F)" size="sm" [active]="findOpen()" (pressed)="find()" />
+  </div>
+  <ex-fold [open]="findOpen()"><label class="find">Find<input #findInput type="search" aria-label="Find in terminal output" [value]="query()" (input)="query.set(findInput.value)" /></label></ex-fold>
+  <div class="content"><ng-content select="[terminalContent]" />
+    @if (output().length) {
+      @if (omitted()) { <p class="omitted">Showing the last 2,000 lines ({{ omitted() }} earlier)</p> }
+      <cdk-virtual-scroll-viewport class="output" [itemSize]="20" [minBufferPx]="200" [maxBufferPx]="400" tabindex="0" role="region" aria-label="Terminal output">
+        <div class="line" *cdkVirtualFor="let line of preview(); trackBy: trackLine" [attr.data-kind]="line.kind">{{ line.text }}</div>
+      </cdk-virtual-scroll-viewport>
+    }
+    @if (!tabs().length) { <div class="empty"><ex-icon name="terminal" [size]="24" /><p>Your terminals run in this task’s workspace.</p><button exButton variant="secondary" (click)="added.emit()">New terminal</button></div> }
+  </div>
+  <ex-fold [open]="!!failure()">@if (failure(); as failed) { <div class="failure" role="status"><ex-icon name="alert" [size]="14" /><span>Exited {{ failed.code }} · <code>{{ failed.cmd }}</code></span><button exButton size="sm" variant="secondary" (click)="failureAction('ask')">Ask the agent</button><button exButton size="sm" variant="ghost" (click)="failureAction('rerun')">Run again</button></div> }</ex-fold>
+</section>

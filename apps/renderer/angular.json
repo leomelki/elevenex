@@ -32,6 +32,15 @@
             ]
           },
           "configurations": {
+            "component-preview": {
+              "browser": "preview/main.ts",
+              "index": "src/index.html",
+              "tsConfig": "preview/tsconfig.json",
+              "outputPath": "out-tsc/component-preview",
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true
+            },
             "capture-fixture": {
               "browser": "capture/main.ts",
               "index": "capture/index.html",

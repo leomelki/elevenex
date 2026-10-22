@@ -1,0 +1,70 @@
+<div class="git">
+  @if (files()) {
+    <button
+      class="stat"
+      type="button"
+      [attr.aria-label]="files() + ' changed files, open changes'"
+      (click)="changesRequested.emit()"
+    >
+      <ex-icon name="changes" [size]="15" /><span class="add">+{{ add() }}</span
+      ><span class="del">−{{ del() }}</span>
+    </button>
+  } @else if (!step()) {
+    <span class="stat quiet">Up to date</span>
+  }
+  <span
+    class="action-slot"
+    [class.hidden]="!step()"
+    [attr.inert]="!step() ? '' : null"
+    [attr.aria-hidden]="!step()"
+    ><span class="split">
+      <button
+        exButton
+        class="primary"
+        [variant]="compact() ? 'secondary' : 'primary'"
+        [disabled]="!!busy()"
+        [attr.aria-busy]="!!busy()"
+        (click)="primary()"
+      >
+        <span class="action-content">
+          @if (busy()) {
+            <ex-status-glyph status="running" [size]="13" />
+          } @else {
+            <ex-icon
+              [name]="step() === 'commit' ? 'commit' : 'push'"
+              [size]="14"
+            />
+          }
+          <span>{{ label() }}</span>
+          @if (count()) {
+            <span class="count">{{ count() }}</span>
+          }
+          @if (!compact() && step() === 'commit' && !busy()) {
+            <ex-kbd>⌘↵</ex-kbd>
+          }
+        </span>
+      </button>
+      <button
+        exButton
+        [variant]="compact() ? 'secondary' : 'primary'"
+        [disabled]="!!busy()"
+        [cdkMenuTriggerFor]="menu"
+        aria-label="More git actions"
+      >
+        <ex-icon name="chevron-down" [size]="14" />
+      </button> </span
+  ></span>
+</div>
+<ng-template #menu
+  ><div class="menu" cdkMenu aria-label="Git actions">
+    @for (item of menuItems(); track item.action) {
+      <button
+        type="button"
+        cdkMenuItem
+        (cdkMenuItemTriggered)="action.emit(item.action)"
+      >
+        {{ item.label }}
+      </button>
+    }
+  </div></ng-template
+>

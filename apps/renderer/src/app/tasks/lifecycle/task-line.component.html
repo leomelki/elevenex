@@ -1,0 +1,41 @@
+<div class="line">
+  @if (task().project; as mark) {
+    <ex-project-mark
+      [name]="mark.name"
+      [logo]="mark.logo"
+      [initials]="mark.initials"
+      [hue]="mark.hue ?? 'steel'"
+      [size]="16"
+      [decorative]="true"
+    />
+  }
+  <button
+    class="title"
+    type="button"
+    title="Rename task"
+    (click)="renameRequested.emit()"
+  >
+    {{ task().title }}
+  </button>
+  @if (task().branch; as name) {
+    <ex-branch-chip
+      [name]="name"
+      [base]="task().base"
+      [copied]="branchCopied()"
+      (renameRequested)="branchRename.emit($event)"
+      (copyRequested)="branchCopy.emit($event)"
+    />
+  }
+  @if (task().workspace; as workspace) {
+    <span class="workspace" role="status">
+      @if (workspace.state === 'setup') {
+        <ex-status-glyph status="running" [size]="12" />Setting up workspace
+        @if (workspace.step) {
+          <span class="muted">· {{ workspace.step }}</span>
+        }
+      } @else {
+        <ex-icon name="check" [size]="12" />Workspace ready
+      }
+    </span>
+  }
+</div>

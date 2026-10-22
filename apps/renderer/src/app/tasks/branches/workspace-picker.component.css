@@ -1,0 +1,51 @@
+:host {
+  display: inline-flex;
+  min-width: 0;
+}
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: var(--control-height);
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.trigger:hover {
+  background: var(--surface-sunken);
+}
+.trigger:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.trigger ex-icon {
+  flex: none;
+  color: var(--ink-muted);
+}
+.note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-caption-size);
+  color: var(--ink-muted);
+}
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-meta-size);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+.dot.used {
+  background: var(--ink-muted);
+}

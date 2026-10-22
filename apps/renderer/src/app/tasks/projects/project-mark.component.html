@@ -1,0 +1,5 @@
+@if (logo() && failedLogo() !== logo()) {
+  <img [src]="logo()" alt="" (error)="failedLogo.set(logo())" />
+} @else {
+  {{ monogram() }}
+}

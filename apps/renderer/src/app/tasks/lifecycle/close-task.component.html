@@ -1,0 +1,71 @@
+<div class="backdrop" tabindex="-1" (keydown.escape)="cancelled.emit()">
+  <button
+    class="dismiss-backdrop"
+    type="button"
+    aria-label="Cancel closing task"
+    tabindex="-1"
+    (click)="cancelled.emit()"
+  ></button>
+  <section
+    role="dialog"
+    aria-modal="true"
+    aria-label="Close task"
+    cdkTrapFocus
+    [cdkTrapFocusAutoCapture]="true"
+  >
+    <h2>Close “{{ title() }}”?</h2>
+    <ul>
+      @if (running()) {
+        <li>
+          <ex-status-glyph status="running" [size]="14" />Stops
+          {{ running() }} running {{ running() === 1 ? 'session' : 'sessions' }}
+        </li>
+      }
+      <li>
+        <ex-icon name="archive" [size]="14" />Archives
+        {{ sessions() }} sessions. Reopen them any time from Closed.
+      </li>
+      <li>
+        <ex-icon name="check" [size]="14" />Cleans up the task’s files on disk.
+      </li>
+      @if (unpushed()) {
+        <li class="warning">
+          <ex-status-glyph status="attention" [size]="14" />{{ unpushed() }}
+          {{ unpushed() === 1 ? 'commit is' : 'commits are' }} not pushed yet.
+        </li>
+      }
+    </ul>
+    @if (ticket()) {
+      <label class="ticket"
+        ><input
+          #ticketCheck
+          type="checkbox"
+          [checked]="moveTicket()"
+          (change)="moveTicket.set(ticketCheck.checked)"
+        />Move
+        <ex-link-chip kind="ticket" [label]="ticket()!" [compact]="true" /> to
+        Done</label
+      >
+    }
+    <footer>
+      <button
+        exButton
+        variant="ghost"
+        cdkFocusInitial
+        (click)="cancelled.emit()"
+      >
+        Cancel</button
+      ><span class="grow"></span>
+      @if (unpushed()) {
+        <button exButton variant="secondary" (click)="confirm(false)">
+          Close without pushing
+        </button>
+      }
+      <button exButton variant="primary" (click)="confirm(unpushed() > 0)">
+        <ex-icon [name]="unpushed() ? 'push' : 'archive'" [size]="14" />{{
+          unpushed() ? 'Push and close' : 'Close task'
+        }}
+      </button>
+    </footer>
+  </section>
+</div>

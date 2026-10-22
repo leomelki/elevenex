@@ -152,6 +152,11 @@ try {
   switch (mode) {
     case 'dev': await dev(); break;
     case 'build': await build(); break;
+    case 'preview':
+      await compileMain();
+      await syncTokens();
+      await run(ng, ['serve', '--build-target', 'renderer:build:component-preview', '--host', '127.0.0.1', '--port', '4310'], renderer);
+      break;
     case 'package':
       await build();
       // Host platform by default; --mac, --win and --linux select explicit targets.
@@ -168,10 +173,10 @@ try {
     case 'lint':
       await run(join(dirname(desktopRequire.resolve('eslint/package.json')), 'bin/eslint.js'), [
         '--config', 'apps/desktop/eslint.config.mjs', 'apps/desktop/src', 'apps/renderer/src', 'packages/shared/src', '--max-warnings', '0',
-        'scripts/desktop-shell.mjs', 'scripts/desktop-capture', 'apps/renderer/capture', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
+        'scripts/desktop-shell.mjs', 'scripts/desktop-capture', 'apps/renderer/capture', 'apps/renderer/preview', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
       ]);
       break;
-    default: throw new Error('Use dev, build, package, test or lint');
+    default: throw new Error('Use dev, preview, build, package, test or lint');
   }
 } catch (error) {
   console.error(error);

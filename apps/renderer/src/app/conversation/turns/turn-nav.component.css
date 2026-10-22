@@ -1,0 +1,52 @@
+:host {
+  display: block;
+}
+nav {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  gap: var(--space-1);
+}
+button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: var(--space-6);
+  height: var(--space-3);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+span {
+  display: block;
+  width: 10px;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--line-strong);
+  transition: transform var(--dur-glide) var(--ease-glide);
+  transform-origin: right;
+}
+button:hover span,
+button[aria-current] span {
+  transform: scaleX(2);
+}
+button[data-state="changes"] span {
+  background: var(--review);
+}
+button[data-state="attention"] span {
+  background: var(--attention);
+}
+button[data-state="live"] span {
+  background: var(--running);
+}
+@media (prefers-reduced-motion: reduce) {
+  span {
+    transition: none;
+  }
+}

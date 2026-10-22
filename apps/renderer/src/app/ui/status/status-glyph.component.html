@@ -1,0 +1,88 @@
+<svg
+  [attr.width]="size()"
+  [attr.height]="size()"
+  viewBox="0 0 14 14"
+  role="img"
+  [attr.aria-label]="labels[status()]"
+  [attr.data-status]="status()"
+>
+  @switch (status()) {
+    @case ("running") {
+      <circle
+        cx="7"
+        cy="7"
+        r="5"
+        fill="none"
+        stroke="currentColor"
+        stroke-opacity=".25"
+        stroke-width="2"
+      />
+      <path
+        class="spin"
+        d="M7 2a5 5 0 0 1 5 5"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+      />
+    }
+    @case ("attention") {
+      <path d="M7 .9l6.1 6.1L7 13.1.9 7z" fill="currentColor" />
+      <path
+        class="inverse"
+        d="M7 4.2v3.4M7 9.6v.1"
+        stroke-width="1.6"
+        stroke-linecap="round"
+      />
+    }
+    @case ("review") {
+      <circle
+        cx="7"
+        cy="7"
+        r="5.25"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+      />
+      <path d="M7 3.5a3.5 3.5 0 0 1 0 7z" fill="currentColor" />
+    }
+    @case ("done") {
+      <circle
+        cx="7"
+        cy="7"
+        r="5.25"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+      />
+      <path
+        d="M4.6 7.2l1.7 1.7 3.2-3.6"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    }
+    @case ("failed") {
+      <circle cx="7" cy="7" r="6" fill="currentColor" />
+      <path
+        class="inverse"
+        d="M5 5l4 4M9 5l-4 4"
+        stroke-width="1.5"
+        stroke-linecap="round"
+      />
+    }
+    @default {
+      <circle
+        cx="7"
+        cy="7"
+        r="5.25"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-dasharray="2.2 2.2"
+      />
+    }
+  }
+</svg>

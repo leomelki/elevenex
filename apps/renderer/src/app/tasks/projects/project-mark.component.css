@@ -1,0 +1,21 @@
+:host {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--radius-xs);
+  color: var(--on-project);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  vertical-align: middle;
+}
+:host.large {
+  border-radius: var(--radius-md);
+}
+img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--line);
+}

@@ -1,0 +1,86 @@
+<div
+  class="mark"
+  [title]="author() + (time() ? ' · ' + time() : '')"
+  [attr.aria-label]="author()"
+>
+  {{ mark() }}
+</div>
+<div class="body">
+  <div class="work-row">
+    <button
+      type="button"
+      class="work"
+      [attr.aria-expanded]="expanded()"
+      (click)="toggled.set(!expanded())"
+    >
+      <span class="work-label" [class.failed]="status() === 'failed'">{{
+        workLabel()
+      }}</span>
+      @if (status() === "live") {
+        <span>{{ steps().length }} steps</span>
+      }
+      <ex-icon
+        [name]="expanded() ? 'chevron-down' : 'chevron-right'"
+        [size]="12"
+      />
+    </button>
+    @if (status() === "live" && stoppable()) {
+      <button exButton variant="secondary" size="sm" (click)="stop.emit()">
+        <ex-icon name="stop" [size]="12" />Stop
+      </button>
+    }
+    <div class="facts" [class.pinned]="expanded()">
+      @if (facts().files) {
+        <span>Edited {{ facts().files }} files</span>
+      }
+      @if (facts().results) {
+        <span>{{ facts().results }}</span>
+      }
+    </div>
+    @if (facts().failures) {
+      <span class="failure">{{ facts().failures }} failed</span>
+    }
+  </div>
+  <ex-fold [open]="expanded()"
+    ><ex-work-timeline
+      [steps]="completedSteps()"
+      [live]="status() === 'live'"
+      [maxVisible]="maxVisible()"
+  /></ex-fold>
+  <ex-fold [open]="status() === 'live' && heldStep() !== null">
+    @if (heldStep(); as step) {
+      <ex-now-line [step]="step" />
+    }
+  </ex-fold>
+  <div class="answer" exAutoHeight>
+    <div><ng-content /></div>
+  </div>
+  @if (status() === "failed" || status() === "stopped") {
+    <div class="error" [class.failed]="status() === 'failed'">
+      <span>{{
+        error() ||
+          (status() === "failed"
+            ? "The agent could not finish."
+            : "The agent stopped.")
+      }}</span
+      ><button exButton variant="secondary" size="sm" (click)="retry.emit()">
+        {{ status() === "failed" ? "Retry" : "Continue" }}
+      </button>
+    </div>
+  }
+  <ex-fold [open]="status() !== 'live'"
+    ><footer>
+      <ex-outcome-bar
+        [files]="files()"
+        action=""
+        (openFile)="openFile.emit($event)"
+        (review)="review.emit()"
+      /><ex-turn-acts (action)="action.emit($event)" />
+      @if (files().length) {
+        <button exButton variant="secondary" size="sm" (click)="review.emit()">
+          Review
+        </button>
+      }
+    </footer></ex-fold
+  >
+</div>

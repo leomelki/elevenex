@@ -1,0 +1,231 @@
+<div class="workspace">
+  <ex-project-rail
+    [projects]="projects"
+    [activeId]="scope()"
+    [all]="{ attention: 2, running: 4 }"
+    (selectProject)="scope.set($event)"
+    (addProject)="note.set('Add project requested.')"
+  />
+  <aside>
+    <div class="sidebar-heading">
+      <span>{{ scope() === 'all' ? 'All projects' : project.name }}</span
+      ><button
+        exButton
+        variant="ghost"
+        size="sm"
+        (click)="note.set('Use the New task card to start.')"
+      >
+        <ex-icon name="plus" [size]="14" />
+      </button>
+    </div>
+    <ex-status-summary
+      [counts]="{ attention: 2, running: 2, review: 2, done: 1 }"
+      [active]="filter()"
+      (selectStatus)="filter.set($event)"
+    />
+    <ex-task-list
+      [tasks]="scopedTasks()"
+      [selected]="selected()"
+      [filter]="filter()"
+      [showProjects]="scope() === 'all'"
+      (selectSession)="selectSession($event)"
+      (addSession)="addSession($event)"
+      (closedRequested)="note.set('Closed task list requested.')"
+    />
+  </aside>
+  <main>
+    <ex-task-header
+      title="Rate-limit refunds"
+      [stage]="stage()"
+      [project]="project"
+      [branch]="branchName()"
+      [links]="[
+        { kind: 'pr', label: '#482', state: 'open' },
+        { kind: 'ticket', label: 'PAY-212', state: 'In progress' },
+      ]"
+      meta="Add exponential backoff · 4 sessions"
+      [git]="git()"
+      [panelOpen]="panelOpen()"
+      [branchCopied]="copied()"
+      (stageChange)="changeStage($event)"
+      (closeRequested)="closeOpen.set(true)"
+      (panelToggle)="togglePanel()"
+      (branchCopy)="copyBranch($event)"
+      (branchRename)="note.set('Rename requested for ' + $event)"
+      (gitAction)="gitAction($event)"
+      (changesRequested)="panel.set('changes')"
+      (linkActivated)="note.set('Open ' + $event.label)"
+    />
+    <div class="main-content">
+      <div class="intro">
+        <span class="eyebrow">Projects, tasks and sessions</span>
+        <h2>A place for every piece of work.</h2>
+        <p>Strong task headers, quiet session rows, and one next step.</p>
+      </div>
+      <ex-task-line
+        [task]="{
+          project: project,
+          title: 'Rate-limit refunds',
+          branch: branchName(),
+          base: 'main',
+          workspace: { state: 'setup', step: 'installing dependencies' },
+        }"
+        (renameRequested)="note.set('Rename task requested.')"
+        (branchCopy)="copyBranch($event)"
+      />
+      <ex-new-task
+        [project]="project"
+        [branches]="branches"
+        [workspaces]="workspaces"
+        branchPrefix="leo/"
+        title="Rate-limit refunds"
+        step="branch"
+        [autoFocus]="false"
+        (create)="createTask($event)"
+        (plan)="planTask($event)"
+        (cancelled)="note.set('New task cancelled.')"
+        (linkRequested)="note.set('Link a ticket or pull request requested.')"
+      />
+      <p class="notice" role="status">{{ note() }}</p>
+    </div>
+  </main>
+  @if (panelOpen()) {
+    <section class="panel">
+      <ex-panel-tabs
+        [tabs]="tabs"
+        [active]="panel()"
+        (selectTab)="panel.set($event)"
+      />
+      <div class="panel-body">
+        <h3>{{ panel() === 'changes' ? '7 changed files' : panel() }}</h3>
+        <p>
+          Views follow the selected task. Switch between them with the arrow
+          keys.
+        </p>
+        <div class="sample-files">
+          <span>src/refunds/retry.ts <b>+92 −12</b></span
+          ><span>src/refunds/refund.ts <b>+42 −8</b></span
+          ><span>test/refunds.spec.ts <b>+80 −18</b></span>
+        </div>
+      </div>
+    </section>
+  }
+</div>
+<div class="specimens">
+  <section>
+    <h3>Project identity</h3>
+    <div class="inline">
+      @for (hue of hues; track hue) {
+        <ex-project-mark name="Elevenex" initials="EX" [hue]="hue" />
+      }
+      <ex-project-mark name="Studio" [size]="20" />
+    </div>
+  </section>
+  <section>
+    <h3>Task stages and links</h3>
+    <div class="inline">
+      @for (item of stages; track item) {
+        <ex-stage-glyph [stage]="item" /><ex-task-stage
+          [stage]="item"
+          (stageChange)="note.set('Stage: ' + $event)"
+        />
+      }
+    </div>
+    <div class="inline">
+      <ex-link-chip kind="pr" label="#482" state="merged" /><ex-link-chip
+        kind="pr"
+        label="#479"
+        state="failing"
+      /><ex-link-chip kind="pr" label="#475" state="draft" /><ex-link-chip
+        kind="ticket"
+        label="PAY-212"
+        state="Done"
+      /><ex-link-chip kind="ticket" label="PAY-214" [compact]="true" />
+    </div>
+  </section>
+  <section>
+    <h3>Branches and workspaces</h3>
+    <div class="inline">
+      <ex-branch-chip
+        name="leo/rate-limit-refunds"
+        base="main"
+        [copied]="copied()"
+        (copyRequested)="copyBranch($event)"
+        (renameRequested)="note.set('Rename ' + $event)"
+      /><ex-workspace-picker
+        [items]="workspaces"
+        [value]="workspace()"
+        (valueChange)="workspace.set($event)"
+        (newWorkspace)="note.set('New workspace requested.')"
+        (manageWorkspaces)="note.set('Manage workspaces requested.')"
+      />
+    </div>
+    <ex-branch-picker
+      query="refund"
+      [branches]="branches"
+      [allowCreate]="true"
+      base="main"
+      (pick)="note.set('Picked ' + $event.name)"
+    /><ex-branch-picker
+      query="invalid..branch"
+      [branches]="branches"
+      [allowCreate]="true"
+    />
+  </section>
+  <section>
+    <h3>Session states</h3>
+    @for (status of statuses; track status) {
+      <ex-session-row
+        [session]="{
+          id: status,
+          title:
+            status === 'attention'
+              ? 'Choose a retry window'
+              : 'Review the implementation',
+          status: status,
+          kind: status === 'review' ? 'fork' : 'main',
+          diff: { add: 42, del: 8 },
+        }"
+        [selected]="status === 'running'"
+        (activated)="note.set('Selected ' + $event)"
+      />
+    }
+  </section>
+  <section>
+    <h3>Git next steps</h3>
+    <div class="git-states">
+      <ex-git-bar
+        [files]="7"
+        [add]="214"
+        [del]="38"
+        [ahead]="2"
+        (action)="note.set($event)"
+      /><ex-git-bar [ahead]="2" (action)="note.set($event)" /><ex-git-bar
+        [files]="7"
+        busy="commit"
+      /><ex-git-bar [ahead]="2" busy="push" /><ex-git-bar />
+    </div>
+  </section>
+  <section>
+    <h3>Wide panel tabs</h3>
+    <ex-panel-tabs
+      [tabs]="tabs"
+      [active]="panel()"
+      [labelled]="true"
+      (selectTab)="panel.set($event)"
+    /><button exButton variant="secondary" (click)="closeOpen.set(true)">
+      Preview close task
+    </button>
+  </section>
+</div>
+@if (closeOpen()) {
+  <ex-close-task
+    title="Rate-limit refunds"
+    [sessions]="4"
+    [running]="1"
+    [unpushed]="2"
+    ticket="PAY-212"
+    (cancelled)="closeOpen.set(false)"
+    (confirmed)="closed($event)"
+  />
+}

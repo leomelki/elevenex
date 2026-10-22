@@ -1,0 +1,16 @@
+<button type="button" class="card" [class.idle]="!connected()" [class.highlighted]="highlighted()" [class.pressed]="pressed()"
+  [disabled]="disabled()" [attr.data-machine]="machine().id" [style.--machine-color]="color()" (click)="open($event)">
+  <span class="top">
+    <span class="machine-icon"><ex-icon [name]="icons[machine().kind]" [size]="16" />
+      <span class="presence" [class.live]="connected()" [class.failed]="machine().conn === 'fail'" [class.update]="machine().update" aria-hidden="true"></span>
+    </span>
+    <span class="spacer"></span>
+    @if (machine().update) { <span class="tag update-tag">Update</span> }
+    @else if (machine().conn === 'kept') { <span class="tag">until you pick</span> }
+    @else if (machine().windows; as count) { <span class="tag">{{ count }} {{ count === 1 ? 'window' : 'windows' }}</span> }
+    @if (highlighted()) { <ex-kbd>↵</ex-kbd> }
+  </span>
+  <span class="name">{{ machine().name }}</span>
+  <span class="description">{{ description() }}</span>
+  @if (machine().conn === 'fail') { <span class="failure">Last connection failed</span> }
+</button>

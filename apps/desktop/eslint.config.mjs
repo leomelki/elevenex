@@ -24,12 +24,12 @@ export default tseslint.config(
   },
   {
     basePath,
-    files: ['apps/desktop/src/**/*.ts', 'packages/shared/src/**/*.ts', 'apps/renderer/src/**/*.ts', 'apps/renderer/capture/**/*.ts'],
+    files: ['apps/desktop/src/**/*.ts', 'packages/shared/src/**/*.ts', 'apps/renderer/src/**/*.ts', 'apps/renderer/capture/**/*.ts', 'apps/renderer/preview/**/*.ts'],
     extends: [eslint.configs.recommended, ...tseslint.configs.recommended],
   },
   {
     basePath,
-    files: ['apps/renderer/src/**/*.ts', 'apps/renderer/capture/**/*.ts'],
+    files: ['apps/renderer/src/**/*.ts', 'apps/renderer/capture/**/*.ts', 'apps/renderer/preview/**/*.ts'],
     extends: [...angular.configs.tsRecommended],
     processor: angular.processInlineTemplates,
     rules: {
@@ -38,7 +38,13 @@ export default tseslint.config(
   },
   {
     basePath,
-    files: ['apps/renderer/src/**/*.html', 'apps/renderer/capture/**/*.html'],
+    files: ['apps/renderer/src/app/ui/button/button.component.ts'],
+    // This one primitive enhances a native button so forms and disabled semantics remain native.
+    rules: { '@angular-eslint/component-selector': ['error', { type: 'attribute', prefix: 'ex', style: 'camelCase' }] },
+  },
+  {
+    basePath,
+    files: ['apps/renderer/src/**/*.html', 'apps/renderer/capture/**/*.html', 'apps/renderer/preview/**/*.html'],
     extends: [...angular.configs.templateRecommended, ...angular.configs.templateAccessibility],
   },
 );

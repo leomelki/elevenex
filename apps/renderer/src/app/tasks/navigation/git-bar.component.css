@@ -1,0 +1,111 @@
+:host {
+  display: inline-flex;
+  flex: none;
+}
+.git {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-height);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.stat:hover {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.stat.quiet {
+  cursor: default;
+  font-size: var(--text-caption-size);
+}
+.stat:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.add,
+.del {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-meta-size);
+  font-variant-numeric: tabular-nums;
+}
+.add {
+  color: var(--diff-add);
+}
+.del {
+  color: var(--diff-del);
+}
+.action-slot {
+  display: grid;
+  grid-template-columns: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-columns var(--dur-slow) var(--ease-in-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+.action-slot.hidden {
+  grid-template-columns: 0fr;
+  opacity: 0;
+}
+.split {
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+.split > button {
+  flex: none;
+  white-space: nowrap;
+}
+.split > button.primary {
+  box-sizing: border-box;
+  overflow: hidden;
+  transition:
+    width var(--dur-slow) var(--ease-in-out),
+    background-color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+.action-content {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+.split > button:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.split > button:last-child {
+  padding-left: var(--space-1);
+  padding-right: var(--space-1);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid color-mix(in oklab, var(--ink-muted) 40%, transparent);
+}
+.count {
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in oklab, var(--on-accent) 20%, transparent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .action-slot,
+  .split > button.primary {
+    transition: none;
+  }
+}

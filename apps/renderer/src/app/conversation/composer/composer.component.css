@@ -1,0 +1,103 @@
+:host {
+  display: block;
+  width: 100%;
+  max-width: var(--chat-max);
+}
+.composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px var(--line);
+  transition: box-shadow var(--dur-fast) var(--ease-out);
+}
+.composer:focus-within {
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px var(--line-strong);
+}
+textarea {
+  width: 100%;
+  min-height: 44px;
+  max-height: 240px;
+  resize: none;
+  field-sizing: content;
+  padding: 0 var(--space-1);
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: var(--text-body-size)/var(--text-body-line) var(--font-sans);
+}
+textarea::placeholder {
+  color: var(--ink-muted);
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.bar ex-agent-picker {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.bar ex-mode-toggle,
+.bar ex-permission-picker,
+.bar ex-tools-menu,
+.bar ex-icon-button,
+.send {
+  flex: none;
+}
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+.context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: 0 var(--space-1);
+}
+.recording {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--accent);
+  font-size: var(--text-caption-size);
+  padding: var(--space-1);
+}
+.interim {
+  flex: 1;
+  color: var(--ink-muted);
+}
+.dropping {
+  box-shadow: var(--focus-ring);
+}
+.drop-label {
+  position: absolute;
+  inset: var(--space-2);
+  display: grid;
+  place-items: center;
+  z-index: 2;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-body-size);
+  font-weight: 600;
+  pointer-events: none;
+}
+.disabled textarea {
+  opacity: 0.65;
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer {
+    transition: none;
+  }
+}

@@ -33,6 +33,7 @@
     "electron:package:mac": "pnpm frontend:build && pnpm source-maps:collect && pnpm electron:stage-version && pnpm --dir apps/electron package:mac",
     "electron:package:win": "pnpm frontend:build && pnpm source-maps:collect && pnpm electron:stage-version && pnpm --dir apps/electron package:win",
     "desktop:dev": "pnpm --dir apps/desktop dev",
+    "desktop:preview": "node scripts/desktop-shell.mjs preview",
     "desktop:build": "pnpm --dir apps/desktop build",
     "desktop:package": "pnpm --dir apps/desktop package",
     "desktop:test": "pnpm --dir apps/desktop test",

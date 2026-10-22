@@ -1,0 +1,47 @@
+:host {
+  display: block;
+}
+button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  padding: var(--space-1) 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  cursor: pointer;
+}
+button:hover {
+  color: var(--ink);
+}
+button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+button > span:last-child {
+  font-family: var(--font-mono);
+}
+.reasoning {
+  margin: var(--space-1);
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 2px solid var(--line);
+  color: var(--ink-muted);
+  font-size: var(--text-ui-size);
+  line-height: var(--text-code-line);
+}
+.active {
+  animation: breathe calc(var(--dur-deliberate) * 4) var(--ease-in-out) infinite;
+}
+@keyframes breathe {
+  50% {
+    opacity: 0.55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .active {
+    animation: none;
+  }
+}

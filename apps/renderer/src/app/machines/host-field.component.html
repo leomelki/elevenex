@@ -1,0 +1,13 @@
+<div class="host">
+  <label class="field"><ex-icon name="server" [size]="14" /><input #hostInput type="text" aria-label="SSH host" placeholder="user@host:port" autocomplete="off" spellcheck="false" [value]="picked()?.name ?? query()" [disabled]="disabled()" [readOnly]="!!picked()" [attr.aria-invalid]="error() ? 'true' : null" (input)="onInput(hostInput.value)" (keydown)="keydown($event)" />
+    @if (picked()?.fromConfig) { <span class="tag">from ~/.ssh/config</span> }
+    @if (picked()) { <button exButton variant="ghost" size="sm" [disabled]="disabled()" (click)="cleared.emit()">Change</button> }
+  </label>
+  @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
+  <ex-fold [open]="!picked()"><div class="suggestions"><span class="overline">From ~/.ssh/config</span>
+    @for (host of matches(); track host.id; let index = $index) { <button class="suggestion" type="button" [class.highlighted]="focusedIndex() === index" [disabled]="disabled()" (click)="selected.emit(host)"><ex-icon name="server" [size]="13" /><b>{{ host.name }}</b><span>{{ host.detail }}</span></button> }
+    @if (!matches().length) { <p>No matching saved hosts</p> }
+    <button class="suggestion other" type="button" [disabled]="disabled() || !query().trim()" (click)="submitted.emit(query().trim())"><ex-icon name="plus" [size]="13" />Connect to {{ query().trim() || 'user@host:port' }}</button>
+  </div></ex-fold>
+  <ex-fold [open]="!!picked()">@if (picked(); as host) { <dl><div><dt>User</dt><dd>{{ host.user }}</dd></div><div><dt>Port</dt><dd>{{ host.port ?? 22 }}</dd></div><div class="wide"><dt>Sign in with</dt><dd class="auth"><ex-icon name="key" [size]="13" />{{ host.auth ?? 'SSH agent' }}</dd></div></dl> }</ex-fold>
+</div>

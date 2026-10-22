@@ -1,0 +1,118 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+button {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px var(--line);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+button:hover {
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px var(--line-strong);
+  transform: translateY(-1px);
+}
+button.selected {
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 2px var(--accent);
+}
+button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+button.custom {
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  box-shadow: none;
+}
+.top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 20px;
+  margin-bottom: var(--space-2);
+}
+.mark {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-overline-size);
+  font-weight: 600;
+}
+.grow {
+  flex: 1;
+}
+.check {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-ui-size);
+  font-weight: 600;
+  line-height: var(--text-ui-line);
+}
+.sub {
+  color: var(--ink);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}
+.harness {
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}
+.compact {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-full);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
+}
+.compact .top {
+  margin: 0;
+}
+.compact .check,
+.compact ex-kbd {
+  display: none;
+}
+.compact .name {
+  font-weight: 500;
+}
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+  button:hover {
+    transform: none;
+  }
+}

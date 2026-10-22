@@ -1,0 +1,58 @@
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  input,
+  output,
+  signal,
+} from "@angular/core";
+import { TaskLineComponent } from "../../tasks/lifecycle/task-line.component";
+import type { TaskContext } from "../../tasks/task.models";
+import type { AgentConfig, SessionTask } from "../conversation.models";
+import { PresetPickerComponent } from "./preset-picker.component";
+@Component({
+  selector: "ex-session-start",
+  imports: [TaskLineComponent, PresetPickerComponent],
+  templateUrl: "./session-start.component.html",
+  styleUrl: "./session-start.component.css",
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { "(keydown)": "onKey($event)" },
+})
+export class SessionStartComponent {
+  readonly presets = input<readonly AgentConfig[]>([]);
+  readonly value = input<string>();
+  readonly task = input<SessionTask>();
+  readonly title = input("What should we work on?");
+  readonly presetSelected = output<string>();
+  readonly renameTask = output<void>();
+  readonly renameBranch = output<string>();
+  readonly copyBranch = output<string>();
+  readonly taskContext = computed<TaskContext | null>(() => {
+    const task = this.task();
+    return task
+      ? { ...task, project: task.project ? { name: task.project } : undefined }
+      : null;
+  });
+  readonly localSelection = signal<string | null>(null);
+  readonly selected = computed(
+    () =>
+      this.localSelection() ??
+      this.value() ??
+      this.presets()[0]?.preset ??
+      this.presets()[0]?.model ??
+      "custom",
+  );
+  select(value: string): void {
+    this.localSelection.set(value);
+    this.presetSelected.emit(value);
+  }
+  onKey(event: KeyboardEvent): void {
+    if (event.defaultPrevented || !event.altKey || !/^[1-9]$/.test(event.key))
+      return;
+    const preset = this.presets()[Number(event.key) - 1];
+    if (preset) {
+      event.preventDefault();
+      this.select(preset.preset || preset.model);
+    }
+  }
+}

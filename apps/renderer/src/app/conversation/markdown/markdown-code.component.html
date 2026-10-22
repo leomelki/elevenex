@@ -1,0 +1,13 @@
+<div class="code-block">
+  <div class="code-actions">
+    <span>{{ language() }}</span
+    ><button
+      type="button"
+      (click)="copyRequested.emit(text())"
+      [attr.aria-label]="copied() ? 'Code copied' : 'Copy code'"
+    >
+      {{ copied() ? "✓ Copied" : "Copy" }}
+    </button>
+  </div>
+  <pre><code>@for (token of tokens(); track $index) {<span [attr.data-token]="token.kind">{{ token.text }}</span>}</code>@if (streaming()) { <span class="caret" aria-hidden="true"></span> }</pre>
+</div>

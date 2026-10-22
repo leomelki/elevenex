@@ -1,0 +1,6 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "rootDir": "..", "outDir": "../out-tsc/component-preview" },
+  "include": ["./**/*.ts", "../src/**/*.ts"],
+  "exclude": ["../src/**/*.spec.ts"]
+}

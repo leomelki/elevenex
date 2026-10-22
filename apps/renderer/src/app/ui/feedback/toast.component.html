@@ -1,0 +1,31 @@
+<ex-status-glyph [status]="tone() === 'danger' ? 'failed' : glyph()" />
+<span class="text"
+  ><span>{{ title() }}</span>
+  @if (detail()) {
+    <span class="detail">{{ detail() }}</span>
+  }
+</span>
+@if (action()) {
+  <button
+    exButton
+    variant="ghost"
+    size="sm"
+    (click)="actionSelected.emit(); dismiss()"
+  >
+    {{ action() }}
+  </button>
+}
+<ex-icon-button
+  icon="x"
+  label="Dismiss notification"
+  size="sm"
+  (pressed)="dismiss()"
+/>
+@if (duration() > 0) {
+  <span
+    class="time"
+    aria-hidden="true"
+    [style.animation-duration.ms]="duration()"
+    [style.animation-play-state]="paused() ? 'paused' : 'running'"
+  ></span>
+}

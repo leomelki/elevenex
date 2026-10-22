@@ -1,0 +1,222 @@
+<section aria-label="New task" tabindex="-1" (keydown)="onKey($event)">
+  <header>
+    <button class="project" type="button" (click)="projectRequested.emit()">
+      <ex-project-mark
+        [name]="project().name"
+        [logo]="project().logo"
+        [initials]="project().initials"
+        [hue]="project().hue ?? 'steel'"
+        [size]="18"
+        [decorative]="true"
+      />{{ project().name }}<ex-icon name="chevron-down" [size]="13" /></button
+    ><span class="muted">/</span><span class="muted">New task</span
+    ><span class="grow"></span
+    ><button
+      class="dismiss"
+      type="button"
+      aria-label="Cancel new task"
+      (click)="cancelled.emit()"
+    >
+      <ex-kbd>Esc</ex-kbd>
+    </button>
+  </header>
+  <div class="rows">
+    <div class="row" [class.active]="state('name') === 'active'">
+      <button
+        type="button"
+        class="row-head"
+        [disabled]="currentStep() === 'name'"
+        (click)="go('name')"
+      >
+        <span class="number" [attr.data-state]="state('name')">
+          @if (state('name') === 'done') {
+            <ex-icon name="check" [size]="11" />
+          } @else {
+            1
+          }</span
+        ><span class="row-label">Name</span>
+        @if (currentStep() !== 'name') {
+          <span class="value title-value">{{
+            titleValue() || 'Task name'
+          }}</span>
+        }</button
+      ><ex-fold [open]="currentStep() === 'name'"
+        ><div class="body">
+          <input
+            #nameField
+            class="title-input"
+            [value]="titleValue()"
+            (input)="nameChanged(nameField.value)"
+            placeholder="What are you working on?"
+            aria-label="Task name"
+            autocomplete="off"
+          /></div
+      ></ex-fold>
+    </div>
+    <div class="row" [class.active]="state('branch') === 'active'">
+      <button
+        type="button"
+        class="row-head"
+        [disabled]="currentStep() === 'branch'"
+        (click)="go('branch')"
+      >
+        <span class="number" [attr.data-state]="state('branch')">
+          @if (state('branch') === 'done') {
+            <ex-icon name="check" [size]="11" />
+          } @else {
+            2
+          }</span
+        ><span class="row-label">Branch</span>
+        @if (currentStep() !== 'branch') {
+          <span class="value">
+            @if (branch(); as chosen) {
+              <ex-icon name="branch" [size]="13" /><span class="mono">{{
+                chosen.name
+              }}</span
+              ><span class="tag">{{ existing() ? 'existing' : 'new' }}</span>
+            } @else {
+              <span class="muted">from the task name</span>
+            }
+          </span>
+        }</button
+      ><ex-fold [open]="currentStep() === 'branch'"
+        ><div class="body">
+          <label class="field"
+            ><ex-icon name="branch" [size]="14" /><input
+              #branchField
+              [value]="branchValue()"
+              (input)="branchChanged(branchField.value)"
+              aria-label="Branch: type to search or create"
+              role="combobox"
+              aria-autocomplete="list"
+              [attr.aria-controls]="branchListId"
+              [attr.aria-expanded]="currentStep() === 'branch'"
+              [attr.aria-activedescendant]="branchListId + '-' + highlighted()"
+              spellcheck="false"
+            />
+            @if (branchQueryValue() !== null) {
+              <button
+                class="reset"
+                type="button"
+                title="Back to the name from the task"
+                (click)="branchChanged(null)"
+              >
+                <ex-icon name="reset" [size]="12" />
+              </button>
+            } @else {
+              <span class="tag">from the name</span>
+            }</label
+          ><ex-branch-picker
+            [listId]="branchListId"
+            [items]="branchRows()"
+            [query]="branchValue()"
+            [base]="baseValue()"
+            [highlighted]="highlighted()"
+            (pick)="pickBranch($event)"
+          /></div
+      ></ex-fold>
+    </div>
+    <div class="row" [class.active]="state('base') === 'active'">
+      <button
+        type="button"
+        class="row-head"
+        [disabled]="currentStep() === 'base' || existing()"
+        (click)="go('base')"
+      >
+        <span class="number" [attr.data-state]="state('base')">{{
+          existing() ? '–' : '3'
+        }}</span
+        ><span class="row-label">From</span>
+        @if (currentStep() !== 'base') {
+          <span class="value">
+            @if (existing()) {
+              <span class="muted"
+                >not needed: an existing branch keeps its history</span
+              >
+            } @else {
+              <ex-icon name="branch" [size]="13" /><span class="mono">{{
+                baseValue()
+              }}</span>
+              @if (baseValue() === base()) {
+                <span class="tag">default</span>
+              }
+            }
+          </span>
+        }</button
+      ><ex-fold [open]="currentStep() === 'base' && !existing()"
+        ><div class="body">
+          <label class="field"
+            ><ex-icon name="search" [size]="14" /><input
+              #baseField
+              [value]="baseQuery()"
+              (input)="baseChanged(baseField.value)"
+              placeholder="Search branches to start from"
+              aria-label="Start from"
+              role="combobox"
+              aria-autocomplete="list"
+              [attr.aria-controls]="baseListId"
+              [attr.aria-expanded]="currentStep() === 'base'"
+              [attr.aria-activedescendant]="baseListId + '-' + highlighted()"
+              spellcheck="false" /></label
+          ><ex-branch-picker
+            [listId]="baseListId"
+            [items]="baseRows()"
+            [query]="baseQuery()"
+            [highlighted]="highlighted()"
+            label="Start from"
+            (pick)="pickBase($event)"
+          /></div
+      ></ex-fold>
+    </div>
+  </div>
+  <div class="extras">
+    <span class="extra-label">Workspace</span
+    ><ex-workspace-picker
+      [value]="workspaceValue()"
+      [items]="workspaces()"
+      (valueChange)="pickedWorkspace.set($event)"
+      (newWorkspace)="workspaceRequested.emit('new')"
+      (manageWorkspaces)="workspaceRequested.emit('manage')"
+    /><span class="extra-label">Link</span>
+    <div class="links">
+      @for (link of links(); track link.kind + link.label) {
+        <ex-link-chip
+          [kind]="link.kind"
+          [label]="link.label"
+          [state]="link.state"
+        />
+      }
+      <button class="link" type="button" (click)="linkRequested.emit()">
+        <ex-icon name="link" [size]="12" />{{
+          links().length ? 'Link another' : 'Paste a ticket or PR (optional)'
+        }}
+      </button>
+    </div>
+  </div>
+  <footer>
+    <span class="keys"
+      ><ex-kbd>↵</ex-kbd
+      >{{
+        currentStep() === 'base' || (currentStep() === 'branch' && existing())
+          ? 'Create'
+          : 'Next'
+      }}<span></span><ex-kbd>⇧⇥</ex-kbd>Back<span></span
+      ><ex-kbd>⌘↵</ex-kbd>Create now</span
+    ><span class="grow"></span
+    ><button
+      exButton
+      variant="ghost"
+      [disabled]="!titleValue().trim()"
+      (click)="savePlanned()"
+    >
+      Save as planned <ex-kbd>⌥↵</ex-kbd></button
+    ><button
+      exButton
+      variant="primary"
+      [disabled]="!canCreate()"
+      (click)="submit()"
+    >
+      Create task
+    </button>
+  </footer>
+</section>

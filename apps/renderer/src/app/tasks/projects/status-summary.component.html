@@ -1,0 +1,16 @@
+<div role="group" aria-label="Session status">
+  @for (status of order; track status) {
+    <button
+      type="button"
+      [class.zero]="!counts()[status]"
+      [attr.aria-pressed]="active() === status"
+      (click)="selectStatus.emit(active() === status ? null : status)"
+    >
+      <span class="number"
+        ><ex-status-glyph [status]="status" [size]="12" />{{
+          counts()[status] ?? 0
+        }}</span
+      ><span class="label">{{ labels[status] }}</span>
+    </button>
+  }
+</div>

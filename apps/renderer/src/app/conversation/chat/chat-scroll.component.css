@@ -1,0 +1,100 @@
+:host {
+  display: block;
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.viewport {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  overflow-anchor: auto;
+}
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  max-width: var(--chat-max);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4) var(--space-8);
+}
+.reminder {
+  position: absolute;
+  z-index: 5;
+  top: var(--space-2);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(calc(100% - var(--space-8)), var(--chat-max));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--glass);
+  backdrop-filter: blur(var(--blur-glass));
+  box-shadow: var(--shadow-raised);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink);
+  font-size: var(--text-ui-size);
+}
+.reminder-top {
+  display: flex;
+  align-items: center;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.reminder-top strong {
+  flex: 1;
+  font-weight: 500;
+}
+button {
+  background: transparent;
+  color: var(--ink-muted);
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+button:hover {
+  color: var(--ink);
+}
+button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.prompt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  width: 100%;
+  margin: var(--space-1) 0;
+  color: var(--ink);
+  text-align: left;
+  line-height: var(--text-ui-line);
+}
+.back {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-caption-size);
+  color: var(--accent);
+}
+.new {
+  position: absolute;
+  z-index: 6;
+  bottom: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--surface-raised);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-pop);
+  color: var(--ink);
+  font-size: var(--text-ui-size);
+}

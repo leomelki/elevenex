@@ -5,11 +5,12 @@ Yield names to capture precise checkpoints. No Playwright, Chrome installation,
 backend, accounts, production debugging hooks or new dependencies are required.
 Use the Node version required by `apps/desktop/README.md`.
 
-The desktop shell has **not been implemented in this checkout** (`src/main.ts`
-and the canonical design inputs are missing). The explicit `--fixture` mode
-verifies this tool using a synthetic Angular component, never a substitute for
-product visual verification. Once the shell exists, omit `--fixture`; the runner
-uses its normal Angular entry, Electron main process and sandboxed preload.
+Omit `--fixture` to capture the normal product renderer through Electron main
+and its sandboxed preload. For supplied-data component states, start
+`pnpm desktop:preview` and pass `--url http://127.0.0.1:4310`. This uses the real
+components under an isolated development entry. The explicit `--fixture` mode
+only verifies this tool using a synthetic Angular component and never supplies
+product visual evidence.
 
 ## Quick start
 

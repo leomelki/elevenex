@@ -1,0 +1,58 @@
+:host {
+  font: inherit;
+  font-weight: var(--text-ui-weight);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-fast),
+    border-color var(--dur-fast),
+    color var(--dur-fast),
+    transform var(--dur-fast) var(--ease-out);
+}
+:host([data-size="sm"]) {
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  font-size: var(--text-caption-size);
+}
+:host([data-variant="primary"]) {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+:host([data-variant="primary"]:hover) {
+  background: color-mix(in oklab, var(--accent) 88%, var(--ink));
+}
+:host([data-variant="secondary"]) {
+  background: var(--surface-raised);
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+:host([data-variant="secondary"]:hover),
+:host([data-variant="ghost"]:hover) {
+  background: var(--surface-sunken);
+}
+:host([data-variant="ghost"]) {
+  background: transparent;
+  color: var(--ink);
+}
+:host([data-variant="danger"]) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+:host([data-variant="danger"]:hover) {
+  border-color: var(--danger);
+}
+:host(:active:not(:disabled)) {
+  transform: scale(0.97);
+}
+:host(:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}

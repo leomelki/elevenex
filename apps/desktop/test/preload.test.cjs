@@ -17,7 +17,7 @@ test('preload exposes only the typed bridge and strips event objects', async () 
         ipcRenderer: {
           invoke: async (...args) => { calls.push(args); return 'mock'; },
           on: (channel, fn) => listeners.set(channel, fn),
-          removeListener: (channel, fn) => { assert.equal(listeners.get(channel), fn); listeners.delete(channel); },
+          removeListener: (channel, fn) => { assert.equal(listeners.get(channel), fn); listeners.delete(channel); return { privateEmitter: Symbol('ipcRenderer') }; },
         },
       };
     },
@@ -31,6 +31,6 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   const stop = bridge.onThemeChanged((...args) => received.push(args));
   listeners.get('theme:changed')({ sender: 'private Electron object' }, 'dark');
   assert.deepEqual(received, [['dark']]);
-  stop();
+  assert.equal(stop(), undefined, 'unsubscribe must not return the private emitter across contextBridge');
   assert.equal(listeners.size, 0);
 });

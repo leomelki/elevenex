@@ -1,0 +1,48 @@
+:host {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: min(420px, calc(100vw - var(--space-8)));
+  padding: var(--space-3) var(--space-2) var(--space-3) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow:
+    var(--shadow-pop),
+    inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+.text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.detail {
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.time {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: left;
+  opacity: 0.55;
+  animation: countdown linear both;
+}
+@keyframes countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .time {
+    animation: none;
+  }
+}

@@ -3,10 +3,10 @@
 The new desktop lives alongside the existing application. Root `pnpm dev` and
 the existing frontend/backend/Electron scripts still run the existing app.
 
-**Pending:** supply `docs/design-system/project/README.md` and `tokens.css` from
-the design-system zip. The renderer shell and its visual/package verification
-must follow that brand book. `dev`, `build` and `package` deliberately report
-the missing tokens until those files are supplied.
+The supplied brand book and tokens live in `docs/design-system/project/`.
+The renderer implements the designed shell and reusable component families.
+See [renderer architecture and usage](../renderer/README.md) for APIs, ownership,
+and the isolated interactive component preview (`pnpm desktop:preview`).
 
 ## Run
 
@@ -16,6 +16,7 @@ Angular version. Install with the repository's pinned pnpm:
 ```sh
 pnpm install
 pnpm desktop:dev
+pnpm desktop:preview
 pnpm desktop:build
 pnpm desktop:test
 pnpm desktop:lint
@@ -76,8 +77,9 @@ Shift+Cmd+N on macOS, or Shift+Ctrl+N elsewhere, opens another window.
 Use `pnpm desktop:capture` for native Electron screenshots, precise Angular state,
 trusted input, layout/focus/accessibility inspection and animation filmstrips.
 See [the capture guide](../../scripts/desktop-capture/README.md) for inline scenarios
-and warm-server iteration. The shell is still pending; the tool's explicit
-`--fixture` mode verifies automation without pretending to be product UI:
+and warm-server iteration. Capture the normal app without `--fixture`, or the
+component preview with `--url http://127.0.0.1:4310`. The tool's explicit
+`--fixture` mode only verifies automation:
 
 ```sh
 pnpm desktop:capture scripts/desktop-capture/scenarios/check.mjs --fixture

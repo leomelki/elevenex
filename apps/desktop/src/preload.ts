@@ -6,7 +6,9 @@ const invoke: Invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args
 const subscribe: Subscribe = (channel, listener) => {
   const handler = (_event: Electron.IpcRendererEvent, value: Parameters<typeof listener>[0]) => listener(value);
   ipcRenderer.on(channel, handler);
-  return () => ipcRenderer.removeListener(channel, handler);
+  // EventEmitter returns ipcRenderer itself. Never return that privileged object
+  // through contextBridge; unsubscribe is a void operation.
+  return () => { ipcRenderer.removeListener(channel, handler); };
 };
 
 const bridge = Object.freeze<ElevenexBridge>({

@@ -1,0 +1,75 @@
+<ol>
+  @if (hiddenCount() > 1) {
+    <li>
+      <button type="button" class="earlier" (click)="earlierOpen.set(true)">
+        {{ hiddenCount() }} earlier steps
+      </button>
+    </li>
+  }
+  @for (entry of visible(); track entry.id) {
+    <li>
+      @if (entry.kind === "group") {
+        <button
+          type="button"
+          class="group"
+          [attr.aria-expanded]="openGroups().has(entry.id)"
+          (click)="toggleGroup(entry.id)"
+        >
+          <ex-icon name="file" [size]="14" />{{ entry.label
+          }}<ex-icon
+            [name]="
+              openGroups().has(entry.id) ? 'chevron-down' : 'chevron-right'
+            "
+            [size]="12"
+          />
+        </button>
+        <ex-fold [open]="openGroups().has(entry.id)"
+          ><div class="nested">
+            @for (step of entry.items; track step.id) {
+              <ex-tool-step
+                [icon]="icon(step)"
+                [verb]="verb(step)"
+                [detail]="step.detail || ''"
+                [status]="step.status || 'done'"
+                [output]="step.output || ''"
+              />
+            }</div
+        ></ex-fold>
+      } @else if (prose(entry)) {
+        <div class="prose"><ex-markdown [source]="entry.text || ''" /></div>
+      } @else {
+        <div
+          [class.recovered]="entry.recovered"
+          [class.expected]="entry.expected"
+        >
+          <ex-tool-step
+            [icon]="icon(entry)"
+            [verb]="verb(entry)"
+            [detail]="entry.title || entry.detail || ''"
+            [status]="
+              entry.recovered || entry.expected
+                ? 'done'
+                : entry.status || 'done'
+            "
+            [meta]="
+              entry.recovered
+                ? 'fixed'
+                : entry.expected
+                  ? 'reproduced'
+                  : entry.result ||
+                    entry.meta ||
+                    (entry.duration && entry.duration > 1
+                      ? duration(entry.duration)
+                      : '')
+            "
+            [output]="
+              entry.kind === 'think'
+                ? entry.text || ''
+                : entry.output || entry.hunk?.join('\n') || ''
+            "
+          />
+        </div>
+      }
+    </li>
+  }
+</ol>

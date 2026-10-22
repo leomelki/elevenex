@@ -1,0 +1,118 @@
+# Renderer component system
+
+Standalone Angular components, Signals, OnPush change detection and plain token CSS.
+The production renderer contains no example projects, agent output, repository
+services or synthetic activity. It starts with the empty workspace. Existing
+frontend/backend/Electron commands retain their original behavior.
+
+## Try the components
+
+```sh
+pnpm desktop:preview
+```
+
+Open `http://127.0.0.1:4310`. The workspace preview composes real components;
+Foundations, Tasks, Conversation, and Machines and views exercise their public
+APIs. Example data lives only in `preview/`, under a separate Angular build
+configuration. It is absent from the production entry graph and packaged app.
+
+Use `pnpm desktop:dev` for the normal native application. Checks are
+`pnpm desktop:lint`, `pnpm desktop:test`, and `pnpm desktop:build`.
+Visual verification uses [the native capture runner](../../scripts/desktop-capture/README.md),
+with `--url http://127.0.0.1:4310` when reviewing the component preview.
+See [verification results](VERIFICATION.md) for checks and captured states.
+
+## Boundaries
+
+| Folder | Responsibility | Public API |
+| --- | --- | --- |
+| `src/app/ui` | Native actions, glyphs, feedback, choices, tooltip, motion | `ui/index.ts` |
+| `src/app/tasks` | Projects, task lifecycle, branch/workspace choice, sidebar, git and panel tabs | [Task APIs](src/app/tasks/README.md) |
+| `src/app/conversation` | Messages, turns, work evidence, decisions, composer, presets, Markdown, scroll | [Conversation APIs](src/app/conversation/README.md) |
+| `src/app/machines` | Machine home, connection steps, title island, launch transition | [Machine and view APIs](src/app/machines/README.md) |
+| `src/app/views` | Changes review, change list, Browser and Terminal frames | `views/index.ts` |
+| `src/app/shell` | Four-region layout and native/system theme subscription ownership | `AppShellComponent` |
+| `src/app/workbench` | Empty application route and supplied-data composition | `WorkbenchComponent` |
+| `preview` | Interactive examples and composition fixtures | Separate development entry |
+
+Feature barrels export components and readonly view models. Import from the
+family you need; there is no all-features module or mutable global store.
+Serializable IPC contracts remain in `packages/shared`; renderer-only view
+models and DOM interaction state stay in the renderer.
+
+## Inputs and outputs
+
+An owner supplies readonly data. Children emit intent and retain only unfinished
+interaction state: an open menu, draft, disclosure, current wizard step, or local
+selection. Outputs do not secretly execute git, spawn agents, write files, copy
+to the clipboard, or initiate network requests. For example, `Composer.submitted`
+emits `{ text, intent, context }`; `DiffReview.fileRequested` emits the file's
+identity, revision and requested mode. The future application controller owns
+those operations, their busy/error state and cancellation.
+
+Pass stable IDs when updating task/session/message/file lists. Replace changed
+objects or collections rather than mutating an input in place. Diff responses
+must match file ID, revision and review mode. `draft` and selected workspace
+controls expose model inputs where two-way binding is useful. Most actions
+remain controlled: apply the emitted value explicitly so loading, rejection and
+optimistic updates have a clear owner.
+
+Substantial templates and styles are beside their owning component. Tiny marks
+and native-control wrappers use inline templates. Shared primitives are small
+standalone imports, not feature services. Browser and Terminal expose projection
+slots for a future trusted platform adapter; their controls emit typed requests.
+No browser/terminal backend or unrestricted embed was added.
+
+## Composition
+
+`AppShellComponent` lays out five named slots: `shellTitle`, `shellRail`,
+`shellSidebar`, `shellMain`, `shellPanel`. Its `panelOpen`, `wideReview`, and
+`panelLabel` inputs control layout without changing feature data. The side panel
+remains mounted and inert while closed; wider review makes the covered main
+region inert and restores focus when it exits. Rail and sidebar keep their place.
+
+`WorkbenchComponent` composes project/task navigation around supplied content.
+Use `workbenchConversation` and `workbenchPanel` slots, readonly `projects` and
+`tasks`, and its selection models. A platform container can replace this route
+without modifying the reusable component families.
+
+## Motion and accessibility
+
+- `FoldComponent` animates unknown height in place, preserves local state,
+  releases clipping after settling, and makes closed descendants inert.
+- `AutoHeightDirective` observes one inner wrapper and eases meaningful height
+  changes. Give that inner wrapper the same gap/direction as its content.
+- `FlipDirective` measures elements marked `data-flip="stable-id"` only after its
+  collection input changes. Existing rows animate from their former positions;
+  first render does not animate.
+- `PresenceComponent` uses Angular `animate.enter`/`animate.leave`; `EaseSwap`
+  retains a control while its text fades and its width eases.
+- Keyed Angular `@for` blocks with entry/exit classes implement the design's
+  MotionList vocabulary. `Message.isNew` explicitly opts a new message into
+  entry motion; opening existing history never does.
+- Observers, subscriptions, timers, scheduled frames and WAAPI animations are
+  disposed by their owning component/directive. Reduced motion disables movement
+  and loops. Motion never gates user input.
+- Menus/popovers use CDK overlay/focus facilities. Native buttons retain native
+  disabled, keyboard and form semantics. The button primitive is used as
+  `<button exButton variant="primary">…</button>`; icon actions require a label.
+
+## Design sources and deliberate adapter boundaries
+
+The [brand book](../../docs/design-system/project/README.md), tokens and component
+specifications were imported verbatim from `elevenex-design-system.local`.
+`docs/design-system/project/tokens.css` is authoritative and is copied verbatim
+by the desktop commands. The two licensed fonts are bundled locally; the
+reference's runtime Google Fonts import is not shipped.
+
+All designed component families are implemented. Features the designer marked
+as not designed (Code/Actions content, Settings, command palette, split diff,
+multi-line review comments) were not invented. The existing desktop CSP is
+preserved: HTML reply cards emit an Open in Browser intent rather than creating
+an untrusted frame; external media needs a confined platform resolver. Mermaid
+fences stay readable code until a trusted diagram adapter is supplied.
+
+Large change lists use CDK virtual scrolling. Reviews page files and lines and
+request content lazily rather than computing unbounded diffs in the UI thread.
+The owner is responsible for incremental repository data, bounded history
+windows and cancelling asynchronous work after navigation.

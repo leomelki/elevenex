@@ -1,0 +1,34 @@
+:host {
+  display: inline;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fresh {
+  animation: ink var(--dur-slow) var(--ease-out) both;
+}
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: var(--space-1);
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: blink calc(var(--dur-deliberate) * 2) step-end infinite;
+}
+@keyframes ink {
+  from {
+    opacity: 0.3;
+    filter: blur(2px);
+  }
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fresh,
+  .caret {
+    animation: none;
+  }
+}

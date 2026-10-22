@@ -1,0 +1,132 @@
+<div
+  class="composer"
+  [class.dropping]="dropping()"
+  [class.disabled]="disabled()"
+  cdkOverlayOrigin
+  #origin="cdkOverlayOrigin"
+>
+  <ex-composer-queue
+    [items]="queue()"
+    (steer)="queueSteer.emit($event)"
+    (remove)="queueRemove.emit($event)"
+    (edited)="queueEdited.emit($event)"
+    (reordered)="queueReordered.emit($event)"
+  />
+  @if (context().length) {
+    <div class="context">
+      @for (mention of context(); track mention.kind + ":" + mention.id) {
+        <ex-mention
+          [mention]="mention"
+          [removable]="true"
+          (removed)="contextRemoved.emit($event)"
+        />
+      }
+    </div>
+  }
+  @if (dropping()) {
+    <div class="drop-label">Drop to attach</div>
+  }
+  <textarea
+    #textarea
+    aria-label="Message the agent"
+    rows="2"
+    [disabled]="disabled()"
+    [placeholder]="placeholder()"
+    [value]="draft()"
+    (input)="update($event)"
+    (keydown)="onKey($event)"
+  ></textarea>
+  @if (recording(); as recording) {
+    <div class="recording" role="status">
+      <ex-icon name="mic" [size]="14" /><span>{{ recording.time }}</span
+      ><span class="interim">{{ recording.interim }}</span
+      ><ex-icon-button
+        icon="check"
+        label="Keep dictation"
+        size="sm"
+        (pressed)="recordingKept.emit()"
+      /><ex-icon-button
+        icon="x"
+        label="Discard dictation"
+        size="sm"
+        (pressed)="recordingDiscarded.emit()"
+      />
+    </div>
+  }
+  <div class="bar">
+    <ex-mode-toggle [value]="mode()" (changed)="modeChanged.emit($event)" />
+    @if (agent(); as value) {
+      @if (!hideAgent()) {
+        <ex-agent-picker
+          [value]="value"
+          [harnesses]="harnesses()"
+          (changed)="agentChanged.emit($event)"
+          (fork)="forkAgent.emit()"
+          (savePreset)="savePreset.emit($event)"
+        />
+      }
+    }
+    @if (mode() === "code") {
+      <ex-permission-picker
+        [value]="permission()"
+        (changed)="permissionChanged.emit($event)"
+      />
+    }
+    <span class="grow"></span
+    ><ex-tools-menu
+      [servers]="servers()"
+      (attach)="attach.emit()"
+      (mention)="openMentions()"
+      (manage)="manageServers.emit()"
+      (serverChanged)="serverChanged.emit($event)"
+    /><ex-icon-button
+      icon="mic"
+      label="Dictate (⌘D)"
+      [disabled]="disabled() || !!recording()"
+      (pressed)="dictate.emit()"
+    />
+    @if (running()) {
+      <ex-icon-button
+        icon="stop"
+        label="Stop agent (⌘.)"
+        (pressed)="stop.emit()"
+      />
+    }
+    <button
+      exButton
+      variant="primary"
+      size="sm"
+      class="send"
+      [disabled]="disabled() || !draft().trim() || !!recording()"
+      [attr.aria-label]="
+        running()
+          ? 'Queue message (Enter), or Alt Enter to steer'
+          : 'Send message (Enter)'
+      "
+      [title]="running() ? 'Queue · ↵, Steer · ⌥↵' : 'Send · ↵'"
+      (click)="send()"
+    >
+      <ex-icon [name]="running() ? 'layers' : 'arrow-up'" [size]="16" />
+    </button>
+  </div>
+</div>
+<ng-template
+  cdkConnectedOverlay
+  [cdkConnectedOverlayOrigin]="origin"
+  [cdkConnectedOverlayOpen]="mentionQuery() !== null"
+  [cdkConnectedOverlayPositions]="[
+    {
+      originX: 'start',
+      originY: 'top',
+      overlayX: 'start',
+      overlayY: 'bottom',
+      offsetY: -8,
+    },
+  ]"
+  (overlayOutsideClick)="mentionQuery.set(null)"
+  ><ex-mention-menu
+    [query]="mentionQuery() || ''"
+    [items]="mentionItems()"
+    (selected)="insertMention($event)"
+    (closed)="mentionQuery.set(null)"
+/></ng-template>

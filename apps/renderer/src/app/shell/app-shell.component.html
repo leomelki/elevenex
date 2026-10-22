@@ -1,0 +1,26 @@
+<header class="title"><ng-content select="[shellTitle]" /></header>
+<div class="regions">
+  <nav class="rail glass" aria-label="Projects">
+    <ng-content select="[shellRail]" />
+  </nav>
+  <aside class="sidebar glass" aria-label="Tasks and sessions">
+    <ng-content select="[shellSidebar]" />
+  </aside>
+  <div class="workspace">
+    <main
+      class="main surface"
+      [attr.inert]="panelOpen() && wideReview() ? '' : null"
+      [attr.aria-hidden]="panelOpen() && wideReview() ? 'true' : null"
+    >
+      <ng-content select="[shellMain]" />
+    </main>
+    <aside
+      class="panel surface"
+      [attr.aria-label]="panelLabel()"
+      [attr.aria-hidden]="!panelOpen()"
+      [attr.inert]="panelOpen() ? null : ''"
+    >
+      <div class="panel-inner"><ng-content select="[shellPanel]" /></div>
+    </aside>
+  </div>
+</div>

@@ -1,0 +1,17 @@
+<div class="preview">
+  <nav aria-label="Component preview">
+    <strong>Elevenex <span>Components</span></strong>
+    <a
+      routerLink="/"
+      routerLinkActive="selected"
+      [routerLinkActiveOptions]="{ exact: true }"
+      >Workspace</a
+    >
+    <a routerLink="/foundations" routerLinkActive="selected">Foundations</a>
+    <a routerLink="/tasks" routerLinkActive="selected">Tasks</a>
+    <a routerLink="/conversation" routerLinkActive="selected">Conversation</a>
+    <a routerLink="/machines" routerLinkActive="selected">Machines and views</a>
+    <span class="theme">{{ theme.theme() }}</span>
+  </nav>
+  <div class="preview-content"><router-outlet /></div>
+</div>

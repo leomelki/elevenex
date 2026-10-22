@@ -1,0 +1,5 @@
+<div class="island" [class.tall]="tall()" [class.open]="open()" [attr.data-tone]="tone()" [style.width.px]="width()" [style.height.px]="height()">
+  <button class="trigger" type="button" [attr.aria-label]="label()" [attr.aria-expanded]="open()" [attr.aria-controls]="controls()" (click)="pressed.emit()"></button>
+  <div #content class="content"><ng-content /></div>
+  @if (progress() !== undefined) { <span class="progress" role="progressbar" aria-label="Machine progress" [attr.aria-valuenow]="progressValue() * 100" aria-valuemin="0" aria-valuemax="100" [style.transform]="'scaleX(' + progressValue() + ')'"></span> }
+</div>

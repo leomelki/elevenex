@@ -1,0 +1,219 @@
+<div class="demo-chat">
+  <ex-chat
+    [exchanges]="exchanges()"
+    (turnAction)="lastAction.set($event.action)"
+    (review)="lastAction.set('Review ' + $event)"
+    (openFile)="lastAction.set('Open ' + $event)"
+    (stop)="lastAction.set('Stop ' + $event)"
+    ><ex-composer
+      chatComposer
+      [agent]="agent()"
+      [harnesses]="harnesses"
+      [mode]="mode()"
+      [permission]="permission()"
+      [servers]="servers"
+      [mentionItems]="mentions"
+      [running]="true"
+      [queue]="queue()"
+      (modeChanged)="mode.set($event)"
+      (permissionChanged)="permission.set($event)"
+      (agentChanged)="agent.set($event)"
+      (submitted)="submitted($event)"
+      (queueRemove)="queue.set([])"
+  /></ex-chat>
+</div>
+<p class="action" aria-live="polite">
+  {{
+    lastAction() ||
+      "Components below are interactive. All data is local to this preview."
+  }}
+</p>
+<div class="gallery">
+  <section>
+    <h2>Decisions · approval</h2>
+    <ex-approval-card
+      command="pnpm test payments --run"
+      where="elevenex"
+      reason="Verify the new retry behavior."
+      [status]="approval()"
+      [undoable]="true"
+      (resolve)="approval.set($event)"
+      (undo)="approval.set('pending')"
+    />
+  </section>
+  <section>
+    <h2>Decisions · questions</h2>
+    <ex-question-card
+      [questions]="questions"
+      [answers]="answers()"
+      (submitted)="answers.set($event)"
+    />
+  </section>
+  <section>
+    <h2>Plan</h2>
+    <ex-plan-card
+      title="Respect Retry-After"
+      [steps]="[
+        { id: 'one', text: 'Trace the existing retry path', state: 'done' },
+        { id: 'two', text: 'Add bounded server guidance', state: 'running' },
+        {
+          id: 'three',
+          text: 'Verify failure and cancellation cases',
+          state: 'todo',
+        },
+      ]"
+    />
+  </section>
+  <section>
+    <h2>Reasoning and standalone tool</h2>
+    <ex-thinking-block [seconds]="12" [open]="true"
+      >The retry window should be bounded at the same boundary as the existing
+      exponential delay.</ex-thinking-block
+    ><ex-tool-step
+      detail="pnpm test payments"
+      verb="Ran"
+      meta="200 passed · 12s"
+      output="200 tests passed in 12s"
+    /><ex-tool-step
+      detail="pnpm test failure-path"
+      verb="Ran"
+      status="failed"
+      meta="1 failed"
+      output="Expected fallback after an invalid Retry-After value"
+    />
+  </section>
+  <section class="wide">
+    <h2>Markdown</h2>
+    <ex-markdown
+      [source]="richMarkdown"
+      (openFile)="lastAction.set('Open ' + $event)"
+      (openLink)="lastAction.set('Visit ' + $event)"
+      (copyCode)="lastAction.set('Copy code')"
+    />
+  </section>
+  <section>
+    <h2>Work timeline and current step</h2>
+    <ex-work-timeline [steps]="steps" /><ex-now-line [step]="liveStep" />
+    <p>
+      <ex-stream-text
+        text="Text arrives in readable chunks, with motion only for new content."
+        [streaming]="true"
+      />
+    </p>
+  </section>
+  <section>
+    <h2>Outcome and files</h2>
+    <ex-outcome-bar [files]="files" /><ex-file-chip [file]="files[0]!" />
+  </section>
+  <section>
+    <h2>Turn states</h2>
+    <ex-turn status="stopped" [duration]="62" [steps]="steps"
+      ><p>The changes are saved. Continue whenever you’re ready.</p></ex-turn
+    ><ex-turn
+      status="failed"
+      [duration]="12"
+      error="The test runner could not connect to its fixture."
+      ><p>The fixture needs to be restarted.</p></ex-turn
+    >
+  </section>
+  <section>
+    <h2>Presets</h2>
+    <ex-preset-picker
+      [presets]="presets"
+      [value]="selectedPreset()"
+      (selected)="selectedPreset.set($event)"
+    /><ex-preset-picker
+      [presets]="presets"
+      [compact]="true"
+      [value]="selectedPreset()"
+      (selected)="selectedPreset.set($event)"
+    /><ex-preset-card [preset]="presets[0]" [selected]="true" shortcut="⌥1" />
+  </section>
+  <section>
+    <h2>Composer controls</h2>
+    <div class="controls">
+      <ex-mode-toggle
+        [value]="mode()"
+        (changed)="mode.set($event)"
+      /><ex-agent-picker
+        [value]="agent()"
+        [harnesses]="harnesses"
+        (changed)="agent.set($event)"
+      /><ex-permission-picker
+        [value]="permission()"
+        (changed)="permission.set($event)"
+      /><ex-tools-menu [servers]="servers" />
+    </div>
+    <ex-composer
+      [mode]="mode()"
+      [agent]="agent()"
+      [context]="mentions"
+      [running]="true"
+      [recording]="{
+        time: '0:08',
+        interim: 'What if the server sends a past date…',
+      }"
+    />
+  </section>
+  <section>
+    <h2>Mentions and queue</h2>
+    <div class="controls">
+      @for (mention of mentions; track mention.id) {
+        <ex-mention [mention]="mention" [removable]="true" />
+      }
+    </div>
+    <ex-mention-menu
+      [items]="mentions"
+      (selected)="lastAction.set('Mention ' + $event.label)"
+    /><ex-composer-queue [items]="queue()" (remove)="queue.set([])" />
+  </section>
+  <section>
+    <h2>Messages and side thread</h2>
+    <ex-side-thread
+      anchor="Invalid headers use bounded exponential backoff."
+      (closed)="lastAction.set('Close side chat')"
+      (promote)="lastAction.set('Promote to fork')"
+      ><ex-message role="user">Does that include negative values?</ex-message
+      ><ex-message role="agent" mark="CX"
+        >Yes. Negative values are treated as invalid and use the
+        fallback.</ex-message
+      ><ex-composer
+        sideComposer
+        placeholder="Ask a follow-up…"
+        [hideAgent]="true"
+        [mode]="'plan'"
+    /></ex-side-thread>
+  </section>
+  <section>
+    <h2>Turn navigation</h2>
+    <ex-turn-nav
+      [turns]="[
+        { id: 'a', label: 'Retry policy' },
+        { id: 'b', label: 'Add coverage', state: 'changes' },
+        { id: 'c', label: 'Confirm behavior', state: 'attention' },
+        { id: 'd', label: 'Run tests', state: 'live' },
+        { id: 'e', label: 'Write docs' },
+      ]"
+      active="b"
+    />
+  </section>
+  <section class="wide">
+    <h2>New session</h2>
+    <div class="session-start">
+      <ex-session-start
+        [presets]="presets"
+        [task]="{
+          project: 'Elevenex',
+          title: 'Rate-limit refunds',
+          branch: 'leo/refund-retries',
+          base: 'main',
+          workspace: { state: 'setup', step: 'Installing dependencies' },
+        }"
+        (presetSelected)="selectedPreset.set($event)"
+        ><ex-composer
+          [hideAgent]="true"
+          placeholder="Describe what you’d like to do…"
+      /></ex-session-start>
+    </div>
+  </section>
+</div>

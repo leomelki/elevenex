@@ -1,0 +1,20 @@
+@if (role() === "agent") {
+  <div class="mark" [title]="author() + (time() ? ' · ' + time() : '')">
+    {{ mark() }}
+  </div>
+}
+<div class="body">
+  <div class="content"><ng-content /></div>
+  @if (role() === "agent") {
+    <footer [class.pinned]="pinned()">
+      <ex-turn-acts (action)="action.emit($event)" />
+      @if (sideChats()) {
+        <button type="button" (click)="action.emit('side-chat')">
+          {{ sideChats() }} side chats
+        </button>
+      }
+    </footer>
+  } @else if (time()) {
+    <time>{{ time() }}</time>
+  }
+</div>

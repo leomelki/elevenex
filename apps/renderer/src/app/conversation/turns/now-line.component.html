@@ -1,0 +1,29 @@
+<div class="row" role="status">
+  <ex-status-glyph status="running" [size]="14" /><span class="verb">{{
+    verb()
+  }}</span
+  ><span class="target" [class.mono]="step().kind !== 'think'">{{
+    step().title || step().detail
+  }}</span
+  ><span class="grow"></span><span class="meta">{{ step().meta }}</span>
+  @if (step().elapsed) {
+    <span class="time">{{ time() }}</span>
+  }
+</div>
+@if (step().kind === "think" && step().text) {
+  <div class="reasoning">
+    <ex-stream-text [text]="step().text || ''" [streaming]="true" />
+  </div>
+}
+@if (step().progress !== undefined) {
+  <div
+    class="progress"
+    role="progressbar"
+    aria-label="Action progress"
+    [attr.aria-valuenow]="progress() * 100"
+    aria-valuemin="0"
+    aria-valuemax="100"
+  >
+    <span [style.transform]="'scaleX(' + progress() + ')'"></span>
+  </div>
+}

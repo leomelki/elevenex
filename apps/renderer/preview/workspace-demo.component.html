@@ -1,0 +1,236 @@
+<ex-app-shell
+  [panelOpen]="panelOpen()"
+  [wideReview]="wide()"
+  (reviewExited)="wide.set(false)"
+>
+  <div shellTitle cdkOverlayOrigin #machineOrigin="cdkOverlayOrigin">
+    <ex-title-island
+      [open]="machineOpen()"
+      (pressed)="machineOpen.set(!machineOpen())"
+      ><ex-island-name [machine]="machine"
+    /></ex-title-island>
+  </div>
+  <ex-project-rail
+    shellRail
+    [projects]="projects"
+    [activeId]="activeProject()"
+    (selectProject)="activeProject.set($event)"
+  />
+  <div shellSidebar class="sidebar">
+    <div class="sidebar-head">
+      <strong
+        ><ex-icon name="layers" />{{
+          activeProject() === "all" ? "All projects" : "Projects"
+        }}</strong
+      ><button
+        exButton
+        variant="primary"
+        size="sm"
+        cdkOverlayOrigin
+        #wizardOrigin="cdkOverlayOrigin"
+        (click)="wizard.set(true)"
+      >
+        <ex-icon name="plus" [size]="13" />New task
+      </button>
+    </div>
+    <ex-status-summary
+      [counts]="{ attention: 2, running: 3, review: 1, done: 4 }"
+      [active]="filter()"
+      (selectStatus)="filter.set($event)"
+    /><ex-task-list
+      [tasks]="visibleTasks()"
+      [selected]="selected()"
+      [filter]="filter()"
+      [showProjects]="activeProject() === 'all'"
+      (selectSession)="selected.set($event.sessionId)"
+    />
+    <div class="sidebar-foot"><span>5 projects</span><ex-kbd>⌘K</ex-kbd></div>
+  </div>
+  <div shellMain class="chat">
+    <ex-task-header
+      [title]="selectedTask().title"
+      [stage]="selectedTask().stage || 'active'"
+      [project]="selectedTask().project"
+      [branch]="branch()"
+      [links]="[
+        { kind: 'ticket', label: 'PAY-212', state: 'In progress' },
+        { kind: 'pr', label: '#482', state: 'draft' },
+      ]"
+      meta="3 sessions"
+      [git]="{ files: 3, add: 92, del: 12, ahead: 1 }"
+      [panelOpen]="panelOpen()"
+      (branchRename)="branch.set($event)"
+      (panelToggle)="panelOpen.set(!panelOpen())"
+      (changesRequested)="panel.set('changes'); panelOpen.set(true)"
+    />
+    <div class="chat-scroll">
+      <div class="chat-column">
+        <ex-message messageId="first-prompt" time="3m"
+          >The checkout test fails about one run in ten. Find out why, and use
+          what the boot investigation found.</ex-message
+        ><ex-turn
+          [duration]="192"
+          [steps]="doneSteps"
+          [files]="[
+            { path: 'payments/retry.ts', add: 49, del: 0 },
+            { path: 'payments/client.ts', add: 34, del: 12 },
+          ]"
+          mark="CX"
+          author="Codex"
+          (review)="panel.set('changes'); panelOpen.set(true)"
+          ><ex-markdown [source]="answer" /></ex-turn
+        ><ex-message messageId="followup-prompt" time="2m"
+          >Run it 200 times to be sure, then push.</ex-message
+        ><ex-turn
+          [status]="running() ? 'live' : 'stopped'"
+          [elapsed]="118"
+          [steps]="liveSteps"
+          mark="CX"
+          (stop)="running.set(false)"
+          (retry)="running.set(true)"
+          ><p>
+            143 of 143 passing so far. Once the run finishes I will push and
+            draft the PR description.
+          </p></ex-turn
+        >
+        @for (message of messages(); track $index) {
+          <ex-message [messageId]="'sent-' + $index" [isNew]="true">{{
+            message
+          }}</ex-message>
+        }
+      </div>
+    </div>
+    <div class="composer">
+      <ex-composer
+        [agent]="agent()"
+        [mode]="mode()"
+        [permission]="permission()"
+        [running]="running()"
+        [queue]="[
+          { id: 'whole-suite', text: 'Then run the whole payments suite' },
+        ]"
+        (modeChanged)="mode.set($event)"
+        (permissionChanged)="permission.set($event)"
+        (agentChanged)="agent.set($event)"
+        (submitted)="submit($event)"
+        (stop)="running.set(false)"
+      />
+    </div>
+  </div>
+  <div shellPanel class="side-panel">
+    <div class="panel-head">
+      <ex-panel-tabs
+        [tabs]="tabs"
+        [active]="panel()"
+        [labelled]="wide()"
+        (selectTab)="panel.set($event)"
+      /><span class="grow"></span
+      ><ex-icon-button
+        icon="x"
+        label="Close side panel"
+        (pressed)="panelOpen.set(false); wide.set(false)"
+      />
+    </div>
+    @switch (panel()) {
+      @case ("changes") {
+        <ex-diff-review
+          [files]="files()"
+          [contents]="contents"
+          [mode]="reviewMode()"
+          [wrap]="wrap()"
+          [wide]="wide()"
+          (modeChange)="reviewMode.set($event)"
+          (wrapChange)="wrap.set($event)"
+          (wideChange)="wide.set($event)"
+          (viewedChange)="markViewed($event)"
+          (exitRequested)="wide.set(false)"
+        />
+      }
+      @case ("terminal") {
+        <ex-terminal-view
+          [tabs]="[
+            {
+              id: 'tests',
+              title: 'Tests',
+              status: 'running',
+              cwd: '~/payments',
+              branch: 'leo/flaky-checkout',
+            },
+          ]"
+          active="tests"
+          [output]="[
+            {
+              id: 'cmd',
+              kind: 'cmd',
+              text: 'pnpm test --filter checkout --repeat 200',
+            },
+            { id: 'pass', kind: 'ok', text: '143 tests passing' },
+          ]"
+        />
+      }
+      @case ("browser") {
+        <ex-browser-view
+          [tabs]="[
+            {
+              id: 'checkout',
+              title: 'Checkout',
+              url: 'http://localhost:4200',
+              by: 'agent',
+            },
+          ]"
+          active="checkout"
+          driver="agent"
+          ><div browserPreview class="browser-page">
+            <h2>Checkout</h2>
+            <p>Your order is ready.</p>
+            <button exButton variant="primary">Pay securely</button>
+          </div></ex-browser-view
+        >
+      }
+    }
+  </div>
+</ex-app-shell>
+<ng-template
+  cdkConnectedOverlay
+  [cdkConnectedOverlayOrigin]="wizardOrigin"
+  [cdkConnectedOverlayOpen]="wizard()"
+  [cdkConnectedOverlayHasBackdrop]="true"
+  (backdropClick)="wizard.set(false)"
+  (overlayKeydown)="$event.key === 'Escape' && wizard.set(false)"
+  ><div
+    class="wizard"
+    role="dialog"
+    aria-label="New task"
+    cdkTrapFocus
+    [cdkTrapFocusAutoCapture]="true"
+  >
+    <ex-new-task
+      [project]="projects[1]!"
+      [branches]="[
+        { name: 'main', isDefault: true },
+        { name: 'leo/refund-webhooks' },
+      ]"
+      base="main"
+      branchPrefix="leo/"
+      [autoFocus]="true"
+      (create)="createTask($event)"
+      (cancelled)="wizard.set(false)"
+    /></div
+></ng-template>
+<ng-template
+  cdkConnectedOverlay
+  [cdkConnectedOverlayOrigin]="machineOrigin"
+  [cdkConnectedOverlayOpen]="machineOpen()"
+  [cdkConnectedOverlayHasBackdrop]="true"
+  cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
+  (backdropClick)="machineOpen.set(false)"
+  (overlayKeydown)="$event.key === 'Escape' && machineOpen.set(false)"
+  ><div
+    class="machine-panel"
+    role="dialog"
+    aria-label="Machine details"
+    cdkTrapFocus
+    [cdkTrapFocusAutoCapture]="true"
+  >
+    <ex-machine-panel [machine]="machine" /></div
+></ng-template>
