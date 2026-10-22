@@ -1,12 +1,12 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
-import { ButtonComponent, IconComponent, KbdComponent } from '../ui';
+import { IconComponent, KbdComponent } from '../ui';
 import { Machine, MachineGuest, MACHINE_ICON } from './machine.models';
 
 @Component({
   selector: 'ex-machine-panel',
-  imports: [ButtonComponent, IconComponent, KbdComponent],
+  imports: [IconComponent, KbdComponent],
   templateUrl: './machine-panel.component.html',
-  styleUrl: './machine-panel.component.css',
+  styleUrls: ['./island-controls.css', './machine-panel.component.css'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class MachinePanelComponent {

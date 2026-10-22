@@ -15,11 +15,33 @@ makes the inactive side inert. It owns and cancels all Web Animations. Stable
 the card face through the transition, and restores keyboard focus on return.
 
 `TitleBar` reserves native window controls; it does not draw imitation traffic
-lights. `TitleIsland` measures projected content, animates size, and emits `pressed`.
-Give it a descriptive `label` and `controls` when it opens a panel. Its trigger and
-projected event action are siblings, so there are no nested buttons. The owner
-places `MachinePanel` in a CDK overlay, traps focus and restores it when closing.
-Machine events and their four-second expiry belong to the owner.
+lights. `TitleIsland` keeps one measured surface: width and height spring using
+`dur-deliberate` / `ease-spring`, then incoming content blurs in after 60ms using
+`dur-slow` / `ease-out`. Change `contentKey` for machine news; `open` and `tall`
+also trigger the content transition. Initial content stays still, size changes
+can reverse mid-flight, and reduced motion stops movement immediately.
+
+The whole island family uses the reference's inverted surface: `ink` behind
+`ink-inverse` text in both themes. Event chips, guest marks, panel sections and
+keyboard hints use translucent mixes of that foreground. Tone sets the inherited
+`--icon-color`; the panel sets `--kbd-background`, `--kbd-color` and `--kbd-padding`
+on its keyboard hint without changing ordinary icons or hints elsewhere.
+The reference's island radii, shadow geometry and compact control dimensions are
+component-specific values that have no equivalent in the exported token scale.
+`island-controls.css` owns the repeated event/panel chip styling and focus states.
+
+Give it a descriptive `label` and `controls`. Supply a `TemplateRef` through
+`[panel]` to grow that same surface into `MachinePanel` when `[open]` is true.
+The island uses CDK to trap and restore focus, emits `dismissed` on Escape or
+outside pointer input, and keeps the title-bar anchor at its resting height so
+the panel grows down over the workspace. Its trigger and projected event action
+are siblings, so there are no nested buttons. The owner applies `pressed` and
+`dismissed` to its open state; machine events and their four-second expiry also
+belong to the owner. The preview includes manual states and a playable sequence.
+With the preview running, `pnpm desktop:capture
+scripts/desktop-capture/scenarios/title-island.mjs --url http://127.0.0.1:4310`
+checks spring frames, interruptions, event actions, keyboard focus, progress,
+both themes, reduced motion and the composed workspace.
 
 `RunChoice` uses a native radio group. `HostField` emits `queryChange`, `selected`
 and `submitted`; it shows at most eight saved-host matches. The owner resolves a

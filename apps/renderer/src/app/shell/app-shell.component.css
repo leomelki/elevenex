@@ -1,4 +1,5 @@
 :host {
+  --side-panel-width: var(--panel-width);
   height: 100dvh;
   min-height: 0;
   display: flex;
@@ -83,14 +84,15 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  width: var(--panel-width);
+  /* Follow wider review's animated width, but keep content stable while closing. */
+  width: max(100%, var(--side-panel-width));
 }
 :host(.panel-open) .panel {
-  width: var(--panel-width);
+  width: var(--side-panel-width);
   opacity: 1;
 }
 :host(.panel-open) .main {
-  margin-right: calc(var(--panel-width) + var(--space-2));
+  margin-right: calc(var(--side-panel-width) + var(--space-2));
 }
 :host(.wide-review) .main {
   opacity: 0;
@@ -99,24 +101,12 @@
 :host(.wide-review) .panel {
   width: 100%;
 }
-:host(.wide-review) .panel-inner {
-  width: 100%;
-}
 @media (max-width: 1000px) {
+  :host {
+    --side-panel-width: min(var(--panel-width), 40vw);
+  }
   .sidebar {
     flex-basis: min(var(--sidebar-width), 23vw);
-  }
-  :host(.panel-open) .panel {
-    width: min(var(--panel-width), 40vw);
-  }
-  :host(.panel-open) .main {
-    margin-right: calc(min(var(--panel-width), 40vw) + var(--space-2));
-  }
-  .panel-inner {
-    width: min(var(--panel-width), 40vw);
-  }
-  :host(.wide-review) .panel {
-    width: 100%;
   }
 }
 @media (prefers-reduced-motion: reduce) {

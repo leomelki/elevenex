@@ -81,9 +81,6 @@ ex-browser-view {
   width: 540px;
   max-width: calc(100vw - var(--space-8));
 }
-.machine-panel {
-  width: 320px;
-}
 .browser-page {
   padding: var(--space-8);
   text-align: center;

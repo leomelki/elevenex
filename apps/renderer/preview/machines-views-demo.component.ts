@@ -1,13 +1,12 @@
-import { A11yModule } from '@angular/cdk/a11y';
-import { OverlayModule } from '@angular/cdk/overlay';
+import { TitleIslandDemoComponent } from './title-island-demo.component';
 import { ChangeDetectionStrategy, Component, computed, signal } from '@angular/core';
 import { ButtonComponent } from '../src/app/ui';
-import { GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, IslandEventComponent, IslandNameComponent, Machine, MachineCardComponent, MachineHomeComponent, MachineLaunchComponent, MachineOpenEvent, MachinePanelComponent, PairingTextComponent, PairPasteComponent, RunChoiceComponent, TitleBarComponent, TitleIslandComponent, MachineKind, SshHost } from '../src/app/machines';
+import { GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, IslandNameComponent, Machine, MachineCardComponent, MachineHomeComponent, MachineLaunchComponent, MachineOpenEvent, MachinePanelComponent, PairingTextComponent, PairPasteComponent, RunChoiceComponent, TitleBarComponent, TitleIslandComponent, MachineKind, SshHost } from '../src/app/machines';
 import { BrowserDriver, BrowserViewComponent, ChangeFile, ChangeListComponent, DiffContextRequest, DiffFileContent, DiffFileRequest, DiffReviewComponent, ReviewMode, TerminalLine, TerminalTab, TerminalViewComponent } from '../src/app/views';
 
 @Component({
   selector: 'ex-machines-views-demo',
-  imports: [A11yModule, OverlayModule, ButtonComponent, GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, IslandEventComponent, IslandNameComponent, MachineCardComponent, MachineHomeComponent, MachineLaunchComponent, MachinePanelComponent, PairingTextComponent, PairPasteComponent, RunChoiceComponent, TitleBarComponent, TitleIslandComponent, BrowserViewComponent, TerminalViewComponent, DiffReviewComponent, ChangeListComponent],
+  imports: [TitleIslandDemoComponent, ButtonComponent, GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, IslandNameComponent, MachineCardComponent, MachineHomeComponent, MachineLaunchComponent, MachinePanelComponent, PairingTextComponent, PairPasteComponent, RunChoiceComponent, TitleBarComponent, TitleIslandComponent, BrowserViewComponent, TerminalViewComponent, DiffReviewComponent, ChangeListComponent],
   templateUrl: './machines-views-demo.component.html',
   styleUrl: './machines-views-demo.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,

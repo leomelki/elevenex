@@ -3,13 +3,8 @@
   [wideReview]="wide()"
   (reviewExited)="wide.set(false)"
 >
-  <div shellTitle cdkOverlayOrigin #machineOrigin="cdkOverlayOrigin">
-    <ex-title-island
-      [open]="machineOpen()"
-      (pressed)="machineOpen.set(!machineOpen())"
-      ><ex-island-name [machine]="machine"
-    /></ex-title-island>
-  </div>
+  <ex-title-island shellTitle controls="workspace-machine-details" [open]="machineOpen()" [panel]="machineDetails" (pressed)="machineOpen.set(true)" (dismissed)="machineOpen.set(false)"><ex-island-name [machine]="machine" /></ex-title-island>
+  <ng-template #machineDetails><ex-machine-panel [machine]="machine" /></ng-template>
   <ex-project-rail
     shellRail
     [projects]="projects"
@@ -216,21 +211,4 @@
       (create)="createTask($event)"
       (cancelled)="wizard.set(false)"
     /></div
-></ng-template>
-<ng-template
-  cdkConnectedOverlay
-  [cdkConnectedOverlayOrigin]="machineOrigin"
-  [cdkConnectedOverlayOpen]="machineOpen()"
-  [cdkConnectedOverlayHasBackdrop]="true"
-  cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
-  (backdropClick)="machineOpen.set(false)"
-  (overlayKeydown)="$event.key === 'Escape' && machineOpen.set(false)"
-  ><div
-    class="machine-panel"
-    role="dialog"
-    aria-label="Machine details"
-    cdkTrapFocus
-    [cdkTrapFocusAutoCapture]="true"
-  >
-    <ex-machine-panel [machine]="machine" /></div
 ></ng-template>

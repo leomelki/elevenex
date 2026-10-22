@@ -27,6 +27,7 @@ import { ICON_PATHS } from "./icon-paths";
       display: inline-flex;
       flex: none;
       vertical-align: middle;
+      color: var(--icon-color, inherit);
     }
     svg {
       display: block;

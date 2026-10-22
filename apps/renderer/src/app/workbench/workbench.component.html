@@ -2,6 +2,7 @@
   <ex-title-island
     shellTitle
     label="Choose a machine"
+    [contentKey]="machine()?.id ?? 'home'"
     (pressed)="machineRequested.emit()"
   >
     @if (machine(); as current) {

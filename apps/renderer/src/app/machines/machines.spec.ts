@@ -1,10 +1,36 @@
 import { TestBed } from '@angular/core/testing';
 import { HostKeyCheckComponent } from './host-key-check.component';
 import { MachineCardComponent } from './machine-card.component';
+import { MachinePanelComponent } from './machine-panel.component';
 import { PairPasteComponent } from './pair-paste.component';
 import { stagedSteps } from './machine.models';
 
 describe('Machine presentation boundaries', () => {
+  it('keeps the island panel actions distinct and disables them together while pending', () => {
+    const fixture = TestBed.createComponent(MachinePanelComponent);
+    const guest = { id: 'peer', name: 'Studio Mac', since: '10:42' };
+    fixture.componentRef.setInput('machine', { id: 'remote', name: 'Dev box', kind: 'ssh', conn: 'live' });
+    fixture.componentRef.setInput('guests', [guest]);
+    fixture.componentRef.setInput('disabled', true);
+    fixture.detectChanges();
+    const changed = vi.fn(), disconnected = vi.fn(), guestDisconnected = vi.fn(), newWindow = vi.fn();
+    fixture.componentInstance.changeRequested.subscribe(changed);
+    fixture.componentInstance.disconnectRequested.subscribe(disconnected);
+    fixture.componentInstance.guestDisconnected.subscribe(guestDisconnected);
+    fixture.componentInstance.newWindow.subscribe(newWindow);
+    const buttons = Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[];
+    expect(buttons).toHaveLength(4);
+    for (const button of buttons) { expect(button.disabled).toBe(true); button.click(); }
+    for (const action of [changed, disconnected, guestDisconnected, newWindow]) expect(action).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('disabled', false);
+    fixture.detectChanges();
+    for (const button of buttons) button.click();
+    expect(changed).toHaveBeenCalledOnce();
+    expect(disconnected).toHaveBeenCalledOnce();
+    expect(guestDisconnected).toHaveBeenCalledExactlyOnceWith(guest);
+    expect(newWindow).toHaveBeenCalledOnce();
+  });
+
   it('requires typed confirmation for a changed key and invalidates it when the fingerprint changes', () => {
     const fixture = TestBed.createComponent(HostKeyCheckComponent);
     fixture.componentRef.setInput('host', 'dev-box');
