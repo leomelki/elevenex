@@ -31,6 +31,16 @@
     "electron:package": "pnpm frontend:build && pnpm backend:bundle && pnpm electron:backend:prepare && pnpm source-maps:collect && pnpm electron:stage-version && pnpm --dir apps/electron package",
     "electron:stage-version": "node scripts/stage-version.js",
     "electron:package:mac": "pnpm frontend:build && pnpm source-maps:collect && pnpm electron:stage-version && pnpm --dir apps/electron package:mac",
-    "electron:package:win": "pnpm frontend:build && pnpm source-maps:collect && pnpm electron:stage-version && pnpm --dir apps/electron package:win"
+    "electron:package:win": "pnpm frontend:build && pnpm source-maps:collect && pnpm electron:stage-version && pnpm --dir apps/electron package:win",
+    "desktop:dev": "pnpm --dir apps/desktop dev",
+    "desktop:build": "pnpm --dir apps/desktop build",
+    "desktop:package": "pnpm --dir apps/desktop package",
+    "desktop:test": "pnpm --dir apps/desktop test",
+    "desktop:lint": "pnpm --dir apps/desktop lint"
+  },
+  "pnpm": {
+    "overrides": {
+      "@angular/compiler-cli@22.2.3>@jridgewell/sourcemap-codec": "1.6.0"
+    }
   }
 }

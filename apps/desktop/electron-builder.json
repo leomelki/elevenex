@@ -1,0 +1,33 @@
+{
+  "appId": "app.elevenex.desktop",
+  "productName": "Elevenex Desktop",
+  "asar": true,
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*.js",
+    "renderer/**/*",
+    "package.json"
+  ],
+  "npmRebuild": false,
+  "mac": {
+    "category": "public.app-category.developer-tools",
+    "target": [
+      "dmg",
+      "zip"
+    ]
+  },
+  "win": {
+    "target": [
+      "nsis"
+    ]
+  },
+  "linux": {
+    "category": "Development",
+    "target": [
+      "AppImage",
+      "deb"
+    ]
+  }
+}

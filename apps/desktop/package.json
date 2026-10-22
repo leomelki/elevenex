@@ -1,0 +1,30 @@
+{
+  "name": "@elevenex/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Elevenex desktop foundation",
+  "author": "Elevenex",
+  "license": "CC-BY-NC-4.0",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "node ../../scripts/desktop-shell.mjs dev",
+    "build": "node ../../scripts/desktop-shell.mjs build",
+    "package": "node ../../scripts/desktop-shell.mjs package",
+    "test": "node ../../scripts/desktop-shell.mjs test",
+    "lint": "node ../../scripts/desktop-shell.mjs lint"
+  },
+  "devDependencies": {
+    "@elevenex/shared": "workspace:*",
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.5",
+    "angular-eslint": "22.6.0",
+    "electron": "45.0.0",
+    "electron-builder": "26.15.3",
+    "eslint": "10.13.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.0"
+  },
+  "engines": {
+    "node": "^22.22.3 || ^24.15.0 || >=26.0.0"
+  }
+}
