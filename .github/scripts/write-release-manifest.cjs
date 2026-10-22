@@ -29,7 +29,13 @@ async function main() {
     { key: 'linux-x64', archive: 'elevenex-desktop-linux-x64.deb' },
     { key: 'windows-x64', archive: 'elevenex-desktop-windows-x64.exe' },
   ];
-  for (const asset of [...targets, ...desktopRuntime, ...desktop]) {
+  const backend = [
+    { key: 'macos-arm64', archive: 'elevenex-backend-macos-arm64.tar.gz' },
+    { key: 'linux-x64', archive: 'elevenex-backend-linux-x64.tar.gz' },
+    { key: 'linux-arm64', archive: 'elevenex-backend-linux-arm64.tar.gz' },
+    { key: 'windows-x64', archive: 'elevenex-backend-windows-x64.tar.gz' },
+  ];
+  for (const asset of [...targets, ...desktopRuntime, ...desktop, ...backend]) {
     const checksum = (await readFile(path.join(artifactsDir, `${asset.archive}.sha256`), 'utf8')).trim();
     const expected = /^([a-f0-9]{64})\s+/i.exec(checksum)?.[1].toLowerCase();
     const hash = createHash('sha256');
@@ -40,7 +46,7 @@ async function main() {
   const sourceMaps = JSON.parse(await readFile(path.join(artifactsDir, 'source-maps-manifest.json'), 'utf8'));
   if (sourceMaps.version !== version || sourceMaps.releaseTag !== releaseTag) throw new Error('Source maps refer to another release.');
   const ref = pullRequest ? `refs/pull/${pullRequest}/head` : process.env.GITHUB_REF;
-  const manifest = { version, ref, releaseTag, pullRequest, targets, desktopRuntime, desktop, sourceMaps };
+  const manifest = { version, ref, releaseTag, pullRequest, targets, desktopRuntime, desktop, backend, sourceMaps };
   await writeFile(path.join(artifactsDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 

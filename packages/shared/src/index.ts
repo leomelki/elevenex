@@ -2,6 +2,13 @@
 export type Theme = 'light' | 'dark';
 export type DesktopPlatform = 'darwin' | 'win32' | 'linux';
 
+/** A snapshot is always available; URLs are usable only while phase is ready. */
+export type BackendStatus =
+  | { readonly phase: 'idle' | 'checking' | 'extracting' | 'starting' | 'stopping' | 'stopped'; readonly version: string | null }
+  | { readonly phase: 'downloading'; readonly version: string; readonly receivedBytes: number; readonly totalBytes: number | null }
+  | { readonly phase: 'ready'; readonly version: string; readonly url: string }
+  | { readonly phase: 'failed'; readonly version: string | null; readonly message: string };
+
 export interface GitStatus {
   readonly path: string;
   readonly branch: string;
@@ -14,10 +21,14 @@ export interface GitStatus {
 export interface InvokeContracts {
   'app:version': { args: []; result: string };
   'git:status': { args: [path: string]; result: GitStatus };
+  'backend:status': { args: []; result: BackendStatus };
+  'backend:retry': { args: []; result: BackendStatus };
+  'backend:restart': { args: []; result: BackendStatus };
 }
 
 export interface EventContracts {
   'theme:changed': Theme;
+  'backend:changed': BackendStatus;
 }
 
 export type Invoke = <C extends keyof InvokeContracts>(
@@ -36,4 +47,8 @@ export interface ElevenexBridge {
   appVersion(): Promise<InvokeContracts['app:version']['result']>;
   gitStatus(...args: InvokeContracts['git:status']['args']): Promise<InvokeContracts['git:status']['result']>;
   onThemeChanged(listener: (theme: EventContracts['theme:changed']) => void): () => void;
+  backendStatus(): Promise<BackendStatus>;
+  retryBackend(): Promise<BackendStatus>;
+  restartBackend(): Promise<BackendStatus>;
+  onBackendChanged(listener: (status: BackendStatus) => void): () => void;
 }

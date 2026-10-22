@@ -5,7 +5,7 @@ const { formatSize, getDirectorySize } = require('./prepare-vscode-web-runtime')
 
 const repoRoot = path.resolve(__dirname, '..');
 const electronAppRoot = path.join(repoRoot, 'apps', 'electron');
-const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
+const stageBaseRoot = process.env.ELEVENEX_BACKEND_STAGE_ROOT || path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const archivePath = path.join(stageBaseRoot, 'backend.tar.gz');
 const STAGED_NODE_MODULES_ROOT = path.join(stageBackendRoot, 'node_modules');

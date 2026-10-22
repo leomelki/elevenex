@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from 'vitest';
-import type { ElevenexBridge, GitStatus, Invoke, Subscribe, Theme } from '@elevenex/shared';
+import type { BackendStatus, ElevenexBridge, GitStatus, Invoke, Subscribe, Theme } from '@elevenex/shared';
 
 describe('IPC bridge contract', () => {
   it('keeps the public API arguments and replies typed', () => {
@@ -9,6 +9,11 @@ describe('IPC bridge contract', () => {
     expectTypeOf<Parameters<Parameters<ElevenexBridge['onThemeChanged']>[0]>>().toEqualTypeOf<[theme: Theme]>();
     expectTypeOf<ReturnType<ElevenexBridge['onThemeChanged']>>().toEqualTypeOf<() => void>();
     expectTypeOf<Window['elevenex']>().toEqualTypeOf<ElevenexBridge>();
+    expectTypeOf<ReturnType<ElevenexBridge['backendStatus']>>().toEqualTypeOf<Promise<BackendStatus>>();
+    expectTypeOf<ReturnType<ElevenexBridge['retryBackend']>>().toEqualTypeOf<Promise<BackendStatus>>();
+    expectTypeOf<ReturnType<ElevenexBridge['restartBackend']>>().toEqualTypeOf<Promise<BackendStatus>>();
+    expectTypeOf<Parameters<Parameters<ElevenexBridge['onBackendChanged']>[0]>>().toEqualTypeOf<[status: BackendStatus]>();
+    expectTypeOf<ReturnType<ElevenexBridge['onBackendChanged']>>().toEqualTypeOf<() => void>();
   });
 });
 
@@ -17,6 +22,11 @@ describe('IPC bridge contract', () => {
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   expectTypeOf(invoke('git:status', '/workspace')).toEqualTypeOf<Promise<GitStatus>>();
   expectTypeOf(invoke('app:version')).toEqualTypeOf<Promise<string>>();
+  expectTypeOf(invoke('backend:status')).toEqualTypeOf<Promise<BackendStatus>>();
+  // @ts-expect-error A renderer cannot choose a runtime URL or executable.
+  void invoke('backend:retry', 'https://untrusted.test/backend');
+  // @ts-expect-error Backend snapshots are serializable domain data.
+  subscribe('backend:changed', (event: { sender: unknown }) => void event);
   // @ts-expect-error Unknown channels cannot cross the bridge.
   void invoke('git:delete', '/workspace');
   // @ts-expect-error git:status requires its path argument.

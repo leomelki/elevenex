@@ -1,7 +1,6 @@
 import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import { createWriteStream } from 'node:fs';
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline as streamPipeline } from 'node:stream/promises';
@@ -22,6 +21,7 @@ import {
   type LocalWhisperModelSpec,
 } from './whisper-catalog.js';
 import { describeUnsupportedPlatform } from './whisper-platform.js';
+import { getElevenexDataRoot } from '../../config/app-data-paths.js';
 
 /**
  * Weights live under the user's home rather than inside the app bundle so they
@@ -35,7 +35,7 @@ import { describeUnsupportedPlatform } from './whisper-platform.js';
 function resolveCacheDir(): string {
   return (
     process.env.ELEVENEX_WHISPER_CACHE_DIR?.trim() ||
-    join(homedir(), '.elevenex', 'whisper-models')
+    join(getElevenexDataRoot(), 'whisper-models')
   );
 }
 

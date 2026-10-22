@@ -1,9 +1,11 @@
 import { BrowserWindow, ipcMain, type WebContents, type WebFrameMain } from 'electron';
 import type { EventContracts, InvokeContracts } from '@elevenex/shared';
 
+export type TrustedSender = (frame: WebFrameMain | null, contents: WebContents) => boolean;
+
 export function handle<C extends keyof InvokeContracts>(
   channel: C,
-  trusted: (frame: WebFrameMain | null, contents: WebContents) => boolean,
+  trusted: TrustedSender,
   handler: (...args: InvokeContracts[C]['args']) => InvokeContracts[C]['result'] | Promise<InvokeContracts[C]['result']>,
 ): void {
   ipcMain.handle(channel, (event, ...args: unknown[]) => {

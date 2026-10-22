@@ -5,6 +5,7 @@ import { access, copyFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { stageBackendRelease } from './desktop-backend-release.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const desktop = join(root, 'apps/desktop');
@@ -41,6 +42,7 @@ function run(entry, args, cwd = root) {
 async function compileMain() {
   await run(tsc, ['-p', join(shared, 'tsconfig.json')]);
   await run(tsc, ['-p', join(desktop, 'tsconfig.json')]);
+  await stageBackendRelease(root);
 }
 
 async function syncTokens() {
@@ -159,7 +161,7 @@ try {
       break;
     case 'test':
       await compileMain();
-      await run(null, ['--test', 'test/preload.test.cjs', 'test/security.test.cjs'], desktop);
+      await run(null, ['--test', 'test/preload.test.cjs', 'test/security.test.cjs', 'test/backend-install.test.cjs', 'test/backend-manager.test.cjs', 'test/backend-process.test.cjs', 'test/ipc.test.cjs'], desktop);
       await run(null, ['--test', 'scripts/desktop-capture/test/options.test.mjs', 'scripts/desktop-capture/test/lifecycle.test.mjs']);
       // ng test transpiles TypeScript; tsc also checks the negative IPC type cases.
       await run(tsc, ['-p', join(renderer, 'tsconfig.spec.json'), '--noEmit']);
@@ -168,7 +170,7 @@ try {
     case 'lint':
       await run(join(dirname(desktopRequire.resolve('eslint/package.json')), 'bin/eslint.js'), [
         '--config', 'apps/desktop/eslint.config.mjs', 'apps/desktop/src', 'apps/renderer/src', 'packages/shared/src', '--max-warnings', '0',
-        'scripts/desktop-shell.mjs', 'scripts/desktop-capture', 'apps/renderer/capture', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
+        'scripts/desktop-shell.mjs', 'scripts/desktop-backend-release.mjs', 'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-capture', 'apps/renderer/capture', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
       ]);
       break;
     default: throw new Error('Use dev, build, package, test or lint');

@@ -35,6 +35,7 @@
     "desktop:dev": "pnpm --dir apps/desktop dev",
     "desktop:build": "pnpm --dir apps/desktop build",
     "desktop:package": "pnpm --dir apps/desktop package",
+    "desktop:backend": "pnpm backend:bundle && node scripts/desktop-backend-runtime.mjs",
     "desktop:test": "pnpm --dir apps/desktop test",
     "desktop:lint": "pnpm --dir apps/desktop lint",
     "desktop:capture": "node scripts/desktop-capture/cli.mjs",

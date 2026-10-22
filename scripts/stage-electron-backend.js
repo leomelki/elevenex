@@ -11,7 +11,9 @@ const {
 const repoRoot = path.resolve(__dirname, '..');
 const backendRoot = path.join(repoRoot, 'apps', 'backend');
 const backendBundleRoot = path.join(backendRoot, 'bundle');
-const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
+// The new desktop reuses assembly in an isolated staging tree with bundled Node.
+// Default commands continue to build the legacy Electron runtime unchanged.
+const stageBaseRoot = process.env.ELEVENEX_BACKEND_STAGE_ROOT || path.join(repoRoot, 'apps', 'electron', '.stage');
 const stageBackendRoot = path.join(stageBaseRoot, 'backend');
 const backendPackageJson = require(path.join(backendRoot, 'package.json'));
 const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node'];

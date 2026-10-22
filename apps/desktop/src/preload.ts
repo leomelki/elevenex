@@ -14,6 +14,10 @@ const bridge = Object.freeze<ElevenexBridge>({
   appVersion: () => invoke('app:version'),
   gitStatus: (path: string) => invoke('git:status', path),
   onThemeChanged: (listener) => subscribe('theme:changed', listener),
+  backendStatus: () => invoke('backend:status'),
+  retryBackend: () => invoke('backend:retry'),
+  restartBackend: () => invoke('backend:restart'),
+  onBackendChanged: (listener) => subscribe('backend:changed', listener),
 });
 
 contextBridge.exposeInMainWorld('elevenex', bridge);

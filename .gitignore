@@ -21,6 +21,8 @@ dev
 .worktrees/
 artifacts/
 apps/desktop/renderer/
+apps/desktop/.stage/
+dist-runtime/
 apps/desktop/release/
 apps/renderer/out-tsc/
 

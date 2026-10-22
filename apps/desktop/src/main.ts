@@ -5,6 +5,8 @@ import { randomBytes } from 'node:crypto';
 import { broadcast, handle } from './ipc';
 import { APP_ORIGIN, contentSecurityPolicy, isAppUrl, isExternalUrl, rendererPath } from './security';
 import { WindowStateStore } from './window-state';
+import { createApplicationBackend } from './backend/application';
+import { registerBackendIpc } from './backend/ipc';
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true },
@@ -24,6 +26,23 @@ app.setName('Elevenex Desktop');
 app.setPath('userData', join(app.getPath('appData'), 'Elevenex Desktop'));
 const state = new WindowStateStore(join(app.getPath('userData'), 'window-state.json'));
 const rendererRoot = join(__dirname, '../renderer');
+// Plain Node cannot read Electron's ASAR format. Only the tiny supervisor and
+// its process-tree helper are unpacked, never the renderer or privileged bridge.
+const backend = createApplicationBackend(app.isPackaged
+  ? join(process.resourcesPath, 'app.asar.unpacked/dist/backend/host.js')
+  : join(__dirname, 'backend/host.js'));
+
+// Several windows share one backend and database. A second application process
+// must hand control to the first instead of starting another database owner.
+const ownsInstance = app.requestSingleInstanceLock();
+if (!ownsInstance) app.exit(0);
+app.on('second-instance', () => {
+  if (!app.isReady()) return;
+  const window = BrowserWindow.getAllWindows()[0] ?? createWindow();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+});
 
 function trusted(frame: WebFrameMain | null, contents: WebContents): boolean {
   return !!frame && frame === contents.mainFrame && isAppUrl(frame.url, devUrl)
@@ -128,6 +147,8 @@ void app.whenReady().then(async () => {
     await registerRendererProtocol();
   }
   handle('app:version', trusted, () => app.getVersion());
+  const unsubscribeBackend = registerBackendIpc(backend, trusted);
+  app.once('will-quit', unsubscribeBackend);
   handle('git:status', trusted, (path) => {
     if (typeof path !== 'string' || !path.trim() || path.length > 4096 || path.includes('\0')) {
       throw new Error('A nonempty workspace path is required');
@@ -152,12 +173,15 @@ void app.whenReady().then(async () => {
   ]));
   await state.load();
   createWindow();
+  // Window creation is independent of downloading: a future frontend can read
+  // the current snapshot and subscribe immediately, including after a reload.
+  void backend.start();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 }).catch((error: unknown) => {
   console.error(error);
-  app.exit(1);
+  void backend.dispose().finally(() => app.exit(1));
 });
 
 app.on('window-all-closed', () => {
@@ -168,5 +192,5 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  void state.save().finally(() => app.quit());
+  void Promise.allSettled([state.save(), backend.dispose()]).then(() => app.quit());
 });

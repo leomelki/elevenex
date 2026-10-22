@@ -2,6 +2,29 @@
 // and app:// handler, rather than Node mocks. Not part of the headless unit suite.
 const { app, BrowserWindow, Menu, nativeTheme } = require('electron');
 const assert = require('node:assert/strict');
+const { mkdtempSync } = require('node:fs');
+const { rm } = require('node:fs/promises');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
+const { BackendManager } = require('../dist/backend/manager');
+const { backendRelease } = require('../dist/backend/release');
+
+// Replace only the composition boundary in this test process. Native IPC and
+// preload are real; download/process behavior has separate integration tests.
+// No test hooks, fixture paths or switches enter the production bridge.
+const backendRoot = mkdtempSync(join(tmpdir(), 'elevenex-electron-backend-'));
+app.setPath('appData', backendRoot);
+const revision = 'a'.repeat(40);
+require('../dist/backend/application').createApplicationBackend = () => new BackendManager({
+  root: backendRoot,
+  release: async () => backendRelease({ version: revision, tag: `runtime-${revision}` }, process.platform, process.arch),
+  install: async () => ({ directory: backendRoot, entry: '', executable: '' }),
+  start: async () => {
+    let stopped;
+    const exited = new Promise(resolve => { stopped = resolve; });
+    return { url: 'http://127.0.0.1:12345', exited, stop: async () => stopped({ code: 0, signal: null }) };
+  },
+});
 
 const timeout = setTimeout(() => { console.error('Electron smoke test timed out'); app.exit(1); }, 30000);
 function nextWindow() {
@@ -27,12 +50,20 @@ void (async () => {
     version: await window.elevenex.appVersion(),
     status: await window.elevenex.gitStatus('/mock/workspace'),
     invalidRejected: await window.elevenex.gitStatus('').then(() => false, () => true),
+    backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'gitStatus', 'onThemeChanged', 'platform']);
+  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend']);
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
+  assert.deepEqual(bridge.backend, { phase: 'ready', version: revision, url: 'http://127.0.0.1:12345' });
+  await window.webContents.executeJavaScript(`window.smokeBackendReady = new Promise(resolve => {
+    window.smokeBackendUnsubscribe = window.elevenex.onBackendChanged(status => { if (status.phase === 'ready') resolve(status); });
+  }); void 0;`);
+  await window.webContents.executeJavaScript('window.elevenex.restartBackend()');
+  assert.equal((await window.webContents.executeJavaScript('window.smokeBackendReady')).phase, 'ready');
+  await window.webContents.executeJavaScript('window.smokeBackendUnsubscribe()');
 
   await window.webContents.executeJavaScript('window.smokeThemeReady = new Promise(resolve => { window.smokeUnsubscribe = window.elevenex.onThemeChanged(resolve); }); void 0;');
   const theme = nativeTheme.shouldUseDarkColors ? 'light' : 'dark';
@@ -62,7 +93,8 @@ void (async () => {
   assert.ok(assets.csp.includes("script-src 'self'"));
   assert.ok(!assets.csp.includes('unsafe-inline'));
   assert.equal(assets.missing, 404);
-  console.log('Electron smoke passed: sandbox, typed IPC, runtime validation, native theme, multiple windows and app:// history/CSP.');
+  console.log('Electron smoke passed: sandbox, typed backend lifecycle IPC/events, runtime validation, native theme, multiple windows and app:// history/CSP. Backend runtime is a test fixture.');
+  await rm(backendRoot, { recursive: true, force: true });
   clearTimeout(timeout);
   app.quit();
 })().catch((error) => {

@@ -1,10 +1,10 @@
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import { homedir } from 'os';
 import { join } from 'path';
 import { mkdir, writeFile, readFile, access } from 'fs/promises';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getElevenexProxyPort } from '../config/ports.js';
+import { getElevenexDataRoot } from '../config/app-data-paths.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { ReposService } from '../repos/repos.service.js';
 
@@ -85,7 +85,7 @@ export class ElevenexAgentService implements OnModuleInit {
 
   /** Absolute path of the shared agent workspace. */
   get workspaceDir(): string {
-    return join(homedir(), '.elevenex', 'agent');
+    return join(getElevenexDataRoot(), 'agent');
   }
 
   /** The URL the inner Claude process uses to reach the MCP server. */

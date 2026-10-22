@@ -20,6 +20,10 @@ const assets = [
   'elevenex-desktop-linux-x64.AppImage',
   'elevenex-desktop-linux-x64.deb',
   'elevenex-desktop-windows-x64.exe',
+  'elevenex-backend-macos-arm64.tar.gz',
+  'elevenex-backend-linux-x64.tar.gz',
+  'elevenex-backend-linux-arm64.tar.gz',
+  'elevenex-backend-windows-x64.tar.gz',
 ];
 
 function fixture(context) {
@@ -52,7 +56,18 @@ test('complete preview assets produce a manifest with the matching runtime ident
   assert.equal(manifest.targets.length, 4);
   assert.equal(manifest.desktopRuntime.length, 3);
   assert.equal(manifest.desktop.length, 4);
+  assert.equal(manifest.backend.length, 4);
+  assert.ok(manifest.backend.every(target => target.sha256.length === 64));
   assert.ok(manifest.targets.every((target) => target.sha256.length === 64));
+});
+
+test('a missing or corrupt standalone backend prevents publication', (context) => {
+  const missing = fixture(context);
+  rmSync(path.join(missing, 'elevenex-backend-macos-arm64.tar.gz'));
+  assert.notEqual(publish(missing).status, 0);
+  const corrupt = fixture(context);
+  writeFileSync(path.join(corrupt, 'elevenex-backend-linux-x64.tar.gz'), 'corrupt');
+  assert.match(publish(corrupt).stderr, /Invalid checksum/);
 });
 
 test('partial and corrupt runtime uploads cannot be published', (context) => {

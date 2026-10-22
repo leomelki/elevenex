@@ -2,11 +2,16 @@
   "appId": "app.elevenex.desktop",
   "productName": "Elevenex Desktop",
   "asar": true,
+  "asarUnpack": [
+    "dist/backend/host.js",
+    "dist/backend/process-tree.js"
+  ],
   "directories": {
     "output": "release"
   },
   "files": [
     "dist/**/*.js",
+    "dist/backend-release.json",
     "renderer/**/*",
     "package.json"
   ],

@@ -7,6 +7,9 @@ on:
     paths:
       - 'apps/backend/**'
       - 'apps/electron/**'
+      - 'apps/desktop/**'
+      - 'apps/renderer/**'
+      - 'packages/shared/**'
       - 'apps/frontend/**'
       - 'apps/frontend/proxy.conf.json'
       - 'vscode-filesystem-provider/**'
@@ -18,6 +21,7 @@ on:
       - 'scripts/rebuild-electron-backend-natives.js'
       - 'scripts/archive-electron-backend.js'
       - 'scripts/stage-version.js'
+      - 'scripts/desktop-backend-*.mjs'
       - 'scripts/collect-source-maps.js'
       - 'package.json'
       - '.github/scripts/**'
@@ -159,6 +163,7 @@ jobs:
             Auto-built release assets for commit `${{ needs.prepare.outputs.sha }}`.
             Includes remote runtime tarballs downloaded during SSH setup,
             local desktop runtime tarballs downloaded by packaged desktop apps,
+            isolated Node backend tarballs for the new desktop,
             plus macOS, Linux, and Windows desktop artifacts.
 
       - name: Link release in workflow summary
