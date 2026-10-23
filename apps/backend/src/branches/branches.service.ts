@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { SimpleGit } from 'simple-git';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 export interface BranchInfo {
   name: string;
@@ -36,16 +37,16 @@ export class BranchesService {
     { data: BranchInfo[]; timestamp: number }
   >();
   private readonly inFlight = new Map<string, Promise<BranchInfo[]>>();
-  private readonly generations = new Map<string, number>();
+  private readonly MAX_CACHE_ENTRIES = 1_000;
   private readonly CACHE_TTL_MS = 5_000;
   /** How old a listing interactive pickers may show while it refreshes. */
   private readonly STALE_TTL_MS = 60_000;
   private readonly SEARCH_LIMIT = 100;
 
   invalidateCache(repoPath: string): void {
-    this.generations.set(repoPath, (this.generations.get(repoPath) ?? 0) + 1);
-    this.inFlight.delete(repoPath);
-    this.cache.delete(repoPath);
+    const key = path.resolve(repoPath);
+    this.inFlight.delete(key);
+    this.cache.delete(key);
   }
 
   /** `allowStale` answers from a listing up to a minute old and refreshes it
@@ -58,7 +59,7 @@ export class BranchesService {
   ): Promise<BranchInfo[]> {
     const select = (data: BranchInfo[]) =>
       includeRemote ? data : data.filter((branch) => !branch.isRemote);
-    const cached = this.cache.get(repoPath);
+    const cached = this.cache.get(path.resolve(repoPath));
     const age = cached ? Date.now() - cached.timestamp : Infinity;
     if (cached && age < this.CACHE_TTL_MS) return select(cached.data);
     if (cached && allowStale && age < this.STALE_TTL_MS) {
@@ -72,20 +73,27 @@ export class BranchesService {
    * repository's first read is still running.
    */
   private refresh(repoPath: string): Promise<BranchInfo[]> {
-    let pending = this.inFlight.get(repoPath);
+    const key = path.resolve(repoPath);
+    let pending = this.inFlight.get(key);
     if (!pending) {
-      const generation = this.generations.get(repoPath) ?? 0;
       pending = this.readBranches(repoPath)
         .then((data) => {
-          if ((this.generations.get(repoPath) ?? 0) === generation)
-            this.cache.set(repoPath, { data, timestamp: Date.now() });
+          if (this.inFlight.get(key) === pending) {
+            this.cache.delete(key);
+            this.cache.set(key, { data, timestamp: Date.now() });
+            if (this.cache.size > this.MAX_CACHE_ENTRIES) {
+              for (const oldestKey of this.cache.keys()) {
+                this.cache.delete(oldestKey);
+                break;
+              }
+            }
+          }
           return data;
         })
         .finally(() => {
-          if (this.inFlight.get(repoPath) === pending)
-            this.inFlight.delete(repoPath);
+          if (this.inFlight.get(key) === pending) this.inFlight.delete(key);
         });
-      this.inFlight.set(repoPath, pending);
+      this.inFlight.set(key, pending);
     }
     return pending;
   }
@@ -174,13 +182,13 @@ export class BranchesService {
     allowEmpty = false,
   ): Promise<BranchInfo[]> {
     query = query?.trim() ?? '';
-    const allBranches = await this.getBranches(repoPath, false, {
-      allowStale: true,
-    });
-
     if (!allowEmpty && query.length < 3) {
       return [];
     }
+
+    const allBranches = await this.getBranches(repoPath, false, {
+      allowStale: true,
+    });
 
     if (query) {
       const ranked = this.rank(allBranches, query);
@@ -215,7 +223,7 @@ export class BranchesService {
 
       this.invalidateCache(repoPath);
 
-      const validName = this.validateBranchName(branchName);
+      const validName = await this.validateBranchName(git, branchName);
       if (!validName) {
         throw new BadRequestException(
           `Invalid branch name: "${branchName}". Branch names cannot contain spaces, special characters like ~^:?*[\\, or start with a dot or dash.`,
@@ -224,7 +232,12 @@ export class BranchesService {
 
       // `git.branch()` would list every remote branch with its subject.
       const exists = await git
-        .raw(['rev-parse', '--verify', `refs/heads/${branchName}`])
+        .raw([
+          'rev-parse',
+          '--verify',
+          '--end-of-options',
+          `refs/heads/${branchName}`,
+        ])
         .then(
           () => true,
           () => false,
@@ -235,14 +248,24 @@ export class BranchesService {
 
       const resolvedStartPoint = startPoint || 'HEAD';
       try {
-        await git.raw(['rev-parse', '--verify', resolvedStartPoint]);
+        if (resolvedStartPoint.startsWith('-'))
+          throw new Error('Invalid revision');
+        await git.raw([
+          'rev-parse',
+          '--verify',
+          '--end-of-options',
+          resolvedStartPoint,
+        ]);
       } catch {
         throw new BadRequestException(
           `Invalid start point: "${resolvedStartPoint}" does not exist`,
         );
       }
 
-      await git.branch([branchName, resolvedStartPoint]);
+      await git.raw(['branch', '--', branchName, resolvedStartPoint]);
+      // Listings started during validation or mutation can still contain the
+      // old refs. Discard them before reading back the successfully created ref.
+      this.invalidateCache(repoPath);
 
       const branches = await this.getBranches(repoPath);
       const newBranch = branches.find((b) => b.name === branchName);
@@ -263,14 +286,17 @@ export class BranchesService {
     }
   }
 
-  private validateBranchName(name: string): boolean {
-    if (!name || name.length === 0) return false;
-    if (/^[\.\-]/.test(name)) return false;
-    if (/[\s~^:?*\[\\]/.test(name)) return false;
-    if (name.includes('..')) return false;
-    if (name.endsWith('/')) return false;
-    if (name.endsWith('.lock')) return false;
-    return true;
+  private async validateBranchName(
+    git: SimpleGit,
+    name: string,
+  ): Promise<boolean> {
+    if (!name || name.startsWith('-')) return false;
+    return git.raw(['check-ref-format', '--branch', name]).then(
+      // --branch expands checkout shorthand such as @{-1}; callers create a
+      // literal branch name, so require Git to validate that exact name.
+      (validated) => validated.trim() === name,
+      () => false,
+    );
   }
 
   private async listWorktreePaths(
