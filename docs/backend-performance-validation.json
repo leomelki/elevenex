@@ -1,0 +1,729 @@
+{
+  "validatedCommit": "99bf7e14997ea30b38cd1410023f8f063c7e82bc",
+  "backendSourceTree": "56630d4246603f090723315c2424c95dd5a2dbcf",
+  "baselineCommit": "d1293c35ad720fe5874b1bc5bc60b5c41959365f",
+  "fullTests": {
+    "success": true,
+    "passedSuites": 161,
+    "failedSuites": 0,
+    "skippedSuites": 2,
+    "passedTests": 2521,
+    "failedTests": 0,
+    "skippedTests": 8
+  },
+  "nativeProcessTests": {
+    "success": true,
+    "passedSuites": 1,
+    "failedSuites": 0,
+    "skippedSuites": 0,
+    "passedTests": 6,
+    "failedTests": 0,
+    "skippedTests": 0
+  },
+  "statusMutationRegression": {
+    "failedBeforeFix": 3,
+    "passedAfterFix": 3,
+    "includedInFullRun": true
+  },
+  "productionBuild": true,
+  "electronBundle": true,
+  "electronBundleSyntax": true,
+  "frozenLockfile": {
+    "pnpm": "8.15.4",
+    "offline": true,
+    "lockfileOnly": true,
+    "passed": true
+  },
+  "httpSmoke": {
+    "production": {
+      "entry": "/Users/leomelki/Documents/git/.worktrees/elevenex/elevenex-4/apps/backend/dist/main.js",
+      "checks": [
+        "real backend startup and GET projects",
+        "16 concurrent workspace reads: one default, truthful dirty status",
+        "32 concurrent Git summaries have identical output",
+        "HTTP stage/commit invalidates status and change-review caches",
+        "GitHub routes return empty state for a repository without remotes",
+        "cross-project reorder rejected without partial writes",
+        "startup migration applied; SQLite integrity and foreign keys valid"
+      ],
+      "passed": true
+    },
+    "electronBundle": {
+      "entry": "/Users/leomelki/Documents/git/.worktrees/elevenex/elevenex-4/apps/backend/bundle/main.cjs",
+      "checks": [
+        "real backend startup and GET projects",
+        "16 concurrent workspace reads: one default, truthful dirty status",
+        "32 concurrent Git summaries have identical output",
+        "HTTP stage/commit invalidates status and change-review caches",
+        "GitHub routes return empty state for a repository without remotes",
+        "cross-project reorder rejected without partial writes",
+        "startup migration applied; SQLite integrity and foreign keys valid"
+      ],
+      "passed": true
+    }
+  },
+  "branches": [
+    {
+      "task": 122,
+      "branch": "perf/review-backend-and-optimize",
+      "commit": "99bf7e14997ea30b38cd1410023f8f063c7e82bc",
+      "included": true
+    },
+    {
+      "task": 123,
+      "branch": "perf/backend-git-status",
+      "commit": "137b10456cd0a194c6a7d876909c6c760c8ff652",
+      "included": true
+    },
+    {
+      "task": 124,
+      "branch": "fix/backend-change-review-cache",
+      "commit": "1fd9c2cc703739014a19fe36f8e2b257dca5260b",
+      "included": true
+    },
+    {
+      "task": 125,
+      "branch": "fix/backend-git-cache-races",
+      "commit": "aed2492c117dae9970ec74d5a90a7c96fd43b80f",
+      "included": true
+    },
+    {
+      "task": 126,
+      "branch": "fix/backend-files-and-watchers",
+      "commit": "7b63b523bbd94c8727d33e751cdb4051ad4208de",
+      "included": true
+    },
+    {
+      "task": 127,
+      "branch": "fix/backend-process-lifecycle",
+      "commit": "8f884969ad90edc9c883e14ffbfdf2502f9183f1",
+      "included": true
+    },
+    {
+      "task": 128,
+      "branch": "fix/backend-agent-lifecycle",
+      "commit": "918504ec8c2bf94ad98667bcfc05324bd1c0ed16",
+      "included": true
+    },
+    {
+      "task": 129,
+      "branch": "fix/backend-generation-deadlines",
+      "commit": "ba16712192440039554a3c9cfab95e4a7f2ba43f",
+      "included": true
+    },
+    {
+      "task": 130,
+      "branch": "fix/backend-workspace-state",
+      "commit": "473a0c469d330d0982025b2dd8e244af0f88c211",
+      "included": true
+    },
+    {
+      "task": 131,
+      "branch": "fix/backend-mcp-resources",
+      "commit": "bab4d068a5b53e08f73dd7ab15ccc6f9f38ff63b",
+      "included": true
+    },
+    {
+      "task": 132,
+      "branch": "fix/backend-project-ordering",
+      "commit": "b2549b33a65e6a58b40e148f68fad03675a33d90",
+      "included": true
+    },
+    {
+      "task": 133,
+      "branch": "fix/backend-proxy-cancellation",
+      "commit": "cda7ba08027172cec8c863051891be206047c507",
+      "included": true
+    },
+    {
+      "task": 134,
+      "branch": "fix/backend-codex-turn-isolation",
+      "commit": "297c29d58a73fc38fc3821718f769a4210d3edd0",
+      "included": true
+    },
+    {
+      "task": 135,
+      "branch": "fix/backend-session-helper-lifecycle",
+      "commit": "50b7901be5dabdeffd6daf29c0b9205fb2ea13a1",
+      "included": true
+    },
+    {
+      "task": 136,
+      "branch": "fix/backend-speech-lifecycle",
+      "commit": "424670447f0cec1046d33a2fe4367b1986103d3c",
+      "included": true
+    },
+    {
+      "task": 137,
+      "branch": "perf/backend-shell-environment",
+      "commit": "085318ed33430c8955e353aa4d309ac7cc5b2e45",
+      "included": true
+    },
+    {
+      "task": 138,
+      "branch": "fix/backend-change-capture",
+      "commit": "822a19a79614a947cba88137b716924092758497",
+      "included": true
+    }
+  ],
+  "benchmark": {
+    "sourceCommit": "99bf7e14997ea30b38cd1410023f8f063c7e82bc",
+    "baselineCommit": "d1293c35ad720fe5874b1bc5bc60b5c41959365f",
+    "moduleHashes": {
+      "before": {
+        "git/git.service.js": "9934c790ee5650c0002ef67317bec414c4113cfad1d46aaafd88e04cb54ae59a",
+        "git/git-worktree-fingerprint.js": "21f2ba9f1616aa2c80ee13aecec2522574b364a67c0757c9429b11aa1990c2ce",
+        "github/github.service.js": "303613398a895589b9d487f7639b7e31707f7b712655466444073d7aafd1ad04",
+        "github/repo-context-resolver.service.js": "547b86a2d6ee2578b184fcf62e4e797066491dac18f05c617d562d2bf48a9823",
+        "config/system-paths.js": "9e7f6997891c390f565bfbdb223b3a7042ac9958f3422200827208731c570ecd"
+      },
+      "after": {
+        "git/git.service.js": "86f90fe14361e155823a5aadafd4dce646b2fcfb324d06c4d28bf48ca4b6e0a5",
+        "git/git-worktree-fingerprint.js": "a25ba2544e9036f9eaf2cd4a2dd5d4992ffc4f3820b159fc87a331b7ab80cb4c",
+        "github/github.service.js": "9899eddc917e281ef80264f070b3c8248e47d85e8b54b63201f670a45d798c5a",
+        "github/repo-context-resolver.service.js": "1f2db5499b79ca0f0ed9c0f6c9006c0649d95b87fb05f7ece3b0fb4163e74dce",
+        "config/system-paths.js": "744f531636b815b9ec43bdb9be526dd2b81d13286268ecd8db290a605d776ac8"
+      }
+    },
+    "node": "v24.12.0",
+    "platform": "darwin/arm64",
+    "cpu": "Apple M1",
+    "gitVersion": "git version 2.50.1 (Apple Git-155)",
+    "fixture": {
+      "trackedFiles": 12001,
+      "dirtyFiles": 2400,
+      "stagedFiles": 1200,
+      "branches": 601,
+      "commits": 601
+    },
+    "simulatedGithubLatencyMs": 25,
+    "outputsEqual": true,
+    "comparisons": [
+      {
+        "pass": 1,
+        "workload": "status-cold-burst-32",
+        "beforeMedianMs": 7021.941957999996,
+        "afterMedianMs": 406.69062499999995,
+        "speedup": 17.26605317739989,
+        "beforeGitProcesses": 1127,
+        "afterGitProcesses": 42,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      },
+      {
+        "pass": 1,
+        "workload": "status-warm-single",
+        "beforeMedianMs": 337.55291600000055,
+        "afterMedianMs": 337.04187499999944,
+        "speedup": 1.001516253729603,
+        "beforeGitProcesses": 47,
+        "afterGitProcesses": 46,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      },
+      {
+        "pass": 1,
+        "workload": "conflicts-burst-32",
+        "beforeMedianMs": 2251.4533329999977,
+        "afterMedianMs": 149.38595799999985,
+        "speedup": 15.071385310525638,
+        "beforeGitProcesses": 672,
+        "afterGitProcesses": 21,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      },
+      {
+        "pass": 1,
+        "workload": "github-context-burst-32",
+        "beforeMedianMs": 1237.391832999987,
+        "afterMedianMs": 91.34199999999964,
+        "speedup": 13.546800299971446,
+        "beforeGitProcesses": 1120,
+        "afterGitProcesses": 42,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      },
+      {
+        "pass": 1,
+        "workload": "github-missing-pr-burst-32",
+        "beforeMedianMs": 2453.9772499999963,
+        "afterMedianMs": 118.8442500000001,
+        "speedup": 20.648683045246145,
+        "beforeGitProcesses": 2240,
+        "afterGitProcesses": 42,
+        "beforeSimulatedGithubCalls": 224,
+        "afterSimulatedGithubCalls": 7
+      },
+      {
+        "pass": 1,
+        "workload": "github-positive-pr-warm-single",
+        "beforeMedianMs": 0.0029169999907026067,
+        "afterMedianMs": 93.55795799999942,
+        "speedup": 0.00003117853417346523,
+        "beforeGitProcesses": 0,
+        "afterGitProcesses": 54,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      },
+      {
+        "pass": 1,
+        "workload": "map-20000-staged-additions-cpu",
+        "beforeMedianMs": 353.79812500000116,
+        "afterMedianMs": 5.5107090000001335,
+        "speedup": 64.20192483399008,
+        "beforeGitProcesses": 0,
+        "afterGitProcesses": 0,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      },
+      {
+        "pass": 2,
+        "workload": "status-cold-burst-32",
+        "beforeMedianMs": 7054.9559580000005,
+        "afterMedianMs": 398.48412500000006,
+        "speedup": 17.704484358065706,
+        "beforeGitProcesses": 1127,
+        "afterGitProcesses": 42,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      },
+      {
+        "pass": 2,
+        "workload": "status-warm-single",
+        "beforeMedianMs": 339.9325000000026,
+        "afterMedianMs": 405.62241600000016,
+        "speedup": 0.8380515636985962,
+        "beforeGitProcesses": 47,
+        "afterGitProcesses": 47,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      },
+      {
+        "pass": 2,
+        "workload": "conflicts-burst-32",
+        "beforeMedianMs": 2239.836792000002,
+        "afterMedianMs": 145.61166700000012,
+        "speedup": 15.382261862299812,
+        "beforeGitProcesses": 672,
+        "afterGitProcesses": 21,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      },
+      {
+        "pass": 2,
+        "workload": "github-context-burst-32",
+        "beforeMedianMs": 1261.3798749999987,
+        "afterMedianMs": 93.95945799999936,
+        "speedup": 13.424724895709884,
+        "beforeGitProcesses": 1120,
+        "afterGitProcesses": 42,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      },
+      {
+        "pass": 2,
+        "workload": "github-missing-pr-burst-32",
+        "beforeMedianMs": 2462.865791999997,
+        "afterMedianMs": 120.3135000000002,
+        "speedup": 20.470402673016682,
+        "beforeGitProcesses": 2240,
+        "afterGitProcesses": 42,
+        "beforeSimulatedGithubCalls": 224,
+        "afterSimulatedGithubCalls": 7
+      },
+      {
+        "pass": 2,
+        "workload": "github-positive-pr-warm-single",
+        "beforeMedianMs": 0.0029159999976400286,
+        "afterMedianMs": 93.18470900000102,
+        "speedup": 0.000031292687705232805,
+        "beforeGitProcesses": 0,
+        "afterGitProcesses": 54,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      },
+      {
+        "pass": 2,
+        "workload": "map-20000-staged-additions-cpu",
+        "beforeMedianMs": 346.45366600000125,
+        "afterMedianMs": 5.441082999999708,
+        "speedup": 63.673659453461724,
+        "beforeGitProcesses": 0,
+        "afterGitProcesses": 0,
+        "beforeSimulatedGithubCalls": 0,
+        "afterSimulatedGithubCalls": 0
+      }
+    ]
+  },
+  "benchmarkSamples": {
+    "before-1": [
+      {
+        "name": "status-cold-burst-32",
+        "rounds": 7,
+        "medianMs": 7021.941957999996,
+        "maxMs": 7132.298459,
+        "samplesMs": [
+          7055.08625, 7132.298459, 7082.724041000001, 6984.055082999999,
+          7021.941957999996, 6951.470708000001, 7013.239833
+        ],
+        "gitProcesses": 1127,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "status-warm-single",
+        "rounds": 9,
+        "medianMs": 337.55291600000055,
+        "maxMs": 430.44954199999484,
+        "samplesMs": [
+          430.44954199999484, 315.37416700000176, 340.1564999999973,
+          320.403624999999, 321.94091599999956, 396.3672910000023,
+          341.4334579999995, 337.55291600000055, 336.8453329999975
+        ],
+        "gitProcesses": 47,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "conflicts-burst-32",
+        "rounds": 7,
+        "medianMs": 2251.4533329999977,
+        "maxMs": 2321.347041999994,
+        "samplesMs": [
+          2251.4533329999977, 2216.1357500000013, 2278.3232080000016,
+          2251.1090419999964, 2321.347041999994, 2242.6969170000084,
+          2260.8797919999924
+        ],
+        "gitProcesses": 672,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "github-context-burst-32",
+        "rounds": 7,
+        "medianMs": 1237.391832999987,
+        "maxMs": 1382.3130410000012,
+        "samplesMs": [
+          1229.6571660000045, 1237.391832999987, 1382.3130410000012,
+          1240.1180000000022, 1256.0116669999989, 1233.7542499999981,
+          1223.7880000000005
+        ],
+        "gitProcesses": 1120,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "github-missing-pr-burst-32",
+        "rounds": 7,
+        "medianMs": 2453.9772499999963,
+        "maxMs": 2544.706375000009,
+        "samplesMs": [
+          2421.443041999999, 2448.3027500000026, 2445.2748749999882,
+          2477.8830420000013, 2462.891459000006, 2453.9772499999963,
+          2544.706375000009
+        ],
+        "gitProcesses": 2240,
+        "simulatedGithubCalls": 224
+      },
+      {
+        "name": "github-positive-pr-warm-single",
+        "rounds": 9,
+        "medianMs": 0.0029169999907026067,
+        "maxMs": 0.05912499999976717,
+        "samplesMs": [
+          0.05912499999976717, 0.003958999994210899, 0.0031669999880250543,
+          0.0029169999907026067, 0.0027079999999841675, 0.002666999993380159,
+          0.0025840000016614795, 0.002666000000317581, 0.004457999995793216
+        ],
+        "gitProcesses": 0,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "map-20000-staged-additions-cpu",
+        "rounds": 9,
+        "medianMs": 353.79812500000116,
+        "maxMs": 1222.9571250000008,
+        "samplesMs": [
+          1200.08924999999, 1222.9571250000008, 1198.4378749999887,
+          1195.7430840000015, 352.96270799999184, 352.956291999988,
+          353.7559579999943, 352.1088749999908, 353.79812500000116
+        ],
+        "gitProcesses": 0,
+        "simulatedGithubCalls": 0
+      }
+    ],
+    "after-1": [
+      {
+        "name": "status-cold-burst-32",
+        "rounds": 7,
+        "medianMs": 406.69062499999995,
+        "maxMs": 430.6022499999999,
+        "samplesMs": [
+          409.4804170000001, 393.042541, 430.6022499999999, 406.69062499999995,
+          400.66079200000013, 397.49079200000006, 407.74524999999994
+        ],
+        "gitProcesses": 42,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "status-warm-single",
+        "rounds": 9,
+        "medianMs": 337.04187499999944,
+        "maxMs": 402.57866699999977,
+        "samplesMs": [
+          317.3415420000001, 337.04187499999944, 333.9190410000001,
+          331.11883300000045, 402.57866699999977, 363.3650829999997,
+          364.80716699999994, 332.90283399999953, 342.537875
+        ],
+        "gitProcesses": 46,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "conflicts-burst-32",
+        "rounds": 7,
+        "medianMs": 149.38595799999985,
+        "maxMs": 152.7724159999998,
+        "samplesMs": [
+          145.3125, 152.54454200000055, 145.7897920000005, 143.48149999999987,
+          152.7724159999998, 149.38595799999985, 152.238875
+        ],
+        "gitProcesses": 21,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "github-context-burst-32",
+        "rounds": 7,
+        "medianMs": 91.34199999999964,
+        "maxMs": 110.28645899999992,
+        "samplesMs": [
+          92.96487499999967, 92.68087500000001, 110.28645899999992,
+          91.34199999999964, 90.88499999999931, 91.23258300000089,
+          90.99016699999993
+        ],
+        "gitProcesses": 42,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "github-missing-pr-burst-32",
+        "rounds": 7,
+        "medianMs": 118.8442500000001,
+        "maxMs": 127.79541599999902,
+        "samplesMs": [
+          117.71450000000004, 117.39783299999908, 120.75220799999988,
+          118.8442500000001, 127.79541599999902, 123.36654100000123,
+          118.45112499999959
+        ],
+        "gitProcesses": 42,
+        "simulatedGithubCalls": 7
+      },
+      {
+        "name": "github-positive-pr-warm-single",
+        "rounds": 9,
+        "medianMs": 93.55795799999942,
+        "maxMs": 112.60929099999885,
+        "samplesMs": [
+          90.72479100000055, 94.59254200000032, 112.60929099999885,
+          93.55795799999942, 90.50199999999859, 107.75245899999936,
+          90.91154199999983, 96.050792, 92.03620799999953
+        ],
+        "gitProcesses": 54,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "map-20000-staged-additions-cpu",
+        "rounds": 9,
+        "medianMs": 5.5107090000001335,
+        "maxMs": 8.36620799999946,
+        "samplesMs": [
+          8.36620799999946, 5.586208999999144, 6.042874999999185,
+          5.507999999999811, 5.5107090000001335, 5.489249999998719,
+          8.212542000001122, 5.4071660000008706, 5.399666999999681
+        ],
+        "gitProcesses": 0,
+        "simulatedGithubCalls": 0
+      }
+    ],
+    "after-2": [
+      {
+        "name": "status-cold-burst-32",
+        "rounds": 7,
+        "medianMs": 398.48412500000006,
+        "maxMs": 415.65316699999994,
+        "samplesMs": [
+          398.48412500000006, 411.59904200000005, 400.731542,
+          390.04616699999997, 415.65316699999994, 395.1945420000002,
+          385.2051250000004
+        ],
+        "gitProcesses": 42,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "status-warm-single",
+        "rounds": 9,
+        "medianMs": 405.62241600000016,
+        "maxMs": 513.0975419999995,
+        "samplesMs": [
+          335.0395830000002, 405.62241600000016, 393.19366699999955,
+          408.39266599999974, 513.0975419999995, 403.7922920000001,
+          413.0361670000002, 351.4847919999993, 406.05724999999984
+        ],
+        "gitProcesses": 47,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "conflicts-burst-32",
+        "rounds": 7,
+        "medianMs": 145.61166700000012,
+        "maxMs": 149.42041599999993,
+        "samplesMs": [
+          149.42041599999993, 145.27479099999982, 145.4848750000001,
+          148.07133299999987, 146.0205420000002, 144.58516599999984,
+          145.61166700000012
+        ],
+        "gitProcesses": 21,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "github-context-burst-32",
+        "rounds": 7,
+        "medianMs": 93.95945799999936,
+        "maxMs": 116.90208399999938,
+        "samplesMs": [
+          93.95945799999936, 93.1503330000005, 93.45733300000029,
+          95.06766600000083, 96.7650420000009, 116.90208399999938,
+          93.2345830000013
+        ],
+        "gitProcesses": 42,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "github-missing-pr-burst-32",
+        "rounds": 7,
+        "medianMs": 120.3135000000002,
+        "maxMs": 129.55258400000093,
+        "samplesMs": [
+          119.60874999999942, 120.34379099999933, 120.4223750000001,
+          119.1356250000008, 118.87950000000092, 120.3135000000002,
+          129.55258400000093
+        ],
+        "gitProcesses": 42,
+        "simulatedGithubCalls": 7
+      },
+      {
+        "name": "github-positive-pr-warm-single",
+        "rounds": 9,
+        "medianMs": 93.18470900000102,
+        "maxMs": 119.84529199999997,
+        "samplesMs": [
+          92.5867500000004, 93.0544170000012, 119.84529199999997,
+          110.83300000000054, 92.97966700000143, 92.5812079999996,
+          93.18470900000102, 94.16800000000148, 107.22012499999983
+        ],
+        "gitProcesses": 54,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "map-20000-staged-additions-cpu",
+        "rounds": 9,
+        "medianMs": 5.441082999999708,
+        "maxMs": 8.450334000001021,
+        "samplesMs": [
+          8.450334000001021, 5.441082999999708, 6.223708999999872,
+          5.429457999998704, 5.4067919999997684, 7.392667000000074,
+          7.594417000000249, 5.338041000000885, 5.365916999999172
+        ],
+        "gitProcesses": 0,
+        "simulatedGithubCalls": 0
+      }
+    ],
+    "before-2": [
+      {
+        "name": "status-cold-burst-32",
+        "rounds": 7,
+        "medianMs": 7054.9559580000005,
+        "maxMs": 7083.343709000001,
+        "samplesMs": [
+          7054.9559580000005, 7060.495416000001, 7017.759249999999,
+          7083.343709000001, 6966.437207999999, 7080.218124999999,
+          7001.832042000002
+        ],
+        "gitProcesses": 1127,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "status-warm-single",
+        "rounds": 9,
+        "medianMs": 339.9325000000026,
+        "maxMs": 440.91645800000697,
+        "samplesMs": [
+          426.54299999999785, 337.7525830000013, 345.486917000002,
+          348.6454999999987, 318.0542079999941, 440.91645800000697,
+          325.73029099999985, 332.38333299999795, 339.9325000000026
+        ],
+        "gitProcesses": 47,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "conflicts-burst-32",
+        "rounds": 7,
+        "medianMs": 2239.836792000002,
+        "maxMs": 2268.147041999997,
+        "samplesMs": [
+          2268.147041999997, 2209.3052499999976, 2260.936625000002,
+          2239.836792000002, 2201.6817080000037, 2256.4598329999935,
+          2220.8865829999995
+        ],
+        "gitProcesses": 672,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "github-context-burst-32",
+        "rounds": 7,
+        "medianMs": 1261.3798749999987,
+        "maxMs": 1306.6010419999948,
+        "samplesMs": [
+          1261.3798749999987, 1216.5658750000002, 1289.9832500000048,
+          1230.0263750000013, 1306.6010419999948, 1261.1977920000063,
+          1268.463917000001
+        ],
+        "gitProcesses": 1120,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "github-missing-pr-burst-32",
+        "rounds": 7,
+        "medianMs": 2462.865791999997,
+        "maxMs": 2558.316749999998,
+        "samplesMs": [
+          2467.0597909999924, 2461.7327919999952, 2462.865791999997,
+          2435.402291000006, 2489.648291999998, 2410.430791999999,
+          2558.316749999998
+        ],
+        "gitProcesses": 2240,
+        "simulatedGithubCalls": 224
+      },
+      {
+        "name": "github-positive-pr-warm-single",
+        "rounds": 9,
+        "medianMs": 0.0029159999976400286,
+        "maxMs": 0.06741699999838602,
+        "samplesMs": [
+          0.06741699999838602, 0.004083000007085502, 0.003209000002243556,
+          0.0029159999976400286, 0.0029159999976400286, 0.0027079999999841675,
+          0.0027079999999841675, 0.002709000007598661, 0.004750000007334165
+        ],
+        "gitProcesses": 0,
+        "simulatedGithubCalls": 0
+      },
+      {
+        "name": "map-20000-staged-additions-cpu",
+        "rounds": 9,
+        "medianMs": 346.45366600000125,
+        "maxMs": 1197.560666999998,
+        "samplesMs": [
+          1197.560666999998, 1195.4492080000055, 346.45366600000125,
+          341.2149170000048, 342.4019169999956, 342.1818750000093,
+          365.1812079999945, 347.5394579999993, 341.4623330000031
+        ],
+        "gitProcesses": 0,
+        "simulatedGithubCalls": 0
+      }
+    ]
+  }
+}
