@@ -39,14 +39,20 @@ type MockPty = EventEmitter & {
   write: jest.Mock;
 };
 
+const createdPtys: MockPty[] = [];
+
 function createMockPty(): MockPty {
   const process = new EventEmitter() as MockPty;
   process.kill = jest.fn();
   process.onData = jest.fn();
-  process.onExit = jest.fn();
+  process.onExit = jest.fn((callback) => {
+    process.on('exit', callback);
+    return { dispose: () => process.off('exit', callback) };
+  });
   process.pid = 123;
   process.resize = jest.fn();
   process.write = jest.fn();
+  createdPtys.push(process);
   return process;
 }
 
@@ -112,6 +118,12 @@ describe('PtyManager', () => {
       tmuxManager as never,
       plannotatorRegistry as never,
     );
+  });
+
+  afterEach(() => {
+    manager.onModuleDestroy();
+    for (const process of createdPtys.splice(0))
+      process.emit('exit', { exitCode: 0 });
   });
 
   it('coalesces concurrent async spawns for the same session', async () => {
@@ -219,14 +231,14 @@ describe('PtyManager', () => {
       const second = await manager.spawn(7, '/repo/worktree');
       expect(second).not.toBeNull();
 
-      (first as MockPty).onExit.mock.calls[0][0]({
+      (first as unknown as MockPty).onExit.mock.calls[0][0]({
         exitCode: 0,
         signal: undefined,
       });
 
-      expect(manager.getPid(7)).toBe((second as MockPty).pid);
+      expect(manager.getPid(7)).toBe((second as unknown as MockPty).pid);
 
-      (second as MockPty).onExit.mock.calls[0][0]({
+      (second as unknown as MockPty).onExit.mock.calls[0][0]({
         exitCode: 1,
         signal: undefined,
       });
@@ -424,6 +436,60 @@ describe('PtyManager', () => {
 
       expect(process.kill).toHaveBeenCalledTimes(1);
       expect(manager.isAlive(7)).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+  it('escalates the retired PTY without signalling its replacement', async () => {
+    jest.useFakeTimers();
+    try {
+      const first = createMockPty();
+      const second = createMockPty();
+      mockSpawn
+        .mockReturnValueOnce(first as never)
+        .mockReturnValueOnce(second as never);
+      await manager.spawn(7, '/repo/worktree');
+      manager.kill(7);
+      expect(manager.isAlive(7)).toBe(false);
+      await manager.spawn(7, '/repo/worktree');
+      jest.advanceTimersByTime(5000);
+      expect(first.kill.mock.calls).toEqual([['SIGHUP'], ['SIGKILL']]);
+      expect(second.kill).not.toHaveBeenCalled();
+      first.emit('exit', { exitCode: 137 });
+      expect(manager.isAlive(7)).toBe(true);
+      expect(gateway.onUnexpectedExit).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('cancels escalation on exit and waits for all retired PTYs during strict shutdown', async () => {
+    jest.useFakeTimers();
+    try {
+      const first = createMockPty();
+      const second = createMockPty();
+      mockSpawn
+        .mockReturnValueOnce(first as never)
+        .mockReturnValueOnce(second as never);
+      await manager.spawn(7, '/repo/worktree');
+      manager.kill(7);
+      await manager.spawn(7, '/repo/worktree');
+      manager.kill(7);
+      let stopped = false;
+      const pending = manager.stopForTask(7).then(() => {
+        stopped = true;
+      });
+      first.emit('exit', { exitCode: 0 });
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+      jest.advanceTimersByTime(5000);
+      expect(first.kill.mock.calls).toEqual([['SIGHUP']]);
+      expect(second.kill).toHaveBeenLastCalledWith('SIGKILL');
+      second.emit('exit', { exitCode: 137 });
+      await pending;
+      expect(stopped).toBe(true);
+      expect((manager as any).pendingKills.size).toBe(0);
+      expect(gateway.onUnexpectedExit).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }

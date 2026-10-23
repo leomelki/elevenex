@@ -622,8 +622,8 @@ export function stripInheritedTmuxEnv(
 }
 
 // Default interactive shell for a brand-new user terminal. POSIX systems honour
-// $SHELL (set by login) and fall back to zsh. Windows has no $SHELL and no
-// /bin/zsh — prefer PowerShell (pwsh if installed, else Windows PowerShell),
+// $SHELL (set by login), with zsh on macOS and portable sh elsewhere.
+// Windows has no $SHELL and no /bin/zsh — prefer PowerShell (pwsh if installed, else Windows PowerShell),
 // then cmd.exe as a last resort.
 export function getDefaultUserShell(): string {
   if (IS_WINDOWS) {
@@ -635,7 +635,10 @@ export function getDefaultUserShell(): string {
       'powershell.exe'
     );
   }
-  return process.env.SHELL || '/bin/zsh';
+  return (
+    process.env.SHELL ||
+    (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh')
+  );
 }
 
 // Map a persisted shell to one that can actually run on this platform. User
@@ -651,9 +654,14 @@ export function normalizeShellForPlatform(shell: string): string {
 
 // Return the shell flags needed to run `command` as a one-shot child process.
 // POSIX shells use `-lc`; PowerShell uses `-Command`; cmd.exe uses `/c`.
-export function buildShellCommandArgs(shell: string, command: string): string[] {
+export function buildShellCommandArgs(
+  shell: string,
+  command: string,
+): string[] {
   if (!IS_WINDOWS) return ['-lc', command];
-  const base = basename(shell).toLowerCase().replace(/\.exe$/, '');
+  const base = basename(shell)
+    .toLowerCase()
+    .replace(/\.exe$/, '');
   if (base === 'pwsh' || base === 'powershell') {
     return ['-Command', command];
   }

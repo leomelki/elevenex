@@ -1,8 +1,23 @@
 import type { IPty } from 'node-pty';
 
+const terminations = new WeakMap<IPty, Promise<void>>();
+
 /** Await process exit before allowing its working directory to be reused. */
-export function terminatePtyAndWait(process: IPty): Promise<void> {
-  return new Promise((resolve, reject) => {
+export function terminatePtyAndWait(
+  process: IPty,
+  options: { signal?: string; graceMs?: number } = {},
+): Promise<void> {
+  const existing = terminations.get(process);
+  if (existing) return existing;
+  // Register before signalling: kill can synchronously deliver an exit event.
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const pending = new Promise<void>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  terminations.set(process, pending);
+  const begin = () => {
     let settled = false;
     let escalation: NodeJS.Timeout | undefined;
     let deadline: NodeJS.Timeout | undefined;
@@ -11,11 +26,21 @@ export function terminatePtyAndWait(process: IPty): Promise<void> {
       settled = true;
       clearTimeout(escalation);
       clearTimeout(deadline);
-      subscription.dispose();
+      subscription?.dispose();
       if (error) reject(error);
       else resolve();
     };
-    const subscription = process.onExit(() => finish());
+    let subscription: { dispose(): void } | undefined;
+    try {
+      subscription = process.onExit(() => finish());
+    } catch (error) {
+      finish(error);
+      return;
+    }
+    if (settled) {
+      subscription?.dispose();
+      return;
+    }
     const kill = (signal: string) => {
       try {
         process.kill(signal);
@@ -24,7 +49,7 @@ export function terminatePtyAndWait(process: IPty): Promise<void> {
         else finish(error);
       }
     };
-    escalation = setTimeout(() => kill('SIGKILL'), 1500);
+    escalation = setTimeout(() => kill('SIGKILL'), options.graceMs ?? 1500);
     deadline = setTimeout(
       () =>
         finish(
@@ -34,6 +59,12 @@ export function terminatePtyAndWait(process: IPty): Promise<void> {
         ),
       7000,
     );
-    kill('SIGTERM');
+    kill(options.signal ?? 'SIGTERM');
+  };
+  begin();
+  // A failed stop can be retried. Successful stops remain known for late callers.
+  void pending.catch(() => {
+    if (terminations.get(process) === pending) terminations.delete(process);
   });
+  return pending;
 }
