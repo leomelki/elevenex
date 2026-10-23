@@ -31,10 +31,10 @@ type RenameRequest = {
   overwrite?: boolean;
 };
 
-function decodeWildcardPath(value: string | string[]): string {
-  // Express 5 supplies wildcard captures as already-decoded path segments.
-  // Joining preserves directory separators and avoids decoding literal '%' twice.
-  return Array.isArray(value) ? value.join('/') : decodeURIComponent(value);
+function joinWildcardPath(value: string | string[]): string {
+  // Express already decodes route and query parameters, including wildcard
+  // segments. Only join the wildcard array; literal percent escapes are names.
+  return Array.isArray(value) ? value.join('/') : value;
 }
 
 function toBoolean(value: string | undefined): boolean | undefined {
@@ -94,15 +94,35 @@ export class FilesystemController {
 
 @Controller('worktrees')
 export class FilesController {
-  constructor(private readonly filesService: FilesService, @Inject(DRIZZLE) private readonly db: DrizzleDB) {}
+  constructor(
+    private readonly filesService: FilesService,
+    @Inject(DRIZZLE) private readonly db: DrizzleDB,
+  ) {}
 
   private async assertTaskWrite(worktreePath: string, taskId?: string) {
     // A cached editor may outlive its task or the checkout assigned to it.
     if (!taskId) return;
     const id = Number(taskId);
-    const task = Number.isSafeInteger(id) && id > 0 ? (await this.db.select().from(schema.workspaces).where(eq(schema.workspaces.id, id)).limit(1))[0] : undefined;
-    if (!task || task.archivedAt || task.taskState !== 'ready' || task.linkStatus !== 'linked' || path.resolve(task.path) !== path.resolve(worktreePath)) {
-      throw new ConflictException('This editor belongs to an inactive task. Reopen the task before saving files.');
+    const task =
+      Number.isSafeInteger(id) && id > 0
+        ? (
+            await this.db
+              .select()
+              .from(schema.workspaces)
+              .where(eq(schema.workspaces.id, id))
+              .limit(1)
+          )[0]
+        : undefined;
+    if (
+      !task ||
+      task.archivedAt ||
+      task.taskState !== 'ready' ||
+      task.linkStatus !== 'linked' ||
+      path.resolve(task.path) !== path.resolve(worktreePath)
+    ) {
+      throw new ConflictException(
+        'This editor belongs to an inactive task. Reopen the task before saving files.',
+      );
     }
   }
 
@@ -111,12 +131,10 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Query('path') targetPath?: string,
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedTargetPath = targetPath ? decodeURIComponent(targetPath) : '';
-    const absolutePath = decodedTargetPath
-      ? path.join(decodedWorktree, decodedTargetPath)
-      : decodedWorktree;
-    return this.filesService.stat(absolutePath, decodedWorktree);
+    const absolutePath = targetPath
+      ? path.join(worktreePath, targetPath)
+      : worktreePath;
+    return this.filesService.stat(absolutePath, worktreePath);
   }
 
   @Get(':worktreePath/stat/*path')
@@ -124,10 +142,9 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Param('path') filePath: string | string[],
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedFile = decodeWildcardPath(filePath);
-    const absolutePath = path.join(decodedWorktree, decodedFile);
-    return this.filesService.stat(absolutePath, decodedWorktree);
+    const decodedFile = joinWildcardPath(filePath);
+    const absolutePath = path.join(worktreePath, decodedFile);
+    return this.filesService.stat(absolutePath, worktreePath);
   }
 
   /**
@@ -141,9 +158,7 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Query('dir') dir?: string,
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedDir = dir ? decodeURIComponent(dir) : '';
-    return this.filesService.listFiles(decodedWorktree, decodedDir);
+    return this.filesService.listFiles(worktreePath, dir ?? '');
   }
 
   @Get(':worktreePath/file-search')
@@ -152,10 +167,9 @@ export class FilesController {
     @Query('query') query?: string,
     @Query('limit') limit?: string,
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
     const parsedLimit = limit === undefined ? undefined : Number(limit);
     return this.filesService.searchFiles(
-      decodedWorktree,
+      worktreePath,
       query ?? '',
       parsedLimit,
     );
@@ -182,7 +196,6 @@ export class FilesController {
     @Query('useIgnoreFiles') useIgnoreFiles?: string,
     @Query('maxResults') maxResults?: string,
   ): Promise<void> {
-    const decodedWorktree = decodeURIComponent(worktreePath);
     const parsedMaxResults =
       maxResults === undefined ? undefined : Number(maxResults);
 
@@ -213,7 +226,7 @@ export class FilesController {
 
     try {
       const summary = await this.filesService.searchTextStream(
-        decodedWorktree,
+        worktreePath,
         {
           query: query ?? '',
           isRegExp: toBoolean(isRegExp),
@@ -271,11 +284,10 @@ export class FilesController {
     @Query('useIgnoreFiles') useIgnoreFiles?: string,
     @Query('maxResults') maxResults?: string,
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
     const parsedMaxResults =
       maxResults === undefined ? undefined : Number(maxResults);
 
-    return this.filesService.searchText(decodedWorktree, {
+    return this.filesService.searchText(worktreePath, {
       query: query ?? '',
       isRegExp: toBoolean(isRegExp),
       isCaseSensitive: toBoolean(isCaseSensitive),
@@ -297,12 +309,11 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Param('path') filePath: string | string[],
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedFile = decodeWildcardPath(filePath);
-    const absolutePath = path.join(decodedWorktree, decodedFile);
+    const decodedFile = joinWildcardPath(filePath);
+    const absolutePath = path.join(worktreePath, decodedFile);
 
     try {
-      return await this.filesService.readFile(absolutePath, decodedWorktree);
+      return await this.filesService.readFile(absolutePath, worktreePath);
     } catch (error) {
       if (error instanceof Error && error.message.includes('does not exist')) {
         throw new NotFoundException(error.message);
@@ -325,22 +336,20 @@ export class FilesController {
     @Res({ passthrough: true }) res: Response,
     @Headers('range') range?: string,
   ): Promise<StreamableFile> {
-    const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedFile = decodeWildcardPath(filePath);
-    const absolutePath = path.join(decodedWorktree, decodedFile);
+    const decodedFile = joinWildcardPath(filePath);
+    const absolutePath = path.join(worktreePath, decodedFile);
 
     try {
       const { stream, mimeType, length, statusCode, contentRange } =
-        await this.filesService.readFileRaw(
-          absolutePath,
-          decodedWorktree,
-          range,
-        );
+        await this.filesService.readFileRaw(absolutePath, worktreePath, range);
       res.status(statusCode);
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Accept-Ranges', 'bytes');
       if (contentRange) res.setHeader('Content-Range', contentRange);
-      res.setHeader('Cache-Control', /^(image|video)\//.test(mimeType) ? 'no-store' : 'private, max-age=60');
+      res.setHeader(
+        'Cache-Control',
+        /^(image|video)\//.test(mimeType) ? 'no-store' : 'private, max-age=60',
+      );
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.once('close', () => stream.destroy());
       return new StreamableFile(stream, { type: mimeType, length });
@@ -357,12 +366,10 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Query('path') filePath: string,
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
-    const decodedFile = decodeURIComponent(filePath);
-    const absolutePath = path.join(decodedWorktree, decodedFile);
+    const absolutePath = path.join(worktreePath, filePath);
 
     try {
-      return await this.filesService.readFile(absolutePath, decodedWorktree);
+      return await this.filesService.readFile(absolutePath, worktreePath);
     } catch (error) {
       if (error instanceof Error && error.message.includes('does not exist')) {
         throw new NotFoundException(error.message);
@@ -383,16 +390,11 @@ export class FilesController {
     @Body() body: { content: string },
     @Headers('x-elevenex-task-id') taskId?: string,
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
-    await this.assertTaskWrite(decodedWorktree, taskId);
-    const decodedFile = decodeWildcardPath(filePath);
-    const absolutePath = path.join(decodedWorktree, decodedFile);
+    await this.assertTaskWrite(worktreePath, taskId);
+    const decodedFile = joinWildcardPath(filePath);
+    const absolutePath = path.join(worktreePath, decodedFile);
 
-    await this.filesService.writeFile(
-      absolutePath,
-      body.content,
-      decodedWorktree,
-    );
+    await this.filesService.writeFile(absolutePath, body.content, worktreePath);
     return { success: true };
   }
 
@@ -403,16 +405,10 @@ export class FilesController {
     @Body() body: { content: string },
     @Headers('x-elevenex-task-id') taskId?: string,
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
-    await this.assertTaskWrite(decodedWorktree, taskId);
-    const decodedFile = decodeURIComponent(filePath);
-    const absolutePath = path.join(decodedWorktree, decodedFile);
+    await this.assertTaskWrite(worktreePath, taskId);
+    const absolutePath = path.join(worktreePath, filePath);
 
-    await this.filesService.writeFile(
-      absolutePath,
-      body.content,
-      decodedWorktree,
-    );
+    await this.filesService.writeFile(absolutePath, body.content, worktreePath);
     return { success: true };
   }
 
@@ -425,7 +421,9 @@ export class FilesController {
     @Headers('x-elevenex-task-id') taskId?: string,
   ) {
     if (!req.is('application/octet-stream')) {
-      throw new UnsupportedMediaTypeException('Expected application/octet-stream');
+      throw new UnsupportedMediaTypeException(
+        'Expected application/octet-stream',
+      );
     }
     // Express already decodes route and query parameters. Preserve literal %.
     await this.assertTaskWrite(worktreePath, taskId);
@@ -445,12 +443,11 @@ export class FilesController {
     @Param('path') dirPath: string | string[],
     @Headers('x-elevenex-task-id') taskId?: string,
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
-    await this.assertTaskWrite(decodedWorktree, taskId);
-    const decodedDir = decodeWildcardPath(dirPath);
-    const absolutePath = path.join(decodedWorktree, decodedDir);
+    await this.assertTaskWrite(worktreePath, taskId);
+    const decodedDir = joinWildcardPath(dirPath);
+    const absolutePath = path.join(worktreePath, decodedDir);
 
-    await this.filesService.createDirectory(absolutePath, decodedWorktree);
+    await this.filesService.createDirectory(absolutePath, worktreePath);
     return { success: true };
   }
 
@@ -461,16 +458,15 @@ export class FilesController {
     @Body() body: RenameRequest,
     @Headers('x-elevenex-task-id') taskId?: string,
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
-    await this.assertTaskWrite(decodedWorktree, taskId);
-    const decodedFile = decodeWildcardPath(filePath);
-    const absoluteOldPath = path.join(decodedWorktree, decodedFile);
-    const absoluteNewPath = path.join(decodedWorktree, body.newPath);
+    await this.assertTaskWrite(worktreePath, taskId);
+    const decodedFile = joinWildcardPath(filePath);
+    const absoluteOldPath = path.join(worktreePath, decodedFile);
+    const absoluteNewPath = path.join(worktreePath, body.newPath);
 
     await this.filesService.rename(
       absoluteOldPath,
       absoluteNewPath,
-      decodedWorktree,
+      worktreePath,
       body.overwrite ?? false,
     );
 
@@ -484,14 +480,13 @@ export class FilesController {
     @Query('recursive') recursive?: string,
     @Headers('x-elevenex-task-id') taskId?: string,
   ) {
-    const decodedWorktree = decodeURIComponent(worktreePath);
-    await this.assertTaskWrite(decodedWorktree, taskId);
-    const decodedFile = decodeWildcardPath(filePath);
-    const absolutePath = path.join(decodedWorktree, decodedFile);
+    await this.assertTaskWrite(worktreePath, taskId);
+    const decodedFile = joinWildcardPath(filePath);
+    const absolutePath = path.join(worktreePath, decodedFile);
 
     await this.filesService.deleteEntry(
       absolutePath,
-      decodedWorktree,
+      worktreePath,
       recursive === 'true',
     );
 

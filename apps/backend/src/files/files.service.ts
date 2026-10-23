@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { StringDecoder } from 'node:string_decoder';
 
 export interface FileTreeNode {
   key: string; // Relative path from worktree root
@@ -60,7 +61,7 @@ export interface TextSearchOptions {
 }
 
 export interface TextSearchSummary {
-  /** True when the search stopped early because `maxResults` was reached. */
+  /** True when the search stopped early at a result or processing limit. */
   limitHit: boolean;
 }
 
@@ -77,6 +78,10 @@ const MAX_TEXT_SEARCH_LIMIT = 2_000;
  */
 const TEXT_SEARCH_MAX_PREVIEW_CHARS = 1_000;
 const TEXT_SEARCH_PREVIEW_LEAD_CHARS = 100;
+// Bound JSON parsing, offset mapping and response size for minified bundles.
+// Hitting either cap is reported through the existing limitHit summary.
+const TEXT_SEARCH_MAX_RECORD_CHARS = 8 * 1024 * 1024;
+const TEXT_SEARCH_MAX_RANGES_PER_LINE = 2_000;
 /**
  * Matches are coalesced into batches so a busy search does not turn into one
  * socket write per line, while still reaching the client quickly.
@@ -296,14 +301,39 @@ function resolveRipgrepBinary(): string {
   return 'rg';
 }
 
-function byteOffsetToStringOffset(text: string, byteOffset: number): number {
-  if (byteOffset <= 0) {
-    return 0;
+function mapByteRanges(
+  text: string,
+  submatches: TextSearchRange[],
+): TextSearchRange[] {
+  // Encode once, then decode disjoint spans in byte order. Rebuilding and
+  // decoding the entire prefix for each endpoint is quadratic on long lines.
+  const bytes = Buffer.from(text, 'utf8');
+  const offsets = [
+    ...new Set(submatches.flatMap(({ start, end }) => [start, end])),
+  ].sort((left, right) => left - right);
+  const mapped = new Map<number, number>();
+  let previousByte = 0;
+  let previousString = 0;
+  for (const offset of offsets) {
+    const end = Math.min(offset, bytes.length);
+    let boundary = end;
+    // Byte-oriented regular expressions can end inside a UTF-8 character.
+    // Match Buffer prefix decoding's single replacement character in that case.
+    while (
+      boundary > 0 &&
+      boundary < bytes.length &&
+      (bytes[boundary] & 0xc0) === 0x80
+    ) {
+      boundary -= 1;
+    }
+    previousString += bytes.toString('utf8', previousByte, boundary).length;
+    previousByte = boundary;
+    mapped.set(offset, previousString + (boundary < end ? 1 : 0));
   }
-
-  return Buffer.from(text, 'utf8')
-    .subarray(0, byteOffset)
-    .toString('utf8').length;
+  return submatches.map(({ start, end }) => ({
+    start: mapped.get(start)!,
+    end: mapped.get(end)!,
+  }));
 }
 
 /**
@@ -333,7 +363,10 @@ function buildBoundedPreview(
   const previewText = lineText.slice(windowStart, windowEnd);
   const previewRanges = ranges
     .map((range) => ({
-      start: Math.min(Math.max(range.start - windowStart, 0), previewText.length),
+      start: Math.min(
+        Math.max(range.start - windowStart, 0),
+        previewText.length,
+      ),
       end: Math.min(Math.max(range.end - windowStart, 0), previewText.length),
     }))
     .filter((range) => range.end > range.start);
@@ -431,10 +464,7 @@ function runGitLsFiles(worktreePath: string): Promise<string[]> {
       }
 
       resolve(
-        Buffer.concat(stdout)
-          .toString('utf8')
-          .split('\0')
-          .filter(Boolean),
+        Buffer.concat(stdout).toString('utf8').split('\0').filter(Boolean),
       );
     });
   });
@@ -498,7 +528,9 @@ export class FilesService {
     try {
       stat = await fs.stat(resolvedWorktree);
     } catch {
-      throw new BadRequestException(`Directory does not exist: ${worktreePath}`);
+      throw new BadRequestException(
+        `Directory does not exist: ${worktreePath}`,
+      );
     }
 
     if (!stat.isDirectory()) {
@@ -577,7 +609,9 @@ export class FilesService {
     try {
       stat = await fs.stat(resolvedWorktree);
     } catch {
-      throw new BadRequestException(`Directory does not exist: ${worktreePath}`);
+      throw new BadRequestException(
+        `Directory does not exist: ${worktreePath}`,
+      );
     }
 
     if (!stat.isDirectory()) {
@@ -602,7 +636,10 @@ export class FilesService {
       let flushTimer: ReturnType<typeof setTimeout> | null = null;
       let emitted = 0;
       let limitHit = false;
-      let stdoutBuffer = '';
+      const stdoutDecoder = new StringDecoder('utf8');
+      const stderrDecoder = new StringDecoder('utf8');
+      let lineParts: string[] = [];
+      let lineChars = 0;
       let stderr = '';
       let stopped = false;
       let settled = false;
@@ -640,7 +677,8 @@ export class FilesService {
           onResults(batch);
         } catch (error) {
           // The consumer (usually a disconnected HTTP response) went away.
-          consumerError = error instanceof Error ? error : new Error(String(error));
+          consumerError =
+            error instanceof Error ? error : new Error(String(error));
           stopChild();
         }
       };
@@ -701,19 +739,29 @@ export class FilesService {
           /\r?\n$/,
           '',
         );
-        const lineNumber = Math.max(0, Number(event.data?.line_number ?? 1) - 1);
+        const lineNumber = Math.max(
+          0,
+          Number(event.data?.line_number ?? 1) - 1,
+        );
         const submatches = Array.isArray(event.data?.submatches)
           ? event.data.submatches
           : [];
-        const ranges = submatches
-          .map((submatch: any) => ({
-            start: byteOffsetToStringOffset(
-              lineText,
-              Number(submatch.start ?? 0),
+        const ranges = mapByteRanges(
+          lineText,
+          submatches
+            .slice(0, TEXT_SEARCH_MAX_RANGES_PER_LINE)
+            .map((submatch: any) => ({
+              start: Number(submatch.start),
+              end: Number(submatch.end),
+            }))
+            .filter(
+              ({ start, end }: TextSearchRange) =>
+                Number.isSafeInteger(start) &&
+                Number.isSafeInteger(end) &&
+                start >= 0 &&
+                end >= start,
             ),
-            end: byteOffsetToStringOffset(lineText, Number(submatch.end ?? 0)),
-          }))
-          .filter((range: TextSearchRange) => range.end >= range.start);
+        );
 
         if (!relativePath || ranges.length === 0) {
           return;
@@ -727,7 +775,10 @@ export class FilesService {
         });
         emitted += 1;
 
-        if (emitted >= maxResults) {
+        if (
+          emitted >= maxResults ||
+          submatches.length > TEXT_SEARCH_MAX_RANGES_PER_LINE
+        ) {
           limitHit = true;
           flush();
           stopChild();
@@ -737,17 +788,34 @@ export class FilesService {
         scheduleFlush();
       };
 
-      child.stdout.on('data', (chunk: Buffer) => {
-        stdoutBuffer += chunk.toString('utf8');
-        const lines = stdoutBuffer.split(/\r?\n/);
-        stdoutBuffer = lines.pop() ?? '';
-        for (const line of lines) {
-          handleLine(line);
+      const consumeOutput = (text: string): void => {
+        let start = 0;
+        while (start < text.length && !stopped && !settled) {
+          const newline = text.indexOf('\n', start);
+          const part = text.slice(start, newline < 0 ? text.length : newline);
+          lineChars += part.length;
+          if (lineChars > TEXT_SEARCH_MAX_RECORD_CHARS) {
+            lineParts = [];
+            lineChars = 0;
+            limitHit = true;
+            stopChild();
+            return;
+          }
+          lineParts.push(part);
+          if (newline < 0) return;
+          handleLine(lineParts.join(''));
+          lineParts = [];
+          lineChars = 0;
+          start = newline + 1;
         }
+      };
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        consumeOutput(stdoutDecoder.write(chunk));
       });
 
       child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf8');
+        stderr = (stderr + stderrDecoder.write(chunk)).slice(0, 64 * 1024);
       });
 
       child.on('error', (error) => {
@@ -756,8 +824,10 @@ export class FilesService {
       });
 
       child.on('close', (code, exitSignal) => {
-        if (stdoutBuffer) {
-          handleLine(stdoutBuffer);
+        consumeOutput(stdoutDecoder.end());
+        stderr += stderrDecoder.end();
+        if (!stopped && lineParts.length > 0) {
+          handleLine(lineParts.join(''));
         }
         flush();
 
@@ -948,10 +1018,7 @@ export class FilesService {
       }
 
       for (const entry of entries) {
-        if (
-          entry.name === '.git' ||
-          entry.name === 'node_modules'
-        ) {
+        if (entry.name === '.git' || entry.name === 'node_modules') {
           continue;
         }
 
@@ -1105,6 +1172,9 @@ export class FilesService {
     dirPath: string = '',
   ): Promise<FileTreeNode[]> {
     const targetDir = dirPath ? path.join(worktreePath, dirPath) : worktreePath;
+    if (!isWithinWorktree(worktreePath, targetDir)) {
+      throw new BadRequestException('Access denied: path outside worktree');
+    }
 
     // Validate worktree exists
     try {
@@ -1333,31 +1403,42 @@ export class FilesService {
       throw new BadRequestException('Access denied: path outside worktree');
     }
     if (path.resolve(filePath) === path.resolve(worktreePath)) {
-      throw new BadRequestException('A file path within the worktree is required');
+      throw new BadRequestException(
+        'A file path within the worktree is required',
+      );
     }
 
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     const realWorktree = await fs.realpath(worktreePath);
     const realParent = await fs.realpath(path.dirname(filePath));
     // Save through existing symlinks instead of replacing the link itself.
-    const destination = await fs.realpath(filePath).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') throw error;
-      return path.join(realParent, path.basename(filePath));
-    });
+    const destination = await fs
+      .realpath(filePath)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+        return path.join(realParent, path.basename(filePath));
+      });
     if (!isWithinWorktree(realWorktree, destination)) {
       throw new BadRequestException('Access denied: path outside worktree');
     }
     if (destination === realWorktree) {
-      throw new BadRequestException('A file path within the worktree is required');
+      throw new BadRequestException(
+        'A file path within the worktree is required',
+      );
     }
-    const temporary = path.join(path.dirname(destination), `.elevenex-upload-${randomUUID()}.tmp`);
+    const temporary = path.join(
+      path.dirname(destination),
+      `.elevenex-upload-${randomUUID()}.tmp`,
+    );
     try {
       await pipeline(content, createWriteStream(temporary, { flags: 'wx' }));
       // Preserve executable bits when uploading over an existing file.
-      const existing = await fs.stat(destination).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') throw error;
-        return undefined;
-      });
+      const existing = await fs
+        .stat(destination)
+        .catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+          return undefined;
+        });
       if (existing) await fs.chmod(temporary, existing.mode);
       await beforeCommit?.();
       await fs.rename(temporary, destination);
@@ -1387,32 +1468,110 @@ export class FilesService {
       throw new BadRequestException('Access denied: path outside worktree');
     }
 
-    try {
-      await fs.access(oldPath);
-    } catch {
-      throw new BadRequestException(`Path does not exist: ${oldPath}`);
+    const root = path.resolve(worktreePath);
+    oldPath = path.resolve(oldPath);
+    newPath = path.resolve(newPath);
+    if (oldPath === root || newPath === root) {
+      throw new BadRequestException(
+        'Cannot rename or replace the worktree root',
+      );
     }
 
-    let destinationExists = false;
-
-    try {
-      await fs.access(newPath);
-      destinationExists = true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+    const source = await fs
+      .lstat(oldPath)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') {
+          throw new BadRequestException(`Path does not exist: ${oldPath}`);
+        }
         throw error;
-      }
+      });
+    if (oldPath === newPath) return;
+    if (
+      isWithinWorktree(oldPath, newPath) ||
+      isWithinWorktree(newPath, oldPath)
+    ) {
+      throw new BadRequestException(
+        'Cannot rename between ancestor and descendant paths',
+      );
     }
 
-    if (destinationExists) {
+    // Resolve parents, not the final entry: rename moves a symlink itself.
+    // This also catches aliases through symlinked directories before touching
+    // either entry, and verifies that the destination parent exists.
+    const [realRoot, oldParent, newParent] = await Promise.all([
+      fs.realpath(root),
+      fs.realpath(path.dirname(oldPath)),
+      fs.realpath(path.dirname(newPath)),
+    ]);
+    const sourceEntry = path.join(oldParent, path.basename(oldPath));
+    const destinationEntry = path.join(newParent, path.basename(newPath));
+    if (
+      !isWithinWorktree(realRoot, sourceEntry) ||
+      !isWithinWorktree(realRoot, destinationEntry)
+    ) {
+      throw new BadRequestException('Access denied: path outside worktree');
+    }
+    if (sourceEntry === destinationEntry) return;
+    if (
+      isWithinWorktree(sourceEntry, destinationEntry) ||
+      isWithinWorktree(destinationEntry, sourceEntry)
+    ) {
+      throw new BadRequestException(
+        'Cannot rename between ancestor and descendant paths',
+      );
+    }
+
+    const destination = await fs
+      .lstat(newPath)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+        return undefined;
+      });
+    if (destination) {
+      // Hard links and case-only renames can name the same filesystem entry.
+      // Let the OS handle these without ever removing the source's identity.
+      if (source.dev === destination.dev && source.ino === destination.ino) {
+        await fs.rename(oldPath, newPath);
+        return;
+      }
       if (!overwrite) {
         throw new BadRequestException('Destination already exists');
       }
-
-      await fs.rm(newPath, { recursive: true, force: true });
     }
 
-    await fs.rename(oldPath, newPath);
+    try {
+      // Prefer an atomic replacement; a failed rename leaves the target intact.
+      await fs.rename(oldPath, newPath);
+      return;
+    } catch (error) {
+      if (
+        !destination ||
+        !overwrite ||
+        !['EEXIST', 'ENOTEMPTY', 'EISDIR', 'ENOTDIR'].includes(
+          (error as NodeJS.ErrnoException).code ?? '',
+        )
+      )
+        throw error;
+    }
+
+    // Non-empty directories (and file/directory replacements) require moving
+    // the target aside. Keep it recoverable until the source has moved.
+    const backup = path.join(newParent, `.elevenex-rename-${randomUUID()}.tmp`);
+    await fs.rename(newPath, backup);
+    try {
+      await fs.rename(oldPath, newPath);
+    } catch (error) {
+      try {
+        await fs.rename(backup, newPath);
+      } catch (restoreError) {
+        throw new AggregateError(
+          [error, restoreError],
+          `Rename failed; original destination retained at ${backup}`,
+        );
+      }
+      throw error;
+    }
+    await fs.rm(backup, { recursive: true, force: true });
   }
 
   async deleteEntry(
