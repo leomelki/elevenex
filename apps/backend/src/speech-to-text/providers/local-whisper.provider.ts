@@ -46,6 +46,7 @@ export class LocalWhisperSpeechToTextProvider implements SpeechToTextProvider {
     // transcript; transcript cleanup is the supported way to fix identifiers
     // for this provider.
     return this.engine.transcribe({
+      signal: input.signal,
       samples,
       model: input.model as LocalWhisperModelId,
       // The full set, not `input.language`: unlike the cloud providers this

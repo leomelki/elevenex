@@ -1,3 +1,4 @@
+import { fetchTranscriptionJson } from './provider-request.js';
 import {
   MAX_KEYTERMS,
   SpeechToTextProvider,
@@ -12,9 +13,7 @@ import {
  * is just a base URL. OpenAI documents flac, mp3, mp4, mpeg, mpga, m4a, ogg,
  * wav and webm, so browser recordings upload as-is.
  */
-export class OpenAiCompatibleSpeechToTextProvider
-  implements SpeechToTextProvider
-{
+export class OpenAiCompatibleSpeechToTextProvider implements SpeechToTextProvider {
   readonly id = 'openai-compatible' as const;
 
   readonly acceptedMimeTypes = [
@@ -48,36 +47,25 @@ export class OpenAiCompatibleSpeechToTextProvider
     if (input.keyterms.length > 0) {
       // Whisper-style models take a free-text prompt as a decoding hint; a bare
       // comma list of identifiers is the documented way to bias vocabulary.
-      form.append(
-        'prompt',
-        input.keyterms.slice(0, MAX_KEYTERMS).join(', '),
-      );
+      form.append('prompt', input.keyterms.slice(0, MAX_KEYTERMS).join(', '));
     }
 
     const endpoint = `${this.baseUrl.replace(/\/+$/, '')}/audio/transcriptions`;
 
-    let response: Response;
-    try {
-      response = await fetch(endpoint, {
+    const payload = (await fetchTranscriptionJson(
+      endpoint,
+      {
         method: 'POST',
         headers: { Authorization: `Bearer ${this.apiKey}` },
         body: form,
-      });
-    } catch (error) {
-      throw new SpeechToTextProviderError(
-        `Could not reach ${this.baseUrl}: ${(error as Error).message}`,
-      );
-    }
-
-    if (!response.ok) {
-      throw new SpeechToTextProviderError(
-        describeFailure(response.status),
-        response.status,
-      );
-    }
-
-    const payload = (await response.json()) as { text?: unknown };
-    if (typeof payload.text !== 'string') {
+      },
+      {
+        signal: input.signal,
+        provider: 'the transcription endpoint',
+        describeFailure,
+      },
+    )) as { text?: unknown };
+    if (typeof payload?.text !== 'string') {
       throw new SpeechToTextProviderError(
         'The transcription endpoint returned an unexpected response shape.',
       );
