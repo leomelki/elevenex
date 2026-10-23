@@ -232,6 +232,18 @@ export class GitService {
     return request;
   }
 
+  private invalidateStatusSummaries(worktreePath: string): void {
+    const normalizedPath = path.resolve(worktreePath);
+    clearWorktreeFingerprintCache(normalizedPath);
+    // A request can still be waiting for remote metadata after its local scan.
+    // New readers after a mutation must not join that pre-mutation summary.
+    for (const conflictsOnly of [false, true]) {
+      this.statusSummaryInFlight.delete(
+        JSON.stringify([normalizedPath, conflictsOnly]),
+      );
+    }
+  }
+
   private async loadStatusSummary(
     worktreePath: string,
     conflictsOnly: boolean,
@@ -345,22 +357,22 @@ export class GitService {
   }
 
   async stageFiles(worktreePath: string, files: string[]): Promise<void> {
-    clearWorktreeFingerprintCache(worktreePath);
+    this.invalidateStatusSummaries(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
     try {
       await git.add(files);
     } finally {
-      clearWorktreeFingerprintCache(worktreePath);
+      this.invalidateStatusSummaries(worktreePath);
     }
   }
 
   async unstageFiles(worktreePath: string, files: string[]): Promise<void> {
-    clearWorktreeFingerprintCache(worktreePath);
+    this.invalidateStatusSummaries(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
     try {
       await git.raw(['reset', 'HEAD', '--', ...files]);
     } finally {
-      clearWorktreeFingerprintCache(worktreePath);
+      this.invalidateStatusSummaries(worktreePath);
     }
   }
 
@@ -374,7 +386,7 @@ export class GitService {
     } = {},
   ): Promise<CommitResult> {
     const requestId = options.requestId ?? this.createRequestId();
-    clearWorktreeFingerprintCache(worktreePath);
+    this.invalidateStatusSummaries(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
 
     this.logger.log(
@@ -433,7 +445,7 @@ export class GitService {
 
       this.logger.log(`[commit:${requestId}] running git commit`);
       const result = await git.commit(message);
-      clearWorktreeFingerprintCache(worktreePath);
+      this.invalidateStatusSummaries(worktreePath);
       this.logger.log(
         `[commit:${requestId}] git commit completed hash=${result.commit || 'unknown'} generatedMessage=${generatedMessage}`,
       );
@@ -447,7 +459,7 @@ export class GitService {
         `[commit:${requestId}] failed ${this.formatGitError(error)}`,
         error?.stack,
       );
-      clearWorktreeFingerprintCache(worktreePath);
+      this.invalidateStatusSummaries(worktreePath);
       if (error instanceof BadRequestException) {
         throw error;
       }

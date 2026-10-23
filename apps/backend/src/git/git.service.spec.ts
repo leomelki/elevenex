@@ -575,6 +575,46 @@ describe('GitService', () => {
   });
 
   describe('getStatusSummary', () => {
+    it.each(['stage', 'unstage', 'commit'] as const)(
+      'does not reuse a pre-%s summary that is still waiting for remote metadata',
+      async (mutation) => {
+        fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'changed content');
+        if (mutation !== 'stage') {
+          execFileSync('git', ['add', 'initial.txt'], { cwd: repoPath });
+        }
+        const observingRemote = deferred<void>();
+        const oldRemote = deferred<null>();
+        const probe = jest
+          .spyOn(service as any, 'findMatchingRemoteBranch')
+          .mockImplementationOnce(() => {
+            observingRemote.resolve();
+            return oldRemote.promise;
+          })
+          .mockResolvedValue(null);
+        const old = service.getStatusSummary(repoPath);
+        try {
+          await observingRemote.promise;
+          if (mutation === 'stage') {
+            await service.stageFiles(repoPath, ['initial.txt']);
+          } else if (mutation === 'unstage') {
+            await service.unstageFiles(repoPath, ['initial.txt']);
+          } else {
+            await service.commit(repoPath, { message: 'Save changed content' });
+          }
+          const current = service.getStatusSummary(repoPath);
+          expect(current).not.toBe(old);
+          const fresh = await current;
+          expect(fresh.staged.files).toBe(mutation === 'stage' ? 1 : 0);
+          expect(fresh.unstaged.files).toBe(mutation === 'unstage' ? 1 : 0);
+          expect(fresh.hasChanges).toBe(mutation !== 'commit');
+        } finally {
+          oldRemote.resolve(null);
+          await old;
+          probe.mockRestore();
+        }
+      },
+    );
+
     it('shares the entire pending summary and rereads stats on the next poll', async () => {
       fs.writeFileSync(path.join(repoPath, 'notes.txt'), 'note\n');
       const entered = deferred<void>();
