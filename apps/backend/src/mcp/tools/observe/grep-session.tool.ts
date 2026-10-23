@@ -1,12 +1,10 @@
 import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
-import {
-  renderMarkdown,
-  type ConversationExportOptions,
-} from '../../../agent-runtime/conversation-export.service.js';
+import { type ConversationExportOptions } from '../../../agent-runtime/conversation-export.service.js';
+import { searchSessionTranscript } from './session-grep.js';
 
 /**
- * grep_session — search the full rendered transcript without loading it whole.
+ * grep_session — search bounded rendered chunks in a cancellable worker.
  *
  * Renders the session at the requested precision (same pipeline as read_session)
  * and returns matches with surrounding context lines and their line numbers.
@@ -20,18 +18,15 @@ export const grepSessionTool = defineTool({
   costClass: 'cached',
   requiresQuery: true,
   description:
-    "Search the rendered transcript for a string or regex. ⚠️ The grep runs only against the file generated at the chosen precision — content omitted at that precision level is invisible to this search. 'small' collapses or drops many details; if you might be missing results, retry at a higher precision. Returns matching lines with context and their line numbers. 🟢 Use read_session_range with the same precision to zoom into any match.",
+    "Search the rendered transcript for a string or regex. ⚠️ The grep runs only against the file generated at the chosen precision — content omitted at that precision level is invisible to this search. 'small' collapses or drops many details; if you might be missing results, retry at a higher precision. Uses JavaScript regex syntax, matched separately on each line, with a 5-second search deadline. Returns matching lines with context and their line numbers; lines are capped at 2000 characters and combined line/context output at 24000 characters, with truncation metadata. Oversized input returns grep_input_limit; at most two searches run concurrently. 🟢 Use read_session_range with the same precision to zoom into any match.",
   annotations: { readOnlyHint: true },
   currentSessionScope: 'session',
   inputShape: {
-    sessionId: z
-      .number()
-      .int()
-      .positive()
-      .describe('Session id to search.'),
+    sessionId: z.number().int().positive().describe('Session id to search.'),
     query: z
       .string()
       .min(1)
+      .max(4096)
       .describe('Search term. Use isRegExp:true for regex patterns.'),
     precision: z
       .enum(['small', 'medium', 'full'])
@@ -53,7 +48,9 @@ export const grepSessionTool = defineTool({
       .min(0)
       .max(10)
       .default(3)
-      .describe('Lines of context to include before and after each match (0–10). Default 3.'),
+      .describe(
+        'Lines of context to include before and after each match (0–10). Default 3.',
+      ),
     maxMatches: z
       .number()
       .int()
@@ -63,6 +60,7 @@ export const grepSessionTool = defineTool({
       .describe('Max matches to return (1–50). Default 20.'),
   },
   handler: async (args, ctx) => {
+    ctx.signal.throwIfAborted();
     const { sessions, conversationExport } = ctx.services;
 
     const session = await sessions.findOne(args.sessionId).catch(() => null);
@@ -91,67 +89,19 @@ export const grepSessionTool = defineTool({
       includeChanges: false,
       includeIds: false,
     };
-    const markdown = renderMarkdown(model, options);
-    const lines = markdown.split('\n');
-    const totalLines = lines.length;
-
-    let pattern: RegExp;
-    try {
-      pattern = args.isRegExp
-        ? new RegExp(args.query, args.caseSensitive ? 'g' : 'gi')
-        : new RegExp(escapeRegExp(args.query), args.caseSensitive ? 'g' : 'gi');
-    } catch {
-      throw new ToolError({
-        code: 'invalid_regexp',
-        message: `Invalid regular expression: ${args.query}`,
-        remediation: 'Fix the pattern syntax or set isRegExp:false for a literal search.',
-      });
-    }
-
-    const matches: {
-      lineNumber: number;
-      line: string;
-      context: string;
-    }[] = [];
-
-    // Track already-covered line ranges so context windows don't create duplicates
-    // when matches are close together.
-    let lastContextEnd = -1;
-
-    for (let i = 0; i < lines.length && matches.length < args.maxMatches; i++) {
-      pattern.lastIndex = 0;
-      if (!pattern.test(lines[i])) continue;
-
-      const contextStart = Math.max(0, i - args.contextLines);
-      const contextEnd = Math.min(totalLines - 1, i + args.contextLines);
-
-      const contextLines = lines
-        .slice(contextStart, contextEnd + 1)
-        .map((l, offset) => {
-          const lineNum = contextStart + offset + 1;
-          return lineNum === i + 1 ? `>>> ${l}` : `    ${l}`;
-        })
-        .join('\n');
-
-      matches.push({
-        lineNumber: i + 1, // 1-based
-        line: lines[i],
-        context: contextLines,
-      });
-
-      lastContextEnd = contextEnd;
-    }
-
-    const truncated = matches.length >= args.maxMatches;
+    const result = await searchSessionTranscript(
+      model,
+      options,
+      args,
+      ctx.signal,
+    );
+    const { matches, truncated } = result;
 
     return {
       data: {
         sessionId: session.id,
         precision: args.precision,
-        totalLines,
-        matchCount: matches.length,
-        truncated,
-        matches,
+        ...result,
       },
       truncated,
       deepLink: ctx.deepLink.session(session.id, { panel: 'transcript' }),
@@ -159,12 +109,13 @@ export const grepSessionTool = defineTool({
         matches.length === 0
           ? `No matches found at precision:'${args.precision}'. This grep only searches the content rendered at that level — details omitted by the precision setting are invisible. Try a higher precision (${args.precision === 'small' ? "'medium' or 'full'" : "'full'"}) before concluding the content is absent, or broaden your query / set isRegExp:true.`
           : truncated
-            ? `Capped at ${args.maxMatches} matches. Narrow your query or increase maxMatches.`
+            ? `Search output was capped (${Object.entries(result.truncation)
+                .filter(([, capped]) => capped)
+                .map(([reason]) => reason)
+                .join(
+                  ', ',
+                )}). Narrow your query or use read_session_range at the returned line numbers.`
             : `Use read_session_range with precision:'${args.precision}' and a lineNumber ± window to zoom into any match. Remember: this search only covers content rendered at '${args.precision}' precision — switch to a higher precision if you need finer detail.`,
     };
   },
 });
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}

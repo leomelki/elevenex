@@ -211,6 +211,19 @@ export const awaitSessionEventTool = defineTool({
         return;
       }
 
+      // Archive/stop can happen while the initial runtime read is in flight.
+      // A disposed runtime cannot replay that DB event, so re-read after both
+      // listeners are installed as well as rechecking the runtime below.
+      if (wanted.has('failed')) {
+        void sessions
+          .findOne(session.id)
+          .then((current) => {
+            if (TERMINAL_DB_STATUSES.has(current.status))
+              finish('failed', 'failed');
+          })
+          .catch(() => {});
+      }
+
       // Re-check runtime state after subscribing to close the race between our
       // initial check above and listener registration.
       runtime.getRuntimeState(session.id).then((s) => {

@@ -422,28 +422,47 @@ export function renderMarkdown(
   model: ConversationExportModel,
   options: ConversationExportOptions,
 ): string {
-  const out: string[] = [];
-  out.push(renderFrontMatter(model.meta, options));
+  return [...renderMarkdownChunks(model, options)].join('');
+}
+
+/** Same bytes as renderMarkdown, without retaining the entire rendered transcript. */
+export function* renderMarkdownChunks(
+  model: ConversationExportModel,
+  options: ConversationExportOptions,
+): Generator<string> {
+  let pendingWhitespace = '';
+  let first = true;
+  for (const block of renderMarkdownBlocks(model, options)) {
+    const chunk = (pendingWhitespace + (first ? '' : '\n\n') + block).replace(
+      /\n{3,}/g,
+      '\n\n',
+    );
+    first = false;
+    const text = chunk.trimEnd();
+    pendingWhitespace = chunk.slice(text.length);
+    if (text) yield text;
+  }
+  yield '\n';
+}
+
+function* renderMarkdownBlocks(
+  model: ConversationExportModel,
+  options: ConversationExportOptions,
+): Generator<string> {
+  yield renderFrontMatter(model.meta, options);
 
   if (options.precision !== 'small' && model.preamble.length) {
     const body = renderSteps(model.preamble, options);
     if (body) {
-      out.push('## Preamble');
-      out.push(body);
+      yield '## Preamble';
+      yield body;
     }
   }
 
   const offset = options.turnNumberOffset ?? 0;
-  model.turns.forEach((turn, index) => {
-    out.push(renderTurn(turn, offset + index + 1, options));
-  });
-
-  return (
-    out
-      .join('\n\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trimEnd() + '\n'
-  );
+  for (const [index, turn] of model.turns.entries()) {
+    yield renderTurn(turn, offset + index + 1, options);
+  }
 }
 
 function renderFrontMatter(
@@ -582,14 +601,19 @@ function renderChanges(changes: TurnChangeDetails, withHunks: boolean): string {
     `${changes.files} ${changes.files === 1 ? 'file' : 'files'} ` +
       `(${signed(changes.additions, '+')} ${signed(changes.deletions, '−')})`,
   ];
-  if (changes.capture?.shared) lines.push('Shared checkout: these observations may include other agents’ changes.');
-  if (changes.capture && !changes.capture.complete) lines.push(changes.capture.message ?? 'Change capture was incomplete.');
+  if (changes.capture?.shared)
+    lines.push(
+      'Shared checkout: these observations may include other agents’ changes.',
+    );
+  if (changes.capture && !changes.capture.complete)
+    lines.push(changes.capture.message ?? 'Change capture was incomplete.');
   for (const file of changes.filesChanged) {
     lines.push(
       `- ${statusLetter(file.status)} ${file.path} ` +
         `(${signed(file.additions, '+')} ${signed(file.deletions, '−')})`,
     );
-    if (file.diffUnavailable) lines.push(`  ${file.diffUnavailable}; line counts may be incomplete.`);
+    if (file.diffUnavailable)
+      lines.push(`  ${file.diffUnavailable}; line counts may be incomplete.`);
     if (withHunks) {
       for (const hunk of file.hunks) {
         const patch = hunk.patch ?? buildHunkPatch(hunk);

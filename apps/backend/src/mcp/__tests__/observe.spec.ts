@@ -1106,7 +1106,9 @@ describe('observe tool group', () => {
         event: 'timeout',
         backgroundWork: [{ label: 'git scan', taskId: 'b1' }],
       });
-      expect(res.nextStep).toContain('Its turn has ended. Waiting on "git scan"');
+      expect(res.nextStep).toContain(
+        'Its turn has ended. Waiting on "git scan"',
+      );
     });
 
     it('resolves when the runtime emits a requires_action run_state', async () => {
@@ -1167,6 +1169,30 @@ describe('observe tool group', () => {
       const res = await pending;
       expect(res.data).toMatchObject({ event: 'failed', status: 'failed' });
     });
+
+    it.each(['archived', 'stopped'])(
+      'rechecks DB %s after subscribing when the runtime was disposed',
+      async (status) => {
+        const { sessions, agentRuntime, runtimeEmitter } = makeAwaitServices();
+        const runtime = agentRuntime.getProvider();
+        agentRuntime.getProvider.mockReturnValue(runtime);
+        runtime.getRuntimeState
+          .mockImplementationOnce(async () => {
+            // This event is emitted between the initial DB read and subscription.
+            sessions.emit('session-status-changed', { sessionId: 7, status });
+            sessions.findOne.mockResolvedValue({ ...baseSession, status });
+            throw new Error('runtime disposed');
+          })
+          .mockRejectedValue(new Error('runtime disposed'));
+        const res = await awaitSessionEventTool.handler(
+          { sessionId: 7, timeoutMs: 5000 },
+          makeCtx({ sessions, agentRuntime }),
+        );
+        expect(res.data).toMatchObject({ event: 'failed' });
+        expect(sessions.listenerCount('session-status-changed')).toBe(0);
+        expect(runtimeEmitter.listenerCount('event')).toBe(0);
+      },
+    );
 
     it('resolves with timeout and leaks no listeners', async () => {
       const { sessions, agentRuntime, runtimeEmitter } = makeAwaitServices();
