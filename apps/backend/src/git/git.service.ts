@@ -4,6 +4,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { execFile, spawn, type ExecFileOptions } from 'node:child_process';
 import * as path from 'node:path';
 import { SimpleGit, StatusResult, LogResult } from 'simple-git';
+import type { RemoteWithRefs } from 'simple-git';
 
 import {
   buildAugmentedEnv,
@@ -869,7 +870,9 @@ export class GitService {
   ): Promise<RemoteBranchMatch | null> {
     if (branch === 'HEAD') return null;
 
-    const remotes = await git.getRemotes(true).catch(() => []);
+    const remotes: RemoteWithRefs[] = await git
+      .getRemotes(true)
+      .catch((): RemoteWithRefs[] => []);
     const remote =
       remotes.find((candidate) => candidate.name === 'origin') ?? remotes[0];
     if (!remote) return null;
