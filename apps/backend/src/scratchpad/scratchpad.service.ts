@@ -1,5 +1,10 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { eq, asc, and, count, sql } from 'drizzle-orm';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { eq, asc, and, count, inArray, max, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { ProjectsService } from '../projects/projects.service.js';
@@ -14,22 +19,29 @@ export class ScratchpadService {
   async create(projectId: number, name: string, description?: string) {
     await this.projectsService.assertProjectIsActive(projectId);
 
-    // Get count of existing sections to assign sortOrder
-    const existing = await this.db
-      .select()
-      .from(schema.scratchpadSections)
-      .where(eq(schema.scratchpadSections.projectId, projectId));
+    // better-sqlite3 requires synchronous transactions. Lock before reading the
+    // maximum so concurrent inserts cannot allocate the same sort order.
+    return this.db.transaction(
+      (tx) => {
+        const existing = tx
+          .select({ sortOrder: max(schema.scratchpadSections.sortOrder) })
+          .from(schema.scratchpadSections)
+          .where(eq(schema.scratchpadSections.projectId, projectId))
+          .get()!;
 
-    const rows = await this.db
-      .insert(schema.scratchpadSections)
-      .values({
-        projectId,
-        name,
-        description: description ?? null,
-        sortOrder: existing.length,
-      })
-      .returning();
-    return rows[0];
+        return tx
+          .insert(schema.scratchpadSections)
+          .values({
+            projectId,
+            name,
+            description: description ?? null,
+            sortOrder: (existing.sortOrder ?? -1) + 1,
+          })
+          .returning()
+          .get()!;
+      },
+      { behavior: 'immediate' },
+    );
   }
 
   async findByProject(projectId: number) {
@@ -131,13 +143,45 @@ export class ScratchpadService {
   ) {
     await this.projectsService.assertProjectIsActive(projectId);
 
-    // Update each section's sort order
-    for (const order of orders) {
-      await this.db
-        .update(schema.scratchpadSections)
-        .set({ sortOrder: order.sortOrder })
-        .where(eq(schema.scratchpadSections.id, order.id));
+    const ids = orders.map((order) => order.id);
+    if (new Set(ids).size !== ids.length) {
+      throw new BadRequestException('Scratchpad section IDs must be unique');
     }
+    if (ids.length === 0) return;
+
+    // Keep validation and all writes in the same synchronous SQLite transaction.
+    this.db.transaction(
+      (tx) => {
+        const existing = tx
+          .select({ value: count() })
+          .from(schema.scratchpadSections)
+          .where(
+            and(
+              eq(schema.scratchpadSections.projectId, projectId),
+              inArray(schema.scratchpadSections.id, ids),
+            ),
+          )
+          .get()!;
+        if (existing.value !== ids.length) {
+          throw new NotFoundException(
+            `One or more scratchpad sections were not found in project ${projectId}`,
+          );
+        }
+
+        for (const order of orders) {
+          tx.update(schema.scratchpadSections)
+            .set({ sortOrder: order.sortOrder })
+            .where(
+              and(
+                eq(schema.scratchpadSections.projectId, projectId),
+                eq(schema.scratchpadSections.id, order.id),
+              ),
+            )
+            .run();
+        }
+      },
+      { behavior: 'immediate' },
+    );
   }
 
   async delete(sectionId: number) {

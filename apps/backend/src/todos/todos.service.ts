@@ -1,5 +1,10 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { eq, asc, and, count } from 'drizzle-orm';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { eq, asc, and, count, inArray, max } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { ProjectsService } from '../projects/projects.service.js';
@@ -14,21 +19,28 @@ export class TodosService {
   async create(projectId: number, text: string) {
     await this.projectsService.assertProjectIsActive(projectId);
 
-    // Get count of existing todos to assign sortOrder
-    const existing = await this.db
-      .select()
-      .from(schema.todoItems)
-      .where(eq(schema.todoItems.projectId, projectId));
+    // better-sqlite3 requires synchronous transactions. Lock before reading the
+    // maximum so concurrent inserts cannot allocate the same sort order.
+    return this.db.transaction(
+      (tx) => {
+        const existing = tx
+          .select({ sortOrder: max(schema.todoItems.sortOrder) })
+          .from(schema.todoItems)
+          .where(eq(schema.todoItems.projectId, projectId))
+          .get()!;
 
-    const rows = await this.db
-      .insert(schema.todoItems)
-      .values({
-        projectId,
-        text,
-        sortOrder: existing.length,
-      })
-      .returning();
-    return rows[0];
+        return tx
+          .insert(schema.todoItems)
+          .values({
+            projectId,
+            text,
+            sortOrder: (existing.sortOrder ?? -1) + 1,
+          })
+          .returning()
+          .get()!;
+      },
+      { behavior: 'immediate' },
+    );
   }
 
   async findByProject(projectId: number) {
@@ -101,13 +113,45 @@ export class TodosService {
   ) {
     await this.projectsService.assertProjectIsActive(projectId);
 
-    // Update each todo's sort order
-    for (const order of orders) {
-      await this.db
-        .update(schema.todoItems)
-        .set({ sortOrder: order.sortOrder })
-        .where(eq(schema.todoItems.id, order.id));
+    const ids = orders.map((order) => order.id);
+    if (new Set(ids).size !== ids.length) {
+      throw new BadRequestException('Todo IDs must be unique');
     }
+    if (ids.length === 0) return;
+
+    // Keep validation and all writes in the same synchronous SQLite transaction.
+    this.db.transaction(
+      (tx) => {
+        const existing = tx
+          .select({ value: count() })
+          .from(schema.todoItems)
+          .where(
+            and(
+              eq(schema.todoItems.projectId, projectId),
+              inArray(schema.todoItems.id, ids),
+            ),
+          )
+          .get()!;
+        if (existing.value !== ids.length) {
+          throw new NotFoundException(
+            `One or more todos were not found in project ${projectId}`,
+          );
+        }
+
+        for (const order of orders) {
+          tx.update(schema.todoItems)
+            .set({ sortOrder: order.sortOrder })
+            .where(
+              and(
+                eq(schema.todoItems.projectId, projectId),
+                eq(schema.todoItems.id, order.id),
+              ),
+            )
+            .run();
+        }
+      },
+      { behavior: 'immediate' },
+    );
   }
 
   async delete(todoId: number) {
