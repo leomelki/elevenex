@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
+import { sendBounded } from '../websocket/bounded-send.js';
 import { TmuxManager } from '../terminal/tmux-manager.service.js';
 
 type ServerConnectionMessageType = 'ready' | 'heartbeat';
@@ -105,7 +106,7 @@ export class ServerConnectionGateway implements OnModuleDestroy {
       };
     }
 
-    client.send(JSON.stringify(message));
+    sendBounded(client, JSON.stringify(message));
   }
 
   onModuleDestroy(): void {

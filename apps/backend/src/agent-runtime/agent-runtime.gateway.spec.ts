@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws';
 import { AgentRuntimeGateway } from './agent-runtime.gateway.js';
+import { MAX_WEBSOCKET_BUFFERED_BYTES } from '../websocket/bounded-send.js';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -24,7 +25,12 @@ describe('AgentRuntimeGateway hydration', () => {
       {} as any,
       {} as any,
     );
-    const ws = { readyState: WebSocket.OPEN as number, send: jest.fn() };
+    const ws = {
+      readyState: WebSocket.OPEN as number,
+      bufferedAmount: 0,
+      send: jest.fn(),
+      terminate: jest.fn(),
+    };
     const hydrate = (includeHistory = true) =>
       (gateway as any).handleMessage(
         'codex',
@@ -119,6 +125,20 @@ describe('AgentRuntimeGateway hydration', () => {
     await new Promise(setImmediate);
     expect(test.ws.send).not.toHaveBeenCalled();
   });
+
+  it('disconnects a saturated runtime socket and skips subsequent hydration output', async () => {
+    const test = setup();
+    test.ws.bufferedAmount = MAX_WEBSOCKET_BUFFERED_BYTES;
+    await test.hydrate();
+    test.runtime.resolve({ sessionId: 7 });
+    await new Promise(setImmediate);
+    expect(test.ws.terminate).toHaveBeenCalledTimes(1);
+    expect(test.ws.send).not.toHaveBeenCalled();
+    test.history.resolve([{ id: 'message' }]);
+    await new Promise(setImmediate);
+    expect(test.ws.terminate).toHaveBeenCalledTimes(1);
+    expect(test.ws.send).not.toHaveBeenCalled();
+  });
 });
 
 it('sends worker logs only to subscribed clients and avoids serializing unobserved output', async () => {
@@ -128,8 +148,16 @@ it('sends worker logs only to subscribed clients and avoids serializing unobserv
     {} as any,
     {} as any,
   );
-  const watched = { readyState: WebSocket.OPEN, send: jest.fn() };
-  const other = { readyState: WebSocket.OPEN, send: jest.fn() };
+  const watched = {
+    readyState: WebSocket.OPEN,
+    bufferedAmount: 0,
+    send: jest.fn(),
+  };
+  const other = {
+    readyState: WebSocket.OPEN,
+    bufferedAmount: 0,
+    send: jest.fn(),
+  };
   (gateway as any).clients.set('claude:7', new Set([watched, other]));
   let serializations = 0;
   const item = {
@@ -153,3 +181,75 @@ it('sends worker logs only to subscribed clients and avoids serializing unobserv
   expect(watched.send).toHaveBeenCalledTimes(1);
   expect(other.send).not.toHaveBeenCalled();
 });
+
+it.each(['session', 'provider'])(
+  'bounds runtime %s broadcasts without delaying healthy subscribers',
+  (scope) => {
+    const gateway = new AgentRuntimeGateway(
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const slow = {
+      readyState: WebSocket.OPEN,
+      bufferedAmount: MAX_WEBSOCKET_BUFFERED_BYTES,
+      send: jest.fn(),
+      terminate: jest.fn(),
+    };
+    const healthy = {
+      ...slow,
+      bufferedAmount: 0,
+      send: jest.fn(),
+      terminate: jest.fn(),
+    };
+    const otherProvider = { ...healthy, send: jest.fn() };
+    (gateway as any).clients.set('codex:7', new Set([slow, healthy]));
+    (gateway as any).clients.set('claude:7', new Set([otherProvider]));
+    const event = {
+      type: 'message_delta',
+      payload: { sessionId: 7, delta: 'token' },
+    };
+    for (let i = 0; i < 1000; i++) {
+      if (scope === 'session') (gateway as any).broadcast('codex', 7, event);
+      else (gateway as any).broadcastToProvider('codex', event);
+    }
+    expect(slow.send).not.toHaveBeenCalled();
+    expect(slow.terminate).toHaveBeenCalledTimes(1);
+    expect(healthy.send).toHaveBeenCalledTimes(1000);
+    expect(healthy.terminate).not.toHaveBeenCalled();
+    expect(otherProvider.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each(['invalid JSON', 'provider error'])(
+  'bounds runtime error output for %s',
+  async (failure) => {
+    const gateway = new AgentRuntimeGateway(
+      {
+        getProvider: () => ({
+          interrupt: jest.fn().mockRejectedValue(new Error('failed')),
+        }),
+      } as never,
+      { findOne: jest.fn().mockResolvedValue({}) } as never,
+      {} as never,
+    );
+    const ws = {
+      readyState: WebSocket.OPEN,
+      bufferedAmount: MAX_WEBSOCKET_BUFFERED_BYTES,
+      send: jest.fn(),
+      terminate: jest.fn(),
+    };
+    for (let i = 0; i < 10; i++) {
+      await (gateway as any).handleMessage(
+        'codex',
+        7,
+        ws,
+        failure === 'invalid JSON'
+          ? '{'
+          : JSON.stringify({ type: 'interrupt' }),
+      );
+    }
+    expect(ws.send).not.toHaveBeenCalled();
+    expect(ws.terminate).toHaveBeenCalledTimes(1);
+  },
+);

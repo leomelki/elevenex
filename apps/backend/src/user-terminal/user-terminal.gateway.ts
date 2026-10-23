@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
+import { sendBounded } from '../websocket/bounded-send.js';
 import { UserPtyManager } from './user-pty-manager.service.js';
 import { UserTerminalService } from './user-terminal.service.js';
 
@@ -96,7 +97,8 @@ export class UserTerminalGateway implements OnModuleDestroy {
 
         if (!result.success) {
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(
+            sendBounded(
+              ws,
               `\x1b[31mFailed to start terminal: ${result.error}\x1b[0m\r\n`,
             );
             ws.close(1011, 'Failed to start terminal');
@@ -117,7 +119,7 @@ export class UserTerminalGateway implements OnModuleDestroy {
 
         console.error(`Failed to start user terminal ${terminalId}:`, error);
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send('\x1b[31mFailed to start terminal.\x1b[0m\r\n');
+          sendBounded(ws, '\x1b[31mFailed to start terminal.\x1b[0m\r\n');
           ws.close(1011, 'Failed to start terminal');
         }
         if (isCurrentConnection()) {
@@ -188,7 +190,7 @@ export class UserTerminalGateway implements OnModuleDestroy {
   sendToTerminal(terminalId: number, data: Buffer | string): void {
     const conn = this.connections.get(terminalId);
     if (conn?.ws?.readyState === WebSocket.OPEN) {
-      conn.ws.send(data);
+      sendBounded(conn.ws, data);
     }
   }
 

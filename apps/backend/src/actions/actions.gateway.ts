@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
+import { sendBounded } from '../websocket/bounded-send.js';
 import { ActionPtyManager } from './action-pty-manager.service.js';
 import { ActionsService } from './actions.service.js';
 
@@ -54,22 +55,6 @@ export class ActionsGateway implements OnModuleDestroy {
     set.add(connection);
     this.connections.set(actionId, set);
 
-    const action = await this.actionsService.findOne(actionId);
-    const output = this.ptyManager.isRunning(actionId)
-      ? this.ptyManager.getCurrentOutput(actionId)
-      : action.currentOutput || action.lastOutput;
-
-    if (output) {
-      ws.send(output);
-    }
-
-    ws.send(
-      JSON.stringify({
-        type: 'status',
-        status: this.ptyManager.isRunning(actionId) ? 'running' : action.status,
-      }),
-    );
-
     ws.on('close', () => {
       const connections = this.connections.get(actionId);
       if (!connections) return;
@@ -82,13 +67,37 @@ export class ActionsGateway implements OnModuleDestroy {
     ws.on('error', () => {
       ws.close();
     });
+
+    try {
+      const action = await this.actionsService.findOne(actionId);
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const output = this.ptyManager.isRunning(actionId)
+        ? this.ptyManager.getCurrentOutput(actionId)
+        : action.currentOutput || action.lastOutput;
+
+      if (output) {
+        sendBounded(ws, output);
+      }
+
+      sendBounded(
+        ws,
+        JSON.stringify({
+          type: 'status',
+          status: this.ptyManager.isRunning(actionId)
+            ? 'running'
+            : action.status,
+        }),
+      );
+    } catch {
+      ws.close(1011, 'Unable to load action');
+    }
   }
 
   sendToAction(actionId: number, data: Buffer | string): void {
     const payload = typeof data === 'string' ? data : data.toString();
     for (const connection of this.connections.get(actionId) ?? []) {
       if (connection.ws.readyState === WebSocket.OPEN) {
-        connection.ws.send(payload);
+        sendBounded(connection.ws, payload);
       }
     }
   }
@@ -97,7 +106,7 @@ export class ActionsGateway implements OnModuleDestroy {
     const payload = JSON.stringify({ type: 'status', status });
     for (const connection of this.connections.get(actionId) ?? []) {
       if (connection.ws.readyState === WebSocket.OPEN) {
-        connection.ws.send(payload);
+        sendBounded(connection.ws, payload);
       }
     }
   }

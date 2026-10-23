@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
+import { sendBounded } from '../websocket/bounded-send.js';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
 import type { AgentRuntimeEvent } from './agent-runtime.types.js';
 import { SessionsService } from '../sessions/sessions.service.js';
@@ -148,7 +149,8 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
     try {
       action = JSON.parse(rawMessage) as AgentRuntimeClientAction;
     } catch {
-      ws.send(
+      sendBounded(
+        ws,
         JSON.stringify({
           type: 'error',
           payload: { sessionId, message: 'Invalid message payload' },
@@ -171,7 +173,7 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
           // snapshot can render as soon as it is ready, in either order.
           const send = (event: unknown) => {
             if (ws.readyState === WebSocket.OPEN)
-              ws.send(JSON.stringify(event));
+              sendBounded(ws, JSON.stringify(event));
           };
           const reportError = (error: unknown) =>
             send({
@@ -305,7 +307,8 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      ws.send(
+      sendBounded(
+        ws,
         JSON.stringify({ type: 'error', payload: { sessionId, message } }),
       );
     }
@@ -340,7 +343,7 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
     const serialized = JSON.stringify(event);
     for (const client of targets) {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(serialized);
+        sendBounded(client, serialized);
       }
     }
   }
@@ -352,7 +355,7 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
       if (!key.startsWith(prefix)) continue;
       for (const client of bucket) {
         if (client.readyState === WebSocket.OPEN) {
-          client.send(serialized);
+          sendBounded(client, serialized);
         }
       }
     }
