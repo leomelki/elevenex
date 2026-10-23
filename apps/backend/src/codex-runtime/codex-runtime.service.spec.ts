@@ -1501,6 +1501,281 @@ describe('CodexRuntimeService', () => {
     return iterator;
   }
 
+  it('keeps the new turn running through delayed previous-turn notifications', async () => {
+    const { service, appServer } = createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'thread-1');
+    state.cachedWorktreePath = '/tmp/project';
+    const wire = wireAppServerTurn(appServer);
+    let starts = 0;
+    let acknowledge!: (value: unknown) => void;
+    const ack = new Promise((resolve) => {
+      acknowledge = resolve;
+    });
+    const stale = () => {
+      wire.notificationHandler({
+        method: 'turn/started',
+        params: {
+          threadId: 'thread-1',
+          turn: { id: 'turn-old' },
+        },
+      });
+      wire.notificationHandler({
+        method: 'item/agentMessage/delta',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-old',
+          itemId: 'reply',
+          delta: 'stale',
+        },
+      });
+      wire.notificationHandler({
+        method: 'item/started',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-old',
+          item: { id: 'old', type: 'agentMessage', text: 'old' },
+        },
+      });
+      wire.notificationHandler({
+        method: 'item/completed',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-old',
+          item: { id: 'old', type: 'agentMessage', text: 'old' },
+        },
+      });
+      wire.notificationHandler({
+        method: 'thread/tokenUsage/updated',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-old',
+          tokenUsage: { last: { totalTokens: 190000 } },
+        },
+      });
+      wire.notificationHandler({
+        method: 'error',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-old',
+          error: { message: 'old error' },
+        },
+      });
+      wire.notificationHandler({
+        method: 'turn/completed',
+        params: {
+          threadId: 'thread-1',
+          turn: { id: 'turn-old', status: 'completed' },
+        },
+      });
+    };
+    appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'thread/resume') {
+        if (starts) stale(); // Previous turn completes while the new run resumes.
+        return {};
+      }
+      if (method === 'turn/start') {
+        if (++starts === 1) return { turn: { id: 'turn-old' } };
+        return ack;
+      }
+      return {};
+    });
+    const previous = service.submitPrompt(7, 'previous');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-old', status: 'completed' },
+      },
+    });
+    await previous;
+
+    const current = service.submitPrompt(7, 'current');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    stale(); // Old events and new output can also arrive before the start ack.
+    wire.notificationHandler({
+      method: 'turn/started',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-new' },
+      },
+    });
+    wire.notificationHandler({
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-new',
+        itemId: 'reply',
+        delta: 'current',
+      },
+    });
+    expect(runtime.activeRuns.get(7).turnId).toBeNull();
+    acknowledge({ turn: { id: 'turn-new' } });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    stale(); // A stale turn/started must never replace the acknowledged ID.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runtime.activeRuns.get(7).turnId).toBe('turn-new');
+    expect(state).toMatchObject({
+      runPhase: 'running',
+      canInterrupt: true,
+      lastError: null,
+    });
+    expect(state.liveItems.map((item: any) => item.content)).toEqual([
+      'current',
+    ]);
+    expect(state.contextUsage).toBeNull();
+
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-new', status: 'completed' },
+      },
+    });
+    await current;
+    expect(state.runPhase).toBe('idle');
+    expect(runtime.activeRuns.has(7)).toBe(false);
+  });
+
+  it('replays a complete current turn delivered before its start acknowledgement', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') {
+        wire.notificationHandler({
+          method: 'turn/started',
+          params: {
+            threadId: 'thread-1',
+            turn: { id: 'turn-1' },
+          },
+        });
+        wire.notificationHandler({
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'reply',
+            delta: 'early',
+          },
+        });
+        wire.notificationHandler({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-1',
+            turn: { id: 'turn-1', status: 'completed' },
+          },
+        });
+        return { turn: { id: 'turn-1' } };
+      }
+      return {};
+    });
+    const iterator = await startAppServerTurn(service, 'default');
+    const events = [];
+    for await (const event of iterator) events.push(event);
+    expect(events).toMatchObject([
+      { type: 'turn.started' },
+      { type: 'item.updated', item: { text: 'early' } },
+      { type: 'turn.completed' },
+    ]);
+  });
+
+  it('preserves legacy notifications without turn IDs', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const iterator = await startAppServerTurn(service, 'default');
+    wire.notificationHandler({
+      method: 'turn/started',
+      params: { threadId: 'thread-1' },
+    });
+    wire.notificationHandler({
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        itemId: 'legacy',
+        delta: 'legacy output',
+      },
+    });
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { status: 'completed' },
+      },
+    });
+    const events = [];
+    for await (const event of iterator) events.push(event);
+    expect(events).toMatchObject([
+      { type: 'turn.started' },
+      { type: 'item.updated', item: { text: 'legacy output' } },
+      { type: 'turn.completed' },
+    ]);
+  });
+
+  it.each([
+    'codex app-server request "thread/resume" timed out after 60000ms',
+    'Codex server temporarily unavailable',
+    'database file not found',
+  ])(
+    'preserves the thread association and surfaces resume failure: %s',
+    async (message) => {
+      const { service, appServer, sessionsService } = createService();
+      const runtime = service as any;
+      const state = runtime.ensureRuntimeState(7, 'thread-1');
+      state.cachedWorktreePath = '/tmp/project';
+      wireAppServerTurn(appServer);
+      appServer.request.mockRejectedValue(new Error(message));
+      await service.submitPrompt(7, 'retry this thread');
+      expect(state).toMatchObject({
+        codexSessionId: 'thread-1',
+        runPhase: 'error',
+        lastError: message,
+      });
+      expect(appServer.request).toHaveBeenCalledTimes(1);
+      expect(appServer.request).toHaveBeenCalledWith(
+        'thread/resume',
+        expect.objectContaining({ threadId: 'thread-1' }),
+      );
+      expect(sessionsService.updateCodexSessionId).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    'thread not found: missing',
+    'no rollout found for thread id missing',
+  ])(
+    'starts fresh only for a confirmed missing thread: %s',
+    async (message) => {
+      const { service, appServer, sessionsService } = createService();
+      const runtime = service as any;
+      const state = runtime.ensureRuntimeState(7, 'missing');
+      state.cachedWorktreePath = '/tmp/project';
+      const wire = wireAppServerTurn(appServer);
+      appServer.request.mockImplementation(async (method: string) => {
+        if (method === 'thread/resume') throw new Error(message);
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') return { turn: { id: 'turn-1' } };
+        return {};
+      });
+      const running = service.submitPrompt(7, 'recover missing thread');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(state.codexSessionId).toBe('thread-1');
+      expect(sessionsService.updateCodexSessionId).toHaveBeenCalledWith(
+        7,
+        'thread-1',
+      );
+      wire.notificationHandler({
+        method: 'turn/completed',
+        params: {
+          threadId: 'thread-1',
+          turn: { id: 'turn-1', status: 'completed' },
+        },
+      });
+      await running;
+    },
+  );
+
   it('prewarms the shared app-server and caches session metadata', async () => {
     const { service, sessionsService, authService, appServer } =
       createService();

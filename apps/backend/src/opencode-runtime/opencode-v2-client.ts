@@ -39,6 +39,21 @@ export function createOpenCodeV2Client(
   const events = new OpenCodeV2Events(native, directory);
   const { forms, permissionOwners } = events;
   const wrap = <T>(data: T) => ({ data });
+  const dispatches = new Map<string, Promise<unknown>>();
+  const dispatch = async <T>(
+    sessionID: string,
+    send: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> => {
+    signal?.throwIfAborted();
+    const pending = send();
+    dispatches.set(sessionID, pending);
+    try {
+      return await pending;
+    } finally {
+      if (dispatches.get(sessionID) === pending) dispatches.delete(sessionID);
+    }
+  };
   const messages = async (sessionID: string) => {
     const results: { info: Message; parts: Part[] }[] = [];
     let cursor: string | undefined;
@@ -59,17 +74,35 @@ export function createOpenCodeV2Client(
   };
   const configurePrompt = async (
     input: Parameters<OpenCodeClient['session']['prompt']>[0],
+    signal?: AbortSignal,
   ) => {
-    const session = await native.session.get({ sessionID: input.sessionID });
+    const options = { signal };
+    const prepare = async <T>(request: () => Promise<T>): Promise<T> => {
+      signal?.throwIfAborted();
+      const result = await request();
+      // Also guard clients/transports that settle successfully after abort.
+      signal?.throwIfAborted();
+      return result;
+    };
+    const session = await prepare(() =>
+      native.session.get({ sessionID: input.sessionID }, options),
+    );
     if (session.location.directory !== directory)
-      await native.session.move({ sessionID: input.sessionID, directory });
+      await prepare(() =>
+        native.session.move({ sessionID: input.sessionID, directory }, options),
+      );
     const agent = input.agent ?? session.agent;
     const agentChanged = !!input.agent && input.agent !== session.agent;
     if (agentChanged)
-      await native.session.switchAgent({
-        sessionID: input.sessionID,
-        agent: input.agent!,
-      });
+      await prepare(() =>
+        native.session.switchAgent(
+          {
+            sessionID: input.sessionID,
+            agent: input.agent!,
+          },
+          options,
+        ),
+      );
     let selected = input.model
       ? {
           id: input.model.modelID,
@@ -79,10 +112,15 @@ export function createOpenCodeV2Client(
       : undefined;
     if (!selected) {
       const agentModel = agent
-        ? (await native.agent.get({ agentID: agent, location })).data.model
+        ? (
+            await prepare(() =>
+              native.agent.get({ agentID: agent, location }, options),
+            )
+          ).data.model
         : undefined;
       const fallback =
-        agentModel ?? (await native.model.default({ location })).data;
+        agentModel ??
+        (await prepare(() => native.model.default({ location }, options))).data;
       if (!fallback) throw new Error('No default OpenCode model is available.');
       selected = {
         id: fallback.id,
@@ -96,25 +134,37 @@ export function createOpenCodeV2Client(
       session.model.providerID !== selected.providerID ||
       session.model.variant !== selected.variant
     )
-      await native.session.switchModel({
-        sessionID: input.sessionID,
-        model: selected,
-      });
+      await prepare(() =>
+        native.session.switchModel(
+          {
+            sessionID: input.sessionID,
+            model: selected!,
+          },
+          options,
+        ),
+      );
     if (input.system)
-      await native.session.instructions.entry.put({
-        sessionID: input.sessionID,
-        key: 'elevenex-system',
-        value: input.system,
-      });
+      await prepare(() =>
+        native.session.instructions.entry.put(
+          {
+            sessionID: input.sessionID,
+            key: 'elevenex-system',
+            value: input.system!,
+          },
+          options,
+        ),
+      );
   };
   const wait = async (
     sessionID: string,
     options?: { signal?: AbortSignal },
   ) => {
+    options?.signal?.throwIfAborted();
     await native.session.wait(
       { sessionID },
       { signal: options?.signal ?? undefined },
     );
+    options?.signal?.throwIfAborted();
     // The final response is enough here. The provider performs one authoritative history reconciliation.
     const page = await native.message.list(
       { sessionID, type: 'assistant', order: 'desc', limit: 1 },
@@ -437,62 +487,90 @@ export function createOpenCodeV2Client(
         return wrap(children);
       },
       prompt: async (input, options) => {
-        await configurePrompt(input);
+        const signal = options?.signal ?? undefined;
+        await configurePrompt(input, signal);
+        signal?.throwIfAborted();
         if (input.noReply) {
-          await native.session.synthetic({
-            sessionID: input.sessionID,
-            text: (input.parts ?? [])
-              .filter((part) => part.type === 'text')
-              .map((part) => part.text)
-              .join('\n'),
-          });
+          await dispatch(
+            input.sessionID,
+            () =>
+              native.session.synthetic(
+                {
+                  sessionID: input.sessionID,
+                  text: (input.parts ?? [])
+                    .filter((part) => part.type === 'text')
+                    .map((part) => part.text)
+                    .join('\n'),
+                },
+                { signal },
+              ),
+            signal,
+          );
           return { data: undefined };
         }
-        await native.session.prompt(
-          {
-            sessionID: input.sessionID,
-            text: (input.parts ?? [])
-              .filter((part) => part.type === 'text')
-              .map((part) => part.text)
-              .join('\n'),
-            files: (input.parts ?? [])
-              .filter((part) => part.type === 'file')
-              .map((part) => ({ uri: part.url, name: part.filename })),
-          },
-          { signal: options?.signal ?? undefined },
+        await dispatch(
+          input.sessionID,
+          () =>
+            native.session.prompt(
+              {
+                sessionID: input.sessionID,
+                text: (input.parts ?? [])
+                  .filter((part) => part.type === 'text')
+                  .map((part) => part.text)
+                  .join('\n'),
+                files: (input.parts ?? [])
+                  .filter((part) => part.type === 'file')
+                  .map((part) => ({ uri: part.url, name: part.filename })),
+              },
+              { signal },
+            ),
+          signal,
         );
         return wait(input.sessionID, { signal: options?.signal ?? undefined });
       },
       command: async (input, options) => {
-        await configurePrompt({
-          sessionID: input.sessionID,
-          agent: input.agent,
-          variant: input.variant,
-          ...(input.model
-            ? {
-                model: {
-                  providerID: input.model.slice(0, input.model.indexOf('/')),
-                  modelID: input.model.slice(input.model.indexOf('/') + 1),
-                },
-              }
-            : {}),
-        });
-        await native.session.command(
+        const signal = options?.signal ?? undefined;
+        await configurePrompt(
           {
             sessionID: input.sessionID,
-            name: input.command ?? '',
-            text: input.arguments ?? '',
-            files: input.parts?.map((part) => ({
-              uri: part.url,
-              name: part.filename,
-            })),
+            agent: input.agent,
+            variant: input.variant,
+            ...(input.model
+              ? {
+                  model: {
+                    providerID: input.model.slice(0, input.model.indexOf('/')),
+                    modelID: input.model.slice(input.model.indexOf('/') + 1),
+                  },
+                }
+              : {}),
           },
-          { signal: options?.signal ?? undefined },
+          signal,
+        );
+        await dispatch(
+          input.sessionID,
+          () =>
+            native.session.command(
+              {
+                sessionID: input.sessionID,
+                name: input.command ?? '',
+                text: input.arguments ?? '',
+                files: input.parts?.map((part) => ({
+                  uri: part.url,
+                  name: part.filename,
+                })),
+              },
+              { signal },
+            ),
+          signal,
         );
         return wait(input.sessionID, { signal: options?.signal ?? undefined });
       },
       abort: async ({ sessionID }) => {
+        // A submission may already be in flight. Interrupt after it settles,
+        // then confirm native execution ended without the cancelled signal.
+        await dispatches.get(sessionID)?.catch(() => undefined);
         await native.session.interrupt({ sessionID });
+        await native.session.wait({ sessionID });
         return wrap(true);
       },
       fork: async ({ sessionID, messageID }) =>
@@ -683,18 +761,29 @@ export function createOpenCodeV2Client(
         agent: session.agent,
       };
     },
-    compact: async (sessionID, selection) => {
-      await configurePrompt({ sessionID, ...selection });
-      await native.session.compact({ sessionID });
-      await native.session.wait({ sessionID });
+    compact: async (sessionID, selection, options) => {
+      await configurePrompt({ sessionID, ...selection }, options?.signal);
+      await dispatch(
+        sessionID,
+        () => native.session.compact({ sessionID }, options),
+        options?.signal,
+      );
+      options?.signal?.throwIfAborted();
+      await native.session.wait({ sessionID }, options);
     },
-    activateSkill: async (sessionID, id, selection) => {
-      await configurePrompt({ sessionID, ...selection });
-      await native.session.skill({ sessionID, id });
-      await native.session.wait({ sessionID });
+    activateSkill: async (sessionID, id, selection, options) => {
+      await configurePrompt({ sessionID, ...selection }, options?.signal);
+      await dispatch(
+        sessionID,
+        () => native.session.skill({ sessionID, id }, options),
+        options?.signal,
+      );
+      options?.signal?.throwIfAborted();
+      await native.session.wait({ sessionID }, options);
     },
-    selectAgent: async (sessionID, agent) => {
-      await native.session.switchAgent({ sessionID, agent });
+    selectAgent: async (sessionID, agent, options) => {
+      options?.signal?.throwIfAborted();
+      await native.session.switchAgent({ sessionID, agent }, options);
     },
   };
 

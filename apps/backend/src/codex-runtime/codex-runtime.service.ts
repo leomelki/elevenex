@@ -3441,6 +3441,14 @@ export class CodexRuntimeService
         ? state.codexSessionId
         : null;
     let endStream = false;
+    let turnIdFilter: string | null = null;
+    let turnStartSent = false;
+    let turnStartAcknowledged = false;
+    const pendingNotifications: CodexAppServerNotification[] = [];
+    let resolveTurnOwnership!: () => void;
+    const turnOwnership = new Promise<void>((resolve) => {
+      resolveTurnOwnership = resolve;
+    });
     const resolvedUserInputRequests = new Set<string>();
 
     const matchesThread = (params: any): boolean => {
@@ -3453,12 +3461,36 @@ export class CodexRuntimeService
       if (!id) return false;
       return id === threadIdFilter;
     };
+    const matchesTurn = (params: any): boolean => {
+      const id = params?.turnId ?? params?.turn?.id;
+      // Older servers omit turn IDs. An explicit ID must match the start
+      // response; turn/started alone cannot establish ownership.
+      return id == null || id === turnIdFilter;
+    };
 
     const handle = (notification: CodexAppServerNotification): void => {
       // Production keeps a lifetime listener, including between parent turns.
       if (!this.unsubscribePlanUsageNotifications)
         this.handleSubagentNotification(notification);
       const params = notification.params as any;
+      if (signal.aborted || endStream) return;
+      const turnScoped =
+        notification.method.startsWith('turn/') ||
+        notification.method.startsWith('item/') ||
+        notification.method === 'thread/tokenUsage/updated' ||
+        notification.method === 'serverRequest/resolved' ||
+        (notification.method === 'error' &&
+          (params?.threadId != null || params?.turnId != null));
+      if (turnScoped) {
+        if (!matchesThread(params) || !turnStartSent) return;
+        // Notifications can precede the turn/start response, including the
+        // entire new turn. Replay them only after its authoritative ID arrives.
+        if (!turnStartAcknowledged) {
+          pendingNotifications.push(notification);
+          return;
+        }
+        if (!matchesTurn(params)) return;
+      }
       switch (notification.method) {
         case 'serverRequest/resolved': {
           if (!matchesThread(params)) return;
@@ -3481,13 +3513,6 @@ export class CodexRuntimeService
           return;
         case 'turn/started': {
           if (!matchesThread(params)) return;
-          // TurnStartedNotification = { threadId, turn: { id, ... } }
-          const run = this.activeRuns.get(sessionId);
-          const newTurnId = params?.turn?.id;
-          if (run && typeof newTurnId === 'string') {
-            run.turnId = newTurnId;
-            run.resolveTurnReady();
-          }
           push({ type: 'turn.started' });
           return;
         }
@@ -3641,6 +3666,17 @@ export class CodexRuntimeService
       request: CodexAppServerRequest,
     ): Promise<boolean> => {
       const params = request.params as any;
+      if (matchesThread(params)) {
+        if (!turnStartSent) return false;
+        if (!turnStartAcknowledged) await turnOwnership;
+        if (
+          !turnStartAcknowledged ||
+          signal.aborted ||
+          endStream ||
+          !matchesTurn(params)
+        )
+          return false;
+      }
       if (this.unsubscribeSubagentRequests && !matchesThread(params))
         return false;
       if (
@@ -3690,6 +3726,7 @@ export class CodexRuntimeService
     const unsubscribeRequests = this.appServer.onRequest(handleRequest);
     const onAbort = (): void => {
       endStream = true;
+      resolveTurnOwnership();
       wake();
     };
     signal.addEventListener('abort', onAbort);
@@ -3779,15 +3816,21 @@ export class CodexRuntimeService
           // emitSessionMetadata and the frontend sees a populated header.
           push({ type: 'thread.started', thread_id: threadIdFilter });
         } catch (error) {
-          // The stored thread id may be stale (~/.codex/sessions wiped, or
-          // a different machine). Fall back to a fresh thread rather than
-          // permanently wedging the session.
+          const message =
+            error instanceof Error ? error.message : String(error);
+          // Only a confirmed missing thread permits replacing its association.
+          // Timeouts and server/storage failures must remain retryable.
+          if (
+            !/^(?:thread not found(?:: .+)?|no rollout found for thread id .+)$/i.test(
+              message,
+            )
+          )
+            throw error;
           this.logger.warn(
             `thread/resume failed for ${threadIdFilter}, starting fresh thread: ${
-              error instanceof Error ? error.message : String(error)
+              message
             }`,
           );
-          state.codexSessionId = null;
           threadIdFilter = await startFreshThread();
           push({ type: 'thread.started', thread_id: threadIdFilter });
         }
@@ -3809,6 +3852,7 @@ export class CodexRuntimeService
       await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
       if (signal.aborted || activeRun?.interruptRequested) return;
       contextModel = state.selectedModel ?? this.codexDefaultModel;
+      turnStartSent = true;
       const turnStart = await this.appServer.request<CodexTurnStartResult>(
         'turn/start',
         {
@@ -3827,10 +3871,17 @@ export class CodexRuntimeService
         },
       );
       const startedTurnId = turnStart.turn?.id;
-      if (activeRun && typeof startedTurnId === 'string') {
-        activeRun.turnId = startedTurnId;
-        activeRun.resolveTurnReady();
+      if (typeof startedTurnId === 'string') {
+        turnIdFilter = startedTurnId;
+        if (activeRun) {
+          activeRun.turnId = startedTurnId;
+          activeRun.resolveTurnReady();
+        }
       }
+      turnStartAcknowledged = true;
+      resolveTurnOwnership();
+      for (const notification of pendingNotifications) handle(notification);
+      pendingNotifications.length = 0;
 
       while (!endStream || queue.length > 0) {
         if (signal.aborted) return;
@@ -3856,6 +3907,7 @@ export class CodexRuntimeService
         }
       }
     } finally {
+      resolveTurnOwnership();
       signal.removeEventListener('abort', onAbort);
       unsubscribe();
       unsubscribeRequests();

@@ -18,6 +18,213 @@ const assistant = (id: string): SessionMessageInfo => ({
 });
 
 describe('OpenCode v2 protocol adapter', () => {
+  it.each([
+    'get',
+    'move',
+    'switchAgent',
+    'agentModel',
+    'defaultModel',
+    'switchModel',
+    'instructions',
+  ])(
+    'does not dispatch after cancellation during %s preparation',
+    async (stage) => {
+      let release!: () => void;
+      let entered!: () => void;
+      const preparing = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const block = async (name: string) => {
+        if (stage === name) {
+          entered();
+          await gate;
+        }
+      };
+      const session = {
+        get: jest.fn(async () => {
+          await block('get');
+          return { location: { directory: '/old' }, agent: 'build' };
+        }),
+        move: jest.fn(async () => block('move')),
+        switchAgent: jest.fn(async () => block('switchAgent')),
+        switchModel: jest.fn(async () => block('switchModel')),
+        instructions: {
+          entry: { put: jest.fn(async () => block('instructions')) },
+        },
+        prompt: jest.fn(),
+        interrupt: jest.fn(),
+        wait: jest.fn(),
+      };
+      const client = createOpenCodeV2Client(
+        {
+          session,
+          agent: {
+            get: jest.fn(async () => {
+              await block('agentModel');
+              return { data: {} };
+            }),
+          },
+          model: {
+            default: jest.fn(async () => {
+              await block('defaultModel');
+              return { data: { providerID: 'test', id: 'model' } };
+            }),
+          },
+        } as unknown as NativeClient,
+        '/repo',
+      );
+      const controller = new AbortController();
+      const prompting = client.session.prompt(
+        {
+          sessionID: 's',
+          agent: 'plan',
+          system: 'instructions',
+          parts: [],
+        },
+        { signal: controller.signal },
+      );
+      const cancelled = expect(prompting).rejects.toMatchObject({
+        name: 'AbortError',
+      });
+      await preparing;
+      controller.abort();
+      await client.session.abort({ sessionID: 's' });
+      release();
+      await cancelled;
+      expect(session.prompt).not.toHaveBeenCalled();
+      expect(session.get).toHaveBeenCalledWith(
+        { sessionID: 's' },
+        { signal: controller.signal },
+      );
+    },
+  );
+
+  it.each(['prompt', 'command', 'compact', 'skill', 'synthetic'])(
+    'cancels %s before dispatch when preparation finishes after Stop',
+    async (operation) => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const session = {
+        get: jest.fn(async () => {
+          await gate;
+          return { location: { directory: '/repo' } };
+        }),
+        prompt: jest.fn(),
+        command: jest.fn(),
+        compact: jest.fn(),
+        skill: jest.fn(),
+        synthetic: jest.fn(),
+      };
+      const client = createOpenCodeV2Client(
+        { session } as unknown as NativeClient,
+        '/repo',
+      );
+      const controller = new AbortController();
+      const options = { signal: controller.signal };
+      const model = { providerID: 'test', modelID: 'model' };
+      const running =
+        operation === 'compact'
+          ? client.compact!('s', { model }, options)
+          : operation === 'skill'
+            ? client.activateSkill!('s', 'review', { model }, options)
+            : operation === 'command'
+              ? client.session.command(
+                  { sessionID: 's', command: 'review', model: 'test/model' },
+                  options,
+                )
+              : client.session.prompt(
+                  {
+                    sessionID: 's',
+                    model,
+                    noReply: operation === 'synthetic',
+                    parts: [],
+                  },
+                  options,
+                );
+      const cancelled = expect(running).rejects.toMatchObject({
+        name: 'AbortError',
+      });
+      controller.abort();
+      release();
+      await cancelled;
+      for (const name of [
+        'prompt',
+        'command',
+        'compact',
+        'skill',
+        'synthetic',
+      ] as const)
+        expect(session[name]).not.toHaveBeenCalled();
+    },
+  );
+
+  it('interrupts after an in-flight submission settles and waits for native execution to end', async () => {
+    let dispatched!: () => void;
+    const submitting = new Promise<void>((resolve) => {
+      dispatched = resolve;
+    });
+    let finishDispatch!: () => void;
+    const submitted = new Promise<void>((resolve) => {
+      finishDispatch = resolve;
+    });
+    let finishNative!: () => void;
+    const nativeDone = new Promise<void>((resolve) => {
+      finishNative = resolve;
+    });
+    const session = {
+      get: jest.fn(async () => ({
+        location: { directory: '/repo' },
+        model: { providerID: 'test', id: 'model' },
+      })),
+      prompt: jest.fn(async () => {
+        dispatched();
+        await submitted;
+      }),
+      interrupt: jest.fn(),
+      wait: jest.fn((_input: unknown, options?: { signal?: AbortSignal }) =>
+        options?.signal ? Promise.reject(options.signal.reason) : nativeDone,
+      ),
+    };
+    const client = createOpenCodeV2Client(
+      { session } as unknown as NativeClient,
+      '/repo',
+    );
+    const controller = new AbortController();
+    const prompting = client.session.prompt(
+      {
+        sessionID: 's',
+        model: { providerID: 'test', modelID: 'model' },
+        parts: [],
+      },
+      { signal: controller.signal },
+    );
+    const cancelled = expect(prompting).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    await submitting;
+    controller.abort();
+    let stopped = false;
+    const stopping = client.session.abort({ sessionID: 's' }).then(() => {
+      stopped = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(session.interrupt).not.toHaveBeenCalled();
+    finishDispatch();
+    await cancelled;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(session.interrupt).toHaveBeenCalledWith({ sessionID: 's' });
+    expect(session.wait).toHaveBeenCalledWith({ sessionID: 's' });
+    expect(stopped).toBe(false);
+    finishNative();
+    await stopping;
+    expect(stopped).toBe(true);
+  });
+
   it.each(['compact', 'skill'])(
     'applies the current model, variant, agent and mission before %s',
     async (operation) => {
@@ -46,20 +253,29 @@ describe('OpenCode v2 protocol adapter', () => {
       };
       if (operation === 'compact') await client.compact!('s', selection);
       else await client.activateSkill!('s', 'review', selection);
-      expect(session.switchAgent).toHaveBeenCalledWith({
-        sessionID: 's',
-        agent: 'plan',
-      });
-      expect(session.switchModel).toHaveBeenCalledWith({
-        sessionID: 's',
-        model: { providerID: 'test', id: 'model', variant: 'high' },
-      });
-      expect(session.instructions.entry.put).toHaveBeenCalledWith({
-        sessionID: 's',
-        key: 'elevenex-system',
-        value: 'Mission',
-      });
-      expect(session.wait).toHaveBeenCalledWith({ sessionID: 's' });
+      expect(session.switchAgent).toHaveBeenCalledWith(
+        {
+          sessionID: 's',
+          agent: 'plan',
+        },
+        { signal: undefined },
+      );
+      expect(session.switchModel).toHaveBeenCalledWith(
+        {
+          sessionID: 's',
+          model: { providerID: 'test', id: 'model', variant: 'high' },
+        },
+        { signal: undefined },
+      );
+      expect(session.instructions.entry.put).toHaveBeenCalledWith(
+        {
+          sessionID: 's',
+          key: 'elevenex-system',
+          value: 'Mission',
+        },
+        { signal: undefined },
+      );
+      expect(session.wait).toHaveBeenCalledWith({ sessionID: 's' }, undefined);
     },
   );
   it.each([false, true])(
@@ -103,12 +319,15 @@ describe('OpenCode v2 protocol adapter', () => {
         sessionID: 's',
         parts: [{ type: 'text', text: 'Use default' }],
       });
-      expect(session.switchModel).toHaveBeenCalledWith({
-        sessionID: 's',
-        model: hasAgentModel
-          ? { providerID: 'agent', id: 'custom', variant: 'medium' }
-          : { providerID: 'project', id: 'default', variant: undefined },
-      });
+      expect(session.switchModel).toHaveBeenCalledWith(
+        {
+          sessionID: 's',
+          model: hasAgentModel
+            ? { providerID: 'agent', id: 'custom', variant: 'medium' }
+            : { providerID: 'project', id: 'default', variant: undefined },
+        },
+        { signal: undefined },
+      );
       expect(defaultModel).toHaveBeenCalledTimes(hasAgentModel ? 0 : 1);
       expect(list.mock.calls).toEqual([
         [
@@ -141,10 +360,13 @@ describe('OpenCode v2 protocol adapter', () => {
       model: { providerID: 'test', modelID: 'model' },
       parts: [],
     });
-    expect(session.switchModel).toHaveBeenCalledWith({
-      sessionID: 's',
-      model: { providerID: 'test', id: 'model', variant: undefined },
-    });
+    expect(session.switchModel).toHaveBeenCalledWith(
+      {
+        sessionID: 's',
+        model: { providerID: 'test', id: 'model', variant: undefined },
+      },
+      { signal: undefined },
+    );
   });
   it('retains native OAuth setup requirements for non-string form fields', async () => {
     const client = createOpenCodeV2Client(
@@ -225,23 +447,35 @@ describe('OpenCode v2 protocol adapter', () => {
         { type: 'file', mime: 'image/png', url: 'data:image/png;base64,abcd' },
       ],
     });
-    expect(session.instructions.entry.put).toHaveBeenCalledWith({
-      sessionID: 's',
-      key: 'elevenex-system',
-      value: 'Mission instructions',
-    });
-    expect(session.move).toHaveBeenCalledWith({
-      sessionID: 's',
-      directory: '/repo',
-    });
-    expect(session.switchAgent).toHaveBeenCalledWith({
-      sessionID: 's',
-      agent: 'plan',
-    });
-    expect(session.switchModel).toHaveBeenCalledWith({
-      sessionID: 's',
-      model: { providerID: 'test', id: 'model', variant: 'custom' },
-    });
+    expect(session.instructions.entry.put).toHaveBeenCalledWith(
+      {
+        sessionID: 's',
+        key: 'elevenex-system',
+        value: 'Mission instructions',
+      },
+      { signal: undefined },
+    );
+    expect(session.move).toHaveBeenCalledWith(
+      {
+        sessionID: 's',
+        directory: '/repo',
+      },
+      { signal: undefined },
+    );
+    expect(session.switchAgent).toHaveBeenCalledWith(
+      {
+        sessionID: 's',
+        agent: 'plan',
+      },
+      { signal: undefined },
+    );
+    expect(session.switchModel).toHaveBeenCalledWith(
+      {
+        sessionID: 's',
+        model: { providerID: 'test', id: 'model', variant: 'custom' },
+      },
+      { signal: undefined },
+    );
     expect(session.prompt).toHaveBeenCalledWith(
       {
         sessionID: 's',

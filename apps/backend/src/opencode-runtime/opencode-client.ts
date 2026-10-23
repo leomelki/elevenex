@@ -79,11 +79,20 @@ export interface OpenCodeClient {
   selection?(
     sessionID: string,
   ): Promise<{ model: string | null; variant: string | null; agent?: string }>;
-  compact?(sessionID: string, selection?: OpenCodeTurnSelection): Promise<void>;
+  compact?(
+    sessionID: string,
+    selection?: OpenCodeTurnSelection,
+    options?: { signal?: AbortSignal },
+  ): Promise<void>;
   activateSkill?(
     sessionID: string,
     id: string,
     selection?: OpenCodeTurnSelection,
+    options?: { signal?: AbortSignal },
   ): Promise<void>;
-  selectAgent?(sessionID: string, agent: string): Promise<void>;
+  selectAgent?(
+    sessionID: string,
+    agent: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<void>;
 }
