@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { AgentHumanChannelService } from '../human-channel/human-channel.js';
 import { DeltaCursorStore } from '../tool-registry/delta-cursor.store.js';
 import { DeepLinkBuilder } from '../deep-link/deep-link.builder.js';
@@ -10,9 +11,14 @@ import type { ToolContext } from '../tool-registry/tool.types.js';
 
 function makeCtx(
   channel: AgentHumanChannelService,
-  opts: { agentSessionId?: number | null; canUseHumanChannel?: boolean } = {},
+  opts: {
+    agentSessionId?: number | null;
+    canUseHumanChannel?: boolean;
+    signal?: AbortSignal;
+  } = {},
 ): ToolContext {
   const agentSessionId = opts.agentSessionId ?? 42;
+  const signal = opts.signal ?? new AbortController().signal;
   return {
     services: {} as never,
     agentSessionId,
@@ -27,8 +33,9 @@ function makeCtx(
     human: channel.bindFor({
       agentSessionId,
       canUseHumanChannel: opts.canUseHumanChannel ?? agentSessionId !== null,
+      signal,
     }),
-    signal: new AbortController().signal,
+    signal,
     mcpSessionId: 't',
   };
 }
@@ -208,5 +215,84 @@ describe('human-channel tools', () => {
     channel.resolveApproval({ id: open[0].id, decision: 'approve' });
     await pending;
     expect(channel.pendingApprovals(42)).toHaveLength(0);
+  });
+});
+
+describe('human-channel request lifecycle', () => {
+  afterEach(() => jest.useRealTimers());
+  it.each(['approval', 'selection'] as const)(
+    'cancels %s, dismisses the panel item, and rejects late answers',
+    async (kind) => {
+      jest.useFakeTimers();
+      const channel = new AgentHumanChannelService();
+      const controller = new AbortController();
+      const human = makeCtx(channel, { signal: controller.signal }).human;
+      const dismissed = jest.fn();
+      channel.on(`${kind}-resolved`, dismissed);
+      const pending =
+        kind === 'approval'
+          ? human.requestApproval({ title: 'wait' })
+          : human.requestSelection({ title: 'wait', rootPath: '/repo' });
+      const rejection = expect(pending).rejects.toThrow('cancel now');
+      const request =
+        kind === 'approval'
+          ? channel.pendingApprovals()[0]
+          : channel.pendingSelections()[0];
+      expect(getEventListeners(controller.signal, 'abort')).toHaveLength(1);
+      controller.abort(new Error('cancel now'));
+      expect(channel.pendingApprovals()).toHaveLength(0);
+      expect(channel.pendingSelections()).toHaveLength(0);
+      expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+      expect(jest.getTimerCount()).toBe(0);
+      expect(
+        channel.resolveApproval({ id: request.id, decision: 'approve' }),
+      ).toBe(false);
+      expect(
+        channel.resolveSelection({
+          id: request.id,
+          outcome: 'selected',
+          paths: [],
+        }),
+      ).toBe(false);
+      await rejection;
+      jest.runAllTimers();
+      expect(dismissed).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('never publishes a request for an already cancelled tool', async () => {
+    const channel = new AgentHumanChannelService();
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled'));
+    const published = jest.fn();
+    channel.on('approval', published);
+    const human = makeCtx(channel, { signal: controller.signal }).human;
+    await expect(human.requestApproval({ title: 'wait' })).rejects.toThrow(
+      'cancelled',
+    );
+    expect(published).not.toHaveBeenCalled();
+  });
+
+  it('drains approvals/selections, listeners, and timers on shutdown and rejects new requests', async () => {
+    jest.useFakeTimers();
+    const channel = new AgentHumanChannelService();
+    const controller = new AbortController();
+    const human = makeCtx(channel, { signal: controller.signal }).human;
+    const approval = expect(
+      human.requestApproval({ title: 'wait' }),
+    ).rejects.toMatchObject({ code: 'human_channel_closed' });
+    const selection = expect(
+      human.requestSelection({ title: 'wait', rootPath: '/repo' }),
+    ).rejects.toMatchObject({ code: 'human_channel_closed' });
+    channel.onModuleDestroy();
+    await Promise.all([approval, selection]);
+    expect(channel.pendingApprovals()).toEqual([]);
+    expect(channel.pendingSelections()).toEqual([]);
+    expect(getEventListeners(controller.signal, 'abort')).toEqual([]);
+    expect(jest.getTimerCount()).toBe(0);
+    expect(channel.eventNames()).toEqual([]);
+    await expect(
+      human.requestApproval({ title: 'too late' }),
+    ).rejects.toMatchObject({ code: 'human_channel_closed' });
   });
 });

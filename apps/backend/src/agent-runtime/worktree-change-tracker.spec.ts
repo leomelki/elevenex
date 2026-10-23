@@ -13,8 +13,14 @@ describe('WorktreeChangeTracker (real git and filesystem)', () => {
   let directory: string;
   let tracker: WorktreeChangeTracker | undefined;
   let budget: ChangeContentBudget;
+  const run = (file: string, args: string[]) =>
+    execFileAsync(file, args, {
+      cwd: directory,
+      timeout: 2_000,
+      killSignal: 'SIGKILL',
+    });
   const git = (...args: string[]) =>
-    execFileAsync('git', args, { cwd: directory });
+    run('git', args);
   const write = (path: string, content: string | Buffer) =>
     fs.writeFile(join(directory, path), content);
   const commit = async () => {
@@ -49,24 +55,22 @@ describe('WorktreeChangeTracker (real git and filesystem)', () => {
     await fs.rm(directory, { recursive: true, force: true });
   });
 
-  it('captures Python, cat redirection, dotfiles, renames, deletion and unusual filenames without editing the index', async () => {
+  it('captures external Node writes, cat redirection, dotfiles, renames, deletion and unusual filenames without editing the index', async () => {
     await write('source.ts', 'pre-existing unstaged edit\n');
     await write('existing-untracked.ts', 'already here\n');
     const indexBefore = await fs.readFile(join(directory, '.git/index'));
     tracker = await WorktreeChangeTracker.create(directory, budget);
     const turn = await tracker.begin();
-    await execFileAsync(
-      'python3',
+    await run(
+      process.execPath,
       [
-        '-c',
-        'from pathlib import Path; Path("source.ts").write_text("pre-existing unstaged edit\\npython edit\\n"); Path(".hidden").write_text("hidden\\n")',
+        '-e',
+        'const fs = require("node:fs"); fs.writeFileSync("source.ts", "pre-existing unstaged edit\\nexternal edit\\n"); fs.writeFileSync(".hidden", "hidden\\n")',
       ],
-      { cwd: directory },
     );
-    await execFileAsync(
+    await run(
       '/bin/sh',
-      ['-c', "cat > created.ts <<'EOF'\nfrom cat\nEOF"],
-      { cwd: directory },
+      ['-c', "exec cat > created.ts <<'EOF'\nfrom cat\nEOF"],
     );
     await fs.rename(
       join(directory, 'delete.ts'),
@@ -92,6 +96,80 @@ describe('WorktreeChangeTracker (real git and filesystem)', () => {
       indexBefore,
     );
     expect(result.capture?.complete).toBe(true);
+  });
+
+  it('captures an ordinary journaled file without modifying the index', async () => {
+    const indexBefore = await fs.readFile(join(directory, '.git/index'));
+    tracker = await WorktreeChangeTracker.create(directory, budget);
+    const turn = await tracker.begin();
+    await write('from-external.ts', 'new\n');
+    // Exercise check-ignore even when filesystem events are delayed or absent.
+    turn.paths.add('from-external.ts');
+    const result = await tracker.finish(turn);
+    expect(result.filesChanged).toEqual([
+      expect.objectContaining({
+        path: 'from-external.ts',
+        status: 'created',
+        additions: 1,
+        deletions: 0,
+      }),
+    ]);
+    expect(result.capture?.complete).toBe(true);
+    expect(await fs.readFile(join(directory, '.git/index'))).toEqual(indexBefore);
+  });
+
+  it.each([
+    'GIT_LITERAL_PATHSPECS',
+    'GIT_GLOB_PATHSPECS',
+    'GIT_NOGLOB_PATHSPECS',
+    'GIT_ICASE_PATHSPECS',
+  ])('treats unusual tracked, untracked and ignored filenames literally despite inherited %s', async (pathspecVariable) => {
+    const names = [
+      ':leading-colon',
+      ':(glob)*',
+      'space name',
+      'new\nname\t',
+      'glob*?[ab]',
+    ];
+    for (const name of names) await write(`${name}.ts`, 'before\n');
+    await write('.gitignore', 'node_modules/\nignored.txt\n*.ignored\n');
+    await commit();
+    const indexBefore = await fs.readFile(join(directory, '.git/index'));
+    const missing = join(directory, 'missing');
+    jest.replaceProperty(process, 'env', {
+      ...process.env,
+      GIT_DIR: missing,
+      GIT_WORK_TREE: missing,
+      GIT_INDEX_FILE: missing,
+      GIT_COMMON_DIR: missing,
+      GIT_OBJECT_DIRECTORY: missing,
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: missing,
+      [pathspecVariable]: '1',
+    });
+    tracker = await WorktreeChangeTracker.create(directory, budget);
+    const turn = await tracker.begin();
+    for (const name of names) {
+      await write(`${name}.ts`, 'before\nafter\n');
+      await write(`${name}.new`, 'new\n');
+      await write(`${name}.ignored`, 'ignored source\n');
+      turn.paths.add(`${name}.ts`);
+      turn.paths.add(`${name}.new`);
+      turn.paths.add(`${name}.ignored`);
+    }
+    const result = await tracker.finish(turn);
+    expect(result.filesChanged.map((file) => file.path)).toEqual(
+      names.flatMap((name) => [`${name}.ts`, `${name}.new`, `${name}.ignored`]).sort(),
+    );
+    for (const name of names) {
+      expect(result.filesChanged.find((file) => file.path === `${name}.ts`))
+        .toMatchObject({ status: 'modified', additions: 1, deletions: 0 });
+      expect(result.filesChanged.find((file) => file.path === `${name}.new`))
+        .toMatchObject({ status: 'created', additions: 1, deletions: 0 });
+      expect(result.filesChanged.find((file) => file.path === `${name}.ignored`)
+        ?.diffUnavailable).toMatch(/ignored by Git/);
+    }
+    expect(result.capture?.complete).toBe(true);
+    expect(await fs.readFile(join(directory, '.git/index'))).toEqual(indexBefore);
   });
 
   it('compares against the actual dirty starting state, including staged and untracked files', async () => {

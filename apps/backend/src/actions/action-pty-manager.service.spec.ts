@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as pty from 'node-pty';
+import { ActionsService } from './actions.service.js';
 import { ActionPtyManager } from './action-pty-manager.service.js';
 import {
   buildAugmentedEnvAsync,
@@ -12,7 +13,7 @@ import {
   getDefaultUserShell,
   normalizeShellForPlatform,
 } from '../config/system-paths.js';
-import { execFileQuiet } from '../terminal/async-process.js';
+import { execFileAsync, execFileQuiet } from '../terminal/async-process.js';
 import { shouldUseTmux } from '../config/backend-runtime-mode.js';
 
 jest.mock('node-pty', () => ({
@@ -33,6 +34,7 @@ jest.mock('../config/system-paths.js', () => ({
 
 jest.mock('../terminal/async-process.js', () => ({
   execFileQuiet: jest.fn(),
+  execFileAsync: jest.fn(),
 }));
 
 jest.mock('../config/backend-runtime-mode.js', () => ({
@@ -46,12 +48,18 @@ type MockPty = EventEmitter & {
   pid: number;
 };
 
+const createdPtys: MockPty[] = [];
+
 function createMockPty(): MockPty {
   const process = new EventEmitter() as MockPty;
   process.kill = jest.fn();
   process.onData = jest.fn();
-  process.onExit = jest.fn();
+  process.onExit = jest.fn((callback) => {
+    process.on('exit', callback);
+    return { dispose: () => process.off('exit', callback) };
+  });
   process.pid = 123;
+  createdPtys.push(process);
   return process;
 }
 
@@ -82,7 +90,20 @@ describe('ActionPtyManager', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     manager = null;
+    jest
+      .spyOn(ActionPtyManager.prototype as any, 'waitForFile')
+      .mockResolvedValue(true);
+    jest.mocked(execFileAsync).mockImplementation(async (_file, args) => ({
+      stdout: args[0] === 'display-message' ? '123\t1' : '',
+      stderr: '',
+    }));
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'elevenex-action-test-'));
+    jest
+      .spyOn(ActionPtyManager.prototype as any, 'getLogFilePath')
+      .mockImplementation((id: unknown) => path.join(tmpDir, `${id}.log`));
+    jest
+      .spyOn(ActionPtyManager.prototype as any, 'getExitCodePath')
+      .mockImplementation((id: unknown) => path.join(tmpDir, `${id}.exitcode`));
     mockBuildAugmentedEnv.mockResolvedValue({
       PATH: '/repo/bin:/usr/bin',
       SHELL: '/custom/zsh',
@@ -105,6 +126,9 @@ describe('ActionPtyManager', () => {
 
   afterEach(() => {
     manager?.onModuleDestroy();
+    for (const process of createdPtys.splice(0))
+      process.emit('exit', { exitCode: 0 });
+    jest.restoreAllMocks();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -227,7 +251,7 @@ describe('ActionPtyManager', () => {
     expect(mockBuildAugmentedEnv).toHaveBeenCalledWith(process.env, tmpDir);
     expect(mockSpawn).toHaveBeenCalledWith(
       'tail',
-      ['-n', '0', '-f', path.join(os.tmpdir(), 'elevenex-action-42.log')],
+      ['-c', '+1', '-F', path.join(tmpDir, '42.log')],
       {
         name: 'xterm-256color',
         cols: 120,
@@ -312,5 +336,419 @@ describe('ActionPtyManager', () => {
     await firstStart;
 
     expect(mockSpawn).toHaveBeenCalledTimes(1);
+  });
+  function setup(tmux = false) {
+    mockFindBinary.mockReturnValue(tmux ? '/usr/bin/tmux' : null);
+    manager = new ActionPtyManager();
+    // Keep all test artifacts scoped to this test, including completion markers.
+    jest
+      .spyOn(manager as any, 'getLogFilePath')
+      .mockReturnValue(path.join(tmpDir, 'action.log'));
+    jest
+      .spyOn(manager as any, 'getExitCodePath')
+      .mockReturnValue(path.join(tmpDir, 'action.exitcode'));
+    const persistence = {
+      markRunning: jest.fn().mockResolvedValue(undefined),
+      flushCurrentOutput: jest.fn().mockResolvedValue(undefined),
+      finalizeRun: jest.fn().mockResolvedValue(undefined),
+    };
+    const gateway = { sendToAction: jest.fn(), notifyStatus: jest.fn() };
+    manager.registerPersistence(persistence);
+    manager.registerGateway(gateway);
+    return {
+      persistence,
+      gateway,
+      action: { id: 91, worktreePath: tmpDir, command: 'side-effect' },
+    };
+  }
+
+  it('never escalates a stopped run into a newer rerun', async () => {
+    jest.useFakeTimers();
+    try {
+      const { action, persistence } = setup();
+      const first = createMockPty();
+      const second = createMockPty();
+      mockSpawn
+        .mockReturnValueOnce(first as never)
+        .mockReturnValueOnce(second as never);
+      await manager!.start(action);
+      await manager!.stop(action.id);
+      first.emit('exit', { exitCode: 143 });
+      await new Promise<void>((resolve) =>
+        jest.requireActual('node:timers').setImmediate(resolve),
+      );
+      expect(manager!.isRunning(action.id)).toBe(false);
+      await manager!.start(action);
+      jest.advanceTimersByTime(2000);
+      expect(first.kill.mock.calls).toEqual([['SIGTERM']]);
+      expect(second.kill).not.toHaveBeenCalled();
+      expect(persistence.finalizeRun).toHaveBeenCalledTimes(1);
+      expect(manager!.isRunning(action.id)).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('escalates only the concrete action and shares concurrent strict stops', async () => {
+    jest.useFakeTimers();
+    try {
+      const { action, persistence } = setup();
+      const process = createMockPty();
+      mockSpawn.mockReturnValue(process as never);
+      await manager!.start(action);
+      const stops = Promise.all([
+        manager!.stop(action.id, true),
+        manager!.stop(action.id, true),
+      ]);
+      jest.advanceTimersByTime(1500);
+      expect(process.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']]);
+      process.emit('exit', { exitCode: 137 });
+      await stops;
+      expect(persistence.finalizeRun).toHaveBeenCalledTimes(1);
+      expect(persistence.finalizeRun.mock.calls[0][1].status).toBe('stopped');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each(['new-session', 'set-option', 'tail'])(
+    'cleans partial tmux setup without direct fallback after %s fails',
+    async (failure) => {
+      const { action } = setup(true);
+      mockExecFileQuiet.mockImplementation(async (_file, args) => {
+        if (args[0] === 'has-session') throw new Error('No session');
+        if (args[0] === failure) throw new Error('setup failed');
+      });
+      if (failure === 'tail')
+        mockSpawn.mockImplementation(() => {
+          throw new Error('setup failed');
+        });
+      await expect(manager!.start(action)).rejects.toThrow('setup failed');
+      expect(mockSpawn.mock.calls.every(([file]) => file === 'tail')).toBe(
+        true,
+      );
+      expect(
+        mockExecFileQuiet.mock.calls.some(
+          ([, args]) => args[0] === 'kill-session',
+        ),
+      ).toBe(true);
+      expect(manager!.isRunning(action.id)).toBe(false);
+      expect(fs.readdirSync(tmpDir)).toEqual([]);
+    },
+  );
+
+  it('holds the launch gate until logging and tail are ready', async () => {
+    const { action } = setup(true);
+    const ready = createDeferred<boolean>();
+    jest.spyOn(manager as any, 'waitForFile').mockReturnValue(ready.promise);
+    mockExecFileQuiet.mockImplementation(async (_file, args) => {
+      if (args[0] === 'has-session') throw new Error('No session');
+    });
+    const start = manager!.start(action);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      mockExecFileQuiet.mock.calls.some(([, args]) =>
+        args.includes('pipe-pane'),
+      ),
+    ).toBe(true);
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(
+      fs.readdirSync(tmpDir).some((file) => file.includes('.launch-')),
+    ).toBe(false);
+    ready.resolve(true);
+    await start;
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(
+      fs.readdirSync(tmpDir).some((file) => file.includes('.launch-')),
+    ).toBe(true);
+  });
+
+  it('serializes an in-flight output flush before final persistence', async () => {
+    const { action, persistence } = setup();
+    const flushed = createDeferred<void>();
+    persistence.flushCurrentOutput.mockReturnValue(flushed.promise);
+    const process = createMockPty();
+    mockSpawn.mockReturnValue(process as never);
+    await manager!.start(action);
+    process.onData.mock.calls[0][0]('first');
+    (manager as any).flushCurrentOutput(
+      (manager as any).processes.get(action.id),
+    );
+    await Promise.resolve();
+    process.onData.mock.calls[0][0](' last');
+    process.emit('exit', { exitCode: 0 });
+    await Promise.resolve();
+    expect(persistence.finalizeRun).not.toHaveBeenCalled();
+    flushed.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(persistence.finalizeRun.mock.calls[0][1]).toMatchObject({
+      status: 'success',
+      lastOutput: 'first last',
+      currentOutput: '',
+    });
+    expect(manager!.isRunning(action.id)).toBe(false);
+  });
+
+  it('coalesces completion snapshots and ignores an old poll after an action reruns', async () => {
+    const { action, persistence } = setup(true);
+    const first = createMockPty();
+    first.kill.mockImplementation(() => first.emit('exit', { exitCode: 0 }));
+    const second = createMockPty();
+    mockSpawn
+      .mockReturnValueOnce(first as never)
+      .mockReturnValueOnce(second as never);
+    await manager!.start(action);
+    const check = createDeferred<{ stdout: string; stderr: string }>();
+    jest
+      .mocked(execFileAsync)
+      .mockImplementation((_file, args) =>
+        args[0] === 'display-message'
+          ? Promise.resolve({ stdout: '123\t1', stderr: '' })
+          : check.promise,
+      );
+    const poll = (manager as any).pollCompletions();
+    await (manager as any).pollCompletions();
+    expect(execFileAsync).toHaveBeenCalledTimes(1);
+    await manager!.stop(action.id);
+    await manager!.start(action);
+    check.resolve({ stdout: '', stderr: '' });
+    await poll;
+    expect(second.kill).not.toHaveBeenCalled();
+    expect(persistence.finalizeRun).toHaveBeenCalledTimes(1);
+    expect(manager!.isRunning(action.id)).toBe(true);
+  });
+
+  it('uses one pane snapshot for multiple actions and leaves them running on a poll error', async () => {
+    const { action } = setup(true);
+    mockSpawn.mockImplementation(() => createMockPty() as never);
+    await manager!.start(action);
+    await manager!.start({ ...action, id: 92 });
+    jest
+      .mocked(execFileAsync)
+      .mockRejectedValueOnce(new Error('permission denied'));
+    await (manager as any).pollCompletions();
+    expect(execFileAsync).toHaveBeenCalledTimes(1);
+    expect(manager!.isRunning(91)).toBe(true);
+    expect(manager!.isRunning(92)).toBe(true);
+  });
+
+  it('drains the log before its bounded final snapshot and ignores late tail output', async () => {
+    const { action, persistence } = setup(true);
+    const process = createMockPty();
+    process.kill.mockImplementation(() =>
+      process.emit('exit', { exitCode: 0 }),
+    );
+    mockSpawn.mockReturnValue(process as never);
+    await manager!.start(action);
+    const drained = createDeferred<void>();
+    jest
+      .spyOn(manager as any, 'waitForLogDrain')
+      .mockReturnValue(drained.promise);
+    const stop = manager!.stop(action.id, true);
+    await new Promise((resolve) => setImmediate(resolve));
+    fs.writeFileSync(path.join(tmpDir, 'action.log.1'), 'old');
+    fs.writeFileSync(path.join(tmpDir, 'action.log'), ' final');
+    drained.resolve();
+    await stop;
+    process.onData.mock.calls[0][0]('stale tail');
+    expect(persistence.finalizeRun.mock.calls[0][1].lastOutput).toBe(
+      'old final',
+    );
+    expect(persistence.finalizeRun).toHaveBeenCalledTimes(1);
+    expect(fs.readdirSync(tmpDir)).toEqual([]);
+  });
+  it('completes a vanished tmux server but does not mistake connection permission errors for exit', async () => {
+    const { action, persistence } = setup(true);
+    const process = createMockPty();
+    process.kill.mockImplementation(() =>
+      process.emit('exit', { exitCode: 0 }),
+    );
+    mockSpawn.mockReturnValue(process as never);
+    await manager!.start(action);
+    jest.mocked(execFileAsync).mockRejectedValueOnce(
+      Object.assign(new Error('missing'), {
+        stderr: 'no server running on /tmp/test',
+      }),
+    );
+    const current = (manager as any).processes.get(action.id);
+    await (manager as any).pollCompletions();
+    await current.completion;
+    expect(persistence.finalizeRun).toHaveBeenCalledTimes(1);
+    expect(manager!.isRunning(action.id)).toBe(false);
+  });
+
+  it('preserves the observed exit code when persistence fails and strict stop retries', async () => {
+    const { action, persistence } = setup();
+    const process = createMockPty();
+    mockSpawn.mockReturnValue(process as never);
+    persistence.finalizeRun.mockRejectedValueOnce(new Error('database busy'));
+    await manager!.start(action);
+    process.emit('exit', { exitCode: 7 });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(manager!.isRunning(action.id)).toBe(true);
+    process.kill.mockImplementation(() =>
+      process.emit('exit', { exitCode: 0 }),
+    );
+    await manager!.stop(action.id, true);
+    expect(persistence.finalizeRun.mock.calls[1][1]).toMatchObject({
+      status: 'stopped',
+      lastExitCode: 7,
+    });
+  });
+  it('escalates the captured tmux process group while retaining the pane for output drain', async () => {
+    jest.useFakeTimers();
+    const signal = jest.spyOn(process, 'kill').mockReturnValue(true);
+    try {
+      const { action } = setup(true);
+      const started = Date.now();
+      jest.mocked(execFileAsync).mockImplementation(async (_file, args) => ({
+        stdout:
+          args[0] === 'display-message'
+            ? `23456\t${Date.now() - started >= 1600 ? 1 : 0}`
+            : 'elevenex-action-91\t0',
+        stderr: '',
+      }));
+      await manager!.start(action);
+      mockExecFileQuiet.mockClear();
+      const pane = (manager as any).processes.get(action.id);
+      const pending = (manager as any).terminateTmuxPane(pane);
+      await jest.advanceTimersByTimeAsync(1600);
+      await pending;
+      expect(signal.mock.calls).toEqual([
+        [process.platform === 'win32' ? 23456 : -23456, 'SIGTERM'],
+        [process.platform === 'win32' ? 23456 : -23456, 'SIGKILL'],
+      ]);
+      expect(manager!.isRunning(action.id)).toBe(true);
+      expect(
+        mockExecFileQuiet.mock.calls.some(
+          ([, args]) => args[0] === 'kill-session',
+        ),
+      ).toBe(false);
+    } finally {
+      signal.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
+  it('refuses to escalate when the pane process changes during stop', async () => {
+    jest.useFakeTimers();
+    const signal = jest.spyOn(process, 'kill').mockReturnValue(true);
+    try {
+      const { action } = setup(true);
+      await manager!.start(action);
+      jest
+        .mocked(execFileAsync)
+        .mockResolvedValueOnce({ stdout: '23456\t0', stderr: '' })
+        .mockResolvedValueOnce({ stdout: '23457\t0', stderr: '' });
+      const pane = (manager as any).processes.get(action.id);
+      const rejected = expect(
+        (manager as any).terminateTmuxPane(pane),
+      ).rejects.toThrow('pane changed');
+      await jest.advanceTimersByTimeAsync(50);
+      await rejected;
+      expect(signal.mock.calls).toEqual([
+        [process.platform === 'win32' ? 23456 : -23456, 'SIGTERM'],
+      ]);
+      expect(manager!.isRunning(action.id)).toBe(true);
+    } finally {
+      signal.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+  it('keeps a surviving tmux pipe intact on reattach instead of toggling it off', async () => {
+    setup(true);
+    jest
+      .mocked(execFileAsync)
+      .mockResolvedValue({ stdout: '1\t0', stderr: '' });
+    expect(await manager!.reattach(91, tmpDir)).toBe(true);
+    expect(
+      mockExecFileQuiet.mock.calls.some(([, args]) => args[0] === 'pipe-pane'),
+    ).toBe(false);
+  });
+  function serviceFor(action: {
+    id: number;
+    worktreePath: string;
+    command: string;
+  }) {
+    const where = jest.fn().mockResolvedValue(undefined);
+    const db = { delete: jest.fn(() => ({ where })) };
+    const service = new ActionsService(db as never, manager!);
+    jest
+      .spyOn(service, 'findOne')
+      .mockResolvedValue({
+        ...action,
+        name: 'Test',
+        status: 'idle',
+        workspaceId: null,
+      } as never);
+    jest.spyOn(service, 'markRunning').mockResolvedValue(undefined);
+    jest.spyOn(service, 'flushCurrentOutput').mockResolvedValue(undefined);
+    jest.spyOn(service, 'finalizeRun').mockResolvedValue(undefined);
+    return { service, db };
+  }
+
+  it('rejects delete/update while tmux existence is pending, before startup resumes', async () => {
+    const { action } = setup(true);
+    const { service, db } = serviceFor(action);
+    const exists = createDeferred<void>();
+    const requested = createDeferred<void>();
+    mockExecFileQuiet.mockImplementation((_file, args) => {
+      if (args[0] === 'has-session') {
+        requested.resolve();
+        return exists.promise;
+      }
+      return Promise.resolve();
+    });
+    const pending = manager!.start(action);
+    await requested.promise;
+    expect(manager!.isRunning(action.id)).toBe(true);
+    await expect(service.remove(action.id)).rejects.toThrow(
+      'Cannot delete a running action',
+    );
+    await expect(
+      service.update(action.id, { command: 'changed' }),
+    ).rejects.toThrow('Cannot edit a running action');
+    expect(db.delete).not.toHaveBeenCalled();
+    exists.reject(new Error('No session'));
+    await pending;
+    expect(manager!.isRunning(action.id)).toBe(true);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps delete ownership across tmux cleanup so startup cannot enter behind it', async () => {
+    const { action } = setup(true);
+    const { service, db } = serviceFor(action);
+    const killed = createDeferred<void>();
+    const requested = createDeferred<void>();
+    mockExecFileQuiet.mockImplementation((_file, args) => {
+      if (args[0] === 'kill-session') {
+        requested.resolve();
+        return killed.promise;
+      }
+      return Promise.resolve();
+    });
+    const pending = service.remove(action.id);
+    await requested.promise;
+    await expect(manager!.start(action)).rejects.toThrow('already running');
+    expect(mockSpawn).not.toHaveBeenCalled();
+    killed.resolve();
+    await pending;
+    expect(db.delete).toHaveBeenCalledTimes(1);
+    const release = manager!.reserveIdleAction(action.id);
+    expect(release).not.toBeNull();
+    release!();
+  });
+
+  it('resumes reattached output from the captured snapshot end', async () => {
+    setup(true);
+    const log = path.join(tmpDir, 'action.log');
+    fs.writeFileSync(log, 'before');
+    mockSpawn.mockImplementation((_file, args) => {
+      fs.appendFileSync(log, ' during attach');
+      expect(args).toEqual(['-c', '+7', '-F', log]);
+      return createMockPty() as never;
+    });
+    expect(await manager!.reattach(91, tmpDir)).toBe(true);
+    expect(manager!.getCurrentOutput(91)).toBe('before');
   });
 });

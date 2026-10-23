@@ -7,6 +7,16 @@ import { SessionTitleService } from '../session-title/session-title.service.js';
 const flushImmediate = () =>
   new Promise<void>((resolve) => setImmediate(resolve));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('ClaudeHooksService', () => {
   let service: ClaudeHooksService;
   let sessionsService: {
@@ -310,6 +320,111 @@ describe('ClaudeHooksService', () => {
 
     expect(sessionsService.updateClaudeSessionId).not.toHaveBeenCalled();
     expect(sessionsService.markLastStateChange).not.toHaveBeenCalled();
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'ignores a stale status %s after reactivation',
+    async (outcome) => {
+      await service.updateStatus(42, 'running');
+      const pending = deferred<void>();
+      sessionsService.markLastStateChange.mockReturnValueOnce(pending.promise);
+      const old = service.updateStatus(42, 'idle');
+      service.clearStatus(42);
+      service.reactivateSession(42);
+      await service.updateStatus(42, 'running');
+      const changed = jest.fn();
+      service.on('status-changed', changed);
+      if (outcome === 'reject')
+        pending.reject(new Error('Old session disappeared'));
+      else pending.resolve();
+      await old;
+      expect(service.getStatus(42)).toBe('running');
+      expect(changed).not.toHaveBeenCalled();
+      expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+      await service.handleHookEvent(42, { hook_event_name: 'Stop' });
+      expect(service.getStatus(42)).toBe('idle');
+    },
+  );
+
+  it('does not invalidate reopened hooks when an old SessionStart fails', async () => {
+    const pending = deferred<void>();
+    sessionsService.updateClaudeSessionId.mockReturnValueOnce(pending.promise);
+    const old = service.handleHookEvent(7, {
+      hook_event_name: 'SessionStart',
+      session_id: 'old',
+    });
+    service.clearStatus(7);
+    service.reactivateSession(7);
+    await service.handleHookEvent(7, {
+      hook_event_name: 'SessionStart',
+      session_id: 'new',
+    });
+    pending.reject(new Error('Old persistence failed'));
+    await old;
+    await service.handleHookEvent(7, { hook_event_name: 'UserPromptSubmit' });
+    expect(service.getStatus(7)).toBe('running');
+  });
+
+  it('reactivates TUI context and title generation without consuming or saving old results', async () => {
+    sessionsService.findOne.mockResolvedValue({
+      id: 7,
+      repoId: 1,
+      worktreePath: '/tmp/project',
+      name: 'Session 1',
+      hasInjectedWorktreeContext: false,
+    });
+    const oldContext = deferred<unknown>();
+    const oldTitle = deferred<string>();
+    const titleStarted = deferred<void>();
+    worktreeContextService.getCachedSnapshot
+      .mockReturnValueOnce(oldContext.promise)
+      .mockResolvedValue({
+        generationStatus: 'ready',
+        contextSentence: 'Fresh context',
+      });
+    worktreeContextService.consumeForSession.mockResolvedValue({
+      shouldInject: true,
+      contextSentence: 'Fresh context',
+    });
+    sessionTitleService.generate
+      .mockImplementationOnce(() => {
+        titleStarted.resolve();
+        return oldTitle.promise;
+      })
+      .mockResolvedValue('Fresh title');
+    sessionsService.renameFromGeneratedTitle.mockResolvedValue({
+      name: 'Fresh title',
+    });
+
+    const old = service.handleHookEvent(
+      7,
+      { hook_event_name: 'UserPromptSubmit', prompt: 'Old prompt' },
+      { origin: 'tui' },
+    );
+    await titleStarted.promise;
+    expect(sessionTitleService.generate).toHaveBeenCalledTimes(1);
+    service.clearStatus(7);
+    service.reactivateSession(7);
+    const fresh = await service.handleHookEvent(
+      7,
+      { hook_event_name: 'UserPromptSubmit', prompt: 'Fresh prompt' },
+      { origin: 'tui' },
+    );
+    expect(fresh.hookSpecificOutput?.additionalContext).toContain(
+      'Fresh context',
+    );
+    expect(service.getStatus(7)).toBe('running');
+    oldContext.resolve({
+      generationStatus: 'ready',
+      contextSentence: 'Old context',
+    });
+    oldTitle.resolve('Old title');
+    expect(await old).toEqual({ continue: true });
+    await flushImmediate();
+    expect(worktreeContextService.consumeForSession).toHaveBeenCalledTimes(1);
+    expect(sessionsService.renameFromGeneratedTitle.mock.calls).toEqual([
+      [7, 'Fresh title'],
+    ]);
   });
 
   it('does not generate hook output for non-TUI UserPromptSubmit events', async () => {

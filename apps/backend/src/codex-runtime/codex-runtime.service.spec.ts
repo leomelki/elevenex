@@ -7,6 +7,7 @@ jest.mock('../session-title/session-title.service.js', () => ({
 
 import { CodexRuntimeService } from './codex-runtime.service.js';
 import { CodexAppServerClient } from './codex-app-server.js';
+import type { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 
 describe('CodexRuntimeService', () => {
   it('publishes authoritative routing and payload updates without duplicating incoming messages', () => {
@@ -759,6 +760,343 @@ describe('CodexRuntimeService', () => {
     expect(runtime.unconfirmedStops.has(7)).toBe(false);
   });
 
+  it('keeps a timed-out stop actionable and preserves the queue until stop retry confirms', async () => {
+    const { service, appServer, sessionsService, hooksService } =
+      createService();
+    const runtime = service as any;
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'thread-1',
+    });
+    const state = runtime.ensureRuntimeState(7, 'thread-1');
+    state.cachedWorktreePath = '/tmp/project';
+    jest
+      .spyOn(runtime, 'scheduleModelCatalogRefresh')
+      .mockImplementation(() => undefined);
+    const wire = wireAppServerTurn(appServer);
+    let rejectRead!: (error: Error) => void;
+    const read = new Promise((_, reject) => {
+      rejectRead = reject;
+    });
+    let readStarted!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      readStarted = resolve;
+    });
+    let confirmed = false;
+    let turns = 0;
+    appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'turn/start') return { turn: { id: `turn-${++turns}` } };
+      if (method === 'thread/read') {
+        if (confirmed)
+          return {
+            thread: { turns: [{ id: 'turn-1', status: 'interrupted' }] },
+          };
+        readStarted();
+        return read;
+      }
+      return {};
+    });
+    const states: any[] = [];
+    const completions: unknown[] = [];
+    service.on('event', (event: any) => {
+      if (event.type === 'run_state') states.push({ ...event.payload });
+      if (event.type === 'complete') completions.push(event);
+    });
+
+    const running = service.submitPrompt(7, 'active turn');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await service.submitPrompt(7, 'queued follow-up');
+    const queued = state.pendingPrompts[0];
+    const stoppingStateIndex = states.length;
+    const stopping = service.interrupt(7);
+    const rejected = expect(stopping).rejects.toThrow('thread/read');
+    await reading;
+    await running;
+    expect(runtime.activeRuns.has(7)).toBe(false);
+    rejectRead(
+      new Error(
+        'codex app-server request "thread/read" timed out after 2000ms',
+      ),
+    );
+    await rejected;
+
+    expect(await service.getRuntimeState(7)).toMatchObject({
+      runPhase: 'waiting',
+      sessionState: 'requires_action',
+      canInterrupt: true,
+      queuePaused: true,
+      lastError: expect.stringMatching(/Retry stopping.*thread\/read/),
+      pendingPrompts: [queued],
+    });
+    expect(
+      states
+        .slice(stoppingStateIndex)
+        .every((state) => state.canInterrupt && state.runPhase !== 'idle'),
+    ).toBe(true);
+    expect(completions).toHaveLength(0);
+    expect(hooksService.updateRuntimeActivity).toHaveBeenLastCalledWith(
+      7,
+      expect.objectContaining({
+        activityStatus: 'waiting',
+        actionLabel: expect.stringContaining('stop'),
+      }),
+      { authoritative: true },
+    );
+    await expect(service.resumePendingPrompts(7)).rejects.toThrow(
+      'Retry stopping',
+    );
+    expect(state.pendingPrompts).toEqual([queued]);
+    expect(state.queuePaused).toBe(true);
+    expect(turns).toBe(1);
+
+    confirmed = true;
+    await service.interrupt(7);
+    expect(runtime.unconfirmedStops.has(7)).toBe(false);
+    expect(await service.getRuntimeState(7)).toMatchObject({
+      runPhase: 'idle',
+      canInterrupt: false,
+      lastError: null,
+      queuePaused: true,
+      pendingPrompts: [queued],
+    });
+    expect(completions).toHaveLength(1);
+    await service.resumePendingPrompts(7);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(turns).toBe(2);
+    expect(state).toMatchObject({
+      runPhase: 'running',
+      queuePaused: false,
+      pendingPrompts: [],
+      lastError: null,
+    });
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-2', status: 'completed' },
+      },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(state.runPhase).toBe('idle');
+  });
+
+  it.each(['resume', 'completion'])(
+    'does not requeue uncertain work when dispatch after %s rejects',
+    async (trigger) => {
+      const { service, appServer } = createService();
+      const runtime = service as any;
+      const state = runtime.ensureRuntimeState(7);
+      const wire = wireAppServerTurn(appServer);
+      let running: Promise<void> | undefined;
+      if (trigger === 'completion') {
+        running = service.submitPrompt(7, 'active turn');
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      const queued = [
+        {
+          id: 'first',
+          prompt: 'first prompt',
+          queuedAt: '2026-10-23T11:00:00Z',
+          images: [{ mediaType: 'image/png', data: 'image' }],
+        },
+        {
+          id: 'second',
+          prompt: 'second prompt',
+          queuedAt: '2026-10-23T11:01:00Z',
+        },
+      ];
+      state.pendingPrompts = queued;
+      state.queuePaused = trigger === 'resume';
+      const submit = jest
+        .spyOn(service, 'submitPrompt')
+        .mockRejectedValueOnce(new Error('submission outcome unavailable'))
+        .mockResolvedValueOnce(undefined);
+      if (trigger === 'resume') await service.resumePendingPrompts(7);
+      else {
+        wire.notificationHandler({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-1',
+            turn: { id: 'turn-1', status: 'completed' },
+          },
+        });
+        await running;
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(state).toMatchObject({
+        pendingPrompts: [queued[1]],
+        queuePaused: true,
+        runPhase: 'error',
+        lastError: expect.stringMatching(
+          /submission outcome unavailable.*not been requeued/,
+        ),
+      });
+      await service.resumePendingPrompts(7);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(submit).toHaveBeenNthCalledWith(
+        2,
+        7,
+        queued[1].prompt,
+        undefined,
+        undefined,
+      );
+      expect(state.pendingPrompts).toEqual([]);
+      expect(state.queuePaused).toBe(false);
+      expect(state.lastError).toBeNull();
+    },
+  );
+
+  it.each(['resume', 'completion'])(
+    'retains queued work when stop becomes unconfirmed before scheduled %s dispatch',
+    async (trigger) => {
+      const { service, appServer } = createService();
+      const runtime = service as any;
+      const state = runtime.ensureRuntimeState(7);
+      const wire = wireAppServerTurn(appServer);
+      let running: Promise<void> | undefined;
+      if (trigger === 'completion') {
+        running = service.submitPrompt(7, 'active turn');
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      const queued = [
+        {
+          id: 'first',
+          prompt: 'first prompt',
+          queuedAt: '2026-10-23T11:00:00Z',
+          images: [{ mediaType: 'image/png', data: 'image' }],
+        },
+        {
+          id: 'second',
+          prompt: 'second prompt',
+          queuedAt: '2026-10-23T11:01:00Z',
+        },
+      ];
+      state.pendingPrompts = queued;
+      state.queuePaused = trigger === 'resume';
+      const submit = jest
+        .spyOn(service, 'submitPrompt')
+        .mockResolvedValue(undefined);
+      if (trigger === 'resume') await service.resumePendingPrompts(7);
+      else {
+        wire.notificationHandler({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-1',
+            turn: { id: 'turn-1', status: 'completed' },
+          },
+        });
+        await running;
+      }
+      runtime.unconfirmedStops.set(7, {});
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(submit).not.toHaveBeenCalled();
+      expect(state).toMatchObject({
+        pendingPrompts: queued,
+        queuePaused: true,
+        canInterrupt: true,
+        runPhase: 'waiting',
+        lastError: expect.stringContaining('Retry stopping'),
+      });
+    },
+  );
+
+  it('never requeues an executed queued turn when turn-change cleanup rejects', async () => {
+    const capture = {
+      id: 'capture',
+      sessionId: 7,
+      provider: 'codex',
+      root: '/tmp/project',
+      startedAt: '2026-10-23T11:00:00Z',
+    };
+    const turnChanges = {
+      begin: jest.fn<TurnChangesService['begin']>().mockResolvedValue(capture),
+      finish: jest
+        .fn<TurnChangesService['finish']>()
+        .mockRejectedValue(new Error('capture cleanup failed')),
+    };
+    const { service, appServer } = createService(undefined, turnChanges);
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'thread-1');
+    state.cachedWorktreePath = '/tmp/project';
+    const wire = wireAppServerTurn(appServer);
+    const queued = [
+      {
+        id: 'executed',
+        prompt: 'perform the side effect',
+        queuedAt: '2026-10-23T11:00:00Z',
+      },
+      {
+        id: 'remaining',
+        prompt: 'different follow-up',
+        queuedAt: '2026-10-23T11:01:00Z',
+      },
+    ];
+    const results: unknown[] = [];
+    service.on('event', (event: any) => {
+      if (event.type === 'tool_result') results.push(event);
+    });
+    state.pendingPrompts = queued;
+    state.queuePaused = true;
+    await service.resumePendingPrompts(7);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(wire.turnStartParams).toMatchObject({
+      input: [{ type: 'text', text: queued[0].prompt }],
+    });
+    wire.notificationHandler({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        item: {
+          id: 'side-effect',
+          type: 'commandExecution',
+          command: 'touch output',
+          status: 'completed',
+          exitCode: 0,
+        },
+      },
+    });
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-1', status: 'completed' },
+      },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(results).toHaveLength(1);
+    expect(turnChanges.finish).toHaveBeenCalledWith(capture, 'thread-1');
+    expect(state).toMatchObject({
+      pendingPrompts: [queued[1]],
+      queuePaused: true,
+      runPhase: 'error',
+      lastError: expect.stringMatching(
+        /capture cleanup failed.*not been requeued/,
+      ),
+    });
+    expect(runtime.activeRuns.has(7)).toBe(false);
+    turnChanges.finish.mockResolvedValueOnce(undefined);
+    await service.resumePendingPrompts(7);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(
+      appServer.request.mock.calls
+        .filter(([method]) => method === 'turn/start')
+        .map(([, params]) => (params as any).input),
+    ).toEqual([
+      [{ type: 'text', text: queued[0].prompt }],
+      [{ type: 'text', text: queued[1].prompt }],
+    ]);
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-1', status: 'completed' },
+      },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(state).toMatchObject({ pendingPrompts: [], runPhase: 'idle' });
+  });
+
   it('accepts a new prompt after reactivation and reloads the task’s current environment', async () => {
     const { service, sessionsService } = createService();
     (service as any).ensureRuntimeState(7).cachedWorktreePath =
@@ -892,6 +1230,7 @@ describe('CodexRuntimeService', () => {
       reasoningEffort: string | null;
       fastMode?: boolean;
     } = { model: null, reasoningEffort: null },
+    turnChanges?: Pick<TurnChangesService, 'begin' | 'finish'>,
   ) {
     const sessionsService = {
       assertSessionWorkspaceLinked: jest.fn().mockResolvedValue(undefined),
@@ -989,6 +1328,7 @@ describe('CodexRuntimeService', () => {
         } as never,
         mcpAgentTokens as never,
         db as never,
+        turnChanges as never,
       ),
       sessionsService,
       authService,
@@ -1500,6 +1840,281 @@ describe('CodexRuntimeService', () => {
     });
     return iterator;
   }
+
+  it('keeps the new turn running through delayed previous-turn notifications', async () => {
+    const { service, appServer } = createService();
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'thread-1');
+    state.cachedWorktreePath = '/tmp/project';
+    const wire = wireAppServerTurn(appServer);
+    let starts = 0;
+    let acknowledge!: (value: unknown) => void;
+    const ack = new Promise((resolve) => {
+      acknowledge = resolve;
+    });
+    const stale = () => {
+      wire.notificationHandler({
+        method: 'turn/started',
+        params: {
+          threadId: 'thread-1',
+          turn: { id: 'turn-old' },
+        },
+      });
+      wire.notificationHandler({
+        method: 'item/agentMessage/delta',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-old',
+          itemId: 'reply',
+          delta: 'stale',
+        },
+      });
+      wire.notificationHandler({
+        method: 'item/started',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-old',
+          item: { id: 'old', type: 'agentMessage', text: 'old' },
+        },
+      });
+      wire.notificationHandler({
+        method: 'item/completed',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-old',
+          item: { id: 'old', type: 'agentMessage', text: 'old' },
+        },
+      });
+      wire.notificationHandler({
+        method: 'thread/tokenUsage/updated',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-old',
+          tokenUsage: { last: { totalTokens: 190000 } },
+        },
+      });
+      wire.notificationHandler({
+        method: 'error',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-old',
+          error: { message: 'old error' },
+        },
+      });
+      wire.notificationHandler({
+        method: 'turn/completed',
+        params: {
+          threadId: 'thread-1',
+          turn: { id: 'turn-old', status: 'completed' },
+        },
+      });
+    };
+    appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'thread/resume') {
+        if (starts) stale(); // Previous turn completes while the new run resumes.
+        return {};
+      }
+      if (method === 'turn/start') {
+        if (++starts === 1) return { turn: { id: 'turn-old' } };
+        return ack;
+      }
+      return {};
+    });
+    const previous = service.submitPrompt(7, 'previous');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-old', status: 'completed' },
+      },
+    });
+    await previous;
+
+    const current = service.submitPrompt(7, 'current');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    stale(); // Old events and new output can also arrive before the start ack.
+    wire.notificationHandler({
+      method: 'turn/started',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-new' },
+      },
+    });
+    wire.notificationHandler({
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-new',
+        itemId: 'reply',
+        delta: 'current',
+      },
+    });
+    expect(runtime.activeRuns.get(7).turnId).toBeNull();
+    acknowledge({ turn: { id: 'turn-new' } });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    stale(); // A stale turn/started must never replace the acknowledged ID.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runtime.activeRuns.get(7).turnId).toBe('turn-new');
+    expect(state).toMatchObject({
+      runPhase: 'running',
+      canInterrupt: true,
+      lastError: null,
+    });
+    expect(state.liveItems.map((item: any) => item.content)).toEqual([
+      'current',
+    ]);
+    expect(state.contextUsage).toBeNull();
+
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-new', status: 'completed' },
+      },
+    });
+    await current;
+    expect(state.runPhase).toBe('idle');
+    expect(runtime.activeRuns.has(7)).toBe(false);
+  });
+
+  it('replays a complete current turn delivered before its start acknowledgement', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') {
+        wire.notificationHandler({
+          method: 'turn/started',
+          params: {
+            threadId: 'thread-1',
+            turn: { id: 'turn-1' },
+          },
+        });
+        wire.notificationHandler({
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'reply',
+            delta: 'early',
+          },
+        });
+        wire.notificationHandler({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-1',
+            turn: { id: 'turn-1', status: 'completed' },
+          },
+        });
+        return { turn: { id: 'turn-1' } };
+      }
+      return {};
+    });
+    const iterator = await startAppServerTurn(service, 'default');
+    const events = [];
+    for await (const event of iterator) events.push(event);
+    expect(events).toMatchObject([
+      { type: 'turn.started' },
+      { type: 'item.updated', item: { text: 'early' } },
+      { type: 'turn.completed' },
+    ]);
+  });
+
+  it('preserves legacy notifications without turn IDs', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const iterator = await startAppServerTurn(service, 'default');
+    wire.notificationHandler({
+      method: 'turn/started',
+      params: { threadId: 'thread-1' },
+    });
+    wire.notificationHandler({
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'thread-1',
+        itemId: 'legacy',
+        delta: 'legacy output',
+      },
+    });
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { status: 'completed' },
+      },
+    });
+    const events = [];
+    for await (const event of iterator) events.push(event);
+    expect(events).toMatchObject([
+      { type: 'turn.started' },
+      { type: 'item.updated', item: { text: 'legacy output' } },
+      { type: 'turn.completed' },
+    ]);
+  });
+
+  it.each([
+    'codex app-server request "thread/resume" timed out after 60000ms',
+    'Codex server temporarily unavailable',
+    'database file not found',
+  ])(
+    'preserves the thread association and surfaces resume failure: %s',
+    async (message) => {
+      const { service, appServer, sessionsService } = createService();
+      const runtime = service as any;
+      const state = runtime.ensureRuntimeState(7, 'thread-1');
+      state.cachedWorktreePath = '/tmp/project';
+      wireAppServerTurn(appServer);
+      appServer.request.mockRejectedValue(new Error(message));
+      await service.submitPrompt(7, 'retry this thread');
+      expect(state).toMatchObject({
+        codexSessionId: 'thread-1',
+        runPhase: 'error',
+        lastError: message,
+      });
+      expect(appServer.request).toHaveBeenCalledTimes(1);
+      expect(appServer.request).toHaveBeenCalledWith(
+        'thread/resume',
+        expect.objectContaining({ threadId: 'thread-1' }),
+      );
+      expect(sessionsService.updateCodexSessionId).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    'thread not found: missing',
+    'no rollout found for thread id missing',
+  ])(
+    'starts fresh only for a confirmed missing thread: %s',
+    async (message) => {
+      const { service, appServer, sessionsService } = createService();
+      const runtime = service as any;
+      const state = runtime.ensureRuntimeState(7, 'missing');
+      state.cachedWorktreePath = '/tmp/project';
+      const wire = wireAppServerTurn(appServer);
+      appServer.request.mockImplementation(async (method: string) => {
+        if (method === 'thread/resume') throw new Error(message);
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') return { turn: { id: 'turn-1' } };
+        return {};
+      });
+      const running = service.submitPrompt(7, 'recover missing thread');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(state.codexSessionId).toBe('thread-1');
+      expect(sessionsService.updateCodexSessionId).toHaveBeenCalledWith(
+        7,
+        'thread-1',
+      );
+      wire.notificationHandler({
+        method: 'turn/completed',
+        params: {
+          threadId: 'thread-1',
+          turn: { id: 'turn-1', status: 'completed' },
+        },
+      });
+      await running;
+    },
+  );
 
   it('prewarms the shared app-server and caches session metadata', async () => {
     const { service, sessionsService, authService, appServer } =

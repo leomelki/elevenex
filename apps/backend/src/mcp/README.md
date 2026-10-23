@@ -11,6 +11,10 @@ commands, coordinate other sessions, and reach the human. It is the integration 
   as a raw Express route at `POST/GET/DELETE /api/mcp` in the **pre-body-parser** block of
   `main.ts` (next to the mcp-auth-proxy) so the transport reads the raw request stream. One
   `McpServer`+transport per `Mcp-Session-Id`; `GET` is the SSE notify channel, `DELETE` tears down.
+  Sessions expire after 15 idle minutes; `ELEVENEX_MCP_IDLE_TIMEOUT_MS` accepts integer
+  milliseconds from 1000 to 86400000. An active tool suspends expiry and starts a fresh idle
+  period when it finishes. SSE disconnects preserve the logical session. Initialization failure,
+  expiry, DELETE and module shutdown close transports/servers and clear registrations/cursors.
 - **Identity**: every coding session and mission lazily receives a stable `mcpAgentToken`.
   Claude, Codex, and OpenCode receive the authenticated HTTP server through runtime configuration;
   Pi receives `ELEVENEX_AGENT_TOKEN` and `ELEVENEX_MCP_URL` through its extension environment.
@@ -61,6 +65,15 @@ guarantees so individual tools can't regress them:
   rejection** (`requiresQuery` → blocks `''`, `.`, `*`).
 - **Token economy**: results are compact handles (id, status, deepLink), deltas (`read_session`
   cursors), and counts — never full DB objects; hard caps emit `truncated` + a narrow-scope hint.
+  `grep_session` preserves JavaScript per-line regex semantics in a disposable worker (two
+  concurrent searches, 5-second render/search deadline, immediate abort). Rendering uses
+  bounded chunks with backpressure: each rendered preamble/turn input projection is limited
+  to 2 Mi characters and 50000 values, and rendered text to 32 Mi characters; larger input fails
+  explicitly with `grep_input_limit`. Fields omitted by precision or render options do not
+  consume the input budget. The existing history/model loader still reads the full session
+  before the deadline starts. Returned lines cap at 2000 characters, and combined match/context text
+  at 24000 characters. `truncation` distinguishes match, line and aggregate limits. Human
+  approvals/selections are removed from panels and rejected on tool abort or module shutdown.
 - **Cost classes** (`instant`/`cached`/`scoped`/`heavy`) distinguish DB reads, cached
   observations, checkout/process work, and expensive setup/agent work. Task preparation and
   prompt/command submission return handles; polling tools and finish cleanup explicitly wait.

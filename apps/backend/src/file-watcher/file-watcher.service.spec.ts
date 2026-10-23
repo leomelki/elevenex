@@ -1,21 +1,29 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { FileWatcherService, FileChangeEvent } from './file-watcher.service.js';
-import chokidar, { FSWatcher } from 'chokidar';
+import chokidar from 'chokidar';
 import * as path from 'node:path';
 
 // Mock chokidar
 jest.mock('chokidar');
 
+interface MockWatcher {
+  on: jest.Mock<
+    MockWatcher,
+    [event: string, listener: (...args: unknown[]) => void]
+  >;
+  close: jest.Mock<Promise<void>, []>;
+}
+
 describe('FileWatcherService', () => {
   let service: FileWatcherService;
-  let mockWatcher: jest.Mocked<FSWatcher>;
+  let mockWatcher: MockWatcher;
 
   beforeEach(async () => {
     // Create mock watcher
     mockWatcher = {
       on: jest.fn().mockReturnThis(),
       close: jest.fn().mockResolvedValue(undefined),
-    } as unknown as jest.Mocked<FSWatcher>;
+    };
 
     // Mock chokidar.watch to return our mock watcher
     (chokidar.watch as jest.Mock).mockReturnValue(mockWatcher);
@@ -33,11 +41,27 @@ describe('FileWatcherService', () => {
     ).useNativeRecursiveWatch = false;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await service.onModuleDestroy();
+    jest.useRealTimers();
+    jest.restoreAllMocks();
     jest.clearAllMocks();
   });
 
   describe('watchWorktree', () => {
+    it.each(['/build/project', '/dist/project', '/test/build', '/test/dist'])(
+      'matches ignores relative to checkout %s',
+      (root) => {
+        const onEvent = jest.fn();
+        service.watchWorktree(root, onEvent);
+        const ignored = (chokidar.watch as jest.Mock).mock.calls[0][1].ignored;
+        expect(ignored(root)).toBe(false);
+        expect(ignored(`${root}/src/main.ts`)).toBe(false);
+        expect(ignored(`${root}/build/main.js`)).toBe(true);
+        expect(ignored(`${root}/dist/main.js`)).toBe(true);
+      },
+    );
+
     it('should create FSWatcher for valid worktree path', () => {
       const worktreePath = '/test/worktree';
       const onEvent = jest.fn();
@@ -183,6 +207,20 @@ describe('FileWatcherService', () => {
   });
 
   describe('error handling', () => {
+    it('contains synchronous polling fallback failures without retaining an active owner', () => {
+      service.watchWorktree('/test/worktree', jest.fn());
+      const errorHandler = mockWatcher.on.mock.calls.find(
+        ([event]) => event === 'error',
+      )![1];
+      (chokidar.watch as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('polling failed');
+      });
+      expect(() =>
+        errorHandler(Object.assign(new Error('EMFILE'), { code: 'EMFILE' })),
+      ).not.toThrow();
+      expect(service.isWatching('/test/worktree')).toBe(false);
+    });
+
     it('should register an error listener on the watcher', () => {
       service.watchWorktree('/test/worktree', jest.fn());
 
@@ -228,6 +266,69 @@ describe('FileWatcherService', () => {
   });
 
   describe('native recursive watch (macOS/Windows)', () => {
+    it('ignores generated children relative to a checkout under build', async () => {
+      jest.useFakeTimers();
+      let notify!: (event: string, filename: string) => void;
+      const native = { on: jest.fn().mockReturnThis(), close: jest.fn() };
+      jest
+        .spyOn(require('node:fs'), 'watch')
+        .mockImplementation(
+          (_root: unknown, _options: unknown, callback: typeof notify) => {
+            notify = callback;
+            return native;
+          },
+        );
+      jest
+        .spyOn(require('node:fs/promises'), 'stat')
+        .mockResolvedValue({ isDirectory: () => false });
+      (
+        service as unknown as { useNativeRecursiveWatch: boolean }
+      ).useNativeRecursiveWatch = true;
+      const events = jest.fn();
+      service.watchWorktree('/build/checkout', events);
+      notify('change', 'dist/generated.js');
+      notify('change', 'src/main.ts');
+      await jest.advanceTimersByTimeAsync(50);
+      expect(events).toHaveBeenCalledTimes(1);
+      expect(events).toHaveBeenCalledWith(
+        expect.objectContaining({ path: path.join('src', 'main.ts') }),
+      );
+    });
+
+    it('suppresses a native stat result from a detached watcher after reconnect', async () => {
+      jest.useFakeTimers();
+      let notify!: (event: string, filename: string) => void;
+      jest
+        .spyOn(require('node:fs'), 'watch')
+        .mockImplementation(
+          (_root: unknown, _options: unknown, callback: typeof notify) => {
+            notify = callback;
+            return { on: jest.fn().mockReturnThis(), close: jest.fn() };
+          },
+        );
+      let finishStat!: (stats: unknown) => void;
+      jest.spyOn(require('node:fs/promises'), 'stat').mockReturnValue(
+        new Promise((resolve) => {
+          finishStat = resolve;
+        }),
+      );
+      (
+        service as unknown as { useNativeRecursiveWatch: boolean }
+      ).useNativeRecursiveWatch = true;
+      const oldEvents = jest.fn();
+      const newEvents = jest.fn();
+      service.watchWorktree('/test/checkout', oldEvents);
+      notify('change', 'main.ts');
+      await jest.advanceTimersByTimeAsync(50);
+      await service.unwatchWorktree('/test/checkout');
+      service.watchWorktree('/test/checkout', newEvents);
+      finishStat({ isDirectory: () => false });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(oldEvents).not.toHaveBeenCalled();
+      expect(newEvents).not.toHaveBeenCalled();
+    });
+
     it('should fall back to polling when native watcher creation throws', () => {
       const worktreePath = '\\\\wsl.localhost\\Debian\\home\\user\\repo\\';
       const nativeFailure = Object.assign(
@@ -352,6 +453,50 @@ describe('FileWatcherService', () => {
   });
 
   describe('unwatchWorktree', () => {
+    it('retains a reconnected watcher when the old deferred close completes', async () => {
+      let finishClose!: () => void;
+      mockWatcher.close.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishClose = resolve;
+        }),
+      );
+      const replacement = {
+        on: jest.fn().mockReturnThis(),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      const oldEvents = jest.fn();
+      const newEvents = jest.fn();
+      const root = '/test/worktree';
+      service.watchWorktree(root, oldEvents);
+      const oldAll = mockWatcher.on.mock.calls.find(
+        ([event]) => event === 'all',
+      )![1];
+      const oldError = mockWatcher.on.mock.calls.find(
+        ([event]) => event === 'error',
+      )![1];
+      const closing = service.unwatchWorktree(root);
+      expect(service.isWatching(root)).toBe(false);
+
+      (chokidar.watch as jest.Mock).mockReturnValueOnce(replacement);
+      service.watchWorktree(root, newEvents);
+      oldAll('change', `${root}/stale.ts`);
+      oldError(Object.assign(new Error('late EMFILE'), { code: 'EMFILE' }));
+      finishClose();
+      await closing;
+
+      expect(service.isWatching(root)).toBe(true);
+      expect(service.getActiveWatcherCount()).toBe(1);
+      expect(chokidar.watch).toHaveBeenCalledTimes(2);
+      expect(oldEvents).not.toHaveBeenCalled();
+      replacement.on.mock.calls.find(([event]) => event === 'all')![1](
+        'change',
+        `${root}/current.ts`,
+      );
+      expect(newEvents).toHaveBeenCalledWith(
+        expect.objectContaining({ path: 'current.ts' }),
+      );
+    });
+
     it('should close watcher and remove from map', async () => {
       const worktreePath = '/test/worktree';
       service.watchWorktree(worktreePath, jest.fn());
@@ -372,6 +517,37 @@ describe('FileWatcherService', () => {
   });
 
   describe('onModuleDestroy', () => {
+    it('awaits detached closes and all active watchers even when a close rejects', async () => {
+      let finishClose!: () => void;
+      mockWatcher.close.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishClose = resolve;
+        }),
+      );
+      service.watchWorktree('/test/old', jest.fn());
+      void service.unwatchWorktree('/test/old');
+      const rejecting = {
+        on: jest.fn().mockReturnThis(),
+        close: jest.fn().mockRejectedValue(new Error('close failed')),
+      };
+      (chokidar.watch as jest.Mock).mockReturnValueOnce(rejecting);
+      service.watchWorktree('/test/new', jest.fn());
+      let complete = false;
+      const shutdown = service.onModuleDestroy().then(() => {
+        complete = true;
+      });
+      service.watchWorktree('/test/late', jest.fn());
+      await Promise.resolve();
+      expect(complete).toBe(false);
+      expect(rejecting.close).toHaveBeenCalledTimes(1);
+      expect(service.getActiveWatcherCount()).toBe(0);
+      finishClose();
+      await shutdown;
+      expect(complete).toBe(true);
+      expect(mockWatcher.close).toHaveBeenCalledTimes(1);
+      expect(chokidar.watch).toHaveBeenCalledTimes(2);
+    });
+
     it('should close all active watchers', async () => {
       const path1 = '/test/worktree1';
       const path2 = '/test/worktree2';
@@ -380,11 +556,11 @@ describe('FileWatcherService', () => {
       const mockWatcher1 = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn().mockResolvedValue(undefined),
-      } as unknown as jest.Mocked<FSWatcher>;
+      };
       const mockWatcher2 = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn().mockResolvedValue(undefined),
-      } as unknown as jest.Mocked<FSWatcher>;
+      };
 
       (chokidar.watch as jest.Mock)
         .mockReturnValueOnce(mockWatcher1)
@@ -399,16 +575,15 @@ describe('FileWatcherService', () => {
       expect(mockWatcher2.close).toHaveBeenCalled();
     });
 
-    it('should clear watchers map after closing', async () => {
+    it('should reject new watchers after shutdown', async () => {
       const worktreePath = '/test/worktree';
       service.watchWorktree(worktreePath, jest.fn());
 
       await service.onModuleDestroy();
 
-      // After destroy, watching same path should create new watcher
-      (chokidar.watch as jest.Mock).mockReturnValue(mockWatcher);
+      expect(service.getActiveWatcherCount()).toBe(0);
       service.watchWorktree(worktreePath, jest.fn());
-      expect(chokidar.watch).toHaveBeenCalled();
+      expect(chokidar.watch).toHaveBeenCalledTimes(1);
     });
   });
 

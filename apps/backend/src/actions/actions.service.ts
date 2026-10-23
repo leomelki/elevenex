@@ -160,42 +160,38 @@ export class ActionsService extends EventEmitter implements OnModuleInit {
   }
 
   async update(id: number, dto: { name?: string; command?: string }) {
-    const existing = await this.findOne(id);
-    if (this.ptyManager.isRunning(id)) {
-      throw new BadRequestException('Cannot edit a running action');
+    const release = this.ptyManager.reserveIdleAction(id);
+    if (!release) throw new BadRequestException('Cannot edit a running action');
+    try {
+      await this.findOne(id);
+      const updatePayload: Partial<typeof schema.actions.$inferInsert> = {
+        updatedAt: new Date().toISOString(),
+      };
+      if (typeof dto.name === 'string') updatePayload.name = dto.name.trim();
+      if (typeof dto.command === 'string')
+        updatePayload.command = dto.command.trim();
+      await this.db
+        .update(schema.actions)
+        .set(updatePayload)
+        .where(eq(schema.actions.id, id));
+      return await this.findOne(id);
+    } finally {
+      release();
     }
-
-    const updatePayload: Partial<typeof existing> = {
-      updatedAt: new Date().toISOString(),
-    };
-
-    if (typeof dto.name === 'string') {
-      updatePayload.name = dto.name.trim();
-    }
-
-    if (typeof dto.command === 'string') {
-      updatePayload.command = dto.command.trim();
-    }
-
-    await this.db
-      .update(schema.actions)
-      .set(updatePayload)
-      .where(eq(schema.actions.id, id));
-
-    return this.findOne(id);
   }
 
   async remove(id: number) {
-    const existing = await this.findOne(id);
-    if (this.ptyManager.isRunning(id)) {
-      throw new BadRequestException(`Action "${existing.name}" is running`);
+    const release = this.ptyManager.reserveIdleAction(id);
+    if (!release)
+      throw new BadRequestException('Cannot delete a running action');
+    try {
+      await this.findOne(id);
+      await this.ptyManager.killTmuxSession(id, true);
+      await this.db.delete(schema.actions).where(eq(schema.actions.id, id));
+      return { success: true };
+    } finally {
+      release();
     }
-
-    await this.ptyManager.killTmuxSession(id);
-
-    await this.db.delete(schema.actions).where(eq(schema.actions.id, id));
-
-    return { success: true };
   }
 
   async run(id: number) {

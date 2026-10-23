@@ -31,6 +31,8 @@ type TranscriptMirrorRuntime = Pick<
   Partial<Pick<ClaudeRuntimeService, 'getSavedSubagents'>>;
 
 interface MirrorState {
+  disposed: boolean;
+  operations: Promise<void>;
   clients: Set<MirrorSend>;
   claudeSessionId: string | null;
   transcriptPath: string | null;
@@ -76,6 +78,7 @@ export class ClaudeTerminalTranscriptMirrorService
     ClaudeTerminalTranscriptMirrorService.name,
   );
   private readonly states = new Map<number, MirrorState>();
+  private destroyed = false;
 
   private readonly hookEventListener = (data: {
     sessionId: number;
@@ -97,34 +100,69 @@ export class ClaudeTerminalTranscriptMirrorService
   }
 
   attachClient(sessionId: number, send: MirrorSend): () => void {
+    if (this.destroyed) return () => {};
     const state = this.ensureState(sessionId);
     state.clients.add(send);
 
-    void this.hydrate(sessionId, send);
+    void this.hydrateState(sessionId, state, (event) => {
+      if (state.clients.has(send)) send(event);
+    });
 
     return () => {
-      const current = this.states.get(sessionId);
-      if (!current) return;
-      current.clients.delete(send);
-      if (current.clients.size === 0) {
-        void this.disposeState(sessionId, current);
+      if (!this.ownsState(sessionId, state)) return;
+      state.clients.delete(send);
+      if (state.clients.size === 0) {
+        void this.disposeState(sessionId, state);
       }
     };
   }
 
   async hydrate(sessionId: number, target?: MirrorSend): Promise<void> {
+    if (this.destroyed) return;
     const state = this.ensureState(sessionId);
-    try {
+    return this.hydrateState(sessionId, state, target);
+  }
+
+  private hydrateState(
+    sessionId: number,
+    state: MirrorState,
+    target?: MirrorSend,
+    claudeSessionId?: string,
+  ): Promise<void> {
+    return this.serializeRead(sessionId, state, async () => {
+      if (claudeSessionId) state.claudeSessionId = claudeSessionId;
       await this.reloadTranscript(sessionId, state);
-      state.subagents =
+      if (!this.ownsState(sessionId, state)) return;
+      const subagents =
         (await this.claudeRuntime.getSavedSubagents?.(sessionId)) ?? [];
-      if (this.states.get(sessionId) !== state) return;
+      if (!this.ownsState(sessionId, state)) return;
+      state.subagents = subagents;
       this.emitSnapshot(sessionId, state, target);
-    } catch (error) {
+    }).catch((error) => {
+      if (!this.ownsState(sessionId, state)) return;
       const message = error instanceof Error ? error.message : String(error);
       state.lastError = message;
       this.emitError(sessionId, message, target);
-    }
+    });
+  }
+
+  private ownsState(sessionId: number, state: MirrorState): boolean {
+    return (
+      !this.destroyed && !state.disposed && this.states.get(sessionId) === state
+    );
+  }
+
+  private serializeRead(
+    sessionId: number,
+    state: MirrorState,
+    read: () => Promise<void>,
+  ): Promise<void> {
+    // Hydration and watcher reads share offsets, branch tracking, and watcher ownership.
+    const operation = state.operations.then(async () => {
+      if (this.ownsState(sessionId, state)) await read();
+    });
+    state.operations = operation.catch(() => undefined);
+    return operation;
   }
 
   getActiveSessionCount(): number {
@@ -140,12 +178,11 @@ export class ClaudeTerminalTranscriptMirrorService
         ? payload.session_id.trim()
         : null;
     if (claudeSessionId && claudeSessionId !== state.claudeSessionId) {
-      state.claudeSessionId = claudeSessionId;
       this.broadcast(sessionId, {
         type: 'session_created',
         payload: { sessionId, claudeSessionId },
       });
-      void this.hydrate(sessionId);
+      void this.hydrateState(sessionId, state, undefined, claudeSessionId);
       return;
     }
 
@@ -156,7 +193,7 @@ export class ClaudeTerminalTranscriptMirrorService
       void this.claudeRuntime
         .getSavedSubagents?.(sessionId)
         .then((agents) => {
-          if (this.states.get(sessionId) !== state) return;
+          if (!this.ownsState(sessionId, state)) return;
           state.subagents = agents;
           this.emitRuntimeSnapshot(sessionId, state);
         })
@@ -185,9 +222,10 @@ export class ClaudeTerminalTranscriptMirrorService
     state: MirrorState,
     delayMs = READ_DEBOUNCE_MS,
   ): void {
+    if (!this.ownsState(sessionId, state)) return;
     if (!state.transcriptPath) {
       if (state.claudeSessionId) {
-        void this.hydrate(sessionId);
+        void this.hydrateState(sessionId, state);
       }
       return;
     }
@@ -206,13 +244,17 @@ export class ClaudeTerminalTranscriptMirrorService
     sessionId: number,
     state: MirrorState,
   ): Promise<void> {
+    if (!this.ownsState(sessionId, state)) return;
     if (state.readInFlight) {
       state.readAgain = true;
       return state.readInFlight;
     }
 
-    state.readInFlight = this.readLatestInternal(sessionId, state)
+    state.readInFlight = this.serializeRead(sessionId, state, () =>
+      this.readLatestInternal(sessionId, state),
+    )
       .catch((error) => {
+        if (!this.ownsState(sessionId, state)) return;
         const message = error instanceof Error ? error.message : String(error);
         this.logger.warn(
           `Failed to mirror Claude transcript session=${sessionId}: ${message}`,
@@ -238,13 +280,16 @@ export class ClaudeTerminalTranscriptMirrorService
     if (!transcriptPath) return;
 
     const stats = await stat(transcriptPath);
+    if (!this.ownsState(sessionId, state)) return;
     if (
       await this.shouldReloadBeforeIncrementalRead(transcriptPath, state, stats)
     ) {
+      if (!this.ownsState(sessionId, state)) return;
       await this.reloadTranscript(sessionId, state);
       this.emitSnapshot(sessionId, state);
       return;
     }
+    if (!this.ownsState(sessionId, state)) return;
 
     if (stats.size === state.fileOffset) {
       return;
@@ -259,12 +304,14 @@ export class ClaudeTerminalTranscriptMirrorService
         buffer.length,
         state.fileOffset,
       );
+      if (!this.ownsState(sessionId, state)) return;
       state.fileOffset += bytesRead;
       const records = this.parseJsonlText(
         buffer.subarray(0, bytesRead).toString('utf8'),
         state,
       );
       await this.updateFileTracking(state, transcriptPath, state.fileOffset);
+      if (!this.ownsState(sessionId, state)) return;
       if (records.length === 0) return;
 
       if (this.recordsStartNewBranch(records, state)) {
@@ -278,6 +325,7 @@ export class ClaudeTerminalTranscriptMirrorService
           sessionId,
           records,
         );
+      if (!this.ownsState(sessionId, state)) return;
       if (nextItems.length === 0) return;
 
       state.history = this.mergeTranscriptItems(state.history, nextItems);
@@ -297,10 +345,12 @@ export class ClaudeTerminalTranscriptMirrorService
       sessionId,
       state.claudeSessionId,
     );
+    if (!this.ownsState(sessionId, state)) return;
     state.claudeSessionId = ref.claudeSessionId;
 
     if (ref.transcriptPath !== state.transcriptPath) {
       await this.closeWatcher(state);
+      if (!this.ownsState(sessionId, state)) return;
       state.transcriptPath = ref.transcriptPath;
       this.resetFileTracking(state);
     }
@@ -312,6 +362,7 @@ export class ClaudeTerminalTranscriptMirrorService
     }
 
     const raw = await readFile(state.transcriptPath, 'utf8');
+    if (!this.ownsState(sessionId, state)) return;
     state.fileOffset = Buffer.byteLength(raw, 'utf8');
     state.partialLine = '';
     const records = this.parseJsonlText(raw, state);
@@ -324,6 +375,7 @@ export class ClaudeTerminalTranscriptMirrorService
       state.transcriptPath,
       state.fileOffset,
     );
+    if (!this.ownsState(sessionId, state)) return;
     state.history =
       await this.claudeRuntime.normalizeTranscriptRecordsForSession(
         sessionId,
@@ -334,7 +386,12 @@ export class ClaudeTerminalTranscriptMirrorService
   }
 
   private ensureWatcher(sessionId: number, state: MirrorState): void {
-    if (state.watcher || !state.transcriptPath) return;
+    if (
+      !this.ownsState(sessionId, state) ||
+      state.watcher ||
+      !state.transcriptPath
+    )
+      return;
 
     const watcher = chokidar.watch(state.transcriptPath, {
       awaitWriteFinish: {
@@ -347,16 +404,18 @@ export class ClaudeTerminalTranscriptMirrorService
     });
     watcher.on('change', () => this.scheduleRead(sessionId, state));
     watcher.on('add', () => {
-      void this.reloadTranscript(sessionId, state).then(() =>
-        this.emitSnapshot(sessionId, state),
-      );
+      if (this.ownsState(sessionId, state))
+        void this.hydrateState(sessionId, state);
     });
     watcher.on('unlink', () => {
-      state.history = [];
-      this.resetFileTracking(state);
-      this.emitHistory(sessionId, state.history);
+      void this.serializeRead(sessionId, state, async () => {
+        state.history = [];
+        this.resetFileTracking(state);
+        this.emitHistory(sessionId, state.history);
+      });
     });
     watcher.on('error', (error) => {
+      if (!this.ownsState(sessionId, state)) return;
       const message = error instanceof Error ? error.message : String(error);
       state.lastError = message;
       this.emitError(sessionId, message);
@@ -553,6 +612,7 @@ export class ClaudeTerminalTranscriptMirrorService
     state: MirrorState,
     target?: MirrorSend,
   ): void {
+    if (!this.ownsState(sessionId, state)) return;
     this.emitRuntimeSnapshot(sessionId, state, target);
     this.emitHistory(sessionId, state.history, target);
   }
@@ -562,6 +622,7 @@ export class ClaudeTerminalTranscriptMirrorService
     state: MirrorState,
     target?: MirrorSend,
   ): void {
+    if (!this.ownsState(sessionId, state)) return;
     const event: ClaudeRuntimeEvent = {
       type: 'runtime_snapshot',
       payload: this.toRuntimeStatePayload(sessionId, state),
@@ -699,6 +760,8 @@ export class ClaudeTerminalTranscriptMirrorService
     const activity = this.hooksService.getActivity(sessionId);
     const runPhase = this.activityStatusToRunPhase(activity.activityStatus);
     state = {
+      disposed: false,
+      operations: Promise.resolve(),
       clients: new Set(),
       claudeSessionId: null,
       transcriptPath: null,
@@ -757,14 +820,15 @@ export class ClaudeTerminalTranscriptMirrorService
     sessionId: number,
     state: MirrorState,
   ): Promise<void> {
+    state.disposed = true;
+    // Unpublish before awaiting watcher shutdown so a new attach gets its own state.
+    if (this.states.get(sessionId) === state) this.states.delete(sessionId);
     if (state.debounceTimer) {
       clearTimeout(state.debounceTimer);
       state.debounceTimer = null;
     }
     await this.closeWatcher(state);
-    if (this.states.get(sessionId) === state && state.clients.size === 0) {
-      this.states.delete(sessionId);
-    }
+    await state.operations;
   }
 
   private async closeWatcher(state: MirrorState): Promise<void> {
@@ -776,6 +840,7 @@ export class ClaudeTerminalTranscriptMirrorService
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.destroyed = true;
     this.hooksService.off('hook-event', this.hookEventListener);
     this.hooksService.off('status-changed', this.statusChangedListener);
     await Promise.all(

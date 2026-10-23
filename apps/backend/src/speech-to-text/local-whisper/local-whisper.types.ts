@@ -35,6 +35,7 @@ export interface LocalWhisperStatus {
 }
 
 export interface LocalWhisperTranscribeInput {
+  signal?: AbortSignal;
   /** 16 kHz mono PCM. */
   samples: Float32Array;
   model: LocalWhisperModelId;

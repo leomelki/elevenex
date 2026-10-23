@@ -1,9 +1,10 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
-import { execFile, type ExecFileOptions } from 'node:child_process';
+import { execFile, spawn, type ExecFileOptions } from 'node:child_process';
 import * as path from 'node:path';
 import { SimpleGit, StatusResult, LogResult } from 'simple-git';
+import type { RemoteWithRefs } from 'simple-git';
 
 import {
   buildAugmentedEnv,
@@ -47,6 +48,10 @@ interface CommitMessagePromptInput {
   compactStatus: string;
   compactLog: string;
   conventionDocs: string;
+}
+interface RemoteBranchMatch {
+  ref: string;
+  sha: string;
 }
 
 export function isValidGitRef(ref: string): boolean {
@@ -103,6 +108,8 @@ export interface GitScopeSummary {
 
 export interface GitStatusSummary {
   branch: string;
+  // Configured tracking ref or a comparable same-named remote branch. A failed
+  // fallback lookup/comparison leaves this null rather than implying sync.
   upstream: string | null;
   headSha: string | null;
   worktreeFingerprint: string;
@@ -124,6 +131,10 @@ export interface CommitResult {
 @Injectable()
 export class GitService {
   private readonly logger = new Logger(GitService.name);
+  private readonly statusSummaryInFlight = new Map<
+    string,
+    Promise<GitStatusSummary>
+  >();
 
   constructor(
     private readonly textAgentGenerationService: TextAgentGenerationService,
@@ -138,6 +149,10 @@ export class GitService {
   private toFileStatuses(status: StatusResult): FileStatus[] {
     const files: FileStatus[] = [];
     const conflictedPaths = new Set(status.conflicted);
+    const stagedPaths = new Set(status.staged);
+    const createdPaths = new Set(status.created);
+    const deletedPaths = new Set(status.deleted);
+    const renamedPaths = new Set(status.renamed.map((file) => file.to));
     // simple-git's modified list includes index-only changes too.
     const stagedOnlyPaths = new Set(
       status.files
@@ -151,10 +166,14 @@ export class GitService {
 
     status.staged.forEach((path) => {
       if (conflictedPaths.has(path)) return;
-      if (status.renamed.some((r) => r.to === path)) return;
+      if (renamedPaths.has(path)) return;
       files.push({
         path,
-        status: this.getFileStatus(status, path),
+        status: createdPaths.has(path)
+          ? 'added'
+          : deletedPaths.has(path)
+            ? 'deleted'
+            : 'modified',
         staged: true,
       });
     });
@@ -172,7 +191,7 @@ export class GitService {
 
     status.deleted.forEach((path) => {
       if (conflictedPaths.has(path)) return;
-      if (status.staged.includes(path)) return;
+      if (stagedPaths.has(path)) return;
       files.push({
         path,
         status: 'deleted',
@@ -191,13 +210,47 @@ export class GitService {
     });
   }
 
-  async getStatusSummary(
+  getStatusSummary(
     worktreePath: string,
     options: { conflictsOnly?: boolean } = {},
   ): Promise<GitStatusSummary> {
+    const normalizedPath = path.resolve(worktreePath);
+    const conflictsOnly = Boolean(options.conflictsOnly);
+    const key = JSON.stringify([normalizedPath, conflictsOnly]);
+    const existing = this.statusSummaryInFlight.get(key);
+    if (existing) return existing;
+
+    const request = this.loadStatusSummary(normalizedPath, conflictsOnly);
+    this.statusSummaryInFlight.set(key, request);
+    const cleanup = () => {
+      if (this.statusSummaryInFlight.get(key) === request) {
+        this.statusSummaryInFlight.delete(key);
+      }
+    };
+    // Share pending work only: the next poll must read fresh stats and refs.
+    void request.then(cleanup, cleanup);
+    return request;
+  }
+
+  private invalidateStatusSummaries(worktreePath: string): void {
+    const normalizedPath = path.resolve(worktreePath);
+    clearWorktreeFingerprintCache(normalizedPath);
+    // A request can still be waiting for remote metadata after its local scan.
+    // New readers after a mutation must not join that pre-mutation summary.
+    for (const conflictsOnly of [false, true]) {
+      this.statusSummaryInFlight.delete(
+        JSON.stringify([normalizedPath, conflictsOnly]),
+      );
+    }
+  }
+
+  private async loadStatusSummary(
+    worktreePath: string,
+    conflictsOnly: boolean,
+  ): Promise<GitStatusSummary> {
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
-    if (options.conflictsOnly) {
-      return this.getConflictsOnlySummary(git, worktreePath);
+    if (conflictsOnly) {
+      return this.getConflictsOnlySummary(git);
     }
 
     const [statusSnapshot, headSha] = await Promise.all([
@@ -221,22 +274,25 @@ export class GitService {
     if (upstream) {
       ({ ahead, behind } = await this.getAheadBehind(git, branch, upstream));
     } else {
-      // No tracking branch configured (e.g. branch created without -u/--set-upstream,
-      // or this repo's fetch refspec doesn't mirror this branch prefix into
-      // refs/remotes/*). Ask the remote directly whether a same-named branch already
-      // exists in sync, so a fully-pushed branch isn't misreported as unpushed.
+      // Preserve same-named remote branch detection for branches without -u,
+      // including repos whose fetch refspec excludes the current branch.
       const remoteMatch = await this.findMatchingRemoteBranch(
         git,
         worktreePath,
         branch,
       );
       if (remoteMatch) {
-        upstream = remoteMatch.ref;
-        ({ ahead, behind } = await this.getAheadBehindBySha(
+        const counts = await this.getAheadBehindBySha(
           git,
           branch,
           remoteMatch.sha,
-        ));
+        );
+        // A remote can advertise an object we have never fetched. Keep upstream
+        // unresolved in that case; upstream + zero counts would imply synced.
+        if (counts) {
+          upstream = remoteMatch.ref;
+          ({ ahead, behind } = counts);
+        }
       }
     }
 
@@ -261,11 +317,10 @@ export class GitService {
 
   private async getConflictsOnlySummary(
     git: SimpleGit,
-    worktreePath: string,
   ): Promise<GitStatusSummary> {
-    const [rawConflicts, branchSummary, headSha] = await Promise.all([
+    const [rawConflicts, branch, headSha] = await Promise.all([
       git.raw(['diff', '--name-only', '--diff-filter=U', '-z']).catch(() => ''),
-      git.branchLocal().catch(() => ({ current: 'HEAD' })),
+      this.getCurrentBranch(git),
       git
         .revparse(['HEAD'])
         .then((value) => value.trim())
@@ -287,7 +342,7 @@ export class GitService {
       .digest('hex');
 
     return {
-      branch: branchSummary.current || 'HEAD',
+      branch: branch || 'HEAD',
       upstream: null,
       headSha,
       worktreeFingerprint: fingerprint,
@@ -302,22 +357,22 @@ export class GitService {
   }
 
   async stageFiles(worktreePath: string, files: string[]): Promise<void> {
-    clearWorktreeFingerprintCache(worktreePath);
+    this.invalidateStatusSummaries(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
     try {
       await git.add(files);
     } finally {
-      clearWorktreeFingerprintCache(worktreePath);
+      this.invalidateStatusSummaries(worktreePath);
     }
   }
 
   async unstageFiles(worktreePath: string, files: string[]): Promise<void> {
-    clearWorktreeFingerprintCache(worktreePath);
+    this.invalidateStatusSummaries(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
     try {
       await git.raw(['reset', 'HEAD', '--', ...files]);
     } finally {
-      clearWorktreeFingerprintCache(worktreePath);
+      this.invalidateStatusSummaries(worktreePath);
     }
   }
 
@@ -331,7 +386,7 @@ export class GitService {
     } = {},
   ): Promise<CommitResult> {
     const requestId = options.requestId ?? this.createRequestId();
-    clearWorktreeFingerprintCache(worktreePath);
+    this.invalidateStatusSummaries(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
 
     this.logger.log(
@@ -390,7 +445,7 @@ export class GitService {
 
       this.logger.log(`[commit:${requestId}] running git commit`);
       const result = await git.commit(message);
-      clearWorktreeFingerprintCache(worktreePath);
+      this.invalidateStatusSummaries(worktreePath);
       this.logger.log(
         `[commit:${requestId}] git commit completed hash=${result.commit || 'unknown'} generatedMessage=${generatedMessage}`,
       );
@@ -404,7 +459,7 @@ export class GitService {
         `[commit:${requestId}] failed ${this.formatGitError(error)}`,
         error?.stack,
       );
-      clearWorktreeFingerprintCache(worktreePath);
+      this.invalidateStatusSummaries(worktreePath);
       if (error instanceof BadRequestException) {
         throw error;
       }
@@ -439,14 +494,13 @@ export class GitService {
         );
       }
 
-      const [diff, branchSummary, log, conventionDocs] = await Promise.all([
+      const [diff, log, conventionDocs] = await Promise.all([
         this.getDiff(worktreePath, { staged: true }),
-        git.branchLocal(),
         this.getLog(worktreePath, MAX_COMMIT_MESSAGE_LOG_ENTRIES),
         this.readCommitConventionDocs(worktreePath),
       ]);
 
-      const currentBranch = branchSummary.current || 'HEAD';
+      const currentBranch = status.current || 'HEAD';
       const compressedStatus = this.buildCompactStatusSummary(stagedFiles);
       const compressedLog = this.buildCompactLog(log);
       const truncatedDiff = this.truncateDiffForPrompt(diff);
@@ -494,8 +548,7 @@ export class GitService {
     this.logger.log(
       `[push:${requestId}] service started worktreePath="${worktreePath}"`,
     );
-    const branchSummary = await git.branchLocal();
-    const branch = branchSummary.current;
+    const branch = await this.getCurrentBranch(git);
     this.logger.log(
       `[push:${requestId}] branch loaded branch="${branch || 'HEAD'}"`,
     );
@@ -797,54 +850,177 @@ export class GitService {
     }
   }
 
+  private async getCurrentBranch(git: SimpleGit): Promise<string | null> {
+    return git
+      .raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])
+      .then((value) => value.trim() || null)
+      .catch(() => null);
+  }
+
   // Some repos (large monorepos in particular) scope remote.origin.fetch to a
   // handful of branch prefixes, so most branches never get a local
   // refs/remotes/origin/<branch> ref even after being pushed. ls-remote asks the
-  // remote directly, but this is polled every few seconds by the UI, so results
-  // are cached briefly per (worktree, branch) to avoid a network round-trip on
-  // every poll.
+  // remote directly only when no local remote ref exists. This is polled every
+  // few seconds, so bound network work and briefly cache even failed lookups.
   private readonly remoteBranchShaCache = new Map<
     string,
-    { remoteName: string; sha: string | null; expiresAt: number }
+    { match: RemoteBranchMatch | null; expiresAt: number }
+  >();
+  private readonly remoteBranchInFlight = new Map<
+    string,
+    Promise<RemoteBranchMatch | null>
   >();
   private static readonly REMOTE_BRANCH_CACHE_TTL_MS = 90_000;
+  private static readonly REMOTE_BRANCH_FAILURE_TTL_MS = 10_000;
+  private static readonly REMOTE_BRANCH_CACHE_MAX_ENTRIES = 256;
+  private static readonly REMOTE_BRANCH_TIMEOUT_MS = 1_500;
 
   private async findMatchingRemoteBranch(
     git: SimpleGit,
     worktreePath: string,
     branch: string,
-  ): Promise<{ ref: string; sha: string } | null> {
+  ): Promise<RemoteBranchMatch | null> {
     if (branch === 'HEAD') return null;
 
-    const cacheKey = `${worktreePath}#${branch}`;
-    const cached = this.remoteBranchShaCache.get(cacheKey);
-    const now = Date.now();
-
-    if (cached && cached.expiresAt > now) {
-      return cached.sha
-        ? { ref: `${cached.remoteName}/${branch}`, sha: cached.sha }
-        : null;
-    }
-
-    const remotes: Array<{ name: string }> = await git
+    const remotes: RemoteWithRefs[] = await git
       .getRemotes(true)
-      .catch(() => []);
+      .catch((): RemoteWithRefs[] => []);
     const remote =
       remotes.find((candidate) => candidate.name === 'origin') ?? remotes[0];
     if (!remote) return null;
 
-    const sha = await git
-      .raw(['ls-remote', remote.name, `refs/heads/${branch}`])
-      .then((output) => output.split(/\s+/)[0]?.trim() || null)
+    const localSha = await git
+      .revparse(['--verify', `refs/remotes/${remote.name}/${branch}`])
+      .then((value) => value.trim())
       .catch(() => null);
+    if (localSha) return { ref: `${remote.name}/${branch}`, sha: localSha };
 
-    this.remoteBranchShaCache.set(cacheKey, {
-      remoteName: remote.name,
-      sha,
-      expiresAt: now + GitService.REMOTE_BRANCH_CACHE_TTL_MS,
+    const normalizedPath = path.resolve(worktreePath);
+    const cacheKey = JSON.stringify([
+      normalizedPath,
+      remote.name,
+      remote.refs.fetch,
+      branch,
+    ]);
+    const cached = this.remoteBranchShaCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.match;
+    const existing = this.remoteBranchInFlight.get(cacheKey);
+    if (existing) return existing;
+
+    const request = (async () => {
+      let sha: string | null = null;
+      let ttl = GitService.REMOTE_BRANCH_CACHE_TTL_MS;
+      try {
+        sha = await this.readRemoteBranchSha(
+          normalizedPath,
+          remote.name,
+          branch,
+        );
+      } catch {
+        ttl = GitService.REMOTE_BRANCH_FAILURE_TTL_MS;
+      }
+      const match = sha ? { ref: `${remote.name}/${branch}`, sha } : null;
+      const now = Date.now();
+      for (const [key, entry] of this.remoteBranchShaCache) {
+        if (entry.expiresAt <= now) this.remoteBranchShaCache.delete(key);
+      }
+      this.remoteBranchShaCache.delete(cacheKey);
+      while (
+        this.remoteBranchShaCache.size >=
+        GitService.REMOTE_BRANCH_CACHE_MAX_ENTRIES
+      ) {
+        this.remoteBranchShaCache.delete(
+          this.remoteBranchShaCache.keys().next().value!,
+        );
+      }
+      this.remoteBranchShaCache.set(cacheKey, { match, expiresAt: now + ttl });
+      return match;
+    })();
+    this.remoteBranchInFlight.set(cacheKey, request);
+    const cleanup = () => {
+      if (this.remoteBranchInFlight.get(cacheKey) === request) {
+        this.remoteBranchInFlight.delete(cacheKey);
+      }
+    };
+    void request.then(cleanup, cleanup);
+    return request;
+  }
+
+  private readRemoteBranchSha(
+    worktreePath: string,
+    remote: string,
+    branch: string,
+  ): Promise<string | null> {
+    return new Promise((resolve, reject) => {
+      const ref = `refs/heads/${branch}`;
+      const child = spawn('git', ['ls-remote', '--heads', '--', remote, ref], {
+        cwd: worktreePath,
+        env: {
+          ...buildAugmentedEnv(process.env, worktreePath),
+          GIT_TERMINAL_PROMPT: '0',
+        },
+        stdio: ['ignore', 'pipe', 'ignore'],
+        detached: process.platform !== 'win32',
+      });
+      const output: Buffer[] = [];
+      let bytes = 0;
+      let settled = false;
+      const terminate = () => {
+        if (process.platform === 'win32' && child.pid) {
+          execFile(
+            'taskkill',
+            ['/PID', String(child.pid), '/T', '/F'],
+            { windowsHide: true, timeout: 1_000 },
+            () => child.kill('SIGKILL'),
+          );
+          return;
+        }
+        if (process.platform !== 'win32' && child.pid) {
+          try {
+            process.kill(-child.pid, 'SIGKILL');
+            return;
+          } catch {
+            // The process may already have exited.
+          }
+        }
+        child.kill('SIGKILL');
+      };
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+        terminate();
+      };
+      // An absolute deadline also covers helpers that keep inherited pipes open.
+      // Kill the process group on POSIX so ssh/credential helpers do not pile up.
+      const timer = setTimeout(() => {
+        fail(new Error('Remote branch lookup timed out.'));
+      }, GitService.REMOTE_BRANCH_TIMEOUT_MS);
+      child.on('error', fail);
+      child.stdout.on('data', (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes > 64 * 1024) {
+          fail(new Error('Remote branch lookup output exceeded limit.'));
+        } else if (!settled) {
+          output.push(chunk);
+        }
+      });
+      child.on('close', (code) => {
+        if (settled) return;
+        if (code !== 0) return fail(new Error('Remote branch lookup failed.'));
+        settled = true;
+        clearTimeout(timer);
+        const line = Buffer.concat(output)
+          .toString('utf8')
+          .split('\n')
+          .find((line) => {
+            const [sha, name] = line.split('\t');
+            return name === ref && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sha);
+          });
+        resolve(line?.split('\t')[0] ?? null);
+      });
     });
-
-    return sha ? { ref: `${remote.name}/${branch}`, sha } : null;
   }
 
   private async getAheadBehind(
@@ -876,20 +1052,24 @@ export class GitService {
   // findMatchingRemoteBranch). rev-list still works directly against a raw SHA as
   // long as the commit is reachable locally; if the remote is ahead of what we have
   // (e.g. someone else pushed to this branch), the object may be missing and
-  // rev-list fails — treated as "unknown, assume synced" rather than blocking status.
+  // rev-list fails. Return unknown so callers do not report a fabricated sync.
   private async getAheadBehindBySha(
     git: SimpleGit,
     branch: string,
     remoteSha: string,
-  ): Promise<{ ahead: number; behind: number }> {
+  ): Promise<{ ahead: number; behind: number } | null> {
     try {
+      // A partial clone must not lazily fetch an advertised, missing object
+      // outside the bounded remote lookup above.
       const counts = (
-        await git.raw([
-          'rev-list',
-          '--left-right',
-          '--count',
-          `${branch}...${remoteSha}`,
-        ])
+        await git
+          .env('GIT_NO_LAZY_FETCH', '1')
+          .raw([
+            'rev-list',
+            '--left-right',
+            '--count',
+            `${branch}...${remoteSha}`,
+          ])
       ).trim();
       const [aheadCount, behindCount] = counts.split(/\s+/);
       return {
@@ -897,7 +1077,7 @@ export class GitService {
         behind: Number(behindCount) || 0,
       };
     } catch {
-      return { ahead: 0, behind: 0 };
+      return null;
     }
   }
 
@@ -1263,17 +1443,6 @@ export class GitService {
     }
 
     return normalized;
-  }
-
-  private getFileStatus(
-    status: StatusResult,
-    path: string,
-  ): FileStatus['status'] {
-    if (status.created.includes(path)) return 'added';
-    if (status.deleted.includes(path)) return 'deleted';
-    if (status.renamed.some((r) => r.to === path)) return 'renamed';
-    if (status.conflicted.includes(path)) return 'conflicted';
-    return 'modified';
   }
 
   private getRelativeDate(dateStr: string): string {

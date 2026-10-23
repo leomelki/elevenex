@@ -36,6 +36,10 @@ interface WorktreeWatcher {
   close(): Promise<void>;
 }
 
+interface WatcherRegistration {
+  watcher?: WorktreeWatcher;
+}
+
 /**
  * Options for configuring the chokidar fallback watcher.
  */
@@ -125,11 +129,11 @@ function supportsRecursiveWatch(): boolean {
  * {@link IGNORED_DIRECTORIES}, including Git internals and generated dot directories.
  * Project dotfiles and configuration directories remain watchable.
  *
- * @param filePath - The absolute file path to check
+ * @param filePath - The path relative to the checkout root
  * @returns true if the path should be ignored, false otherwise
  */
 function shouldIgnorePath(filePath: string): boolean {
-  const pathParts = filePath.split('/');
+  const pathParts = filePath.split(path.sep);
 
   return pathParts.some((part) => IGNORED_DIRECTORIES.has(part));
 }
@@ -163,7 +167,10 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(FileWatcherService.name);
 
   /** Map of worktree paths to their active watcher handles */
-  private watchers = new Map<string, WorktreeWatcher>();
+  private watchers = new Map<string, WatcherRegistration>();
+  private readonly closingWatchers = new Map<WorktreeWatcher, Promise<void>>();
+  private destroyed = false;
+  private shutdown: Promise<void> | null = null;
 
   /** Worktrees for which a file-descriptor-exhaustion warning was already logged */
   private fdExhaustionWarned = new Set<string>();
@@ -194,21 +201,36 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
     onEvent: (event: FileChangeEvent) => void,
   ): void {
     // Don't create duplicate watchers for the same worktree
-    if (this.watchers.has(worktreePath)) {
+    if (this.destroyed || this.watchers.has(worktreePath)) {
       return;
     }
 
+    const registration: WatcherRegistration = {};
+    this.watchers.set(worktreePath, registration);
+    const emitIfCurrent = (event: FileChangeEvent): void => {
+      if (!this.destroyed && this.watchers.get(worktreePath) === registration) {
+        onEvent(event);
+      }
+    };
     try {
-      const watcher = this.useNativeRecursiveWatch
-        ? this.createNativeWatcherWithFallback(worktreePath, onEvent)
-        : this.createChokidarWatcher(worktreePath, onEvent, false);
-
-      this.watchers.set(worktreePath, watcher);
+      registration.watcher = this.useNativeRecursiveWatch
+        ? this.createNativeWatcherWithFallback(
+            worktreePath,
+            emitIfCurrent,
+            registration,
+          )
+        : this.createChokidarWatcher(
+            worktreePath,
+            emitIfCurrent,
+            false,
+            registration,
+          );
     } catch (error) {
       // fs.watch and chokidar.watch can both fail synchronously before an
       // 'error' listener can be attached (for example, native recursive watch
       // throws EISDIR for WSL UNC directories on Windows). A failed file watcher
       // must not take down the API and every other active session.
+      this.watchers.delete(worktreePath);
       this.logWatcherError(worktreePath, error);
     }
   }
@@ -221,6 +243,7 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
   private createNativeWatcherWithFallback(
     worktreePath: string,
     onEvent: (event: FileChangeEvent) => void,
+    registration: WatcherRegistration,
   ): WorktreeWatcher {
     try {
       return this.createNativeWatcher(worktreePath, onEvent);
@@ -230,7 +253,12 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
           error instanceof Error ? error.message : String(error)
         }; falling back to polling.`,
       );
-      return this.createChokidarWatcher(worktreePath, onEvent, true);
+      return this.createChokidarWatcher(
+        worktreePath,
+        onEvent,
+        true,
+        registration,
+      );
     }
   }
 
@@ -248,6 +276,7 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
   ): WorktreeWatcher {
     // Coalesce the burst of events a single save/atomic-write produces.
     const debounceTimers = new Map<string, NodeJS.Timeout>();
+    let closed = false;
 
     const scheduleEmit = (absolutePath: string): void => {
       const existing = debounceTimers.get(absolutePath);
@@ -258,7 +287,13 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
         absolutePath,
         setTimeout(() => {
           debounceTimers.delete(absolutePath);
-          void this.emitNativeEvent(worktreePath, absolutePath, onEvent);
+          if (!closed) {
+            void this.emitNativeEvent(
+              worktreePath,
+              absolutePath,
+              onEvent,
+            ).catch((error) => this.logWatcherError(worktreePath, error));
+          }
         }, NATIVE_EVENT_DEBOUNCE_MS),
       );
     };
@@ -268,7 +303,7 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
       { recursive: true, persistent: true },
       (_eventType, filename) => {
         // filename is relative to worktreePath and may be null on some events.
-        if (!filename) {
+        if (closed || !filename) {
           return;
         }
         const absolutePath = path.resolve(worktreePath, filename.toString());
@@ -277,7 +312,7 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
         if (!isWithinWorktree(worktreePath, absolutePath)) {
           return;
         }
-        if (shouldIgnorePath(absolutePath)) {
+        if (shouldIgnorePath(path.relative(worktreePath, absolutePath))) {
           return;
         }
 
@@ -291,6 +326,7 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
 
     return {
       close: () => {
+        closed = true;
         for (const timer of debounceTimers.values()) {
           clearTimeout(timer);
         }
@@ -346,9 +382,11 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
     worktreePath: string,
     onEvent: (event: FileChangeEvent) => void,
     usePolling: boolean,
+    registration: WatcherRegistration,
   ): WorktreeWatcher {
     const watcher = chokidar.watch(worktreePath, {
-      ignored: shouldIgnorePath,
+      ignored: (filePath: string) =>
+        shouldIgnorePath(path.relative(worktreePath, filePath)),
       ...DEFAULT_WATCHER_OPTIONS,
       // Only add polling options when polling, so the non-polling configuration
       // stays byte-for-byte identical to the original behaviour.
@@ -356,11 +394,18 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
         ? { usePolling: true, interval: POLLING_INTERVAL_MS }
         : {}),
     });
+    const handle: WorktreeWatcher = {
+      close: () => Promise.resolve(watcher.close()),
+    };
+    const isCurrent = (): boolean =>
+      !this.destroyed &&
+      this.watchers.get(worktreePath) === registration &&
+      registration.watcher === handle;
 
     // Handle all file system events
     watcher.on('all', (event: string, absolutePath: string) => {
       // Security: Validate path is within worktree (prevents traversal attacks)
-      if (!isWithinWorktree(worktreePath, absolutePath)) {
+      if (!isCurrent() || !isWithinWorktree(worktreePath, absolutePath)) {
         return;
       }
 
@@ -376,6 +421,7 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
     // Without an 'error' listener, Node re-throws an emitted error as an uncaught
     // exception, which crashes the whole backend process.
     watcher.on('error', (error: unknown) => {
+      if (!isCurrent()) return;
       const code = (error as NodeJS.ErrnoException)?.code;
 
       // File-descriptor exhaustion: recover by switching this worktree to polling
@@ -388,18 +434,28 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
               `falling back to polling. Raise the open-file limit (ulimit -n) to avoid the slower polling mode.`,
           );
         }
-        void watcher.close().catch(() => undefined);
-        this.watchers.set(
-          worktreePath,
-          this.createChokidarWatcher(worktreePath, onEvent, true),
-        );
+        // Transfer ownership before closing: late errors/events from the old
+        // backend must not replace or notify the current registration.
+        registration.watcher = undefined;
+        void this.closeWatcher(worktreePath, handle);
+        try {
+          registration.watcher = this.createChokidarWatcher(
+            worktreePath,
+            onEvent,
+            true,
+            registration,
+          );
+        } catch (fallbackError) {
+          this.watchers.delete(worktreePath);
+          this.logWatcherError(worktreePath, fallbackError);
+        }
         return;
       }
 
       this.logWatcherError(worktreePath, error);
     });
 
-    return { close: () => Promise.resolve(watcher.close()) };
+    return handle;
   }
 
   /**
@@ -421,18 +477,37 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
    * @returns Promise that resolves when the watcher is closed
    */
   unwatchWorktree(worktreePath: string): Promise<void> {
-    const watcher = this.watchers.get(worktreePath);
+    const registration = this.watchers.get(worktreePath);
 
     // Return gracefully if not watching this worktree
-    if (!watcher) {
+    if (!registration) {
       return Promise.resolve();
     }
 
-    // Close the watcher and remove from map
-    return watcher.close().then(() => {
-      this.watchers.delete(worktreePath);
-      this.fdExhaustionWarned.delete(worktreePath);
-    });
+    // Detach synchronously, so a reconnect can own a fresh watcher while this
+    // backend is still releasing resources. Close completion never edits owners.
+    this.watchers.delete(worktreePath);
+    this.fdExhaustionWarned.delete(worktreePath);
+    return registration.watcher
+      ? this.closeWatcher(worktreePath, registration.watcher)
+      : Promise.resolve();
+  }
+
+  private closeWatcher(
+    worktreePath: string,
+    watcher: WorktreeWatcher,
+  ): Promise<void> {
+    const existing = this.closingWatchers.get(watcher);
+    if (existing) return existing;
+    const closing = (async () => {
+      try {
+        await watcher.close();
+      } catch (error) {
+        this.logWatcherError(worktreePath, error);
+      }
+    })().finally(() => this.closingWatchers.delete(watcher));
+    this.closingWatchers.set(watcher, closing);
+    return closing;
   }
 
   /**
@@ -461,15 +536,14 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
    * @returns Promise that resolves when all watchers are closed
    */
   onModuleDestroy(): Promise<void> {
-    // Close all active watchers in parallel
-    const closePromises = Array.from(this.watchers.values()).map((watcher) =>
-      watcher.close(),
-    );
-
-    // Wait for all watchers to close, then clear the map
-    return Promise.all(closePromises).then(() => {
-      this.watchers.clear();
+    if (this.shutdown) return this.shutdown;
+    this.destroyed = true;
+    for (const worktreePath of this.watchers.keys()) {
+      void this.unwatchWorktree(worktreePath);
+    }
+    this.shutdown = Promise.all(this.closingWatchers.values()).then(() => {
       this.fdExhaustionWarned.clear();
     });
+    return this.shutdown;
   }
 }

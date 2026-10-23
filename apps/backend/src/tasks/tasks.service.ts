@@ -1361,6 +1361,7 @@ export class TasksService
             await this.actions.stop(action.id, true);
         }
         let released = current.linkStatus !== 'linked';
+        let retentionReason: { code: string; message: string } | null = null;
         let finalCommit = current.finalCommit;
         let taskBranch = current.taskBranch;
         let checkoutMode = current.checkoutMode;
@@ -1374,6 +1375,7 @@ export class TasksService
               )[0]
             : null;
           try {
+            await this.assertCheckoutIdentity(current, repo, key, pool);
             // Task processes are stopped, so a managed checkout can save its
             // index caches and stay fast to inspect for the next task.
             const status = await this.git.status(current.path, {
@@ -1396,6 +1398,8 @@ export class TasksService
               !status.conflicts &&
               !(await this.git.hasOperationInProgress(current.path))
             ) {
+              // Status can be slow. Recheck identity immediately before mutation.
+              await this.assertCheckoutIdentity(current, repo, key, pool);
               await worktreeSimpleGit(current.path).raw([
                 'checkout',
                 '--detach',
@@ -1404,6 +1408,21 @@ export class TasksService
               released = true;
             }
           } catch (error) {
+            const response =
+              error instanceof HttpException ? error.getResponse() : null;
+            retentionReason =
+              response &&
+              typeof response === 'object' &&
+              'code' in response &&
+              'message' in response
+                ? {
+                    code: String(response.code),
+                    message: String(response.message),
+                  }
+                : {
+                    code: 'finish_observation_failed',
+                    message: `Could not safely inspect or detach this checkout; it remains reserved. ${conciseFailureMessage(error instanceof Error ? error.message : String(error))}`,
+                  };
             this.logger.warn(
               `Task ${id} finished with its worktree retained: ${String(error)}`,
             );
@@ -1420,6 +1439,7 @@ export class TasksService
           taskBranch,
           checkoutMode,
           sourceRef: current.sourceRef ?? taskBranch,
+          taskError: retentionReason ? JSON.stringify(retentionReason) : null,
           ...(released
             ? {
                 linkStatus: 'unlinked',
@@ -1484,6 +1504,43 @@ export class TasksService
       .digest('hex');
   }
 
+  private async assertCheckoutIdentity(
+    current: Task,
+    repo: Repo,
+    key: string,
+    pool: typeof schema.repoWorktrees.$inferSelect | null | undefined,
+  ) {
+    try {
+      // Git discovers parent repositories when .git disappears. A matching
+      // common directory alone is insufficient for a nested or symlinked path.
+      const [topLevel, checkoutKey, checkoutPath, repoPath] = await Promise.all(
+        [
+          worktreeSimpleGit(current.path)
+            .revparse(['--show-toplevel'])
+            .then((value) => realpath(value.trim())),
+          this.git.repositoryKey(current.path),
+          realpath(current.path),
+          realpath(repo.path),
+        ],
+      );
+      if (
+        topLevel === checkoutPath &&
+        checkoutKey === key &&
+        (!pool || pool.path === current.path) &&
+        (!pool?.managed ||
+          (checkoutPath === current.path && checkoutPath !== repoPath))
+      )
+        return;
+    } catch {
+      // An unreadable or absent Git identity cannot authorize a mutation.
+    }
+    throw new ConflictException({
+      code: 'checkout_changed',
+      message:
+        'This directory is no longer the task’s verified Git worktree. Restore its Git metadata before releasing it; the assignment remains reserved.',
+    });
+  }
+
   private async releaseChecks(current: Task, repo: Repo, key: string) {
     const id = current.id;
     const pool = current.poolWorktreeId
@@ -1536,27 +1593,11 @@ export class TasksService
           'This checkout is also used by another task or conversation. Stop or archive the other conversation, or release the other task’s assignment, before trying again.',
         );
     };
+    const assertIdentity = () =>
+      this.assertCheckoutIdentity(current, repo, key, pool);
     const inspect = async (persistIndex = false) => {
       if (await isMissingWorktreePath(current.path)) return null;
-      // Git walks up to a parent repository when a checkout loses its .git
-      // file. Never let a stale task path detach that parent (or a replacement repo).
-      const [topLevel, checkoutKey, checkoutPath] = await Promise.all([
-        worktreeSimpleGit(current.path)
-          .revparse(['--show-toplevel'])
-          .then((value) => realpath(value.trim())),
-        this.git.repositoryKey(current.path),
-        realpath(current.path),
-      ]);
-      if (
-        topLevel !== checkoutPath ||
-        checkoutKey !== key ||
-        (managed && checkoutPath !== current.path)
-      )
-        throw new ConflictException({
-          code: 'checkout_changed',
-          message:
-            'This directory is no longer the task’s Git worktree. Restore its Git metadata before releasing it.',
-        });
+      await assertIdentity();
       const status = await this.git.status(current.path, {
         persistIndex: managed && persistIndex,
       });
@@ -1574,7 +1615,7 @@ export class TasksService
         });
       return status;
     };
-    return { managed, assertOwnership, inspect };
+    return { managed, assertOwnership, assertIdentity, inspect };
   }
 
   /** Read-only and coalesced: checking a large checkout never owns the Git operation lock. */
@@ -1682,11 +1723,8 @@ export class TasksService
       if (current.taskState === 'released' && !current.archivedAt)
         return this.get(id);
       this.assertReleaseAllowed(current);
-      const { managed, assertOwnership, inspect } = await this.releaseChecks(
-        current,
-        repo,
-        key,
-      );
+      const { managed, assertOwnership, assertIdentity, inspect } =
+        await this.releaseChecks(current, repo, key);
       await assertOwnership();
 
       const running = await this.finishPreview(id);
@@ -1769,12 +1807,14 @@ export class TasksService
             `refs/elevenex/tasks/${id}/finish`,
             saved.finalCommit,
           ]);
-        if (status && managed)
+        if (status && managed) {
+          await assertIdentity();
           await worktreeSimpleGit(current.path).raw([
             'checkout',
             '--detach',
             status.head,
           ]);
+        }
         // The reservation and owner must disappear together for pool reuse.
         this.db.transaction((tx) => {
           tx.delete(schema.taskReservations)

@@ -1,4 +1,11 @@
-import { integer, text, sqliteTable, index } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
+import {
+  integer,
+  text,
+  sqliteTable,
+  index,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core';
 import { repos } from './repos.schema.js';
 import { repoWorktrees } from './repo-worktrees.schema.js';
 
@@ -53,6 +60,9 @@ export const workspaces = sqliteTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (table) => [
+    uniqueIndex('workspaces_repo_default_unique')
+      .on(table.repoId)
+      .where(sql`${table.isDefault} = 1`),
     index('workspaces_repo_lifecycle_idx').on(table.repoId, table.archivedAt),
     index('workspaces_assignment_idx').on(
       table.poolWorktreeId,

@@ -127,7 +127,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private readonly strictStops = new Set<number>();
   private readonly generations = new Map<number, number>();
   private readonly tmuxResizeState = new Map<number, TmuxResizeState>();
-  private pendingKills = new Map<number, pty.IPty>();
+  private readonly pendingKills = new Map<number, Set<pty.IPty>>();
   private readonly logger = new Logger('PtyManager');
 
   private wrapperScriptPath: string;
@@ -150,7 +150,11 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
     resumeSessionId?: string,
     generation = this.getGeneration(sessionId),
   ): Promise<pty.IPty | null> {
-    if (this.shuttingDown || generation !== this.getGeneration(sessionId))
+    if (
+      this.shuttingDown ||
+      this.strictStops.has(sessionId) ||
+      generation !== this.getGeneration(sessionId)
+    )
       return null;
 
     const inFlight = this.spawnInFlight.get(sessionId);
@@ -401,9 +405,6 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
         `tmux attach exited for session ${sessionId}: code=${exitCode}, signal=${signal}`,
       );
       if (this.processes.get(sessionId)?.pty !== ptyProcess) {
-        if (this.pendingKills.get(sessionId) === ptyProcess) {
-          this.pendingKills.delete(sessionId);
-        }
         return;
       }
       this.processes.delete(sessionId);
@@ -453,9 +454,6 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
         `PTY exited for session ${sessionId}: code=${exitCode}, signal=${signal}`,
       );
       if (this.processes.get(sessionId)?.pty !== ptyProcess) {
-        if (this.pendingKills.get(sessionId) === ptyProcess) {
-          this.pendingKills.delete(sessionId);
-        }
         return;
       }
       this.processes.delete(sessionId);
@@ -500,8 +498,7 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
       this.plannotatorRegistry.markLaunchInactive(sessionId);
     }
 
-    if (this.pendingKills.get(sessionId) === ptyProcess) {
-      this.pendingKills.delete(sessionId);
+    if (this.pendingKills.get(sessionId)?.has(ptyProcess)) {
       return; // Intentional kill, don't restart
     }
     this.gateway.onUnexpectedExit(sessionId, exitCode, signal);
@@ -534,42 +531,38 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private killProcess(sessionId: number): boolean {
     const session = this.processes.get(sessionId);
 
-    if (session) {
-      this.pendingKills.set(sessionId, session.pty);
-      if (!session.useTmux) {
-        this.plannotatorRegistry.markLaunchInactive(sessionId);
-      }
-
-      try {
-        session.pty.kill();
-
-        // Force kill after timeout
-        setTimeout(() => {
-          const current = this.processes.get(sessionId);
-          if (current?.pty === session.pty && session.pid) {
-            try {
-              process.kill(session.pid, 'SIGKILL');
-            } catch {
-              // Process already dead
-            }
-          }
-        }, 5000);
-
-        if (this.processes.get(sessionId)?.pty === session.pty) {
-          this.processes.delete(sessionId);
-        }
-        return true;
-      } catch (error) {
-        this.logger.error(
-          `Failed to kill PTY for session ${sessionId}: ${error}`,
-        );
-        if (this.processes.get(sessionId)?.pty === session.pty) {
-          this.processes.delete(sessionId);
-        }
-        return false;
-      }
+    if (!session) return false;
+    // Retire the concrete PTY before signalling; a replacement can start now,
+    // while escalation and strict task shutdown still own the old process.
+    this.processes.delete(sessionId);
+    if (!session.useTmux) {
+      this.plannotatorRegistry.markLaunchInactive(sessionId);
     }
-    return false;
+    void this.terminateProcess(sessionId, session.pty, true).catch((error) => {
+      this.logger.error(
+        `Failed to kill PTY for session ${sessionId}: ${error}`,
+      );
+    });
+    return true;
+  }
+
+  private terminateProcess(
+    sessionId: number,
+    process: pty.IPty,
+    detach = false,
+  ): Promise<void> {
+    const retiring = this.pendingKills.get(sessionId) ?? new Set<pty.IPty>();
+    retiring.add(process);
+    this.pendingKills.set(sessionId, retiring);
+    return terminatePtyAndWait(
+      process,
+      detach ? { signal: 'SIGHUP', graceMs: 5000 } : {},
+    ).then(() => {
+      retiring.delete(process);
+      if (!retiring.size && this.pendingKills.get(sessionId) === retiring) {
+        this.pendingKills.delete(sessionId);
+      }
+    });
   }
 
   async killTmuxSession(sessionId: number): Promise<void> {
@@ -595,11 +588,15 @@ export class PtyManager implements OnModuleDestroy, OnApplicationShutdown {
         await pending;
       }
       const session = this.processes.get(sessionId);
-      if (session) {
-        this.pendingKills.set(sessionId, session.pty);
-        await terminatePtyAndWait(session.pty);
-        if (this.processes.get(sessionId)?.pty === session.pty)
-          this.processes.delete(sessionId);
+      const retiring = new Set(this.pendingKills.get(sessionId));
+      if (session) retiring.add(session.pty);
+      await Promise.all(
+        [...retiring].map((process) =>
+          this.terminateProcess(sessionId, process),
+        ),
+      );
+      if (session && this.processes.get(sessionId) === session) {
+        this.processes.delete(sessionId);
       }
       await this.killTmuxSession(sessionId);
       if (await this.hasTmuxSession(sessionId))

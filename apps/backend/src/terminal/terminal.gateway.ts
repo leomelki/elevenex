@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
+import { sendBounded } from '../websocket/bounded-send.js';
 import { PtyManager } from './pty-manager.service.js';
 import { TerminalService } from './terminal.service.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
@@ -98,7 +99,8 @@ export class TerminalGateway implements OnModuleDestroy {
 
         if (!result.success) {
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(
+            sendBounded(
+              ws,
               `\x1b[31mFailed to start terminal: ${result.error}\x1b[0m\r\n`,
             );
             ws.close(1011, 'Failed to start terminal');
@@ -122,7 +124,7 @@ export class TerminalGateway implements OnModuleDestroy {
         console.error(`Failed to start terminal session ${sessionId}:`, error);
 
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send('\x1b[31mFailed to start terminal.\x1b[0m\r\n');
+          sendBounded(ws, '\x1b[31mFailed to start terminal.\x1b[0m\r\n');
           ws.close(1011, 'Failed to start terminal');
         }
 
@@ -196,7 +198,8 @@ export class TerminalGateway implements OnModuleDestroy {
     // Crash loop prevention: don't restart if last restart was < 5s ago
     if (lastRestart && now - lastRestart < 5000) {
       if (session.ws.readyState === WebSocket.OPEN) {
-        session.ws.send(
+        sendBounded(
+          session.ws,
           '\r\n\x1b[31m[Claude crashed repeatedly — not restarting. Reconnect to try again.]\x1b[0m\r\n',
         );
       }
@@ -205,7 +208,10 @@ export class TerminalGateway implements OnModuleDestroy {
 
     this.lastRestartTime.set(sessionId, now);
     if (session.ws.readyState === WebSocket.OPEN) {
-      session.ws.send('\r\n\x1b[33m[Claude exited, restarting...]\x1b[0m\r\n');
+      sendBounded(
+        session.ws,
+        '\r\n\x1b[33m[Claude exited, restarting...]\x1b[0m\r\n',
+      );
     }
 
     setTimeout(() => {
@@ -214,7 +220,8 @@ export class TerminalGateway implements OnModuleDestroy {
           .startSession(sessionId)
           .then((result) => {
             if (!result.success && session.ws.readyState === WebSocket.OPEN) {
-              session.ws.send(
+              sendBounded(
+                session.ws,
                 `\r\n\x1b[31m[Failed to restart: ${result.error}]\x1b[0m\r\n`,
               );
             }
@@ -225,7 +232,8 @@ export class TerminalGateway implements OnModuleDestroy {
               error,
             );
             if (session.ws.readyState === WebSocket.OPEN) {
-              session.ws.send(
+              sendBounded(
+                session.ws,
                 '\r\n\x1b[31m[Failed to restart terminal.]\x1b[0m\r\n',
               );
             }
@@ -237,7 +245,7 @@ export class TerminalGateway implements OnModuleDestroy {
   sendToSession(sessionId: number, data: Buffer | string): void {
     const session = this.sessions.get(sessionId);
     if (session?.ws?.readyState === WebSocket.OPEN) {
-      session.ws.send(data);
+      sendBounded(session.ws, data);
     }
   }
 

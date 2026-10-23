@@ -8,7 +8,10 @@ import { pipeline as streamPipeline } from 'node:stream/promises';
 import { Subject } from 'rxjs';
 import { SettingsService } from '../../settings/settings.service.js';
 import type { LocalWhisperModelId } from '../../settings/settings.types.js';
-import { SpeechToTextProviderError } from '../speech-to-text.types.js';
+import {
+  SpeechToTextProviderError,
+  throwIfTranscriptionAborted,
+} from '../speech-to-text.types.js';
 import type {
   LocalWhisperModelState,
   LocalWhisperStatus,
@@ -105,9 +108,7 @@ interface WhisperPipeline {
     };
     generate?: (options: Record<string, unknown>) => Promise<unknown>;
   };
-  processor?: (
-    samples: Float32Array,
-  ) => Promise<{ input_features?: unknown }>;
+  processor?: (samples: Float32Array) => Promise<{ input_features?: unknown }>;
 }
 
 /**
@@ -137,14 +138,23 @@ export class LocalWhisperService implements OnModuleDestroy {
   private readonly errors = new Map<LocalWhisperModelId, string>();
   /** Cached readiness, so status polls do not stat the disk on every request. */
   private readonly readyCache = new Map<LocalWhisperModelId, boolean>();
+  private readinessGeneration = 0;
+  /** Reserves disk ownership as soon as removal is requested, before queuing. */
+  private readonly removals = new Map<LocalWhisperModelId, Promise<void>>();
+  private stopping = false;
+  private shutdownPromise: Promise<void> | null = null;
 
   private loadedModel: LocalWhisperModelId | null = null;
   private pipelinePromise: Promise<WhisperPipeline> | null = null;
+  private pipelineLoaded = false;
+  /** A failed dispose can leave partially released sessions; never reuse them. */
+  private pipelineNeedsDisposal = false;
   private evictTimer: NodeJS.Timeout | null = null;
 
   /**
    * Serializes everything that touches the resident pipeline — inference, the
-   * post-download validation load, and idle eviction.
+   * post-download validation load/marker, complete removal, and shutdown.
+   * Transfers keep disk ownership via `downloads` and cannot overlap removal.
    *
    * Two concurrent inferences would only thrash the CPU, but the dangerous
    * pair is a *load* racing an inference: loading a different model disposes
@@ -172,14 +182,30 @@ export class LocalWhisperService implements OnModuleDestroy {
 
   constructor(private readonly settingsService: SettingsService) {}
 
-  async onModuleDestroy(): Promise<void> {
+  onModuleDestroy(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    this.stopping = true;
+    if (this.evictTimer) {
+      clearTimeout(this.evictTimer);
+      this.evictTimer = null;
+    }
     for (const job of this.downloads.values()) {
       job.cancelled = true;
       job.controller.abort();
     }
-    this.downloads.clear();
-    await this.evictPipeline();
-    this.changesSubject.complete();
+    this.shutdownPromise = (async () => {
+      // Native loads/inference cannot safely be interrupted with dispose().
+      // Drain transfers and validation, then release native resources in order.
+      await Promise.allSettled(
+        [...this.downloads.values()].map((job) => job.promise),
+      );
+      try {
+        await this.runExclusive(() => this.evictPipeline());
+      } finally {
+        this.changesSubject.complete();
+      }
+    })();
+    return this.shutdownPromise;
   }
 
   async getStatus(): Promise<LocalWhisperStatus> {
@@ -189,8 +215,10 @@ export class LocalWhisperService implements OnModuleDestroy {
     );
 
     return {
-      engineAvailable: this.engineError === null,
-      engineError: this.engineError,
+      engineAvailable: !this.stopping && this.engineError === null,
+      engineError: this.stopping
+        ? 'The local speech engine is shutting down.'
+        : this.engineError,
       cacheDir: this.cacheDir,
       selectedModel: settings.localModel,
       models,
@@ -209,7 +237,13 @@ export class LocalWhisperService implements OnModuleDestroy {
       return false;
     }
 
+    const generation = this.readinessGeneration;
     const ready = await this.hasCompleteDownload(spec);
+    // A status scan started before deletion/download must not restore stale
+    // readiness after that operation invalidated the cache.
+    if (generation !== this.readinessGeneration) {
+      return this.isReady(model);
+    }
     this.readyCache.set(model, ready);
     return ready;
   }
@@ -222,6 +256,12 @@ export class LocalWhisperService implements OnModuleDestroy {
    * same model join the in-flight job rather than starting a second transfer.
    */
   download(model: LocalWhisperModelId): DownloadJob {
+    this.assertRunning();
+    if (this.removals.has(model)) {
+      throw new SpeechToTextProviderError(
+        'That model is being removed. Try again when removal finishes.',
+      );
+    }
     const existing = this.downloads.get(model);
     if (existing) {
       return existing;
@@ -248,14 +288,17 @@ export class LocalWhisperService implements OnModuleDestroy {
     };
     this.downloads.set(model, job);
     this.errors.delete(model);
+    this.setReady(model, false);
 
     job.promise = this.runDownload(spec, job)
       .then(() => {
-        this.readyCache.set(model, true);
+        this.assertDownloadActive(model, job);
+        this.setReady(model, true);
         this.logger.log(`Local Whisper model ready model=${model}`);
       })
       .catch((error: unknown) => {
-        if (job.cancelled) {
+        if (job.cancelled || this.stopping) {
+          this.errors.delete(model);
           this.logger.log(`Local Whisper download cancelled model=${model}`);
           return;
         }
@@ -266,7 +309,7 @@ export class LocalWhisperService implements OnModuleDestroy {
         );
       })
       .finally(() => {
-        this.downloads.delete(model);
+        if (this.downloads.get(model) === job) this.downloads.delete(model);
         void this.emitStatus(true);
       });
 
@@ -280,6 +323,9 @@ export class LocalWhisperService implements OnModuleDestroy {
    * megabytes behind after an explicit cancel would be its own surprise.
    */
   async cancelDownload(model: LocalWhisperModelId): Promise<void> {
+    this.assertRunning();
+    const removal = this.removals.get(model);
+    if (removal) return removal;
     const job = this.downloads.get(model);
     if (!job) {
       return;
@@ -287,35 +333,58 @@ export class LocalWhisperService implements OnModuleDestroy {
 
     job.cancelled = true;
     job.controller.abort();
-    await job.promise.catch(() => undefined);
-    await this.remove(model);
+    // Reserve removal before awaiting the cancelled job, so another download
+    // cannot acquire the same files between cancellation and deletion.
+    await this.removeModel(model, job);
   }
 
   /** Deletes a model's weights from disk. */
   async remove(model: LocalWhisperModelId): Promise<void> {
+    this.assertRunning();
+    return this.removeModel(model);
+  }
+
+  private removeModel(
+    model: LocalWhisperModelId,
+    cancelledJob?: DownloadJob,
+  ): Promise<void> {
+    const existing = this.removals.get(model);
+    if (existing) return existing;
     const spec = findWhisperModel(model);
     if (!spec) {
-      return;
+      return Promise.resolve();
     }
-    if (this.downloads.has(model)) {
+    if (
+      this.downloads.has(model) &&
+      this.downloads.get(model) !== cancelledJob
+    ) {
       throw new SpeechToTextProviderError(
         'That model is still downloading. Cancel the download first.',
       );
     }
 
-    if (this.loadedModel === model) {
-      // Queued so deleting the model someone is dictating with waits for that
-      // dictation rather than disposing its weights mid-run.
-      await this.runExclusive(() => this.evictPipeline());
-    }
-
-    await rm(join(this.cacheDir, ...spec.repo.split('/')), {
-      recursive: true,
-      force: true,
-    });
-    this.readyCache.set(model, false);
-    this.errors.delete(model);
-    await this.emitStatus(true);
+    const removal = this.runExclusive(async () => {
+      // Cancellation checks in runDownload prevent it from queuing a new load
+      // after this reservation. An already queued validation precedes us.
+      await cancelledJob?.promise;
+      if (this.loadedModel === model) await this.evictPipeline();
+      this.setReady(model, false);
+      await rm(join(this.cacheDir, ...spec.repo.split('/')), {
+        recursive: true,
+        force: true,
+      });
+      this.errors.delete(model);
+    })
+      .catch((error: unknown) => {
+        this.errors.set(model, describeError(error));
+        throw error;
+      })
+      .finally(async () => {
+        this.removals.delete(model);
+        await this.emitStatus(true);
+      });
+    this.removals.set(model, removal);
+    return removal;
   }
 
   /**
@@ -324,7 +393,31 @@ export class LocalWhisperService implements OnModuleDestroy {
    * requests are serialized to keep one dictation from starving another.
    */
   async transcribe(input: LocalWhisperTranscribeInput): Promise<string> {
+    this.assertRunning();
+    throwIfTranscriptionAborted(input.signal);
     return this.runExclusive(() => this.runTranscription(input));
+  }
+
+  private assertRunning(): void {
+    if (this.stopping) {
+      throw new SpeechToTextProviderError(
+        'The local speech engine is shutting down.',
+      );
+    }
+  }
+
+  private assertDownloadActive(
+    model: LocalWhisperModelId,
+    job: DownloadJob,
+  ): void {
+    if (this.stopping || job.cancelled || this.downloads.get(model) !== job) {
+      throw new DownloadCancelled();
+    }
+  }
+
+  private setReady(model: LocalWhisperModelId, ready: boolean): void {
+    this.readinessGeneration += 1;
+    this.readyCache.set(model, ready);
   }
 
   /**
@@ -344,6 +437,8 @@ export class LocalWhisperService implements OnModuleDestroy {
   private async runTranscription(
     input: LocalWhisperTranscribeInput,
   ): Promise<string> {
+    this.assertRunning();
+    throwIfTranscriptionAborted(input.signal);
     const unsupported = describeUnsupportedPlatform();
     if (unsupported) {
       throw new SpeechToTextProviderError(unsupported);
@@ -358,7 +453,11 @@ export class LocalWhisperService implements OnModuleDestroy {
     const transcriber = await this.loadPipeline(input.model);
 
     try {
+      this.assertRunning();
+      throwIfTranscriptionAborted(input.signal);
       const language = await this.resolveLanguage(transcriber, input);
+      this.assertRunning();
+      throwIfTranscriptionAborted(input.signal);
       const output = await transcriber(input.samples, {
         // Whisper only sees 30 s at a time; chunking with an overlap lets a
         // long dictation through without clipping words at the seams.
@@ -368,8 +467,10 @@ export class LocalWhisperService implements OnModuleDestroy {
         ...(language ? { language } : {}),
       });
 
+      throwIfTranscriptionAborted(input.signal);
       return typeof output.text === 'string' ? output.text.trim() : '';
     } catch (error) {
+      if (error instanceof SpeechToTextProviderError) throw error;
       throw new SpeechToTextProviderError(
         `Local transcription failed: ${describeError(error)}`,
       );
@@ -504,12 +605,18 @@ export class LocalWhisperService implements OnModuleDestroy {
   private async loadPipeline(
     model: LocalWhisperModelId,
   ): Promise<WhisperPipeline> {
-    if (this.loadedModel === model && this.pipelinePromise) {
+    this.assertRunning();
+    if (
+      this.loadedModel === model &&
+      this.pipelinePromise &&
+      !this.pipelineNeedsDisposal
+    ) {
       return this.pipelinePromise;
     }
 
     // Switching models: release the old weights before allocating new ones.
     await this.evictPipeline();
+    this.assertRunning();
 
     const spec = findWhisperModel(model);
     if (!spec) {
@@ -517,15 +624,21 @@ export class LocalWhisperService implements OnModuleDestroy {
     }
 
     this.loadedModel = model;
-    this.pipelinePromise = this.createPipeline(spec).catch(
-      (error: unknown) => {
+    this.pipelinePromise = this.createPipeline(spec)
+      .then((transcriber) => {
+        this.pipelineLoaded = true;
+        this.errors.delete(model);
+        return transcriber;
+      })
+      .catch((error: unknown) => {
         // A failed load must not be cached, or every later attempt returns the
         // same rejected promise until the process restarts.
         this.loadedModel = null;
         this.pipelinePromise = null;
+        this.pipelineLoaded = false;
+        this.errors.set(model, describeError(error));
         throw error;
-      },
-    );
+      });
     return this.pipelinePromise;
   }
 
@@ -533,6 +646,7 @@ export class LocalWhisperService implements OnModuleDestroy {
     spec: LocalWhisperModelSpec,
   ): Promise<WhisperPipeline> {
     const { pipeline } = await this.loadTransformers();
+    this.assertRunning();
     const startedAt = Date.now();
 
     const transcriber = (await pipeline(
@@ -566,9 +680,8 @@ export class LocalWhisperService implements OnModuleDestroy {
 
     this.transformersPromise = (async () => {
       try {
-        const transformers = (await import(
-          '@huggingface/transformers'
-        )) as unknown as TransformersModule;
+        const transformers =
+          (await import('@huggingface/transformers')) as unknown as TransformersModule;
 
         transformers.env.cacheDir = this.cacheDir;
         // Resolve strictly through our cache directory. Transformers.js
@@ -595,13 +708,20 @@ export class LocalWhisperService implements OnModuleDestroy {
   }
 
   private scheduleEviction(): void {
+    if (this.stopping) return;
     if (this.evictTimer) {
       clearTimeout(this.evictTimer);
     }
     this.evictTimer = setTimeout(() => {
       // Through the queue: a dictation that started between the timer being
       // armed and it firing must finish before the weights are released.
-      void this.runExclusive(() => this.evictPipeline());
+      void this.runExclusive(() => this.evictPipeline()).catch(
+        (error: unknown) => {
+          this.logger.warn(
+            `Local Whisper eviction failed: ${describeError(error)}`,
+          );
+        },
+      );
     }, PIPELINE_IDLE_EVICT_MS);
     // Never hold the process open just to expire a cache entry.
     this.evictTimer.unref?.();
@@ -614,33 +734,39 @@ export class LocalWhisperService implements OnModuleDestroy {
     }
 
     const pending = this.pipelinePromise;
-    this.pipelinePromise = null;
-    this.loadedModel = null;
     if (!pending) {
       return;
     }
 
+    // A rejected load has nothing to release. A failed native dispose must
+    // propagate, so callers cannot delete files or load over a live pipeline.
+    const transcriber = await pending.catch(() => null);
     try {
-      const transcriber = await pending;
-      await transcriber.dispose?.();
-    } catch {
-      // A pipeline that never loaded has nothing to release.
+      await transcriber?.dispose?.();
+    } catch (error) {
+      this.pipelineNeedsDisposal = true;
+      throw error;
     }
+    this.pipelinePromise = null;
+    this.loadedModel = null;
+    this.pipelineLoaded = false;
+    this.pipelineNeedsDisposal = false;
   }
 
   private async runDownload(
     spec: LocalWhisperModelSpec,
     job: DownloadJob,
   ): Promise<void> {
+    this.assertDownloadActive(spec.id, job);
     const modelDir = join(this.cacheDir, ...spec.repo.split('/'));
     await mkdir(modelDir, { recursive: true });
+    this.assertDownloadActive(spec.id, job);
+    await rm(join(modelDir, COMPLETE_MARKER), { force: true });
 
     // Weights first: they are the slow part, and a user watching the bar wants
     // it to reflect the download they are actually waiting on.
     for (const file of [...WHISPER_ONNX_FILES, ...WHISPER_SUPPORT_FILES]) {
-      if (job.cancelled) {
-        throw new DownloadCancelled();
-      }
+      this.assertDownloadActive(spec.id, job);
 
       const optional = !WHISPER_ONNX_FILES.includes(
         file as (typeof WHISPER_ONNX_FILES)[number],
@@ -650,9 +776,7 @@ export class LocalWhisperService implements OnModuleDestroy {
     }
 
     job.currentFile = null;
-    if (job.cancelled) {
-      throw new DownloadCancelled();
-    }
+    this.assertDownloadActive(spec.id, job);
 
     // Proves the files on disk actually produce a working pipeline before this
     // model is advertised as ready, and leaves it warm for the first dictation.
@@ -661,10 +785,19 @@ export class LocalWhisperService implements OnModuleDestroy {
     // resident one, and a background download finishing mid-dictation would
     // otherwise dispose the weights that dictation is using.
     await this.runExclusive(async () => {
-      await this.loadPipeline(spec.id);
+      this.assertDownloadActive(spec.id, job);
+      try {
+        await this.loadPipeline(spec.id);
+        this.assertDownloadActive(spec.id, job);
+        await writeFile(join(modelDir, COMPLETE_MARKER), spec.repo, 'utf8');
+        this.assertDownloadActive(spec.id, job);
+        this.scheduleEviction();
+      } catch (error) {
+        await rm(join(modelDir, COMPLETE_MARKER), { force: true });
+        if (this.loadedModel === spec.id) await this.evictPipeline();
+        throw error;
+      }
     });
-    await writeFile(join(modelDir, COMPLETE_MARKER), spec.repo, 'utf8');
-    this.scheduleEviction();
   }
 
   /**
@@ -678,7 +811,11 @@ export class LocalWhisperService implements OnModuleDestroy {
     job: DownloadJob,
     optional: boolean,
   ): Promise<void> {
-    const destination = join(this.cacheDir, ...spec.repo.split('/'), ...file.split('/'));
+    const destination = join(
+      this.cacheDir,
+      ...spec.repo.split('/'),
+      ...file.split('/'),
+    );
     if (await exists(destination)) {
       // Already cached from an earlier attempt; count it so resuming a failed
       // download does not restart the progress bar at zero.
@@ -702,12 +839,19 @@ export class LocalWhisperService implements OnModuleDestroy {
       );
     }
 
+    if (job.cancelled || this.stopping) {
+      void response.body?.cancel().catch(() => undefined);
+      throw new DownloadCancelled();
+    }
+
     if (response.status === 404 && optional) {
+      void response.body?.cancel().catch(() => undefined);
       // Not every repo ships every config file; the pipeline copes, and
       // treating it as fatal would block otherwise-usable models.
       return;
     }
     if (!response.ok || !response.body) {
+      void response.body?.cancel().catch(() => undefined);
       throw new SpeechToTextProviderError(
         `Downloading ${file} failed with HTTP ${response.status}.`,
       );
@@ -717,7 +861,9 @@ export class LocalWhisperService implements OnModuleDestroy {
     const temporary = `${destination}.part`;
 
     let loaded = 0;
-    const body = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
+    const body = Readable.fromWeb(
+      response.body as Parameters<typeof Readable.fromWeb>[0],
+    );
     body.on('data', (chunk: Buffer) => {
       loaded += chunk.length;
       job.loadedByFile.set(file, loaded);
@@ -728,6 +874,7 @@ export class LocalWhisperService implements OnModuleDestroy {
       await streamPipeline(body, createWriteStream(temporary), {
         signal: job.controller.signal,
       });
+      this.assertDownloadActive(spec.id, job);
       await rename(temporary, destination);
     } catch (error) {
       await rm(temporary, { force: true }).catch(() => undefined);
@@ -752,10 +899,10 @@ export class LocalWhisperService implements OnModuleDestroy {
       ...spec,
       status: job
         ? 'downloading'
-        : ready
-          ? 'ready'
-          : error
-            ? 'error'
+        : error
+          ? 'error'
+          : ready
+            ? 'ready'
             : 'not-downloaded',
       loadedBytes,
       progress: job
@@ -765,7 +912,7 @@ export class LocalWhisperService implements OnModuleDestroy {
           : 0,
       currentFile: job?.currentFile ?? null,
       error,
-      loadedInMemory: this.loadedModel === spec.id,
+      loadedInMemory: this.pipelineLoaded && this.loadedModel === spec.id,
     };
   }
 
@@ -790,7 +937,7 @@ export class LocalWhisperService implements OnModuleDestroy {
    * status snapshot covering every model, so one is enough for all of them.
    */
   private emitProgress(job: DownloadJob): void {
-    if (job.cancelled) {
+    if (job.cancelled || this.stopping) {
       return;
     }
     const now = Date.now();
@@ -802,11 +949,21 @@ export class LocalWhisperService implements OnModuleDestroy {
   }
 
   private async emitStatus(force: boolean): Promise<void> {
+    if (this.stopping) return;
     if (force) {
       this.lastEmitAt = Date.now();
     }
     if (this.changesSubject.observed) {
-      this.changesSubject.next(await this.getStatus());
+      try {
+        const status = await this.getStatus();
+        if (!this.stopping) this.changesSubject.next(status);
+      } catch (error) {
+        if (!this.stopping) {
+          this.logger.warn(
+            `Local Whisper status failed: ${describeError(error)}`,
+          );
+        }
+      }
     }
   }
 }

@@ -1,11 +1,14 @@
 import { EventEmitter } from 'events';
 import { WebSocket } from 'ws';
 import { ServerConnectionGateway } from './server-connection.gateway.js';
+import { MAX_WEBSOCKET_BUFFERED_BYTES } from '../websocket/bounded-send.js';
 
 class MockWebSocket extends EventEmitter {
   readyState = WebSocket.OPEN;
+  bufferedAmount = 0;
   send = jest.fn();
   close = jest.fn();
+  terminate = jest.fn(() => this.emit('close'));
 }
 
 describe('ServerConnectionGateway', () => {
@@ -116,5 +119,16 @@ describe('ServerConnectionGateway', () => {
     expect(
       (gateway as unknown as { clients: Set<MockWebSocket> }).clients.size,
     ).toBe(0);
+  });
+
+  it('disconnects a client whose heartbeat output is backed up and stops its timer', () => {
+    const ws = new MockWebSocket();
+    const wss = (gateway as unknown as { wss: EventEmitter }).wss;
+    wss.emit('connection', ws);
+    ws.bufferedAmount = MAX_WEBSOCKET_BUFFERED_BYTES;
+    jest.advanceTimersByTime(5000 * 100);
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    expect(ws.terminate).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
   });
 });

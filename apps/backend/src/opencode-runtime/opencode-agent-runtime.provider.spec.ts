@@ -4,6 +4,8 @@ import { EventEmitter } from 'node:events';
 import { OpenCodeAgentRuntimeProvider } from './opencode-agent-runtime.provider.js';
 import { OpenCodeServer } from './opencode-server.js';
 import type { OpenCodeClient } from './opencode-client.js';
+import type { OpenCodeClient as NativeClient } from '@opencode/client';
+import { createOpenCodeV2Client } from './opencode-v2-client.js';
 import type { Event, Message, Part } from '@opencode-ai/sdk/v2/client';
 import type { SessionsService } from '../sessions/sessions.service.js';
 import type { SettingsService } from '../settings/settings.service.js';
@@ -139,6 +141,213 @@ function fixture(nativeSessionId = '-1') {
 
 describe('OpenCode runtime lifecycle', () => {
   afterEach(() => jest.clearAllMocks());
+  it('stops a V2 prompt during preparation without dispatching or closing the runtime', async () => {
+    const f = fixture('s');
+    const configuring = deferred<void>();
+    const release = deferred<void>();
+    const native = {
+      get: jest.fn(async () => {
+        configuring.resolve();
+        await release.promise;
+        return { location: { directory: '/tmp/repo' } };
+      }),
+      prompt: jest.fn(),
+      interrupt: jest.fn(),
+      wait: jest.fn(),
+    };
+    const adapter = createOpenCodeV2Client(
+      { session: native } as unknown as NativeClient,
+      '/tmp/repo',
+    );
+    Object.assign(f.client.session, {
+      prompt: adapter.session.prompt,
+      abort: adapter.session.abort,
+    });
+    try {
+      await f.provider.submitPrompt(1, 'first');
+      await configuring.promise;
+      const stopping = f.provider.interrupt(1);
+      await tick();
+      release.resolve();
+      await stopping;
+      expect(native.prompt).not.toHaveBeenCalled();
+      expect(f.sessions.markCompletionUnreviewed).not.toHaveBeenCalled();
+      expect(await f.provider.getRuntimeState(1)).toMatchObject({
+        runPhase: 'idle',
+        canInterrupt: false,
+        lastError: null,
+      });
+      expect(f.server.close).not.toHaveBeenCalled();
+      const lifetime = f.client.event.subscribe.mock.calls[0][1].signal;
+      expect(lifetime.aborted).toBe(false);
+
+      // The next turn has a new signal and can use the same live runtime.
+      const next = jest.fn(
+        async (_input: unknown, options: { signal: AbortSignal }) => {
+          expect(options.signal.aborted).toBe(false);
+          expect(options.signal).not.toBe(lifetime);
+          return { data: undefined };
+        },
+      );
+      Object.assign(f.client.session, { prompt: next });
+      await f.provider.submitPrompt(1, 'next');
+      await tick();
+      expect(next).toHaveBeenCalledTimes(1);
+    } finally {
+      release.resolve();
+      f.provider.onModuleDestroy();
+    }
+  });
+
+  it('keeps Stop pending until native interruption is confirmed, even after the local run ends', async () => {
+    const f = fixture();
+    const aborted = deferred<{ data: boolean }>();
+    f.client.session.abort.mockImplementation(() => aborted.promise);
+    try {
+      await f.provider.submitPrompt(1, 'first');
+      await tick();
+      const stopping = f.provider.interrupt(1);
+      await tick();
+      f.turn.resolve({ data: undefined });
+      await tick();
+      f.send({
+        id: 'idle',
+        type: 'session.status',
+        properties: { sessionID: 's', status: { type: 'idle' } },
+      });
+      await tick();
+      expect(await f.provider.getRuntimeState(1)).toMatchObject({
+        runPhase: 'running',
+        canInterrupt: true,
+      });
+      aborted.resolve({ data: true });
+      await stopping;
+      expect(await f.provider.getRuntimeState(1)).toMatchObject({
+        runPhase: 'idle',
+        canInterrupt: false,
+      });
+    } finally {
+      f.provider.onModuleDestroy();
+    }
+  });
+
+  it.each(['detached', 'mcp'])(
+    'evicts a %s runtime after confirmed interruption',
+    async (connection) => {
+      jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+      const f = fixture();
+      const aborted = deferred<{ data: boolean }>();
+      f.client.session.abort.mockImplementation(() => aborted.promise);
+      try {
+        if (connection === 'detached') f.provider.onClientAttached(1);
+        await f.provider.submitPrompt(1, 'first');
+        await tick();
+        if (connection === 'detached') f.provider.onClientDetached(1);
+
+        const stopping = f.provider.interrupt(1);
+        await tick();
+        f.turn.resolve({ data: undefined });
+        await tick();
+        jest.advanceTimersByTime(5 * 60_000);
+        expect(f.server.close).not.toHaveBeenCalled();
+
+        aborted.resolve({ data: true });
+        await stopping;
+        expect(await f.provider.getRuntimeState(1)).toMatchObject({
+          runPhase: 'idle',
+          canInterrupt: false,
+          warmState: 'warm',
+        });
+        jest.advanceTimersByTime(5 * 60_000 - 1);
+        expect(f.server.close).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(1);
+        expect(f.server.close).toHaveBeenCalledTimes(1);
+        expect((await f.provider.getRuntimeState(1)).warmState).toBe('cold');
+      } finally {
+        aborted.resolve({ data: true });
+        f.provider.onModuleDestroy();
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it('keeps an unconfirmed stop alive and evicts after a successful retry', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+    const f = fixture();
+    const retried = deferred<{ data: boolean }>();
+    f.client.session.abort
+      .mockRejectedValueOnce(new Error('interrupt failed'))
+      .mockImplementationOnce(() => retried.promise);
+    try {
+      await f.provider.submitPrompt(1, 'first');
+      await tick();
+      await expect(f.provider.interrupt(1)).rejects.toThrow('interrupt failed');
+      f.turn.resolve({ data: undefined });
+      await tick();
+      jest.advanceTimersByTime(10 * 60_000);
+      expect(f.server.close).not.toHaveBeenCalled();
+      expect(await f.provider.getRuntimeState(1)).toMatchObject({
+        runPhase: 'error',
+        canInterrupt: true,
+      });
+
+      const stopping = f.provider.interrupt(1);
+      await tick();
+      jest.advanceTimersByTime(5 * 60_000);
+      expect(f.server.close).not.toHaveBeenCalled();
+      retried.resolve({ data: true });
+      await stopping;
+      expect(await f.provider.getRuntimeState(1)).toMatchObject({
+        runPhase: 'idle',
+        canInterrupt: false,
+      });
+      jest.advanceTimersByTime(5 * 60_000);
+      expect(f.server.close).toHaveBeenCalledTimes(1);
+      expect((await f.provider.getRuntimeState(1)).warmState).toBe('cold');
+    } finally {
+      retried.resolve({ data: true });
+      f.provider.onModuleDestroy();
+      jest.useRealTimers();
+    }
+  });
+
+  it('surfaces failure to confirm native interruption', async () => {
+    const f = fixture();
+    f.client.session.abort.mockRejectedValue(new Error('interrupt failed'));
+    try {
+      await f.provider.submitPrompt(1, 'first');
+      await tick();
+      await expect(f.provider.interrupt(1)).rejects.toThrow('interrupt failed');
+      f.turn.resolve({ data: undefined });
+      await tick();
+      f.send({
+        id: 'stale-idle',
+        type: 'session.status',
+        properties: { sessionID: 's', status: { type: 'idle' } },
+      });
+      f.send({ id: 'reconnected', type: 'server.connected', properties: {} });
+      await tick();
+      expect(await f.provider.getRuntimeState(1)).toMatchObject({
+        runPhase: 'error',
+        canInterrupt: true,
+        lastError: expect.stringContaining('interrupt failed'),
+      });
+      await expect(
+        f.provider.submitPrompt(1, 'unsafe replacement'),
+      ).rejects.toThrow('has not confirmed');
+      expect(f.client.session.prompt).toHaveBeenCalledTimes(1);
+      f.client.session.abort.mockResolvedValue({ data: true });
+      await f.provider.interrupt(1);
+      expect(await f.provider.getRuntimeState(1)).toMatchObject({
+        runPhase: 'idle',
+        canInterrupt: false,
+      });
+      expect(f.server.close).not.toHaveBeenCalled();
+    } finally {
+      f.provider.onModuleDestroy();
+    }
+  });
+
   it('reports a running turn before cold initialization finishes and honors a stop during startup', async () => {
     const f = fixture();
     const startup = deferred<OpenCodeClient>();

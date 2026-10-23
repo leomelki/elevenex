@@ -8,6 +8,10 @@ import {
 } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
+import {
+  MAX_AGENT_FRAME_BYTES,
+  sendAgentFrame,
+} from '../websocket/bounded-send.js';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
 import type { AgentRuntimeEvent } from './agent-runtime.types.js';
 import { SessionsService } from '../sessions/sessions.service.js';
@@ -148,11 +152,14 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
     try {
       action = JSON.parse(rawMessage) as AgentRuntimeClientAction;
     } catch {
-      ws.send(
+      this.sendFrame(
+        ws,
         JSON.stringify({
           type: 'error',
           payload: { sessionId, message: 'Invalid message payload' },
         }),
+        'error',
+        sessionId,
       );
       return;
     }
@@ -169,9 +176,10 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
             return;
           // History must not wait for provider initialization/auth checks. Each
           // snapshot can render as soon as it is ready, in either order.
-          const send = (event: unknown) => {
+          // getHistory returns the full, unpaginated transcript.
+          const send = (event: { type: string; payload: unknown }) => {
             if (ws.readyState === WebSocket.OPEN)
-              ws.send(JSON.stringify(event));
+              this.sendFrame(ws, JSON.stringify(event), event.type, sessionId);
           };
           const reportError = (error: unknown) =>
             send({
@@ -305,10 +313,43 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      ws.send(
+      this.sendFrame(
+        ws,
         JSON.stringify({ type: 'error', payload: { sessionId, message } }),
+        'error',
+        sessionId,
       );
     }
+  }
+
+  private sendFrame(
+    client: WebSocket,
+    serialized: string,
+    type: string,
+    sessionId: number,
+  ): void {
+    const snapshot =
+      type === 'history_snapshot' ||
+      type === 'runtime_snapshot' ||
+      type === 'session_snapshot';
+    if (sendAgentFrame(client, serialized, snapshot) !== 'oversized') return;
+
+    // Keep the existing error protocol/socket: reconnecting would just request
+    // the same oversized snapshot again. The HTTP history/export APIs remain
+    // available for full transcripts beyond this transport's finite ceiling.
+    sendAgentFrame(
+      client,
+      JSON.stringify({
+        type: 'error',
+        payload: {
+          sessionId,
+          message:
+            `The ${type} frame exceeds the ${MAX_AGENT_FRAME_BYTES / (1024 * 1024)} MiB WebSocket limit. ` +
+            'Use Export conversation or the HTTP history API for the full transcript, ' +
+            'or start a new session. Reconnecting will not reduce its size.',
+        },
+      }),
+    );
   }
 
   private async assertSessionMutable(sessionId: number): Promise<void> {
@@ -340,19 +381,27 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
     const serialized = JSON.stringify(event);
     for (const client of targets) {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(serialized);
+        this.sendFrame(client, serialized, event.type, sessionId);
       }
     }
   }
 
-  private broadcastToProvider(providerId: string, event: unknown): void {
+  private broadcastToProvider(
+    providerId: string,
+    event: { type: string; payload: unknown },
+  ): void {
     const serialized = JSON.stringify(event);
     const prefix = `${providerId}:`;
     for (const [key, bucket] of this.clients.entries()) {
       if (!key.startsWith(prefix)) continue;
       for (const client of bucket) {
         if (client.readyState === WebSocket.OPEN) {
-          client.send(serialized);
+          this.sendFrame(
+            client,
+            serialized,
+            event.type,
+            Number(key.slice(prefix.length)),
+          );
         }
       }
     }
@@ -366,11 +415,10 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   ): void {
     const current = this.clients.get(key);
     const hadClient = current?.delete(ws) ?? false;
-    const hasRemainingClients = Boolean(current && current.size > 0);
     if (current && current.size === 0) {
       this.clients.delete(key);
     }
-    if (hadClient && !hasRemainingClients) {
+    if (hadClient) {
       this.registry.getProvider(providerId).onClientDetached?.(sessionId);
     }
   }
@@ -380,8 +428,12 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
-    for (const bucket of this.clients.values()) {
+    for (const [key, bucket] of this.clients) {
+      const separator = key.lastIndexOf(':');
+      const providerId = key.slice(0, separator);
+      const sessionId = Number(key.slice(separator + 1));
       for (const client of bucket) {
+        this.removeClient(providerId, sessionId, key, client);
         client.close(1001, 'Server shutting down');
       }
     }

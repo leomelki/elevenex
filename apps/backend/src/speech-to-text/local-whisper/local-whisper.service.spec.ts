@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import fs, { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,6 +9,32 @@ import { LocalWhisperService } from './local-whisper.service.js';
  * developer's real one — these tests delete models.
  */
 let cacheDir: string;
+const originalFetch = global.fetch;
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+function nativePipeline(run = async () => ({ text: 'hello' })) {
+  return Object.assign(jest.fn(run), {
+    dispose: jest.fn(async () => undefined),
+  });
+}
+
+type Internals = {
+  loadedModel: string | null;
+  pipelinePromise: Promise<unknown> | null;
+  createPipeline: (spec: unknown) => Promise<ReturnType<typeof nativePipeline>>;
+  fetchFile: (...args: unknown[]) => Promise<void>;
+  hasCompleteDownload: (...args: unknown[]) => Promise<boolean>;
+  evictTimer: NodeJS.Timeout | null;
+};
 
 const settingsStub = (localModel = 'small') => ({
   getSpeechToTextConfig: jest.fn(async () => ({ localModel })),
@@ -20,7 +46,10 @@ async function markDownloaded(repo: string): Promise<void> {
   const dir = join(cacheDir, ...repo.split('/'));
   await mkdir(join(dir, 'onnx'), { recursive: true });
   await writeFile(join(dir, 'onnx', 'encoder_model_quantized.onnx'), 'x');
-  await writeFile(join(dir, 'onnx', 'decoder_model_merged_quantized.onnx'), 'x');
+  await writeFile(
+    join(dir, 'onnx', 'decoder_model_merged_quantized.onnx'),
+    'x',
+  );
   await writeFile(join(dir, '.elevenex-complete'), repo);
 }
 
@@ -41,13 +70,447 @@ describe('LocalWhisperService', () => {
 
   beforeEach(() => {
     service = new LocalWhisperService(settingsStub() as never);
+    // Transfers are controlled by each test; never fetch real model weights.
+    global.fetch = jest.fn(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = init!.signal!;
+          if (signal.aborted) return reject(new Error('aborted'));
+          signal.addEventListener('abort', () => reject(new Error('aborted')), {
+            once: true,
+          });
+        }),
+    ) as never;
   });
 
   afterEach(async () => {
     await service.onModuleDestroy();
+    jest.restoreAllMocks();
+    global.fetch = originalFetch;
     await rm(join(cacheDir, 'onnx-community'), {
       recursive: true,
       force: true,
+    });
+  });
+
+  describe('lifecycle ownership', () => {
+    const audio = () => ({
+      samples: new Float32Array(160),
+      model: 'small' as const,
+      languages: ['en'],
+    });
+    const internals = () => service as unknown as Internals;
+
+    async function install(pipeline: ReturnType<typeof nativePipeline>) {
+      await markDownloaded('onnx-community/whisper-small');
+      internals().loadedModel = 'small';
+      internals().pipelinePromise = Promise.resolve(pipeline);
+    }
+
+    it('reports a failed native load and clears the error after a successful retry', async () => {
+      await markDownloaded('onnx-community/whisper-small');
+      jest
+        .spyOn(internals(), 'createPipeline')
+        .mockRejectedValueOnce(new Error('native load failed'))
+        .mockResolvedValueOnce(nativePipeline());
+      await expect(service.transcribe(audio())).rejects.toThrow(
+        'native load failed',
+      );
+      expect(
+        (await service.getStatus()).models.find(
+          (model) => model.id === 'small',
+        ),
+      ).toMatchObject({
+        status: 'error',
+        error: 'native load failed',
+        loadedInMemory: false,
+      });
+      await expect(service.transcribe(audio())).resolves.toBe('hello');
+      expect(
+        (await service.getStatus()).models.find(
+          (model) => model.id === 'small',
+        ),
+      ).toMatchObject({
+        status: 'ready',
+        error: null,
+        loadedInMemory: true,
+      });
+    });
+
+    it('preserves the model files and reports an error if native disposal fails', async () => {
+      await markDownloaded('onnx-community/whisper-small');
+      const pipeline = nativePipeline();
+      const replacement = nativePipeline();
+      jest
+        .spyOn(internals(), 'createPipeline')
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValue(replacement);
+      await service.transcribe(audio());
+      pipeline.dispose.mockRejectedValueOnce(
+        new Error('native disposal failed'),
+      );
+      await expect(service.remove('small')).rejects.toThrow(
+        'native disposal failed',
+      );
+      await expect(
+        stat(
+          join(
+            cacheDir,
+            'onnx-community',
+            'whisper-small',
+            '.elevenex-complete',
+          ),
+        ),
+      ).resolves.toBeDefined();
+      expect(
+        (await service.getStatus()).models.find(
+          (model) => model.id === 'small',
+        ),
+      ).toMatchObject({
+        status: 'error',
+        error: 'native disposal failed',
+        loadedInMemory: true,
+      });
+      await expect(service.transcribe(audio())).resolves.toBe('hello');
+      expect(pipeline.dispose).toHaveBeenCalledTimes(2);
+      expect(pipeline).toHaveBeenCalledTimes(1);
+      expect(replacement).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels a late download response during shutdown without reading or writing it', async () => {
+      const entered = deferred();
+      const transfer = deferred<Response>();
+      const cancel = jest.fn(async () => undefined);
+      const create = jest.spyOn(internals(), 'createPipeline');
+      global.fetch = jest.fn(() => {
+        entered.resolve();
+        return transfer.promise;
+      }) as never;
+      const job = service.download('tiny');
+      await entered.promise;
+      const shutdown = service.onModuleDestroy();
+      expect(job.controller.signal.aborted).toBe(true);
+      transfer.resolve({
+        ok: true,
+        status: 200,
+        body: { cancel },
+      } as unknown as Response);
+      await shutdown;
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(create).not.toHaveBeenCalled();
+      await expect(
+        stat(
+          join(
+            cacheDir,
+            'onnx-community',
+            'whisper-tiny',
+            'onnx',
+            'encoder_model_quantized.onnx',
+          ),
+        ),
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('removes a completion marker whose write settles after shutdown starts', async () => {
+      jest.spyOn(internals(), 'fetchFile').mockResolvedValue(undefined);
+      const pipeline = nativePipeline();
+      jest.spyOn(internals(), 'createPipeline').mockResolvedValue(pipeline);
+      const marker = join(
+        cacheDir,
+        'onnx-community',
+        'whisper-tiny',
+        '.elevenex-complete',
+      );
+      const entered = deferred();
+      const writing = deferred();
+      const originalWrite = fs.writeFile;
+      jest
+        .spyOn(fs, 'writeFile')
+        .mockImplementation(async (file, data, options) => {
+          if (file === marker) {
+            entered.resolve();
+            await writing.promise;
+          }
+          return originalWrite(file, data, options);
+        });
+      service.download('tiny');
+      await entered.promise;
+      const shutdown = service.onModuleDestroy();
+      writing.resolve();
+      await shutdown;
+      expect(pipeline.dispose).toHaveBeenCalledTimes(1);
+      expect(
+        (await service.getStatus()).models.find((model) => model.id === 'tiny')
+          ?.status,
+      ).toBe('not-downloaded');
+      await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('drains active inference before shutdown disposal and rejects queued/new work', async () => {
+      const entered = deferred();
+      const inference = deferred<{ text: string }>();
+      const pipeline = nativePipeline(() => {
+        entered.resolve();
+        return inference.promise;
+      });
+      await install(pipeline);
+      const speaking = service.transcribe(audio());
+      await entered.promise;
+      const queued = service.transcribe(audio());
+      const queuedFailure = expect(queued).rejects.toThrow(/shutting down/i);
+      const shutdown = service.onModuleDestroy();
+      expect(service.onModuleDestroy()).toBe(shutdown);
+      await Promise.resolve();
+      expect(pipeline.dispose).not.toHaveBeenCalled();
+      await expect(service.transcribe(audio())).rejects.toThrow(
+        /shutting down/i,
+      );
+      expect(() => service.download('tiny')).toThrow(/shutting down/i);
+      await expect(service.remove('small')).rejects.toThrow(/shutting down/i);
+      inference.resolve({ text: 'finished' });
+      await expect(speaking).resolves.toBe('finished');
+      await queuedFailure;
+      await shutdown;
+      expect(pipeline).toHaveBeenCalledTimes(1);
+      expect(pipeline.dispose).toHaveBeenCalledTimes(1);
+      expect(internals().pipelinePromise).toBeNull();
+      expect(internals().evictTimer).toBeNull();
+    });
+
+    it('drains a native load on shutdown without starting inference or another load', async () => {
+      await markDownloaded('onnx-community/whisper-small');
+      const entered = deferred();
+      const loading = deferred<ReturnType<typeof nativePipeline>>();
+      const create = jest
+        .spyOn(internals(), 'createPipeline')
+        .mockImplementation(() => {
+          entered.resolve();
+          return loading.promise;
+        });
+      const speaking = service.transcribe(audio());
+      const failed = expect(speaking).rejects.toThrow(/shutting down/i);
+      await entered.promise;
+      expect(
+        (await service.getStatus()).models.find((model) => model.id === 'small')
+          ?.loadedInMemory,
+      ).toBe(false);
+      const queued = expect(service.transcribe(audio())).rejects.toThrow(
+        /shutting down/i,
+      );
+      const shutdown = service.onModuleDestroy();
+      const pipeline = nativePipeline();
+      expect(pipeline.dispose).not.toHaveBeenCalled();
+      loading.resolve(pipeline);
+      await Promise.all([failed, queued, shutdown]);
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(pipeline).not.toHaveBeenCalled();
+      expect(pipeline.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('holds the queue and disk reservation through deletion and cache invalidation', async () => {
+      const pipeline = nativePipeline();
+      await install(pipeline);
+      expect(await service.isReady('small')).toBe(true);
+      const entered = deferred();
+      const deleting = deferred();
+      const originalRm = fs.rm;
+      const modelDir = join(cacheDir, 'onnx-community', 'whisper-small');
+      jest.spyOn(fs, 'rm').mockImplementation(async (path, options) => {
+        if (path === modelDir) {
+          entered.resolve();
+          await deleting.promise;
+        }
+        return originalRm(path, options);
+      });
+      const create = jest.spyOn(internals(), 'createPipeline');
+      const removal = service.remove('small');
+      await entered.promise;
+      expect(pipeline.dispose).toHaveBeenCalledTimes(1);
+      const speaking = service.transcribe(audio());
+      const failed = expect(speaking).rejects.toThrow(/not downloaded/i);
+      expect(() => service.download('small')).toThrow(/being removed/i);
+      await Promise.resolve();
+      expect(create).not.toHaveBeenCalled();
+      deleting.resolve();
+      await Promise.all([removal, failed]);
+      expect(create).not.toHaveBeenCalled();
+      expect(await service.isReady('small')).toBe(false);
+      await expect(stat(modelDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('checks the resident model when removal executes, after a pending load', async () => {
+      await markDownloaded('onnx-community/whisper-small');
+      const entered = deferred();
+      const loading = deferred<ReturnType<typeof nativePipeline>>();
+      jest.spyOn(internals(), 'createPipeline').mockImplementation(() => {
+        entered.resolve();
+        return loading.promise;
+      });
+      const speaking = service.transcribe(audio());
+      await entered.promise;
+      const removal = service.remove('small');
+      const pipeline = nativePipeline();
+      loading.resolve(pipeline);
+      await Promise.all([speaking, removal]);
+      expect(pipeline.dispose).toHaveBeenCalledTimes(1);
+      expect(internals().pipelinePromise).toBeNull();
+      expect(await service.isReady('small')).toBe(false);
+    });
+
+    it('does not let a stale status scan restore readiness after removal', async () => {
+      const scan = deferred<boolean>();
+      jest
+        .spyOn(internals(), 'hasCompleteDownload')
+        .mockReturnValueOnce(scan.promise);
+      const readiness = service.isReady('small');
+      await service.remove('small');
+      scan.resolve(true);
+      expect(await readiness).toBe(false);
+      expect(await service.isReady('small')).toBe(false);
+    });
+
+    it('does not publish readiness or load after a transfer completes during shutdown', async () => {
+      const entered = deferred();
+      const transfer = deferred();
+      jest.spyOn(internals(), 'fetchFile').mockImplementation(() => {
+        entered.resolve();
+        return transfer.promise;
+      });
+      const create = jest.spyOn(internals(), 'createPipeline');
+      const next = jest.fn();
+      const complete = jest.fn();
+      service.changes.subscribe({ next, complete });
+      const job = service.download('tiny');
+      await entered.promise;
+      const shutdown = service.onModuleDestroy();
+      const eventsAtShutdown = next.mock.calls.length;
+      expect(job.controller.signal.aborted).toBe(true);
+      transfer.resolve();
+      await shutdown;
+      expect(create).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalledTimes(eventsAtShutdown);
+      expect(complete).toHaveBeenCalledTimes(1);
+      expect(
+        (await service.getStatus()).models.find((model) => model.id === 'tiny')
+          ?.status,
+      ).toBe('not-downloaded');
+      await expect(
+        stat(
+          join(
+            cacheDir,
+            'onnx-community',
+            'whisper-tiny',
+            '.elevenex-complete',
+          ),
+        ),
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it.each(['cancel', 'shutdown'])(
+      'disposes a download validation load that completes after %s without marking it ready',
+      async (action) => {
+        jest.spyOn(internals(), 'fetchFile').mockResolvedValue(undefined);
+        const entered = deferred();
+        const loading = deferred<ReturnType<typeof nativePipeline>>();
+        jest.spyOn(internals(), 'createPipeline').mockImplementation(() => {
+          entered.resolve();
+          return loading.promise;
+        });
+        const job = service.download('tiny');
+        await entered.promise;
+        const finishing =
+          action === 'cancel'
+            ? service.cancelDownload('tiny')
+            : service.onModuleDestroy();
+        const pipeline = nativePipeline();
+        expect(pipeline.dispose).not.toHaveBeenCalled();
+        loading.resolve(pipeline);
+        await finishing;
+        await job.promise;
+        expect(pipeline.dispose).toHaveBeenCalledTimes(1);
+        expect(internals().pipelinePromise).toBeNull();
+        const tiny = (await service.getStatus()).models.find(
+          (model) => model.id === 'tiny',
+        );
+        expect(tiny?.status).toBe('not-downloaded');
+        expect(tiny?.error).toBeNull();
+        expect(tiny?.loadedInMemory).toBe(false);
+        await expect(
+          stat(
+            join(
+              cacheDir,
+              'onnx-community',
+              'whisper-tiny',
+              '.elevenex-complete',
+            ),
+          ),
+        ).rejects.toMatchObject({ code: 'ENOENT' });
+      },
+    );
+
+    it('does not retain a load error from validation cancelled during shutdown', async () => {
+      jest.spyOn(internals(), 'fetchFile').mockResolvedValue(undefined);
+      const entered = deferred();
+      const loading = deferred<ReturnType<typeof nativePipeline>>();
+      jest.spyOn(internals(), 'createPipeline').mockImplementation(() => {
+        entered.resolve();
+        return loading.promise;
+      });
+      service.download('tiny');
+      await entered.promise;
+      const shutdown = service.onModuleDestroy();
+      loading.reject(new Error('native load interrupted'));
+      await shutdown;
+      expect(
+        (await service.getStatus()).models.find((model) => model.id === 'tiny'),
+      ).toMatchObject({
+        status: 'not-downloaded',
+        error: null,
+        loadedInMemory: false,
+      });
+    });
+
+    it('cancels validation queued behind inference and prevents a replacement download during deletion', async () => {
+      const entered = deferred();
+      const inference = deferred<{ text: string }>();
+      await install(
+        nativePipeline(() => {
+          entered.resolve();
+          return inference.promise;
+        }),
+      );
+      const speaking = service.transcribe(audio());
+      await entered.promise;
+      jest.spyOn(internals(), 'fetchFile').mockResolvedValue(undefined);
+      const create = jest.spyOn(internals(), 'createPipeline');
+      const job = service.download('tiny');
+      // Let all transfer continuations queue their validation behind inference.
+      await new Promise((resolve) => setImmediate(resolve));
+      const cancelling = service.cancelDownload('tiny');
+      expect(() => service.download('tiny')).toThrow(/being removed/i);
+      inference.resolve({ text: 'finished' });
+      await Promise.all([speaking, cancelling, job.promise]);
+      expect(create).not.toHaveBeenCalled();
+      expect(await service.isReady('tiny')).toBe(false);
+    });
+
+    it('skips a queued transcription cancelled by its client', async () => {
+      const entered = deferred();
+      const inference = deferred<{ text: string }>();
+      const pipeline = nativePipeline(() => {
+        entered.resolve();
+        return inference.promise;
+      });
+      await install(pipeline);
+      const speaking = service.transcribe(audio());
+      await entered.promise;
+      const client = new AbortController();
+      const queued = service.transcribe({ ...audio(), signal: client.signal });
+      const failed = expect(queued).rejects.toMatchObject({ status: 499 });
+      client.abort();
+      inference.resolve({ text: 'finished' });
+      await Promise.all([speaking, failed]);
+      expect(pipeline).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -83,9 +546,9 @@ describe('LocalWhisperService', () => {
 
     expect(await service.isReady('small')).toBe(true);
     const status = await service.getStatus();
-    expect(
-      status.models.find((model) => model.id === 'small')?.status,
-    ).toBe('ready');
+    expect(status.models.find((model) => model.id === 'small')?.status).toBe(
+      'ready',
+    );
   });
 
   it('refuses to transcribe with a model that is not downloaded', async () => {
@@ -119,9 +582,9 @@ describe('LocalWhisperService', () => {
 
     expect(await service.isReady('small')).toBe(false);
     const status = await service.getStatus();
-    expect(
-      status.models.find((model) => model.id === 'small')?.status,
-    ).toBe('not-downloaded');
+    expect(status.models.find((model) => model.id === 'small')?.status).toBe(
+      'not-downloaded',
+    );
   });
 
   it('reports a download in progress with its own progress figures', async () => {
@@ -148,7 +611,11 @@ describe('LocalWhisperService', () => {
      * an inference was still running — the failure mode these guard.
      */
     function fakePipeline() {
-      const state = { disposed: false, disposedDuringRun: false, running: false };
+      const state = {
+        disposed: false,
+        disposedDuringRun: false,
+        running: false,
+      };
       const transcriber = async () => {
         state.running = true;
         await new Promise((resolve) => setTimeout(resolve, 20));
@@ -164,7 +631,10 @@ describe('LocalWhisperService', () => {
       return { state, transcriber };
     }
 
-    function install(target: Service, pipeline: ReturnType<typeof fakePipeline>) {
+    function install(
+      target: Service,
+      pipeline: ReturnType<typeof fakePipeline>,
+    ) {
       const internals = target as unknown as {
         loadedModel: string;
         pipelinePromise: Promise<unknown>;
@@ -213,9 +683,21 @@ describe('LocalWhisperService', () => {
       });
 
       await Promise.all([
-        service.transcribe({ samples: new Float32Array(16_000), model: 'small', languages: [] }),
-        service.transcribe({ samples: new Float32Array(16_000), model: 'small', languages: [] }),
-        service.transcribe({ samples: new Float32Array(16_000), model: 'small', languages: [] }),
+        service.transcribe({
+          samples: new Float32Array(16_000),
+          model: 'small',
+          languages: [],
+        }),
+        service.transcribe({
+          samples: new Float32Array(16_000),
+          model: 'small',
+          languages: [],
+        }),
+        service.transcribe({
+          samples: new Float32Array(16_000),
+          model: 'small',
+          languages: [],
+        }),
       ]);
 
       expect(peak).toBe(1);
@@ -239,12 +721,20 @@ describe('LocalWhisperService', () => {
       });
 
       await expect(
-        service.transcribe({ samples: new Float32Array(16_000), model: 'small', languages: [] }),
+        service.transcribe({
+          samples: new Float32Array(16_000),
+          model: 'small',
+          languages: [],
+        }),
       ).rejects.toThrow(/blew up/);
 
       // A rejected task must not poison the shared queue.
       await expect(
-        service.transcribe({ samples: new Float32Array(16_000), model: 'small', languages: [] }),
+        service.transcribe({
+          samples: new Float32Array(16_000),
+          model: 'small',
+          languages: [],
+        }),
       ).resolves.toBe('second');
     });
   });
@@ -350,7 +840,8 @@ describe('LocalWhisperService', () => {
         languages: ['fr', 'en'],
       });
 
-      const suppressed = pipeline.generateOptions[0]?.suppress_tokens as number[];
+      const suppressed = pipeline.generateOptions[0]
+        ?.suppress_tokens as number[];
       // Narrowing the field to the two candidates is what makes detection
       // reliable on the small builds.
       expect(suppressed).toEqual(expect.arrayContaining([50261, 50266]));

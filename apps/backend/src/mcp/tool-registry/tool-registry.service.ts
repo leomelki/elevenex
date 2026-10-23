@@ -56,18 +56,23 @@ export class ToolRegistryService {
   ) {}
 
   /** Register all known tools on a freshly created server. */
-  registerAll(server: McpServer): void {
+  registerAll(server: McpServer, toolActivity?: (delta: 1 | -1) => void): void {
     for (const tool of ALL_TOOLS) {
-      this.registerOne(server, tool);
+      this.registerOne(server, tool, toolActivity);
     }
     this.logger.log(`Registered ${ALL_TOOLS.length} elevenex MCP tools`);
   }
 
-  private registerOne(server: McpServer, tool: ToolDefinition): void {
+  private registerOne(
+    server: McpServer,
+    tool: ToolDefinition,
+    toolActivity?: (delta: 1 | -1) => void,
+  ): void {
     const handler = async (
       args: Record<string, unknown>,
       extra: McpRequestContext,
     ): Promise<CallToolResult> => {
+      toolActivity?.(1);
       try {
         const ctx = await this.buildContext(extra);
         this.enforceCaps(tool, ctx);
@@ -102,6 +107,8 @@ export class ToolRegistryService {
           );
         }
         return errorToResult(err);
+      } finally {
+        toolActivity?.(-1);
       }
     };
 
@@ -289,6 +296,7 @@ export class ToolRegistryService {
   private async buildContext(extra: McpRequestContext): Promise<ToolContext> {
     const token = extra.authInfo?.token;
     const agentSessionId = await this.tokens.resolveSessionId(token);
+    extra.signal.throwIfAborted();
     const caps = McpConnectionRegistryService.capsFor(agentSessionId);
     // Keep the connection registry current for human-channel routing/presence.
     if (extra.sessionId) {
@@ -303,6 +311,7 @@ export class ToolRegistryService {
       human: this.human.bindFor({
         agentSessionId,
         canUseHumanChannel: caps.canUseHumanChannel,
+        signal: extra.signal,
       }),
       signal: extra.signal,
       mcpSessionId: extra.sessionId,

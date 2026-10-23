@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { Logger } from '@nestjs/common';
 import { readFile, unlink } from 'node:fs/promises';
 import { z } from 'zod';
 import { ConversationExportService } from '../../agent-runtime/conversation-export.service.js';
@@ -137,6 +138,7 @@ describe('Drive tool group', () => {
         'interrupt_session',
         'prompt_session',
         'reset_session',
+        'resume_pending_prompts',
         'resolve_action',
         'set_model',
         'set_permission_mode',
@@ -565,6 +567,386 @@ describe('Drive tool group', () => {
         accepted: true,
         status: 'running',
       });
+    });
+  });
+
+  describe('prompt_session bounded acceptance', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => {
+      jest.useRealTimers();
+      jest.restoreAllMocks();
+    });
+    const idle = { sessionState: 'idle', runPhase: 'idle', pendingPrompts: [] };
+    const running = {
+      sessionState: 'running',
+      runPhase: 'running',
+      pendingPrompts: [],
+    };
+    function pendingSubmit() {
+      let resolve!: () => void;
+      let reject!: (error: Error) => void;
+      const promise = new Promise<void>((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+      return { promise, resolve, reject };
+    }
+
+    it.each([
+      ['claude', 'run_state'],
+      ['codex', 'run_state'],
+      ['claude', 'runtime_snapshot'],
+      ['codex', 'runtime_snapshot'],
+    ])(
+      'returns on %s %s while submit awaits the full turn',
+      async (provider, eventType) => {
+        const log = jest
+          .spyOn(Logger.prototype, 'error')
+          .mockImplementation(() => {});
+        const submit = pendingSubmit();
+        const runtime = makeRuntime({
+          getRuntimeState: jest.fn().mockResolvedValue(idle),
+        });
+        runtime.submitPrompt.mockImplementation(() => {
+          runtime.emit('event', {
+            type: eventType,
+            payload: { sessionId: 7, ...running },
+          });
+          return submit.promise;
+        });
+        const { services } = makeServices({
+          session: { id: 7, status: 'active', activeAgentProvider: provider },
+          runtime,
+        });
+        const res = await promptSessionTool.handler(
+          { sessionId: 7, prompt: 'go' },
+          makeCtx(services),
+        );
+        expect(res.data).toMatchObject({
+          accepted: true,
+          status: 'running',
+          provider,
+        });
+        expect(runtime.listenerCount('event')).toBe(0);
+        expect(jest.getTimerCount()).toBe(0);
+        submit.reject(new Error('later turn failure'));
+        await jest.advanceTimersByTimeAsync(0);
+        expect(log).toHaveBeenCalledWith(
+          expect.stringContaining('later turn failure'),
+        );
+      },
+    );
+
+    it.each(['result', 'history_snapshot', 'terminal'])(
+      'checks acceptance immediately on %s without waiting for fallback polling',
+      async (eventType) => {
+        const submit = pendingSubmit();
+        let state = {
+          ...running,
+          pendingPrompts: [] as { id: string; prompt: string }[],
+        };
+        const runtime = makeRuntime({
+          getRuntimeState: jest.fn().mockImplementation(async () => state),
+          submitPrompt: jest.fn().mockReturnValue(submit.promise),
+        });
+        const { services } = makeServices({ runtime });
+        const pending = promptSessionTool.handler(
+          { sessionId: 7, prompt: 'go' },
+          makeCtx(services),
+        );
+        const returned = jest.fn();
+        void pending.then(returned);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(returned).not.toHaveBeenCalled();
+        expect(runtime.getRuntimeState).toHaveBeenCalledTimes(2);
+
+        state = { ...running, pendingPrompts: [{ id: 'new', prompt: 'go' }] };
+        runtime.emit('event', { type: eventType, payload: { sessionId: 7 } });
+        // No clock advance: the lifecycle event must wake the waiter before its 1s poll.
+        await jest.advanceTimersByTimeAsync(0);
+        expect(returned).toHaveBeenCalledTimes(1);
+        expect((await pending).data).toMatchObject({
+          accepted: true,
+          queued: true,
+        });
+        expect(runtime.getRuntimeState).toHaveBeenCalledTimes(3);
+        expect(runtime.listenerCount('event')).toBe(0);
+        expect(jest.getTimerCount()).toBe(0);
+        submit.resolve();
+      },
+    );
+
+    it('observes acceptance without an event while submit remains pending', async () => {
+      const submit = pendingSubmit();
+      const runtime = makeRuntime({
+        getRuntimeState: jest
+          .fn()
+          .mockResolvedValueOnce(idle)
+          .mockResolvedValue(running),
+        submitPrompt: jest.fn().mockReturnValue(submit.promise),
+      });
+      const { services } = makeServices({ runtime });
+      const res = await promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        makeCtx(services),
+      );
+      expect(res.data).toMatchObject({ accepted: true, status: 'running' });
+      expect(jest.getTimerCount()).toBe(0);
+      submit.resolve();
+    });
+
+    it('reports queued acceptance using new queue identities from a mutable snapshot', async () => {
+      const submit = pendingSubmit();
+      const state = { ...idle, pendingPrompts: [{ id: 'old', prompt: 'go' }] };
+      const runtime = makeRuntime({
+        getRuntimeState: jest.fn().mockResolvedValue(state),
+      });
+      runtime.submitPrompt.mockImplementation(() => {
+        state.pendingPrompts.push({ id: 'new', prompt: 'go' });
+        runtime.emit('event', {
+          type: 'run_state',
+          payload: { sessionId: 7, ...state },
+        });
+        return submit.promise;
+      });
+      const { services } = makeServices({ runtime });
+      const res = await promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        makeCtx(services),
+      );
+      expect(res.data).toMatchObject({
+        accepted: true,
+        status: 'running',
+        queued: true,
+      });
+      expect(res.nextStep).toContain('queued');
+      expect(jest.getTimerCount()).toBe(0);
+      submit.resolve();
+    });
+
+    it('keeps permission guidance when the accepted prompt is queued behind a blocked turn', async () => {
+      const runtime = makeRuntime({
+        getRuntimeState: jest
+          .fn()
+          .mockResolvedValueOnce(running)
+          .mockResolvedValue({
+            sessionState: 'requires_action',
+            runPhase: 'running',
+            pendingPrompts: [{ id: 'new', prompt: 'go' }],
+          }),
+      });
+      const { services } = makeServices({ runtime });
+      const res = await promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        makeCtx(services),
+      );
+      expect(res.data).toMatchObject({
+        accepted: true,
+        queued: true,
+        status: 'requires_action',
+      });
+      expect(res.nextStep).toContain('get_pending_action');
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('does not label a steered prompt queued because older messages remain queued', async () => {
+      const state = {
+        ...running,
+        pendingPrompts: [{ id: 'old', prompt: 'later' }],
+      };
+      const runtime = makeRuntime({
+        getRuntimeState: jest.fn().mockResolvedValue(state),
+      });
+      const { services } = makeServices({ runtime });
+      const res = await promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        makeCtx(services),
+      );
+      expect(res.data).toMatchObject({ accepted: true, status: 'running' });
+      expect(res.data).not.toHaveProperty('queued');
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it.each(['already running', 'old matching queue', 'no state'])(
+      'returns honest unconfirmed acceptance for %s',
+      async (mode) => {
+        const submit = pendingSubmit();
+        const state =
+          mode === 'old matching queue'
+            ? { ...idle, pendingPrompts: [{ id: 'old', prompt: 'go' }] }
+            : running;
+        const runtime = makeRuntime({
+          getRuntimeState: jest
+            .fn()
+            .mockImplementation(() =>
+              mode === 'no state'
+                ? new Promise(() => {})
+                : Promise.resolve(state),
+            ),
+          submitPrompt: jest.fn().mockReturnValue(submit.promise),
+        });
+        const { services } = makeServices({ runtime });
+        const pending = promptSessionTool.handler(
+          { sessionId: 7, prompt: 'go' },
+          makeCtx(services),
+        );
+        await jest.advanceTimersByTimeAsync(5_000);
+        const res = await pending;
+        expect(res.data).toMatchObject({
+          accepted: false,
+          status: 'acceptance_pending',
+        });
+        expect(res.nextStep).toContain('Do not resubmit');
+        expect(runtime.submitPrompt).toHaveBeenCalledTimes(1);
+        expect(runtime.listenerCount('event')).toBe(0);
+        expect(jest.getTimerCount()).toBe(0);
+        submit.resolve();
+      },
+    );
+
+    it('returns confirmed acceptance even when every state read hangs', async () => {
+      const runtime = makeRuntime({
+        getRuntimeState: jest.fn().mockReturnValue(new Promise(() => {})),
+      });
+      const { services } = makeServices({ runtime });
+      const pending = promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        makeCtx(services),
+      );
+      await jest.advanceTimersByTimeAsync(350);
+      const res = await pending;
+      expect(res.data).toMatchObject({ accepted: true, status: 'running' });
+      expect(runtime.listenerCount('event')).toBe(0);
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('propagates submit failure instead of claiming acceptance from an old running turn', async () => {
+      const runtime = makeRuntime({
+        getRuntimeState: jest.fn().mockResolvedValue(running),
+        submitPrompt: jest.fn().mockRejectedValue(new Error('dispatch failed')),
+      });
+      const { services } = makeServices({ runtime });
+      await expect(
+        promptSessionTool.handler(
+          { sessionId: 7, prompt: 'go' },
+          makeCtx(services),
+        ),
+      ).rejects.toThrow('dispatch failed');
+      expect(runtime.listenerCount('event')).toBe(0);
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('aborts while submit or a state read is pending and observes late failures', async () => {
+      const log = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => {});
+      const submit = pendingSubmit();
+      const runtime = makeRuntime({
+        getRuntimeState: jest.fn().mockResolvedValue(running),
+        submitPrompt: jest.fn().mockReturnValue(submit.promise),
+      });
+      const { services } = makeServices({ runtime });
+      const ctx = makeCtx(services);
+      const controller = new AbortController();
+      ctx.signal = controller.signal;
+      const remove = jest.spyOn(ctx.signal, 'removeEventListener');
+      const pending = promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        ctx,
+      );
+      const rejected = expect(pending).rejects.toThrow('cancelled');
+      await jest.advanceTimersByTimeAsync(0);
+      controller.abort(new Error('cancelled'));
+      await rejected;
+      expect(runtime.listenerCount('event')).toBe(0);
+      expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+      expect(jest.getTimerCount()).toBe(0);
+      submit.reject(new Error('late dispatch failure'));
+      await jest.advanceTimersByTimeAsync(0);
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining('late dispatch failure'),
+      );
+    });
+
+    it('bounds reads during message/thinking delta storms while awaiting acceptance', async () => {
+      const submit = pendingSubmit();
+      const runtime = makeRuntime({
+        getRuntimeState: jest.fn().mockResolvedValue(running),
+        submitPrompt: jest.fn().mockReturnValue(submit.promise),
+      });
+      const { services } = makeServices({ runtime });
+      const pending = promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        makeCtx(services),
+      );
+      await jest.advanceTimersByTimeAsync(0);
+      for (let i = 0; i < 20; i++) {
+        for (const type of ['message_delta', 'thinking_delta']) {
+          runtime.emit('event', { type, payload: { sessionId: 7 } });
+          await jest.advanceTimersByTimeAsync(0);
+        }
+      }
+      expect(runtime.getRuntimeState).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(runtime.getRuntimeState).toHaveBeenCalledTimes(3);
+      await jest.advanceTimersByTimeAsync(4_000);
+      expect((await pending).data).toMatchObject({
+        accepted: false,
+        status: 'acceptance_pending',
+      });
+      expect(runtime.listenerCount('event')).toBe(0);
+      expect(jest.getTimerCount()).toBe(0);
+      submit.resolve();
+    });
+
+    it('handles runtime errors immediately even when the state read is hung', async () => {
+      const submit = pendingSubmit();
+      const runtime = makeRuntime({
+        getRuntimeState: jest
+          .fn()
+          .mockResolvedValueOnce(running)
+          .mockReturnValue(new Promise(() => {})),
+        submitPrompt: jest.fn().mockReturnValue(submit.promise),
+      });
+      const { services } = makeServices({ runtime });
+      const pending = promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        makeCtx(services),
+      );
+      const rejected = expect(pending).rejects.toThrow('runtime failed');
+      await jest.advanceTimersByTimeAsync(0);
+      runtime.emit('event', {
+        type: 'error',
+        payload: { sessionId: 7, message: 'runtime failed' },
+      });
+      await rejected;
+      expect(runtime.listenerCount('event')).toBe(0);
+      expect(jest.getTimerCount()).toBe(0);
+      submit.resolve();
+    });
+
+    it('does not overlap polling reads while waiting for acceptance', async () => {
+      const submit = pendingSubmit();
+      const runtime = makeRuntime({
+        getRuntimeState: jest
+          .fn()
+          .mockResolvedValueOnce(running)
+          .mockReturnValue(new Promise(() => {})),
+        submitPrompt: jest.fn().mockReturnValue(submit.promise),
+      });
+      const { services } = makeServices({ runtime });
+      const pending = promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go' },
+        makeCtx(services),
+      );
+      await jest.advanceTimersByTimeAsync(0);
+      for (let i = 0; i < 10; i++)
+        runtime.emit('event', { type: 'complete', payload: { sessionId: 7 } });
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect((await pending).data).toMatchObject({ accepted: false });
+      expect(runtime.getRuntimeState).toHaveBeenCalledTimes(2);
+      expect(jest.getTimerCount()).toBe(0);
+      submit.resolve();
     });
   });
 

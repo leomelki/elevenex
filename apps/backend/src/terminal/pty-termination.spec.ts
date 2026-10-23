@@ -53,4 +53,28 @@ describe('terminatePtyAndWait', () => {
     );
     expect(jest.getTimerCount()).toBe(0);
   });
+  it('coalesces stops of the same PTY, including a synchronous exit during kill', async () => {
+    process.kill.mockImplementation(() => exit());
+    const first = terminatePtyAndWait(process as never);
+    const second = terminatePtyAndWait(process as never);
+    expect(first).toBe(second);
+    await first;
+    expect(process.kill).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('treats ESRCH as exited and permits retry after another signal error', async () => {
+    process.kill.mockImplementationOnce(() => {
+      throw new Error('permission denied');
+    });
+    await expect(terminatePtyAndWait(process as never)).rejects.toThrow(
+      'permission denied',
+    );
+    process.kill.mockImplementationOnce(() => {
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+    });
+    await terminatePtyAndWait(process as never);
+    expect(jest.getTimerCount()).toBe(0);
+    expect(dispose).toHaveBeenCalledTimes(2);
+  });
 });
