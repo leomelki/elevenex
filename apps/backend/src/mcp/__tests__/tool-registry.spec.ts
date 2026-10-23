@@ -751,3 +751,70 @@ describe('mission autonomy at the MCP boundary', () => {
     },
   );
 });
+
+describe('tool wrapper lifecycle bindings', () => {
+  it('propagates cancellation through the real human binding and balances active-tool accounting', async () => {
+    const services = buildServices();
+    const channel = new AgentHumanChannelService();
+    const connections = new McpConnectionRegistryService();
+    const registry = new ToolRegistryService(
+      services,
+      new DeltaCursorStore(),
+      new DeepLinkBuilder(),
+      channel,
+      { resolveSessionId: async () => 42 } as never,
+      connections,
+      { invalidate: jest.fn() } as never,
+    );
+    const server = new FakeServer();
+    const activity = jest.fn();
+    registry.registerAll(server as never, activity);
+    const controller = new AbortController();
+    const raised = new Promise<void>((resolve) =>
+      channel.once('approval', () => resolve()),
+    );
+    const pending = server.tools.get('request_approval')!(
+      { title: 'Wait for user', timeoutMs: 600000 },
+      { ...extraFor('agent-token'), signal: controller.signal },
+    );
+    await raised;
+    const id = channel.pendingApprovals()[0].id;
+    expect(activity.mock.calls).toEqual([[1]]);
+    controller.abort();
+    const result = await pending;
+    expect(parse(result)).toMatchObject({ error: { code: 'cancelled' } });
+    expect(channel.pendingApprovals()).toEqual([]);
+    expect(channel.resolveApproval({ id, decision: 'approve' })).toBe(false);
+    expect(activity.mock.calls).toEqual([[1], [-1]]);
+  });
+
+  it('does not recreate a registration after cancellation while token resolution was in flight', async () => {
+    let release!: (id: number) => void;
+    const token = new Promise<number>((resolve) => {
+      release = resolve;
+    });
+    const connections = new McpConnectionRegistryService();
+    const registry = new ToolRegistryService(
+      buildServices(),
+      new DeltaCursorStore(),
+      new DeepLinkBuilder(),
+      new AgentHumanChannelService(),
+      { resolveSessionId: () => token } as never,
+      connections,
+      { invalidate: jest.fn() } as never,
+    );
+    const server = new FakeServer();
+    registry.registerAll(server as never);
+    const controller = new AbortController();
+    const pending = server.tools.get('project_overview')!(
+      { state: 'active' },
+      { ...extraFor(), signal: controller.signal },
+    );
+    controller.abort();
+    release(42);
+    expect(parse(await pending)).toMatchObject({
+      error: { code: 'cancelled' },
+    });
+    expect(connections.get('mcp-sess-1')).toBeUndefined();
+  });
+});

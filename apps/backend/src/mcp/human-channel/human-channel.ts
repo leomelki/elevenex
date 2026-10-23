@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { ToolError } from '../tool-registry/tool.types.js';
@@ -135,12 +135,16 @@ type PendingEntry =
       kind: 'approval';
       resolve: (r: AgentApprovalResolution) => void;
       timer: NodeJS.Timeout;
+      cleanup: () => void;
+      reject: (error: unknown) => void;
       request: AgentApprovalRequest;
     }
   | {
       kind: 'selection';
       resolve: (r: AgentSelectionResolution) => void;
       timer: NodeJS.Timeout;
+      cleanup: () => void;
+      reject: (error: unknown) => void;
       request: AgentSelectionRequest;
     };
 
@@ -151,9 +155,13 @@ type PendingEntry =
  * connection-bound `HumanChannel` view via `bindFor`.
  */
 @Injectable()
-export class AgentHumanChannelService extends EventEmitter {
+export class AgentHumanChannelService
+  extends EventEmitter
+  implements OnModuleDestroy
+{
   private readonly logger = new Logger(AgentHumanChannelService.name);
   private readonly pending = new Map<string, PendingEntry>();
+  private destroyed = false;
 
   /** Snapshot of approvals still awaiting a human decision (panel restore). */
   pendingApprovals(agentSessionId?: number): AgentApprovalRequest[] {
@@ -198,6 +206,7 @@ export class AgentHumanChannelService extends EventEmitter {
     const entry = this.pending.get(resolution.id);
     if (!entry || entry.kind !== 'approval') return false;
     clearTimeout(entry.timer);
+    entry.cleanup();
     this.pending.delete(resolution.id);
     entry.resolve(resolution);
     this.emit('approval-resolved', resolution);
@@ -209,6 +218,7 @@ export class AgentHumanChannelService extends EventEmitter {
     const entry = this.pending.get(resolution.id);
     if (!entry || entry.kind !== 'selection') return false;
     clearTimeout(entry.timer);
+    entry.cleanup();
     this.pending.delete(resolution.id);
     entry.resolve(resolution);
     this.emit('selection-resolved', resolution);
@@ -218,24 +228,35 @@ export class AgentHumanChannelService extends EventEmitter {
   private awaitApproval(
     request: AgentApprovalRequest,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<AgentApprovalResolution> {
-    return new Promise<AgentApprovalResolution>((resolve) => {
+    return new Promise<AgentApprovalResolution>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (this.pending.delete(request.id)) {
-          const resolution: AgentApprovalResolution = {
-            id: request.id,
-            decision: 'denied',
-            note: 'timeout',
-          };
-          this.emit('approval-resolved', resolution);
-          resolve(resolution);
-        }
+        this.resolveApproval({
+          id: request.id,
+          decision: 'denied',
+          note: 'timeout',
+        });
       }, timeoutMs);
       // Don't keep the event loop alive solely for a pending approval.
       timer.unref?.();
       // Register BEFORE emitting so a synchronous listener (e.g. an
       // immediately-answering panel/test) can resolve it without racing.
-      this.pending.set(request.id, { kind: 'approval', resolve, timer, request });
+      const onAbort = () => this.cancel(request.id, signal!.reason);
+      const cleanup = () => signal?.removeEventListener('abort', onAbort);
+      this.pending.set(request.id, {
+        kind: 'approval',
+        resolve,
+        reject,
+        timer,
+        request,
+        cleanup,
+      });
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
       this.emit('approval', request);
     });
   }
@@ -243,22 +264,63 @@ export class AgentHumanChannelService extends EventEmitter {
   private awaitSelection(
     request: AgentSelectionRequest,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<AgentSelectionResolution> {
-    return new Promise<AgentSelectionResolution>((resolve) => {
+    return new Promise<AgentSelectionResolution>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (this.pending.delete(request.id)) {
-          const resolution: AgentSelectionResolution = {
-            id: request.id,
-            outcome: 'cancelled',
-          };
-          this.emit('selection-resolved', resolution);
-          resolve(resolution);
-        }
+        this.resolveSelection({ id: request.id, outcome: 'cancelled' });
       }, timeoutMs);
       timer.unref?.();
-      this.pending.set(request.id, { kind: 'selection', resolve, timer, request });
+      const onAbort = () => this.cancel(request.id, signal!.reason);
+      const cleanup = () => signal?.removeEventListener('abort', onAbort);
+      this.pending.set(request.id, {
+        kind: 'selection',
+        resolve,
+        reject,
+        timer,
+        request,
+        cleanup,
+      });
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
       this.emit('selection', request);
     });
+  }
+
+  private cancel(id: string, reason: unknown): void {
+    const entry = this.pending.get(id);
+    if (!entry) return;
+    this.pending.delete(id);
+    clearTimeout(entry.timer);
+    entry.cleanup();
+    entry.reject(reason);
+    // Existing resolution events remove the request from connected panels too.
+    if (entry.kind === 'approval') {
+      this.emit('approval-resolved', {
+        id,
+        decision: 'denied',
+        note: 'cancelled',
+      });
+    } else {
+      this.emit('selection-resolved', { id, outcome: 'cancelled' });
+    }
+  }
+
+  onModuleDestroy(): void {
+    this.destroyed = true;
+    for (const id of this.pending.keys()) {
+      this.cancel(
+        id,
+        new ToolError({
+          code: 'human_channel_closed',
+          message: 'The human channel is shutting down.',
+        }),
+      );
+    }
+    this.removeAllListeners();
   }
 
   /**
@@ -269,9 +331,16 @@ export class AgentHumanChannelService extends EventEmitter {
   bindFor(args: {
     agentSessionId: number | null;
     canUseHumanChannel: boolean;
+    signal?: AbortSignal;
   }): HumanChannel {
     const { agentSessionId, canUseHumanChannel } = args;
     const guard = () => {
+      args.signal?.throwIfAborted();
+      if (this.destroyed)
+        throw new ToolError({
+          code: 'human_channel_closed',
+          message: 'The human channel is shutting down.',
+        });
       if (!canUseHumanChannel || agentSessionId === null) {
         throw new ToolError({
           code: 'human_channel_unavailable',
@@ -326,7 +395,11 @@ export class AgentHumanChannelService extends EventEmitter {
         };
         // Cap the block so a never-answered escalation can't hang a tool call
         // forever; 10 minutes by default.
-        return this.awaitApproval(request, input.timeoutMs ?? 10 * 60 * 1000);
+        return this.awaitApproval(
+          request,
+          input.timeoutMs ?? 10 * 60 * 1000,
+          args.signal,
+        );
       },
       requestSelection: async (input) => {
         guard();
@@ -343,7 +416,11 @@ export class AgentHumanChannelService extends EventEmitter {
           deepLink: input.deepLink,
           createdAt: new Date().toISOString(),
         };
-        return this.awaitSelection(request, input.timeoutMs ?? 10 * 60 * 1000);
+        return this.awaitSelection(
+          request,
+          input.timeoutMs ?? 10 * 60 * 1000,
+          args.signal,
+        );
       },
     };
   }

@@ -26,14 +26,10 @@ export const awaitSessionEventTool = defineTool({
   title: 'Await session event',
   costClass: 'heavy',
   description:
-    "Block until a session reaches one of `events` (default completed/requires_action/failed) or `timeoutMs` elapses — event-driven, not polling. 🔴 Use instead of looping session_status. `completed` only fires once the session is truly settled: a live background task or a prompt queued behind one keeps it running even though the visible turn already ended, so this correctly keeps waiting through that instead of returning early. On resolve: read_session for the delta, or get_pending_action when requires_action. On timeout: re-call immediately — no sleep needed.",
+    'Block until a session reaches one of `events` (default completed/requires_action/failed) or `timeoutMs` elapses — event-driven, not polling. 🔴 Use instead of looping session_status. `completed` only fires once the session is truly settled: a live background task or a prompt queued behind one keeps it running even though the visible turn already ended, so this correctly keeps waiting through that instead of returning early. On resolve: read_session for the delta, or get_pending_action when requires_action. On timeout: re-call immediately — no sleep needed.',
   annotations: { readOnlyHint: true },
   inputShape: {
-    sessionId: z
-      .number()
-      .int()
-      .positive()
-      .describe('Session id to watch.'),
+    sessionId: z.number().int().positive().describe('Session id to watch.'),
     events: z
       .array(z.string().min(1))
       .optional()
@@ -46,7 +42,9 @@ export const awaitSessionEventTool = defineTool({
       .min(1)
       .max(MAX_TIMEOUT_MS)
       .default(DEFAULT_TIMEOUT_MS)
-      .describe('Max time to wait in ms (1-170000). Default 170000. Resolves with event:"timeout" on expiry — re-call immediately, no sleep needed.'),
+      .describe(
+        'Max time to wait in ms (1-170000). Default 170000. Resolves with event:"timeout" on expiry — re-call immediately, no sleep needed.',
+      ),
   },
   handler: async (args, ctx) => {
     const { sessions, agentRuntime } = ctx.services;
@@ -121,9 +119,13 @@ export const awaitSessionEventTool = defineTool({
     const runtime = agentRuntime.getProvider(session.activeAgentProvider);
 
     // Check live runtime state before subscribing to close any already-done race.
-    const initialState = await runtime.getRuntimeState(session.id).catch(() => null);
+    const initialState = await runtime
+      .getRuntimeState(session.id)
+      .catch(() => null);
     if (initialState) {
-      const logicalEvent = runtimeEventFor(initialState as SessionRuntimeSnapshot);
+      const logicalEvent = runtimeEventFor(
+        initialState as SessionRuntimeSnapshot,
+      );
       if (logicalEvent && wanted.has(logicalEvent)) {
         return makeResult(logicalEvent, logicalEvent);
       }
@@ -155,12 +157,17 @@ export const awaitSessionEventTool = defineTool({
           .getRuntimeState(session.id)
           .catch(() => null)
           .then((s) =>
-            resolve(makeResult(event, status, s as SessionRuntimeSnapshot | null)),
+            resolve(
+              makeResult(event, status, s as SessionRuntimeSnapshot | null),
+            ),
           );
       };
 
       // DB status listener: handles external kills (archived/stopped).
-      const onSessionStatus = (payload: { sessionId: number; status: string }) => {
+      const onSessionStatus = (payload: {
+        sessionId: number;
+        status: string;
+      }) => {
         if (payload.sessionId !== session.id) return;
         if (TERMINAL_DB_STATUSES.has(payload.status) && wanted.has('failed')) {
           finish('failed', 'failed');
@@ -185,15 +192,18 @@ export const awaitSessionEventTool = defineTool({
         }
         if (event.type === 'run_state') {
           const logicalEvent = runtimeEventFor(event.payload);
-          if (logicalEvent && wanted.has(logicalEvent)) finish(logicalEvent, logicalEvent);
+          if (logicalEvent && wanted.has(logicalEvent))
+            finish(logicalEvent, logicalEvent);
           return;
         }
-        if (event.type !== 'complete' && event.type !== 'background_work') return;
+        if (event.type !== 'complete' && event.type !== 'background_work')
+          return;
         void runtime
           .getRuntimeState(session.id)
           .then((s) => {
             const logicalEvent = runtimeEventFor(s as SessionRuntimeSnapshot);
-            if (logicalEvent && wanted.has(logicalEvent)) finish(logicalEvent, logicalEvent);
+            if (logicalEvent && wanted.has(logicalEvent))
+              finish(logicalEvent, logicalEvent);
           })
           .catch(() => {});
       };
@@ -211,12 +221,29 @@ export const awaitSessionEventTool = defineTool({
         return;
       }
 
+      // Archive/stop can happen while the initial runtime read is in flight.
+      // A disposed runtime cannot replay that DB event, so re-read after both
+      // listeners are installed as well as rechecking the runtime below.
+      if (wanted.has('failed')) {
+        void sessions
+          .findOne(session.id)
+          .then((current) => {
+            if (TERMINAL_DB_STATUSES.has(current.status))
+              finish('failed', 'failed');
+          })
+          .catch(() => {});
+      }
+
       // Re-check runtime state after subscribing to close the race between our
       // initial check above and listener registration.
-      runtime.getRuntimeState(session.id).then((s) => {
-        const logicalEvent = runtimeEventFor(s as SessionRuntimeSnapshot);
-        if (logicalEvent && wanted.has(logicalEvent)) finish(logicalEvent, logicalEvent);
-      }).catch(() => {});
+      runtime
+        .getRuntimeState(session.id)
+        .then((s) => {
+          const logicalEvent = runtimeEventFor(s as SessionRuntimeSnapshot);
+          if (logicalEvent && wanted.has(logicalEvent))
+            finish(logicalEvent, logicalEvent);
+        })
+        .catch(() => {});
     });
   },
 });

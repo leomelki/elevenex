@@ -16,7 +16,7 @@ const SERVER_INFO = { name: 'elevenex', version: '0.2.0' } as const;
 export class McpServerFactory {
   constructor(private readonly registry: ToolRegistryService) {}
 
-  create(): McpServer {
+  create(toolActivity?: (delta: 1 | -1) => void): McpServer {
     const server = new McpServer(SERVER_INFO, {
       instructions: ELEVENEX_SERVER_INSTRUCTIONS,
       capabilities: {
@@ -24,7 +24,7 @@ export class McpServerFactory {
         logging: {},
       },
     });
-    this.registry.registerAll(server);
+    this.registry.registerAll(server, toolActivity);
     return server;
   }
 }
