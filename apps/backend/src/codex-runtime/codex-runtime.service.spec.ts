@@ -7,6 +7,7 @@ jest.mock('../session-title/session-title.service.js', () => ({
 
 import { CodexRuntimeService } from './codex-runtime.service.js';
 import { CodexAppServerClient } from './codex-app-server.js';
+import type { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 
 describe('CodexRuntimeService', () => {
   it('publishes authoritative routing and payload updates without duplicating incoming messages', () => {
@@ -880,7 +881,7 @@ describe('CodexRuntimeService', () => {
   });
 
   it.each(['resume', 'completion'])(
-    'restores a queued prompt when dispatch after %s rejects',
+    'does not requeue uncertain work when dispatch after %s rejects',
     async (trigger) => {
       const { service, appServer } = createService();
       const runtime = service as any;
@@ -908,7 +909,7 @@ describe('CodexRuntimeService', () => {
       state.queuePaused = trigger === 'resume';
       const submit = jest
         .spyOn(service, 'submitPrompt')
-        .mockRejectedValueOnce(new Error('workspace temporarily unavailable'))
+        .mockRejectedValueOnce(new Error('submission outcome unavailable'))
         .mockResolvedValueOnce(undefined);
       if (trigger === 'resume') await service.resumePendingPrompts(7);
       else {
@@ -923,11 +924,11 @@ describe('CodexRuntimeService', () => {
       }
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(state).toMatchObject({
-        pendingPrompts: queued,
+        pendingPrompts: [queued[1]],
         queuePaused: true,
         runPhase: 'error',
         lastError: expect.stringMatching(
-          /workspace temporarily unavailable.*still queued/,
+          /submission outcome unavailable.*not been requeued/,
         ),
       });
       await service.resumePendingPrompts(7);
@@ -935,15 +936,166 @@ describe('CodexRuntimeService', () => {
       expect(submit).toHaveBeenNthCalledWith(
         2,
         7,
-        queued[0].prompt,
+        queued[1].prompt,
         undefined,
-        queued[0].images,
+        undefined,
       );
-      expect(state.pendingPrompts).toEqual([queued[1]]);
+      expect(state.pendingPrompts).toEqual([]);
       expect(state.queuePaused).toBe(false);
       expect(state.lastError).toBeNull();
     },
   );
+
+  it.each(['resume', 'completion'])(
+    'retains queued work when stop becomes unconfirmed before scheduled %s dispatch',
+    async (trigger) => {
+      const { service, appServer } = createService();
+      const runtime = service as any;
+      const state = runtime.ensureRuntimeState(7);
+      const wire = wireAppServerTurn(appServer);
+      let running: Promise<void> | undefined;
+      if (trigger === 'completion') {
+        running = service.submitPrompt(7, 'active turn');
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      const queued = [
+        {
+          id: 'first',
+          prompt: 'first prompt',
+          queuedAt: '2026-10-23T11:00:00Z',
+          images: [{ mediaType: 'image/png', data: 'image' }],
+        },
+        {
+          id: 'second',
+          prompt: 'second prompt',
+          queuedAt: '2026-10-23T11:01:00Z',
+        },
+      ];
+      state.pendingPrompts = queued;
+      state.queuePaused = trigger === 'resume';
+      const submit = jest
+        .spyOn(service, 'submitPrompt')
+        .mockResolvedValue(undefined);
+      if (trigger === 'resume') await service.resumePendingPrompts(7);
+      else {
+        wire.notificationHandler({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-1',
+            turn: { id: 'turn-1', status: 'completed' },
+          },
+        });
+        await running;
+      }
+      runtime.unconfirmedStops.set(7, {});
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(submit).not.toHaveBeenCalled();
+      expect(state).toMatchObject({
+        pendingPrompts: queued,
+        queuePaused: true,
+        canInterrupt: true,
+        runPhase: 'waiting',
+        lastError: expect.stringContaining('Retry stopping'),
+      });
+    },
+  );
+
+  it('never requeues an executed queued turn when turn-change cleanup rejects', async () => {
+    const capture = {
+      id: 'capture',
+      sessionId: 7,
+      provider: 'codex',
+      root: '/tmp/project',
+      startedAt: '2026-10-23T11:00:00Z',
+    };
+    const turnChanges = {
+      begin: jest.fn<TurnChangesService['begin']>().mockResolvedValue(capture),
+      finish: jest
+        .fn<TurnChangesService['finish']>()
+        .mockRejectedValue(new Error('capture cleanup failed')),
+    };
+    const { service, appServer } = createService(undefined, turnChanges);
+    const runtime = service as any;
+    const state = runtime.ensureRuntimeState(7, 'thread-1');
+    state.cachedWorktreePath = '/tmp/project';
+    const wire = wireAppServerTurn(appServer);
+    const queued = [
+      {
+        id: 'executed',
+        prompt: 'perform the side effect',
+        queuedAt: '2026-10-23T11:00:00Z',
+      },
+      {
+        id: 'remaining',
+        prompt: 'different follow-up',
+        queuedAt: '2026-10-23T11:01:00Z',
+      },
+    ];
+    const results: unknown[] = [];
+    service.on('event', (event: any) => {
+      if (event.type === 'tool_result') results.push(event);
+    });
+    state.pendingPrompts = queued;
+    state.queuePaused = true;
+    await service.resumePendingPrompts(7);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(wire.turnStartParams).toMatchObject({
+      input: [{ type: 'text', text: queued[0].prompt }],
+    });
+    wire.notificationHandler({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        item: {
+          id: 'side-effect',
+          type: 'commandExecution',
+          command: 'touch output',
+          status: 'completed',
+          exitCode: 0,
+        },
+      },
+    });
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-1', status: 'completed' },
+      },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(results).toHaveLength(1);
+    expect(turnChanges.finish).toHaveBeenCalledWith(capture, 'thread-1');
+    expect(state).toMatchObject({
+      pendingPrompts: [queued[1]],
+      queuePaused: true,
+      runPhase: 'error',
+      lastError: expect.stringMatching(
+        /capture cleanup failed.*not been requeued/,
+      ),
+    });
+    expect(runtime.activeRuns.has(7)).toBe(false);
+    turnChanges.finish.mockResolvedValueOnce(undefined);
+    await service.resumePendingPrompts(7);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(
+      appServer.request.mock.calls
+        .filter(([method]) => method === 'turn/start')
+        .map(([, params]) => (params as any).input),
+    ).toEqual([
+      [{ type: 'text', text: queued[0].prompt }],
+      [{ type: 'text', text: queued[1].prompt }],
+    ]);
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-1', status: 'completed' },
+      },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(state).toMatchObject({ pendingPrompts: [], runPhase: 'idle' });
+  });
 
   it('accepts a new prompt after reactivation and reloads the task’s current environment', async () => {
     const { service, sessionsService } = createService();
@@ -1078,6 +1230,7 @@ describe('CodexRuntimeService', () => {
       reasoningEffort: string | null;
       fastMode?: boolean;
     } = { model: null, reasoningEffort: null },
+    turnChanges?: Pick<TurnChangesService, 'begin' | 'finish'>,
   ) {
     const sessionsService = {
       assertSessionWorkspaceLinked: jest.fn().mockResolvedValue(undefined),
@@ -1175,6 +1328,7 @@ describe('CodexRuntimeService', () => {
         } as never,
         mcpAgentTokens as never,
         db as never,
+        turnChanges as never,
       ),
       sessionsService,
       authService,

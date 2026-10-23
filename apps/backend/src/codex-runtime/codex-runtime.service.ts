@@ -1706,24 +1706,32 @@ export class CodexRuntimeService
       this.emitRunState(sessionId);
       this.logger.error(`Codex run failed session=${sessionId}: ${message}`);
     } finally {
-      const changes = await this.turnChanges?.finish(changeCapture, state.codexSessionId);
-      if (changes && !this.invalidatedSessions.has(sessionId)) this.pushItem(sessionId, changes);
-      const run = this.activeRuns.get(sessionId);
-      this.activeRuns.delete(sessionId);
-      run?.resolveTurnReady();
-      run?.resolveCompletion();
-      if (stagedImageDir) {
-        void rm(stagedImageDir, { recursive: true, force: true });
-      }
-      if (
-        !state.lastError &&
-        !state.queuePaused &&
-        state.pendingPrompts.length > 0
-      ) {
-        const [next, ...rest] = state.pendingPrompts;
-        state.pendingPrompts = rest;
-        this.emitRunState(sessionId);
-        this.dispatchQueuedPrompt(sessionId, state, next);
+      let changesFinished = false;
+      try {
+        const changes = await this.turnChanges?.finish(
+          changeCapture,
+          state.codexSessionId,
+        );
+        if (changes && !this.invalidatedSessions.has(sessionId))
+          this.pushItem(sessionId, changes);
+        changesFinished = true;
+      } finally {
+        // Capture failure must not strand the run or unblock automatic dispatch.
+        const run = this.activeRuns.get(sessionId);
+        this.activeRuns.delete(sessionId);
+        run?.resolveTurnReady();
+        run?.resolveCompletion();
+        if (stagedImageDir) {
+          void rm(stagedImageDir, { recursive: true, force: true });
+        }
+        if (
+          changesFinished &&
+          !state.lastError &&
+          !state.queuePaused &&
+          state.pendingPrompts.length > 0
+        ) {
+          this.dispatchQueuedPrompt(sessionId, state);
+        }
       }
     }
   }
@@ -1967,18 +1975,27 @@ export class CodexRuntimeService
       this.emitRunState(sessionId);
       return;
     }
-    const [next, ...rest] = state.pendingPrompts;
-    state.pendingPrompts = rest;
     this.emitRunState(sessionId);
-    this.dispatchQueuedPrompt(sessionId, state, next);
+    this.dispatchQueuedPrompt(sessionId, state);
   }
 
   private dispatchQueuedPrompt(
     sessionId: number,
     state: CodexRuntimeState,
-    next: CodexRuntimeState['pendingPrompts'][number],
   ): void {
     setImmediate(() => {
+      if (this.runtimeStates.get(sessionId) !== state) return;
+      // Stop can become unconfirmed after scheduling. Leave the item untouched
+      // until this final guard passes, immediately before invocation.
+      if (this.unconfirmedStops.has(sessionId)) {
+        this.emitRunState(sessionId);
+        return;
+      }
+      if (state.queuePaused || this.activeRuns.has(sessionId)) return;
+      const [next, ...rest] = state.pendingPrompts;
+      if (!next) return;
+      state.pendingPrompts = rest;
+      this.emitRunState(sessionId);
       void this.submitPrompt(
         sessionId,
         next.prompt,
@@ -1989,16 +2006,14 @@ export class CodexRuntimeService
           `Queued Codex prompt failed session=${sessionId}: ${String(error)}`,
         );
         if (this.runtimeStates.get(sessionId) !== state) return;
-        state.pendingPrompts = [
-          next,
-          ...state.pendingPrompts.filter((prompt) => prompt.id !== next.id),
-        ];
         state.queuePaused = true;
         state.runPhase = 'error';
         state.sessionState = 'requires_action';
         if (!this.unconfirmedStops.has(sessionId)) {
           const message = error instanceof Error ? error.message : String(error);
-          state.lastError = `Could not start queued Codex prompt: ${message}. The prompt is still queued; retry resuming it.`;
+          // submitPrompt spans execution and cleanup. A rejection provides no
+          // evidence that native work was not dispatched; never requeue it.
+          state.lastError = `Queued Codex prompt failed: ${message}. It may have executed and has not been requeued. Review its result before submitting it again.`;
         }
         this.emitRunState(sessionId);
         this.emitEvent({
