@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import * as path from 'node:path';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 
 export interface RepoContext {
   repoRoot: string;
   worktreePath: string;
   branch: string;
+  headSha: string | null;
   upstream: string | null;
   ahead: number;
   behind: number;
@@ -16,15 +18,37 @@ export interface RepoContext {
 
 @Injectable()
 export class RepoContextResolverService {
-  async resolve(worktreePath: string): Promise<RepoContext> {
+  private readonly inFlight = new Map<string, Promise<RepoContext>>();
+
+  resolve(worktreePath: string): Promise<RepoContext> {
+    worktreePath = path.resolve(worktreePath);
+    const existing = this.inFlight.get(worktreePath);
+    if (existing) return existing;
+    const pending = this.readContext(worktreePath).finally(() => {
+      if (this.inFlight.get(worktreePath) === pending) {
+        this.inFlight.delete(worktreePath);
+      }
+    });
+    this.inFlight.set(worktreePath, pending);
+    return pending;
+  }
+
+  private async readContext(worktreePath: string): Promise<RepoContext> {
     const git = worktreeSimpleGit(worktreePath);
     const repoRoot = (await git.revparse(['--show-toplevel'])).trim();
-    const branchSummary = await git.branchLocal();
-    const branch = branchSummary.current;
+    // Reading the current symbolic ref does not visit every branch's tip.
+    const branch = await git
+      .raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])
+      .then((value) => value.trim())
+      .catch(() => '');
 
     if (!branch) {
       throw new Error('Detached HEAD is not supported for GitHub cockpit.');
     }
+    const headSha = await git
+      .revparse(['HEAD'])
+      .then((value) => value.trim())
+      .catch(() => null);
 
     let upstream: string | null = null;
     try {
@@ -78,6 +102,7 @@ export class RepoContextResolverService {
       repoRoot,
       worktreePath,
       branch,
+      headSha,
       upstream,
       ahead,
       behind,

@@ -1,10 +1,14 @@
 import { Injectable } from '@nestjs/common';
+import * as path from 'node:path';
 import { GitService, PushResult } from '../git/git.service.js';
 import {
   GhCommandError,
   GhCommandRunnerService,
 } from './gh-command-runner.service.js';
-import { RepoContextResolverService } from './repo-context-resolver.service.js';
+import {
+  RepoContextResolverService,
+  type RepoContext,
+} from './repo-context-resolver.service.js';
 import type {
   GitHubBranchContext,
   GitHubCapabilities,
@@ -19,12 +23,19 @@ import type {
 interface CacheEntry<T> {
   data: T;
   createdAt: number;
+  worktreePath: string;
+  estimatedBytes: number;
 }
 
 @Injectable()
 export class GithubService {
   private readonly cache = new Map<string, CacheEntry<unknown>>();
   private readonly cacheTtlMs = 10_000;
+  private readonly maxCacheEntries = 64;
+  private readonly maxCacheBytes = 32 * 1024 * 1024;
+  private readonly maxEntryBytes = 8 * 1024 * 1024;
+  private cacheBytes = 0;
+  private readonly inFlight = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly runner: GhCommandRunnerService,
@@ -37,348 +48,354 @@ export class GithubService {
     refresh = false,
   ): Promise<GitHubCapabilities> {
     const context = await this.repoContextResolver.resolve(worktreePath);
-    const ghInstalled = await this.runner.isInstalled(context.repoRoot);
+    return this.readCached('capabilities', context, refresh, async () => {
+      const ghInstalled = await this.runner.isInstalled(context.repoRoot);
 
-    if (!ghInstalled) {
+      if (!ghInstalled) {
+        return {
+          ghInstalled: false,
+          authenticated: false,
+          hasGitHubRemote: Boolean(
+            context.host && context.owner && context.repo,
+          ),
+          hasUpstream: Boolean(context.upstream),
+          linkedPullRequest: false,
+          defaultRemote: context.remoteName,
+          host: context.host,
+          repoOwner: context.owner,
+          repoName: context.repo,
+          message: 'GitHub CLI is not installed on the backend host.',
+        };
+      }
+
+      const authenticated = await this.isAuthenticated(context.repoRoot);
+      const linkedPullRequest = authenticated
+        ? Boolean(
+            await this.findLinkedPullRequest(
+              context.worktreePath,
+              refresh,
+              context,
+            ),
+          )
+        : false;
+
       return {
-        ghInstalled: false,
-        authenticated: false,
-        hasGitHubRemote: Boolean(context.host && context.owner && context.repo),
+        ghInstalled: true,
+        authenticated,
+        hasGitHubRemote: Boolean(
+          context.host === 'github.com' && context.owner && context.repo,
+        ),
         hasUpstream: Boolean(context.upstream),
-        linkedPullRequest: false,
+        linkedPullRequest,
         defaultRemote: context.remoteName,
         host: context.host,
         repoOwner: context.owner,
         repoName: context.repo,
-        message: 'GitHub CLI is not installed on the backend host.',
+        message: this.buildCapabilityMessage(context, authenticated),
       };
-    }
-
-    const authenticated = await this.isAuthenticated(context.repoRoot);
-    const linkedPullRequest = authenticated
-      ? Boolean(await this.findLinkedPullRequest(context.worktreePath, refresh))
-      : false;
-
-    return {
-      ghInstalled: true,
-      authenticated,
-      hasGitHubRemote: Boolean(
-        context.host === 'github.com' && context.owner && context.repo,
-      ),
-      hasUpstream: Boolean(context.upstream),
-      linkedPullRequest,
-      defaultRemote: context.remoteName,
-      host: context.host,
-      repoOwner: context.owner,
-      repoName: context.repo,
-      message: this.buildCapabilityMessage(context, authenticated),
-    };
+    });
   }
 
   async getBranchContext(
     worktreePath: string,
     refresh = false,
+    resolvedContext?: RepoContext,
   ): Promise<GitHubBranchContext> {
-    const cacheKey = `context:${worktreePath}`;
-    if (!refresh) {
-      const cached = this.getCache<GitHubBranchContext>(cacheKey);
-      if (cached) return cached;
-    }
-
-    const context = await this.repoContextResolver.resolve(worktreePath);
-    const linkedPullRequest = await this.findLinkedPullRequest(
-      worktreePath,
-      refresh,
-    );
-    const response: GitHubBranchContext = {
-      repoRoot: context.repoRoot,
-      worktreePath: context.worktreePath,
-      branch: context.branch,
-      upstream: context.upstream,
-      ahead: context.ahead,
-      behind: context.behind,
-      remoteName: context.remoteName,
-      host: context.host,
-      owner: context.owner,
-      name: context.repo,
-      linkedPullRequest,
-    };
-    this.setCache(cacheKey, response);
-    return response;
+    const context =
+      resolvedContext ?? (await this.repoContextResolver.resolve(worktreePath));
+    return this.readCached('context', context, refresh, async () => {
+      const linkedPullRequest = await this.findLinkedPullRequest(
+        worktreePath,
+        refresh,
+        context,
+      );
+      const response: GitHubBranchContext = {
+        repoRoot: context.repoRoot,
+        worktreePath: context.worktreePath,
+        branch: context.branch,
+        upstream: context.upstream,
+        ahead: context.ahead,
+        behind: context.behind,
+        remoteName: context.remoteName,
+        host: context.host,
+        owner: context.owner,
+        name: context.repo,
+        linkedPullRequest,
+      };
+      return response;
+    });
   }
 
   async getPullRequest(
     worktreePath: string,
     refresh = false,
+    resolvedContext?: RepoContext,
   ): Promise<PullRequestDetail | null> {
-    const cacheKey = `pr:${worktreePath}`;
-    if (!refresh) {
-      const cached = this.getCache<PullRequestDetail | null>(cacheKey);
-      if (cached !== null) return cached;
-    }
-
-    const context = await this.repoContextResolver.resolve(worktreePath);
-    if (!this.supportsGitHub(context)) {
-      this.setCache(cacheKey, null);
-      return null;
-    }
-
-    const raw = await this.runPrViewJson(worktreePath, [
-      'number',
-      'title',
-      'url',
-      'state',
-      'isDraft',
-      'body',
-      'author',
-      'baseRefName',
-      'headRefName',
-      'createdAt',
-      'updatedAt',
-      'mergeable',
-      'mergeStateStatus',
-      'comments',
-      'reviews',
-      'reviewDecision',
-    ]);
-
-    if (!raw) {
-      this.setCache(cacheKey, null);
-      return null;
-    }
-
-    const checks = await this.getPullRequestChecks(worktreePath, refresh);
-    const reviewersMap = new Map<
-      string,
-      {
-        login: string;
-        name: string | null;
-        avatarUrl: string | null;
-        state: string | null;
+    const context =
+      resolvedContext ?? (await this.repoContextResolver.resolve(worktreePath));
+    return this.readCached('pr', context, refresh, async () => {
+      if (!this.supportsGitHub(context)) {
+        return null;
       }
-    >();
 
-    for (const review of raw.reviews ?? []) {
-      if (!review?.author?.login) continue;
-      reviewersMap.set(review.author.login, {
-        login: review.author.login,
-        name: review.author.name ?? null,
-        avatarUrl: review.author.avatarUrl ?? null,
-        state: review.state ?? null,
-      });
-    }
+      const raw = await this.runPrViewJson(context, [
+        'number',
+        'title',
+        'url',
+        'state',
+        'isDraft',
+        'body',
+        'author',
+        'baseRefName',
+        'headRefName',
+        'createdAt',
+        'updatedAt',
+        'mergeable',
+        'mergeStateStatus',
+        'comments',
+        'reviews',
+        'reviewDecision',
+      ]);
 
-    const detail: PullRequestDetail = {
-      number: raw.number,
-      title: raw.title,
-      url: raw.url,
-      state: raw.state,
-      isDraft: Boolean(raw.isDraft),
-      body: raw.body ?? '',
-      author: raw.author
-        ? {
-            login: raw.author.login,
-            name: raw.author.name ?? null,
-            avatarUrl: raw.author.avatarUrl ?? null,
-          }
-        : null,
-      baseRefName: raw.baseRefName,
-      headRefName: raw.headRefName,
-      createdAt: raw.createdAt,
-      updatedAt: raw.updatedAt,
-      mergeable: raw.mergeable ?? 'UNKNOWN',
-      mergeStateStatus: raw.mergeStateStatus ?? 'UNKNOWN',
-      commentsCount: Array.isArray(raw.comments) ? raw.comments.length : 0,
-      reviewDecision: raw.reviewDecision ?? null,
-      checksSummary: checks.summary,
-      reviewers: Array.from(reviewersMap.values()),
-    };
+      if (!raw) {
+        return null;
+      }
 
-    this.setCache(cacheKey, detail);
-    return detail;
+      const checks = await this.getPullRequestChecks(
+        worktreePath,
+        refresh,
+        context,
+      );
+      const reviewersMap = new Map<
+        string,
+        {
+          login: string;
+          name: string | null;
+          avatarUrl: string | null;
+          state: string | null;
+        }
+      >();
+
+      for (const review of raw.reviews ?? []) {
+        if (!review?.author?.login) continue;
+        reviewersMap.set(review.author.login, {
+          login: review.author.login,
+          name: review.author.name ?? null,
+          avatarUrl: review.author.avatarUrl ?? null,
+          state: review.state ?? null,
+        });
+      }
+
+      const detail: PullRequestDetail = {
+        number: raw.number,
+        title: raw.title,
+        url: raw.url,
+        state: raw.state,
+        isDraft: Boolean(raw.isDraft),
+        body: raw.body ?? '',
+        author: raw.author
+          ? {
+              login: raw.author.login,
+              name: raw.author.name ?? null,
+              avatarUrl: raw.author.avatarUrl ?? null,
+            }
+          : null,
+        baseRefName: raw.baseRefName,
+        headRefName: raw.headRefName,
+        createdAt: raw.createdAt,
+        updatedAt: raw.updatedAt,
+        mergeable: raw.mergeable ?? 'UNKNOWN',
+        mergeStateStatus: raw.mergeStateStatus ?? 'UNKNOWN',
+        commentsCount: Array.isArray(raw.comments) ? raw.comments.length : 0,
+        reviewDecision: raw.reviewDecision ?? null,
+        checksSummary: checks.summary,
+        reviewers: Array.from(reviewersMap.values()),
+      };
+
+      return detail;
+    });
   }
 
   async getPullRequestDiff(
     worktreePath: string,
     refresh = false,
+    resolvedContext?: RepoContext,
   ): Promise<PullRequestFileDiff[]> {
-    const cacheKey = `diff:${worktreePath}`;
-    if (!refresh) {
-      const cached = this.getCache<PullRequestFileDiff[]>(cacheKey);
-      if (cached) return cached;
-    }
+    const context =
+      resolvedContext ?? (await this.repoContextResolver.resolve(worktreePath));
+    return this.readCached('diff', context, refresh, async () => {
+      const summary = await this.findLinkedPullRequest(
+        worktreePath,
+        refresh,
+        context,
+      );
+      if (!summary) {
+        return [];
+      }
 
-    const summary = await this.findLinkedPullRequest(worktreePath, refresh);
-    if (!summary) {
-      this.setCache(cacheKey, []);
-      return [];
-    }
+      const diffRaw = await this.runner.run(
+        [
+          'pr',
+          'diff',
+          String(summary.number),
+          '--repo',
+          `${context.owner}/${context.repo}`,
+        ],
+        context.repoRoot,
+      );
+      const conversation = await this.getPullRequestConversation(
+        worktreePath,
+        refresh,
+        context,
+      );
+      const threadsByPath = conversation.threads.reduce<
+        Map<string, PullRequestReviewThread[]>
+      >((map, thread) => {
+        const existing = map.get(thread.path) || [];
+        existing.push(thread);
+        map.set(thread.path, existing);
+        return map;
+      }, new Map());
 
-    const context = await this.repoContextResolver.resolve(worktreePath);
-    const diffRaw = await this.runner.run(
-      [
-        'pr',
-        'diff',
-        String(summary.number),
-        '--repo',
-        `${context.owner}/${context.repo}`,
-      ],
-      context.repoRoot,
-    );
-    const conversation = await this.getPullRequestConversation(
-      worktreePath,
-      refresh,
-    );
-    const threadsByPath = conversation.threads.reduce<
-      Map<string, PullRequestReviewThread[]>
-    >((map, thread) => {
-      const existing = map.get(thread.path) || [];
-      existing.push(thread);
-      map.set(thread.path, existing);
-      return map;
-    }, new Map());
-
-    const diff = this.parseUnifiedDiff(diffRaw).map((file) => ({
-      ...file,
-      threads: threadsByPath.get(file.path) || [],
-    }));
-    this.setCache(cacheKey, diff);
-    return diff;
+      const diff = this.parseUnifiedDiff(diffRaw).map((file) => ({
+        ...file,
+        threads: threadsByPath.get(file.path) || [],
+      }));
+      return diff;
+    });
   }
 
   async getPullRequestConversation(
     worktreePath: string,
     refresh = false,
+    resolvedContext?: RepoContext,
   ): Promise<PullRequestConversation> {
-    const cacheKey = `conversation:${worktreePath}`;
-    if (!refresh) {
-      const cached = this.getCache<PullRequestConversation>(cacheKey);
-      if (cached) return cached;
-    }
+    const context =
+      resolvedContext ?? (await this.repoContextResolver.resolve(worktreePath));
+    return this.readCached('conversation', context, refresh, async () => {
+      const pr = await this.runPrViewJson(context, [
+        'number',
+        'comments',
+        'reviews',
+      ]);
+      if (!pr) {
+        const empty = { reviews: [], comments: [], threads: [] };
+        return empty;
+      }
 
-    const context = await this.repoContextResolver.resolve(worktreePath);
-    const pr = await this.runPrViewJson(worktreePath, [
-      'number',
-      'comments',
-      'reviews',
-    ]);
-    if (!pr) {
-      const empty = { reviews: [], comments: [], threads: [] };
-      this.setCache(cacheKey, empty);
-      return empty;
-    }
+      const threads = await this.getReviewThreads(
+        context.repoRoot,
+        context.owner!,
+        context.repo!,
+        pr.number,
+      );
+      const conversation: PullRequestConversation = {
+        reviews: (pr.reviews ?? []).map((review: any) => ({
+          id: String(review.id),
+          authorLogin: review.author?.login ?? 'unknown',
+          authorAvatarUrl: review.author?.avatarUrl ?? null,
+          state: review.state ?? 'COMMENTED',
+          body: review.body ?? '',
+          submittedAt: review.submittedAt ?? null,
+        })),
+        comments: (pr.comments ?? []).map((comment: any) => ({
+          id: String(comment.id),
+          authorLogin: comment.author?.login ?? 'unknown',
+          authorAvatarUrl: comment.author?.avatarUrl ?? null,
+          body: comment.body ?? '',
+          createdAt: comment.createdAt,
+          url: comment.url ?? null,
+        })),
+        threads,
+      };
 
-    const threads = await this.getReviewThreads(
-      context.repoRoot,
-      context.owner!,
-      context.repo!,
-      pr.number,
-    );
-    const conversation: PullRequestConversation = {
-      reviews: (pr.reviews ?? []).map((review: any) => ({
-        id: String(review.id),
-        authorLogin: review.author?.login ?? 'unknown',
-        authorAvatarUrl: review.author?.avatarUrl ?? null,
-        state: review.state ?? 'COMMENTED',
-        body: review.body ?? '',
-        submittedAt: review.submittedAt ?? null,
-      })),
-      comments: (pr.comments ?? []).map((comment: any) => ({
-        id: String(comment.id),
-        authorLogin: comment.author?.login ?? 'unknown',
-        authorAvatarUrl: comment.author?.avatarUrl ?? null,
-        body: comment.body ?? '',
-        createdAt: comment.createdAt,
-        url: comment.url ?? null,
-      })),
-      threads,
-    };
-
-    this.setCache(cacheKey, conversation);
-    return conversation;
+      return conversation;
+    });
   }
 
   async getPullRequestChecks(
     worktreePath: string,
     refresh = false,
+    resolvedContext?: RepoContext,
   ): Promise<PullRequestCheckRollup> {
-    const cacheKey = `checks:${worktreePath}`;
-    if (!refresh) {
-      const cached = this.getCache<PullRequestCheckRollup>(cacheKey);
-      if (cached) return cached;
-    }
-
-    const summary = await this.findLinkedPullRequest(worktreePath, refresh);
-    if (!summary) {
-      const empty = {
-        summary: { total: 0, passing: 0, failing: 0, pending: 0 },
-        checks: [],
-      };
-      this.setCache(cacheKey, empty);
-      return empty;
-    }
-
-    const context = await this.repoContextResolver.resolve(worktreePath);
-    let stdout = '';
-    try {
-      stdout = await this.runner.run(
-        [
-          'pr',
-          'checks',
-          String(summary.number),
-          '--repo',
-          `${context.owner}/${context.repo}`,
-          '--json',
-          'bucket,name,workflow,state,description,link,startedAt,completedAt',
-        ],
-        context.repoRoot,
+    const context =
+      resolvedContext ?? (await this.repoContextResolver.resolve(worktreePath));
+    return this.readCached('checks', context, refresh, async () => {
+      const summary = await this.findLinkedPullRequest(
+        worktreePath,
+        refresh,
+        context,
       );
-    } catch (error) {
-      if (error instanceof GhCommandError && error.stdout) {
-        stdout = error.stdout;
-      } else {
-        throw error;
+      if (!summary) {
+        const empty = {
+          summary: { total: 0, passing: 0, failing: 0, pending: 0 },
+          checks: [],
+        };
+        return empty;
       }
-    }
 
-    const checks = JSON.parse(stdout || '[]').map((check: any) => ({
-      name: check.name,
-      workflow: check.workflow ?? null,
-      state: check.state,
-      bucket: check.bucket,
-      description: check.description ?? null,
-      link: check.link ?? null,
-      startedAt: check.startedAt ?? null,
-      completedAt: check.completedAt ?? null,
-    }));
+      let stdout = '';
+      try {
+        stdout = await this.runner.run(
+          [
+            'pr',
+            'checks',
+            String(summary.number),
+            '--repo',
+            `${context.owner}/${context.repo}`,
+            '--json',
+            'bucket,name,workflow,state,description,link,startedAt,completedAt',
+          ],
+          context.repoRoot,
+        );
+      } catch (error) {
+        if (error instanceof GhCommandError && error.stdout) {
+          stdout = error.stdout;
+        } else {
+          throw error;
+        }
+      }
 
-    const rollup: PullRequestCheckRollup = {
-      summary: {
-        total: checks.length,
-        passing: checks.filter((check: any) => check.bucket === 'pass').length,
-        failing: checks.filter(
-          (check: any) => check.bucket === 'fail' || check.bucket === 'cancel',
-        ).length,
-        pending: checks.filter((check: any) => check.bucket === 'pending')
-          .length,
-      },
-      checks,
-    };
+      const checks = JSON.parse(stdout || '[]').map((check: any) => ({
+        name: check.name,
+        workflow: check.workflow ?? null,
+        state: check.state,
+        bucket: check.bucket,
+        description: check.description ?? null,
+        link: check.link ?? null,
+        startedAt: check.startedAt ?? null,
+        completedAt: check.completedAt ?? null,
+      }));
 
-    this.setCache(cacheKey, rollup);
-    return rollup;
+      const rollup: PullRequestCheckRollup = {
+        summary: {
+          total: checks.length,
+          passing: checks.filter((check: any) => check.bucket === 'pass')
+            .length,
+          failing: checks.filter(
+            (check: any) =>
+              check.bucket === 'fail' || check.bucket === 'cancel',
+          ).length,
+          pending: checks.filter((check: any) => check.bucket === 'pending')
+            .length,
+        },
+        checks,
+      };
+
+      return rollup;
+    });
   }
 
   async addComment(
     worktreePath: string,
     body: string,
   ): Promise<{ success: boolean }> {
-    const pr = await this.findLinkedPullRequest(worktreePath, true);
+    const context = await this.repoContextResolver.resolve(worktreePath);
+    const pr = await this.findLinkedPullRequest(worktreePath, true, context);
     if (!pr) {
       throw new Error('No pull request is linked to this branch.');
     }
 
-    const context = await this.repoContextResolver.resolve(worktreePath);
     await this.runner.run(
       [
         'pr',
@@ -400,12 +417,12 @@ export class GithubService {
     event: 'APPROVE' | 'COMMENT' | 'REQUEST_CHANGES',
     body: string,
   ): Promise<{ success: boolean }> {
-    const pr = await this.findLinkedPullRequest(worktreePath, true);
+    const context = await this.repoContextResolver.resolve(worktreePath);
+    const pr = await this.findLinkedPullRequest(worktreePath, true, context);
     if (!pr) {
       throw new Error('No pull request is linked to this branch.');
     }
 
-    const context = await this.repoContextResolver.resolve(worktreePath);
     const flags =
       event === 'APPROVE'
         ? ['--approve']
@@ -431,52 +448,55 @@ export class GithubService {
   }
 
   async push(worktreePath: string): Promise<PushResult> {
-    return this.gitService.push(worktreePath);
+    const result = await this.gitService.push(worktreePath);
+    if (result.pushed) this.invalidate(worktreePath);
+    return result;
   }
 
   invalidate(worktreePath: string): void {
-    for (const key of this.cache.keys()) {
-      if (key.endsWith(`:${worktreePath}`) || key.includes(worktreePath)) {
-        this.cache.delete(key);
-      }
+    worktreePath = path.resolve(worktreePath);
+    // Invalidated reads may finish for their original caller, but cannot
+    // repopulate the cache or remove a replacement in-flight read.
+    for (const [key, entry] of this.cache) {
+      if (entry.worktreePath === worktreePath) this.deleteCached(key);
+    }
+    for (const key of this.inFlight.keys()) {
+      if (JSON.parse(key)[1] === worktreePath) this.inFlight.delete(key);
     }
   }
 
   private async findLinkedPullRequest(
     worktreePath: string,
     refresh = false,
+    resolvedContext?: RepoContext,
   ): Promise<LinkedPullRequestSummary | null> {
-    const cacheKey = `pr-summary:${worktreePath}`;
-    if (!refresh) {
-      const cached = this.getCache<LinkedPullRequestSummary | null>(cacheKey);
-      if (cached !== null) return cached;
-    }
-
-    const raw = await this.runPrViewJson(worktreePath, [
-      'number',
-      'title',
-      'url',
-      'state',
-      'isDraft',
-    ]);
-    const summary = raw
-      ? {
-          number: raw.number,
-          title: raw.title,
-          url: raw.url,
-          state: raw.state,
-          isDraft: Boolean(raw.isDraft),
-        }
-      : null;
-    this.setCache(cacheKey, summary);
-    return summary;
+    const context =
+      resolvedContext ?? (await this.repoContextResolver.resolve(worktreePath));
+    return this.readCached('pr-summary', context, refresh, async () => {
+      const raw = await this.runPrViewJson(context, [
+        'number',
+        'title',
+        'url',
+        'state',
+        'isDraft',
+      ]);
+      const summary = raw
+        ? {
+            number: raw.number,
+            title: raw.title,
+            url: raw.url,
+            state: raw.state,
+            isDraft: Boolean(raw.isDraft),
+          }
+        : null;
+      return summary;
+    });
   }
 
   private async runPrViewJson(
-    worktreePath: string,
+    context: RepoContext,
     fields: string[],
   ): Promise<any | null> {
-    const context = await this.repoContextResolver.resolve(worktreePath);
     if (!this.supportsGitHub(context)) {
       return null;
     }
@@ -674,17 +694,87 @@ export class GithubService {
     }
   }
 
-  private getCache<T>(key: string): T | null {
-    const value = this.cache.get(key);
-    if (!value) return null;
-    if (Date.now() - value.createdAt > this.cacheTtlMs) {
-      this.cache.delete(key);
-      return null;
+  private readCached<T>(
+    kind: string,
+    context: RepoContext,
+    refresh: boolean,
+    read: () => Promise<T>,
+  ): Promise<T> {
+    const key = JSON.stringify([
+      kind,
+      context.worktreePath,
+      context.branch,
+      context.headSha,
+      context.upstream,
+      context.ahead,
+      context.behind,
+      context.remoteName,
+      context.host,
+      context.owner,
+      context.repo,
+    ]);
+    const cached = this.cache.get(key);
+    // A cached null is a successful negative lookup, not a cache miss.
+    if (!refresh && cached && Date.now() - cached.createdAt < this.cacheTtlMs) {
+      return Promise.resolve(cached.data as T);
     }
-    return value.data as T;
+    const existing = this.inFlight.get(key);
+    if (existing) return existing as Promise<T>;
+
+    const pending = Promise.resolve()
+      .then(read)
+      .then((data) => {
+        if (this.inFlight.get(key) === pending) {
+          const now = Date.now();
+          for (const [oldKey, entry] of this.cache) {
+            if (now - entry.createdAt >= this.cacheTtlMs)
+              this.deleteCached(oldKey);
+          }
+          this.deleteCached(key);
+          const estimatedBytes = this.estimateCacheBytes(
+            data,
+            this.maxEntryBytes,
+          );
+          if (estimatedBytes <= this.maxEntryBytes) {
+            this.cache.set(key, {
+              data,
+              createdAt: now,
+              worktreePath: context.worktreePath,
+              estimatedBytes,
+            });
+            this.cacheBytes += estimatedBytes;
+          }
+          while (
+            this.cache.size > this.maxCacheEntries ||
+            this.cacheBytes > this.maxCacheBytes
+          ) {
+            this.deleteCached(this.cache.keys().next().value!);
+          }
+        }
+        return data;
+      })
+      .finally(() => {
+        if (this.inFlight.get(key) === pending) this.inFlight.delete(key);
+      });
+    this.inFlight.set(key, pending);
+    return pending;
   }
 
-  private setCache<T>(key: string, data: T): void {
-    this.cache.set(key, { data, createdAt: Date.now() });
+  private deleteCached(key: string): void {
+    const entry = this.cache.get(key);
+    if (entry) this.cacheBytes -= entry.estimatedBytes;
+    this.cache.delete(key);
+  }
+
+  /** Estimate retained JSON data without serializing/copying large patches. */
+  private estimateCacheBytes(value: unknown, budget: number): number {
+    if (typeof value === 'string') return value.length * 2;
+    if (!value || typeof value !== 'object') return 8;
+    let size = 64;
+    for (const [key, child] of Object.entries(value)) {
+      size += key.length * 2 + this.estimateCacheBytes(child, budget - size);
+      if (size > budget) break;
+    }
+    return size;
   }
 }

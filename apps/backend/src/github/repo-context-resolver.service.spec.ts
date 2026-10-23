@@ -62,4 +62,30 @@ describe('RepoContextResolverService', () => {
     expect(context.owner).toBe('acme');
     expect(context.repo).toBe('elevenex');
   });
+
+  it('coalesces concurrent normalized paths without retaining stale branch or HEAD state', async () => {
+    const first = service.resolve(repoPath);
+    const concurrent = service.resolve(`${repoPath}/./`);
+    expect(concurrent).toBe(first);
+    const original = await first;
+
+    execSync('git switch -c next', { cwd: repoPath });
+    execSync('git commit --allow-empty -m next', { cwd: repoPath });
+    const next = await service.resolve(repoPath);
+    expect(next.branch).toBe('next');
+    expect(next.headSha).not.toBe(original.headSha);
+  });
+
+  it('retries after a failed context read and rejects detached HEAD', async () => {
+    await expect(
+      service.resolve(path.join(repoPath, 'missing')),
+    ).rejects.toThrow();
+    fs.mkdirSync(path.join(repoPath, 'missing'));
+    expect((await service.resolve(path.join(repoPath, 'missing'))).branch).toBe(
+      'main',
+    );
+
+    execSync('git checkout --detach', { cwd: repoPath });
+    await expect(service.resolve(repoPath)).rejects.toThrow('Detached HEAD');
+  });
 });
