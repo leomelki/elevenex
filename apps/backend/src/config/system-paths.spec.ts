@@ -270,6 +270,63 @@ describePosix('system-paths bounded shell refreshes', () => {
     expect(mockSpawn).toHaveBeenCalledTimes(4);
   });
 
+  it.each(['new required capture', 'promoted optional capture'])(
+    'runs a %s ahead of older background work while retaining coalescing',
+    async (kind) => {
+      await seedGlobalEnv();
+      systemPaths.buildAugmentedEnv({}, '/repo/block-a');
+      systemPaths.buildAugmentedEnv({}, '/repo/block-b');
+      for (let index = 0; index < 8; index++) {
+        systemPaths.buildAugmentedEnv({}, `/repo/background-${index}`);
+      }
+      if (kind === 'promoted optional capture') {
+        systemPaths.buildAugmentedEnv({}, '/repo/priority');
+      }
+      const first = systemPaths.buildAugmentedEnvAsync({}, '/repo/priority');
+      const second = systemPaths.buildAugmentedEnvAsync({}, '/repo/priority');
+      expect(mockSpawn).toHaveBeenCalledTimes(3);
+
+      await closeShellProcess(children[1], envOutput('/block-a/bin'));
+      expect(mockSpawn).toHaveBeenCalledTimes(4);
+      expect(mockSpawn.mock.calls[3][2].cwd).toBe('/repo/priority');
+      await closeShellProcess(children[2], envOutput('/block-b/bin'));
+      expect(mockSpawn.mock.calls[4][2].cwd).toBe('/repo/background-0');
+      await closeShellProcess(children[3], envOutput('/priority/bin'));
+      expect((await first).PATH).toMatch(/^\/priority\/bin:/);
+      expect((await second).PATH).toMatch(/^\/priority\/bin:/);
+      await drainCaptures(4);
+      expect(
+        mockSpawn.mock.calls.filter((call) => call[2].cwd === '/repo/priority'),
+      ).toHaveLength(1);
+      expect(mockSpawn).toHaveBeenCalledTimes(12);
+    },
+  );
+
+  it('runs a coalesced global bootstrap ahead of older queued background work', async () => {
+    mockSpawn.mockImplementation(() => createShellProcess());
+    systemPaths.buildAugmentedEnv({}, '/repo/block-a');
+    systemPaths.buildAugmentedEnv({}, '/repo/block-b');
+    for (let index = 0; index < 8; index++) {
+      systemPaths.buildAugmentedEnv({}, `/repo/background-${index}`);
+    }
+    const first = systemPaths.refreshLoginShellEnv(true);
+    const second = systemPaths.refreshLoginShellEnv(true);
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
+
+    await closeShellProcess(children[0], envOutput('/block-a/bin'));
+    expect(mockSpawn).toHaveBeenCalledTimes(3);
+    expect(mockSpawn.mock.calls[2][2].cwd).toBeUndefined();
+    await closeShellProcess(children[1], envOutput('/block-b/bin'));
+    expect(mockSpawn.mock.calls[3][2].cwd).toBe('/repo/background-0');
+    await closeShellProcess(children[2], envOutput('/global/bin'));
+    await Promise.all([first, second]);
+    await drainCaptures(3);
+    expect(
+      mockSpawn.mock.calls.filter((call) => call[2].cwd === undefined),
+    ).toHaveLength(1);
+    expect(mockSpawn).toHaveBeenCalledTimes(11);
+  });
+
   it('coalesces a queued global capture and then captures an async caller cwd', async () => {
     mockSpawn.mockImplementation(() => createShellProcess());
     systemPaths.buildAugmentedEnv({}, '/repo/block-a');

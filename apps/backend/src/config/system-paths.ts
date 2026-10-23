@@ -98,7 +98,7 @@ type ShellRefresh = {
   promise: Promise<NodeJS.ProcessEnv | null>;
   resolve: (env: NodeJS.ProcessEnv | null) => void;
 };
-// Insertion order is the queue; running jobs remain here for coalescing.
+// Insertion order is FIFO within each priority; running jobs stay coalesced.
 // Background jobs are bounded by the cwd LRU. Explicit async callers retain
 // their queued job even if its cache entry is evicted, and receive its result.
 const _shellRefreshes = new Map<string | undefined, ShellRefresh>();
@@ -317,9 +317,20 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
 }
 
 function drainShellRefreshes(): void {
-  for (const job of _shellRefreshes.values()) {
-    if (_activeShellRefreshes >= SHELL_REFRESH_CONCURRENCY) break;
-    if (job.running) continue;
+  while (_activeShellRefreshes < SHELL_REFRESH_CONCURRENCY) {
+    let next: ShellRefresh | undefined;
+    for (const candidate of _shellRefreshes.values()) {
+      if (candidate.running) continue;
+      next ??= candidate;
+      // Async callers can promote an existing queued capture in place;
+      // global bootstrap also takes precedence over background probes.
+      if (candidate.cwd === undefined || candidate.required) {
+        next = candidate;
+        break;
+      }
+    }
+    const job = next;
+    if (!job) break;
     job.running = true;
     _activeShellRefreshes++;
     // Throttle from the actual attempt, even after a long queue wait.
