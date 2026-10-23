@@ -1,5 +1,6 @@
 import { ElevenLabsSpeechToTextProvider } from './elevenlabs.provider.js';
 import { LocalWhisperSpeechToTextProvider } from './local-whisper.provider.js';
+import type { LocalWhisperTranscribeInput } from '../local-whisper/local-whisper.types.js';
 import { OpenAiCompatibleSpeechToTextProvider } from './openai-compatible.provider.js';
 import {
   OpenRouterSpeechToTextProvider,
@@ -7,6 +8,8 @@ import {
 } from './openrouter.provider.js';
 import {
   SpeechToTextProviderError,
+  SPEECH_TO_TEXT_TIMEOUT_MS,
+  type SpeechToTextProvider,
   extensionForMimeType,
 } from '../speech-to-text.types.js';
 
@@ -54,13 +57,16 @@ describe('ElevenLabsSpeechToTextProvider', () => {
       mimeType: 'audio/webm;codecs=opus',
       model: 'scribe_v2',
       language: 'en',
+      languages: ['en'],
       keyterms: ['cw-composer.component.ts'],
     });
 
     expect(text).toBe('hello world');
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.elevenlabs.io/v1/speech-to-text');
-    expect((init.headers as Record<string, string>)['xi-api-key']).toBe('xi-key');
+    expect((init.headers as Record<string, string>)['xi-api-key']).toBe(
+      'xi-key',
+    );
 
     const form = init.body as FormData;
     expect(form.get('model_id')).toBe('scribe_v2');
@@ -104,6 +110,168 @@ describe('ElevenLabsSpeechToTextProvider', () => {
       }),
     ).rejects.toThrow(/rejected the API key/i);
   });
+});
+
+describe.each<[string, () => SpeechToTextProvider]>([
+  ['ElevenLabs', () => new ElevenLabsSpeechToTextProvider('secret-key')],
+  [
+    'OpenAI compatible',
+    () =>
+      new OpenAiCompatibleSpeechToTextProvider(
+        'secret-key',
+        'https://example.test/v1',
+      ),
+  ],
+  ['OpenRouter', () => new OpenRouterSpeechToTextProvider('secret-key')],
+])('%s request lifecycle', (_label, create) => {
+  const input = {
+    audio: AUDIO,
+    mimeType: 'audio/wav',
+    model: 'model',
+    language: null,
+    languages: [],
+    keyterms: [],
+  };
+  const payload = {
+    text: 'hello',
+    choices: [{ message: { content: 'hello' } }],
+  };
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it.each(['upload', 'body'])(
+    'times out a stalled %s and cleans up',
+    async (stage) => {
+      const client = new AbortController();
+      const removeListener = jest.spyOn(client.signal, 'removeEventListener');
+      let providerSignal!: AbortSignal;
+      let finish!: (value: unknown) => void;
+      const stalled = new Promise<unknown>((resolve) => {
+        finish = resolve;
+      });
+      global.fetch = jest.fn((_url, init) => {
+        providerSignal = init!.signal as AbortSignal;
+        return stage === 'upload'
+          ? stalled
+          : Promise.resolve({ ok: true, json: () => stalled });
+      }) as never;
+      const result = create().transcribe({ ...input, signal: client.signal });
+      const failed = expect(result).rejects.toMatchObject({
+        status: 504,
+        message: expect.stringMatching(/timed out/i),
+      });
+      await jest.advanceTimersByTimeAsync(SPEECH_TO_TEXT_TIMEOUT_MS);
+      await failed;
+      expect(providerSignal.aborted).toBe(true);
+      expect(removeListener).toHaveBeenCalledWith(
+        'abort',
+        expect.any(Function),
+      );
+      expect(jest.getTimerCount()).toBe(0);
+      // A late, otherwise successful transport must never become a transcript.
+      const cancel = jest.fn(async () => undefined);
+      finish(
+        stage === 'upload'
+          ? { ok: true, body: { cancel }, json: async () => payload }
+          : payload,
+      );
+      await Promise.resolve();
+      await expect(result).rejects.toMatchObject({ status: 504 });
+      if (stage === 'upload') expect(cancel).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['upload', 'body'])(
+    'aborts an in-flight %s and removes listeners and timers',
+    async (stage) => {
+      const client = new AbortController();
+      const removeListener = jest.spyOn(client.signal, 'removeEventListener');
+      let providerSignal!: AbortSignal;
+      global.fetch = jest.fn((_url, init) => {
+        providerSignal = init!.signal as AbortSignal;
+        const stalled = new Promise(() => undefined);
+        return stage === 'upload'
+          ? stalled
+          : Promise.resolve({ ok: true, json: () => stalled });
+      }) as never;
+      const result = create().transcribe({ ...input, signal: client.signal });
+      const failed = expect(result).rejects.toMatchObject({
+        status: 499,
+        message: 'Transcription cancelled.',
+      });
+      await Promise.resolve();
+      client.abort(new Error('private client error'));
+      await failed;
+      expect(providerSignal.aborted).toBe(true);
+      expect(removeListener).toHaveBeenCalledWith(
+        'abort',
+        expect.any(Function),
+      );
+      expect(jest.getTimerCount()).toBe(0);
+    },
+  );
+
+  it('skips fetch for an already disconnected client', async () => {
+    const client = new AbortController();
+    client.abort();
+    const fetchMock = mockFetch({ json: payload });
+    await expect(
+      create().transcribe({ ...input, signal: client.signal }),
+    ).rejects.toMatchObject({ status: 499 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('reports a null provider payload as an invalid response', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      json: async () => null,
+    })) as never;
+    await expect(create().transcribe(input)).rejects.toBeInstanceOf(
+      SpeechToTextProviderError,
+    );
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it.each(['success', 'http', 'network', 'parse'])(
+    'cleans up after %s without exposing transport data',
+    async (outcome) => {
+      const client = new AbortController();
+      const removeListener = jest.spyOn(client.signal, 'removeEventListener');
+      const cancel = jest.fn(async () => undefined);
+      global.fetch = jest.fn(async () => {
+        if (outcome === 'network')
+          throw new Error('secret-key in a transport message');
+        return {
+          ok: outcome !== 'http',
+          status: 401,
+          body: { cancel },
+          json: async () => {
+            if (outcome === 'parse')
+              throw new Error('secret-key in invalid JSON');
+            return payload;
+          },
+        };
+      }) as never;
+      const result = create().transcribe({ ...input, signal: client.signal });
+      if (outcome === 'success') {
+        await expect(result).resolves.toBe('hello');
+      } else {
+        await expect(result).rejects.toBeInstanceOf(SpeechToTextProviderError);
+        await expect(result).rejects.not.toThrow('secret-key');
+      }
+      if (outcome === 'http') expect(cancel).toHaveBeenCalledTimes(1);
+      expect(removeListener).toHaveBeenCalledWith(
+        'abort',
+        expect.any(Function),
+      );
+      expect(jest.getTimerCount()).toBe(0);
+    },
+  );
 });
 
 describe('OpenAiCompatibleSpeechToTextProvider', () => {
@@ -221,9 +389,9 @@ describe('stripTranscriptPreamble', () => {
   });
 
   it('leaves a transcript that legitimately mentions transcripts alone', () => {
-    expect(stripTranscriptPreamble('add a transcript view to the sidebar')).toBe(
-      'add a transcript view to the sidebar',
-    );
+    expect(
+      stripTranscriptPreamble('add a transcript view to the sidebar'),
+    ).toBe('add a transcript view to the sidebar');
   });
 
   it('keeps inner quotes when only the outside is quoted', () => {
@@ -257,7 +425,11 @@ describe('LocalWhisperSpeechToTextProvider', () => {
     return buffer;
   }
 
-  const engine = () => ({ transcribe: jest.fn(async () => 'ship the fix') });
+  const engine = () => ({
+    transcribe: jest.fn(
+      async (_input: LocalWhisperTranscribeInput) => 'ship the fix',
+    ),
+  });
 
   it('accepts only WAV, which is what the client transcodes to', () => {
     const provider = new LocalWhisperSpeechToTextProvider(engine() as never);
@@ -281,11 +453,7 @@ describe('LocalWhisperSpeechToTextProvider', () => {
     });
 
     expect(text).toBe('ship the fix');
-    const call = local.transcribe.mock.calls[0]![0] as {
-      samples: Float32Array;
-      model: string;
-      languages: string[];
-    };
+    const call = local.transcribe.mock.calls[0]![0];
     expect(call.samples).toBeInstanceOf(Float32Array);
     expect(call.samples.length).toBe(320);
     expect(call.model).toBe('small');

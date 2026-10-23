@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  GatewayTimeoutException,
+  HttpException,
   Inject,
   Injectable,
   Logger,
@@ -32,10 +34,12 @@ import {
   SpeechToTextProviderError,
   TranscriptionResult,
   baseMimeType,
+  throwIfTranscriptionAborted,
 } from './speech-to-text.types.js';
 import { TranscriptCleanupService } from './transcript-cleanup.service.js';
 
 export interface TranscribeRequest {
+  signal?: AbortSignal;
   audio: Buffer;
   mimeType: string;
   sessionId: number | null;
@@ -67,6 +71,9 @@ export class SpeechToTextService {
   ) {}
 
   async transcribe(request: TranscribeRequest): Promise<TranscriptionResult> {
+    if (request.signal?.aborted) {
+      throw new HttpException('Transcription cancelled.', 499);
+    }
     if (request.audio.byteLength === 0) {
       throw new BadRequestException('No audio was recorded.');
     }
@@ -122,7 +129,9 @@ export class SpeechToTextService {
     const startedAt = Date.now();
     let rawText: string;
     try {
+      throwIfTranscriptionAborted(request.signal);
       rawText = await provider.transcribe({
+        signal: request.signal,
         audio: request.audio,
         mimeType: request.mimeType,
         model,
@@ -130,11 +139,21 @@ export class SpeechToTextService {
         languages: config.languages,
         keyterms,
       });
+      throwIfTranscriptionAborted(request.signal);
     } catch (error) {
+      if (request.signal?.aborted) {
+        throw new HttpException('Transcription cancelled.', 499);
+      }
       if (error instanceof SpeechToTextProviderError) {
         this.logger.warn(
           `Transcription failed provider=${config.provider} model=${model} status=${error.status ?? 'n/a'} message=${error.message}`,
         );
+        if (error.status === 504) {
+          throw new GatewayTimeoutException(error.message);
+        }
+        if (error.status === 499) {
+          throw new HttpException(error.message, 499);
+        }
         throw new ServiceUnavailableException(error.message);
       }
       throw error;

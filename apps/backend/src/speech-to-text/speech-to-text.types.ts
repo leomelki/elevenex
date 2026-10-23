@@ -6,6 +6,8 @@ import type { SpeechToTextProviderId } from '../settings/settings.types.js';
  * provider that cannot take the native format).
  */
 export interface TranscribeAudioInput {
+  /** Cancels request-owned work when the HTTP client disconnects. */
+  signal?: AbortSignal;
   audio: Buffer;
   mimeType: string;
   model: string;
@@ -51,6 +53,15 @@ export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
 /** Cap on vocabulary-bias terms sent upstream. */
 export const MAX_KEYTERMS = 200;
+
+/** Covers upload, provider processing, and reading the complete response. */
+export const SPEECH_TO_TEXT_TIMEOUT_MS = 120_000;
+
+export function throwIfTranscriptionAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new SpeechToTextProviderError('Transcription cancelled.', 499);
+  }
+}
 
 /**
  * Raised by providers for problems the user can act on. The message is shown

@@ -1,3 +1,4 @@
+import { fetchTranscriptionJson } from './provider-request.js';
 import {
   MAX_KEYTERMS,
   SpeechToTextProvider,
@@ -43,31 +44,18 @@ export class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
     if (input.keyterms.length > 0) {
       // Biasing carries a surcharge upstream, so the caller only populates this
       // when the user has opted in.
-      form.append('keyterms', JSON.stringify(input.keyterms.slice(0, MAX_KEYTERMS)));
-    }
-
-    let response: Response;
-    try {
-      response = await fetch(ENDPOINT, {
-        method: 'POST',
-        headers: { 'xi-api-key': this.apiKey },
-        body: form,
-      });
-    } catch (error) {
-      throw new SpeechToTextProviderError(
-        `Could not reach ElevenLabs: ${(error as Error).message}`,
+      form.append(
+        'keyterms',
+        JSON.stringify(input.keyterms.slice(0, MAX_KEYTERMS)),
       );
     }
 
-    if (!response.ok) {
-      throw new SpeechToTextProviderError(
-        describeFailure(response.status),
-        response.status,
-      );
-    }
-
-    const payload = (await response.json()) as { text?: unknown };
-    if (typeof payload.text !== 'string') {
+    const payload = (await fetchTranscriptionJson(
+      ENDPOINT,
+      { method: 'POST', headers: { 'xi-api-key': this.apiKey }, body: form },
+      { signal: input.signal, provider: 'ElevenLabs', describeFailure },
+    )) as { text?: unknown };
+    if (typeof payload?.text !== 'string') {
       throw new SpeechToTextProviderError(
         'ElevenLabs returned an unexpected response shape.',
       );

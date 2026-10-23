@@ -1,3 +1,4 @@
+import { fetchTranscriptionJson } from './provider-request.js';
 import {
   MAX_KEYTERMS,
   SpeechToTextProvider,
@@ -80,33 +81,21 @@ export class OpenRouterSpeechToTextProvider implements SpeechToTextProvider {
       ],
     };
 
-    let response: Response;
-    try {
-      response = await fetch(ENDPOINT, {
+    const payload = (await fetchTranscriptionJson(
+      ENDPOINT,
+      {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
-      });
-    } catch (error) {
-      throw new SpeechToTextProviderError(
-        `Could not reach OpenRouter: ${(error as Error).message}`,
-      );
-    }
-
-    if (!response.ok) {
-      throw new SpeechToTextProviderError(
-        describeFailure(response.status),
-        response.status,
-      );
-    }
-
-    const payload = (await response.json()) as {
+      },
+      { signal: input.signal, provider: 'OpenRouter', describeFailure },
+    )) as {
       choices?: { message?: { content?: unknown } }[];
     };
-    const content = payload.choices?.[0]?.message?.content;
+    const content = payload?.choices?.[0]?.message?.content;
     if (typeof content !== 'string') {
       throw new SpeechToTextProviderError(
         `${input.model} did not return a transcript. It may not accept audio input — pick an audio-capable model in Settings.`,
