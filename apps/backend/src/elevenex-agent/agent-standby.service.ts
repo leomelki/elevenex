@@ -1,4 +1,9 @@
-import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  type OnModuleDestroy,
+  type OnModuleInit,
+} from '@nestjs/common';
 import { ClaudeRuntimeService } from '../claude-runtime/claude-runtime.service.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import {
@@ -28,13 +33,17 @@ export const STANDBY_SESSION_NAME = '__standby__';
  *     so the replacement matches the user's typical workflow.
  */
 @Injectable()
-export class AgentStandbyService implements OnModuleInit {
+export class AgentStandbyService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AgentStandbyService.name);
 
   private standbySessionId: number | null = null;
   private standbyMode: AgentAutonomyMode | null = null;
   /** Guards against concurrent warmup attempts. */
   private inFlight: Promise<void> | null = null;
+  private requestedMode: AgentAutonomyMode | null = null;
+  private generation = 0;
+  private destroyed = false;
+  private readonly cleanups = new Set<Promise<void>>();
 
   constructor(
     private readonly agentService: ElevenexAgentService,
@@ -57,9 +66,18 @@ export class AgentStandbyService implements OnModuleInit {
    * a cold start.
    */
   claimStandby(mode: AgentAutonomyMode, provider = 'claude'): number | null {
-    if (provider !== 'claude') return null;
+    if (this.destroyed) return null;
+    if (provider !== 'claude') {
+      this.scheduleStandby(mode, provider);
+      return null;
+    }
     const id = this.standbySessionId;
-    if (id == null || this.standbyMode !== mode) {
+    if (this.standbyMode !== mode || id == null) {
+      if (id != null) this.discardStandby();
+      if (this.requestedMode !== mode) {
+        this.generation++;
+        this.requestedMode = null;
+      }
       return null;
     }
     // The idle-shutdown timer may have closed the process while it sat unused.
@@ -67,8 +85,7 @@ export class AgentStandbyService implements OnModuleInit {
       this.logger.debug(
         `Standby session=${id} expired before claim, discarding`,
       );
-      this.standbySessionId = null;
-      this.standbyMode = null;
+      this.discardStandby();
       return null;
     }
     this.standbySessionId = null;
@@ -79,58 +96,122 @@ export class AgentStandbyService implements OnModuleInit {
 
   /**
    * Fire-and-forget: begin warming a replacement standby for the given mode.
-   * De-duplicated — a second call while one is in flight is a no-op.
+   * Matching requests coalesce; a changed mode retires the previous warmup.
    */
   scheduleStandby(mode: AgentAutonomyMode, provider = 'claude'): void {
+    if (this.destroyed) return;
     if (provider !== 'claude') {
-      const id = this.standbySessionId;
-      this.standbySessionId = null;
-      this.standbyMode = null;
-      if (id != null) {
-        void this.sessionsService.archiveAndStop(id).catch((err: unknown) => {
-          this.logger.warn(`Standby cleanup failed: ${String(err)}`);
-        });
-      }
+      this.generation++;
+      this.requestedMode = null;
+      this.discardStandby();
       return;
     }
-    if (this.inFlight) {
+    mode = normalizeAutonomyMode(mode);
+    if (this.inFlight && this.requestedMode === mode) return;
+    if (
+      this.standbySessionId != null &&
+      this.standbyMode === mode &&
+      this.claudeRuntime.isSessionWarm(this.standbySessionId)
+    )
       return;
-    }
-    this.inFlight = this.createStandby(normalizeAutonomyMode(mode))
+    this.discardStandby();
+    const generation = ++this.generation;
+    this.requestedMode = mode;
+    const previous = this.inFlight;
+    const attempt = (async () => {
+      await previous;
+      if (this.ownsWarmup(generation))
+        await this.createStandby(mode, generation);
+    })()
       .catch((err: unknown) => {
         this.logger.warn(`Standby warmup failed: ${String(err)}`);
       })
       .finally(() => {
-        this.inFlight = null;
+        if (this.inFlight === attempt) this.inFlight = null;
       });
+    this.inFlight = attempt;
   }
 
-  private async createStandby(mode: AgentAutonomyMode): Promise<void> {
+  private ownsWarmup(generation: number): boolean {
+    return !this.destroyed && this.generation === generation;
+  }
+
+  private discardStandby(): void {
+    const id = this.standbySessionId;
+    this.standbySessionId = null;
+    this.standbyMode = null;
+    if (id != null) void this.archiveStandby(id);
+  }
+
+  private archiveStandby(id: number): Promise<void> {
+    const cleanup = this.sessionsService
+      .archiveAndStop(id)
+      .then(() => undefined)
+      .catch((err: unknown) => {
+        this.logger.warn(
+          `Standby cleanup failed session=${id}: ${String(err)}`,
+        );
+      })
+      .finally(() => this.cleanups.delete(cleanup));
+    this.cleanups.add(cleanup);
+    return cleanup;
+  }
+
+  private async createStandby(
+    mode: AgentAutonomyMode,
+    generation: number,
+  ): Promise<void> {
     const { repoId, worktreePath } = await this.agentService.ensureAgentRepo();
+    if (!this.ownsWarmup(generation)) return;
 
-    const session = await this.sessionsService.create({
-      repoId,
-      worktreePath,
-      branchName: 'main',
-      surface: 'agent',
-      activeAgentProvider: 'claude',
-      name: STANDBY_SESSION_NAME,
-    });
-    const sessionId = session.id;
+    let sessionId: number | null = null;
+    let published = false;
+    try {
+      const session = await this.sessionsService.create({
+        repoId,
+        worktreePath,
+        branchName: 'main',
+        surface: 'agent',
+        activeAgentProvider: 'claude',
+        name: STANDBY_SESSION_NAME,
+      });
+      sessionId = session.id;
+      if (!this.ownsWarmup(generation)) return;
 
-    // Wire up identity and autonomy before the prewarm starts the process, so
-    // the runtime is built with the correct permission mode and system prompt.
-    await this.tokenService.ensureToken(sessionId);
-    await this.sessionsService.updateAgentAutonomyMode(sessionId, mode);
-    await this.claudeRuntime.setAgentAutonomy(sessionId, mode);
+      // Wire up identity and autonomy before the prewarm starts the process, so
+      // the runtime is built with the correct permission mode and system prompt.
+      await this.tokenService.ensureToken(sessionId);
+      if (!this.ownsWarmup(generation)) return;
+      await this.sessionsService.updateAgentAutonomyMode(sessionId, mode);
+      if (!this.ownsWarmup(generation)) return;
+      await this.claudeRuntime.setAgentAutonomy(sessionId, mode);
+      if (!this.ownsWarmup(generation)) return;
 
-    // Start the Claude Code process and wait until it signals ready. After this
-    // returns the process is warm and will accept a first turn with no delay.
-    await this.claudeRuntime.prewarmSession(sessionId);
+      // Start the Claude Code process and wait until it signals ready. After this
+      // returns the process is warm and will accept a first turn with no delay.
+      await this.claudeRuntime.prewarmSession(sessionId);
+      if (
+        !this.ownsWarmup(generation) ||
+        !this.claudeRuntime.isSessionWarm(sessionId)
+      )
+        return;
 
-    this.standbySessionId = sessionId;
-    this.standbyMode = mode;
-    this.logger.log(`Standby ready session=${sessionId} mode=${mode}`);
+      this.discardStandby();
+      this.standbySessionId = sessionId;
+      this.standbyMode = mode;
+      published = true;
+      this.logger.log(`Standby ready session=${sessionId} mode=${mode}`);
+    } finally {
+      if (sessionId != null && !published) await this.archiveStandby(sessionId);
+    }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    this.destroyed = true;
+    this.generation++;
+    this.discardStandby();
+    await this.inFlight;
+    await Promise.all(this.cleanups);
   }
 
   /** Archive `__standby__` rows left over from a previous server run. */

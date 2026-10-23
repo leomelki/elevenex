@@ -8,6 +8,16 @@ import type { ClaudeTranscriptRecord } from './claude-runtime.service.js';
 
 jest.mock('chokidar');
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 const waitForDebounce = () =>
   new Promise<void>((resolve) =>
     setTimeout(resolve, READ_DEBOUNCE_MS_FOR_TEST + 30),
@@ -455,6 +465,131 @@ describe('ClaudeTerminalTranscriptMirrorService', () => {
     await waitFor(() => service.getActiveSessionCount() === 0);
 
     expect(watcher.close).toHaveBeenCalled();
+    expect(service.getActiveSessionCount()).toBe(0);
+  });
+
+  it.each(['resolve', 'normalize', 'reject'])(
+    'discards a detached hydrate at %s while a new state reopens',
+    async (stage) => {
+      const record = userRecord(
+        'fresh',
+        'Fresh data',
+        '2026-01-01T00:00:00.000Z',
+      );
+      await writeFile(transcriptPath, serializeRecords([record]));
+      const pending = deferred<any>();
+      if (stage === 'normalize')
+        runtime.normalizeTranscriptRecordsForSession.mockReturnValueOnce(
+          pending.promise,
+        );
+      else runtime.resolveTranscriptFile.mockReturnValueOnce(pending.promise);
+      const oldEvents: any[] = [];
+      const detach = service.attachClient(7, (event) => oldEvents.push(event));
+      await waitFor(() =>
+        stage === 'normalize'
+          ? runtime.normalizeTranscriptRecordsForSession.mock.calls.length === 1
+          : runtime.resolveTranscriptFile.mock.calls.length === 1,
+      );
+      detach();
+      expect(service.getActiveSessionCount()).toBe(0);
+      const freshEvents: any[] = [];
+      const detachFresh = service.attachClient(7, (event) =>
+        freshEvents.push(event),
+      );
+      await waitFor(() => freshEvents.length === 2);
+      if (stage === 'reject') pending.reject(new Error('Old read failed'));
+      else
+        pending.resolve(
+          stage === 'normalize'
+            ? [recordToItem(record)]
+            : {
+                claudeSessionId: 'old',
+                transcriptPath,
+              },
+        );
+      await new Promise(setImmediate);
+      detach();
+      expect(oldEvents).toEqual([]);
+      expect(freshEvents).toHaveLength(2);
+      expect(chokidar.watch).toHaveBeenCalledTimes(1);
+      expect(watcher.close).not.toHaveBeenCalled();
+      expect(service.getActiveSessionCount()).toBe(1);
+      detachFresh();
+    },
+  );
+
+  it('serializes hydrate and watcher reloads behind incremental reads', async () => {
+    const first = userRecord('first', 'First', '2026-01-01T00:00:00.000Z');
+    const second = assistantRecord(
+      'second',
+      'Second',
+      '2026-01-01T00:00:01.000Z',
+      'first',
+    );
+    await writeFile(transcriptPath, serializeRecords([first]));
+    const events: any[] = [];
+    service.attachClient(7, (event) => events.push(event));
+    await waitFor(() => events.length === 2);
+    const pending = deferred<any[]>();
+    runtime.normalizeTranscriptRecordsForSession.mockReturnValueOnce(
+      pending.promise,
+    );
+    await appendFile(transcriptPath, serializeRecords([second]));
+    watcher.emit('change');
+    await waitFor(
+      () =>
+        runtime.normalizeTranscriptRecordsForSession.mock.calls.length === 2,
+    );
+    const hydrate = service.hydrate(7);
+    watcher.emit('add', transcriptPath);
+    await new Promise(setImmediate);
+    expect(runtime.resolveTranscriptFile).toHaveBeenCalledTimes(1);
+    pending.resolve([recordToItem(second)]);
+    await hydrate;
+    await waitFor(
+      () =>
+        runtime.resolveTranscriptFile.mock.calls.length === 3 &&
+        events.length >= 7,
+    );
+    const snapshots = events.filter(
+      (event) => event.type === 'history_snapshot',
+    );
+    expect(
+      snapshots.slice(1).every((event) => event.payload.history.length === 2),
+    ).toBe(true);
+    expect(
+      snapshots.at(-1).payload.history.map((item: any) => item.sourceMessageId),
+    ).toEqual(['first', 'second']);
+    expect(chokidar.watch).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports add-callback reload errors without leaving an unhandled rejection', async () => {
+    await writeFile(transcriptPath, '');
+    const events: any[] = [];
+    service.attachClient(7, (event) => events.push(event));
+    await waitFor(() => events.length === 2);
+    runtime.resolveTranscriptFile.mockRejectedValueOnce(
+      new Error('Reload failed'),
+    );
+    watcher.emit('add', transcriptPath);
+    await waitFor(() => events.some((event) => event.type === 'error'));
+    expect(events.at(-1)).toMatchObject({
+      type: 'error',
+      payload: { message: 'Reload failed' },
+    });
+  });
+
+  it('invalidates pending hydration on shutdown before a watcher can be created', async () => {
+    const pending = deferred<any>();
+    runtime.resolveTranscriptFile.mockReturnValueOnce(pending.promise);
+    const send = jest.fn();
+    service.attachClient(7, send);
+    await waitFor(() => runtime.resolveTranscriptFile.mock.calls.length === 1);
+    const shutdown = service.onModuleDestroy();
+    pending.resolve({ claudeSessionId: 'old', transcriptPath });
+    await shutdown;
+    expect(chokidar.watch).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
     expect(service.getActiveSessionCount()).toBe(0);
   });
 });

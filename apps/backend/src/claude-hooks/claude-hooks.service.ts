@@ -60,6 +60,7 @@ export class ClaudeHooksService extends EventEmitter {
   private statuses = new Map<number, StatusEntry>();
   private runtimeActivities = new Map<number, ClaudeSessionActivity>();
   private readonly invalidatedSessions = new Set<number>();
+  private readonly sessionGenerations = new Map<number, number>();
   private readonly userPromptSubmitInFlight = new Map<
     number,
     Promise<ClaudeHookResponse>
@@ -83,6 +84,7 @@ export class ClaudeHooksService extends EventEmitter {
     if (this.invalidatedSessions.has(sessionId)) {
       return;
     }
+    const generation = this.sessionGeneration(sessionId);
 
     const { markCompletion = true } = options;
     const prev = this.statuses.get(sessionId);
@@ -97,23 +99,34 @@ export class ClaudeHooksService extends EventEmitter {
     if (prev?.status === status) return; // No change
 
     const changedAt = new Date().toISOString();
-    this.statuses.set(sessionId, { status, updatedAt: Date.now() });
+    const entry = { status, updatedAt: Date.now() };
+    this.statuses.set(sessionId, entry);
     try {
       await this.sessionsService.markLastStateChange(sessionId, changedAt);
     } catch (error) {
-      this.invalidatedSessions.add(sessionId);
-      this.statuses.delete(sessionId);
+      if (
+        !this.ownsSession(sessionId, generation) ||
+        this.statuses.get(sessionId) !== entry
+      )
+        return;
+      this.clearStatus(sessionId);
       this.logger.warn(
         `Ignoring Claude hook status update for missing session ${sessionId}: ${String(error)}`,
       );
       return;
     }
+    if (
+      !this.ownsSession(sessionId, generation) ||
+      this.statuses.get(sessionId) !== entry
+    )
+      return;
     this.logger.debug(
       `Session ${sessionId}: ${prev?.status ?? 'unknown'} → ${status}`,
     );
     this.emitStatusChanged(sessionId);
 
     if (
+      this.ownsSession(sessionId, generation) &&
       markCompletion &&
       status === 'idle' &&
       (prev?.status === 'running' || prev?.status === 'waiting')
@@ -187,6 +200,7 @@ export class ClaudeHooksService extends EventEmitter {
     if (this.invalidatedSessions.has(sessionId)) {
       return this.emptyHookResponse();
     }
+    const generation = this.sessionGeneration(sessionId);
 
     const startedAtMs = Date.now();
     this.logger.debug(
@@ -198,6 +212,8 @@ export class ClaudeHooksService extends EventEmitter {
       payload: payload as Record<string, unknown>,
       timestamp: new Date().toISOString(),
     });
+    if (!this.ownsSession(sessionId, generation))
+      return this.emptyHookResponse();
 
     // Only persist the session ID on SessionStart — it is the canonical event
     // that identifies which session the PTY is actually running.  Other events
@@ -212,13 +228,17 @@ export class ClaudeHooksService extends EventEmitter {
           claudeSessionId,
         );
       } catch (error) {
-        this.invalidatedSessions.add(sessionId);
+        if (!this.ownsSession(sessionId, generation))
+          return this.emptyHookResponse();
+        this.clearStatus(sessionId);
         this.logger.warn(
           `Failed to persist Claude session id for session ${sessionId}: ${String(error)}`,
         );
         return this.emptyHookResponse();
       }
     }
+    if (!this.ownsSession(sessionId, generation))
+      return this.emptyHookResponse();
 
     const event = payload.hook_event_name;
     let status: ClaudeActivityStatus | null = null;
@@ -247,11 +267,19 @@ export class ClaudeHooksService extends EventEmitter {
     if (status) {
       await this.updateStatus(sessionId, status);
     }
+    if (!this.ownsSession(sessionId, generation))
+      return this.emptyHookResponse();
 
     let response = this.emptyHookResponse();
     if (event === 'UserPromptSubmit' && options.origin === 'tui') {
-      response = await this.handleUserPromptSubmit(sessionId, payload);
+      response = await this.handleUserPromptSubmit(
+        sessionId,
+        payload,
+        generation,
+      );
     }
+    if (!this.ownsSession(sessionId, generation))
+      return this.emptyHookResponse();
 
     this.logger.debug(
       `Hook bridge processed session=${sessionId} event=${payload.hook_event_name ?? 'unknown'} elapsedMs=${Date.now() - startedAtMs} status=${status ?? 'unchanged'}`,
@@ -288,10 +316,32 @@ export class ClaudeHooksService extends EventEmitter {
   }
 
   clearStatus(sessionId: number): void {
+    this.sessionGenerations.set(
+      sessionId,
+      this.sessionGeneration(sessionId) + 1,
+    );
     this.invalidatedSessions.add(sessionId);
+    this.userPromptSubmitInFlight.delete(sessionId);
+    this.sessionTitleInFlight.delete(sessionId);
     this.statuses.delete(sessionId);
     this.runtimeActivities.delete(sessionId);
     this.emitStatusChanged(sessionId);
+  }
+
+  reactivateSession(sessionId: number): void {
+    // Keep the generation advanced by clearStatus so old continuations stay stale.
+    this.invalidatedSessions.delete(sessionId);
+  }
+
+  private sessionGeneration(sessionId: number): number {
+    return this.sessionGenerations.get(sessionId) ?? 0;
+  }
+
+  private ownsSession(sessionId: number, generation: number): boolean {
+    return (
+      !this.invalidatedSessions.has(sessionId) &&
+      this.sessionGeneration(sessionId) === generation
+    );
   }
 
   private emitStatusChanged(sessionId: number): void {
@@ -306,13 +356,18 @@ export class ClaudeHooksService extends EventEmitter {
   private handleUserPromptSubmit(
     sessionId: number,
     payload: ClaudeHookPayload,
+    generation: number,
   ): Promise<ClaudeHookResponse> {
     const existing = this.userPromptSubmitInFlight.get(sessionId);
     if (existing) {
       return existing;
     }
 
-    const promise = this.handleUserPromptSubmitInternal(sessionId, payload)
+    const promise = this.handleUserPromptSubmitInternal(
+      sessionId,
+      payload,
+      generation,
+    )
       .catch((error) => {
         this.logger.warn(
           `Failed to prepare TUI prompt hook response for session ${sessionId}: ${String(error)}`,
@@ -332,6 +387,7 @@ export class ClaudeHooksService extends EventEmitter {
   private async handleUserPromptSubmitInternal(
     sessionId: number,
     payload: ClaudeHookPayload,
+    generation: number,
   ): Promise<ClaudeHookResponse> {
     const prompt = this.extractUserPrompt(payload);
     if (!prompt.trim()) {
@@ -339,12 +395,17 @@ export class ClaudeHooksService extends EventEmitter {
     }
 
     const session = await this.sessionsService.findOne(sessionId);
-    this.scheduleSessionTitleGeneration(sessionId, session, prompt);
+    if (!this.ownsSession(sessionId, generation))
+      return this.emptyHookResponse();
+    this.scheduleSessionTitleGeneration(sessionId, session, prompt, generation);
     const contextSentence = await this.prepareWorktreeContext(
       sessionId,
       session,
       prompt,
+      generation,
     );
+    if (!this.ownsSession(sessionId, generation))
+      return this.emptyHookResponse();
 
     const hookSpecificOutput: ClaudeHookResponse['hookSpecificOutput'] = {
       hookEventName: 'UserPromptSubmit',
@@ -364,6 +425,7 @@ export class ClaudeHooksService extends EventEmitter {
     sessionId: number,
     session: { name: string | null; worktreePath: string },
     prompt: string,
+    generation: number,
   ): void {
     if (!this.sessionTitleService.isAutoGeneratedName(session.name)) {
       this.logger.debug(
@@ -383,7 +445,7 @@ export class ClaudeHooksService extends EventEmitter {
     );
     const scheduled = new Promise<void>((resolve) => {
       setImmediate(() => {
-        void this.prepareSessionTitle(sessionId, session, prompt)
+        void this.prepareSessionTitle(sessionId, session, prompt, generation)
           .catch((error) => {
             this.logger.warn(
               `Background TUI session title generation failed for session ${sessionId}: ${String(error)}`,
@@ -408,6 +470,7 @@ export class ClaudeHooksService extends EventEmitter {
       hasInjectedWorktreeContext: boolean;
     },
     prompt: string,
+    generation: number,
   ): Promise<string | null> {
     if (
       session.hasInjectedWorktreeContext ||
@@ -421,6 +484,7 @@ export class ClaudeHooksService extends EventEmitter {
         session.repoId,
         session.worktreePath,
       );
+      if (!this.ownsSession(sessionId, generation)) return null;
       if (snapshot.generationStatus !== 'ready' || !snapshot.contextSentence) {
         snapshot = await this.worktreeContextService.generate(
           session.repoId,
@@ -428,6 +492,7 @@ export class ClaudeHooksService extends EventEmitter {
           { provider: 'claude' },
         );
       }
+      if (!this.ownsSession(sessionId, generation)) return null;
 
       const sentence = snapshot.contextSentence?.trim();
       if (snapshot.generationStatus !== 'ready' || !sentence) {
@@ -439,6 +504,7 @@ export class ClaudeHooksService extends EventEmitter {
         true,
         sentence,
       );
+      if (!this.ownsSession(sessionId, generation)) return null;
       return consumed.shouldInject
         ? (consumed.contextSentence ?? sentence).trim()
         : null;
@@ -454,8 +520,9 @@ export class ClaudeHooksService extends EventEmitter {
     sessionId: number,
     session: { name: string | null; worktreePath: string },
     prompt: string,
+    generation: number,
   ): Promise<string | null> {
-    if (this.invalidatedSessions.has(sessionId)) {
+    if (!this.ownsSession(sessionId, generation)) {
       this.logger.warn(
         `TUI session title generation skipped session=${sessionId} reason=invalidated_before_start`,
       );
@@ -483,7 +550,7 @@ export class ClaudeHooksService extends EventEmitter {
         );
         return null;
       }
-      if (this.invalidatedSessions.has(sessionId)) {
+      if (!this.ownsSession(sessionId, generation)) {
         this.logger.warn(
           `TUI session title generation skipped session=${sessionId} reason=invalidated_before_save title=${JSON.stringify(title)}`,
         );
