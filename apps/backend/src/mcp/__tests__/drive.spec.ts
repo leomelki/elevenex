@@ -636,6 +636,45 @@ describe('Drive tool group', () => {
       },
     );
 
+    it.each(['result', 'history_snapshot', 'terminal'])(
+      'checks acceptance immediately on %s without waiting for fallback polling',
+      async (eventType) => {
+        const submit = pendingSubmit();
+        let state = {
+          ...running,
+          pendingPrompts: [] as { id: string; prompt: string }[],
+        };
+        const runtime = makeRuntime({
+          getRuntimeState: jest.fn().mockImplementation(async () => state),
+          submitPrompt: jest.fn().mockReturnValue(submit.promise),
+        });
+        const { services } = makeServices({ runtime });
+        const pending = promptSessionTool.handler(
+          { sessionId: 7, prompt: 'go' },
+          makeCtx(services),
+        );
+        const returned = jest.fn();
+        void pending.then(returned);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(returned).not.toHaveBeenCalled();
+        expect(runtime.getRuntimeState).toHaveBeenCalledTimes(2);
+
+        state = { ...running, pendingPrompts: [{ id: 'new', prompt: 'go' }] };
+        runtime.emit('event', { type: eventType, payload: { sessionId: 7 } });
+        // No clock advance: the lifecycle event must wake the waiter before its 1s poll.
+        await jest.advanceTimersByTimeAsync(0);
+        expect(returned).toHaveBeenCalledTimes(1);
+        expect((await pending).data).toMatchObject({
+          accepted: true,
+          queued: true,
+        });
+        expect(runtime.getRuntimeState).toHaveBeenCalledTimes(3);
+        expect(runtime.listenerCount('event')).toBe(0);
+        expect(jest.getTimerCount()).toBe(0);
+        submit.resolve();
+      },
+    );
+
     it('observes acceptance without an event while submit remains pending', async () => {
       const submit = pendingSubmit();
       const runtime = makeRuntime({
