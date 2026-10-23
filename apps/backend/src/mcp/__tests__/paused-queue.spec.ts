@@ -2,7 +2,11 @@ import { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import { DeltaCursorStore } from '../tool-registry/delta-cursor.store.js';
 import { DeepLinkBuilder } from '../deep-link/deep-link.builder.js';
-import { ToolError, type ToolContext } from '../tool-registry/tool.types.js';
+import {
+  ToolError,
+  type ToolContext,
+  type ToolResultEnvelope,
+} from '../tool-registry/tool.types.js';
 import { resumePendingPromptsTool } from '../tools/drive/resume-pending-prompts.tool.js';
 import { promptSessionTool } from '../tools/drive/prompt-session.tool.js';
 import { DRIVE_TOOLS } from '../tools/drive/index.js';
@@ -11,6 +15,7 @@ import { pollSessionStatusTool } from '../tools/observe/poll-session-status.tool
 import { awaitSessionEventTool } from '../tools/observe/await-session-event.tool.js';
 import {
   hasPausedQueue,
+  getSessionAttentionStatus,
   hasQueuedWork,
   isSessionSettled,
   type SessionRuntimeSnapshot,
@@ -28,6 +33,38 @@ const running = {
   queuePaused: false,
   pendingPrompts: [],
 };
+
+const mixedStates = [
+  {
+    status: 'requires_action',
+    action: 'get_pending_action',
+    state: { ...paused, sessionState: 'requires_action', runPhase: 'running' },
+  },
+  {
+    status: 'failed',
+    action: 'read_session',
+    state: { ...paused, runPhase: 'error' },
+  },
+];
+
+function expectPrimary(
+  res: ToolResultEnvelope,
+  status: string,
+  action: string,
+  pendingPromptCount = 1,
+) {
+  expect(res.data).toMatchObject({
+    status,
+    queuePaused: true,
+    pendingPromptCount,
+  });
+  expect(res.nextStep).toContain(action);
+  expect(res.nextStep).toContain('resume_pending_prompts');
+  expect(res.nextStep!.indexOf(action)).toBeLessThan(
+    res.nextStep!.indexOf('resume_pending_prompts'),
+  );
+  expect(res.nextStep).not.toContain('Still waiting');
+}
 
 function fixture(state: SessionRuntimeSnapshot = paused, provider = 'claude') {
   const runtime = Object.assign(new EventEmitter(), {
@@ -197,6 +234,61 @@ describe('explicit paused queue recovery', () => {
     expect(res.nextStep).toContain('resume_pending_prompts');
   });
 
+  it('prioritizes current permission and error states over the future prompt queue', () => {
+    expect(
+      getSessionAttentionStatus({
+        ...paused,
+        sessionState: 'requires_action',
+        runPhase: 'error',
+      }),
+    ).toBe('requires_action');
+    expect(getSessionAttentionStatus({ ...paused, runPhase: 'error' })).toBe(
+      'failed',
+    );
+    expect(getSessionAttentionStatus(paused)).toBe('paused');
+  });
+
+  it.each(mixedStates)(
+    'session_status reports $status ahead of the paused queue',
+    async ({ status, action, state }) => {
+      const { ctx } = fixture(state);
+      const res = await sessionStatusTool.handler({ sessionId: 7 }, ctx);
+      expect(res.data).toMatchObject({
+        runtimeState: status,
+        queuePaused: true,
+        pendingPromptCount: 1,
+      });
+      expect(res.nextStep).toContain(action);
+      expect(res.nextStep).toContain('resume_pending_prompts');
+      expect(res.nextStep!.indexOf(action)).toBeLessThan(
+        res.nextStep!.indexOf('resume_pending_prompts'),
+      );
+    },
+  );
+
+  it.each(mixedStates)(
+    'prompt_session preserves $status alongside paused queue metadata',
+    async ({ status, action, state }) => {
+      const { ctx, runtime } = fixture(state);
+      runtime.getRuntimeState
+        .mockResolvedValueOnce(state)
+        .mockResolvedValue({
+          ...state,
+          pendingPrompts: [
+            ...state.pendingPrompts!,
+            { id: 'new', prompt: 'New work' },
+          ],
+        });
+      const res = await promptSessionTool.handler(
+        { sessionId: 7, prompt: 'New work' },
+        ctx,
+      );
+      expectPrimary(res, status, action, 2);
+      expect(runtime.resumePendingPrompts).not.toHaveBeenCalled();
+      expect(jest.getTimerCount()).toBe(0);
+    },
+  );
+
   it('does not resume old work when prompt_session enqueues a new prompt', async () => {
     const { ctx, runtime } = fixture();
     runtime.getRuntimeState.mockResolvedValueOnce(paused).mockResolvedValue({
@@ -231,6 +323,74 @@ describe('explicit paused queue recovery', () => {
             { sessionId: 7, events: ['completed'], timeoutMs: 5_000 },
             ctx,
           );
+
+    it.each(mixedStates)(
+      `${name} prioritizes $status in its initial snapshot`,
+      async ({ status, action, state }) => {
+        const { ctx, runtime, sessions } = fixture(state);
+        const res = await wait(ctx);
+        expectPrimary(res, status, action);
+        if (name === 'await') expect(res.data).toMatchObject({ event: status });
+        expect(runtime.listenerCount('event')).toBe(0);
+        expect(sessions.listenerCount('session-status-changed')).toBe(0);
+        expect(jest.getTimerCount()).toBe(0);
+      },
+    );
+
+    for (const { status, action, state } of mixedStates) {
+      it.each(['run_state', 'complete', 'background_work'])(
+        `${name} prioritizes ${status} in a %s event snapshot`,
+        async (type) => {
+          const { ctx, runtime, sessions } = fixture(running);
+          const pending = wait(ctx);
+          await jest.advanceTimersByTimeAsync(0);
+          runtime.getRuntimeState.mockResolvedValue(state);
+          runtime.emit('event', { type, payload: { sessionId: 7, ...state } });
+          const res = await pending;
+          expectPrimary(res, status, action);
+          if (name === 'await')
+            expect(res.data).toMatchObject({ event: status });
+          expect(runtime.listenerCount('event')).toBe(0);
+          expect(sessions.listenerCount('session-status-changed')).toBe(0);
+          expect(jest.getTimerCount()).toBe(0);
+        },
+      );
+
+      it(`${name} prioritizes ${status} in the final timeout snapshot`, async () => {
+        const { ctx, runtime } = fixture(running);
+        const pending = wait(ctx);
+        await jest.advanceTimersByTimeAsync(0);
+        runtime.getRuntimeState.mockResolvedValue(state);
+        await jest.advanceTimersByTimeAsync(name === 'poll' ? 170_000 : 5_000);
+        const res = await pending;
+        expectPrimary(res, status, action);
+        if (name === 'await') expect(res.data).toMatchObject({ event: status });
+        expect(jest.getTimerCount()).toBe(0);
+      });
+
+      it(`${name} prioritizes ${status} in the subscription race recheck`, async () => {
+        const { ctx, runtime } = fixture();
+        runtime.getRuntimeState
+          .mockResolvedValueOnce(running)
+          .mockResolvedValue(state);
+        const res = await wait(ctx);
+        expectPrimary(res, status, action);
+        expect(runtime.listenerCount('event')).toBe(0);
+        expect(jest.getTimerCount()).toBe(0);
+      });
+    }
+
+    it(`${name} preserves paused metadata on an immediate error event`, async () => {
+      const { ctx, runtime } = fixture(running);
+      const pending = wait(ctx);
+      await jest.advanceTimersByTimeAsync(0);
+      runtime.emit('event', {
+        type: 'error',
+        payload: { sessionId: 7, ...paused, runPhase: 'error' },
+      });
+      expectPrimary(await pending, 'failed', 'read_session');
+      expect(jest.getTimerCount()).toBe(0);
+    });
 
     it(`${name} returns an actionable paused result immediately, even when waiting only for completion`, async () => {
       const { ctx, runtime, sessions, services } = fixture();

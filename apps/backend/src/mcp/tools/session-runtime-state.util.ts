@@ -145,6 +145,16 @@ export function hasPausedQueue(
   return state?.queuePaused === true && (state.pendingPrompts?.length ?? 0) > 0;
 }
 
+/** A future prompt queue cannot replace the current turn's permission/error state. */
+export function getSessionAttentionStatus(
+  state: SessionRuntimeSnapshot | null | undefined,
+): 'requires_action' | 'failed' | 'paused' | null {
+  if (state?.sessionState === 'requires_action') return 'requires_action';
+  if (state?.runPhase === 'error') return 'failed';
+  if (hasPausedQueue(state)) return 'paused';
+  return null;
+}
+
 export function describePausedQueue(
   sessionId: number,
   pendingPromptCount: number,

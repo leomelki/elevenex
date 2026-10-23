@@ -5,6 +5,7 @@ import {
   describeQueuedWork,
   describePausedQueue,
   hasPausedQueue,
+  getSessionAttentionStatus,
   hasQueuedWork,
   isSessionSettled,
   summarizeBackgroundWork,
@@ -28,7 +29,7 @@ export const awaitSessionEventTool = defineTool({
   title: 'Await session event',
   costClass: 'heavy',
   description:
-    "Block until a session reaches one of `events` (default completed/requires_action/failed) or `timeoutMs` elapses — event-driven, not polling. 🔴 Use instead of looping session_status. `completed` only fires once the session is truly settled: a live background task or a prompt queued behind one keeps it running even though the visible turn already ended, so this correctly keeps waiting through that instead of returning early. On resolve: read_session for the delta, or get_pending_action when requires_action. A paused queue always returns event:paused with resume_pending_prompts guidance, even when omitted from events. On timeout: re-call immediately — no sleep needed.",
+    "Block until a session reaches one of `events` (default completed/requires_action/failed) or `timeoutMs` elapses — event-driven, not polling. 🔴 Use instead of looping session_status. `completed` only fires once the session is truly settled: a live background task or a prompt queued behind one keeps it running even though the visible turn already ended, so this correctly keeps waiting through that instead of returning early. On resolve: read_session for the delta, or get_pending_action when requires_action. A paused queue always wakes the waiter with resume_pending_prompts guidance, even when omitted from events; current requires_action/failed states take priority over paused. On timeout: re-call immediately — no sleep needed.",
   annotations: { readOnlyHint: true },
   inputShape: {
     sessionId: z
@@ -40,7 +41,7 @@ export const awaitSessionEventTool = defineTool({
       .array(z.string().min(1))
       .optional()
       .describe(
-        "Statuses to wake on. Default ['completed','requires_action','failed']. A paused queue always wakes with event:paused.",
+        "Statuses to wake on. Default ['completed','requires_action','failed']. A paused queue always wakes; current permission/error states take priority over paused.",
       ),
     timeoutMs: z
       .number()
@@ -86,6 +87,21 @@ export const awaitSessionEventTool = defineTool({
       const backgroundWork = summarizeBackgroundWork(state);
       const turnEnded =
         state?.sessionState === 'idle' && state.runPhase === 'idle';
+      const pausedGuidance = hasPausedQueue(state) && status !== 'paused'
+        ? ` ${describePausedQueue(session.id, state!.pendingPrompts!.length)}`
+        : '';
+      const nextStep =
+        status === 'paused'
+          ? describePausedQueue(session.id, state?.pendingPrompts?.length ?? 0)
+          : event === 'timeout'
+            ? `Still waiting — re-call await_session_event immediately with the same arguments, no sleep needed.${
+                turnEnded && hasQueuedWork(state)
+                  ? ` Its turn has ended. ${describeQueuedWork(backgroundWork, state.pendingPrompts?.length ?? 0)}`
+                  : ''
+              }`
+            : status === 'requires_action'
+              ? 'get_pending_action to inspect the block, then resolve it.'
+              : 'read_session for the delta.';
       return {
         data: {
           sessionId: session.id,
@@ -97,18 +113,7 @@ export const awaitSessionEventTool = defineTool({
             : {}),
         },
         deepLink: ctx.deepLink.session(session.id),
-        nextStep:
-          status === 'paused'
-            ? describePausedQueue(session.id, state?.pendingPrompts?.length ?? 0)
-            : event === 'timeout'
-            ? `Still waiting — re-call await_session_event immediately with the same arguments, no sleep needed.${
-                turnEnded && hasQueuedWork(state)
-                  ? ` Its turn has ended. ${describeQueuedWork(backgroundWork, state.pendingPrompts?.length ?? 0)}`
-                  : ''
-              }`
-            : status === 'requires_action'
-              ? 'get_pending_action to inspect the block, then resolve it.'
-              : 'read_session for the delta.',
+        nextStep: nextStep + pausedGuidance,
       };
     };
 
@@ -117,9 +122,8 @@ export const awaitSessionEventTool = defineTool({
     // unpaused queued prompt can resume the session. Paused prompts instead
     // require action — they cannot be treated as completed or waited on forever.
     const runtimeEventFor = (s: SessionRuntimeSnapshot): string | null => {
-      if (hasPausedQueue(s)) return 'paused';
-      if (s.sessionState === 'requires_action') return 'requires_action';
-      if (s.runPhase === 'error') return 'failed';
+      const attention = getSessionAttentionStatus(s);
+      if (attention) return attention;
       if (isSessionSettled(s)) return 'completed';
       return null;
     };
@@ -135,7 +139,7 @@ export const awaitSessionEventTool = defineTool({
     const initialState = await runtime.getRuntimeState(session.id).catch(() => null);
     if (initialState) {
       const logicalEvent = runtimeEventFor(initialState as SessionRuntimeSnapshot);
-      if (logicalEvent && wanted.has(logicalEvent)) {
+      if (logicalEvent && (wanted.has(logicalEvent) || hasPausedQueue(initialState as SessionRuntimeSnapshot))) {
         return makeResult(logicalEvent, logicalEvent, initialState as SessionRuntimeSnapshot);
       }
     }
@@ -169,13 +173,13 @@ export const awaitSessionEventTool = defineTool({
         void runtime
           .getRuntimeState(session.id)
           .catch(() => null)
-          .then((s) =>
-            resolve(
-              hasPausedQueue(s as SessionRuntimeSnapshot | null)
-                ? makeResult('paused', 'paused', s as SessionRuntimeSnapshot)
-                : makeResult(event, status, s as SessionRuntimeSnapshot | null),
-            ),
-          );
+          .then((s) => {
+            const state = s as SessionRuntimeSnapshot | null;
+            const primary = hasPausedQueue(state) ? getSessionAttentionStatus(state) : null;
+            resolve(primary
+              ? makeResult(primary, primary, state)
+              : makeResult(event, status, state));
+          });
       };
 
       // DB status listener: handles external kills (archived/stopped).
@@ -199,12 +203,12 @@ export const awaitSessionEventTool = defineTool({
       }) => {
         if (event.payload.sessionId !== session.id) return;
         if (event.type === 'error') {
-          if (wanted.has('failed')) finish('failed', 'failed');
+          if (wanted.has('failed') || hasPausedQueue(event.payload)) finish('failed', 'failed', event.payload);
           return;
         }
         if (event.type === 'run_state') {
           const logicalEvent = runtimeEventFor(event.payload);
-          if (logicalEvent && wanted.has(logicalEvent)) {
+          if (logicalEvent && (wanted.has(logicalEvent) || hasPausedQueue(event.payload))) {
             finish(logicalEvent, logicalEvent, event.payload);
           }
           return;
@@ -214,7 +218,7 @@ export const awaitSessionEventTool = defineTool({
           .getRuntimeState(session.id)
           .then((s) => {
             const logicalEvent = runtimeEventFor(s as SessionRuntimeSnapshot);
-            if (logicalEvent && wanted.has(logicalEvent)) {
+            if (logicalEvent && (wanted.has(logicalEvent) || hasPausedQueue(s as SessionRuntimeSnapshot))) {
               finish(logicalEvent, logicalEvent, s as SessionRuntimeSnapshot);
             }
           })
@@ -238,7 +242,7 @@ export const awaitSessionEventTool = defineTool({
       // initial check above and listener registration.
       runtime.getRuntimeState(session.id).then((s) => {
         const logicalEvent = runtimeEventFor(s as SessionRuntimeSnapshot);
-        if (logicalEvent && wanted.has(logicalEvent)) {
+        if (logicalEvent && (wanted.has(logicalEvent) || hasPausedQueue(s as SessionRuntimeSnapshot))) {
           finish(logicalEvent, logicalEvent, s as SessionRuntimeSnapshot);
         }
       }).catch(() => {});

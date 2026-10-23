@@ -4,6 +4,7 @@ import {
   describeQueuedWork,
   describePausedQueue,
   hasPausedQueue,
+  getSessionAttentionStatus,
   hasQueuedWork,
   summarizeBackgroundWork,
   type BackgroundWorkSummary,
@@ -61,6 +62,7 @@ export const sessionStatusTool = defineTool({
     let pendingPromptCount = 0;
     let queuePaused = false;
     let pausedQueue = false;
+    let attention: ReturnType<typeof getSessionAttentionStatus> = null;
     try {
       const provider = agentRuntime.getProvider(session.activeAgentProvider);
       const state = (await provider.getRuntimeState(
@@ -72,25 +74,30 @@ export const sessionStatusTool = defineTool({
       queuedWork = hasQueuedWork(state);
       queuePaused = state.queuePaused === true;
       pausedQueue = hasPausedQueue(state);
+      attention = getSessionAttentionStatus(state);
       backgroundWork = summarizeBackgroundWork(state);
       pendingPromptCount = state.pendingPrompts?.length ?? 0;
       // A paused queue needs explicit intervention. Unpaused queued work can
       // resume an idle visible turn automatically.
       runtimeState =
-        pausedQueue &&
-        state.sessionState !== 'running' &&
-        state.sessionState !== 'requires_action' &&
-        state.runPhase !== 'running'
-          ? 'paused'
-          : queuedWork &&
-              state.sessionState === 'idle' &&
-              state.runPhase === 'idle'
-            ? 'running'
-            : (state.sessionState ??
-              (state.runPhase === 'running' ? 'running' : undefined) ??
-              undefined);
+        attention === 'requires_action' || attention === 'failed'
+          ? attention
+          : pausedQueue &&
+              state.sessionState !== 'running' &&
+              state.sessionState !== 'requires_action' &&
+              state.runPhase !== 'running'
+            ? 'paused'
+            : queuedWork &&
+                state.sessionState === 'idle' &&
+                state.runPhase === 'idle'
+              ? 'running'
+              : (state.sessionState ??
+                (state.runPhase === 'running' ? 'running' : undefined) ??
+                undefined);
       hasPendingAction =
-        !!state.pendingPermissionRequest || !!state.pendingUserInputRequest;
+        state.sessionState === 'requires_action' ||
+        !!state.pendingPermissionRequest ||
+        !!state.pendingUserInputRequest;
     } catch {
       runtimeState = undefined;
     }
@@ -111,11 +118,13 @@ export const sessionStatusTool = defineTool({
       deepLink: ctx.deepLink.session(session.id),
       nextStep: hasPendingAction
         ? `Blocked: inspect with get_pending_action, then resolve it.${pausedQueue ? ` ${describePausedQueue(session.id, pendingPromptCount)}` : ''}`
-        : pausedQueue
-          ? describePausedQueue(session.id, pendingPromptCount)
-          : queuedWork
-            ? `Not actually idle: a background task or queued prompt will resume this session. await_session_event or poll_session_status to wait for real completion — do not treat this as done. ${describeQueuedWork(backgroundWork, pendingPromptCount)}`
-            : 'If items advanced, read_session for the delta; else await_session_event to block on a change.',
+        : attention === 'failed'
+          ? `Session failed. Call read_session for details.${pausedQueue ? ` ${describePausedQueue(session.id, pendingPromptCount)}` : ''}`
+          : pausedQueue
+            ? describePausedQueue(session.id, pendingPromptCount)
+            : queuedWork
+              ? `Not actually idle: a background task or queued prompt will resume this session. await_session_event or poll_session_status to wait for real completion — do not treat this as done. ${describeQueuedWork(backgroundWork, pendingPromptCount)}`
+              : 'If items advanced, read_session for the delta; else await_session_event to block on a change.',
     };
   },
 });

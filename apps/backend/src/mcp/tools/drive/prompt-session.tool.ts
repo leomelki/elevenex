@@ -7,6 +7,7 @@ import { resolveSessionProvider } from './provider.util.js';
 import {
   isSessionSettled,
   hasPausedQueue,
+  getSessionAttentionStatus,
   describePausedQueue,
   type SessionRuntimeSnapshot,
 } from '../session-runtime-state.util.js';
@@ -350,10 +351,8 @@ export const promptSessionTool = defineTool({
 
     let status = acceptance.accepted ? 'running' : 'acceptance_pending';
     if (acceptance.accepted && runtimeState) {
-      if (hasPausedQueue(runtimeState)) status = 'paused';
-      else if (runtimeState.sessionState === 'requires_action')
-        status = 'requires_action';
-      else if (runtimeState.runPhase === 'error') status = 'failed';
+      const attention = getSessionAttentionStatus(runtimeState);
+      if (attention) status = attention;
       else if (isSessionSettled(runtimeState)) status = 'completed';
     }
 
@@ -389,7 +388,11 @@ export const promptSessionTool = defineTool({
           : {}),
       },
       deepLink: ctx.deepLink.session(args.sessionId),
-      nextStep,
+      nextStep:
+        nextStep +
+        (hasPausedQueue(runtimeState) && status !== 'paused'
+          ? ` ${describePausedQueue(args.sessionId, runtimeState!.pendingPrompts!.length)}`
+          : ''),
     };
   },
 });
