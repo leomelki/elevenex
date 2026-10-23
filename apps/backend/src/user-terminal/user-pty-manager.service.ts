@@ -53,7 +53,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private readonly generations = new Map<number, number>();
   private readonly strictStops = new Set<number>();
   private readonly tmuxResizeState = new Map<number, TmuxResizeState>();
-  private pendingKills = new Set<number>();
+  private readonly pendingKills = new Map<number, Set<pty.IPty>>();
   private readonly logger = new Logger('UserPtyManager');
   private readonly tmuxEnabled: boolean;
   private tmuxBin: string;
@@ -115,7 +115,11 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     shell: string,
     generation = this.getGeneration(terminalId),
   ): Promise<pty.IPty | null> {
-    if (this.shuttingDown || generation !== this.getGeneration(terminalId))
+    if (
+      this.shuttingDown ||
+      this.strictStops.has(terminalId) ||
+      generation !== this.getGeneration(terminalId)
+    )
       return null;
 
     const inFlight = this.spawnInFlight.get(terminalId);
@@ -317,8 +321,9 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
         return;
       }
       this.processes.delete(terminalId);
-      // No auto-restart for user terminals
-      this.gateway.onProcessExit(terminalId);
+      if (!this.pendingKills.get(terminalId)?.has(ptyProcess)) {
+        this.gateway.onProcessExit(terminalId);
+      }
     });
 
     return ptyProcess;
@@ -367,7 +372,9 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
         return;
       }
       this.processes.delete(terminalId);
-      this.gateway.onProcessExit(terminalId);
+      if (!this.pendingKills.get(terminalId)?.has(ptyProcess)) {
+        this.gateway.onProcessExit(terminalId);
+      }
     });
 
     return ptyProcess;
@@ -419,37 +426,33 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   private killProcess(terminalId: number): boolean {
     const session = this.processes.get(terminalId);
 
-    if (session) {
-      this.pendingKills.add(terminalId);
-      try {
-        session.pty.kill();
+    if (!session) return false;
+    this.processes.delete(terminalId);
+    void this.terminateProcess(terminalId, session.pty, true).catch((error) => {
+      this.logger.error(
+        `Failed to kill PTY for terminal ${terminalId}: ${error}`,
+      );
+    });
+    return true;
+  }
 
-        setTimeout(() => {
-          const current = this.processes.get(terminalId);
-          if (current?.pty === session.pty && session.pid) {
-            try {
-              process.kill(session.pid, 'SIGKILL');
-            } catch {
-              // Already dead
-            }
-          }
-        }, 5000);
-
-        if (this.processes.get(terminalId)?.pty === session.pty) {
-          this.processes.delete(terminalId);
-        }
-        return true;
-      } catch (error) {
-        this.logger.error(
-          `Failed to kill PTY for terminal ${terminalId}: ${error}`,
-        );
-        if (this.processes.get(terminalId)?.pty === session.pty) {
-          this.processes.delete(terminalId);
-        }
-        return false;
+  private terminateProcess(
+    terminalId: number,
+    process: pty.IPty,
+    detach = false,
+  ): Promise<void> {
+    const retiring = this.pendingKills.get(terminalId) ?? new Set<pty.IPty>();
+    retiring.add(process);
+    this.pendingKills.set(terminalId, retiring);
+    return terminatePtyAndWait(
+      process,
+      detach ? { signal: 'SIGHUP', graceMs: 5000 } : {},
+    ).then(() => {
+      retiring.delete(process);
+      if (!retiring.size && this.pendingKills.get(terminalId) === retiring) {
+        this.pendingKills.delete(terminalId);
       }
-    }
-    return false;
+    });
   }
 
   /** Kill both PTY and tmux session — used when deleting a terminal */
@@ -459,44 +462,48 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
 
   async destroy(terminalId: number, requireStopped = false): Promise<boolean> {
     this.generations.set(terminalId, this.getGeneration(terminalId) + 1);
-    if (requireStopped) {
-      this.strictStops.add(terminalId);
-      try {
+    if (requireStopped) this.strictStops.add(terminalId);
+    try {
+      if (requireStopped) {
         const pending = this.spawnInFlight.get(terminalId);
         if (pending) {
           this.cancelledSpawns.add(terminalId);
           await pending;
         }
         const session = this.processes.get(terminalId);
-        if (session) {
-          this.pendingKills.add(terminalId);
-          await terminatePtyAndWait(session.pty);
-          if (this.processes.get(terminalId)?.pty === session.pty)
-            this.processes.delete(terminalId);
+        const retiring = new Set(this.pendingKills.get(terminalId));
+        if (session) retiring.add(session.pty);
+        await Promise.all(
+          [...retiring].map((process) =>
+            this.terminateProcess(terminalId, process),
+          ),
+        );
+        if (session && this.processes.get(terminalId) === session) {
+          this.processes.delete(terminalId);
         }
-      } finally {
-        this.strictStops.delete(terminalId);
-      }
-    } else this.kill(terminalId);
-    this.tmuxResizeState.delete(terminalId);
+      } else this.kill(terminalId);
+      this.tmuxResizeState.delete(terminalId);
 
-    if (this.isTmuxAvailable()) {
-      const tmuxSessionName = this.getTmuxSessionName(terminalId);
-      try {
-        await execFileQuiet(this.tmuxBin, [
-          'kill-session',
-          '-t',
-          tmuxSessionName,
-        ]);
-      } catch (error) {
-        if (
-          requireStopped &&
-          (await this.hasTmuxSessionForTerminal(terminalId))
-        )
-          throw error;
+      if (this.isTmuxAvailable()) {
+        const tmuxSessionName = this.getTmuxSessionName(terminalId);
+        try {
+          await execFileQuiet(this.tmuxBin, [
+            'kill-session',
+            '-t',
+            tmuxSessionName,
+          ]);
+        } catch (error) {
+          if (
+            requireStopped &&
+            (await this.hasTmuxSessionForTerminal(terminalId))
+          )
+            throw error;
+        }
       }
+      return true;
+    } finally {
+      if (requireStopped) this.strictStops.delete(terminalId);
     }
-    return true;
   }
 
   isAlive(terminalId: number): boolean {

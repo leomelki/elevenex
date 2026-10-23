@@ -7,6 +7,7 @@ describe('ActionsService', () => {
     registerPersistence: jest.Mock;
     isRunning: jest.Mock;
     start: jest.Mock;
+    reserveIdleAction: jest.Mock;
   };
 
   beforeEach(() => {
@@ -14,6 +15,7 @@ describe('ActionsService', () => {
       registerPersistence: jest.fn(),
       isRunning: jest.fn(() => false),
       start: jest.fn(),
+      reserveIdleAction: jest.fn(() => jest.fn()),
     };
     service = new ActionsService({} as never, ptyManager as never);
   });
@@ -39,5 +41,12 @@ describe('ActionsService', () => {
 
     expect(caught).toBeInstanceOf(BadRequestException);
     expect((caught as Error).message).toBe('Action "Tests" is already running');
+  });
+  it('releases delete ownership if loading the action fails', async () => {
+    const release = jest.fn();
+    ptyManager.reserveIdleAction.mockReturnValue(release);
+    jest.spyOn(service, 'findOne').mockRejectedValue(new Error('missing'));
+    await expect(service.remove(12)).rejects.toThrow('missing');
+    expect(release).toHaveBeenCalledTimes(1);
   });
 });
