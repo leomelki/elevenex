@@ -240,7 +240,12 @@ export class ReviewChatsService {
     });
     const provider = this.normalizeProvider(row.provider as AgentProviderId);
     const mode = this.parseMode(row.mode);
-    await this.setPlanMode(registry, provider, row.childSessionId, mode === 'readonly');
+    await this.setPlanMode(
+      registry,
+      provider,
+      row.childSessionId,
+      mode === 'readonly',
+    );
 
     void registry
       .getProvider(provider)
@@ -395,8 +400,15 @@ export class ReviewChatsService {
     await this.sessionsService
       .delete(row.childSessionId)
       .catch(async (error) => {
-        this.logger.warn(
-          `Failed to delete review chat child session ${row.childSessionId}: ${String(error)}`,
+        if (!(error instanceof NotFoundException)) throw error;
+        // A runtime NotFound is not proof the stored child is gone.
+        await this.sessionsService.findOne(row.childSessionId).then(
+          () => {
+            throw error;
+          },
+          (lookupError: unknown) => {
+            if (!(lookupError instanceof NotFoundException)) throw lookupError;
+          },
         );
         await this.db
           .delete(schema.reviewChats)
@@ -434,7 +446,10 @@ export class ReviewChatsService {
   ): Promise<{ id: string; kind: ReviewChatAnchorKind }> {
     const explicitId = dto.anchorMessageId?.trim();
     if (explicitId) {
-      return { id: explicitId, kind: this.parseAnchorKind(dto.anchorMessageKind) };
+      return {
+        id: explicitId,
+        kind: this.parseAnchorKind(dto.anchorMessageKind),
+      };
     }
 
     const running = await this.isRuntimeRunning(
@@ -442,7 +457,9 @@ export class ReviewChatsService {
       provider,
       parentSessionId,
     );
-    const history = await registry.getProvider(provider).getHistory(parentSessionId);
+    const history = await registry
+      .getProvider(provider)
+      .getHistory(parentSessionId);
     const searchFrom = running ? history.length - 2 : history.length - 1;
 
     for (let index = searchFrom; index >= 0; index -= 1) {
@@ -501,9 +518,7 @@ export class ReviewChatsService {
     const start = anchor.newLineStart ?? anchor.oldLineStart;
     const end = anchor.newLineEnd ?? anchor.oldLineEnd;
     if (start === null || start === undefined) return '';
-    return end && end !== start
-      ? `lines: ${start}-${end}`
-      : `lines: ${start}`;
+    return end && end !== start ? `lines: ${start}-${end}` : `lines: ${start}`;
   }
 
   private async applyProviderResult(
@@ -525,7 +540,10 @@ export class ReviewChatsService {
           providerSessionId,
         );
       } else if (provider === 'opencode') {
-        await this.sessionsService.updateOpenCodeSessionId(childSessionId, providerSessionId);
+        await this.sessionsService.updateOpenCodeSessionId(
+          childSessionId,
+          providerSessionId,
+        );
       }
     } else {
       await this.sessionsService.updateActiveAgentProvider(
@@ -660,7 +678,11 @@ export class ReviewChatsService {
   }
 
   private normalizeProvider(provider: AgentProviderId): AgentProviderId {
-    if (provider === 'claude' || provider === 'codex' || provider === 'opencode') {
+    if (
+      provider === 'claude' ||
+      provider === 'codex' ||
+      provider === 'opencode'
+    ) {
       return provider;
     }
     throw new BadRequestException(
