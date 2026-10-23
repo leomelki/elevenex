@@ -12,7 +12,7 @@ export const interruptSessionTool = defineTool({
   costClass: 'scoped',
   mutates: true,
   description:
-    "Interrupt a session's currently running agent turn (the session stays alive). 🟡scoped. Use when a prompt_session run is off-track; then re-prompt with prompt_session or inspect with session_status.",
+    "Interrupt a session's currently running agent turn (the session stays alive). 🟡scoped. Use when a prompt_session run is off-track; then inspect session_status. Interruption pauses queued prompts; resume_pending_prompts explicitly resumes that queue.",
   disallowSelfTarget: 'session',
   inputShape: {
     sessionId: z
@@ -28,7 +28,8 @@ export const interruptSessionTool = defineTool({
     return {
       data: { sessionId: args.sessionId, interrupted: true },
       deepLink: ctx.deepLink.session(args.sessionId),
-      nextStep: 'Re-prompt with prompt_session, or inspect with session_status.',
+      nextStep:
+        'Inspect session_status. Use resume_pending_prompts to explicitly continue a paused queue; prompt_session only adds more queued work while it is paused.',
     };
   },
 });

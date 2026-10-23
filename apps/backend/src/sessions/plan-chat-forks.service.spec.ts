@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { NotFoundException } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import type Database from 'better-sqlite3';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
@@ -328,5 +329,69 @@ describe('PlanChatForksService', () => {
     );
     expect(allSessions.map((item) => item.id)).not.toContain(session.id);
     expect(planChats).toEqual([]);
+  });
+  it('preserves the child and relation when cleanup fails: runtime still alive', async () => {
+    const parent = await createParent();
+    provider.forkConversation.mockResolvedValue({ providerSessionId: 'child' });
+    const { planChat: chat, session } = await planChatsService.ensure(
+      parent.id,
+      {
+        reviewId: 'delete-test',
+        anchorMessageId: 'a1',
+        anchorMessageKind: 'assistant',
+      },
+    );
+    agentRuntimeCleanup.cleanupSession.mockRejectedValueOnce(
+      new Error('runtime still alive'),
+    );
+
+    await expect(planChatsService.delete(parent.id, chat.id)).rejects.toThrow();
+
+    expect((await sessionsService.findOne(session.id)).id).toBe(session.id);
+    expect(await planChatsService.findByParent(parent.id)).toHaveLength(1);
+  });
+
+  it('preserves the child and relation when cleanup fails: runtime missing', async () => {
+    const parent = await createParent();
+    provider.forkConversation.mockResolvedValue({ providerSessionId: 'child' });
+    const { planChat: chat, session } = await planChatsService.ensure(
+      parent.id,
+      {
+        reviewId: 'delete-test',
+        anchorMessageId: 'a1',
+        anchorMessageKind: 'assistant',
+      },
+    );
+    agentRuntimeCleanup.cleanupSession.mockRejectedValueOnce(
+      new NotFoundException('runtime missing'),
+    );
+
+    await expect(planChatsService.delete(parent.id, chat.id)).rejects.toThrow();
+
+    expect((await sessionsService.findOne(session.id)).id).toBe(session.id);
+    expect(await planChatsService.findByParent(parent.id)).toHaveLength(1);
+  });
+
+  it('removes a dangling relation when its child is actually missing', async () => {
+    const parent = await createParent();
+    provider.forkConversation.mockResolvedValue({ providerSessionId: 'child' });
+    const { planChat: chat, session } = await planChatsService.ensure(
+      parent.id,
+      {
+        reviewId: 'delete-test',
+        anchorMessageId: 'a1',
+        anchorMessageKind: 'assistant',
+      },
+    );
+    // Simulate legacy dangling metadata without exercising cascade deletion.
+    sqliteConn.pragma('foreign_keys = OFF');
+    sqliteConn.prepare('DELETE FROM sessions WHERE id = ?').run(session.id);
+    sqliteConn.pragma('foreign_keys = ON');
+
+    await expect(planChatsService.delete(parent.id, chat.id)).resolves.toEqual({
+      id: chat.id,
+      deleted: true,
+    });
+    expect(await planChatsService.findByParent(parent.id)).toHaveLength(0);
   });
 });
