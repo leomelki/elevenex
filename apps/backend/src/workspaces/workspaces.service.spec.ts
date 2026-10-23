@@ -296,7 +296,7 @@ describe('WorkspacesService', () => {
   });
 
   it.each([false, true])(
-    'migrates duplicate defaults with folder/suffix collisions and preserves scoped links (legacy unique index=%s)',
+    'merges duplicate defaults preserving folder names, IDs and scoped links (legacy unique index=%s)',
     async (legacyUniqueIndex) => {
       const migrationsFolder = path.resolve(__dirname, '../../drizzle');
       const prefix = await mkdtemp(
@@ -477,25 +477,18 @@ describe('WorkspacesService', () => {
         const repairedFolders = await upgrade
           .select()
           .from(schema.sessionFolders);
-        expect(repairedFolders.map((folder) => folder.id)).toEqual(
-          folders.map((folder) => folder.id),
+        expect(repairedFolders).toEqual(
+          folders.map((folder) => ({
+            ...folder,
+            workspaceId: folder.workspaceId === leased.id ? leased.id : main.id,
+          })),
         );
-        expect(
-          repairedFolders.find((folder) => folder.id === incoming.id),
-        ).toMatchObject({
-          name: `Work${suffix}${suffix}${suffix}`,
-          archivedAt: incoming.archivedAt,
-          workspaceId: main.id,
-        });
-        expect(
-          repairedFolders.find((folder) => folder.id === original.id)?.name,
-        ).toBe('Work');
         const merged = repairedFolders.filter(
           (folder) => folder.workspaceId === main.id,
         );
         expect(merged).toHaveLength(folders.length - 1);
-        expect(new Set(merged.map((folder) => folder.name)).size).toBe(
-          merged.length,
+        expect(merged.filter((folder) => folder.name === 'Work')).toHaveLength(
+          3,
         );
         expect(await upgrade.select().from(schema.sessions)).toEqual(
           sessions.map((session) => ({
