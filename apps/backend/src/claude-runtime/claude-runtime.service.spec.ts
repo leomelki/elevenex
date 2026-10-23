@@ -86,6 +86,7 @@ describe('ClaudeRuntimeService', () => {
     updateStatus: jest.Mock;
     updateRuntimeActivity: jest.Mock;
     clearStatus: jest.Mock;
+    reactivateSession: jest.Mock;
   };
   let terminalService: {
     startSession: jest.Mock;
@@ -215,6 +216,7 @@ describe('ClaudeRuntimeService', () => {
       updateStatus: jest.fn().mockResolvedValue(undefined),
       updateRuntimeActivity: jest.fn(),
       clearStatus: jest.fn(),
+      reactivateSession: jest.fn(),
     });
 
     terminalService = {
@@ -1545,6 +1547,7 @@ describe('ClaudeRuntimeService', () => {
     await expect(service.submitPrompt(7, 'Archived')).rejects.toThrow('closed');
     expect(query).not.toHaveBeenCalled();
     service.reactivateSession(7);
+    expect(hooksService.reactivateSession).toHaveBeenCalledWith(7);
     await service.submitPrompt(7, 'Continue the investigation');
     expect(query).toHaveBeenCalledTimes(1);
   });

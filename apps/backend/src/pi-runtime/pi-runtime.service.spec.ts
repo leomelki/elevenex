@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
+import { promises as fs } from 'fs';
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -219,6 +220,7 @@ function createService(options?: {
       modelsPath: '/Users/test/.pi/agent/models.json',
     })),
   };
+  const tokens = { ensureToken: jest.fn().mockResolvedValue('evx_pi_test') };
   return {
     service: new PiRuntimeService(
       sessions as never,
@@ -234,9 +236,10 @@ function createService(options?: {
           reasoningEffort: null,
         }),
       } as never,
-      { ensureToken: jest.fn().mockResolvedValue('evx_pi_test') } as never,
+      tokens as never,
     ),
     sessions,
+    tokens,
   };
 }
 
@@ -317,6 +320,192 @@ describe('PiRuntimeService lifecycle', () => {
     ]);
     expect(first).toBe(second);
     expect(mockSpawn).toHaveBeenCalledTimes(1);
+    await service.onModuleDestroy();
+  });
+
+  it.each([
+    'prompt lookup',
+    'runtime lookup',
+    'token',
+    'config directory',
+    'extension path',
+    'environment',
+    'status update',
+    'change capture',
+  ])(
+    'drains cleanup during %s without a late prompt or publication',
+    async (stage) => {
+      jest.useRealTimers();
+      const { service, sessions, tokens } = createService();
+      const session = await sessions.findOne(1);
+      const pending = createDeferred<any>();
+      const entered = createDeferred<void>();
+      const pause = () => {
+        entered.resolve();
+        return pending.promise;
+      };
+      let restore: (() => void) | undefined;
+      let configDir: string | undefined;
+      let value: unknown;
+      const child = createPiProcess('/tmp/pi-session.jsonl');
+      mockSpawn.mockReturnValue(child as never);
+      switch (stage) {
+        case 'prompt lookup':
+        case 'runtime lookup':
+          sessions.findOne.mockImplementationOnce(pause);
+          value = session;
+          break;
+        case 'token':
+          tokens.ensureToken.mockImplementationOnce(pause);
+          value = 'token';
+          break;
+        case 'config directory': {
+          sessions.findOne.mockResolvedValue({
+            ...session,
+            surface: 'agent',
+          } as any);
+          configDir = await mkdtemp(join(tmpdir(), 'pi-cleanup-race-'));
+          const spy = jest.spyOn(fs, 'mkdtemp').mockImplementationOnce(pause);
+          restore = () => spy.mockRestore();
+          value = configDir;
+          break;
+        }
+        case 'extension path': {
+          const spy = jest
+            .spyOn(service as any, 'agentExtensionPath')
+            .mockImplementationOnce(pause);
+          restore = () => spy.mockRestore();
+          value = '/mock/extension.js';
+          break;
+        }
+        case 'environment':
+          mockBuildAugmentedEnv.mockImplementationOnce(pause);
+          value = { PATH: '/mock/bin' };
+          break;
+        case 'status update':
+          sessions.updateStatus.mockImplementationOnce(pause);
+          break;
+        case 'change capture':
+          (service as any).turnChanges = {
+            begin: jest.fn(pause),
+            finish: jest.fn(),
+            cancelSession: jest.fn(),
+          };
+          break;
+      }
+      const start = (
+        stage === 'runtime lookup'
+          ? (service as any).ensureRuntime(1)
+          : service.submitPrompt(1, 'Never dispatch this')
+      ).catch(() => undefined);
+      try {
+        await entered.promise;
+        const events = jest.fn();
+        service.on('event', events);
+        let cleaned = false;
+        const cleanup = service.cleanupSession(1).then(() => {
+          cleaned = true;
+        });
+        await Promise.resolve();
+        expect(cleaned).toBe(false);
+        await expect(service.submitPrompt(1, 'During cleanup')).rejects.toThrow(
+          'closed',
+        );
+        pending.resolve(value);
+        await Promise.all([start, cleanup]);
+        expect(
+          child.stdin.writes
+            .map((line) => JSON.parse(line))
+            .filter((command) => command.type === 'prompt'),
+        ).toEqual([]);
+        if (stage !== 'status update' && stage !== 'change capture')
+          expect(mockSpawn).not.toHaveBeenCalled();
+        expect(events).not.toHaveBeenCalled();
+        for (const map of [
+          'runtimes',
+          'runtimeStarts',
+          'initializingRuns',
+          'runtimeStates',
+          'activeRuns',
+          'promptTasks',
+        ]) {
+          expect((service as any)[map].has(1)).toBe(false);
+        }
+        if (configDir)
+          await expect(fs.stat(configDir)).rejects.toMatchObject({
+            code: 'ENOENT',
+          });
+      } finally {
+        pending.resolve(value);
+        await start;
+        restore?.();
+        await service.onModuleDestroy();
+        if (configDir) await rm(configDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('drains module shutdown while a runtime is still being created', async () => {
+    const { service, tokens } = createService();
+    const pending = createDeferred<string>();
+    const entered = createDeferred<void>();
+    tokens.ensureToken.mockImplementationOnce(() => {
+      entered.resolve();
+      return pending.promise;
+    });
+    const start = service.submitPrompt(1, 'Old prompt');
+    await entered.promise;
+    const shutdown = service.onModuleDestroy();
+    pending.resolve('token');
+    await Promise.all([start, shutdown]);
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect((service as any).runtimeStarts.size).toBe(0);
+    await expect(service.submitPrompt(1, 'After shutdown')).rejects.toThrow(
+      'closed',
+    );
+  });
+
+  it('ignores an old exit after cleanup and reopen without touching the replacement run', async () => {
+    jest.useRealTimers();
+    const { service } = createService();
+    mockSpawn.mockImplementation(
+      () => createPiProcess('/tmp/pi-session.jsonl') as never,
+    );
+    const old = await (service as any).ensureRuntime(1);
+    await service.cleanupSession(1);
+    await (service as any).ensureRuntime(1);
+    const replacement = (service as any).runtimes.get(1);
+    const run = { resolveCompletion: jest.fn() };
+    (service as any).activeRuns.set(1, run);
+    const events = jest.fn();
+    service.on('event', events);
+    old.emit('exit', { message: 'Old process finally exited' });
+    expect((service as any).runtimes.get(1)).toBe(replacement);
+    expect((service as any).activeRuns.get(1)).toBe(run);
+    expect(run.resolveCompletion).not.toHaveBeenCalled();
+    expect(events).not.toHaveBeenCalled();
+    (service as any).activeRuns.delete(1);
+    await service.onModuleDestroy();
+  });
+
+  it('keeps socket ownership across cleanup and only schedules idle shutdown after the last tab detaches', async () => {
+    jest.useRealTimers();
+    const { service } = createService();
+    mockSpawn.mockImplementation(() => createPiProcess('/tmp/pi-session.jsonl') as never);
+    service.onClientAttached(1);
+    service.onClientAttached(1);
+    await (service as any).ensureRuntime(1);
+    await service.cleanupSession(1);
+    await (service as any).ensureRuntime(1);
+    const entry = (service as any).runtimes.get(1);
+    expect(entry.attachedClients).toBe(2);
+    service.onClientDetached(1);
+    expect(entry.attachedClients).toBe(1);
+    expect(entry.idleTimer).toBeNull();
+    service.onClientDetached(1);
+    expect(entry.attachedClients).toBe(0);
+    expect(entry.idleTimer).not.toBeNull();
+    expect((service as any).clientCounts.has(1)).toBe(false);
     await service.onModuleDestroy();
   });
 

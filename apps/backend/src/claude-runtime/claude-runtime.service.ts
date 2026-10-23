@@ -1300,6 +1300,7 @@ export class ClaudeRuntimeService
 
   reactivateSession(sessionId: number): void {
     this.invalidatedSessions.delete(sessionId);
+    this.claudeHooksService.reactivateSession(sessionId);
   }
 
   async rewindConversation(

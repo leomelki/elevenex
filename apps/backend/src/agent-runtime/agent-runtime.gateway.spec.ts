@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import { EventEmitter } from 'events';
 import { AgentRuntimeGateway } from './agent-runtime.gateway.js';
 
 function deferred<T>() {
@@ -10,6 +11,51 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+
+describe('AgentRuntimeGateway client ownership', () => {
+  it.each(['pi', 'opencode'])(
+    'balances %s multi-tab attachment and duplicate disconnects',
+    (providerId) => {
+      let count = 0;
+      const provider = {
+        onClientAttached: jest.fn(() => count++),
+        onClientDetached: jest.fn(() => count--),
+      };
+      const gateway = new AgentRuntimeGateway(
+        { getProvider: () => provider } as any,
+        {} as any,
+        {} as any,
+      );
+      gateway.attachToServer(new EventEmitter() as any);
+      const connect = () => {
+        const ws = Object.assign(new EventEmitter(), {
+          close: jest.fn(() => ws.emit('close')),
+        });
+        (gateway as any).wss.emit('connection', ws, {
+          url: `/agent-runtime?provider=${providerId}&sessionId=7`,
+          headers: { host: 'localhost' },
+        });
+        return ws;
+      };
+      const first = connect();
+      const second = connect();
+      expect(count).toBe(2);
+      first.emit('error', new Error('Disconnected'));
+      first.emit('close');
+      expect(count).toBe(1);
+      second.emit('close');
+      expect(count).toBe(0);
+      expect(provider.onClientAttached).toHaveBeenCalledTimes(2);
+      expect(provider.onClientDetached).toHaveBeenCalledTimes(2);
+
+      connect();
+      connect();
+      gateway.onModuleDestroy();
+      expect(count).toBe(0);
+      expect(provider.onClientDetached).toHaveBeenCalledTimes(4);
+    },
+  );
+});
 
 describe('AgentRuntimeGateway hydration', () => {
   function setup() {

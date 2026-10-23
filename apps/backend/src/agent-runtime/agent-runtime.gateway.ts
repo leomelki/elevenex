@@ -366,11 +366,10 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   ): void {
     const current = this.clients.get(key);
     const hadClient = current?.delete(ws) ?? false;
-    const hasRemainingClients = Boolean(current && current.size > 0);
     if (current && current.size === 0) {
       this.clients.delete(key);
     }
-    if (hadClient && !hasRemainingClients) {
+    if (hadClient) {
       this.registry.getProvider(providerId).onClientDetached?.(sessionId);
     }
   }
@@ -380,8 +379,12 @@ export class AgentRuntimeGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
-    for (const bucket of this.clients.values()) {
+    for (const [key, bucket] of this.clients) {
+      const separator = key.lastIndexOf(':');
+      const providerId = key.slice(0, separator);
+      const sessionId = Number(key.slice(separator + 1));
       for (const client of bucket) {
+        this.removeClient(providerId, sessionId, key, client);
         client.close(1001, 'Server shutting down');
       }
     }
