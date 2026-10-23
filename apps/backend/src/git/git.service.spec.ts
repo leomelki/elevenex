@@ -3,10 +3,25 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync, execSync } from 'node:child_process';
-import { GitService, isValidGitRef } from './git.service.js';
+import {
+  GitService,
+  isValidGitRef,
+  type GitStatusSummary,
+} from './git.service.js';
+import type { SimpleGit, StatusResult } from 'simple-git';
 import { clearWorktreeFingerprintCache } from './git-worktree-fingerprint.js';
 import { BadRequestException } from '@nestjs/common';
 import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 describe('GitService', () => {
   let service: GitService;
@@ -386,6 +401,12 @@ describe('GitService', () => {
       );
       expect(request.prompt).toContain('### COMMIT_CONVENTION.md');
       expect(request.prompt).toContain('Use Conventional Commits.');
+      expect(request.prompt).toContain(
+        execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], {
+          cwd: repoPath,
+          encoding: 'utf8',
+        }).trim(),
+      );
     });
 
     it('should reject when the selected provider cannot generate a message', async () => {
@@ -554,6 +575,227 @@ describe('GitService', () => {
   });
 
   describe('getStatusSummary', () => {
+    it('shares the entire pending summary and rereads stats on the next poll', async () => {
+      fs.writeFileSync(path.join(repoPath, 'notes.txt'), 'note\n');
+      const entered = deferred<void>();
+      const upstream = deferred<string>();
+      const getUpstream = jest
+        .spyOn(service as any, 'getUpstream')
+        .mockResolvedValue('origin/main')
+        .mockImplementationOnce(() => {
+          entered.resolve();
+          return upstream.promise;
+        });
+      const numstat = jest.spyOn(service as any, 'readNumstat');
+      const untracked = jest.spyOn(service as any, 'readUntrackedFileStats');
+      const counts = jest
+        .spyOn(service as any, 'getAheadBehind')
+        .mockResolvedValue({ ahead: 1, behind: 0 });
+
+      const first = service.getStatusSummary(repoPath);
+      await entered.promise;
+      const second = service.getStatusSummary(`${repoPath}/.`);
+      expect(second).toBe(first);
+      upstream.resolve('origin/main');
+      const [summary, shared] = await Promise.all([first, second]);
+      expect(shared).toBe(summary);
+      expect(numstat).toHaveBeenCalledTimes(2);
+      expect(untracked).toHaveBeenCalledTimes(1);
+      expect(getUpstream).toHaveBeenCalledTimes(1);
+      expect(counts).toHaveBeenCalledTimes(1);
+
+      fs.writeFileSync(path.join(repoPath, 'notes.txt'), 'note\nsecond\n');
+      const next = await service.getStatusSummary(repoPath);
+      expect(next.unstaged.additions).toBe(2);
+      expect(numstat).toHaveBeenCalledTimes(4);
+      expect(untracked).toHaveBeenCalledTimes(2);
+      expect(getUpstream).toHaveBeenCalledTimes(2);
+      expect(counts).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([true, false])(
+      'uses local remote refs without network (tracking=%s)',
+      async (tracking) => {
+        const branch = execFileSync('git', ['branch', '--show-current'], {
+          cwd: repoPath,
+          encoding: 'utf8',
+        }).trim();
+        execFileSync(
+          'git',
+          ['remote', 'add', 'origin', 'ssh://offline.invalid/repo.git'],
+          { cwd: repoPath },
+        );
+        execFileSync(
+          'git',
+          ['update-ref', `refs/remotes/origin/${branch}`, 'HEAD'],
+          { cwd: repoPath },
+        );
+        if (tracking) {
+          execFileSync(
+            'git',
+            ['branch', `--set-upstream-to=origin/${branch}`],
+            { cwd: repoPath },
+          );
+        }
+        const network = jest.spyOn(service as any, 'readRemoteBranchSha');
+
+        const summary = await service.getStatusSummary(repoPath);
+
+        expect(summary.upstream).toBe(`origin/${branch}`);
+        expect(summary.ahead).toBe(0);
+        expect(summary.behind).toBe(0);
+        expect(network).not.toHaveBeenCalled();
+      },
+    );
+
+    it('detects a same-named branch through a restricted fetch refspec', async () => {
+      const remotePath = path.join(tmpDir, 'remote.git');
+      const branch = execFileSync('git', ['branch', '--show-current'], {
+        cwd: repoPath,
+        encoding: 'utf8',
+      }).trim();
+      execFileSync('git', ['init', '--bare', remotePath], { stdio: 'pipe' });
+      execFileSync('git', ['remote', 'add', 'origin', remotePath], {
+        cwd: repoPath,
+      });
+      execFileSync(
+        'git',
+        [
+          'config',
+          'remote.origin.fetch',
+          '+refs/heads/other:refs/remotes/origin/other',
+        ],
+        { cwd: repoPath },
+      );
+      execFileSync('git', ['push', 'origin', `HEAD:refs/heads/${branch}`], {
+        cwd: repoPath,
+        stdio: 'pipe',
+      });
+      const network = jest.spyOn(service as any, 'readRemoteBranchSha');
+
+      const summary = await service.getStatusSummary(repoPath);
+      expect(summary).toMatchObject({
+        upstream: `origin/${branch}`,
+        ahead: 0,
+        behind: 0,
+      });
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'Local commit'], {
+        cwd: repoPath,
+      });
+      const next = await service.getStatusSummary(repoPath);
+      expect(next).toMatchObject({
+        upstream: `origin/${branch}`,
+        ahead: 1,
+        behind: 0,
+      });
+      expect(network).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not claim synced when the advertised remote object is missing locally', async () => {
+      execFileSync(
+        'git',
+        ['remote', 'add', 'origin', 'ssh://offline.invalid/repo.git'],
+        { cwd: repoPath },
+      );
+      jest
+        .spyOn(service as any, 'readRemoteBranchSha')
+        .mockResolvedValue('f'.repeat(40));
+
+      const summary = await service.getStatusSummary(repoPath);
+      expect(summary.upstream).toBeNull();
+      expect(summary.hasChanges).toBe(false);
+    });
+
+    it('returns local changes when a remote is unavailable and backs off retries', async () => {
+      execFileSync(
+        'git',
+        ['remote', 'add', 'origin', path.join(tmpDir, 'missing.git')],
+        { cwd: repoPath },
+      );
+      fs.writeFileSync(path.join(repoPath, 'notes.txt'), 'local content\n');
+      const network = jest.spyOn(service as any, 'readRemoteBranchSha');
+
+      const summary = await service.getStatusSummary(repoPath);
+      expect(summary.upstream).toBeNull();
+      expect(summary.files).toEqual([
+        { path: 'notes.txt', status: 'untracked', staged: false },
+      ]);
+      await service.getStatusSummary(repoPath);
+      expect(network).toHaveBeenCalledTimes(1);
+    });
+
+    (process.platform === 'win32' ? it.skip : it)(
+      'bounds a stalled SSH helper and kills it while preserving local status',
+      async () => {
+        const helper = path.join(tmpDir, 'slow-ssh.sh');
+        const pidFile = path.join(tmpDir, 'ssh.pid');
+        fs.writeFileSync(
+          helper,
+          'printf \'%s\' "$$" > "$1"\n' +
+            "while :; do printf 'still waiting\\n' >&2; sleep 0.05; done\n",
+        );
+        execFileSync(
+          'git',
+          ['remote', 'add', 'origin', 'ssh://offline.invalid/repo.git'],
+          { cwd: repoPath },
+        );
+        execFileSync(
+          'git',
+          ['config', 'core.sshCommand', `/bin/sh "${helper}" "${pidFile}"`],
+          { cwd: repoPath },
+        );
+        execFileSync('git', ['config', 'ssh.variant', 'ssh'], {
+          cwd: repoPath,
+        });
+        fs.writeFileSync(path.join(repoPath, 'notes.txt'), 'local content\n');
+        const readRemote = (service as any).readRemoteBranchSha.bind(service);
+        let networkDuration = 0;
+        const network = jest
+          .spyOn(service as any, 'readRemoteBranchSha')
+          .mockImplementation(async (...args: unknown[]) => {
+            const started = Date.now();
+            try {
+              return await readRemote(...args);
+            } finally {
+              networkDuration = Date.now() - started;
+            }
+          });
+        try {
+          const [summary, shared] = await Promise.all([
+            service.getStatusSummary(repoPath),
+            service.getStatusSummary(`${repoPath}/.`),
+          ]);
+          expect(networkDuration).toBeLessThan(4_000);
+          expect(shared).toBe(summary);
+          expect(summary.upstream).toBeNull();
+          expect(summary.total.additions).toBe(1);
+          expect(fs.existsSync(pidFile)).toBe(true);
+          const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+          // Give the OS time to reap the killed helper.
+          for (let attempt = 0; attempt < 20; attempt++) {
+            try {
+              process.kill(pid, 0);
+            } catch {
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+          expect(() => process.kill(pid, 0)).toThrow();
+          await service.getStatusSummary(repoPath);
+          expect(network).toHaveBeenCalledTimes(1);
+        } finally {
+          if (fs.existsSync(pidFile)) {
+            try {
+              process.kill(Number(fs.readFileSync(pidFile, 'utf8')), 'SIGKILL');
+            } catch {
+              /* Already killed. */
+            }
+          }
+        }
+      },
+      15_000,
+    );
+
     it('ignores internal changes in tracked worktrees across status, stats, diffs, and fingerprints', async () => {
       const firstWorktree = createTrackedWorktree('first');
       const secondWorktree = createTrackedWorktree('second');
@@ -842,6 +1084,225 @@ describe('GitService', () => {
       expect(result.pushed).toBe(false);
       expect(result.message).toContain('No git remote is configured');
     });
+
+    it('rejects detached HEAD without enumerating branches', async () => {
+      execFileSync('git', ['checkout', '--detach'], {
+        cwd: repoPath,
+        stdio: 'pipe',
+      });
+      await expect(service.push(repoPath)).rejects.toThrow(
+        'Cannot push from detached HEAD.',
+      );
+      const summary = await service.getStatusSummary(repoPath, {
+        conflictsOnly: true,
+      });
+      expect(summary.branch).toBe('HEAD');
+    });
+
+    it('reads the current branch in an unborn repository', async () => {
+      const unborn = path.join(tmpDir, 'unborn');
+      fs.mkdirSync(unborn);
+      execFileSync('git', ['init', '-b', 'new-branch'], {
+        cwd: unborn,
+        stdio: 'pipe',
+      });
+      const summary = await service.getStatusSummary(unborn, {
+        conflictsOnly: true,
+      });
+      expect(summary.branch).toBe('new-branch');
+      expect(summary.headSha).toBeNull();
+      expect(await service.push(unborn)).toMatchObject({
+        branch: 'new-branch',
+        pushed: false,
+      });
+    });
+  });
+});
+
+describe('GitService pending request coordination', () => {
+  let service: GitService;
+  const summary = { branch: 'main' } as GitStatusSummary;
+
+  beforeEach(() => {
+    service = new GitService({} as TextAgentGenerationService);
+  });
+
+  it('separates conflict mode and worktrees and retries failed summaries', async () => {
+    const pending = deferred<GitStatusSummary>();
+    const load = jest
+      .spyOn(service as any, 'loadStatusSummary')
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue(summary);
+    const first = service.getStatusSummary('/repo');
+    const shared = service.getStatusSummary('/repo/.', {
+      conflictsOnly: false,
+    });
+    const conflicts = service.getStatusSummary('/repo', {
+      conflictsOnly: true,
+    });
+    const other = service.getStatusSummary('/other');
+    expect(shared).toBe(first);
+    expect(conflicts).not.toBe(first);
+    expect(other).not.toBe(first);
+    expect(load).toHaveBeenCalledTimes(3);
+    pending.reject(new Error('read failed'));
+    const results = await Promise.allSettled([first, shared, conflicts, other]);
+    expect(results.map((result) => result.status)).toEqual([
+      'rejected',
+      'rejected',
+      'fulfilled',
+      'fulfilled',
+    ]);
+    await expect(service.getStatusSummary('/repo')).resolves.toBe(summary);
+    expect(load).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'keeps a replacement request when an older one %ss',
+    async (settle) => {
+      const old = deferred<GitStatusSummary>();
+      const replacement = deferred<GitStatusSummary>();
+      jest
+        .spyOn(service as any, 'loadStatusSummary')
+        .mockReturnValue(old.promise);
+      const request = service.getStatusSummary('/repo');
+      const inFlight = (service as any).statusSummaryInFlight as Map<
+        string,
+        Promise<GitStatusSummary>
+      >;
+      const key = JSON.stringify([path.resolve('/repo'), false]);
+      inFlight.set(key, replacement.promise);
+      if (settle === 'resolve') old.resolve(summary);
+      else old.reject(new Error('old failure'));
+      await Promise.allSettled([request]);
+      expect(service.getStatusSummary('/repo')).toBe(replacement.promise);
+      replacement.resolve(summary);
+    },
+  );
+
+  it('coalesces fallback probes across concurrent callers, backs off failures, and retries', async () => {
+    const git = {
+      getRemotes: jest
+        .fn()
+        .mockResolvedValue([{ name: 'origin', refs: { fetch: 'url' } }]),
+      revparse: jest.fn().mockRejectedValue(new Error('no local remote ref')),
+    } as unknown as SimpleGit;
+    const pending = deferred<string | null>();
+    const probe = jest
+      .spyOn(service as any, 'readRemoteBranchSha')
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue('a'.repeat(40));
+    const find = (cwd: string) =>
+      (service as any).findMatchingRemoteBranch(git, cwd, 'main');
+    const first = find('/repo');
+    const second = find('/repo/.');
+    // Let both callers reach the pending network operation.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(probe).toHaveBeenCalledTimes(1);
+    pending.reject(new Error('offline'));
+    expect(await Promise.all([first, second])).toEqual([null, null]);
+    expect((service as any).remoteBranchInFlight.size).toBe(0);
+    expect(await find('/repo')).toBeNull();
+    expect(probe).toHaveBeenCalledTimes(1);
+
+    const now = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_001);
+    try {
+      expect(await find('/repo')).toEqual({
+        ref: 'origin/main',
+        sha: 'a'.repeat(40),
+      });
+      expect(probe).toHaveBeenCalledTimes(2);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('caps remote cache entries and isolates branches and changed remote URLs', async () => {
+    const remotes = [{ name: 'origin', refs: { fetch: 'old-url' } }];
+    const git = {
+      getRemotes: jest.fn().mockResolvedValue(remotes),
+      revparse: jest.fn().mockRejectedValue(new Error('no local remote ref')),
+    } as unknown as SimpleGit;
+    const probe = jest
+      .spyOn(service as any, 'readRemoteBranchSha')
+      .mockResolvedValue(null);
+    const find = (branch: string) =>
+      (service as any).findMatchingRemoteBranch(git, '/repo', branch);
+    for (let index = 0; index < 260; index++) await find(`branch-${index}`);
+    expect((service as any).remoteBranchShaCache.size).toBe(256);
+    expect(probe).toHaveBeenCalledTimes(260);
+    await find('branch-259');
+    expect(probe).toHaveBeenCalledTimes(260);
+    await find('branch-0');
+    expect(probe).toHaveBeenCalledTimes(261);
+    remotes[0].refs.fetch = 'new-url';
+    await find('branch-259');
+    expect(probe).toHaveBeenCalledTimes(262);
+  });
+
+  it('maps large mixed dirty sets without repeated array membership scans', () => {
+    const renamed = Array.from({ length: 2_000 }, (_, index) => ({
+      from: `old-${index}`,
+      to: `new-${index}`,
+    }));
+    const created = Array.from(
+      { length: 2_000 },
+      (_, index) => `added-${index}`,
+    );
+    const deleted = Array.from(
+      { length: 2_000 },
+      (_, index) => `deleted-${index}`,
+    );
+    const status = {
+      staged: [
+        ...renamed.map((file) => file.to),
+        ...created,
+        ...deleted,
+        'both',
+        'index-only',
+        'conflict',
+      ],
+      renamed,
+      created,
+      deleted: [...deleted, 'unstaged-delete'],
+      conflicted: ['conflict'],
+      modified: ['both', 'index-only', 'conflict'],
+      not_added: ['untracked'],
+      files: [{ path: 'index-only', index: 'M', working_dir: ' ' }],
+    } as unknown as StatusResult;
+    for (const list of [
+      status.staged,
+      status.created,
+      status.deleted,
+      status.conflicted,
+    ]) {
+      jest.spyOn(list, 'includes').mockImplementation(() => {
+        throw new Error('repeated membership scan');
+      });
+    }
+    jest.spyOn(status.renamed, 'some').mockImplementation(() => {
+      throw new Error('repeated rename scan');
+    });
+    const files = (service as any).toFileStatuses(status);
+    expect(files).toHaveLength(6_006);
+    expect(files).toEqual(
+      expect.arrayContaining([
+        {
+          path: 'new-1999',
+          oldPath: 'old-1999',
+          status: 'renamed',
+          staged: true,
+        },
+        { path: 'added-1999', status: 'added', staged: true },
+        { path: 'deleted-1999', status: 'deleted', staged: true },
+        { path: 'both', status: 'modified', staged: true },
+        { path: 'both', status: 'modified', staged: false },
+        { path: 'index-only', status: 'modified', staged: true },
+        { path: 'conflict', status: 'conflicted', staged: false },
+        { path: 'unstaged-delete', status: 'deleted', staged: false },
+        { path: 'untracked', status: 'untracked', staged: false },
+      ]),
+    );
   });
 });
 
