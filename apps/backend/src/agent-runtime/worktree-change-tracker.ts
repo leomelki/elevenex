@@ -176,10 +176,12 @@ export class WorktreeChangeTracker {
             await git(
               this.root,
               ['check-ignore', '--stdin', '-z'],
-              Buffer.from(journal.join('\0') + '\0'),
+              // check-ignore rejects literal pathspec magic. A ./ prefix
+              // protects leading colons while its stdin keeps names literal.
+              Buffer.from(journal.map((path) => `./${path}`).join('\0') + '\0'),
               [0, 1],
             ),
-          ),
+          ).map((path) => path.slice(2)),
         );
         for (const path of journal) {
           if (!ignored.has(path)) paths.add(path);
@@ -803,10 +805,15 @@ function git(
       'GIT_COMMON_DIR',
       'GIT_OBJECT_DIRECTORY',
       'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+      'GIT_LITERAL_PATHSPECS',
+      'GIT_GLOB_PATHSPECS',
+      'GIT_NOGLOB_PATHSPECS',
+      'GIT_ICASE_PATHSPECS',
     ])
       delete env[key];
     env.GIT_OPTIONAL_LOCKS = '0';
-    env.GIT_LITERAL_PATHSPECS = '1';
+    // Only ls-tree receives filename pathspecs; check-ignore rejects this mode.
+    if (args[0] === 'ls-tree') env.GIT_LITERAL_PATHSPECS = '1';
     const child = spawn('git', ['--no-optional-locks', ...args], {
       cwd,
       env,
