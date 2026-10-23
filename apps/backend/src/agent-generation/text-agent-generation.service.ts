@@ -19,6 +19,36 @@ import { SettingsService } from '../settings/settings.service.js';
 
 export type TextAgentProvider = 'claude' | 'codex' | 'pi' | 'opencode';
 
+export const DEFAULT_TEXT_GENERATION_TIMEOUT_MS = 60_000;
+
+/** Races even startup/cleanup APIs that do not implement AbortSignal themselves. */
+function withCancellation<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(signal.reason);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    // Attach both handlers immediately, including when already cancelled. A late
+    // provider failure must never become an unhandled rejection.
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+    if (signal.aborted) onAbort();
+  });
+}
+
 export function readCodexExecAgentMessage(line: string): string | null {
   try {
     const event = JSON.parse(line) as {
@@ -57,6 +87,9 @@ export interface GenerateTextWithAgentRequest {
   worktreePath: string;
   prompt: string | AsyncIterable<SDKUserMessage>;
   taskName: string;
+  /** Overall deadline, including provider startup and cleanup. Defaults to 60s. */
+  timeoutMs?: number;
+  signal?: AbortSignal;
   claude?: {
     model?: string;
     maxTurns?: number;
@@ -103,20 +136,61 @@ export class TextAgentGenerationService {
   async generate(
     request: GenerateTextWithAgentRequest,
   ): Promise<GenerateTextWithAgentResult | null> {
-    switch (request.provider) {
-      case 'claude':
-        return this.generateWithClaude(request);
-      case 'codex':
-        return this.generateWithCodex(request);
-      case 'opencode':
-        return this.generateWithOpenCode(request);
-      case 'pi':
-        return this.generateWithPi(request);
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(request.signal?.reason);
+    request.signal?.addEventListener('abort', onAbort, { once: true });
+    if (request.signal?.aborted) onAbort();
+    const requestedTimeout =
+      request.timeoutMs ??
+      (request.provider === 'pi'
+        ? request.pi?.timeoutMs
+        : request.provider === 'opencode'
+          ? request.opencode?.timeoutMs
+          : undefined);
+    const timeoutMs =
+      requestedTimeout !== undefined &&
+      Number.isFinite(requestedTimeout) &&
+      requestedTimeout >= 0
+        ? requestedTimeout
+        : DEFAULT_TEXT_GENERATION_TIMEOUT_MS;
+    const timer = setTimeout(
+      () =>
+        controller.abort(
+          new Error(`Text generation timed out after ${timeoutMs}ms`),
+        ),
+      timeoutMs,
+    );
+    try {
+      controller.signal.throwIfAborted();
+      switch (request.provider) {
+        case 'claude':
+          return await this.generateWithClaude(request, controller);
+        case 'codex':
+          return await this.generateWithCodex(request, controller.signal);
+        case 'opencode':
+          return await this.generateWithOpenCode(request, controller.signal);
+        case 'pi':
+          return await this.generateWithPi(
+            request,
+            controller.signal,
+            timeoutMs,
+          );
+      }
+      return null;
+    } catch (error) {
+      this.logger.warn(
+        `[${request.taskName}] ${request.provider} generation failed: ${String(error)}`,
+      );
+      return null;
+    } finally {
+      clearTimeout(timer);
+      request.signal?.removeEventListener('abort', onAbort);
     }
   }
 
   private async generateWithOpenCode(
     request: GenerateTextWithAgentRequest,
+    signal: AbortSignal,
   ): Promise<GenerateTextWithAgentResult | null> {
     if (typeof request.prompt !== 'string') return null;
     const model = this.resolveModel('opencode', request.opencode?.model);
@@ -124,30 +198,37 @@ export class TextAgentGenerationService {
       cwd: request.worktreePath,
       config: { permission: { '*': 'deny' } },
     });
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-      server.close();
-    }, request.opencode?.timeoutMs ?? 60_000);
     let sessionID: string | undefined;
+    let client: Awaited<ReturnType<OpenCodeServer['start']>> | undefined;
     try {
-      const client = await server.start();
+      client = await withCancellation(server.start(), signal);
+      signal.throwIfAborted();
       sessionID = (
-        await client.session.create({
-          title: `Elevenex ${request.taskName}`,
-          permission: [{ permission: '*', pattern: '*', action: 'deny' }],
-        })
+        await withCancellation(
+          client.session.create(
+            {
+              title: `Elevenex ${request.taskName}`,
+              permission: [{ permission: '*', pattern: '*', action: 'deny' }],
+            },
+            { signal },
+          ),
+          signal,
+        )
       ).data!.id;
+      signal.throwIfAborted();
       const result = (
-        await client.session.prompt(
-          {
-            sessionID,
-            model: openCodeModel(model),
-            parts: [{ type: 'text', text: request.prompt }],
-            system:
-              'Return only the requested text. Do not use tools or modify files.',
-          },
-          { signal: controller.signal },
+        await withCancellation(
+          client.session.prompt(
+            {
+              sessionID,
+              model: openCodeModel(model),
+              parts: [{ type: 'text', text: request.prompt }],
+              system:
+                'Return only the requested text. Do not use tools or modify files.',
+            },
+            { signal },
+          ),
+          signal,
         )
       ).data;
       if (!result || result.info.error) return null;
@@ -163,12 +244,14 @@ export class TextAgentGenerationService {
       );
       return null;
     } finally {
-      clearTimeout(timer);
-      if (sessionID && !controller.signal.aborted) {
+      if (sessionID && client && !signal.aborted) {
         try {
-          await (await server.start()).session.delete({ sessionID });
+          await withCancellation(
+            client.session.delete({ sessionID }, { signal }),
+            signal,
+          );
         } catch {
-          /* Cleanup cannot fail the caller. */
+          // Cleanup is bounded too, but cannot fail a completed generation.
         }
       }
       server.close();
@@ -177,15 +260,21 @@ export class TextAgentGenerationService {
 
   private async generateWithClaude(
     request: GenerateTextWithAgentRequest,
+    controller: AbortController,
   ): Promise<GenerateTextWithAgentResult | null> {
-    const sdk = await this.loadClaudeSdk();
+    const signal = controller.signal;
+    const sdk = await withCancellation(this.loadClaudeSdk(), signal);
     if (!sdk) {
       this.logger.warn(`[${request.taskName}] Claude SDK not available`);
       return null;
     }
 
     const model = this.resolveModel('claude', request.claude?.model);
-    const env = await buildAugmentedEnvAsync(process.env, request.worktreePath);
+    const env = await withCancellation(
+      buildAugmentedEnvAsync(process.env, request.worktreePath),
+      signal,
+    );
+    signal.throwIfAborted();
     const canUseTool =
       request.claude?.canUseTool ??
       (async () => ({
@@ -196,6 +285,7 @@ export class TextAgentGenerationService {
     const runtimeQuery = sdk.query({
       prompt: request.prompt,
       options: {
+        abortController: controller,
         cwd: request.worktreePath,
         ...(model ? { model } : {}),
         permissionMode: 'plan',
@@ -227,14 +317,19 @@ export class TextAgentGenerationService {
 
     let assistantText = '';
     try {
-      for await (const message of runtimeQuery) {
-        if (message.type === 'assistant') {
-          assistantText += this.extractClaudeAssistantText(message);
-        }
-        if (message.type === 'result') {
-          break;
-        }
-      }
+      await withCancellation(
+        (async () => {
+          for await (const message of runtimeQuery) {
+            if (message.type === 'assistant') {
+              assistantText += this.extractClaudeAssistantText(message);
+            }
+            if (message.type === 'result') {
+              break;
+            }
+          }
+        })(),
+        signal,
+      );
     } catch (error) {
       this.logger.warn(
         `[${request.taskName}] Claude query failed: ${
@@ -251,6 +346,7 @@ export class TextAgentGenerationService {
 
   private async generateWithCodex(
     request: GenerateTextWithAgentRequest,
+    signal: AbortSignal,
   ): Promise<GenerateTextWithAgentResult | null> {
     if (typeof request.prompt !== 'string') {
       this.logger.warn(
@@ -261,15 +357,17 @@ export class TextAgentGenerationService {
 
     const model = this.resolveModel('codex', request.codex?.model);
     try {
-      const env = await buildAugmentedEnvAsync(
-        process.env,
-        request.worktreePath,
+      const env = await withCancellation(
+        buildAugmentedEnvAsync(process.env, request.worktreePath),
+        signal,
       );
+      signal.throwIfAborted();
       const text = await this.runCodexExec(
         request.worktreePath,
         request.prompt,
         model,
         env,
+        signal,
       );
       return {
         provider: 'codex',
@@ -297,8 +395,10 @@ export class TextAgentGenerationService {
     prompt: string,
     model: string | null,
     env: NodeJS.ProcessEnv,
+    signal: AbortSignal,
   ): Promise<string> {
     return new Promise((resolve, reject) => {
+      signal.throwIfAborted();
       const { command, shell } = buildSpawnCommand(resolveCodexBinary());
       const args = [
         'exec',
@@ -328,30 +428,68 @@ export class TextAgentGenerationService {
       let protocolError = '';
       let stderr = '';
       let settled = false;
+      let closed = false;
+      let killTimer: NodeJS.Timeout | undefined;
 
-      lines.on('line', (line) => {
+      const onLine = (line: string) => {
         const message = readCodexExecAgentMessage(line);
         if (message !== null) finalResponse = message;
         const error = readCodexExecError(line);
         if (error !== null) protocolError = error;
-      });
-      child.stderr.on('data', (chunk: Buffer) => {
+      };
+      const onStderr = (chunk: Buffer) => {
         stderr = (stderr + chunk.toString('utf8')).slice(-32_768);
-      });
+      };
+      const cleanup = () => {
+        if (killTimer) clearTimeout(killTimer);
+        signal.removeEventListener('abort', onAbort);
+        lines.off('line', onLine);
+        lines.close();
+        lines.off('error', fail);
+        child.stderr.off('data', onStderr);
+        child.off('error', fail);
+        child.stdin.off('error', fail);
+        child.stdout.off('error', fail);
+        child.stderr.off('error', fail);
+        child.off('close', onClose);
+      };
 
       const fail = (error: Error): void => {
         if (settled) return;
         settled = true;
+        signal.removeEventListener('abort', onAbort);
         lines.close();
         reject(error);
+        // Keep error handlers until the pipes close; killing a child can race
+        // an EPIPE from its pending stdin write. Escalate even if SIGTERM was sent.
+        killTimer = setTimeout(() => {
+          try {
+            if (!closed) child.kill('SIGKILL');
+          } catch {
+            /* Already gone. */
+          }
+          cleanup();
+        }, 1_500);
+        killTimer.unref();
+        try {
+          child.kill('SIGTERM');
+        } catch {
+          /* Already gone. */
+        }
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
       };
-      child.once('error', fail);
-      child.stdin.once('error', fail);
-      child.once('exit', (code, signal) => {
+      const onAbort = () => fail(signal.reason);
+      const onClose = (
+        code: number | null,
+        exitSignal: NodeJS.Signals | null,
+      ) => {
+        closed = true;
+        cleanup();
         if (settled) return;
         settled = true;
-        lines.close();
-        if (code === 0) {
+        if (code === 0 && !protocolError) {
           resolve(finalResponse);
           return;
         }
@@ -359,17 +497,34 @@ export class TextAgentGenerationService {
           new Error(
             protocolError ||
               stderr.trim() ||
-              `Codex exited with code ${code ?? 'null'} and signal ${signal ?? 'null'}`,
+              `Codex exited with code ${code ?? 'null'} and signal ${exitSignal ?? 'null'}`,
           ),
         );
-      });
+      };
+      lines.on('line', onLine);
+      lines.on('error', fail);
+      child.stderr.on('data', onStderr);
+      child.on('error', fail);
+      child.stdin.on('error', fail);
+      child.stdout.on('error', fail);
+      child.stderr.on('error', fail);
+      // close follows stdio end, so readline can consume the final JSONL line,
+      // including output without a trailing newline. exit is too early.
+      child.once('close', onClose);
+      signal.addEventListener('abort', onAbort, { once: true });
 
-      child.stdin.end(prompt);
+      try {
+        child.stdin.end(prompt);
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
   private async generateWithPi(
     request: GenerateTextWithAgentRequest,
+    signal: AbortSignal,
+    timeoutMs: number,
   ): Promise<GenerateTextWithAgentResult | null> {
     if (typeof request.prompt !== 'string') {
       this.logger.warn(
@@ -378,22 +533,18 @@ export class TextAgentGenerationService {
       return null;
     }
 
-    const timeoutMs = request.pi?.timeoutMs ?? 60_000;
     const model = this.resolveModel('pi', request.pi?.model);
     const runtime = new PiSessionRuntime({
       cwd: request.worktreePath,
       timeoutMs,
     });
+    const sending = new AbortController();
+    const sendSignal = AbortSignal.any([signal, sending.signal]);
     let assistantDeltaText = '';
     let assistantFinalText = '';
     let cleanupCompletion = () => {};
 
     const completionPromise = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        cleanupCompletion();
-        reject(new Error('Pi text generation timed out.'));
-      }, timeoutMs);
-
       const onEvent = (event: Record<string, unknown>) => {
         if (event.type === 'agent_end') {
           cleanupCompletion();
@@ -438,7 +589,6 @@ export class TextAgentGenerationService {
       };
 
       cleanupCompletion = () => {
-        clearTimeout(timer);
         runtime.off('event', onEvent);
         runtime.off('exit', onExit);
       };
@@ -448,24 +598,40 @@ export class TextAgentGenerationService {
     });
 
     try {
-      const parsedModel = this.parsePiModelRef(model);
-      if (parsedModel) {
-        await runtime.send({
-          type: 'set_model',
-          provider: parsedModel.provider,
-          modelId: parsedModel.modelId,
-        });
-      } else if (model) {
-        this.logger.warn(
-          `[${request.taskName}] Ignoring invalid Pi model reference: ${JSON.stringify(model)}`,
-        );
-      }
-      await runtime.send({
-        type: 'prompt',
-        message: request.prompt,
-        reasoningEffort: 'low',
-      });
-      await completionPromise;
+      // Observe completion immediately: Pi can emit error/exit before an RPC
+      // send acknowledges. Promise.all also releases us if that send hangs.
+      await withCancellation(
+        Promise.all([
+          completionPromise,
+          (async () => {
+            const parsedModel = this.parsePiModelRef(model);
+            if (parsedModel) {
+              await withCancellation(
+                runtime.send({
+                  type: 'set_model',
+                  provider: parsedModel.provider,
+                  modelId: parsedModel.modelId,
+                }),
+                sendSignal,
+              );
+            } else if (model) {
+              this.logger.warn(
+                `[${request.taskName}] Ignoring invalid Pi model reference: ${JSON.stringify(model)}`,
+              );
+            }
+            sendSignal.throwIfAborted();
+            await withCancellation(
+              runtime.send({
+                type: 'prompt',
+                message: request.prompt,
+                reasoningEffort: 'low',
+              }),
+              sendSignal,
+            );
+          })(),
+        ]),
+        signal,
+      );
       return {
         provider: 'pi',
         model,
@@ -477,10 +643,11 @@ export class TextAgentGenerationService {
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      cleanupCompletion();
       return null;
     } finally {
-      await runtime.stop().catch(() => undefined);
+      cleanupCompletion();
+      sending.abort();
+      await withCancellation(runtime.stop(), signal).catch(() => undefined);
     }
   }
 

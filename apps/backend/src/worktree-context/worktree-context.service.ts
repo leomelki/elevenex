@@ -7,8 +7,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  type OnModuleInit,
 } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import {
   type DefaultLogFields,
   type ListLogLine,
@@ -73,7 +74,7 @@ interface CachedSnapshotEntry {
 class StaleWorktreeContextError extends Error {}
 
 @Injectable()
-export class WorktreeContextService {
+export class WorktreeContextService implements OnModuleInit {
   private readonly logger = new Logger(WorktreeContextService.name);
   private readonly snapshotLocks = new Map<
     string,
@@ -85,6 +86,7 @@ export class WorktreeContextService {
   >();
   private readonly preparingWorktrees = new Set<string>();
   private readonly revisions = new Map<string, number>();
+  private readonly generationControllers = new Map<string, AbortController>();
   private readonly emptySnapshotCache = new Map<string, CachedSnapshotEntry>();
 
   constructor(
@@ -94,17 +96,34 @@ export class WorktreeContextService {
     private readonly textAgentGenerationService: TextAgentGenerationService,
   ) {}
 
+  onModuleInit(): void {
+    // Generation locks belong to this process. After a crash no request owns
+    // these rows, and leaving them generating prevents the UI from retrying.
+    this.db
+      .update(schema.worktreeContexts)
+      .set({ generationStatus: 'failed', updatedAt: new Date().toISOString() })
+      .where(eq(schema.worktreeContexts.generationStatus, 'generating'))
+      .run();
+  }
+
+  private supersede(repoId: number, worktreePath: string): void {
+    const key = this.cacheKey(repoId, worktreePath);
+    this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
+    this.snapshotLocks.delete(key);
+    this.generationLocks.delete(key);
+    const controller = this.generationControllers.get(key);
+    this.generationControllers.delete(key);
+    controller?.abort(new Error('Worktree context generation superseded'));
+    this.clearEmptySnapshotCache(repoId, worktreePath);
+  }
+
   /** Reset task-scoped context without waiting for an old LLM request to finish. */
   resetForTask(
     repoId: number,
     worktreePath: string,
     rootRef: string | null = null,
   ): Promise<void> {
-    const key = this.cacheKey(repoId, worktreePath);
-    this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
-    this.snapshotLocks.delete(key);
-    this.generationLocks.delete(key);
-    this.clearEmptySnapshotCache(repoId, worktreePath);
+    this.supersede(repoId, worktreePath);
     this.db
       .delete(schema.worktreeContexts)
       .where(
@@ -382,6 +401,9 @@ export class WorktreeContextService {
     worktreePath: string,
     rootRef: string | null,
   ): Promise<WorktreeContextSnapshot> {
+    if (!this.preparingWorktrees.has(this.cacheKey(repoId, worktreePath))) {
+      this.supersede(repoId, worktreePath);
+    }
     return this.withCurrentSnapshot(repoId, worktreePath, async (revision) => {
       await this.getRepo(repoId);
       const existing = await this.findRecord(repoId, worktreePath);
@@ -391,9 +413,12 @@ export class WorktreeContextService {
       await this.upsertRecord(repoId, worktreePath, revision, {
         rootRef: this.normalizeOptionalText(rootRef),
         contextSentence: existing?.contextSentence ?? null,
-        generationStatus: this.normalizeGenerationStatus(
-          existing?.generationStatus,
-        ),
+        generationStatus:
+          existing?.generationStatus === 'generating'
+            ? existing.contextSentence
+              ? 'ready'
+              : 'idle'
+            : this.normalizeGenerationStatus(existing?.generationStatus),
         generatedAt: existing?.generatedAt ?? null,
         lastUsedAt: existing?.lastUsedAt ?? null,
         updatedAt: now,
@@ -451,11 +476,21 @@ export class WorktreeContextService {
       `[worktree-context] start generation for ${worktreePath} (repo=${repoId}, force=${!!options.force}, rootRef=${options.rootRef ?? 'inherit'})`,
     );
     const startedAt = Date.now();
+    const controller = new AbortController();
+    this.generationControllers.set(key, controller);
     const promise = this.withCurrentSnapshot(repoId, worktreePath, (revision) =>
-      this.generateInternal(repoId, worktreePath, options, revision),
+      this.generateInternal(
+        repoId,
+        worktreePath,
+        options,
+        revision,
+        controller.signal,
+      ),
     ).finally(() => {
       if (this.generationLocks.get(key) === promise)
         this.generationLocks.delete(key);
+      if (this.generationControllers.get(key) === controller)
+        this.generationControllers.delete(key);
       this.logger.log(
         `[worktree-context] generation released for ${worktreePath} after ${Date.now() - startedAt}ms`,
       );
@@ -509,6 +544,7 @@ export class WorktreeContextService {
       provider: AgentProviderId;
     },
     revision: number,
+    signal: AbortSignal,
   ): Promise<WorktreeContextSnapshot> {
     const repo = await this.getRepo(repoId);
     const provider = this.normalizeGenerationProvider(options.provider);
@@ -590,6 +626,7 @@ export class WorktreeContextService {
         worktreePath,
         branchContext,
         provider,
+        signal,
       );
       this.logger.log(
         `[worktree-context] generated for ${worktreePath}: "${sentence}"`,
@@ -603,6 +640,7 @@ export class WorktreeContextService {
           contextSentence: sentence,
           generationStatus: 'ready',
           generatedAt: new Date().toISOString(),
+          previousSentence: existing?.contextSentence ?? null,
         },
       );
       return this.toSnapshot(repoId, worktreePath, ready, branchContext);
@@ -621,6 +659,7 @@ export class WorktreeContextService {
           contextSentence: existing?.contextSentence ?? null,
           generationStatus: 'failed',
           generatedAt: existing?.generatedAt ?? null,
+          previousSentence: existing?.contextSentence ?? null,
         },
       );
       return this.toSnapshot(
@@ -637,6 +676,7 @@ export class WorktreeContextService {
     repoPath: string,
     branchContext: BranchContextInput,
     provider: ContextGenerationProvider,
+    signal: AbortSignal,
   ): Promise<string> {
     const canUseTool: CanUseTool = async () => ({
       behavior: 'deny',
@@ -712,6 +752,7 @@ export class WorktreeContextService {
           worktreePath: repoPath,
           prompt,
           taskName: 'worktree-context',
+          signal,
           claude: { canUseTool },
         })
       )?.text.trim() ?? '';
@@ -1036,21 +1077,40 @@ export class WorktreeContextService {
       contextSentence: string | null;
       generationStatus: GenerationStatus;
       generatedAt: string | null;
+      previousSentence: string | null;
     },
   ) {
-    const existing = await this.findRecord(repoId, worktreePath);
     this.assertCurrentRevision(repoId, worktreePath, revision);
-    const now = new Date().toISOString();
+    // Check ownership and write in one SQLite statement without yielding after
+    // the revision check. Settings/usage edits keep their own columns, and an
+    // outcome can never recreate a deleted row or overwrite a new root/sentence.
+    const result = this.db
+      .update(schema.worktreeContexts)
+      .set({
+        contextSentence: input.contextSentence,
+        generationStatus: input.generationStatus,
+        generatedAt: input.generatedAt,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(
+        and(
+          eq(schema.worktreeContexts.repoId, repoId),
+          eq(schema.worktreeContexts.worktreePath, worktreePath),
+          eq(schema.worktreeContexts.generationStatus, 'generating'),
+          input.rootRef === null
+            ? isNull(schema.worktreeContexts.rootRef)
+            : eq(schema.worktreeContexts.rootRef, input.rootRef),
+          input.previousSentence === null
+            ? isNull(schema.worktreeContexts.contextSentence)
+            : eq(
+                schema.worktreeContexts.contextSentence,
+                input.previousSentence,
+              ),
+        ),
+      )
+      .run();
+    if (!result.changes) throw new StaleWorktreeContextError();
     this.clearEmptySnapshotCache(repoId, worktreePath);
-    await this.upsertRecord(repoId, worktreePath, revision, {
-      rootRef: input.rootRef,
-      contextSentence: input.contextSentence,
-      generationStatus: input.generationStatus,
-      generatedAt: input.generatedAt,
-      lastUsedAt: existing?.lastUsedAt ?? null,
-      updatedAt: now,
-      createdAt: existing?.createdAt ?? now,
-    });
     return this.findRecord(repoId, worktreePath);
   }
 
