@@ -231,6 +231,86 @@ describe('OpenCode runtime lifecycle', () => {
     }
   });
 
+  it.each(['detached', 'mcp'])(
+    'evicts a %s runtime after confirmed interruption',
+    async (connection) => {
+      jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+      const f = fixture();
+      const aborted = deferred<{ data: boolean }>();
+      f.client.session.abort.mockImplementation(() => aborted.promise);
+      try {
+        if (connection === 'detached') f.provider.onClientAttached(1);
+        await f.provider.submitPrompt(1, 'first');
+        await tick();
+        if (connection === 'detached') f.provider.onClientDetached(1);
+
+        const stopping = f.provider.interrupt(1);
+        await tick();
+        f.turn.resolve({ data: undefined });
+        await tick();
+        jest.advanceTimersByTime(5 * 60_000);
+        expect(f.server.close).not.toHaveBeenCalled();
+
+        aborted.resolve({ data: true });
+        await stopping;
+        expect(await f.provider.getRuntimeState(1)).toMatchObject({
+          runPhase: 'idle',
+          canInterrupt: false,
+          warmState: 'warm',
+        });
+        jest.advanceTimersByTime(5 * 60_000 - 1);
+        expect(f.server.close).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(1);
+        expect(f.server.close).toHaveBeenCalledTimes(1);
+        expect((await f.provider.getRuntimeState(1)).warmState).toBe('cold');
+      } finally {
+        aborted.resolve({ data: true });
+        f.provider.onModuleDestroy();
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it('keeps an unconfirmed stop alive and evicts after a successful retry', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+    const f = fixture();
+    const retried = deferred<{ data: boolean }>();
+    f.client.session.abort
+      .mockRejectedValueOnce(new Error('interrupt failed'))
+      .mockImplementationOnce(() => retried.promise);
+    try {
+      await f.provider.submitPrompt(1, 'first');
+      await tick();
+      await expect(f.provider.interrupt(1)).rejects.toThrow('interrupt failed');
+      f.turn.resolve({ data: undefined });
+      await tick();
+      jest.advanceTimersByTime(10 * 60_000);
+      expect(f.server.close).not.toHaveBeenCalled();
+      expect(await f.provider.getRuntimeState(1)).toMatchObject({
+        runPhase: 'error',
+        canInterrupt: true,
+      });
+
+      const stopping = f.provider.interrupt(1);
+      await tick();
+      jest.advanceTimersByTime(5 * 60_000);
+      expect(f.server.close).not.toHaveBeenCalled();
+      retried.resolve({ data: true });
+      await stopping;
+      expect(await f.provider.getRuntimeState(1)).toMatchObject({
+        runPhase: 'idle',
+        canInterrupt: false,
+      });
+      jest.advanceTimersByTime(5 * 60_000);
+      expect(f.server.close).toHaveBeenCalledTimes(1);
+      expect((await f.provider.getRuntimeState(1)).warmState).toBe('cold');
+    } finally {
+      retried.resolve({ data: true });
+      f.provider.onModuleDestroy();
+      jest.useRealTimers();
+    }
+  });
+
   it('surfaces failure to confirm native interruption', async () => {
     const f = fixture();
     f.client.session.abort.mockRejectedValue(new Error('interrupt failed'));

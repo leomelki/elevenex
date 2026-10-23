@@ -1190,6 +1190,7 @@ export class OpenCodeAgentRuntimeProvider
     state.canInterrupt = false;
     state.runPhase = 'idle';
     this.emitState(entry);
+    this.scheduleIdle(sessionId);
   }
   async cancelPendingPrompt(sessionId: number, id: string) {
     const state = await this.state(sessionId);
