@@ -18,6 +18,10 @@ import { SettingsService } from '../settings/settings.service.js';
 import { UNLIMITED_WORKTREES_PER_REPO } from '../settings/settings.types.js';
 import { WorktreeInfo, WorktreesService } from './worktrees.service.js';
 import { isMissingWorktreePath } from './worktree-path.js';
+import {
+  mapWorktrees,
+  WorktreeStatusSnapshot,
+} from './worktree-observation.js';
 
 export type WorktreeLinkStatus = 'linked' | 'unlinked';
 export type PendingStashStatus = 'pending' | 'applied' | 'apply_conflicted';
@@ -48,6 +52,7 @@ export interface WorktreePoolItem {
   isDirty: boolean;
   hasConflicts: boolean;
   statusLoading: boolean;
+  statusError?: string | null;
   runningAgentCount: number;
   /**
    * Sessions still attached to this worktree, whether or not their agent is
@@ -103,7 +108,24 @@ const NO_SESSION_ACTIVITY: SessionActivity = {
 
 @Injectable()
 export class WorktreePoolService {
-  private readonly reconciliations = new Map<string, Promise<void>>();
+  private readonly reconciliations = new Map<
+    string,
+    Promise<WorktreeInfo[] | null>
+  >();
+  private readonly observations = new Map<
+    string,
+    {
+      worktrees: Promise<WorktreeInfo[] | null>;
+      statuses: Map<string, Promise<WorktreeStatusSnapshot>>;
+      readers: number;
+    }
+  >();
+  private readonly statusReads = new Map<
+    string,
+    Promise<WorktreeStatusSnapshot>
+  >();
+  private activeStatusReads = 0;
+  private readonly statusWaiters: Array<() => void> = [];
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -122,70 +144,112 @@ export class WorktreePoolService {
     return items.sort((left, right) => left.name.localeCompare(right.name));
   }
 
+  /** Retain Git observations only for the lifetime of overlapping readers. */
+  async withRepoObservation<T>(
+    repo: typeof schema.repos.$inferSelect,
+    read: (observation: {
+      worktrees: WorktreeInfo[];
+      status: (worktreePath: string) => Promise<WorktreeStatusSnapshot>;
+    }) => Promise<T>,
+  ): Promise<T> {
+    const root = await this.realPathOrRaw(repo.path);
+    let observation = this.observations.get(root);
+    if (!observation) {
+      observation = {
+        worktrees: this.reconcileObservedRoot(repo, root),
+        statuses: new Map(),
+        readers: 0,
+      };
+      this.observations.set(root, observation);
+    }
+    const current = observation;
+    current.readers++;
+    try {
+      return await read({
+        worktrees: (await current.worktrees) ?? [],
+        status: async (worktreePath) => {
+          const key = await this.realPathOrRaw(worktreePath);
+          let pending = current.statuses.get(key);
+          if (!pending) {
+            pending = this.getWorktreeStatusSnapshot(key);
+            current.statuses.set(key, pending);
+          }
+          return pending;
+        },
+      });
+    } finally {
+      if (--current.readers === 0 && this.observations.get(root) === current)
+        this.observations.delete(root);
+    }
+  }
+
   async streamForRepo(
     repo: typeof schema.repos.$inferSelect,
     onItem: (item: WorktreePoolItem) => Promise<void> | void,
   ): Promise<number> {
-    const { poolRows, gitByRealPath } = await this.preparePoolListing(repo);
-
-    await Promise.all(
-      poolRows.map(async (pool) => {
-        const item = await this.buildPoolItem(repo.id, pool, gitByRealPath);
+    return this.withRepoObservation(repo, async (observation) => {
+      const { poolRows, gitByRealPath } = await this.preparePoolListing(
+        repo,
+        observation.worktrees,
+      );
+      await mapWorktrees(poolRows, async (pool) => {
+        const item = await this.buildPoolItem(
+          repo.id,
+          pool,
+          gitByRealPath,
+          observation.status,
+        );
         await onItem(item);
-      }),
-    );
-
-    return poolRows.length;
+      });
+      return poolRows.length;
+    });
   }
 
   async streamProgressivelyForRepo(
     repo: typeof schema.repos.$inferSelect,
     onItem: (item: WorktreePoolItem) => Promise<void> | void,
   ): Promise<number> {
-    const { poolRows, gitByRealPath } = await this.preparePoolListing(repo);
-
-    await Promise.all(
-      poolRows.map(async (pool) => {
+    return this.withRepoObservation(repo, async (observation) => {
+      const { poolRows, gitByRealPath } = await this.preparePoolListing(
+        repo,
+        observation.worktrees,
+      );
+      await mapWorktrees(poolRows, async (pool) => {
         const metadata = await this.buildPoolItemMetadata(
           repo.id,
           pool,
           gitByRealPath,
         );
         await onItem(metadata.item);
-
         if (!metadata.exists) return;
-        const status = await this.getWorktreeStatusSnapshot(pool.path);
-        const currentBranch =
-          status.currentBranch ?? metadata.item.currentBranch;
-        await onItem({
-          ...metadata.item,
-          currentBranch,
-          isDetached: metadata.gitInfo?.isDetached ?? currentBranch === null,
-          isDirty: status.isDirty,
-          hasConflicts: status.hasConflicts,
-          statusLoading: false,
-        });
-      }),
-    );
-
-    return poolRows.length;
+        const item = await this.buildPoolItem(
+          repo.id,
+          pool,
+          gitByRealPath,
+          observation.status,
+        );
+        await onItem(item);
+      });
+      return poolRows.length;
+    });
   }
 
   private async preparePoolListing(
     repo: typeof schema.repos.$inferSelect,
+    gitWorktrees: WorktreeInfo[],
   ) {
-    await this.reconcileRepo(repo);
     const root = await this.realPathOrRaw(repo.path);
     const poolRows = await this.db
       .select()
       .from(schema.repoWorktrees)
       .where(eq(schema.repoWorktrees.repoRootPath, root));
-
-    const gitWorktrees = await this.safeListWorktrees(repo.path);
-    const gitByRealPath = new Map<string, WorktreeInfo>();
-    for (const worktree of gitWorktrees) {
-      gitByRealPath.set(await this.realPathOrRaw(worktree.path), worktree);
-    }
+    const gitByRealPath = new Map(
+      await mapWorktrees(
+        gitWorktrees,
+        async (worktree) =>
+          [await this.realPathOrRaw(worktree.path), worktree] as const,
+      ),
+    );
     return { poolRows, gitByRealPath };
   }
 
@@ -193,16 +257,21 @@ export class WorktreePoolService {
     repoId: number,
     pool: typeof schema.repoWorktrees.$inferSelect,
     gitByRealPath: Map<string, WorktreeInfo>,
+    readStatus: (worktreePath: string) => Promise<WorktreeStatusSnapshot>,
   ): Promise<WorktreePoolItem> {
+    if (await isMissingWorktreePath(pool.path))
+      return (await this.buildPoolItemMetadata(repoId, pool, gitByRealPath))
+        .item;
+    const status = await readStatus(pool.path);
+    // Ownership and active session counts must be read after slow status scans.
     const metadata = await this.buildPoolItemMetadata(
       repoId,
       pool,
       gitByRealPath,
     );
-    if (!metadata.exists) return metadata.item;
-
-    const status = await this.getWorktreeStatusSnapshot(pool.path);
-    const currentBranch = status.currentBranch ?? metadata.item.currentBranch;
+    const currentBranch = status.error
+      ? metadata.item.currentBranch
+      : status.currentBranch;
     return {
       ...metadata.item,
       currentBranch,
@@ -210,6 +279,7 @@ export class WorktreePoolService {
       isDirty: status.isDirty,
       hasConflicts: status.hasConflicts,
       statusLoading: false,
+      statusError: status.error,
     };
   }
 
@@ -222,7 +292,7 @@ export class WorktreePoolService {
       this.realPathOrRaw(pool.path),
       this.findLinkedOwner(pool.id),
       this.findProjectWorkspace(repoId, pool.id),
-      this.pathExists(pool.path),
+      isMissingWorktreePath(pool.path).then((missing) => !missing),
     ]);
     const gitInfo = gitByRealPath.get(realPath) ?? null;
     // Unlinking a worktree archives and stops its sessions, so only an owned
@@ -342,7 +412,12 @@ export class WorktreePoolService {
     const startPoint = input.startPoint.trim() || 'HEAD';
     const worktreePath =
       input.path?.trim() ||
-      path.join(path.dirname(repo.path), '.worktrees', repo.name, this.slugify(name));
+      path.join(
+        path.dirname(repo.path),
+        '.worktrees',
+        repo.name,
+        this.slugify(name),
+      );
     const git = worktreeSimpleGit(repo.path);
     const args = ['worktree', 'add', worktreePath];
     const branchName = input.branchName?.trim();
@@ -398,7 +473,10 @@ export class WorktreePoolService {
     }
 
     const owner = await this.findLinkedWorkspace(pool.id);
-    if (owner?.workspace.taskRequestId || owner?.workspace.archivedAt) throw new ConflictException('This worktree belongs to a task. Open or finish that task first.');
+    if (owner?.workspace.taskRequestId || owner?.workspace.archivedAt)
+      throw new ConflictException(
+        'This worktree belongs to a task. Open or finish that task first.',
+      );
     const projectWorkspace = await this.findProjectWorkspace(repo.id, pool.id);
     const ownerIsCurrentProject = owner?.repo.projectId === repo.projectId;
     const now = new Date().toISOString();
@@ -409,16 +487,28 @@ export class WorktreePoolService {
           'This worktree is linked to another project. Confirm before taking it over.',
         );
       }
-      await this.unlinkOwnerWorkspace(owner, repo.projectId, input.confirmStash);
+      await this.unlinkOwnerWorkspace(
+        owner,
+        repo.projectId,
+        input.confirmStash,
+      );
     }
 
-    if (owner && ownerIsCurrentProject && owner.workspace.id !== projectWorkspace?.id) {
-      await this.unlinkOwnerWorkspace(owner, repo.projectId, input.confirmStash);
+    if (
+      owner &&
+      ownerIsCurrentProject &&
+      owner.workspace.id !== projectWorkspace?.id
+    ) {
+      await this.unlinkOwnerWorkspace(
+        owner,
+        repo.projectId,
+        input.confirmStash,
+      );
     }
 
     const activeWorkspace = projectWorkspace ?? owner?.workspace ?? null;
     if (activeWorkspace && activeWorkspace.linkStatus !== 'unlinked') {
-      const status = await this.getWorktreeStatusSnapshot(pool.path);
+      const status = await this.requireWorktreeStatus(pool.path);
       if (status.currentBranch !== branchName && status.isDirty) {
         if (!input.confirmStash) {
           throw new ConflictException(
@@ -432,6 +522,9 @@ export class WorktreePoolService {
       }
     }
 
+    // An unowned checkout also needs a successful observation before reuse.
+    if (!activeWorkspace || activeWorkspace.linkStatus === 'unlinked')
+      await this.requireWorktreeStatus(pool.path);
     await this.checkoutBranch(repo.path, pool.path, branchName);
 
     const workspace =
@@ -479,11 +572,30 @@ export class WorktreePoolService {
     await this.projectsService.assertProjectIsActive(repo.projectId);
     const pool = await this.findPoolForRepo(repo, worktreeId);
     const owner = await this.findLinkedWorkspace(pool.id);
-    if (owner?.workspace.isDefault || (await this.samePath(pool.path, repo.path)))
-      throw new BadRequestException('The main checkout has a fixed name and location.');
-    if (owner?.workspace.taskRequestId || owner?.workspace.archivedAt) throw new ConflictException('Rename the task instead of moving its worktree.');
-    const history = await this.db.select({ id: schema.workspaces.id }).from(schema.workspaces).where(and(eq(schema.workspaces.path, pool.path), eq(schema.workspaces.linkStatus, 'unlinked')));
-    if (history.length) throw new ConflictException('This worktree has task history and cannot be moved.');
+    if (
+      owner?.workspace.isDefault ||
+      (await this.samePath(pool.path, repo.path))
+    )
+      throw new BadRequestException(
+        'The main checkout has a fixed name and location.',
+      );
+    if (owner?.workspace.taskRequestId || owner?.workspace.archivedAt)
+      throw new ConflictException(
+        'Rename the task instead of moving its worktree.',
+      );
+    const history = await this.db
+      .select({ id: schema.workspaces.id })
+      .from(schema.workspaces)
+      .where(
+        and(
+          eq(schema.workspaces.path, pool.path),
+          eq(schema.workspaces.linkStatus, 'unlinked'),
+        ),
+      );
+    if (history.length)
+      throw new ConflictException(
+        'This worktree has task history and cannot be moved.',
+      );
     const name = this.normalizeName(newName);
     const newPath = path.join(
       path.dirname(repo.path),
@@ -617,15 +729,25 @@ export class WorktreePoolService {
 
   async reconcileRepo(repo: typeof schema.repos.$inferSelect) {
     const root = await this.realPathOrRaw(repo.path);
+    const observation = this.observations.get(root);
+    if (observation) return observation.worktrees;
+    return this.reconcileObservedRoot(repo, root);
+  }
+
+  private async reconcileObservedRoot(
+    repo: typeof schema.repos.$inferSelect,
+    root: string,
+  ) {
     const existing = this.reconciliations.get(root);
     if (existing) return existing;
 
     const pending = this.reconcileRoot(repo, root);
     this.reconciliations.set(root, pending);
     try {
-      await pending;
+      return await pending;
     } finally {
-      this.reconciliations.delete(root);
+      if (this.reconciliations.get(root) === pending)
+        this.reconciliations.delete(root);
     }
   }
 
@@ -638,9 +760,9 @@ export class WorktreePoolService {
       worktrees = await this.worktreesService.listWorktrees(repo.path);
     } catch {
       // An unavailable repository is not evidence that its worktrees were deleted.
-      return;
+      return null;
     }
-    if (worktrees.length === 0) return;
+    if (worktrees.length === 0) return worktrees;
 
     const reposForRoot = await this.findReposForRoot(root);
     const poolRows = await this.db
@@ -663,22 +785,23 @@ export class WorktreePoolService {
       ...workspaceRows
         // Unassigned tasks retain historical paths. Only inspect directories
         // that are still assigned, so removed pool entries do not fail released tasks.
-        .filter((workspace) =>
-          !workspace.isDefault && workspace.path && workspace.linkStatus === 'linked',
+        .filter(
+          (workspace) =>
+            !workspace.isDefault &&
+            workspace.path &&
+            workspace.linkStatus === 'linked',
         )
         .map((workspace) => workspace.path),
     ]);
     const missingPaths = new Set<string>();
-    await Promise.all(
-      [...paths].map(async (worktreePath) => {
-        if (
-          worktreePath !== root &&
-          (await isMissingWorktreePath(worktreePath))
-        ) {
-          missingPaths.add(worktreePath);
-        }
-      }),
-    );
+    await mapWorktrees([...paths], async (worktreePath) => {
+      if (
+        worktreePath !== root &&
+        (await isMissingWorktreePath(worktreePath))
+      ) {
+        missingPaths.add(worktreePath);
+      }
+    });
 
     // Filesystem checks stay outside the synchronous SQLite transaction.
     // Explicitly detach references: older migrations lack ON DELETE SET NULL.
@@ -742,6 +865,7 @@ export class WorktreePoolService {
     for (const rootRepo of reposForRoot) {
       await this.backfillRepoWorkspaces(rootRepo, root);
     }
+    return worktrees;
   }
 
   private async unlinkOwnerWorkspace(
@@ -752,7 +876,7 @@ export class WorktreePoolService {
     unlinkedByProjectId: number,
     confirmStash?: boolean,
   ) {
-    const status = await this.getWorktreeStatusSnapshot(owner.workspace.path);
+    const status = await this.requireWorktreeStatus(owner.workspace.path);
     if (status.isDirty && !confirmStash) {
       throw new ConflictException(
         'This worktree has uncommitted changes. Confirm before stashing and taking it over.',
@@ -808,11 +932,13 @@ export class WorktreePoolService {
         })
         .where(eq(schema.workspaces.id, workspace.id));
     } catch (error) {
-      const status = await this.getWorktreeStatusSnapshot(worktreePath);
+      const status = await this.readWorktreeStatusSnapshot(worktreePath);
       await this.db
         .update(schema.workspaces)
         .set({
-          pendingStashStatus: status.hasConflicts ? 'apply_conflicted' : 'pending',
+          pendingStashStatus: status.hasConflicts
+            ? 'apply_conflicted'
+            : 'pending',
           updatedAt: new Date().toISOString(),
         })
         .where(eq(schema.workspaces.id, workspace.id));
@@ -892,7 +1018,13 @@ export class WorktreePoolService {
       .where(eq(schema.workspaces.repoId, repo.id));
 
     for (const workspace of workspaces) {
-      if (workspace.poolWorktreeId || workspace.archivedAt || workspace.taskRequestId || workspace.linkStatus === 'unlinked') continue;
+      if (
+        workspace.poolWorktreeId ||
+        workspace.archivedAt ||
+        workspace.taskRequestId ||
+        workspace.linkStatus === 'unlinked'
+      )
+        continue;
       const pool = await this.findPoolByPath(root, workspace.path);
       if (!pool) continue;
       await this.db
@@ -902,7 +1034,17 @@ export class WorktreePoolService {
           linkStatus: workspace.linkStatus || 'linked',
           updatedAt: new Date().toISOString(),
         })
-        .where(eq(schema.workspaces.id, workspace.id));
+        .where(
+          and(
+            eq(schema.workspaces.id, workspace.id),
+            eq(schema.workspaces.path, workspace.path),
+            isNull(schema.workspaces.poolWorktreeId),
+            isNull(schema.workspaces.archivedAt),
+            isNull(schema.workspaces.taskRequestId),
+            eq(schema.workspaces.linkStatus, workspace.linkStatus),
+            eq(schema.workspaces.taskState, workspace.taskState),
+          ),
+        );
     }
   }
 
@@ -1005,7 +1147,8 @@ export class WorktreePoolService {
           pendingStashCommit: workspace.pendingStashCommit,
           pendingStashMessage: workspace.pendingStashMessage,
           pendingStashCreatedAt: workspace.pendingStashCreatedAt,
-          pendingStashStatus: workspace.pendingStashStatus as PendingStashStatus | null,
+          pendingStashStatus:
+            workspace.pendingStashStatus as PendingStashStatus | null,
         }
       : null;
   }
@@ -1038,7 +1181,10 @@ export class WorktreePoolService {
       })
       .from(schema.workspaces)
       .innerJoin(schema.repos, eq(schema.workspaces.repoId, schema.repos.id))
-      .innerJoin(schema.projects, eq(schema.repos.projectId, schema.projects.id))
+      .innerJoin(
+        schema.projects,
+        eq(schema.repos.projectId, schema.projects.id),
+      )
       .where(
         and(
           eq(schema.workspaces.poolWorktreeId, poolWorktreeId),
@@ -1165,13 +1311,51 @@ export class WorktreePoolService {
     return null;
   }
 
-  private async getWorktreeStatusSnapshot(worktreePath: string): Promise<{
-    currentBranch: string | null;
-    isDirty: boolean;
-    hasConflicts: boolean;
-  }> {
-    const git = worktreeSimpleGit(worktreePath);
+  /** Share only overlapping reads; mutation decisions always inspect afresh. */
+  async getWorktreeStatusSnapshot(
+    worktreePath: string,
+  ): Promise<WorktreeStatusSnapshot> {
+    const key = await this.realPathOrRaw(worktreePath);
+    const existing = this.statusReads.get(key);
+    if (existing) return existing;
+    const pending = this.readWorktreeStatusSnapshot(key).finally(() => {
+      if (this.statusReads.get(key) === pending) this.statusReads.delete(key);
+    });
+    this.statusReads.set(key, pending);
+    return pending;
+  }
+
+  async requireWorktreeStatus(worktreePath: string) {
+    const status = await this.readWorktreeStatusSnapshot(worktreePath);
+    if (status.error)
+      throw new ConflictException({
+        code: 'worktree_observation_failed',
+        message: `Could not inspect this worktree; its assignment and files must be retained. ${status.error}`,
+      });
+    return status;
+  }
+
+  private async readWorktreeStatusSnapshot(
+    worktreePath: string,
+  ): Promise<WorktreeStatusSnapshot> {
+    // Reserve the slot when waking a waiter so new readers cannot jump the queue.
+    if (this.activeStatusReads >= 4)
+      await new Promise<void>((resolve) => this.statusWaiters.push(resolve));
+    else this.activeStatusReads++;
     try {
+      return await this.observeWorktreeStatus(worktreePath);
+    } finally {
+      const next = this.statusWaiters.shift();
+      if (next) next();
+      else this.activeStatusReads--;
+    }
+  }
+
+  private async observeWorktreeStatus(
+    worktreePath: string,
+  ): Promise<WorktreeStatusSnapshot> {
+    try {
+      const git = worktreeSimpleGit(worktreePath);
       // Git's built-in fsmonitor daemon is only supported on Windows and
       // macOS. Some large, shared repositories still set `core.fsmonitor=true`
       // on Linux; Git then falls back to a very expensive full worktree scan.
@@ -1187,7 +1371,7 @@ export class WorktreePoolService {
           '-z',
           '--untracked-files=normal',
         ]);
-        return this.parseStatusPorcelainV2(output);
+        return { ...this.parseStatusPorcelainV2(output), error: null };
       }
 
       const status = await git.status();
@@ -1197,12 +1381,14 @@ export class WorktreePoolService {
         currentBranch,
         isDirty: !status.isClean(),
         hasConflicts: status.conflicted.length > 0,
+        error: null,
       };
-    } catch {
+    } catch (error) {
       return {
         currentBranch: null,
-        isDirty: false,
-        hasConflicts: false,
+        isDirty: true,
+        hasConflicts: true,
+        error: error instanceof Error ? error.message : String(error),
       };
     }
   }

@@ -20,6 +20,7 @@ import { SessionsService } from '../sessions/sessions.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
 import { compareWorkspaceOrder } from './workspace-order.js';
+import { mapWorktrees } from '../worktrees/worktree-observation.js';
 import {
   PendingStashStatus,
   WorktreeLinkStatus,
@@ -51,6 +52,7 @@ export interface WorkspaceSnapshot {
   isMissing: boolean;
   isDirty: boolean;
   hasConflicts: boolean;
+  statusError?: string | null;
   linkStatus: WorktreeLinkStatus;
   desiredBranch: string | null;
   unlinkedAt: string | null;
@@ -63,8 +65,37 @@ export interface WorkspaceSnapshot {
   checkedOutElsewherePath: string | null;
 }
 
+type WorkspaceObservation = Pick<
+  WorkspaceSnapshot,
+  | 'currentBranch'
+  | 'head'
+  | 'isDetached'
+  | 'isBare'
+  | 'isLocked'
+  | 'lockReason'
+  | 'isMissing'
+  | 'isDirty'
+  | 'hasConflicts'
+  | 'statusError'
+  | 'branchCheckedOutElsewhere'
+  | 'checkedOutElsewherePath'
+>;
+
 @Injectable()
 export class WorkspacesService {
+  private readonly listings = new Map<
+    number,
+    Promise<
+      Map<
+        number,
+        {
+          version: string;
+          state: WorkspaceObservation;
+        }
+      >
+    >
+  >();
+  private readonly sessionReconciliations = new Map<number, Promise<void>>();
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly worktreesService: WorktreesService,
@@ -74,103 +105,197 @@ export class WorkspacesService {
   ) {}
 
   async ensureDefaultWorkspace(repo: typeof schema.repos.$inferSelect) {
-    const existing = await this.findDefault(repo.id);
-    if (existing) {
-      return existing;
-    }
-
-    const rows = await this.db
-      .insert(schema.workspaces)
-      .values({
-        repoId: repo.id,
-        name: 'Main checkout',
-        path: repo.path,
-        isDefault: true,
-        createdFromRef: 'HEAD',
-      })
-      .returning();
-
-    await this.backfillSessionsForWorkspace(repo.id, rows[0].id, repo.path);
-    return rows[0];
+    // A short, synchronous SQLite transaction makes read/create atomic even
+    // across service instances. Git and filesystem work stay outside it.
+    const workspace = this.db.transaction(
+      (tx) => {
+        const existing = tx
+          .select()
+          .from(schema.workspaces)
+          .where(
+            and(
+              eq(schema.workspaces.repoId, repo.id),
+              eq(schema.workspaces.isDefault, true),
+            ),
+          )
+          .get();
+        if (existing) return existing;
+        const created = tx
+          .insert(schema.workspaces)
+          .values({
+            repoId: repo.id,
+            name: 'Main checkout',
+            path: repo.path,
+            isDefault: true,
+            createdFromRef: 'HEAD',
+          })
+          .returning()
+          .get()!;
+        tx.update(schema.sessions)
+          .set({ workspaceId: created.id })
+          .where(
+            and(
+              eq(schema.sessions.repoId, repo.id),
+              eq(schema.sessions.worktreePath, repo.path),
+              isNull(schema.sessions.workspaceId),
+            ),
+          )
+          .run();
+        return created;
+      },
+      { behavior: 'immediate' },
+    );
+    return workspace;
   }
 
   async listForRepo(
     repo: typeof schema.repos.$inferSelect,
   ): Promise<WorkspaceSnapshot[]> {
-    await this.ensureDefaultWorkspace(repo);
-    await this.reconcileSessionWorktrees(repo);
-    await this.worktreePoolService.reconcileRepo(repo);
+    let pending = this.listings.get(repo.id);
+    if (!pending) {
+      pending = this.observeRepo(repo).finally(() => {
+        if (this.listings.get(repo.id) === pending)
+          this.listings.delete(repo.id);
+      });
+      this.listings.set(repo.id, pending);
+    }
+    const observations = await pending;
+    // Share expensive observations, never task ownership. Tasks can finish,
+    // reopen, or acquire a different checkout while a status scan is running.
+    const rows = await this.activeRows(repo.id);
+    return rows
+      .map((workspace) => {
+        const observed = observations.get(workspace.id);
+        const snapshot = this.toCachedSnapshot(workspace);
+        if (
+          workspace.linkStatus !== 'linked' ||
+          workspace.taskState !== 'ready'
+        )
+          return snapshot;
+        return observed?.version === this.checkoutVersion(workspace)
+          ? { ...snapshot, ...observed.state }
+          : {
+              ...snapshot,
+              isDirty: true,
+              hasConflicts: true,
+              statusError:
+                'The checkout assignment changed during observation. Refresh to inspect its current state.',
+            };
+      })
+      .sort(compareWorkspaceOrder);
+  }
 
-    const rows = await this.db
+  private activeRows(repoId: number) {
+    return this.db
       .select()
       .from(schema.workspaces)
       .where(
         and(
-          eq(schema.workspaces.repoId, repo.id),
+          eq(schema.workspaces.repoId, repoId),
           isNull(schema.workspaces.archivedAt),
         ),
       );
+  }
 
-    const gitWorktrees = await this.safeListWorktrees(repo.path);
-    const byRealPath = await this.indexWorktreesByRealPath(gitWorktrees);
+  private checkoutVersion(workspace: typeof schema.workspaces.$inferSelect) {
+    return JSON.stringify([
+      workspace.path,
+      workspace.poolWorktreeId,
+      workspace.linkStatus,
+      workspace.taskState,
+      workspace.taskRequestId,
+      workspace.taskConfig,
+      workspace.archivedAt,
+      workspace.unlinkedAt,
+    ]);
+  }
 
-    const snapshots = await Promise.all(
-      rows.map(async (workspace) => {
-        if (
-          workspace.archivedAt ||
-          workspace.linkStatus === 'unlinked' ||
-          (workspace.taskState && workspace.taskState !== 'ready')
-        )
-          return this.toCachedSnapshot(workspace);
-        const key = await this.realPathOrRaw(workspace.path);
-        const gitInfo = byRealPath.get(key) ?? null;
-        const isMissing = !gitInfo && !(await this.pathExists(workspace.path));
-        const currentBranch =
-          gitInfo?.branch ?? (await this.getCurrentBranch(workspace.path));
-        const isDirty = !isMissing && (await this.isDirty(workspace.path));
-        const hasConflicts =
-          !isMissing && (await this.hasConflicts(workspace.path));
-        const checkedOutElsewhere = currentBranch
-          ? await this.findBranchWorktreePath(
-              repo.path,
-              currentBranch,
-              workspace.path,
-            )
-          : null;
-
-        return {
-          ...this.taskMetadata(workspace),
-          id: workspace.id,
-          repoId: workspace.repoId,
-          name: workspace.name,
-          path: workspace.path,
-          isDefault: workspace.isDefault,
-          createdFromRef: workspace.createdFromRef,
-          currentBranch,
-          head: gitInfo?.head ?? null,
-          isDetached: gitInfo?.isDetached ?? currentBranch === null,
-          isBare: gitInfo?.isBare ?? false,
-          isLocked: gitInfo?.isLocked ?? false,
-          lockReason: gitInfo?.lockReason ?? null,
-          isMissing,
-          isDirty,
-          hasConflicts,
-          linkStatus: workspace.linkStatus as WorktreeLinkStatus,
-          desiredBranch: workspace.desiredBranch,
-          unlinkedAt: workspace.unlinkedAt,
-          unlinkedByProjectId: workspace.unlinkedByProjectId,
-          pendingStashCommit: workspace.pendingStashCommit,
-          pendingStashMessage: workspace.pendingStashMessage,
-          pendingStashCreatedAt: workspace.pendingStashCreatedAt,
-          pendingStashStatus:
-            workspace.pendingStashStatus as PendingStashStatus | null,
-          branchCheckedOutElsewhere: checkedOutElsewhere !== null,
-          checkedOutElsewherePath: checkedOutElsewhere,
-        };
-      }),
+  private async observeRepo(repo: typeof schema.repos.$inferSelect) {
+    await this.ensureDefaultWorkspace(repo);
+    await this.reconcileSessionWorktrees(repo);
+    // Reconciliation and display use the same successful Git worktree list.
+    return this.worktreePoolService.withRepoObservation(
+      repo,
+      async (observation) => {
+        const byRealPath = await this.indexWorktreesByRealPath(
+          observation.worktrees,
+        );
+        const branches = new Map<
+          string,
+          Array<{ key: string; path: string }>
+        >();
+        for (const [key, info] of byRealPath) {
+          if (!info.branch) continue;
+          const entries = branches.get(info.branch) ?? [];
+          entries.push({ key, path: info.path });
+          branches.set(info.branch, entries);
+        }
+        const rows = (await this.activeRows(repo.id)).filter(
+          (workspace) =>
+            workspace.linkStatus === 'linked' &&
+            workspace.taskState === 'ready',
+        );
+        const statuses = new Map<
+          string,
+          Promise<{
+            isMissing: boolean;
+            currentBranch: string | null;
+            isDirty: boolean;
+            hasConflicts: boolean;
+            error: string | null;
+          }>
+        >();
+        const observations = await mapWorktrees(rows, async (workspace) => {
+          const key = await this.realPathOrRaw(workspace.path);
+          const gitInfo = byRealPath.get(key);
+          let pending = statuses.get(key);
+          if (!pending) {
+            pending = (async () => {
+              const isMissing = !gitInfo && !(await this.pathExists(key));
+              const status = isMissing
+                ? {
+                    currentBranch: null,
+                    isDirty: false,
+                    hasConflicts: false,
+                    error: null,
+                  }
+                : await observation.status(key);
+              return { ...status, isMissing };
+            })();
+            statuses.set(key, pending);
+          }
+          const status = await pending;
+          const currentBranch = status.error
+            ? (gitInfo?.branch ?? null)
+            : status.currentBranch;
+          const elsewhere = currentBranch
+            ? (branches.get(currentBranch)?.find((entry) => entry.key !== key)
+                ?.path ?? null)
+            : null;
+          return [
+            workspace.id,
+            {
+              version: this.checkoutVersion(workspace),
+              state: {
+                currentBranch,
+                head: gitInfo?.head ?? null,
+                isDetached: gitInfo?.isDetached ?? currentBranch === null,
+                isBare: gitInfo?.isBare ?? false,
+                isLocked: gitInfo?.isLocked ?? false,
+                lockReason: gitInfo?.lockReason ?? null,
+                isMissing: status.isMissing,
+                isDirty: status.isDirty,
+                hasConflicts: status.hasConflicts,
+                statusError: status.error,
+                branchCheckedOutElsewhere: elsewhere !== null,
+                checkedOutElsewherePath: elsewhere,
+              },
+            },
+          ] as const;
+        });
+        return new Map(observations);
+      },
     );
-
-    return snapshots.sort(compareWorkspaceOrder);
   }
 
   async listCachedForRepo(
@@ -515,64 +640,124 @@ export class WorkspacesService {
   private async reconcileSessionWorktrees(
     repo: typeof schema.repos.$inferSelect,
   ) {
-    const [existing, sessions] = await Promise.all([
-      this.db
-        .select()
-        .from(schema.workspaces)
-        .where(eq(schema.workspaces.repoId, repo.id)),
-      this.sessionsService.findByRepo(repo.id),
-    ]);
-    const workspaceByRealPath = new Map<string, (typeof existing)[0]>();
-    for (const workspace of existing) {
-      workspaceByRealPath.set(
-        await this.realPathOrRaw(workspace.path),
-        workspace,
-      );
-    }
-    const sessionsByPath = new Map<
+    const existing = this.sessionReconciliations.get(repo.id);
+    if (existing) return existing;
+    const pending = this.reconcileSessions(repo).finally(() => {
+      if (this.sessionReconciliations.get(repo.id) === pending)
+        this.sessionReconciliations.delete(repo.id);
+    });
+    this.sessionReconciliations.set(repo.id, pending);
+    return pending;
+  }
+
+  private async reconcileSessions(repo: typeof schema.repos.$inferSelect) {
+    const sessions = await this.sessionsService.findByRepo(repo.id);
+    const paths = new Map<
       string,
-      Awaited<ReturnType<SessionsService['findByRepo']>>
+      { raw: Set<string>; branch: string | null }
     >();
-
     for (const session of sessions) {
-      if (
-        session.workspaceId &&
-        existing.some((workspace) => workspace.id === session.workspaceId)
-      )
-        continue;
-      if (
-        workspaceByRealPath.has(await this.realPathOrRaw(session.worktreePath))
-      ) {
-        continue;
-      }
-      const entry = sessionsByPath.get(session.worktreePath) ?? [];
-      entry.push(session);
-      sessionsByPath.set(session.worktreePath, entry);
+      if (session.workspaceId) continue;
+      const key = await this.realPathOrRaw(session.worktreePath);
+      const entry = paths.get(key) ?? {
+        raw: new Set<string>(),
+        branch: session.branchName,
+      };
+      entry.raw.add(session.worktreePath);
+      paths.set(key, entry);
     }
-
-    for (const [worktreePath, pathSessions] of sessionsByPath) {
-      // Historical sessions must not recreate a workspace after its directory
-      // has been deleted and reconciliation removed the workspace record.
-      if (await isMissingWorktreePath(worktreePath)) continue;
-      const first = pathSessions[0];
-      const name = await this.uniqueWorkspaceName(
-        repo.id,
-        path.basename(worktreePath) || first.branchName || 'workspace',
-      );
-      const rows = await this.insertWorkspace({
-        repoId: repo.id,
-        name,
-        path: worktreePath,
-        isDefault: await this.samePath(worktreePath, repo.path),
-        createdFromRef: first.branchName,
-      });
-      workspaceByRealPath.set(await this.realPathOrRaw(worktreePath), rows[0]);
-      await this.backfillSessionsForWorkspace(
-        repo.id,
-        rows[0].id,
-        worktreePath,
-      );
-    }
+    if (!paths.size) return;
+    const existing = await this.db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.repoId, repo.id));
+    const canonical = new Map(
+      await mapWorktrees(
+        existing,
+        async (workspace) =>
+          [
+            workspace.id,
+            {
+              path: workspace.path,
+              key: await this.realPathOrRaw(workspace.path),
+            },
+          ] as const,
+      ),
+    );
+    const present = new Set<string>();
+    await mapWorktrees([...paths.keys()], async (key) => {
+      if (!(await isMissingWorktreePath(key))) present.add(key);
+    });
+    // Recheck rows and session membership inside the transaction, after all
+    // async reads. Path uniqueness cannot be global: finished tasks keep paths.
+    this.db.transaction(
+      (tx) => {
+        const rows = tx
+          .select()
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.repoId, repo.id))
+          .all();
+        const unassigned = tx
+          .select()
+          .from(schema.sessions)
+          .where(
+            and(
+              eq(schema.sessions.repoId, repo.id),
+              isNull(schema.sessions.workspaceId),
+            ),
+          )
+          .all();
+        const unassignedPaths = new Set(
+          unassigned.map((session) => session.worktreePath),
+        );
+        const names = new Set(rows.map((row) => row.name.toLowerCase()));
+        const workspacePaths = new Set(
+          rows.map((row) =>
+            canonical.get(row.id)?.path === row.path
+              ? canonical.get(row.id)!.key
+              : path.resolve(row.path),
+          ),
+        );
+        for (const [key, entry] of paths) {
+          if (
+            !present.has(key) ||
+            workspacePaths.has(key) ||
+            ![...entry.raw].some((raw) => unassignedPaths.has(raw))
+          )
+            continue;
+          const base = path.basename(key) || entry.branch || 'workspace';
+          let name = base;
+          let suffix = 2;
+          while (names.has(name.toLowerCase())) name = `${base} ${suffix++}`;
+          const workspace = tx
+            .insert(schema.workspaces)
+            .values({
+              repoId: repo.id,
+              name,
+              path: key,
+              isDefault: false,
+              createdFromRef: entry.branch,
+            })
+            .returning()
+            .get()!;
+          names.add(name.toLowerCase());
+          workspacePaths.add(key);
+          for (const raw of entry.raw) {
+            tx.update(schema.sessions)
+              .set({ workspaceId: workspace.id })
+              .where(
+                and(
+                  eq(schema.sessions.repoId, repo.id),
+                  eq(schema.sessions.worktreePath, raw),
+                  isNull(schema.sessions.workspaceId),
+                ),
+              )
+              .run();
+          }
+        }
+      },
+      { behavior: 'immediate' },
+    );
   }
 
   private async insertWorkspace(values: typeof schema.workspaces.$inferInsert) {
@@ -638,19 +823,6 @@ export class WorkspacesService {
     return null;
   }
 
-  private async findDefault(repoId: number) {
-    const rows = await this.db
-      .select()
-      .from(schema.workspaces)
-      .where(
-        and(
-          eq(schema.workspaces.repoId, repoId),
-          eq(schema.workspaces.isDefault, true),
-        ),
-      );
-    return rows[0] ?? null;
-  }
-
   private async safeListWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
     try {
       return await this.worktreesService.listWorktrees(repoPath);
@@ -660,52 +832,18 @@ export class WorkspacesService {
   }
 
   private async indexWorktreesByRealPath(worktrees: WorktreeInfo[]) {
-    const result = new Map<string, WorktreeInfo>();
-    for (const worktree of worktrees) {
-      result.set(await this.realPathOrRaw(worktree.path), worktree);
-    }
-    return result;
-  }
-
-  private async getCurrentBranch(
-    workspacePath: string,
-  ): Promise<string | null> {
-    if (!(await this.pathExists(workspacePath))) {
-      return null;
-    }
-    try {
-      const branch = await worktreeSimpleGit(workspacePath).revparse([
-        '--abbrev-ref',
-        'HEAD',
-      ]);
-      return branch.trim() === 'HEAD' ? null : branch.trim();
-    } catch {
-      return null;
-    }
+    return new Map(
+      await mapWorktrees(
+        worktrees,
+        async (worktree) =>
+          [await this.realPathOrRaw(worktree.path), worktree] as const,
+      ),
+    );
   }
 
   private async isDirty(workspacePath: string): Promise<boolean> {
-    if (!(await this.pathExists(workspacePath))) {
-      return false;
-    }
-    try {
-      const status = await worktreeSimpleGit(workspacePath).status();
-      return !status.isClean();
-    } catch {
-      return false;
-    }
-  }
-
-  private async hasConflicts(workspacePath: string): Promise<boolean> {
-    if (!(await this.pathExists(workspacePath))) {
-      return false;
-    }
-    try {
-      const status = await worktreeSimpleGit(workspacePath).status();
-      return status.conflicted.length > 0;
-    } catch {
-      return false;
-    }
+    return (await this.worktreePoolService.requireWorktreeStatus(workspacePath))
+      .isDirty;
   }
 
   private async findBranchWorktreePath(

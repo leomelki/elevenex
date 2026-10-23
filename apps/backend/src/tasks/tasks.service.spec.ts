@@ -74,10 +74,12 @@ describe('Task lifecycle with real Git and migrations', () => {
   let repo: typeof schema.repos.$inferSelect;
   const hooks = Object.assign(new EventEmitter(), {
     getStatus: jest.fn(() => 'idle'),
-    getActivity: jest.fn(() => ({
-      activityStatus: hooks.getStatus(),
-      backgroundActive: false,
-    })),
+    getActivity: jest.fn(
+      (): { activityStatus: string; backgroundActive: boolean } => ({
+        activityStatus: hooks.getStatus(),
+        backgroundActive: false,
+      }),
+    ),
   });
   const terminals = {
     isAlive: jest.fn(() => false),
@@ -621,6 +623,43 @@ describe('Task lifecycle with real Git and migrations', () => {
       response: { code: 'worktree_not_clean' },
     });
     expect(releaseSession).not.toHaveBeenCalled();
+  });
+
+  it('rechecks checkout identity after the final release status scan before detaching', async () => {
+    const task = await create('release-changed-during-status');
+    const original = gitService.status.bind(gitService);
+    const status = jest
+      .spyOn(gitService, 'status')
+      .mockImplementation(async (...args) => {
+        const observation = await original(...args);
+        if (args[1]?.persistIndex) {
+          await rm(task.path, { recursive: true, force: true });
+          await symlink(repoPath, task.path, 'dir');
+        }
+        return observation;
+      });
+    try {
+      await expect(service.releaseWorktree(task.id)).rejects.toMatchObject({
+        response: { code: 'checkout_changed' },
+      });
+    } finally {
+      status.mockRestore();
+    }
+    expect(
+      (
+        await worktreeSimpleGit(repoPath).revparse(['--abbrev-ref', 'HEAD'])
+      ).trim(),
+    ).toBe('main');
+    expect(await service.get(task.id)).toMatchObject({
+      linkStatus: 'linked',
+      poolWorktreeId: task.poolWorktreeId,
+    });
+    expect(
+      await db
+        .select()
+        .from(schema.taskReservations)
+        .where(eq(schema.taskReservations.taskId, task.id)),
+    ).toHaveLength(1);
   });
 
   it('resumes a released detached commit and preserves it with a Git ref', async () => {
@@ -1214,6 +1253,140 @@ describe('Task lifecycle with real Git and migrations', () => {
       changedFiles: ['current-task.txt'],
       commits: [expect.objectContaining({ message: 'Current task changes' })],
     });
+  });
+
+  it.each([
+    'missing-git',
+    'replacement',
+    'symlink',
+    'sibling-symlink',
+  ] as const)(
+    'finishes with an explicit retained assignment and never detaches a %s checkout',
+    async (kind) => {
+      const task = await create(`finish-${kind}`);
+      let targetPath = repoPath;
+      let expectedBranch = 'main';
+      let assignedPath = task.path;
+      if (kind === 'missing-git') {
+        assignedPath = join(repoPath, 'nested-checkout');
+        await worktreeSimpleGit(repoPath).raw([
+          'worktree',
+          'move',
+          task.path,
+          assignedPath,
+        ]);
+        await db
+          .update(schema.workspaces)
+          .set({ path: assignedPath })
+          .where(eq(schema.workspaces.id, task.id));
+        await db
+          .update(schema.repoWorktrees)
+          .set({ path: assignedPath })
+          .where(eq(schema.repoWorktrees.id, task.poolWorktreeId!));
+        await db
+          .update(schema.taskReservations)
+          .set({ path: assignedPath })
+          .where(eq(schema.taskReservations.taskId, task.id));
+        await rm(join(assignedPath, '.git'));
+      } else if (kind === 'replacement') {
+        await rm(task.path, { recursive: true, force: true });
+        await mkdir(task.path);
+        targetPath = task.path;
+        expectedBranch = 'unrelated';
+        const replacement = worktreeSimpleGit(targetPath);
+        await replacement.raw(['init', '--initial-branch=unrelated']);
+        await replacement.addConfig('user.name', 'Task tests');
+        await replacement.addConfig('user.email', 'tasks@example.test');
+        await replacement.raw(['commit', '--allow-empty', '-m', 'Replacement']);
+      } else {
+        if (kind === 'sibling-symlink') {
+          const sibling = await create('sibling-target');
+          targetPath = sibling.path;
+          expectedBranch = 'sibling-target';
+        }
+        await rm(task.path, { recursive: true, force: true });
+        await symlink(targetPath, task.path, 'dir');
+      }
+      const status = jest.spyOn(gitService, 'status');
+      const finished = await service.finish(task.id);
+      expect(finished).toMatchObject({
+        linkStatus: 'linked',
+        poolWorktreeId: task.poolWorktreeId,
+        error: {
+          code: 'checkout_changed',
+          message: expect.stringContaining('reserved'),
+        },
+      });
+      expect(finished.archivedAt).toBeTruthy();
+      expect(status).not.toHaveBeenCalled();
+      status.mockRestore();
+      expect(
+        (
+          await worktreeSimpleGit(targetPath).revparse(['--abbrev-ref', 'HEAD'])
+        ).trim(),
+      ).toBe(expectedBranch);
+      expect(
+        (
+          await db
+            .select()
+            .from(schema.taskReservations)
+            .where(eq(schema.taskReservations.taskId, task.id))
+        )[0],
+      ).toMatchObject({ path: assignedPath });
+    },
+  );
+
+  it('retains the lease with an explicit error when finish cannot observe status', async () => {
+    const task = await create('finish-unreadable');
+    const status = jest
+      .spyOn(gitService, 'status')
+      .mockRejectedValueOnce(new Error('index unreadable'));
+    const finished = await service.finish(task.id);
+    status.mockRestore();
+    expect(finished).toMatchObject({
+      linkStatus: 'linked',
+      error: { code: 'finish_observation_failed' },
+    });
+    expect(
+      await db
+        .select()
+        .from(schema.taskReservations)
+        .where(eq(schema.taskReservations.taskId, task.id)),
+    ).toHaveLength(1);
+    expect(
+      (
+        await worktreeSimpleGit(task.path).revparse(['--abbrev-ref', 'HEAD'])
+      ).trim(),
+    ).toBe('finish-unreadable');
+  });
+
+  it('rechecks checkout identity if the path changes during the finish status scan', async () => {
+    const task = await create('finish-changed-during-status');
+    const original = gitService.status.bind(gitService);
+    const status = jest
+      .spyOn(gitService, 'status')
+      .mockImplementationOnce(async (...args) => {
+        const observation = await original(...args);
+        await rm(task.path, { recursive: true, force: true });
+        await symlink(repoPath, task.path, 'dir');
+        return observation;
+      });
+    expect(await service.finish(task.id)).toMatchObject({
+      linkStatus: 'linked',
+      error: { code: 'checkout_changed' },
+    });
+    status.mockRestore();
+    expect(
+      (
+        await worktreeSimpleGit(repoPath).revparse(['--abbrev-ref', 'HEAD'])
+      ).trim(),
+    ).toBe('main');
+    expect(
+      await db
+        .select()
+        .from(schema.taskReservations)
+        .where(eq(schema.taskReservations.taskId, task.id)),
+    ).toHaveLength(1);
   });
 
   it('keeps local edits reserved and reopens them intact', async () => {
