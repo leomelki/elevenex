@@ -100,6 +100,8 @@ import type {
 } from './codex-runtime.types.js';
 
 const DEFAULT_CODEX_MODEL = 'gpt-5.5';
+const CODEX_STOP_UNCONFIRMED_MESSAGE =
+  'Codex has not confirmed that the previous turn stopped. Retry stopping it before continuing.';
 const CODEX_MODEL_REFRESH_TTL_MS = 10 * 60 * 1000;
 const CODEX_MODEL_REFRESH_RETRY_MS = 30_000;
 const CODEX_MODEL_LIST_TIMEOUT_MS = 8_000;
@@ -1519,9 +1521,8 @@ export class CodexRuntimeService
       return;
     }
     if (this.unconfirmedStops.has(sessionId)) {
-      throw new ConflictException(
-        'Codex has not confirmed that the previous turn stopped. Retry stopping it before continuing.',
-      );
+      this.emitRunState(sessionId);
+      throw new ConflictException(CODEX_STOP_UNCONFIRMED_MESSAGE);
     }
     if (
       this.activeRuns.has(sessionId) ||
@@ -1722,18 +1723,7 @@ export class CodexRuntimeService
         const [next, ...rest] = state.pendingPrompts;
         state.pendingPrompts = rest;
         this.emitRunState(sessionId);
-        setImmediate(() => {
-          this.submitPrompt(
-            sessionId,
-            next.prompt,
-            undefined,
-            next.images,
-          ).catch((error) => {
-            this.logger.error(
-              `Pending Codex prompt failed session=${sessionId}: ${String(error)}`,
-            );
-          });
-        });
+        this.dispatchQueuedPrompt(sessionId, state, next);
       }
     }
   }
@@ -1755,33 +1745,48 @@ export class CodexRuntimeService
     }
     run.interruptRequested = true;
     this.unconfirmedStops.set(sessionId, run);
+    this.emitRunState(sessionId);
     this.resolvePendingCodexRequests(run);
     run.abortController.abort();
     // An in-flight turn/start must return its IDs before we can stop it. If
     // initialization was cancelled before dispatch, completion wins instead.
-    await Promise.race([run.turnReadyPromise, run.completionPromise]);
-    // Tell the app-server to cancel the in-flight turn so it stops producing
-    // model output; the abort signal also closes the local notification loop.
-    if (run.threadId && run.turnId) {
-      try {
-        await this.appServer.request(
-          'turn/interrupt',
-          { threadId: run.threadId, turnId: run.turnId },
-          5_000,
-        );
-      } catch {
-        // A turn may already have completed. Verify its state below; a failed
-        // request alone is never evidence that its checkout is safe to reuse.
+    try {
+      await Promise.race([run.turnReadyPromise, run.completionPromise]);
+      // Tell the app-server to cancel the in-flight turn so it stops producing
+      // model output; the abort signal also closes the local notification loop.
+      if (run.threadId && run.turnId) {
+        try {
+          await this.appServer.request(
+            'turn/interrupt',
+            { threadId: run.threadId, turnId: run.turnId },
+            5_000,
+          );
+        } catch {
+          // A turn may already have completed. Verify its state below; a failed
+          // request alone is never evidence that its checkout is safe to reuse.
+        }
+        await this.confirmTurnStopped(run);
       }
-      await this.confirmTurnStopped(run);
+      await this.interruptSubagents(sessionId);
+      await run.completionPromise.catch(() => undefined);
+    } catch (error) {
+      if (this.unconfirmedStops.get(sessionId) === run) {
+        const message = error instanceof Error ? error.message : String(error);
+        state.lastError = `${CODEX_STOP_UNCONFIRMED_MESSAGE} ${message}`;
+        this.emitRunState(sessionId);
+        this.emitEvent({
+          type: 'error',
+          payload: { sessionId, message: state.lastError },
+        });
+      }
+      throw error;
     }
-    await this.interruptSubagents(sessionId);
-    await run.completionPromise.catch(() => undefined);
+    if (this.unconfirmedStops.get(sessionId) !== run) return;
     this.unconfirmedStops.delete(sessionId);
     if (this.activeRuns.get(sessionId) === run) {
       this.activeRuns.delete(sessionId);
-      this.finalizeInterruptedRun(sessionId);
     }
+    this.finalizeInterruptedRun(sessionId);
   }
 
   private async confirmTurnStopped(
@@ -1947,18 +1952,32 @@ export class CodexRuntimeService
     await this.resumePendingPrompts(sessionId);
   }
 
-  resumePendingPrompts(sessionId: number): Promise<void> {
+  async resumePendingPrompts(sessionId: number): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
-    if (!state.pendingPrompts.length) return Promise.resolve();
+    if (!state.pendingPrompts.length) return;
+    if (this.unconfirmedStops.has(sessionId)) {
+      this.emitRunState(sessionId);
+      throw new ConflictException(
+        state.lastError ?? CODEX_STOP_UNCONFIRMED_MESSAGE,
+      );
+    }
     state.queuePaused = false;
     state.lastError = null;
     if (this.activeRuns.has(sessionId)) {
       this.emitRunState(sessionId);
-      return Promise.resolve();
+      return;
     }
     const [next, ...rest] = state.pendingPrompts;
     state.pendingPrompts = rest;
     this.emitRunState(sessionId);
+    this.dispatchQueuedPrompt(sessionId, state, next);
+  }
+
+  private dispatchQueuedPrompt(
+    sessionId: number,
+    state: CodexRuntimeState,
+    next: CodexRuntimeState['pendingPrompts'][number],
+  ): void {
     setImmediate(() => {
       void this.submitPrompt(
         sessionId,
@@ -1967,11 +1986,27 @@ export class CodexRuntimeService
         next.images,
       ).catch((error) => {
         this.logger.error(
-          `Resumed Codex prompt failed session=${sessionId}: ${String(error)}`,
+          `Queued Codex prompt failed session=${sessionId}: ${String(error)}`,
         );
+        if (this.runtimeStates.get(sessionId) !== state) return;
+        state.pendingPrompts = [
+          next,
+          ...state.pendingPrompts.filter((prompt) => prompt.id !== next.id),
+        ];
+        state.queuePaused = true;
+        state.runPhase = 'error';
+        state.sessionState = 'requires_action';
+        if (!this.unconfirmedStops.has(sessionId)) {
+          const message = error instanceof Error ? error.message : String(error);
+          state.lastError = `Could not start queued Codex prompt: ${message}. The prompt is still queued; retry resuming it.`;
+        }
+        this.emitRunState(sessionId);
+        this.emitEvent({
+          type: 'error',
+          payload: { sessionId, message: state.lastError! },
+        });
       });
     });
-    return Promise.resolve();
   }
 
   clearPendingPrompts(sessionId: number): Promise<void> {
@@ -2670,6 +2705,10 @@ export class CodexRuntimeService
   }
 
   private finishRun(sessionId: number): void {
+    if (this.unconfirmedStops.has(sessionId)) {
+      this.finalizeInterruptedRun(sessionId);
+      return;
+    }
     const state = this.ensureRuntimeState(sessionId);
     state.runPhase = state.lastError ? 'error' : 'idle';
     state.sessionState = 'idle';
@@ -2685,18 +2724,21 @@ export class CodexRuntimeService
 
   private finalizeInterruptedRun(sessionId: number): void {
     const state = this.ensureRuntimeState(sessionId);
-    state.runPhase = 'idle';
-    state.sessionState = 'idle';
-    state.canInterrupt = false;
-    state.lastError = null;
-    state.queuePaused = state.pendingPrompts.length > 0;
+    if (!this.unconfirmedStops.has(sessionId)) {
+      state.runPhase = 'idle';
+      state.sessionState = 'idle';
+      state.canInterrupt = false;
+      state.lastError = null;
+      state.queuePaused = state.pendingPrompts.length > 0;
+    }
     state.liveItems = [];
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest =
       state.asyncUserInputRequests.values().next().value ?? null;
     this.restoreDelegatedRequestsAfterTurn(sessionId, state);
     this.emitRunState(sessionId);
-    this.emitEvent({ type: 'complete', payload: { sessionId } });
+    if (!this.unconfirmedStops.has(sessionId))
+      this.emitEvent({ type: 'complete', payload: { sessionId } });
   }
 
   private resolvePendingCodexRequests(
@@ -2796,8 +2838,22 @@ export class CodexRuntimeService
     return state;
   }
 
+  private applyUnconfirmedStopState(
+    sessionId: number,
+    state: CodexRuntimeState,
+  ): void {
+    if (!this.unconfirmedStops.has(sessionId)) return;
+    state.runPhase = 'waiting';
+    state.sessionState = 'requires_action';
+    state.canInterrupt = true;
+    state.queuePaused = true;
+    if (!state.lastError?.startsWith(CODEX_STOP_UNCONFIRMED_MESSAGE))
+      state.lastError = CODEX_STOP_UNCONFIRMED_MESSAGE;
+  }
+
   private emitRunState(sessionId: number): void {
     const state = this.ensureRuntimeState(sessionId);
+    this.applyUnconfirmedStopState(sessionId, state);
     this.hooksService.updateRuntimeActivity(
       sessionId,
       this.toSidebarActivity(state, sessionId),
@@ -2834,6 +2890,14 @@ export class CodexRuntimeService
     state: CodexRuntimeState,
     sessionId?: number,
   ): ClaudeSessionActivity {
+    if (sessionId !== undefined && this.unconfirmedStops.has(sessionId)) {
+      return {
+        activityStatus: 'waiting',
+        actionKind: null,
+        actionLabel: 'Retry stopping Codex',
+        backgroundActive: this.subagentBackgroundWork(sessionId).length > 0,
+      };
+    }
     if (state.pendingPermissionRequest) {
       return {
         activityStatus: 'waiting',
@@ -3326,6 +3390,7 @@ export class CodexRuntimeService
     sessionId: number,
     state: CodexRuntimeState,
   ): CodexRuntimeStatePayload {
+    this.applyUnconfirmedStopState(sessionId, state);
     return {
       sessionId,
       claudeSessionId: state.codexSessionId,

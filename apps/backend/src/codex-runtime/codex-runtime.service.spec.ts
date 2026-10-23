@@ -759,6 +759,192 @@ describe('CodexRuntimeService', () => {
     expect(runtime.unconfirmedStops.has(7)).toBe(false);
   });
 
+  it('keeps a timed-out stop actionable and preserves the queue until stop retry confirms', async () => {
+    const { service, appServer, sessionsService, hooksService } =
+      createService();
+    const runtime = service as any;
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'thread-1',
+    });
+    const state = runtime.ensureRuntimeState(7, 'thread-1');
+    state.cachedWorktreePath = '/tmp/project';
+    jest
+      .spyOn(runtime, 'scheduleModelCatalogRefresh')
+      .mockImplementation(() => undefined);
+    const wire = wireAppServerTurn(appServer);
+    let rejectRead!: (error: Error) => void;
+    const read = new Promise((_, reject) => {
+      rejectRead = reject;
+    });
+    let readStarted!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      readStarted = resolve;
+    });
+    let confirmed = false;
+    let turns = 0;
+    appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'turn/start') return { turn: { id: `turn-${++turns}` } };
+      if (method === 'thread/read') {
+        if (confirmed)
+          return {
+            thread: { turns: [{ id: 'turn-1', status: 'interrupted' }] },
+          };
+        readStarted();
+        return read;
+      }
+      return {};
+    });
+    const states: any[] = [];
+    const completions: unknown[] = [];
+    service.on('event', (event: any) => {
+      if (event.type === 'run_state') states.push({ ...event.payload });
+      if (event.type === 'complete') completions.push(event);
+    });
+
+    const running = service.submitPrompt(7, 'active turn');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await service.submitPrompt(7, 'queued follow-up');
+    const queued = state.pendingPrompts[0];
+    const stoppingStateIndex = states.length;
+    const stopping = service.interrupt(7);
+    const rejected = expect(stopping).rejects.toThrow('thread/read');
+    await reading;
+    await running;
+    expect(runtime.activeRuns.has(7)).toBe(false);
+    rejectRead(
+      new Error(
+        'codex app-server request "thread/read" timed out after 2000ms',
+      ),
+    );
+    await rejected;
+
+    expect(await service.getRuntimeState(7)).toMatchObject({
+      runPhase: 'waiting',
+      sessionState: 'requires_action',
+      canInterrupt: true,
+      queuePaused: true,
+      lastError: expect.stringMatching(/Retry stopping.*thread\/read/),
+      pendingPrompts: [queued],
+    });
+    expect(
+      states
+        .slice(stoppingStateIndex)
+        .every((state) => state.canInterrupt && state.runPhase !== 'idle'),
+    ).toBe(true);
+    expect(completions).toHaveLength(0);
+    expect(hooksService.updateRuntimeActivity).toHaveBeenLastCalledWith(
+      7,
+      expect.objectContaining({
+        activityStatus: 'waiting',
+        actionLabel: expect.stringContaining('stop'),
+      }),
+      { authoritative: true },
+    );
+    await expect(service.resumePendingPrompts(7)).rejects.toThrow(
+      'Retry stopping',
+    );
+    expect(state.pendingPrompts).toEqual([queued]);
+    expect(state.queuePaused).toBe(true);
+    expect(turns).toBe(1);
+
+    confirmed = true;
+    await service.interrupt(7);
+    expect(runtime.unconfirmedStops.has(7)).toBe(false);
+    expect(await service.getRuntimeState(7)).toMatchObject({
+      runPhase: 'idle',
+      canInterrupt: false,
+      lastError: null,
+      queuePaused: true,
+      pendingPrompts: [queued],
+    });
+    expect(completions).toHaveLength(1);
+    await service.resumePendingPrompts(7);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(turns).toBe(2);
+    expect(state).toMatchObject({
+      runPhase: 'running',
+      queuePaused: false,
+      pendingPrompts: [],
+      lastError: null,
+    });
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: { id: 'turn-2', status: 'completed' },
+      },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(state.runPhase).toBe('idle');
+  });
+
+  it.each(['resume', 'completion'])(
+    'restores a queued prompt when dispatch after %s rejects',
+    async (trigger) => {
+      const { service, appServer } = createService();
+      const runtime = service as any;
+      const state = runtime.ensureRuntimeState(7);
+      const wire = wireAppServerTurn(appServer);
+      let running: Promise<void> | undefined;
+      if (trigger === 'completion') {
+        running = service.submitPrompt(7, 'active turn');
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      const queued = [
+        {
+          id: 'first',
+          prompt: 'first prompt',
+          queuedAt: '2026-10-23T11:00:00Z',
+          images: [{ mediaType: 'image/png', data: 'image' }],
+        },
+        {
+          id: 'second',
+          prompt: 'second prompt',
+          queuedAt: '2026-10-23T11:01:00Z',
+        },
+      ];
+      state.pendingPrompts = queued;
+      state.queuePaused = trigger === 'resume';
+      const submit = jest
+        .spyOn(service, 'submitPrompt')
+        .mockRejectedValueOnce(new Error('workspace temporarily unavailable'))
+        .mockResolvedValueOnce(undefined);
+      if (trigger === 'resume') await service.resumePendingPrompts(7);
+      else {
+        wire.notificationHandler({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-1',
+            turn: { id: 'turn-1', status: 'completed' },
+          },
+        });
+        await running;
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(state).toMatchObject({
+        pendingPrompts: queued,
+        queuePaused: true,
+        runPhase: 'error',
+        lastError: expect.stringMatching(
+          /workspace temporarily unavailable.*still queued/,
+        ),
+      });
+      await service.resumePendingPrompts(7);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(submit).toHaveBeenNthCalledWith(
+        2,
+        7,
+        queued[0].prompt,
+        undefined,
+        queued[0].images,
+      );
+      expect(state.pendingPrompts).toEqual([queued[1]]);
+      expect(state.queuePaused).toBe(false);
+      expect(state.lastError).toBeNull();
+    },
+  );
+
   it('accepts a new prompt after reactivation and reloads the task’s current environment', async () => {
     const { service, sessionsService } = createService();
     (service as any).ensureRuntimeState(7).cachedWorktreePath =
