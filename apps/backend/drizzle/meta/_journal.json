@@ -337,6 +337,13 @@
       "when": 1792393577358,
       "tag": "0047_keen_sprite",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1792754344528,
+      "tag": "0048_confused_tarantula",
+      "breakpoints": true
     }
   ]
 }

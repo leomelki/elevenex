@@ -61,8 +61,12 @@ describe('WorktreePoolService', () => {
   let sessionsServiceMock: jest.Mocked<
     Pick<SessionsService, 'archiveAndStopByRepoAndWorktreePath'>
   >;
-  let projectsServiceMock: jest.Mocked<Pick<ProjectsService, 'assertProjectIsActive'>>;
-  let claudeHooksServiceMock: jest.Mocked<Pick<ClaudeHooksService, 'getStatus'>>;
+  let projectsServiceMock: jest.Mocked<
+    Pick<ProjectsService, 'assertProjectIsActive'>
+  >;
+  let claudeHooksServiceMock: jest.Mocked<
+    Pick<ClaudeHooksService, 'getStatus'>
+  >;
   let settingsServiceMock: jest.Mocked<
     Pick<SettingsService, 'getMaxWorktreesPerRepo'>
   >;
@@ -96,8 +100,14 @@ describe('WorktreePoolService', () => {
     const testDb = createTestDb();
     db = testDb.db;
     sqliteConn = testDb.sqlite;
-    const [project] = await db.insert(schema.projects).values({ name: 'One' }).returning();
-    const [otherProject] = await db.insert(schema.projects).values({ name: 'Two' }).returning();
+    const [project] = await db
+      .insert(schema.projects)
+      .values({ name: 'One' })
+      .returning();
+    const [otherProject] = await db
+      .insert(schema.projects)
+      .values({ name: 'Two' })
+      .returning();
     [repo] = await db
       .insert(schema.repos)
       .values({ projectId: project.id, name: 'repo', path: REPO_PATH })
@@ -108,11 +118,15 @@ describe('WorktreePoolService', () => {
       .returning();
 
     worktreesServiceMock = {
-      listWorktrees: jest.fn().mockResolvedValue([mainWorktree, featureWorktree]),
+      listWorktrees: jest
+        .fn()
+        .mockResolvedValue([mainWorktree, featureWorktree]),
       moveWorktree: jest.fn().mockResolvedValue(undefined),
     };
     sessionsServiceMock = {
-      archiveAndStopByRepoAndWorktreePath: jest.fn().mockResolvedValue(undefined),
+      archiveAndStopByRepoAndWorktreePath: jest
+        .fn()
+        .mockResolvedValue(undefined),
     };
     projectsServiceMock = {
       assertProjectIsActive: jest.fn().mockResolvedValue(undefined),
@@ -127,7 +141,8 @@ describe('WorktreePoolService', () => {
     };
     gitMock = {
       raw: jest.fn(async (args: string[]) => {
-        if (args[0] === 'rev-parse' && args[1] === 'stash@{0}') return 'stash-sha\n';
+        if (args[0] === 'rev-parse' && args[1] === 'stash@{0}')
+          return 'stash-sha\n';
         return '';
       }),
       status: jest.fn().mockResolvedValue({
@@ -242,7 +257,16 @@ describe('WorktreePoolService', () => {
       ).toEqual([REPO_PATH]);
       const preserved = await db.select().from(schema.workspaces);
       expect(preserved).toHaveLength(4);
-      expect(preserved.filter(row => !row.isDefault).every(row => row.linkStatus === 'unlinked' && row.taskState === 'failed' && row.poolWorktreeId === null)).toBe(true);
+      expect(
+        preserved
+          .filter((row) => !row.isDefault)
+          .every(
+            (row) =>
+              row.linkStatus === 'unlinked' &&
+              row.taskState === 'failed' &&
+              row.poolWorktreeId === null,
+          ),
+      ).toBe(true);
       expect(await db.select().from(schema.sessions)).toEqual([session]);
       expect(await service.getWorktreeQuota(repo)).toMatchObject({ count: 0 });
 
@@ -287,21 +311,43 @@ describe('WorktreePoolService', () => {
       await service.reconcileRepo(repo);
 
       expect(
-        await db.select().from(schema.workspaces).where(eq(schema.workspaces.id, task.id)),
+        await db
+          .select()
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.id, task.id)),
       ).toEqual([task]);
     },
   );
 
   it.each(['releasing', 'released'])(
-    'preserves a task with a %s checkout when its former directory disappears', async (taskState) => {
-      const [task] = await db.insert(schema.workspaces).values({
-        repoId: repo.id, name: 'Preserved task', path: DETACHED_PATH,
-        linkStatus: taskState === 'released' ? 'unlinked' : 'linked', taskState,
-      }).returning();
-      jest.mocked(isMissingWorktreePath).mockImplementation(async value => value === DETACHED_PATH);
+    'preserves a task with a %s checkout when its former directory disappears',
+    async (taskState) => {
+      const [task] = await db
+        .insert(schema.workspaces)
+        .values({
+          repoId: repo.id,
+          name: 'Preserved task',
+          path: DETACHED_PATH,
+          linkStatus: taskState === 'released' ? 'unlinked' : 'linked',
+          taskState,
+        })
+        .returning();
+      jest
+        .mocked(isMissingWorktreePath)
+        .mockImplementation(async (value) => value === DETACHED_PATH);
       await service.reconcileRepo(repo);
-      expect((await db.select().from(schema.workspaces).where(eq(schema.workspaces.id, task.id)))[0])
-        .toMatchObject({ taskState, linkStatus: task.linkStatus, taskError: null });
+      expect(
+        (
+          await db
+            .select()
+            .from(schema.workspaces)
+            .where(eq(schema.workspaces.id, task.id))
+        )[0],
+      ).toMatchObject({
+        taskState,
+        linkStatus: task.linkStatus,
+        taskError: null,
+      });
     },
   );
 
@@ -347,7 +393,9 @@ describe('WorktreePoolService', () => {
   });
 
   it('coalesces concurrent reconciliation for the same repository root', async () => {
-    jest.spyOn(service as any, 'realPathOrRaw').mockImplementation(async (value) => path.resolve(value as string));
+    jest
+      .spyOn(service as any, 'realPathOrRaw')
+      .mockImplementation(async (value) => path.resolve(value as string));
     let finish!: (worktrees: WorktreeInfo[]) => void;
     worktreesServiceMock.listWorktrees.mockReturnValue(
       new Promise((resolve) => {
@@ -366,8 +414,12 @@ describe('WorktreePoolService', () => {
 
   it('protects the repository checkout from pool renaming and moving', async () => {
     await service.reconcileRepo(repo);
-    const main = (await db.select().from(schema.repoWorktrees)).find((item) => item.path === REPO_PATH)!;
-    await expect(service.rename(repo, main.id, 'Another name')).rejects.toThrow('fixed name and location');
+    const main = (await db.select().from(schema.repoWorktrees)).find(
+      (item) => item.path === REPO_PATH,
+    )!;
+    await expect(service.rename(repo, main.id, 'Another name')).rejects.toThrow(
+      'fixed name and location',
+    );
     expect(worktreesServiceMock.moveWorktree).not.toHaveBeenCalled();
   });
 
@@ -421,13 +473,23 @@ describe('WorktreePoolService', () => {
   });
 
   it('uses one status call per worktree to populate branch, dirty, and conflict fields', async () => {
-    const pathExists = jest.spyOn(service as any, 'pathExists').mockResolvedValue(true);
+    const pathExists = jest
+      .spyOn(service as any, 'pathExists')
+      .mockResolvedValue(true);
     await service.reconcileRepo(repo);
     const featurePath = FEATURE_PATH;
     gitMock.status
       .mockReset()
-      .mockResolvedValueOnce({ current: 'main', isClean: () => true, conflicted: [] })
-      .mockResolvedValueOnce({ current: 'feature', isClean: () => false, conflicted: ['src/x.ts'] });
+      .mockResolvedValueOnce({
+        current: 'main',
+        isClean: () => true,
+        conflicted: [],
+      })
+      .mockResolvedValueOnce({
+        current: 'feature',
+        isClean: () => false,
+        conflicted: ['src/x.ts'],
+      });
 
     const items = await service.listForRepo(repo);
     pathExists.mockRestore();
@@ -477,7 +539,9 @@ describe('WorktreePoolService', () => {
 
     for (const id of new Set(emitted.map((item) => item.id))) {
       expect(
-        emitted.filter((item) => item.id === id).map((item) => item.statusLoading),
+        emitted
+          .filter((item) => item.id === id)
+          .map((item) => item.statusLoading),
       ).toEqual([true, false]);
     }
   });
@@ -510,6 +574,7 @@ describe('WorktreePoolService', () => {
       currentBranch: 'feature',
       isDirty: true,
       hasConflicts: true,
+      error: null,
     });
   });
 
@@ -556,6 +621,7 @@ describe('WorktreePoolService', () => {
 
     await service.reconcileRepo(repo);
     gitMock.status.mockClear();
+    jest.mocked(isMissingWorktreePath).mockResolvedValue(true);
 
     const items = await service.listForRepo(repo);
     pathExists.mockRestore();
@@ -668,12 +734,134 @@ describe('WorktreePoolService', () => {
     expect(unlinked.linkStatus).toBe('unlinked');
     expect(unlinked.pendingStashCommit).toBe('stash-sha');
     expect(unlinked.pendingStashStatus).toBe('pending');
-    expect(sessionsServiceMock.archiveAndStopByRepoAndWorktreePath).toHaveBeenCalledWith(
-      repo.id,
-      FEATURE_PATH,
-    );
+    expect(
+      sessionsServiceMock.archiveAndStopByRepoAndWorktreePath,
+    ).toHaveBeenCalledWith(repo.id, FEATURE_PATH);
   });
 
+  it('reports failed status as unknown and conservatively unsafe, then retries on the next listing', async () => {
+    jest.spyOn(service as any, 'pathExists').mockResolvedValue(true);
+    gitMock.status.mockRejectedValue(new Error('permission denied'));
+    const items = await service.listForRepo(repo);
+    expect(
+      items.every(
+        (item) =>
+          item.isDirty &&
+          item.hasConflicts &&
+          item.statusError === 'permission denied',
+      ),
+    ).toBe(true);
+    gitMock.status.mockResolvedValue({
+      current: 'feature',
+      isClean: () => true,
+      conflicted: [],
+    });
+    expect(
+      (await service.listForRepo(repo)).every(
+        (item) => !item.isDirty && !item.statusError,
+      ),
+    ).toBe(true);
+  });
+
+  it.each([false, true])(
+    'refuses takeover after failed observation even with stash confirmation=%s',
+    async (confirmStash) => {
+      await service.reconcileRepo(repo);
+      const pool = (await db.select().from(schema.repoWorktrees)).find(
+        (row) => row.path === FEATURE_PATH,
+      )!;
+      const [owner] = await db
+        .insert(schema.workspaces)
+        .values({
+          repoId: repo.id,
+          path: pool.path,
+          poolWorktreeId: pool.id,
+          name: 'Owner',
+        })
+        .returning();
+      gitMock.status.mockRejectedValue(new Error('unreadable index'));
+      gitMock.raw.mockClear();
+      await expect(
+        service.linkToProject(otherRepo, pool.id, {
+          branchName: 'feature',
+          confirmTakeover: true,
+          confirmStash,
+        }),
+      ).rejects.toMatchObject({
+        response: { code: 'worktree_observation_failed' },
+      });
+      expect(
+        sessionsServiceMock.archiveAndStopByRepoAndWorktreePath,
+      ).not.toHaveBeenCalled();
+      expect(gitMock.raw).not.toHaveBeenCalledWith(
+        expect.arrayContaining(['stash']),
+      );
+      expect(gitMock.raw).not.toHaveBeenCalledWith(
+        expect.arrayContaining(['checkout']),
+      );
+      expect(
+        (
+          await db
+            .select()
+            .from(schema.workspaces)
+            .where(eq(schema.workspaces.id, owner.id))
+        )[0].linkStatus,
+      ).toBe('linked');
+    },
+  );
+
+  it('refuses to checkout an unowned worktree when status fails', async () => {
+    await service.reconcileRepo(repo);
+    const pool = (await db.select().from(schema.repoWorktrees)).find(
+      (row) => row.path === FEATURE_PATH,
+    )!;
+    gitMock.status.mockRejectedValue(new Error('unreadable index'));
+    await expect(
+      service.linkToProject(repo, pool.id, {
+        branchName: 'feature',
+        confirmStash: true,
+      }),
+    ).rejects.toMatchObject({
+      response: { code: 'worktree_observation_failed' },
+    });
+    expect(await db.select().from(schema.workspaces)).toEqual([]);
+  });
+
+  it('reloads pool ownership after a slow status observation', async () => {
+    jest.spyOn(service as any, 'pathExists').mockResolvedValue(true);
+    await service.reconcileRepo(repo);
+    const pool = (await db.select().from(schema.repoWorktrees)).find(
+      (row) => row.path === FEATURE_PATH,
+    )!;
+    const [owner] = await db
+      .insert(schema.workspaces)
+      .values({
+        repoId: repo.id,
+        path: pool.path,
+        poolWorktreeId: pool.id,
+        name: 'Old owner',
+      })
+      .returning();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    gitMock.status.mockImplementation(async () => {
+      await gate;
+      return { current: 'feature', isClean: () => true, conflicted: [] };
+    });
+    const pending = service.listForRepo(repo);
+    while (!gitMock.status.mock.calls.length)
+      await new Promise((resolve) => setImmediate(resolve));
+    await db
+      .update(schema.workspaces)
+      .set({ linkStatus: 'unlinked' })
+      .where(eq(schema.workspaces.id, owner.id));
+    release();
+    const feature = (await pending).find((item) => item.id === pool.id)!;
+    expect(feature.owner).toBeNull();
+    expect(feature.projectWorkspace?.linkStatus).toBe('unlinked');
+  });
   describe('worktree limit', () => {
     it("does not count the repo's own working tree against the limit", async () => {
       settingsServiceMock.getMaxWorktreesPerRepo.mockResolvedValue(1);
