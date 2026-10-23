@@ -34,7 +34,9 @@ export class PlannotatorSessionWatcher
   private sessionsDir: string;
   private interval: NodeJS.Timeout | null = null;
   private pollInFlight = false;
+  private destroyed = false;
   private knownSessions: Map<number, PlannotatorSessionInfo> = new Map();
+  private readonly sessionFiles = new Map<string, number>();
   private readonly logger = new Logger('PlannotatorSessionWatcher');
 
   private worktreeToSession: Map<string, number> = new Map();
@@ -49,6 +51,7 @@ export class PlannotatorSessionWatcher
   }
 
   onModuleDestroy() {
+    this.destroyed = true;
     this.stopPolling();
   }
 
@@ -67,6 +70,7 @@ export class PlannotatorSessionWatcher
   }
 
   private startPolling(): void {
+    if (this.destroyed || this.interval) return;
     void this.poll();
     this.interval = setInterval(() => void this.poll(), 500);
   }
@@ -79,7 +83,7 @@ export class PlannotatorSessionWatcher
   }
 
   private async poll(): Promise<void> {
-    if (this.pollInFlight) return;
+    if (this.destroyed || this.pollInFlight) return;
     this.pollInFlight = true;
 
     try {
@@ -91,7 +95,7 @@ export class PlannotatorSessionWatcher
           }
           throw error;
         });
-      if (!entries) return;
+      if (this.destroyed || !entries) return;
 
       const currentPids = new Set<number>();
 
@@ -99,21 +103,36 @@ export class PlannotatorSessionWatcher
         if (!entry.endsWith('.json')) continue;
 
         const filePath = path.join(this.sessionsDir, entry);
+        // A producer may truncate and rewrite its registration between polls.
+        // Keep an existing session until this file disappears or proves dead.
+        const previousPid = this.sessionFiles.get(entry);
+        if (previousPid !== undefined) currentPids.add(previousPid);
         try {
-          const data: PlannotatorSessionInfo = JSON.parse(
-            await fs.readFile(filePath, 'utf-8'),
-          );
+          const contents = await fs.readFile(filePath, 'utf-8');
+          if (this.destroyed) return;
+          const data: unknown = JSON.parse(contents);
+          if (!this.isSessionInfo(data)) continue;
 
           if (!this.isProcessAlive(data.pid)) {
-            await fs.unlink(filePath).catch(() => undefined);
+            // Recheck contents before unlinking a registration the producer
+            // may have replaced while we were checking its process.
+            const latest = await fs.readFile(filePath, 'utf-8');
+            if (this.destroyed) return;
+            if (latest === contents && !this.isProcessAlive(data.pid)) {
+              await fs.unlink(filePath).catch(() => undefined);
+              if (this.destroyed) return;
+              if (previousPid !== undefined) currentPids.delete(previousPid);
+              this.sessionFiles.delete(entry);
+            }
             continue;
           }
 
           currentPids.add(data.pid);
 
           if (!this.knownSessions.has(data.pid)) {
-            this.knownSessions.set(data.pid, data);
             const match = await this.matchToElevenexSession(data);
+            if (this.destroyed) return;
+            this.knownSessions.set(data.pid, data);
             this.emit('session-started', match);
             this.logger.log(
               `New plannotator session: pid=${data.pid}, port=${data.port}, mode=${data.mode}`,
@@ -124,12 +143,21 @@ export class PlannotatorSessionWatcher
               this.knownSessions.set(data.pid, data);
             }
           }
+          this.sessionFiles.set(entry, data.pid);
+          if (previousPid !== undefined && previousPid !== data.pid) {
+            currentPids.delete(previousPid);
+          }
         } catch (err) {
+          if (this.destroyed) return;
           this.logger.warn(`Failed to read session file ${entry}: ${err}`);
-          await fs.unlink(filePath).catch(() => undefined);
         }
       }
 
+      if (this.destroyed) return;
+      const presentFiles = new Set(entries);
+      for (const entry of this.sessionFiles.keys()) {
+        if (!presentFiles.has(entry)) this.sessionFiles.delete(entry);
+      }
       for (const [pid, session] of this.knownSessions) {
         if (!currentPids.has(pid)) {
           this.knownSessions.delete(pid);
@@ -137,17 +165,39 @@ export class PlannotatorSessionWatcher
           this.logger.log(`Plannotator session ended: pid=${pid}`);
         }
       }
+    } catch (error) {
+      // Timer callbacks intentionally do not await poll(). Contain failures here
+      // so unreadable directories cannot produce unhandled rejections.
+      if (!this.destroyed)
+        this.logger.warn(`Failed to poll sessions: ${error}`);
     } finally {
       this.pollInFlight = false;
     }
+  }
+
+  private isSessionInfo(value: unknown): value is PlannotatorSessionInfo {
+    if (!value || typeof value !== 'object') return false;
+    const data = value as PlannotatorSessionInfo;
+    return (
+      Number.isSafeInteger(data.pid) &&
+      data.pid > 0 &&
+      Number.isInteger(data.port) &&
+      data.port > 0 &&
+      data.port <= 65535 &&
+      ['plan', 'review', 'annotate', 'archive'].includes(data.mode) &&
+      ['url', 'project', 'startedAt', 'label'].every(
+        (key) => typeof (value as Record<string, unknown>)[key] === 'string',
+      )
+    );
   }
 
   private isProcessAlive(pid: number): boolean {
     try {
       process.kill(pid, 0);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      // EPERM (and unknown errors) do not prove that a process is dead.
+      return (error as NodeJS.ErrnoException).code !== 'ESRCH';
     }
   }
 

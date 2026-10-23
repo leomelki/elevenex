@@ -10,13 +10,13 @@ import { FilesController } from './files.controller.js';
 import { FilesService } from './files.service.js';
 import { DRIZZLE } from '../database/database.provider.js';
 
-describe('VS Code binary uploads (HTTP)', () => {
+describe('Filesystem paths and VS Code binary uploads (HTTP)', () => {
   let app: NestExpressApplication;
   let worktree: string;
   let taskLookup: jest.Mock;
 
   beforeEach(async () => {
-    worktree = await mkdtemp(join(tmpdir(), 'elevenex-upload-'));
+    worktree = await mkdtemp(join(tmpdir(), 'elevenex-upload-%2F%-'));
     taskLookup = jest.fn().mockResolvedValue([
       {
         id: 108,
@@ -56,6 +56,71 @@ describe('VS Code binary uploads (HTTP)', () => {
 
   const uploadUrl = (root: string, file: string) =>
     `/api/worktrees/${encodeURIComponent(root)}/raw?path=${encodeURIComponent(file)}`;
+
+  it.each(['100%.txt', 'literal%2Fname.txt'])(
+    'preserves literal percent paths across Express route and query decoding: %s',
+    async (name) => {
+      const base = `/api/worktrees/${encodeURIComponent(worktree)}`;
+      const directory = 'folder%2F%';
+      const file = `${directory}/${name}`;
+      const wildcard = `${base}/files/${encodeURIComponent(directory)}/${encodeURIComponent(name)}`;
+      const query = `${base}/file?path=${encodeURIComponent(file)}`;
+      await request(app.getHttpServer())
+        .post(`${base}/directories/${encodeURIComponent(directory)}`)
+        .expect(201);
+      await request(app.getHttpServer())
+        .put(wildcard)
+        .send({ content: 'wildcard' })
+        .expect(200);
+      expect(await readFile(join(worktree, file), 'utf8')).toBe('wildcard');
+      await request(app.getHttpServer())
+        .get(query)
+        .expect(200, { content: 'wildcard', language: 'plaintext' });
+      await request(app.getHttpServer())
+        .put(query)
+        .send({ content: 'query' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .get(wildcard)
+        .expect(200, { content: 'query', language: 'plaintext' });
+      await request(app.getHttpServer())
+        .get(`${base}/raw/${encodeURIComponent(file)}`)
+        .expect(200, 'query');
+      await request(app.getHttpServer())
+        .get(`${base}/stat?path=${encodeURIComponent(file)}`)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body).toMatchObject({ type: 'file', size: 5 });
+        });
+      await request(app.getHttpServer())
+        .get(`${base}/stat/${encodeURIComponent(file)}`)
+        .expect(200);
+      await request(app.getHttpServer())
+        .get(`${base}/files?dir=${encodeURIComponent(directory)}`)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body.map((entry: { label: string }) => entry.label)).toEqual([
+            name,
+          ]);
+        });
+      await request(app.getHttpServer())
+        .get(`${base}/file-search?query=${encodeURIComponent(name)}`)
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body).toEqual([{ path: file, name }]);
+        });
+      const newPath = `${directory}/renamed%2F%.txt`;
+      await request(app.getHttpServer())
+        .patch(wildcard)
+        .send({ newPath })
+        .expect(200);
+      expect(await readFile(join(worktree, newPath), 'utf8')).toBe('query');
+      await request(app.getHttpServer())
+        .delete(`${base}/files/${encodeURIComponent(newPath)}`)
+        .expect(200);
+      expect(await readdir(join(worktree, directory))).toEqual([]);
+    },
+  );
 
   it('uploads gzip bytes larger than the JSON limit without corruption', async () => {
     const bytes = gzipSync(randomBytes(13 * 1024 * 1024));

@@ -28,7 +28,13 @@ describe('FilesController', () => {
   let controller: FilesController;
   let filesystemController: FilesystemController;
   let service: FilesService;
-  const taskRow = { id: 12, path: '/tmp/checkout', taskState: 'ready', linkStatus: 'linked', archivedAt: null as string | null };
+  const taskRow = {
+    id: 12,
+    path: '/tmp/checkout',
+    taskState: 'ready',
+    linkStatus: 'linked',
+    archivedAt: null as string | null,
+  };
   const taskLookup = jest.fn();
 
   beforeEach(async () => {
@@ -36,7 +42,14 @@ describe('FilesController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [FilesController, FilesystemController],
       providers: [
-        { provide: DRIZZLE, useValue: { select: () => ({ from: () => ({ where: () => ({ limit: taskLookup }) }) }) } },
+        {
+          provide: DRIZZLE,
+          useValue: {
+            select: () => ({
+              from: () => ({ where: () => ({ limit: taskLookup }) }),
+            }),
+          },
+        },
         {
           provide: FilesService,
           useValue: {
@@ -63,24 +76,86 @@ describe('FilesController', () => {
   });
 
   it('rejects a stale editor after its task is finished or assigned to a different directory', async () => {
-    for (const row of [{ ...taskRow, archivedAt: '2026-10-08' }, { ...taskRow, taskState: 'finishing' }, { ...taskRow, path: '/tmp/another-checkout' }]) {
+    for (const row of [
+      { ...taskRow, archivedAt: '2026-10-08' },
+      { ...taskRow, taskState: 'finishing' },
+      { ...taskRow, path: '/tmp/another-checkout' },
+    ]) {
       taskLookup.mockResolvedValue([row]);
-      await expect(controller.writeFile(encodeURIComponent('/tmp/checkout'), 'notes.md', { content: 'old editor' }, '12')).rejects.toThrow('inactive task');
+      await expect(
+        controller.writeFile(
+          '/tmp/checkout',
+          'notes.md',
+          { content: 'old editor' },
+          '12',
+        ),
+      ).rejects.toThrow('inactive task');
     }
     expect(service.writeFile).not.toHaveBeenCalled();
   });
 
   it('allows a current task editor to save', async () => {
-    await controller.writeFile(encodeURIComponent('/tmp/checkout'), 'notes.md', { content: 'findings' }, '12');
-    expect(service.writeFile).toHaveBeenCalledWith('/tmp/checkout/notes.md', 'findings', '/tmp/checkout');
+    await controller.writeFile(
+      '/tmp/checkout',
+      'notes.md',
+      { content: 'findings' },
+      '12',
+    );
+    expect(service.writeFile).toHaveBeenCalledWith(
+      '/tmp/checkout/notes.md',
+      'findings',
+      '/tmp/checkout',
+    );
   });
+
+  it.each(['100%.txt', 'literal%2Fname.txt'])(
+    'preserves already decoded string and array wildcard paths: %s',
+    async (name) => {
+      const root = '/tmp/checkout%2F%';
+      for (const wildcard of [name, [name]]) {
+        await controller.readFile(root, wildcard);
+        await controller.statPath(root, wildcard);
+      }
+      expect(service.readFile).toHaveBeenCalledTimes(2);
+      expect(service.readFile).toHaveBeenLastCalledWith(
+        path.join(root, name),
+        root,
+      );
+      expect(service.stat).toHaveBeenLastCalledWith(
+        path.join(root, name),
+        root,
+      );
+      await controller.listFiles(root, name);
+      expect(service.listFiles).toHaveBeenCalledWith(root, name);
+      await controller.searchText(root, 'needle');
+      expect(service.searchText).toHaveBeenCalledWith(
+        root,
+        expect.objectContaining({ query: 'needle' }),
+      );
+    },
+  );
 
   it('streams external media with decoded query paths, range headers, and disconnect cleanup', async () => {
     const stream = Readable.from(['test']);
-    service.readLocalMedia = jest.fn().mockResolvedValue({ stream, mimeType: 'video/mp4', statusCode: 206, contentRange: 'bytes 2-5/10', length: 4 });
+    service.readLocalMedia = jest
+      .fn()
+      .mockResolvedValue({
+        stream,
+        mimeType: 'video/mp4',
+        statusCode: 206,
+        contentRange: 'bytes 2-5/10',
+        length: 4,
+      });
     const res = { status: jest.fn(), setHeader: jest.fn(), once: jest.fn() };
-    const file = await filesystemController.readMedia('/tmp/été #1%,demo.mp4', res as never, 'bytes=2-5');
-    expect(service.readLocalMedia).toHaveBeenCalledWith('/tmp/été #1%,demo.mp4', 'bytes=2-5');
+    const file = await filesystemController.readMedia(
+      '/tmp/été #1%,demo.mp4',
+      res as never,
+      'bytes=2-5',
+    );
+    expect(service.readLocalMedia).toHaveBeenCalledWith(
+      '/tmp/été #1%,demo.mp4',
+      'bytes=2-5',
+    );
     expect(res.status).toHaveBeenCalledWith(206);
     expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
     expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 2-5/10');
@@ -90,7 +165,14 @@ describe('FilesController', () => {
   });
 
   it('prevents caching worktree images', async () => {
-    service.readFileRaw = jest.fn().mockResolvedValue({ stream: Readable.from(['image']), mimeType: 'image/png', length: 5, statusCode: 200 });
+    service.readFileRaw = jest
+      .fn()
+      .mockResolvedValue({
+        stream: Readable.from(['image']),
+        mimeType: 'image/png',
+        length: 5,
+        statusCode: 200,
+      });
     const res = { status: jest.fn(), setHeader: jest.fn(), once: jest.fn() };
     await controller.readFileRaw('/tmp/worktree', 'shot.png', res as never);
     expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
@@ -140,8 +222,8 @@ describe('FilesController', () => {
           once: jest.fn(),
         };
         const file = await controller.readFileRaw(
-          encodeURIComponent('/tmp/worktree'),
-          'clips%2Fdemo.mp4',
+          '/tmp/worktree',
+          ['clips', 'demo.mp4'],
           res as never,
           'bytes=2-5',
         );
@@ -192,8 +274,8 @@ describe('FilesController', () => {
       service.createDirectory = createDirectory;
 
       const result = await controller.createDirectory(
-        encodeURIComponent('/tmp/worktree path'),
-        encodeURIComponent('src/components'),
+        '/tmp/worktree path',
+        'src/components',
       );
 
       expect(result).toEqual({ success: true });
@@ -210,7 +292,7 @@ describe('FilesController', () => {
       service.createDirectory = createDirectory;
 
       await expect(
-        controller.createDirectory(encodeURIComponent('/tmp/worktree'), 'src'),
+        controller.createDirectory('/tmp/worktree', 'src'),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -223,7 +305,7 @@ describe('FilesController', () => {
       service.searchFiles = searchFiles;
 
       const result = await controller.searchFiles(
-        encodeURIComponent('/tmp/worktree path'),
+        '/tmp/worktree path',
         'app',
         '25',
       );
@@ -236,7 +318,7 @@ describe('FilesController', () => {
       const searchFiles = jest.fn().mockResolvedValue([]);
       service.searchFiles = searchFiles;
 
-      await controller.searchFiles(encodeURIComponent('/tmp/worktree'));
+      await controller.searchFiles('/tmp/worktree');
 
       expect(searchFiles).toHaveBeenCalledWith('/tmp/worktree', '', undefined);
     });
@@ -255,7 +337,7 @@ describe('FilesController', () => {
       service.searchText = searchText;
 
       const result = await controller.searchText(
-        encodeURIComponent('/tmp/worktree path'),
+        '/tmp/worktree path',
         'needle',
         'false',
         'true',
@@ -363,7 +445,7 @@ describe('FilesController', () => {
       const res = createMockResponse();
       await controller.streamSearchText(
         res as never,
-        encodeURIComponent('/tmp/worktree'),
+        '/tmp/worktree',
         'needle',
       );
 
@@ -396,7 +478,7 @@ describe('FilesController', () => {
       const res = createMockResponse();
       await controller.streamSearchText(
         res as never,
-        encodeURIComponent('/tmp/worktree'),
+        '/tmp/worktree',
         'needle',
       );
 
@@ -413,11 +495,7 @@ describe('FilesController', () => {
         ) as unknown as typeof service.searchTextStream;
 
       const res = createMockResponse();
-      await controller.streamSearchText(
-        res as never,
-        encodeURIComponent('/nope'),
-        'needle',
-      );
+      await controller.streamSearchText(res as never, '/nope', 'needle');
 
       expect(res.statusCode).toBe(400);
       expect(res.jsonBody).toEqual({
@@ -442,7 +520,7 @@ describe('FilesController', () => {
       const res = createMockResponse();
       await controller.streamSearchText(
         res as never,
-        encodeURIComponent('/tmp/worktree'),
+        '/tmp/worktree',
         'needle',
       );
 
@@ -460,8 +538,8 @@ describe('FilesController', () => {
       service.rename = rename;
 
       const result = await controller.rename(
-        encodeURIComponent('/tmp/worktree path'),
-        encodeURIComponent('old name.ts'),
+        '/tmp/worktree path',
+        'old name.ts',
         {
           newPath: 'renamed/new name.ts',
           overwrite: true,
@@ -486,7 +564,7 @@ describe('FilesController', () => {
       service.rename = rename;
 
       await expect(
-        controller.rename(encodeURIComponent('/tmp/worktree'), 'old.ts', {
+        controller.rename('/tmp/worktree', 'old.ts', {
           newPath: 'new.ts',
         }),
       ).rejects.toThrow(BadRequestException);
@@ -499,8 +577,8 @@ describe('FilesController', () => {
       service.deleteEntry = deleteEntry;
 
       const result = await controller.deleteEntry(
-        encodeURIComponent('/tmp/worktree path'),
-        encodeURIComponent('folder/file.ts'),
+        '/tmp/worktree path',
+        'folder/file.ts',
         'true',
       );
 
@@ -516,10 +594,7 @@ describe('FilesController', () => {
       const deleteEntry = jest.fn().mockResolvedValue(undefined);
       service.deleteEntry = deleteEntry;
 
-      await controller.deleteEntry(
-        encodeURIComponent('/tmp/worktree'),
-        'file.ts',
-      );
+      await controller.deleteEntry('/tmp/worktree', 'file.ts');
 
       expect(deleteEntry).toHaveBeenCalledWith(
         path.join('/tmp/worktree', 'file.ts'),
@@ -535,10 +610,7 @@ describe('FilesController', () => {
       service.deleteEntry = deleteEntry;
 
       await expect(
-        controller.deleteEntry(
-          encodeURIComponent('/tmp/worktree'),
-          'missing.ts',
-        ),
+        controller.deleteEntry('/tmp/worktree', 'missing.ts'),
       ).rejects.toThrow(BadRequestException);
     });
   });

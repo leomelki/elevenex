@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { Readable } from 'node:stream';
+import { EventEmitter } from 'node:events';
 import {
   FilesService,
   detectLanguage,
@@ -27,6 +28,7 @@ describe('FilesService', () => {
   });
 
   afterEach(() => {
+    jest.restoreAllMocks();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -38,18 +40,37 @@ describe('FilesService', () => {
       const chunks: Buffer[] = [];
       for await (const chunk of result.stream) chunks.push(Buffer.from(chunk));
       expect(Buffer.concat(chunks).toString()).toBe('2345');
-      expect(result).toMatchObject({ statusCode: 206, contentRange: 'bytes 2-5/10', mimeType: 'video/mp4' });
+      expect(result).toMatchObject({
+        statusCode: 206,
+        contentRange: 'bytes 2-5/10',
+        mimeType: 'video/mp4',
+      });
     });
 
     it('supports home-relative media', async () => {
-      const raw = jest.spyOn(service, 'readFileRaw').mockResolvedValue({ stream: require('node:stream').Readable.from([]), mimeType: 'image/png', length: 0, statusCode: 200 });
+      const raw = jest
+        .spyOn(service, 'readFileRaw')
+        .mockResolvedValue({
+          stream: require('node:stream').Readable.from([]),
+          mimeType: 'image/png',
+          length: 0,
+          statusCode: 200,
+        });
       await service.readLocalMedia('~/Pictures/shot.png');
-      expect(raw).toHaveBeenCalledWith(path.join(os.homedir(), 'Pictures/shot.png'), path.join(os.homedir(), 'Pictures'), undefined);
+      expect(raw).toHaveBeenCalledWith(
+        path.join(os.homedir(), 'Pictures/shot.png'),
+        path.join(os.homedir(), 'Pictures'),
+        undefined,
+      );
     });
 
     it('rejects relative paths and non-media files', async () => {
-      await expect(service.readLocalMedia('relative.png')).rejects.toThrow('absolute');
-      await expect(service.readLocalMedia(path.join(tmpDir, 'notes.txt'))).rejects.toThrow('image or video');
+      await expect(service.readLocalMedia('relative.png')).rejects.toThrow(
+        'absolute',
+      );
+      await expect(
+        service.readLocalMedia(path.join(tmpDir, 'notes.txt')),
+      ).rejects.toThrow('image or video');
     });
   });
 
@@ -207,6 +228,16 @@ describe('FilesService', () => {
   });
 
   describe('listFiles', () => {
+    it('rejects traversal before accessing a directory outside the worktree', async () => {
+      const stat = jest.spyOn(fs.promises, 'stat');
+      const readdir = jest.spyOn(fs.promises, 'readdir');
+      await expect(service.listFiles(tmpDir, '../')).rejects.toThrow(
+        'outside worktree',
+      );
+      expect(stat).not.toHaveBeenCalled();
+      expect(readdir).not.toHaveBeenCalled();
+    });
+
     it('should throw BadRequestException for non-existent path', async () => {
       await expect(service.listFiles('/nonexistent')).rejects.toThrow(
         BadRequestException,
@@ -477,7 +508,10 @@ describe('FilesService', () => {
       fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
       fs.writeFileSync(path.join(tmpDir, '.gitignore'), 'ignored.txt\n');
       fs.writeFileSync(path.join(tmpDir, 'src', 'tracked-file.ts'), 'tracked');
-      fs.writeFileSync(path.join(tmpDir, 'src', 'untracked-file.ts'), 'untracked');
+      fs.writeFileSync(
+        path.join(tmpDir, 'src', 'untracked-file.ts'),
+        'untracked',
+      );
       fs.writeFileSync(path.join(tmpDir, 'ignored.txt'), 'ignored');
       execFileSync('git', ['add', '.gitignore', 'src/tracked-file.ts'], {
         cwd: tmpDir,
@@ -498,8 +532,14 @@ describe('FilesService', () => {
       initGitRepo();
       fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
       fs.mkdirSync(path.join(tmpDir, 'src', 'components'), { recursive: true });
-      fs.writeFileSync(path.join(tmpDir, 'docs', 'my-search-target.md'), 'docs');
-      fs.writeFileSync(path.join(tmpDir, 'src', 'components', 'search-panel.ts'), 'panel');
+      fs.writeFileSync(
+        path.join(tmpDir, 'docs', 'my-search-target.md'),
+        'docs',
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, 'src', 'components', 'search-panel.ts'),
+        'panel',
+      );
       fs.writeFileSync(path.join(tmpDir, 'src', 'other-search.ts'), 'other');
       execFileSync('git', ['add', '.'], { cwd: tmpDir, stdio: 'ignore' });
 
@@ -551,6 +591,50 @@ describe('FilesService', () => {
   });
 
   describe('searchText', () => {
+    it('maps thousands of matches on a large Unicode line without repeatedly encoding it', async () => {
+      const prefix = 'é😀'.repeat(200_000);
+      const suffix = 'é😀needle'.repeat(1_500);
+      const line = prefix + suffix;
+      await fs.promises.writeFile(path.join(tmpDir, 'bundle.js'), `${line}\n`);
+      const encode = jest.spyOn(Buffer, 'from');
+      const [result] = await service.searchText(tmpDir, { query: 'needle' });
+      const encodedWholeLines = encode.mock.calls.filter(
+        ([value]) => typeof value === 'string' && value === line,
+      );
+      expect(encodedWholeLines).toHaveLength(1);
+      expect(result.ranges).toHaveLength(1_500);
+      expect(result.ranges[0]).toEqual({
+        start: prefix.length + 3,
+        end: prefix.length + 9,
+      });
+      expect(result.ranges[1_499]).toEqual({
+        start: prefix.length + 1_499 * 9 + 3,
+        end: line.length,
+      });
+      expect(result.lineText.length).toBeLessThanOrEqual(1_000);
+      const range = result.previewRanges![0];
+      expect(result.lineText.slice(range.start, range.end)).toBe('needle');
+    });
+
+    it('caps matches on one minified line and reports limitHit with correct retained offsets', async () => {
+      await fs.promises.writeFile(
+        path.join(tmpDir, 'bundle.js'),
+        'é😀needle'.repeat(10_000),
+      );
+      const results: import('./files.service.js').TextSearchResult[] = [];
+      const summary = await service.searchTextStream(
+        tmpDir,
+        { query: 'needle' },
+        (batch) => results.push(...batch),
+      );
+      expect(summary.limitHit).toBe(true);
+      expect(results[0].ranges).toHaveLength(2_000);
+      expect(results[0].ranges[1_999]).toEqual({
+        start: 1_999 * 9 + 3,
+        end: 2_000 * 9,
+      });
+    });
+
     function initGitRepo(): void {
       execFileSync('git', ['init'], { cwd: tmpDir, stdio: 'ignore' });
       execFileSync('git', ['config', 'user.email', 'test@example.com'], {
@@ -597,7 +681,10 @@ describe('FilesService', () => {
     });
 
     it('honors case sensitivity and whole-word matching', async () => {
-      fs.writeFileSync(path.join(tmpDir, 'app.ts'), 'Needle\nneedle\nneedles\n');
+      fs.writeFileSync(
+        path.join(tmpDir, 'app.ts'),
+        'Needle\nneedle\nneedles\n',
+      );
 
       const caseSensitive = await service.searchText(tmpDir, {
         query: 'needle',
@@ -691,9 +778,9 @@ describe('FilesService', () => {
       expect(result.ranges).toEqual([{ start: 4_000, end: 4_006 }]);
       // Preview coordinates index into the returned snippet.
       const previewRange = result.previewRanges![0];
-      expect(
-        result.lineText.slice(previewRange.start, previewRange.end),
-      ).toBe('needle');
+      expect(result.lineText.slice(previewRange.start, previewRange.end)).toBe(
+        'needle',
+      );
     });
 
     it('leaves short previews untouched', async () => {
@@ -708,6 +795,79 @@ describe('FilesService', () => {
   });
 
   describe('searchTextStream', () => {
+    function mockRipgrep(chunks: Buffer[], trailingNewline = true): jest.Mock {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        kill: jest.Mock;
+      };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = jest.fn();
+      jest
+        .spyOn(require('node:child_process'), 'spawn')
+        .mockImplementationOnce(() => {
+          // Queue after the service has attached its stdout and close listeners.
+          setImmediate(() => {
+            for (const chunk of chunks) child.stdout.emit('data', chunk);
+            if (trailingNewline) child.stdout.emit('data', Buffer.from('\n'));
+            child.emit('close', 0, null);
+          });
+          return child;
+        });
+      return child.kill;
+    }
+
+    it.each([true, false])(
+      'decodes split multibyte stdout with trailing newline=%s',
+      async (trailingNewline) => {
+        const line = 'é😀needle漢needle';
+        const event = JSON.stringify({
+          type: 'match',
+          data: {
+            path: { text: './été😀.ts' },
+            lines: { text: `${line}\r\n` },
+            line_number: 2,
+            submatches: [
+              { start: 6, end: 12 },
+              { start: 15, end: 21 },
+            ],
+          },
+        });
+        // One byte per chunk splits every non-ASCII character in both fields.
+        mockRipgrep(
+          [...Buffer.from(event)].map((byte) => Buffer.from([byte])),
+          trailingNewline,
+        );
+        expect(await service.searchText(tmpDir, { query: 'needle' })).toEqual([
+          {
+            path: 'été😀.ts',
+            lineNumber: 1,
+            lineText: line,
+            ranges: [
+              { start: 3, end: 9 },
+              { start: 10, end: 16 },
+            ],
+          },
+        ]);
+      },
+    );
+
+    it('bounds an oversized JSON record spread across many stdout chunks', async () => {
+      const kill = mockRipgrep(
+        Array.from({ length: 150 }, () => Buffer.alloc(64 * 1024, 120)),
+      );
+      const batch = jest.fn();
+      const summary = await service.searchTextStream(
+        tmpDir,
+        { query: 'needle' },
+        batch,
+      );
+      expect(summary.limitHit).toBe(true);
+      expect(kill).toHaveBeenCalledTimes(1);
+      expect(batch).not.toHaveBeenCalled();
+    });
+
     it('delivers matches through the callback and reports limitHit', async () => {
       fs.writeFileSync(
         path.join(tmpDir, 'a.txt'),
@@ -865,7 +1025,9 @@ describe('FilesService', () => {
       const bytes = Buffer.from([0x1f, 0x8b, 0, 0xff, 0x80]);
       await service.writeFileStream(file, Readable.from([bytes]), tmpDir);
       expect(await fs.promises.readFile(file)).toEqual(bytes);
-      expect(await fs.promises.readdir(path.dirname(file))).toEqual(['trace.json.gz']);
+      expect(await fs.promises.readdir(path.dirname(file))).toEqual([
+        'trace.json.gz',
+      ]);
     });
 
     it('writes an empty file and preserves existing executable permissions', async () => {
@@ -879,11 +1041,15 @@ describe('FilesService', () => {
     it('cleans up an interrupted upload and preserves the original file', async () => {
       const file = path.join(tmpDir, 'trace.gz');
       await fs.promises.writeFile(file, 'original');
-      const content = Readable.from((async function* () {
-        yield Buffer.from('partial');
-        throw new Error('upload disconnected');
-      })());
-      await expect(service.writeFileStream(file, content, tmpDir)).rejects.toThrow('upload disconnected');
+      const content = Readable.from(
+        (async function* () {
+          yield Buffer.from('partial');
+          throw new Error('upload disconnected');
+        })(),
+      );
+      await expect(
+        service.writeFileStream(file, content, tmpDir),
+      ).rejects.toThrow('upload disconnected');
       expect(await fs.promises.readFile(file, 'utf8')).toBe('original');
       expect(await fs.promises.readdir(tmpDir)).toEqual(['trace.gz']);
     });
@@ -891,15 +1057,28 @@ describe('FilesService', () => {
     it('discards uploads when the task becomes inactive before commit', async () => {
       const file = path.join(tmpDir, 'trace.gz');
       await fs.promises.writeFile(file, 'original');
-      await expect(service.writeFileStream(file, Readable.from(['replacement']), tmpDir, async () => {
-        throw new Error('inactive task');
-      })).rejects.toThrow('inactive task');
+      await expect(
+        service.writeFileStream(
+          file,
+          Readable.from(['replacement']),
+          tmpDir,
+          async () => {
+            throw new Error('inactive task');
+          },
+        ),
+      ).rejects.toThrow('inactive task');
       expect(await fs.promises.readFile(file, 'utf8')).toBe('original');
       expect(await fs.promises.readdir(tmpDir)).toEqual(['trace.gz']);
     });
 
     it('rejects paths outside the worktree', async () => {
-      await expect(service.writeFileStream(path.join(tmpDir, '../outside.gz'), Readable.from([]), tmpDir)).rejects.toThrow('outside worktree');
+      await expect(
+        service.writeFileStream(
+          path.join(tmpDir, '../outside.gz'),
+          Readable.from([]),
+          tmpDir,
+        ),
+      ).rejects.toThrow('outside worktree');
     });
 
     it('preserves symlinks when overwriting a file inside the worktree', async () => {
@@ -907,7 +1086,11 @@ describe('FilesService', () => {
       const link = path.join(tmpDir, 'link.txt');
       await fs.promises.writeFile(target, 'original');
       await fs.promises.symlink(target, link);
-      await service.writeFileStream(link, Readable.from(['replacement']), tmpDir);
+      await service.writeFileStream(
+        link,
+        Readable.from(['replacement']),
+        tmpDir,
+      );
       expect((await fs.promises.lstat(link)).isSymbolicLink()).toBe(true);
       expect(await fs.promises.readFile(target, 'utf8')).toBe('replacement');
     });
@@ -919,7 +1102,9 @@ describe('FilesService', () => {
       await fs.promises.writeFile(target, 'original');
       const link = path.join(root, 'link.txt');
       await fs.promises.symlink(target, link);
-      await expect(service.writeFileStream(link, Readable.from(['replacement']), root)).rejects.toThrow('outside worktree');
+      await expect(
+        service.writeFileStream(link, Readable.from(['replacement']), root),
+      ).rejects.toThrow('outside worktree');
       expect(await fs.promises.readFile(target, 'utf8')).toBe('original');
     });
   });
@@ -944,6 +1129,159 @@ describe('FilesService', () => {
   });
 
   describe('rename', () => {
+    it.each([false, true])(
+      'keeps the source for an identical normalized path (overwrite=%s)',
+      async (overwrite) => {
+        const source = path.join(tmpDir, 'same.txt');
+        await fs.promises.writeFile(source, 'source');
+        await service.rename(
+          source,
+          `${tmpDir}/sub/../same.txt`,
+          tmpDir,
+          overwrite,
+        );
+        expect(await fs.promises.readFile(source, 'utf8')).toBe('source');
+      },
+    );
+
+    it('keeps both hard links when the destination has the same identity', async () => {
+      const source = path.join(tmpDir, 'source');
+      const target = path.join(tmpDir, 'target');
+      await fs.promises.writeFile(source, 'source');
+      await fs.promises.link(source, target);
+      await service.rename(source, target, tmpDir, true);
+      expect(await fs.promises.readFile(source, 'utf8')).toBe('source');
+      expect(await fs.promises.readFile(target, 'utf8')).toBe('source');
+    });
+
+    it('rejects ancestor overwrites and moves into descendants before removing anything', async () => {
+      const parent = path.join(tmpDir, 'parent');
+      const child = path.join(parent, 'child');
+      await fs.promises.mkdir(child, { recursive: true });
+      await fs.promises.writeFile(path.join(child, 'data'), 'source');
+      await expect(service.rename(child, parent, tmpDir, true)).rejects.toThrow(
+        'ancestor',
+      );
+      await expect(
+        service.rename(parent, path.join(child, 'nested'), tmpDir, true),
+      ).rejects.toThrow('ancestor');
+      expect(await fs.promises.readFile(path.join(child, 'data'), 'utf8')).toBe(
+        'source',
+      );
+    });
+
+    it('rejects ancestor aliases through symlinked parents', async () => {
+      const parent = path.join(tmpDir, 'parent');
+      const child = path.join(parent, 'child');
+      await fs.promises.mkdir(child, { recursive: true });
+      await fs.promises.symlink(parent, path.join(tmpDir, 'alias'));
+      await fs.promises.writeFile(path.join(child, 'data'), 'source');
+      await expect(
+        service.rename(
+          path.join(tmpDir, 'alias', 'child'),
+          parent,
+          tmpDir,
+          true,
+        ),
+      ).rejects.toThrow('ancestor');
+      expect(await fs.promises.readFile(path.join(child, 'data'), 'utf8')).toBe(
+        'source',
+      );
+    });
+
+    it('rejects paths through parents outside the checkout before replacing either entry', async () => {
+      const root = path.join(tmpDir, 'checkout');
+      const outside = path.join(tmpDir, 'outside');
+      await fs.promises.mkdir(root);
+      await fs.promises.mkdir(outside);
+      const source = path.join(root, 'source');
+      await fs.promises.writeFile(source, 'source');
+      await fs.promises.writeFile(path.join(outside, 'target'), 'destination');
+      await fs.promises.symlink(outside, path.join(root, 'alias'));
+      await expect(
+        service.rename(source, path.join(root, 'alias', 'target'), root, true),
+      ).rejects.toThrow('outside worktree');
+      expect(await fs.promises.readFile(source, 'utf8')).toBe('source');
+      expect(
+        await fs.promises.readFile(path.join(outside, 'target'), 'utf8'),
+      ).toBe('destination');
+    });
+
+    it('rejects replacing or moving the checkout root', async () => {
+      const source = path.join(tmpDir, 'source');
+      await fs.promises.writeFile(source, 'source');
+      await expect(
+        service.rename(source, tmpDir, tmpDir, true),
+      ).rejects.toThrow('worktree root');
+      await expect(
+        service.rename(tmpDir, path.join(tmpDir, 'target'), tmpDir, true),
+      ).rejects.toThrow('worktree root');
+      expect(await fs.promises.readFile(source, 'utf8')).toBe('source');
+    });
+
+    it('preserves the destination when the source is missing or rename fails', async () => {
+      const source = path.join(tmpDir, 'source');
+      const target = path.join(tmpDir, 'target');
+      await fs.promises.writeFile(target, 'destination');
+      await expect(
+        service.rename(source, target, tmpDir, true),
+      ).rejects.toThrow('does not exist');
+      await fs.promises.writeFile(source, 'source');
+      jest
+        .spyOn(fs.promises, 'rename')
+        .mockRejectedValueOnce(
+          Object.assign(new Error('permission'), { code: 'EACCES' }),
+        );
+      await expect(
+        service.rename(source, target, tmpDir, true),
+      ).rejects.toThrow('permission');
+      expect(await fs.promises.readFile(source, 'utf8')).toBe('source');
+      expect(await fs.promises.readFile(target, 'utf8')).toBe('destination');
+    });
+
+    it('overwrites non-empty directories and removes only the old destination contents', async () => {
+      const source = path.join(tmpDir, 'source');
+      const target = path.join(tmpDir, 'target');
+      await fs.promises.mkdir(source);
+      await fs.promises.mkdir(target);
+      await fs.promises.writeFile(path.join(source, 'new'), 'new');
+      await fs.promises.writeFile(path.join(target, 'old'), 'old');
+      await service.rename(source, target, tmpDir, true);
+      expect(await fs.promises.readdir(target)).toEqual(['new']);
+      expect(await fs.promises.readdir(tmpDir)).toEqual(['target']);
+    });
+
+    it('restores a non-empty destination if moving the source fails after staging', async () => {
+      const source = path.join(tmpDir, 'source');
+      const target = path.join(tmpDir, 'target');
+      await fs.promises.mkdir(source);
+      await fs.promises.mkdir(target);
+      await fs.promises.writeFile(path.join(source, 'new'), 'new');
+      await fs.promises.writeFile(path.join(target, 'old'), 'old');
+      const rename = fs.promises.rename;
+      let calls = 0;
+      jest
+        .spyOn(fs.promises, 'rename')
+        .mockImplementation(async (old, next) => {
+          calls += 1;
+          if (calls === 3) throw new Error('source move failed');
+          return rename(old, next);
+        });
+      await expect(
+        service.rename(source, target, tmpDir, true),
+      ).rejects.toThrow('source move failed');
+      expect(await fs.promises.readFile(path.join(source, 'new'), 'utf8')).toBe(
+        'new',
+      );
+      expect(await fs.promises.readFile(path.join(target, 'old'), 'utf8')).toBe(
+        'old',
+      );
+      expect((await fs.promises.readdir(tmpDir)).sort()).toEqual([
+        'source',
+        'target',
+      ]);
+    });
+
     it('moves a file within the worktree', async () => {
       const sourcePath = path.join(tmpDir, 'old-name.ts');
       const destinationPath = path.join(tmpDir, 'new-name.ts');
