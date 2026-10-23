@@ -6,6 +6,8 @@ import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import { resolveSessionProvider } from './provider.util.js';
 import {
   isSessionSettled,
+  hasPausedQueue,
+  describePausedQueue,
   type SessionRuntimeSnapshot,
 } from '../session-runtime-state.util.js';
 
@@ -348,7 +350,8 @@ export const promptSessionTool = defineTool({
 
     let status = acceptance.accepted ? 'running' : 'acceptance_pending';
     if (acceptance.accepted && runtimeState) {
-      if (runtimeState.sessionState === 'requires_action')
+      if (hasPausedQueue(runtimeState)) status = 'paused';
+      else if (runtimeState.sessionState === 'requires_action')
         status = 'requires_action';
       else if (runtimeState.runPhase === 'error') status = 'failed';
       else if (isSessionSettled(runtimeState)) status = 'completed';
@@ -356,15 +359,20 @@ export const promptSessionTool = defineTool({
 
     const nextStep = !acceptance.accepted
       ? 'Prompt dispatched, but acceptance is still unconfirmed. Do not resubmit: call poll_session_status or read_session to check it.'
-      : status === 'requires_action'
-        ? 'Session blocked: get_pending_action to inspect, then resolve_action.'
-        : status === 'failed'
-          ? 'Session finished. Call read_session for the transcript.'
-          : status === 'completed'
-            ? 'Session finished already (fast turn). Call read_session for the transcript.'
-            : acceptance.queued
-              ? 'Prompt accepted and queued. Call poll_session_status or await_session_event to follow its progress.'
-              : 'Prompt accepted; the session is working in the background. Call poll_session_status or await_session_event to wait for it — or prompt_session other sessions now rather than waiting on this one.';
+      : status === 'paused'
+        ? describePausedQueue(
+            args.sessionId,
+            runtimeState?.pendingPrompts?.length ?? 0,
+          )
+        : status === 'requires_action'
+          ? 'Session blocked: get_pending_action to inspect, then resolve_action.'
+          : status === 'failed'
+            ? 'Session finished. Call read_session for the transcript.'
+            : status === 'completed'
+              ? 'Session finished already (fast turn). Call read_session for the transcript.'
+              : acceptance.queued
+                ? 'Prompt accepted and queued. Call poll_session_status or await_session_event to follow its progress.'
+                : 'Prompt accepted; the session is working in the background. Call poll_session_status or await_session_event to wait for it — or prompt_session other sessions now rather than waiting on this one.';
 
     return {
       data: {
@@ -373,6 +381,12 @@ export const promptSessionTool = defineTool({
         provider,
         status,
         ...(acceptance.queued ? { queued: true } : {}),
+        ...(hasPausedQueue(runtimeState)
+          ? {
+              queuePaused: true,
+              pendingPromptCount: runtimeState!.pendingPrompts!.length,
+            }
+          : {}),
       },
       deepLink: ctx.deepLink.session(args.sessionId),
       nextStep,

@@ -3,10 +3,9 @@
  * wait on session completion (`session_status`, `prompt_session`,
  * `poll_session_status`, `await_session_event`).
  *
- * `sessionState`/`runPhase` go idle as soon as the *visible* turn ends, but a
- * `run_in_background` subagent/task or a prompt queued behind one keeps the
- * runtime busy and WILL produce more output (the SDK autonomously resumes to
- * report back, or the queued prompt starts running once it drains) — see
+ * `sessionState`/`runPhase` go idle as soon as the *visible* turn ends, while
+ * background work or queued prompts can remain unfinished. Background work
+ * resumes autonomously; paused prompts require an explicit queue resume — see
  * `claude-runtime.service.ts`'s "Background work registry" section. Only
  * `pendingPrompts` is populated for every provider; `backgroundWork` is a
  * Claude-only signal and absent elsewhere, so both are optional here.
@@ -16,6 +15,7 @@ export interface SessionRuntimeSnapshot {
   runPhase?: string | null;
   backgroundWork?: unknown[] | null;
   pendingPrompts?: unknown[] | null;
+  queuePaused?: boolean | null;
   /** Claude task history; used to explain background work, never to gate it. */
   tasks?: unknown[] | null;
 }
@@ -64,7 +64,9 @@ export function summarizeBackgroundWork(
     }>
   ).map((item) => {
     const id = typeof item.id === 'string' ? item.id : '';
-    const taskId = id.startsWith('task:') ? id.slice('task:'.length) : undefined;
+    const taskId = id.startsWith('task:')
+      ? id.slice('task:'.length)
+      : undefined;
     const task = taskId ? tasks.get(taskId) : undefined;
     const parent =
       typeof task?.parentTaskId === 'string'
@@ -125,7 +127,7 @@ export function describeQueuedWork(
   }`;
 }
 
-/** True when the runtime still has work queued that will resume the session on its own. */
+/** True when unfinished background work or queued prompts remain, including paused prompts. */
 export function hasQueuedWork(
   state: SessionRuntimeSnapshot | null | undefined,
 ): boolean {
@@ -136,11 +138,24 @@ export function hasQueuedWork(
   );
 }
 
+/** Paused prompts require an explicit resume; new prompts do not unpause them. */
+export function hasPausedQueue(
+  state: SessionRuntimeSnapshot | null | undefined,
+): boolean {
+  return state?.queuePaused === true && (state.pendingPrompts?.length ?? 0) > 0;
+}
+
+export function describePausedQueue(
+  sessionId: number,
+  pendingPromptCount: number,
+): string {
+  return `Prompt queue paused (${pendingPromptCount} queued prompt${pendingPromptCount === 1 ? '' : 's'}). Queued prompts will not resume automatically. Call resume_pending_prompts with sessionId:${sessionId} to explicitly resume them.`;
+}
+
 /**
- * True only when the session is idle AND has nothing left that will resume it
- * automatically. Callers that treat `sessionState === 'idle' && runPhase ===
- * 'idle'` alone as "completed" will report a session done while it still has
- * a background task or a queued message about to run.
+ * True only when the session is idle AND has no unfinished work, including
+ * prompts paused pending an explicit resume. Checking only idle/idle can report
+ * completion while background work or an unfinished queue remains.
  */
 export function isSessionSettled(
   state: SessionRuntimeSnapshot | null | undefined,

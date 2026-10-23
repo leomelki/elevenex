@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import {
   describeQueuedWork,
+  describePausedQueue,
+  hasPausedQueue,
   hasQueuedWork,
   summarizeBackgroundWork,
   type BackgroundWorkSummary,
@@ -19,7 +21,7 @@ export const sessionStatusTool = defineTool({
   title: 'Session status',
   costClass: 'instant',
   description:
-    "Cheap liveness poll for one session (DB status + live runtime state, no transcript). ⚡instant. Gate before reading: call read_session when items advanced, get_pending_action when hasPendingAction, or await_session_event to block on a change. `hasQueuedWork:true` means a background task or queued prompt will resume the session even though it looks idle — do not treat it as finished; `backgroundWork` lists what is still running, and `orphaned` items were left behind by a finished subagent (stop_background_task ends one).",
+    'Cheap liveness poll for one session (DB status + live runtime state, no transcript). ⚡instant. Gate before reading: call read_session when items advanced, get_pending_action when hasPendingAction, or await_session_event to block on a change. `hasQueuedWork:true` means unfinished background work or queued prompts remain; `queuePaused:true` means queued prompts need an explicit resume_pending_prompts call and will not resume automatically; `backgroundWork` lists what is still running, and `orphaned` items were left behind by a finished subagent (stop_background_task ends one).',
   annotations: { readOnlyHint: true },
   currentSessionScope: 'session',
   inputShape: {
@@ -27,7 +29,9 @@ export const sessionStatusTool = defineTool({
       .number()
       .int()
       .positive()
-      .describe('Session id to poll. Get ids from project_overview / find_sessions.'),
+      .describe(
+        'Session id to poll. Get ids from project_overview / find_sessions.',
+      ),
   },
   handler: async (args, ctx) => {
     const { sessions, agentRuntime } = ctx.services;
@@ -55,6 +59,8 @@ export const sessionStatusTool = defineTool({
     let queuedWork = false;
     let backgroundWork: BackgroundWorkSummary[] = [];
     let pendingPromptCount = 0;
+    let queuePaused = false;
+    let pausedQueue = false;
     try {
       const provider = agentRuntime.getProvider(session.activeAgentProvider);
       const state = (await provider.getRuntimeState(
@@ -64,17 +70,25 @@ export const sessionStatusTool = defineTool({
         pendingUserInputRequest?: unknown;
       };
       queuedWork = hasQueuedWork(state);
+      queuePaused = state.queuePaused === true;
+      pausedQueue = hasPausedQueue(state);
       backgroundWork = summarizeBackgroundWork(state);
       pendingPromptCount = state.pendingPrompts?.length ?? 0;
-      // idle+idle only means the *visible* turn ended — a background task or a
-      // prompt queued behind it will resume the session on its own, so don't
-      // report a bare 'idle' that reads as "nothing left to do".
+      // A paused queue needs explicit intervention. Unpaused queued work can
+      // resume an idle visible turn automatically.
       runtimeState =
-        queuedWork && state.sessionState === 'idle' && state.runPhase === 'idle'
-          ? 'running'
-          : (state.sessionState ??
-            (state.runPhase === 'running' ? 'running' : undefined) ??
-            undefined);
+        pausedQueue &&
+        state.sessionState !== 'running' &&
+        state.sessionState !== 'requires_action' &&
+        state.runPhase !== 'running'
+          ? 'paused'
+          : queuedWork &&
+              state.sessionState === 'idle' &&
+              state.runPhase === 'idle'
+            ? 'running'
+            : (state.sessionState ??
+              (state.runPhase === 'running' ? 'running' : undefined) ??
+              undefined);
       hasPendingAction =
         !!state.pendingPermissionRequest || !!state.pendingUserInputRequest;
     } catch {
@@ -89,15 +103,19 @@ export const sessionStatusTool = defineTool({
         needsReview: session.hasUnreviewedCompletion,
         hasPendingAction,
         hasQueuedWork: queuedWork,
+        queuePaused,
+        pendingPromptCount,
         ...(backgroundWork.length ? { backgroundWork } : {}),
         lastActivityAt: session.lastStateChangeAt ?? undefined,
       },
       deepLink: ctx.deepLink.session(session.id),
       nextStep: hasPendingAction
-        ? 'Blocked: inspect with get_pending_action, then resolve it.'
-        : queuedWork
-          ? `Not actually idle: a background task or queued prompt will resume this session. await_session_event or poll_session_status to wait for real completion — do not treat this as done. ${describeQueuedWork(backgroundWork, pendingPromptCount)}`
-          : 'If items advanced, read_session for the delta; else await_session_event to block on a change.',
+        ? `Blocked: inspect with get_pending_action, then resolve it.${pausedQueue ? ` ${describePausedQueue(session.id, pendingPromptCount)}` : ''}`
+        : pausedQueue
+          ? describePausedQueue(session.id, pendingPromptCount)
+          : queuedWork
+            ? `Not actually idle: a background task or queued prompt will resume this session. await_session_event or poll_session_status to wait for real completion — do not treat this as done. ${describeQueuedWork(backgroundWork, pendingPromptCount)}`
+            : 'If items advanced, read_session for the delta; else await_session_event to block on a change.',
     };
   },
 });

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import {
   describeQueuedWork,
+  describePausedQueue,
+  hasPausedQueue,
   hasQueuedWork,
   isSessionSettled,
   summarizeBackgroundWork,
@@ -26,7 +28,7 @@ export const awaitSessionEventTool = defineTool({
   title: 'Await session event',
   costClass: 'heavy',
   description:
-    "Block until a session reaches one of `events` (default completed/requires_action/failed) or `timeoutMs` elapses — event-driven, not polling. 🔴 Use instead of looping session_status. `completed` only fires once the session is truly settled: a live background task or a prompt queued behind one keeps it running even though the visible turn already ended, so this correctly keeps waiting through that instead of returning early. On resolve: read_session for the delta, or get_pending_action when requires_action. On timeout: re-call immediately — no sleep needed.",
+    "Block until a session reaches one of `events` (default completed/requires_action/failed) or `timeoutMs` elapses — event-driven, not polling. 🔴 Use instead of looping session_status. `completed` only fires once the session is truly settled: a live background task or a prompt queued behind one keeps it running even though the visible turn already ended, so this correctly keeps waiting through that instead of returning early. On resolve: read_session for the delta, or get_pending_action when requires_action. A paused queue always returns event:paused with resume_pending_prompts guidance, even when omitted from events. On timeout: re-call immediately — no sleep needed.",
   annotations: { readOnlyHint: true },
   inputShape: {
     sessionId: z
@@ -38,7 +40,7 @@ export const awaitSessionEventTool = defineTool({
       .array(z.string().min(1))
       .optional()
       .describe(
-        "Statuses to wake on. Default ['completed','requires_action','failed'].",
+        "Statuses to wake on. Default ['completed','requires_action','failed']. A paused queue always wakes with event:paused.",
       ),
     timeoutMs: z
       .number()
@@ -72,6 +74,9 @@ export const awaitSessionEventTool = defineTool({
       args.events && args.events.length > 0 ? args.events : DEFAULT_EVENTS,
     );
 
+    // A deliberate queue pause requires action even when waiting only for completion.
+    wanted.add('paused');
+
     const makeResult = (
       event: string,
       status: string,
@@ -87,10 +92,15 @@ export const awaitSessionEventTool = defineTool({
           event,
           status,
           ...(backgroundWork.length ? { backgroundWork } : {}),
+          ...(hasPausedQueue(state)
+            ? { queuePaused: true, pendingPromptCount: state!.pendingPrompts!.length }
+            : {}),
         },
         deepLink: ctx.deepLink.session(session.id),
         nextStep:
-          event === 'timeout'
+          status === 'paused'
+            ? describePausedQueue(session.id, state?.pendingPrompts?.length ?? 0)
+            : event === 'timeout'
             ? `Still waiting — re-call await_session_event immediately with the same arguments, no sleep needed.${
                 turnEnded && hasQueuedWork(state)
                   ? ` Its turn has ended. ${describeQueuedWork(backgroundWork, state.pendingPrompts?.length ?? 0)}`
@@ -104,9 +114,10 @@ export const awaitSessionEventTool = defineTool({
 
     // Map runtime state to a logical event name the caller cares about.
     // idle+idle alone is NOT "completed": a live background task or a prompt
-    // queued behind one will resume this session on its own (see
-    // session-runtime-state.util.ts) — isSessionSettled accounts for both.
+    // unpaused queued prompt can resume the session. Paused prompts instead
+    // require action — they cannot be treated as completed or waited on forever.
     const runtimeEventFor = (s: SessionRuntimeSnapshot): string | null => {
+      if (hasPausedQueue(s)) return 'paused';
       if (s.sessionState === 'requires_action') return 'requires_action';
       if (s.runPhase === 'error') return 'failed';
       if (isSessionSettled(s)) return 'completed';
@@ -125,7 +136,7 @@ export const awaitSessionEventTool = defineTool({
     if (initialState) {
       const logicalEvent = runtimeEventFor(initialState as SessionRuntimeSnapshot);
       if (logicalEvent && wanted.has(logicalEvent)) {
-        return makeResult(logicalEvent, logicalEvent);
+        return makeResult(logicalEvent, logicalEvent, initialState as SessionRuntimeSnapshot);
       }
     }
 
@@ -143,19 +154,27 @@ export const awaitSessionEventTool = defineTool({
         if (timer) clearTimeout(timer);
       };
 
-      const finish = (event: string, status: string) => {
+      const finish = (
+        event: string,
+        status: string,
+        state?: SessionRuntimeSnapshot,
+      ) => {
         if (settled) return;
         settled = true;
         cleanup();
         if (event !== 'timeout') {
-          resolve(makeResult(event, status));
+          resolve(makeResult(event, status, state));
           return;
         }
         void runtime
           .getRuntimeState(session.id)
           .catch(() => null)
           .then((s) =>
-            resolve(makeResult(event, status, s as SessionRuntimeSnapshot | null)),
+            resolve(
+              hasPausedQueue(s as SessionRuntimeSnapshot | null)
+                ? makeResult('paused', 'paused', s as SessionRuntimeSnapshot)
+                : makeResult(event, status, s as SessionRuntimeSnapshot | null),
+            ),
           );
       };
 
@@ -185,7 +204,9 @@ export const awaitSessionEventTool = defineTool({
         }
         if (event.type === 'run_state') {
           const logicalEvent = runtimeEventFor(event.payload);
-          if (logicalEvent && wanted.has(logicalEvent)) finish(logicalEvent, logicalEvent);
+          if (logicalEvent && wanted.has(logicalEvent)) {
+            finish(logicalEvent, logicalEvent, event.payload);
+          }
           return;
         }
         if (event.type !== 'complete' && event.type !== 'background_work') return;
@@ -193,7 +214,9 @@ export const awaitSessionEventTool = defineTool({
           .getRuntimeState(session.id)
           .then((s) => {
             const logicalEvent = runtimeEventFor(s as SessionRuntimeSnapshot);
-            if (logicalEvent && wanted.has(logicalEvent)) finish(logicalEvent, logicalEvent);
+            if (logicalEvent && wanted.has(logicalEvent)) {
+              finish(logicalEvent, logicalEvent, s as SessionRuntimeSnapshot);
+            }
           })
           .catch(() => {});
       };
@@ -215,7 +238,9 @@ export const awaitSessionEventTool = defineTool({
       // initial check above and listener registration.
       runtime.getRuntimeState(session.id).then((s) => {
         const logicalEvent = runtimeEventFor(s as SessionRuntimeSnapshot);
-        if (logicalEvent && wanted.has(logicalEvent)) finish(logicalEvent, logicalEvent);
+        if (logicalEvent && wanted.has(logicalEvent)) {
+          finish(logicalEvent, logicalEvent, s as SessionRuntimeSnapshot);
+        }
       }).catch(() => {});
     });
   },

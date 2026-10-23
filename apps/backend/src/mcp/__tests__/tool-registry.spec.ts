@@ -382,6 +382,7 @@ describe('coding session identity and default scopes', () => {
     const bag = setup();
     for (const name of [
       'interrupt_session',
+      'resume_pending_prompts',
       'archive_session',
       'reset_session',
     ]) {

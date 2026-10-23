@@ -2,6 +2,7 @@ import type { ToolDefinition } from '../../tool-registry/tool.types.js';
 import { SESSION_LABEL_TOOLS } from './session-label.tools.js';
 import { promptSessionTool } from './prompt-session.tool.js';
 import { interruptSessionTool } from './interrupt-session.tool.js';
+import { resumePendingPromptsTool } from './resume-pending-prompts.tool.js';
 import { stopBackgroundTaskTool } from './stop-background-task.tool.js';
 import { forkSessionTool } from './fork-session.tool.js';
 import { archiveSessionTool } from './archive-session.tool.js';
@@ -21,6 +22,7 @@ export const DRIVE_TOOLS: ToolDefinition[] = [
   ...SESSION_LABEL_TOOLS,
   promptSessionTool,
   interruptSessionTool,
+  resumePendingPromptsTool,
   stopBackgroundTaskTool,
   forkSessionTool,
   archiveSessionTool,

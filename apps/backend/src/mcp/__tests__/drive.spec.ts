@@ -138,6 +138,7 @@ describe('Drive tool group', () => {
         'interrupt_session',
         'prompt_session',
         'reset_session',
+        'resume_pending_prompts',
         'resolve_action',
         'set_model',
         'set_permission_mode',

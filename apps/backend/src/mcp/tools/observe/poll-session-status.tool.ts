@@ -4,6 +4,8 @@ import { defineTool, ToolError, type ToolContext } from '../../tool-registry/too
 import { renderMarkdown } from '../../../agent-runtime/conversation-export.service.js';
 import {
   describeQueuedWork,
+  describePausedQueue,
+  hasPausedQueue,
   hasQueuedWork,
   isSessionSettled,
   summarizeBackgroundWork,
@@ -33,7 +35,7 @@ export const pollSessionStatusTool = defineTool({
   title: 'Poll session status',
   costClass: 'heavy',
   description:
-    'Block up to 170 s for a running session to finish (event-driven, not a poll loop). 🔴heavy. Only reports completion once the session is truly settled — a live background task or a prompt queued behind one keeps it waiting even though the visible turn already ended. On completion: returns a small transcript summary (call read_session for the full transcript or more detail). On timeout: returns stillRunning=true — call poll_session_status again immediately, no sleep needed between calls.',
+    'Block up to 170 s for a running session to finish (event-driven, not a poll loop). 🔴heavy. Only reports completion once the session is truly settled — a live background task or a prompt queued behind one keeps it waiting even though the visible turn already ended. On completion: returns a small transcript summary (call read_session for the full transcript or more detail). A paused prompt queue returns status:paused with resume_pending_prompts guidance. On timeout: returns stillRunning=true — call poll_session_status again immediately, no sleep needed between calls.',
   annotations: { readOnlyHint: true },
   inputShape: {
     sessionId: z
@@ -74,6 +76,9 @@ export const pollSessionStatusTool = defineTool({
     const initialState = await runtime.getRuntimeState(session.id).catch(() => null);
     const initialRuntimeState = initialState as SessionRuntimeSnapshot | null;
     if (initialRuntimeState) {
+      if (hasPausedQueue(initialRuntimeState)) {
+        return buildPausedResult(ctx, session.id, initialRuntimeState);
+      }
       if (initialRuntimeState.sessionState === 'requires_action') {
         return buildTerminalResult(ctx, session.id, session.activeAgentProvider, 'requires_action');
       }
@@ -99,10 +104,17 @@ export const pollSessionStatusTool = defineTool({
         if (timer) clearTimeout(timer);
       };
 
-      const finish = async (status: string) => {
+      const finish = async (
+        status: string,
+        pausedState?: SessionRuntimeSnapshot,
+      ) => {
         if (settled) return;
         settled = true;
         cleanup();
+        if (status === 'paused' && pausedState) {
+          resolve(buildPausedResult(ctx, args.sessionId, pausedState));
+          return;
+        }
 
         if (status === 'timeout' || status === 'aborted') {
           // Say what the wait is blocked on: a visible turn ending long ago
@@ -114,6 +126,10 @@ export const pollSessionStatusTool = defineTool({
                   .getRuntimeState(args.sessionId)
                   .catch(() => null)) as SessionRuntimeSnapshot | null)
               : null;
+          if (hasPausedQueue(state)) {
+            resolve(buildPausedResult(ctx, args.sessionId, state!));
+            return;
+          }
           const backgroundWork = summarizeBackgroundWork(state);
           const turnEnded =
             state?.sessionState === 'idle' && state.runPhase === 'idle';
@@ -159,14 +175,18 @@ export const pollSessionStatusTool = defineTool({
         if (event.type === 'error') {
           void finish('failed');
         } else if (event.type === 'run_state') {
-          if (event.payload.sessionState === 'requires_action') void finish('requires_action');
+          if (hasPausedQueue(event.payload)) void finish('paused', event.payload);
+          else if (event.payload.sessionState === 'requires_action') void finish('requires_action');
           else if (event.payload.runPhase === 'error') void finish('failed');
           else if (isSessionSettled(event.payload)) void finish('completed');
         } else if (event.type === 'complete' || event.type === 'background_work') {
           void runtime
             .getRuntimeState(args.sessionId)
             .then((s) => {
-              if (isSessionSettled(s as SessionRuntimeSnapshot)) void finish('completed');
+              if (hasPausedQueue(s as SessionRuntimeSnapshot)) {
+                void finish('paused', s as SessionRuntimeSnapshot);
+              }
+              else if (isSessionSettled(s as SessionRuntimeSnapshot)) void finish('completed');
             })
             .catch(() => {});
         }
@@ -188,13 +208,31 @@ export const pollSessionStatusTool = defineTool({
       // our initial check above and listener registration.
       runtime.getRuntimeState(args.sessionId).then((s) => {
         const state = s as SessionRuntimeSnapshot;
-        if (state.sessionState === 'requires_action') void finish('requires_action');
+        if (hasPausedQueue(state)) void finish('paused', state);
+        else if (state.sessionState === 'requires_action') void finish('requires_action');
         else if (state.runPhase === 'error') void finish('failed');
         else if (isSessionSettled(state)) void finish('completed');
       }).catch(() => {});
     });
   },
 });
+
+function buildPausedResult(
+  ctx: ToolContext,
+  sessionId: number,
+  state: SessionRuntimeSnapshot,
+) {
+  const pendingPromptCount = state.pendingPrompts?.length ?? 0;
+  const backgroundWork = summarizeBackgroundWork(state);
+  return {
+    data: {
+      sessionId, status: 'paused', queuePaused: true, pendingPromptCount,
+      ...(backgroundWork.length ? { backgroundWork } : {}),
+    },
+    deepLink: ctx.deepLink.session(sessionId),
+    nextStep: describePausedQueue(sessionId, pendingPromptCount),
+  };
+}
 
 async function buildTerminalResult(
   ctx: ToolContext,
