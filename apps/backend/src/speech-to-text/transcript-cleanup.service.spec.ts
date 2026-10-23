@@ -156,13 +156,23 @@ describe('TranscriptCleanupService', () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
-  it('gives up rather than hanging when the harness never resolves', async () => {
+  it('cancels the underlying harness at 8s when it never resolves', async () => {
     jest.useFakeTimers();
     try {
-      const service = createService(jest.fn(() => new Promise(() => {})));
+      const generate = jest.fn((_request: unknown) => new Promise(() => {}));
+      const service = createService(generate);
       const pending = service.clean({ ...BASE, rawText: 'some words' });
-      await jest.advanceTimersByTimeAsync(10_000);
+      const request = generate.mock.calls[0][0] as {
+        signal: AbortSignal;
+        timeoutMs: number;
+      };
+      expect(request.timeoutMs).toBe(8_000);
+      await jest.advanceTimersByTimeAsync(7_999);
+      expect(request.signal.aborted).toBe(false);
+      await jest.advanceTimersByTimeAsync(1);
       await expect(pending).resolves.toBeNull();
+      expect(request.signal.aborted).toBe(true);
+      expect(jest.getTimerCount()).toBe(0);
     } finally {
       jest.useRealTimers();
     }

@@ -6,6 +6,7 @@ import { WorktreeContextService } from './worktree-context.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 import * as schema from '../database/schema/index.js';
+import { eq } from 'drizzle-orm';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -99,6 +100,203 @@ describe('Worktree context reset with real SQLite', () => {
         hasRecord: true,
       });
   });
+
+  it.each([null, 'Previous task context.'])(
+    'recovers an interrupted generation after restart and allows retry (sentence=%s)',
+    async (contextSentence) => {
+      const db = drizzle(sqlite, { schema });
+      await db.update(schema.worktreeContexts).set({
+        generationStatus: 'generating',
+        contextSentence,
+      });
+      await db.insert(schema.worktreeContexts).values({
+        repoId,
+        worktreePath: '/tmp/other-worktree',
+        rootRef: 'main',
+        generationStatus: 'ready',
+        contextSentence: 'Other context.',
+      });
+      const restarted = new WorktreeContextService(
+        db,
+        {} as SessionsService,
+        {} as TextAgentGenerationService,
+      );
+      restarted.onModuleInit();
+      jest.spyOn(restarted as any, 'readCurrentBranch').mockResolvedValue(null);
+      jest
+        .spyOn(restarted as any, 'collectBranchContext')
+        .mockResolvedValue(branchContext);
+      const generate = jest
+        .spyOn(restarted as any, 'generateSentence')
+        .mockResolvedValue('Recovered context.');
+      expect(
+        await restarted.getCachedSnapshot(repoId, worktreePath),
+      ).toMatchObject({
+        rootRef: 'old-root',
+        generationStatus: 'failed',
+        contextSentence,
+        generatedAt: '2026-04-24T08:00:00.000Z',
+        lastUsedAt: '2026-04-24T09:00:00.000Z',
+        contextEnabled: false,
+        canGenerate: true,
+      });
+      expect(
+        await restarted.getCachedSnapshot(repoId, '/tmp/other-worktree'),
+      ).toMatchObject({
+        generationStatus: 'ready',
+        contextSentence: 'Other context.',
+      });
+      expect(
+        await restarted.generate(repoId, worktreePath, { provider: 'codex' }),
+      ).toMatchObject({
+        generationStatus: 'ready',
+        contextSentence: 'Recovered context.',
+        contextEnabled: false,
+      });
+      expect(generate).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['success', 'failure'])(
+    'supersedes a late %s when the root changes and preserves the new generation lock',
+    async (outcome) => {
+      const oldSentence = deferred<string>();
+      const newSentence = deferred<string>();
+      const oldStarted = deferred<void>();
+      const newStarted = deferred<void>();
+      jest
+        .spyOn(service as any, 'collectBranchContext')
+        .mockImplementation((_path: string, root: string) =>
+          Promise.resolve({
+            ...branchContext,
+            rootRef: root,
+            resolvedRootRef: root,
+          }),
+        );
+      const generate = jest
+        .spyOn(service as any, 'generateSentence')
+        .mockImplementationOnce(() => {
+          oldStarted.resolve();
+          return oldSentence.promise;
+        })
+        .mockImplementationOnce(() => {
+          newStarted.resolve();
+          return newSentence.promise;
+        });
+      const oldGeneration = service.generate(repoId, worktreePath, {
+        provider: 'codex',
+        force: true,
+      });
+      await oldStarted.promise;
+      const oldSignal = generate.mock.calls[0][3] as AbortSignal;
+      expect(oldSignal.aborted).toBe(false);
+      expect(
+        await service.updateRootRef(repoId, worktreePath, 'new-root'),
+      ).toMatchObject({
+        rootRef: 'new-root',
+        contextSentence: 'Previous task context.',
+        generationStatus: 'ready',
+      });
+      expect(oldSignal.aborted).toBe(true);
+      const newGeneration = service.generate(repoId, worktreePath, {
+        provider: 'codex',
+        force: true,
+      });
+      await newStarted.promise;
+      if (outcome === 'success') oldSentence.resolve('Late old root sentence.');
+      else oldSentence.reject(new Error('Late old root failure'));
+      expect(await oldGeneration).toMatchObject({
+        rootRef: 'new-root',
+        contextSentence: 'Previous task context.',
+        generationStatus: 'generating',
+      });
+      const joined = service.generate(repoId, worktreePath, {
+        provider: 'codex',
+        force: true,
+      });
+      newSentence.resolve('New root sentence.');
+      for (const result of await Promise.all([newGeneration, joined])) {
+        expect(result).toMatchObject({
+          rootRef: 'new-root',
+          contextSentence: 'New root sentence.',
+          generationStatus: 'ready',
+        });
+      }
+      expect(generate).toHaveBeenCalledTimes(2);
+      expect(
+        await service.getCachedSnapshot(repoId, worktreePath),
+      ).toMatchObject({
+        rootRef: 'new-root',
+        contextSentence: 'New root sentence.',
+        contextEnabled: false,
+      });
+    },
+  );
+
+  it('makes a root change retryable when there is no previous sentence', async () => {
+    await service.resetForTask(repoId, worktreePath);
+    const sentence = deferred<string>();
+    const started = deferred<void>();
+    jest.spyOn(service as any, 'generateSentence').mockImplementation(() => {
+      started.resolve();
+      return sentence.promise;
+    });
+    const generation = service.generate(repoId, worktreePath, {
+      provider: 'codex',
+    });
+    await started.promise;
+    expect(
+      await service.updateRootRef(repoId, worktreePath, 'new-root'),
+    ).toMatchObject({
+      rootRef: 'new-root',
+      contextSentence: null,
+      generationStatus: 'idle',
+    });
+    sentence.resolve('Discarded old sentence.');
+    expect(await generation).toMatchObject({
+      rootRef: 'new-root',
+      contextSentence: null,
+      generationStatus: 'idle',
+    });
+  });
+
+  it.each(['success', 'failure'])(
+    'preserves a sentence edited during generation on late %s',
+    async (outcome) => {
+      const sentence = deferred<string>();
+      const started = deferred<void>();
+      jest.spyOn(service as any, 'generateSentence').mockImplementation(() => {
+        started.resolve();
+        return sentence.promise;
+      });
+      const generation = service.generate(repoId, worktreePath, {
+        provider: 'codex',
+        force: true,
+      });
+      await started.promise;
+      const db = drizzle(sqlite, { schema });
+      await db
+        .update(schema.worktreeContexts)
+        .set({
+          contextSentence: 'Newly edited context.',
+          generationStatus: 'ready',
+        })
+        .where(eq(schema.worktreeContexts.repoId, repoId));
+      if (outcome === 'success')
+        sentence.resolve('Discarded generated sentence.');
+      else sentence.reject(new Error('Late failure'));
+      expect(await generation).toMatchObject({
+        contextSentence: 'Newly edited context.',
+        generationStatus: 'ready',
+      });
+      expect(
+        await service.getCachedSnapshot(repoId, worktreePath),
+      ).toMatchObject({
+        contextSentence: 'Newly edited context.',
+        generationStatus: 'ready',
+      });
+    },
+  );
 
   it('preserves a context choice changed during generation', async () => {
     await service.resetForTask(repoId, worktreePath);

@@ -59,6 +59,7 @@ export class TranscriptCleanupService {
     const model = request.model;
     const prompt = this.buildPrompt(raw, request.keyterms);
     const startedAt = Date.now();
+    const controller = new AbortController();
 
     try {
       const result = await this.withTimeout(
@@ -67,6 +68,8 @@ export class TranscriptCleanupService {
           worktreePath: request.worktreePath,
           prompt,
           taskName: 'speech-cleanup',
+          timeoutMs: CLEANUP_TIMEOUT_MS,
+          signal: controller.signal,
           claude: {
             ...(model ? { model } : {}),
             maxTurns: 1,
@@ -79,6 +82,7 @@ export class TranscriptCleanupService {
           ...(model ? { codex: { model } } : {}),
         }),
         CLEANUP_TIMEOUT_MS,
+        controller,
       );
 
       const cleaned = this.normalizeReply(result?.text ?? '');
@@ -166,16 +170,18 @@ export class TranscriptCleanupService {
   private async withTimeout<T>(
     promise: Promise<T>,
     timeoutMs: number,
+    controller: AbortController,
   ): Promise<T> {
     let timer: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
         promise,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error(`timed out after ${timeoutMs}ms`)),
-            timeoutMs,
-          );
+          timer = setTimeout(() => {
+            const error = new Error(`timed out after ${timeoutMs}ms`);
+            controller.abort(error);
+            reject(error);
+          }, timeoutMs);
         }),
       ]);
     } finally {
