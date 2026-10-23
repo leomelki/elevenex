@@ -66,6 +66,7 @@ const INLINE_CHANGE_MAX_LINE_LENGTH = 2_000;
 const INLINE_CHANGE_MAX_EDIT_LENGTH = 512;
 
 interface ReviewBase {
+  cacheGeneration: number;
   repoRoot: string;
   branch: string;
   baseRef: string | null;
@@ -100,6 +101,16 @@ interface CachedBase {
   key: string;
   createdAt: number;
   base: ReviewBase;
+}
+
+interface CachedPullRequest {
+  createdAt: number;
+  pullRequest: ChangeReviewPullRequestInfo | null;
+}
+
+interface CachedFileCount {
+  createdAt: number;
+  count: number;
 }
 
 interface CachedFileLines {
@@ -146,13 +157,29 @@ interface FileSummaryLookup {
 
 @Injectable()
 export class ChangeReviewService {
+  private nextCacheGeneration = 0;
+  private readonly scopeGenerations = new Map<string, number>();
+  private readonly worktreeRefs = new Map<string, string>();
   private readonly baseCache = new Map<string, CachedBase>();
+  private readonly pullRequestCache = new Map<string, CachedPullRequest>();
+  private readonly fileCountCache = new Map<string, CachedFileCount>();
   private readonly summaryCache = new Map<string, CachedFileSummaries>();
   private readonly rowCache = new Map<string, CachedRows>();
   private readonly fileLinesCache = new Map<string, CachedFileLines>();
   private readonly contextWindowCache = new Map<string, CachedContextWindow>();
   private readonly summaryBuilds = new Map<string, Promise<FileSummarySet>>();
   private readonly rowBuilds = new Map<string, Promise<CachedRows>>();
+  private readonly baseBuilds = new Map<string, Promise<ReviewBase>>();
+  private readonly refreshBuilds = new Map<string, Promise<ReviewBase>>();
+  private readonly fileCountBuilds = new Map<string, Promise<number>>();
+  private readonly fileLinesBuilds = new Map<
+    string,
+    Promise<{ oldLines: string[]; newLines: string[] }>
+  >();
+  private readonly contextWindowBuilds = new Map<
+    string,
+    Promise<ChangeReviewContextWindow>
+  >();
 
   async getSummary(
     worktreePath: string,
@@ -161,10 +188,6 @@ export class ChangeReviewService {
     forceLoad = false,
   ): Promise<ChangeReviewSummary> {
     this.assertScope(scope);
-    if (refreshBase) {
-      this.clearScopeCache(worktreePath, scope);
-      clearWorktreeFingerprintCache(worktreePath);
-    }
     const git = worktreeSimpleGit(worktreePath);
     const base = await this.resolveBase(git, worktreePath, scope, refreshBase);
     const loadCheck = await this.readLoadCheck(
@@ -296,6 +319,7 @@ export class ChangeReviewService {
     const cacheKey = [
       worktreePath,
       scope,
+      base.cacheGeneration,
       base.mergeBaseSha ?? base.baseSha ?? '',
       base.headSha ?? '',
       scope === 'last-commit' ? '' : worktreeState.fingerprint,
@@ -473,6 +497,7 @@ export class ChangeReviewService {
     const contextCacheKey = [
       worktreePath,
       scope,
+      base.cacheGeneration,
       base.mergeBaseSha ?? base.baseSha ?? '',
       base.headSha ?? '',
       scope === 'last-commit' ? '' : worktreeState.fingerprint,
@@ -489,110 +514,189 @@ export class ChangeReviewService {
     const cached = this.getCachedContextWindow(contextCacheKey);
     if (cached) return cached;
 
-    const fileLines = await this.readReviewFileLines(
-      git,
-      worktreePath,
-      scope,
-      base,
-      summary,
-      worktreeState.fingerprint,
-    );
-    const rows = this.buildContextRows(
-      summary.path,
-      fileLines,
-      oldStart,
-      newStart,
-      Math.min(count, limit),
-    );
+    return this.getOrBuild(
+      this.contextWindowBuilds,
+      contextCacheKey,
+      async () => {
+        const fileLines = await this.readReviewFileLines(
+          git,
+          worktreePath,
+          scope,
+          base,
+          summary,
+          worktreeState.fingerprint,
+        );
+        const rows = this.buildContextRows(
+          summary.path,
+          fileLines,
+          oldStart,
+          newStart,
+          Math.min(count, limit),
+        );
 
-    return this.cachedContextWindow(contextCacheKey, {
-      scope,
-      path: summary.path,
-      oldStart,
-      newStart,
-      count,
-      limit,
-      rows,
-    });
+        return this.cachedContextWindow(contextCacheKey, {
+          scope,
+          path: summary.path,
+          oldStart,
+          newStart,
+          count,
+          limit,
+          rows,
+        });
+      },
+    );
   }
 
-  private async resolveBase(
+  private resolveBase(
     git: SimpleGit,
     worktreePath: string,
     scope: ChangeReviewScope,
     refreshBase: boolean,
   ): Promise<ReviewBase> {
-    const cacheKey = [worktreePath, scope, 'base'].join('\0');
-    const cached = refreshBase ? null : this.getCachedBase(cacheKey);
-    if (cached) return cached;
+    const scopeKey = [worktreePath, scope].join('\0');
+    if (refreshBase) {
+      // Simultaneous refreshes share the same invalidation and remote fetch.
+      const refreshing = this.refreshBuilds.get(scopeKey);
+      if (refreshing) return refreshing;
+      this.clearScopeCache(worktreePath, scope);
+      clearWorktreeFingerprintCache(worktreePath);
+      return this.getOrBuild(this.refreshBuilds, scopeKey, () =>
+        this.resolveCurrentBase(git, worktreePath, scope, true),
+      );
+    }
+    return this.resolveCurrentBase(git, worktreePath, scope, false);
+  }
 
-    const [repoRoot, branchSummary, headSha] = await Promise.all([
-      git.revparse(['--show-toplevel']).then((value) => value.trim()),
-      git.branchLocal(),
-      git
-        .revparse(['HEAD'])
-        .then((value) => value.trim())
-        .catch(() => null),
-    ]);
-    const branch = branchSummary.current || 'HEAD';
-    const pullRequest = await this.readPullRequestInfo(repoRoot, branch);
-    let baseRef: string | null = null;
-    let baseSha: string | null = null;
-    let mergeBaseSha: string | null = null;
-    let compareLabel = 'Working tree';
-    let originRefAgeSeconds: number | null = null;
-
-    if (scope === 'last-commit') {
-      baseSha = await git
-        .revparse(['HEAD^'])
-        .then((value) => value.trim())
-        .catch(() => null);
-      compareLabel = 'Last commit';
-    } else if (scope === 'uncommitted') {
-      baseRef = 'HEAD';
-      baseSha = headSha;
-      mergeBaseSha = headSha;
-      compareLabel = 'Uncommitted changes';
-    } else {
-      if (refreshBase) {
-        await this.refreshLikelyBase(
+  private resolveCurrentBase(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    refreshBase: boolean,
+  ): Promise<ReviewBase> {
+    const generation = this.scopeGeneration(worktreePath, scope);
+    const buildKey = [worktreePath, scope, generation, 'base'].join('\0');
+    return this.getOrBuild(this.baseBuilds, buildKey, async () => {
+      // Always inspect local refs, including on cache hits. Enumerating branches
+      // or refreshing network metadata here would make polling scale poorly.
+      const [repoRoot, branch, headSha] = await Promise.all([
+        git.revparse(['--show-toplevel']).then((value) => value.trim()),
+        git
+          .raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])
+          .then((value) => value.trim() || 'HEAD')
+          .catch(() => 'HEAD'),
+        git
+          .revparse(['--verify', 'HEAD'])
+          .then((value) => value.trim())
+          .catch(() => null),
+      ]);
+      const refs = [branch, headSha ?? ''].join('\0');
+      const previousRefs = this.worktreeRefs.get(worktreePath);
+      if (previousRefs !== undefined && previousRefs !== refs) {
+        // A commit/checkout can change status without changing file stats
+        // (for example, an untracked file that has just been committed).
+        clearWorktreeFingerprintCache(worktreePath);
+      }
+      this.worktreeRefs.delete(worktreePath);
+      this.worktreeRefs.set(worktreePath, refs);
+      this.pruneCache(this.worktreeRefs);
+      let pullRequest: ChangeReviewPullRequestInfo | null = null;
+      let baseRef: string | null = null;
+      let baseSha: string | null = null;
+      if (scope === 'branch') {
+        const metadataKey = [
+          worktreePath,
+          scope,
+          generation,
+          branch,
+          'pr',
+        ].join('\0');
+        const metadata = this.getFresh(this.pullRequestCache, metadataKey);
+        if (metadata) {
+          pullRequest = metadata.pullRequest;
+        } else {
+          pullRequest = await this.readPullRequestInfo(repoRoot, branch);
+          this.cacheValue(this.pullRequestCache, metadataKey, {
+            createdAt: Date.now(),
+            pullRequest,
+          });
+        }
+        if (refreshBase) {
+          await this.refreshLikelyBase(
+            git,
+            repoRoot,
+            pullRequest?.baseRefName ?? null,
+          );
+        }
+        baseRef = await this.detectBaseRef(
           git,
-          repoRoot,
           pullRequest?.baseRefName ?? null,
         );
+        baseSha = baseRef
+          ? await git
+              .revparse(['--verify', baseRef])
+              .then((value) => value.trim())
+              .catch(() => null)
+          : null;
       }
-      baseRef = await this.detectBaseRef(git, pullRequest?.baseRefName ?? null);
-      baseSha = baseRef
-        ? await git
-            .revparse([baseRef])
-            .then((value) => value.trim())
-            .catch(() => null)
-        : null;
-      mergeBaseSha = baseRef
-        ? await git
-            .raw(['merge-base', 'HEAD', baseRef])
-            .then((value) => value.trim())
-            .catch(() => baseSha)
-        : headSha;
-      originRefAgeSeconds = baseRef
-        ? await this.readRefAgeSeconds(git, baseRef)
-        : null;
-      compareLabel = baseRef ? `${branch} vs ${baseRef}` : `${branch} vs HEAD`;
-    }
+      const cacheKey = [
+        buildKey,
+        branch,
+        headSha ?? '',
+        baseRef ?? '',
+        baseSha ?? '',
+        JSON.stringify(pullRequest),
+      ].join('\0');
+      const cached = this.getCachedBase(cacheKey);
+      if (cached) return cached;
 
-    return this.cachedBase(cacheKey, {
-      repoRoot,
-      branch,
-      baseRef,
-      baseSha,
-      headSha,
-      mergeBaseSha,
-      compareLabel,
-      originRefAgeSeconds,
-      staleBase:
-        originRefAgeSeconds !== null &&
-        originRefAgeSeconds > STALE_ORIGIN_SECONDS,
-      pullRequest,
+      let mergeBaseSha: string | null = null;
+      let compareLabel: string;
+      let originRefAgeSeconds: number | null = null;
+      if (scope === 'last-commit') {
+        baseSha = headSha
+          ? await git
+              .revparse([`${headSha}^`])
+              .then((value) => value.trim())
+              .catch(() => null)
+          : null;
+        compareLabel = 'Last commit';
+      } else if (scope === 'uncommitted') {
+        baseRef = 'HEAD';
+        baseSha = headSha;
+        mergeBaseSha = headSha;
+        compareLabel = 'Uncommitted changes';
+      } else {
+        // Captured IDs keep a concurrent ref update from mixing an old headSha
+        // with a merge base calculated from the new HEAD.
+        mergeBaseSha =
+          baseSha && headSha
+            ? await git
+                .raw(['merge-base', headSha, baseSha])
+                .then((value) => value.trim())
+                .catch(() => baseSha)
+            : headSha;
+        originRefAgeSeconds = baseRef
+          ? await this.readRefAgeSeconds(git, baseRef)
+          : null;
+        compareLabel = baseRef
+          ? `${branch} vs ${baseRef}`
+          : `${branch} vs HEAD`;
+      }
+      return this.cachedBase(cacheKey, {
+        cacheGeneration: generation,
+        repoRoot,
+        branch,
+        baseRef,
+        baseSha,
+        headSha,
+        mergeBaseSha,
+        compareLabel,
+        originRefAgeSeconds,
+        staleBase:
+          originRefAgeSeconds !== null &&
+          originRefAgeSeconds > STALE_ORIGIN_SECONDS,
+        pullRequest,
+      });
     });
   }
 
@@ -606,6 +710,7 @@ export class ChangeReviewService {
     const cacheKey = [
       worktreePath,
       scope,
+      base.cacheGeneration,
       base.mergeBaseSha ?? base.baseSha ?? '',
       base.headSha ?? '',
       scope === 'last-commit' ? '' : worktreeState.fingerprint,
@@ -614,21 +719,16 @@ export class ChangeReviewService {
     const cached = this.getCachedFileSummaries(cacheKey);
     if (cached) return cached;
 
-    const inFlight = this.summaryBuilds.get(cacheKey);
-    if (inFlight) return inFlight;
-
-    const promise = this.buildFileSummaries(
-      git,
-      worktreePath,
-      scope,
-      base,
-      worktreeState,
-      cacheKey,
-    ).finally(() => {
-      this.summaryBuilds.delete(cacheKey);
-    });
-    this.summaryBuilds.set(cacheKey, promise);
-    return promise;
+    return this.getOrBuild(this.summaryBuilds, cacheKey, () =>
+      this.buildFileSummaries(
+        git,
+        worktreePath,
+        scope,
+        base,
+        worktreeState,
+        cacheKey,
+      ),
+    );
   }
 
   private async buildFileSummaries(
@@ -708,10 +808,11 @@ export class ChangeReviewService {
       return { guard: null, status: null };
     }
 
-    const status =
+    const snapshot =
       scope === 'last-commit'
         ? null
-        : (await readWorktreeStatusSnapshot(worktreePath, git)).status;
+        : await readWorktreeStatusSnapshot(worktreePath, git);
+    const status = snapshot?.status ?? null;
     const worktreeCounts = status
       ? this.countWorktreeChanges(status)
       : {
@@ -739,7 +840,14 @@ export class ChangeReviewService {
     const scopedFiles =
       scope === 'uncommitted'
         ? worktreeCounts.totalFiles
-        : await this.countScopedFiles(git, scope, base, status);
+        : await this.countScopedFiles(
+            git,
+            worktreePath,
+            scope,
+            base,
+            status,
+            snapshot?.fingerprint ?? LAST_COMMIT_WORKTREE_FINGERPRINT,
+          );
     if (scopedFiles > DEFAULT_CHANGE_REVIEW_FILE_LIMIT) {
       return {
         status,
@@ -809,18 +917,54 @@ export class ChangeReviewService {
 
   private async countScopedFiles(
     git: SimpleGit,
+    worktreePath: string,
     scope: ChangeReviewScope,
     base: ReviewBase,
     status: StatusResult | null,
+    worktreeFingerprint: string,
   ): Promise<number> {
-    const output = await git
-      .raw(this.buildDiffArgs(scope, base, ['--shortstat']))
-      .catch(() => '');
-    const match = output.match(/(\d+) files? changed/);
-    const trackedCount = match ? parseInt(match[1], 10) : 0;
-    const untrackedCount =
-      scope !== 'last-commit' && status ? status.not_added.length : 0;
-    return trackedCount + untrackedCount;
+    const cacheKey = [
+      worktreePath,
+      scope,
+      base.cacheGeneration,
+      base.mergeBaseSha ?? base.baseSha ?? '',
+      base.headSha ?? '',
+      worktreeFingerprint,
+      'count',
+    ].join('\0');
+    const cached = this.getFresh(this.fileCountCache, cacheKey);
+    if (cached) return cached.count;
+    return this.getOrBuild(this.fileCountBuilds, cacheKey, async () => {
+      const countPaths = (output: string): number => {
+        let count = 0;
+        for (let index = 0; index < output.length; index += 1) {
+          if (output.charCodeAt(index) === 0) count += 1;
+        }
+        return count;
+      };
+      const flags = ['--name-only', '-z', '--no-ext-diff', '--no-textconv'];
+      const output = await git.raw(
+        this.buildDiffArgs(scope, base, [...flags, '--no-renames']),
+      );
+      const untrackedCount =
+        scope !== 'last-commit' && status ? status.not_added.length : 0;
+      let count = countPaths(output) + untrackedCount;
+      // A rename counts as two paths without detection. Only pay for rename
+      // matching when that upper bound would otherwise pause the review.
+      if (count > DEFAULT_CHANGE_REVIEW_FILE_LIMIT) {
+        count =
+          countPaths(
+            await git.raw(
+              this.buildDiffArgs(scope, base, [...flags, '--find-renames']),
+            ),
+          ) + untrackedCount;
+      }
+      this.cacheValue(this.fileCountCache, cacheKey, {
+        createdAt: Date.now(),
+        count,
+      });
+      return count;
+    });
   }
 
   private buildGuardedSummary(
@@ -953,7 +1097,7 @@ export class ChangeReviewService {
       const oldRef =
         scope === 'branch'
           ? (base.mergeBaseSha ?? base.baseSha ?? 'HEAD')
-          : 'HEAD';
+          : (base.headSha ?? 'HEAD');
       return this.readGitBlobIdentity(
         git,
         oldRef,
@@ -1020,25 +1164,20 @@ export class ChangeReviewService {
     const cached = this.getCachedRows(cacheKey);
     if (cached) return cached;
 
-    const inFlight = this.rowBuilds.get(cacheKey);
-    if (inFlight) return inFlight;
-
-    const promise = this.buildRows(
-      git,
-      worktreePath,
-      scope,
-      base,
-      lookup,
-      context,
-      cacheKey,
-      worktreeFingerprint,
-      forceFileLoad,
-      fullFile,
-    ).finally(() => {
-      this.rowBuilds.delete(cacheKey);
-    });
-    this.rowBuilds.set(cacheKey, promise);
-    return promise;
+    return this.getOrBuild(this.rowBuilds, cacheKey, () =>
+      this.buildRows(
+        git,
+        worktreePath,
+        scope,
+        base,
+        lookup,
+        context,
+        cacheKey,
+        worktreeFingerprint,
+        forceFileLoad,
+        fullFile,
+      ),
+    );
   }
 
   private async buildRows(
@@ -1291,7 +1430,7 @@ export class ChangeReviewService {
     const ref =
       scope === 'branch'
         ? (base.mergeBaseSha ?? base.baseSha ?? 'HEAD')
-        : 'HEAD';
+        : (base.headSha ?? 'HEAD');
     return ['diff', ...flags, ref];
   }
 
@@ -1671,6 +1810,7 @@ export class ChangeReviewService {
     const cacheKey = [
       worktreePath,
       scope,
+      base.cacheGeneration,
       base.mergeBaseSha ?? base.baseSha ?? '',
       base.headSha ?? '',
       scope === 'last-commit' ? '' : worktreeFingerprint,
@@ -1684,29 +1824,31 @@ export class ChangeReviewService {
     const cached = this.getCachedFileLines(cacheKey);
     if (cached) return cached;
 
-    const oldRef =
-      scope === 'last-commit'
-        ? (base.baseSha ?? 'HEAD^')
-        : scope === 'branch'
-          ? (base.mergeBaseSha ?? base.baseSha ?? 'HEAD')
-          : 'HEAD';
-    const newRef = scope === 'last-commit' ? (base.headSha ?? 'HEAD') : null;
-    const oldPath = summary.oldPath ?? summary.path;
+    return this.getOrBuild(this.fileLinesBuilds, cacheKey, async () => {
+      const oldRef =
+        scope === 'last-commit'
+          ? (base.baseSha ?? 'HEAD^')
+          : scope === 'branch'
+            ? (base.mergeBaseSha ?? base.baseSha ?? 'HEAD')
+            : (base.headSha ?? 'HEAD');
+      const newRef = scope === 'last-commit' ? (base.headSha ?? 'HEAD') : null;
+      const oldPath = summary.oldPath ?? summary.path;
 
-    const [oldText, newText] = await Promise.all([
-      summary.status === 'added'
-        ? Promise.resolve('')
-        : this.readGitFile(git, oldRef, oldPath),
-      summary.status === 'deleted'
-        ? Promise.resolve('')
-        : newRef
-          ? this.readGitFile(git, newRef, summary.path)
-          : this.readWorktreeFile(worktreePath, summary.path),
-    ]);
+      const [oldText, newText] = await Promise.all([
+        summary.status === 'added'
+          ? Promise.resolve('')
+          : this.readGitFile(git, oldRef, oldPath),
+        summary.status === 'deleted'
+          ? Promise.resolve('')
+          : newRef
+            ? this.readGitFile(git, newRef, summary.path)
+            : this.readWorktreeFile(worktreePath, summary.path),
+      ]);
 
-    return this.cachedFileLines(cacheKey, {
-      oldLines: this.splitFileLines(oldText),
-      newLines: this.splitFileLines(newText),
+      return this.cachedFileLines(cacheKey, {
+        oldLines: this.splitFileLines(oldText),
+        newLines: this.splitFileLines(newText),
+      });
     });
   }
 
@@ -1883,7 +2025,7 @@ export class ChangeReviewService {
     for (const candidate of candidates) {
       const exists = await git
         .raw(['rev-parse', '--verify', '--quiet', candidate])
-        .then(() => true)
+        .then((value) => Boolean(value.trim()))
         .catch(() => false);
       if (exists) return candidate;
     }
@@ -2029,8 +2171,7 @@ export class ChangeReviewService {
       ...value,
       changeHash: this.hashRows(value.rows),
     };
-    this.rowCache.set(key, cached);
-    this.pruneCache(this.rowCache);
+    this.cacheValue(this.rowCache, key, cached);
     return cached;
   }
 
@@ -2058,8 +2199,7 @@ export class ChangeReviewService {
   }
 
   private cachedBase(key: string, base: ReviewBase): ReviewBase {
-    this.baseCache.set(key, { key, createdAt: Date.now(), base });
-    this.pruneCache(this.baseCache);
+    this.cacheValue(this.baseCache, key, { key, createdAt: Date.now(), base });
     return base;
   }
 
@@ -2071,8 +2211,11 @@ export class ChangeReviewService {
     key: string,
     summaries: FileSummarySet,
   ): FileSummarySet {
-    this.summaryCache.set(key, { key, createdAt: Date.now(), summaries });
-    this.pruneCache(this.summaryCache);
+    this.cacheValue(this.summaryCache, key, {
+      key,
+      createdAt: Date.now(),
+      summaries,
+    });
     return summaries;
   }
 
@@ -2086,8 +2229,11 @@ export class ChangeReviewService {
     key: string,
     lines: { oldLines: string[]; newLines: string[] },
   ): { oldLines: string[]; newLines: string[] } {
-    this.fileLinesCache.set(key, { key, createdAt: Date.now(), lines });
-    this.pruneCache(this.fileLinesCache);
+    this.cacheValue(this.fileLinesCache, key, {
+      key,
+      createdAt: Date.now(),
+      lines,
+    });
     return lines;
   }
 
@@ -2101,8 +2247,11 @@ export class ChangeReviewService {
     key: string,
     window: ChangeReviewContextWindow,
   ): ChangeReviewContextWindow {
-    this.contextWindowCache.set(key, { key, createdAt: Date.now(), window });
-    this.pruneCache(this.contextWindowCache);
+    this.cacheValue(this.contextWindowCache, key, {
+      key,
+      createdAt: Date.now(),
+      window,
+    });
     return window;
   }
 
@@ -2127,12 +2276,60 @@ export class ChangeReviewService {
     }
   }
 
+  private getOrBuild<T>(
+    builds: Map<string, Promise<T>>,
+    key: string,
+    build: () => Promise<T>,
+  ): Promise<T> {
+    const inFlight = builds.get(key);
+    if (inFlight) return inFlight;
+    const promise = build().finally(() => {
+      // A cleared build may finish after its replacement has started.
+      if (builds.get(key) === promise) builds.delete(key);
+    });
+    builds.set(key, promise);
+    return promise;
+  }
+
+  private scopeGeneration(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+  ): number {
+    const key = [worktreePath, scope].join('\0');
+    let generation = this.scopeGenerations.get(key);
+    if (generation === undefined) {
+      generation = ++this.nextCacheGeneration;
+      this.scopeGenerations.set(key, generation);
+      this.pruneCache(this.scopeGenerations);
+    }
+    return generation;
+  }
+
+  private cacheValue<T>(cache: Map<string, T>, key: string, value: T): void {
+    const [worktreePath, scope, generation] = key.split('\0', 3);
+    if (
+      this.scopeGenerations.get([worktreePath, scope].join('\0')) !==
+      Number(generation)
+    ) {
+      return;
+    }
+    cache.set(key, value);
+    this.pruneCache(cache);
+  }
+
   private clearScopeCache(
     worktreePath: string,
     scope: ChangeReviewScope,
   ): void {
-    const prefix = `${worktreePath}\0${scope}`;
+    this.scopeGenerations.delete([worktreePath, scope].join('\0'));
+    const prefix = `${worktreePath}\0${scope}\0`;
     this.clearCacheMap(this.baseCache, prefix);
+    this.clearCacheMap(this.pullRequestCache, prefix);
+    this.clearCacheMap(this.fileCountCache, prefix);
+    this.clearCacheMap(this.baseBuilds, prefix);
+    this.clearCacheMap(this.fileCountBuilds, prefix);
+    this.clearCacheMap(this.fileLinesBuilds, prefix);
+    this.clearCacheMap(this.contextWindowBuilds, prefix);
     this.clearCacheMap(this.summaryCache, prefix);
     this.clearCacheMap(this.rowCache, prefix);
     this.clearCacheMap(this.fileLinesCache, prefix);

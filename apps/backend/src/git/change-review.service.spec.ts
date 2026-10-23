@@ -2,13 +2,79 @@ import { Test, TestingModule } from '@nestjs/testing';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
+import * as systemPaths from '../config/system-paths.js';
 import { ChangeReviewService } from './change-review.service.js';
 
 describe('ChangeReviewService', () => {
+  // These integration tests create repositories and exercise thousands of paths.
+  jest.setTimeout(30_000);
   let service: ChangeReviewService;
   let tmpDir: string;
   let repoPath: string;
+  let externalCommands: jest.SpyInstance;
+
+  // Expose only the internals needed to pause real builds at deterministic
+  // boundaries; Git operations and the public review API still run normally.
+  function internals() {
+    return service as unknown as {
+      execFileSafe: ChangeReviewService['execFileSafe'];
+      readPullRequestInfo: ChangeReviewService['readPullRequestInfo'];
+      refreshLikelyBase: ChangeReviewService['refreshLikelyBase'];
+      detectBaseRef: ChangeReviewService['detectBaseRef'];
+      readRefAgeSeconds: ChangeReviewService['readRefAgeSeconds'];
+      buildFileSummaries: ChangeReviewService['buildFileSummaries'];
+      buildRows: ChangeReviewService['buildRows'];
+      buildDiffArgs: ChangeReviewService['buildDiffArgs'];
+      readGitFile: ChangeReviewService['readGitFile'];
+      baseCache: ChangeReviewService['baseCache'];
+      summaryCache: ChangeReviewService['summaryCache'];
+      fileCountCache: ChangeReviewService['fileCountCache'];
+      rowCache: ChangeReviewService['rowCache'];
+      fileLinesCache: ChangeReviewService['fileLinesCache'];
+      contextWindowCache: ChangeReviewService['contextWindowCache'];
+      baseBuilds: ChangeReviewService['baseBuilds'];
+      rowBuilds: ChangeReviewService['rowBuilds'];
+      fileLinesBuilds: ChangeReviewService['fileLinesBuilds'];
+      contextWindowBuilds: ChangeReviewService['contextWindowBuilds'];
+      getOrBuild: ChangeReviewService['getOrBuild'];
+    };
+  }
+
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  function setupOrigin(): string {
+    const remotePath = path.join(tmpDir, 'remote.git');
+    fs.mkdirSync(remotePath);
+    git('init --bare', remotePath);
+    git(`remote add origin "${remotePath}"`);
+    git('push -u origin main');
+    git('symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main');
+    return remotePath;
+  }
+
+  function commitTree(changes: string[]): void {
+    const parent = git('rev-parse HEAD').trim();
+    execFileSync('git', ['fast-import', '--quiet'], {
+      cwd: repoPath,
+      input: [
+        'commit refs/heads/main',
+        'committer Test User <test@test.com> 1700000000 +0000',
+        'data 7',
+        'fixture',
+        `from ${parent}`,
+        ...changes,
+        '',
+        '',
+      ].join('\n'),
+    });
+  }
 
   function git(command: string, cwd = repoPath): string {
     return execSync(`git ${command}`, { cwd, encoding: 'utf8' });
@@ -26,6 +92,14 @@ describe('ChangeReviewService', () => {
     }).compile();
 
     service = module.get(ChangeReviewService);
+    const execFileSafe = service['execFileSafe'].bind(service);
+    externalCommands = jest
+      .spyOn(internals(), 'execFileSafe')
+      .mockImplementation((command, args, cwd, timeout) =>
+        command === 'gh'
+          ? Promise.resolve(null)
+          : execFileSafe(command, args, cwd, timeout),
+      );
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'change-review-'));
     repoPath = path.join(tmpDir, 'repo');
     fs.mkdirSync(repoPath);
@@ -39,6 +113,7 @@ describe('ChangeReviewService', () => {
   });
 
   afterEach(() => {
+    jest.restoreAllMocks();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -670,5 +745,408 @@ describe('ChangeReviewService', () => {
       'README.md',
       'feature.txt',
     ]);
+  });
+
+  it.each(['uncommitted', 'last-commit'] as const)(
+    'avoids gh, fetching, and branch enumeration for %s, including refresh',
+    async (scope) => {
+      const makeGit = systemPaths.worktreeSimpleGit;
+      const branchLocal = jest
+        .fn()
+        .mockRejectedValue(new Error('enumerated branches'));
+      jest
+        .spyOn(systemPaths, 'worktreeSimpleGit')
+        .mockImplementation((...args) => {
+          const instance = makeGit(...args);
+          instance.branchLocal = branchLocal;
+          return instance;
+        });
+      await service.getSummary(repoPath, scope);
+      await service.getSummary(repoPath, scope, true);
+      await service.getFileWindow(repoPath, scope, 'README.md', {
+        allowUnchanged: true,
+      });
+      expect(externalCommands).not.toHaveBeenCalled();
+      expect(branchLocal).not.toHaveBeenCalled();
+    },
+  );
+
+  it('updates last-commit summaries, rows, context, and fingerprints after a commit', async () => {
+    write('README.md', 'one\ntwo\n');
+    git('commit -am "second"');
+    const before = await service.getSummary(repoPath, 'last-commit');
+    const beforeRows = await service.getFileWindow(
+      repoPath,
+      'last-commit',
+      'README.md',
+    );
+    const beforeFingerprints = await service.getFileFingerprints(
+      repoPath,
+      'last-commit',
+      ['README.md'],
+    );
+    const range = { oldStart: 1, newStart: 1, count: 2 };
+    await service.getContextWindow(repoPath, 'last-commit', 'README.md', range);
+
+    write('README.md', 'one\nthree\n');
+    write('new.txt', 'new\n');
+    git('add .');
+    git('commit -m "third"');
+    const after = await service.getSummary(repoPath, 'last-commit');
+    const afterRows = await service.getFileWindow(
+      repoPath,
+      'last-commit',
+      'README.md',
+    );
+    const afterFingerprints = await service.getFileFingerprints(
+      repoPath,
+      'last-commit',
+      ['README.md'],
+    );
+    const afterContext = await service.getContextWindow(
+      repoPath,
+      'last-commit',
+      'README.md',
+      range,
+    );
+
+    expect(after.headSha).toBe(git('rev-parse HEAD').trim());
+    expect(after.baseSha).toBe(before.headSha);
+    expect(after.files.map((file) => file.path)).toEqual([
+      'new.txt',
+      'README.md',
+    ]);
+    expect(afterRows.changeHash).not.toBe(beforeRows.changeHash);
+    expect(afterRows.rows).toEqual(
+      expect.arrayContaining([expect.objectContaining({ content: 'three' })]),
+    );
+    expect(afterFingerprints.fingerprints).not.toEqual(
+      beforeFingerprints.fingerprints,
+    );
+    expect(afterContext.rows[1].content).toBe('three');
+  });
+
+  it('updates uncommitted bases after a commit and branch switches at the same SHA', async () => {
+    write('README.md', 'one\ntwo\n');
+    const before = await service.getSummary(repoPath, 'uncommitted');
+    git('commit -am "second"');
+    const committed = await service.getSummary(repoPath, 'uncommitted');
+    expect(committed.headSha).not.toBe(before.headSha);
+    expect(committed.baseSha).toBe(committed.headSha);
+    expect(committed.mergeBaseSha).toBe(committed.headSha);
+    expect(committed.files).toEqual([]);
+
+    git('checkout -b same-head');
+    expect((await service.getSummary(repoPath, 'uncommitted')).branch).toBe(
+      'same-head',
+    );
+    expect((await service.getSummary(repoPath, 'last-commit')).branch).toBe(
+      'same-head',
+    );
+    git('checkout --detach');
+    expect((await service.getSummary(repoPath, 'uncommitted')).branch).toBe(
+      'HEAD',
+    );
+    expect((await service.getSummary(repoPath, 'last-commit')).branch).toBe(
+      'HEAD',
+    );
+  });
+
+  it('does not retain newly committed untracked paths in uncommitted reviews', async () => {
+    write('new.txt', 'new\n');
+    const before = await service.getSummary(repoPath, 'uncommitted');
+    expect(before.files.map((file) => file.path)).toEqual(['new.txt']);
+    git('add .');
+    git('commit -m "commit formerly untracked path"');
+    const after = await service.getSummary(repoPath, 'uncommitted');
+    expect(after.headSha).not.toBe(before.headSha);
+    expect(after.files).toEqual([]);
+  });
+
+  it('observes fetched base movement and branch switches without fetching or requerying gh on each read', async () => {
+    const remote = setupOrigin();
+    git('checkout -b feature');
+    write('first.txt', 'first\n');
+    git('add .');
+    git('commit -m "first feature"');
+    const firstFeature = git('rev-parse HEAD').trim();
+    write('second.txt', 'second\n');
+    git('add .');
+    git('commit -m "second feature"');
+    git('push origin feature');
+    const before = await service.getSummary(repoPath, 'branch');
+
+    // Move the actual remote independently, then fetch its tracking ref locally.
+    git(`update-ref refs/heads/main ${firstFeature}`, remote);
+    git('fetch origin main');
+    const after = await service.getSummary(repoPath, 'branch');
+    expect(after.headSha).toBe(before.headSha);
+    expect(after.baseSha).toBe(firstFeature);
+    expect(after.mergeBaseSha).toBe(firstFeature);
+    expect(after.mergeBaseSha).not.toBe(before.mergeBaseSha);
+    expect(after.files.map((file) => file.path)).toEqual(['second.txt']);
+    expect(externalCommands.mock.calls.map(([command]) => command)).toEqual([
+      'gh',
+    ]);
+
+    git('checkout -b same-head');
+    const switched = await service.getSummary(repoPath, 'branch');
+    expect(switched.headSha).toBe(after.headSha);
+    expect(switched.branch).toBe('same-head');
+    expect(switched.compareLabel).toBe('same-head vs origin/main');
+    git('checkout main');
+    expect((await service.getSummary(repoPath, 'branch')).headSha).toBe(
+      git('rev-parse main').trim(),
+    );
+  });
+
+  it('detects a locally fetched base that did not exist on the previous read', async () => {
+    const before = await service.getSummary(repoPath, 'branch');
+    expect(before.baseRef).toBeNull();
+    setupOrigin();
+    const after = await service.getSummary(repoPath, 'branch');
+    expect(after.baseRef).toBe('origin/main');
+    expect(after.baseSha).toBe(before.headSha);
+    expect(after.mergeBaseSha).toBe(before.headSha);
+    expect(externalCommands.mock.calls.map(([command]) => command)).toEqual([
+      'gh',
+    ]);
+  });
+
+  it('coalesces concurrent base, guard, summary, and row builds and caches metadata across commits', async () => {
+    setupOrigin();
+    git('checkout -b feature');
+    write('README.md', 'one\nfeature\n');
+    git('commit -am "feature"');
+    const detect = jest.spyOn(internals(), 'detectBaseRef');
+    const age = jest.spyOn(internals(), 'readRefAgeSeconds');
+    const summaries = jest.spyOn(internals(), 'buildFileSummaries');
+    const rows = jest.spyOn(internals(), 'buildRows');
+    const diffArgs = jest.spyOn(internals(), 'buildDiffArgs');
+    await Promise.all([
+      ...Array.from({ length: 6 }, () =>
+        service.getSummary(repoPath, 'branch'),
+      ),
+      ...Array.from({ length: 6 }, () =>
+        service.getFileWindow(repoPath, 'branch', 'README.md'),
+      ),
+    ]);
+    expect(detect).toHaveBeenCalledTimes(1);
+    expect(age).toHaveBeenCalledTimes(1);
+    expect(summaries).toHaveBeenCalledTimes(1);
+    expect(rows).toHaveBeenCalledTimes(1);
+    expect(
+      diffArgs.mock.calls.filter(([, , flags]) =>
+        flags.includes('--name-only'),
+      ),
+    ).toHaveLength(1);
+    expect(
+      diffArgs.mock.calls.some(([, , flags]) => flags.includes('--shortstat')),
+    ).toBe(false);
+    await service.getSummary(repoPath, 'branch');
+    expect(age).toHaveBeenCalledTimes(1);
+    expect(summaries).toHaveBeenCalledTimes(1);
+    write('README.md', 'one\nfeature\nnew commit\n');
+    git('commit -am "next"');
+    expect(
+      (await service.getSummary(repoPath, 'branch')).totals.additions,
+    ).toBe(2);
+    expect(externalCommands.mock.calls.map(([command]) => command)).toEqual([
+      'gh',
+    ]);
+  });
+
+  it('keeps refresh builds registered and rejects old cache publications after an older base finishes', async () => {
+    setupOrigin();
+    git('checkout -b feature');
+    const oldHead = git('rev-parse HEAD').trim();
+    const oldEntered = deferred();
+    const newEntered = deferred();
+    const releaseOld = deferred();
+    const releaseNew = deferred();
+    const metadata = jest
+      .spyOn(internals(), 'readPullRequestInfo')
+      .mockImplementationOnce(async () => {
+        oldEntered.resolve();
+        await releaseOld.promise;
+        return null;
+      })
+      .mockImplementationOnce(async () => {
+        newEntered.resolve();
+        await releaseNew.promise;
+        return null;
+      });
+    const fetch = jest.spyOn(internals(), 'refreshLikelyBase');
+    const oldRead = service.getSummary(repoPath, 'branch');
+    await oldEntered.promise;
+    write('new.txt', 'new\n');
+    git('add .');
+    git('commit -m "new head"');
+    const refresh = service.getSummary(repoPath, 'branch', true, true);
+    await newEntered.promise;
+    releaseOld.resolve();
+    const oldResult = await oldRead;
+    expect(oldResult.headSha).toBe(oldHead);
+    expect(internals().baseCache.size).toBe(0);
+    expect(internals().summaryCache.size).toBe(0);
+    expect(internals().fileCountCache.size).toBe(0);
+    expect(internals().baseBuilds.size).toBe(1);
+    const concurrent = service.getSummary(repoPath, 'branch', false, true);
+    const concurrentRefresh = service.getSummary(
+      repoPath,
+      'branch',
+      true,
+      true,
+    );
+    releaseNew.resolve();
+    const fresh = await Promise.all([refresh, concurrent, concurrentRefresh]);
+    expect(
+      fresh.every((result) => result.headSha === git('rev-parse HEAD').trim()),
+    ).toBe(true);
+    expect(fresh.every((result) => result.files === fresh[0].files)).toBe(true);
+    expect(metadata).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect((await service.getSummary(repoPath, 'branch')).headSha).toBe(
+      fresh[0].headSha,
+    );
+  });
+
+  it('does not cache old rows, file lines, or context when they finish during replacement builds', async () => {
+    write('README.md', 'one\ntwo\n');
+    git('commit -am "second"');
+    const oldEntered = deferred();
+    const newEntered = deferred();
+    const releaseOld = deferred();
+    const releaseNew = deferred();
+    const readGitFile = service['readGitFile'].bind(service);
+    let reads = 0;
+    const fileReads = jest
+      .spyOn(internals(), 'readGitFile')
+      .mockImplementation(async (...args) => {
+        const group = reads++ < 2 ? 'old' : 'new';
+        const text = await readGitFile(...args);
+        (group === 'old' ? oldEntered : newEntered).resolve();
+        await (group === 'old' ? releaseOld : releaseNew).promise;
+        return text;
+      });
+    const windows = () =>
+      Promise.all([
+        service.getFileWindow(repoPath, 'last-commit', 'README.md', {
+          forceLoad: true,
+        }),
+        service.getContextWindow(repoPath, 'last-commit', 'README.md', {
+          oldStart: 1,
+          newStart: 1,
+          count: 1,
+          forceLoad: true,
+        }),
+      ]);
+    const oldWindows = windows();
+    await oldEntered.promise;
+    await service.getSummary(repoPath, 'last-commit', true);
+    const newWindows = windows();
+    await newEntered.promise;
+    releaseOld.resolve();
+    await oldWindows;
+    expect(internals().rowCache.size).toBe(0);
+    expect(internals().fileLinesCache.size).toBe(0);
+    expect(internals().contextWindowCache.size).toBe(0);
+    expect(internals().rowBuilds.size).toBe(1);
+    expect(internals().fileLinesBuilds.size).toBe(1);
+    expect(internals().contextWindowBuilds.size).toBe(1);
+    const joinedWindows = windows();
+    releaseNew.resolve();
+    await Promise.all([newWindows, joinedWindows]);
+    expect(fileReads).toHaveBeenCalledTimes(4);
+    expect(internals().rowCache.size).toBe(1);
+    expect(internals().fileLinesCache.size).toBe(1);
+    expect(internals().contextWindowCache.size).toBe(1);
+  });
+
+  it('guards a large committed scope using filenames before building line diffs', async () => {
+    commitTree(
+      Array.from(
+        { length: 2_001 },
+        (_, index) =>
+          `M 100644 inline bulk/file-${index}.txt\ndata 8\ncontent\n`,
+      ),
+    );
+    const summaries = jest.spyOn(internals(), 'buildFileSummaries');
+    const diffArgs = jest.spyOn(internals(), 'buildDiffArgs');
+    const summary = await service.getSummary(repoPath, 'last-commit');
+    expect(summary.loadGuard).toMatchObject({
+      blocked: true,
+      totalFiles: 2_001,
+      reason: 'scope',
+    });
+    expect(summary.files).toEqual([]);
+    expect(summaries).not.toHaveBeenCalled();
+    expect(
+      diffArgs.mock.calls.every(([, , flags]) => flags.includes('--name-only')),
+    ).toBe(true);
+    await expect(
+      service.getFileWindow(repoPath, 'last-commit', 'bulk/file-0.txt'),
+    ).rejects.toThrow(/Diff loading is paused/);
+  });
+
+  it('does not falsely guard a rename-heavy commit when the filename upper bound exceeds the limit', async () => {
+    commitTree(
+      Array.from(
+        { length: 1_001 },
+        (_, index) =>
+          `M 100644 inline before/file-${index}.txt\ndata 8\ncontent\n`,
+      ),
+    );
+    commitTree(
+      Array.from(
+        { length: 1_001 },
+        (_, index) => `R before/file-${index}.txt after/file-${index}.txt`,
+      ),
+    );
+    const diffArgs = jest.spyOn(internals(), 'buildDiffArgs');
+    const summary = await service.getSummary(repoPath, 'last-commit');
+    expect(summary.loadGuard).toBeNull();
+    expect(summary.files).toHaveLength(1_001);
+    expect(summary.files.every((file) => file.status === 'renamed')).toBe(true);
+    const counts = diffArgs.mock.calls.filter(([, , flags]) =>
+      flags.includes('--name-only'),
+    );
+    expect(counts.map(([, , flags]) => flags)).toEqual([
+      expect.arrayContaining(['--no-renames', '-z']),
+      expect.arrayContaining(['--find-renames', '-z']),
+    ]);
+  });
+
+  it('counts paths containing newlines correctly', async () => {
+    write('line\nbreak.txt', 'content\n');
+    git('add .');
+    git('commit -m "newline path"');
+    const summary = await service.getSummary(repoPath, 'last-commit');
+    expect(summary.files.map((file) => file.path)).toEqual(['line\nbreak.txt']);
+    expect(summary.loadGuard).toBeNull();
+  });
+
+  it('does not remove a replacement promise when a cleared build completes', async () => {
+    const builds = new Map<string, Promise<string>>();
+    const releaseOld = deferred();
+    const releaseNew = deferred();
+    const old = internals().getOrBuild(builds, 'same-key', async () => {
+      await releaseOld.promise;
+      return 'old';
+    });
+    builds.clear();
+    const replacement = internals().getOrBuild(builds, 'same-key', async () => {
+      await releaseNew.promise;
+      return 'new';
+    });
+    releaseOld.resolve();
+    await old;
+    expect(builds.get('same-key')).toBe(replacement);
+    expect(
+      internals().getOrBuild(builds, 'same-key', async () => 'unexpected'),
+    ).toBe(replacement);
+    releaseNew.resolve();
+    expect(await replacement).toBe('new');
+    expect(builds.size).toBe(0);
   });
 });
