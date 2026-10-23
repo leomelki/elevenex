@@ -1,6 +1,18 @@
 import { WebSocket } from 'ws';
+import { EventEmitter } from 'events';
 import { AgentRuntimeGateway } from './agent-runtime.gateway.js';
 import { MAX_WEBSOCKET_BUFFERED_BYTES } from '../websocket/bounded-send.js';
+
+function mockSocket(bufferedAmount = 0) {
+  return Object.assign(new EventEmitter(), {
+    readyState: WebSocket.OPEN as number,
+    bufferedAmount,
+    send: jest.fn((_data: string, callback?: (error?: Error) => void) =>
+      callback?.(),
+    ),
+    terminate: jest.fn(),
+  });
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -25,12 +37,7 @@ describe('AgentRuntimeGateway hydration', () => {
       {} as any,
       {} as any,
     );
-    const ws = {
-      readyState: WebSocket.OPEN as number,
-      bufferedAmount: 0,
-      send: jest.fn(),
-      terminate: jest.fn(),
-    };
+    const ws = mockSocket();
     const hydrate = (includeHistory = true) =>
       (gateway as any).handleMessage(
         'codex',
@@ -148,16 +155,8 @@ it('sends worker logs only to subscribed clients and avoids serializing unobserv
     {} as any,
     {} as any,
   );
-  const watched = {
-    readyState: WebSocket.OPEN,
-    bufferedAmount: 0,
-    send: jest.fn(),
-  };
-  const other = {
-    readyState: WebSocket.OPEN,
-    bufferedAmount: 0,
-    send: jest.fn(),
-  };
+  const watched = mockSocket();
+  const other = mockSocket();
   (gateway as any).clients.set('claude:7', new Set([watched, other]));
   let serializations = 0;
   const item = {
@@ -190,19 +189,9 @@ it.each(['session', 'provider'])(
       {} as never,
       {} as never,
     );
-    const slow = {
-      readyState: WebSocket.OPEN,
-      bufferedAmount: MAX_WEBSOCKET_BUFFERED_BYTES,
-      send: jest.fn(),
-      terminate: jest.fn(),
-    };
-    const healthy = {
-      ...slow,
-      bufferedAmount: 0,
-      send: jest.fn(),
-      terminate: jest.fn(),
-    };
-    const otherProvider = { ...healthy, send: jest.fn() };
+    const slow = mockSocket(MAX_WEBSOCKET_BUFFERED_BYTES);
+    const healthy = mockSocket();
+    const otherProvider = mockSocket();
     (gateway as any).clients.set('codex:7', new Set([slow, healthy]));
     (gateway as any).clients.set('claude:7', new Set([otherProvider]));
     const event = {
@@ -233,12 +222,7 @@ it.each(['invalid JSON', 'provider error'])(
       { findOne: jest.fn().mockResolvedValue({}) } as never,
       {} as never,
     );
-    const ws = {
-      readyState: WebSocket.OPEN,
-      bufferedAmount: MAX_WEBSOCKET_BUFFERED_BYTES,
-      send: jest.fn(),
-      terminate: jest.fn(),
-    };
+    const ws = mockSocket(MAX_WEBSOCKET_BUFFERED_BYTES);
     for (let i = 0; i < 10; i++) {
       await (gateway as any).handleMessage(
         'codex',
