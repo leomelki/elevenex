@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
+import { sendBounded } from '../websocket/bounded-send.js';
 import { logEmitter, LogEntry } from './log-interceptor.js';
 
 @Injectable()
@@ -42,7 +43,7 @@ export class BackendLogsGateway implements OnModuleInit, OnModuleDestroy {
     const message = JSON.stringify(entry);
     for (const client of this.clients) {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
+        sendBounded(client, message);
       }
     }
   }

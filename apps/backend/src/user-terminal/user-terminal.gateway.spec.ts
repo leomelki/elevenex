@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { Server as HttpServer } from 'http';
 import { WebSocket, WebSocketServer } from 'ws';
+import { MAX_WEBSOCKET_BUFFERED_BYTES } from '../websocket/bounded-send.js';
 import { UserPtyManager } from './user-pty-manager.service.js';
 import { UserTerminalGateway } from './user-terminal.gateway.js';
 import { UserTerminalService } from './user-terminal.service.js';
@@ -32,7 +33,7 @@ describe('UserTerminalGateway', () => {
       close: jest.fn(),
     } as unknown as jest.Mocked<WebSocketServer>;
 
-    (WebSocketServer as jest.Mock).mockReturnValue(mockWss);
+    (WebSocketServer as unknown as jest.Mock).mockReturnValue(mockWss);
 
     mockServer = {
       on: jest.fn().mockReturnThis(),
@@ -85,6 +86,7 @@ describe('UserTerminalGateway', () => {
       close: jest.fn(),
       send: jest.fn(),
       readyState: WebSocket.OPEN,
+      bufferedAmount: 0,
     } as unknown as jest.Mocked<WebSocket>;
     const request = {
       url: '/user-terminal?terminalId=3',
@@ -107,6 +109,7 @@ describe('UserTerminalGateway', () => {
       close: jest.fn(),
       send: jest.fn(),
       readyState: WebSocket.OPEN,
+      bufferedAmount: 0,
     } as unknown as WebSocket;
     connectionHandler(reopened, request);
     await Promise.resolve();
@@ -136,12 +139,14 @@ describe('UserTerminalGateway', () => {
       close: jest.fn(),
       send: jest.fn(),
       readyState: WebSocket.OPEN,
+      bufferedAmount: 0,
     } as unknown as jest.Mocked<WebSocket>;
     const secondWs = {
       on: jest.fn().mockReturnThis(),
       close: jest.fn(),
       send: jest.fn(),
       readyState: WebSocket.OPEN,
+      bufferedAmount: 0,
     } as unknown as jest.Mocked<WebSocket>;
 
     connectionHandler(firstWs, {
@@ -189,6 +194,7 @@ describe('UserTerminalGateway', () => {
       close: jest.fn(),
       send: jest.fn(),
       readyState: WebSocket.OPEN,
+      bufferedAmount: 0,
     } as unknown as jest.Mocked<WebSocket>;
 
     connectionHandler(ws, {
@@ -238,6 +244,7 @@ describe('UserTerminalGateway', () => {
         close: jest.fn(),
         send: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
       } as unknown as jest.Mocked<WebSocket>;
       const request = {
         url: '/user-terminal?terminalId=3',
@@ -260,6 +267,7 @@ describe('UserTerminalGateway', () => {
         close: jest.fn(),
         send: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
       } as unknown as jest.Mocked<WebSocket>;
       connectionHandler(secondWs, request);
       expect(mockPtyManager.replayOutput).toHaveBeenCalledTimes(2);
@@ -271,4 +279,49 @@ describe('UserTerminalGateway', () => {
       );
     },
   );
+
+  it('disconnects a lagging client and replays output on reconnect', async () => {
+    mockTerminalService.startTerminal.mockResolvedValue({
+      success: true,
+    });
+    const connect = (
+      gateway as unknown as {
+        handleConnection: (ws: WebSocket, id: number) => void;
+      }
+    ).handleConnection.bind(gateway);
+    const handlers = new Map<string, () => void>();
+    const slow = {
+      readyState: WebSocket.OPEN,
+      bufferedAmount: MAX_WEBSOCKET_BUFFERED_BYTES,
+      on: jest.fn((event: string, handler: () => void) => {
+        handlers.set(event, handler);
+      }),
+      send: jest.fn(),
+      close: jest.fn(),
+      terminate: jest.fn(() => handlers.get('close')?.()),
+    };
+    connect(slow as unknown as WebSocket, 3);
+    await Promise.resolve();
+    for (let i = 0; i < 100; i++) gateway.sendToTerminal(3, 'output');
+    expect(slow.send).not.toHaveBeenCalled();
+    expect(slow.terminate).toHaveBeenCalledTimes(1);
+    expect(mockPtyManager.detach).toHaveBeenCalledTimes(1);
+    expect(mockPtyManager.kill).not.toHaveBeenCalled();
+
+    const reconnected = {
+      ...slow,
+      bufferedAmount: 0,
+      on: jest.fn(),
+      send: jest.fn(),
+      terminate: jest.fn(),
+    };
+    connect(reconnected as unknown as WebSocket, 3);
+    gateway.sendToTerminal(3, 'new output');
+    expect(mockPtyManager.replayOutput).toHaveBeenCalledTimes(2);
+    expect(reconnected.send).toHaveBeenCalledWith(
+      'new output',
+      expect.any(Function),
+    );
+    expect(reconnected.terminate).not.toHaveBeenCalled();
+  });
 });

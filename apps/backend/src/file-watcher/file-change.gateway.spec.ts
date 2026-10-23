@@ -3,9 +3,20 @@ import { FileChangeGateway } from './file-change.gateway.js';
 import { FileWatcherService, FileChangeEvent } from './file-watcher.service.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
+import { MAX_WEBSOCKET_BUFFERED_BYTES } from '../websocket/bounded-send.js';
 
 // Mock WebSocket and WebSocketServer
 jest.mock('ws');
+
+// EventEmitter mocks use partial request/socket fixtures and unbound callbacks.
+function mockListener(
+  mock: { mock: { calls: unknown[][] } },
+  event: string,
+): ((...args: unknown[]) => void) | undefined {
+  return mock.mock.calls.find(([name]) => name === event)?.[1] as
+    | ((...args: unknown[]) => void)
+    | undefined;
+}
 
 describe('FileChangeGateway', () => {
   let gateway: FileChangeGateway;
@@ -23,7 +34,7 @@ describe('FileChangeGateway', () => {
     } as unknown as jest.Mocked<WebSocketServer>;
 
     // Mock WebSocketServer constructor
-    (WebSocketServer as jest.Mock).mockReturnValue(mockWss);
+    (WebSocketServer as unknown as jest.Mock).mockReturnValue(mockWss);
 
     // Create mock FileWatcherService
     mockFileWatcher = {
@@ -57,6 +68,44 @@ describe('FileChangeGateway', () => {
     jest.clearAllMocks();
   });
 
+  it('disconnects a lagging watcher while continuing to notify healthy clients', () => {
+    const connect = (
+      gateway as unknown as {
+        handleConnection: (ws: WebSocket, path: string) => void;
+      }
+    ).handleConnection.bind(gateway);
+    const handlers = new Map<string, () => void>();
+    const slow = {
+      readyState: WebSocket.OPEN,
+      bufferedAmount: MAX_WEBSOCKET_BUFFERED_BYTES,
+      on: jest.fn((name: string, handler: () => void) => {
+        handlers.set(name, handler);
+      }),
+      send: jest.fn(),
+      terminate: jest.fn(() => handlers.get('close')?.()),
+    };
+    const healthy = {
+      ...slow,
+      bufferedAmount: 0,
+      on: jest.fn(),
+      send: jest.fn(),
+      terminate: jest.fn(),
+    };
+    connect(slow as unknown as WebSocket, '/test/worktree');
+    connect(healthy as unknown as WebSocket, '/test/worktree');
+    for (let i = 0; i < 100; i++) {
+      gateway.broadcast('/test/worktree', {
+        event: 'change',
+        path: 'file',
+        worktreePath: '/test/worktree',
+      });
+    }
+    expect(slow.send).not.toHaveBeenCalled();
+    expect(slow.terminate).toHaveBeenCalledTimes(1);
+    expect(healthy.send).toHaveBeenCalledTimes(100);
+    expect(mockFileWatcher.unwatchWorktree).not.toHaveBeenCalled();
+  });
+
   describe('attachToServer', () => {
     it('should create WebSocketServer at /file-changes path', () => {
       gateway.attachToServer(mockServer);
@@ -71,9 +120,7 @@ describe('FileChangeGateway', () => {
     it('should handle upgrade requests for /file-changes path', () => {
       gateway.attachToServer(mockServer);
 
-      const upgradeHandler = mockServer.on.mock.calls.find(
-        (call) => call[0] === 'upgrade',
-      )?.[1];
+      const upgradeHandler = mockListener(mockServer.on, 'upgrade');
 
       expect(upgradeHandler).toBeDefined();
 
@@ -100,9 +147,7 @@ describe('FileChangeGateway', () => {
     it('should not handle upgrade requests for other paths', () => {
       gateway.attachToServer(mockServer);
 
-      const upgradeHandler = mockServer.on.mock.calls.find(
-        (call) => call[0] === 'upgrade',
-      )?.[1];
+      const upgradeHandler = mockListener(mockServer.on, 'upgrade');
 
       const mockRequest = {
         url: '/other-path',
@@ -125,14 +170,13 @@ describe('FileChangeGateway', () => {
       gateway.attachToServer(mockServer);
 
       // Simulate connection event
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
 
       const mockWs = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -157,14 +201,13 @@ describe('FileChangeGateway', () => {
     it('should reject connection without worktreePath (1008 error)', () => {
       gateway.attachToServer(mockServer);
 
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
 
       const mockWs = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -177,15 +220,16 @@ describe('FileChangeGateway', () => {
         connectionHandler(mockWs, mockRequest);
       }
 
-      expect(mockWs.close).toHaveBeenCalledWith(1008, 'worktreePath must be an absolute path');
+      expect(mockWs.close).toHaveBeenCalledWith(
+        1008,
+        'worktreePath must be an absolute path',
+      );
       expect(mockFileWatcher.watchWorktree).not.toHaveBeenCalled();
     });
 
     it('rejects a relative worktree path without starting a watcher', () => {
       gateway.attachToServer(mockServer);
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
       const mockWs = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
@@ -196,15 +240,16 @@ describe('FileChangeGateway', () => {
         headers: { host: 'localhost:3000' },
       });
 
-      expect(mockWs.close).toHaveBeenCalledWith(1008, 'worktreePath must be an absolute path');
+      expect(mockWs.close).toHaveBeenCalledWith(
+        1008,
+        'worktreePath must be an absolute path',
+      );
       expect(mockFileWatcher.watchWorktree).not.toHaveBeenCalled();
     });
 
     it('closes the connection if the worktree disappears before watching', () => {
       gateway.attachToServer(mockServer);
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
       const mockWs = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
@@ -215,11 +260,16 @@ describe('FileChangeGateway', () => {
       const warn = jest.spyOn(console, 'warn').mockImplementation();
 
       try {
-        expect(() => connectionHandler?.(mockWs, {
-          url: '/file-changes?worktreePath=/missing/worktree',
-          headers: { host: 'localhost:3000' },
-        })).not.toThrow();
-        expect(mockWs.close).toHaveBeenCalledWith(1011, 'Unable to watch worktree');
+        expect(() =>
+          connectionHandler?.(mockWs, {
+            url: '/file-changes?worktreePath=/missing/worktree',
+            headers: { host: 'localhost:3000' },
+          }),
+        ).not.toThrow();
+        expect(mockWs.close).toHaveBeenCalledWith(
+          1011,
+          'Unable to watch worktree',
+        );
         expect(mockWs.on).not.toHaveBeenCalled();
       } finally {
         warn.mockRestore();
@@ -232,14 +282,13 @@ describe('FileChangeGateway', () => {
       gateway.attachToServer(mockServer);
 
       // Simulate two clients connecting to same worktree
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
 
       const mockWs1 = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -247,6 +296,7 @@ describe('FileChangeGateway', () => {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -276,21 +326,26 @@ describe('FileChangeGateway', () => {
         worktreePath: '/test/worktree',
       });
 
-      expect(mockWs1.send).toHaveBeenCalledWith(expectedMessage);
-      expect(mockWs2.send).toHaveBeenCalledWith(expectedMessage);
+      expect(mockWs1.send).toHaveBeenCalledWith(
+        expectedMessage,
+        expect.any(Function),
+      );
+      expect(mockWs2.send).toHaveBeenCalledWith(
+        expectedMessage,
+        expect.any(Function),
+      );
     });
 
     it('should not send to clients watching different worktree', () => {
       gateway.attachToServer(mockServer);
 
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
 
       const mockWs1 = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -298,6 +353,7 @@ describe('FileChangeGateway', () => {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -334,14 +390,13 @@ describe('FileChangeGateway', () => {
     it('should only send to OPEN WebSocket connections', () => {
       gateway.attachToServer(mockServer);
 
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
 
       const mockWsOpen = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -379,14 +434,13 @@ describe('FileChangeGateway', () => {
     it('should remove client from clients map on disconnect', () => {
       gateway.attachToServer(mockServer);
 
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
 
       const mockWs = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -400,9 +454,7 @@ describe('FileChangeGateway', () => {
       }
 
       // Get the close handler
-      const closeHandler = mockWs.on.mock.calls.find(
-        (call) => call[0] === 'close',
-      )?.[1];
+      const closeHandler = mockListener(mockWs.on, 'close');
 
       if (closeHandler) {
         closeHandler();
@@ -423,14 +475,13 @@ describe('FileChangeGateway', () => {
     it('should unwatch worktree when last client disconnects', async () => {
       gateway.attachToServer(mockServer);
 
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
 
       const mockWs = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -443,9 +494,7 @@ describe('FileChangeGateway', () => {
         connectionHandler(mockWs, mockRequest);
       }
 
-      const closeHandler = mockWs.on.mock.calls.find(
-        (call) => call[0] === 'close',
-      )?.[1];
+      const closeHandler = mockListener(mockWs.on, 'close');
 
       if (closeHandler) {
         closeHandler();
@@ -459,14 +508,13 @@ describe('FileChangeGateway', () => {
     it('should not unwatch worktree if other clients remain', () => {
       gateway.attachToServer(mockServer);
 
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
 
       const mockWs1 = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -474,6 +522,7 @@ describe('FileChangeGateway', () => {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -488,9 +537,7 @@ describe('FileChangeGateway', () => {
       }
 
       // Disconnect client 1
-      const closeHandler1 = mockWs1.on.mock.calls.find(
-        (call) => call[0] === 'close',
-      )?.[1];
+      const closeHandler1 = mockListener(mockWs1.on, 'close');
 
       if (closeHandler1) {
         closeHandler1();
@@ -504,14 +551,13 @@ describe('FileChangeGateway', () => {
     it('should close all WebSocket connections', () => {
       gateway.attachToServer(mockServer);
 
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
 
       const mockWs1 = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -519,6 +565,7 @@ describe('FileChangeGateway', () => {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -547,14 +594,13 @@ describe('FileChangeGateway', () => {
     it('should clear clients map', () => {
       gateway.attachToServer(mockServer);
 
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
 
       const mockWs = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -587,14 +633,13 @@ describe('FileChangeGateway', () => {
     it('should remove client from map on WebSocket error', () => {
       gateway.attachToServer(mockServer);
 
-      const connectionHandler = mockWss.on.mock.calls.find(
-        (call) => call[0] === 'connection',
-      )?.[1];
+      const connectionHandler = mockListener(mockWss.on, 'connection');
 
       const mockWs = {
         on: jest.fn().mockReturnThis(),
         close: jest.fn(),
         readyState: WebSocket.OPEN,
+        bufferedAmount: 0,
         send: jest.fn(),
       } as unknown as jest.Mocked<WebSocket>;
 
@@ -607,9 +652,7 @@ describe('FileChangeGateway', () => {
         connectionHandler(mockWs, mockRequest);
       }
 
-      const errorHandler = mockWs.on.mock.calls.find(
-        (call) => call[0] === 'error',
-      )?.[1];
+      const errorHandler = mockListener(mockWs.on, 'error');
 
       if (errorHandler) {
         errorHandler(new Error('WebSocket error'));

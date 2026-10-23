@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
+import { sendBounded } from '../websocket/bounded-send.js';
 import { isAbsolute } from 'node:path';
 import { FileWatcherService, FileChangeEvent } from './file-watcher.service.js';
 
@@ -156,7 +157,7 @@ export class FileChangeGateway implements OnModuleDestroy {
 
     for (const ws of clients) {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(message);
+        sendBounded(ws, message);
       }
     }
   }

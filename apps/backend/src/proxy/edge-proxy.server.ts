@@ -121,7 +121,8 @@ function copyProxyHeaders(
 
 function writeProxyError(response: ServerResponse, error: Error): void {
   if (response.headersSent) {
-    response.end();
+    // Ending a partial chunked response would make truncated NDJSON look complete.
+    response.destroy();
     return;
   }
 
@@ -141,6 +142,34 @@ function proxyHttpRequest(
   target: URL,
 ): void {
   const transport = target.protocol === 'https:' ? httpsRequest : httpRequest;
+  let proxyResponse: IncomingMessage | undefined;
+  let settled = false;
+
+  const cleanup = () => {
+    request.off('aborted', cancel);
+    response.off('finish', onFinish);
+  };
+  const cancel = () => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    request.unpipe(proxyRequest);
+    proxyResponse?.unpipe(response);
+    proxyResponse?.destroy();
+    proxyRequest.destroy();
+  };
+  const fail = (error: Error) => {
+    if (settled) return;
+    cancel();
+    if (!response.destroyed && !response.writableEnded) {
+      writeProxyError(response, error);
+    }
+  };
+  const onFinish = () => {
+    settled = true;
+    cleanup();
+  };
+
   const proxyRequest = transport(
     {
       protocol: target.protocol,
@@ -150,20 +179,50 @@ function proxyHttpRequest(
       path: request.url,
       headers: copyProxyHeaders(request, target),
     },
-    (proxyResponse) => {
+    (upstreamResponse) => {
+      proxyResponse = upstreamResponse;
+      const onAborted = () => fail(new Error('Upstream response aborted'));
+      upstreamResponse.once('aborted', onAborted);
+      upstreamResponse.on('error', fail);
+      upstreamResponse.once('close', () => {
+        if (!upstreamResponse.complete) onAborted();
+        upstreamResponse.off('aborted', onAborted);
+        upstreamResponse.off('error', fail);
+      });
+      if (settled) {
+        upstreamResponse.destroy();
+        return;
+      }
       response.writeHead(
-        proxyResponse.statusCode ?? 502,
-        proxyResponse.headers,
+        upstreamResponse.statusCode ?? 502,
+        upstreamResponse.headers,
       );
-      proxyResponse.pipe(response);
+      upstreamResponse.pipe(response);
     },
   );
 
-  proxyRequest.on('error', (error) => {
-    writeProxyError(response, error);
+  // Keep error handlers through close: destroy() can emit a deferred ECONNRESET.
+  proxyRequest.on('error', fail);
+  proxyRequest.once('close', () => {
+    if (!proxyResponse) fail(new Error('Upstream closed before responding'));
+    proxyRequest.off('error', fail);
   });
+  request.once('aborted', cancel);
+  request.on('error', cancel);
+  request.once('close', () => {
+    // A completed upload normally closes while the response is still streaming.
+    if (!request.complete) cancel();
+    request.off('error', cancel);
+  });
+  response.once('close', () => {
+    if (!response.writableFinished) cancel();
+    response.off('error', cancel);
+  });
+  response.once('finish', onFinish);
+  response.on('error', cancel);
 
-  request.pipe(proxyRequest);
+  if (request.aborted || response.destroyed) cancel();
+  else request.pipe(proxyRequest);
 }
 
 function serializeHeaders(
@@ -211,8 +270,43 @@ function proxyWebSocketUpgrade(
   target: URL,
 ): void {
   const upstreamSocket = createUpstreamSocket(target);
+  const connectEvent =
+    target.protocol === 'wss:' || target.protocol === 'https:'
+      ? 'secureConnect'
+      : 'connect';
+  let connected = false;
+  let stopped = false;
 
-  upstreamSocket.on('connect', () => {
+  const cleanup = () => {
+    upstreamSocket.off(connectEvent, onConnect);
+    socket.off('end', onClientEnd);
+    socket.unpipe(upstreamSocket);
+    upstreamSocket.unpipe(socket);
+  };
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    cleanup();
+    upstreamSocket.destroy();
+    socket.destroy();
+  };
+  const finishPeer = (peer: Duplex) => {
+    if (stopped) return;
+    stopped = true;
+    cleanup();
+    // A clean EOF can follow a WebSocket close frame. Flush piped bytes before
+    // closing the peer so its close code/reason (or final data) is not lost.
+    peer.end(() => peer.destroy());
+  };
+  const onClientEnd = () => {
+    if (!connected) stop();
+  };
+  const onConnect = () => {
+    if (stopped || socket.destroyed) {
+      stop();
+      return;
+    }
+    connected = true;
     const path = request.url || '/';
     const headerBlock = serializeHeaders(request.headers, target.host);
     upstreamSocket.write(
@@ -225,17 +319,35 @@ function proxyWebSocketUpgrade(
 
     socket.pipe(upstreamSocket);
     upstreamSocket.pipe(socket);
-  });
+  };
 
-  upstreamSocket.on('error', () => {
-    if (!socket.destroyed) {
-      socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+  const onUpstreamError = () => {
+    if (stopped) return;
+    if (connected || socket.destroyed) {
+      stop();
+      return;
     }
-  });
-
-  socket.on('error', () => {
+    stopped = true;
+    cleanup();
     upstreamSocket.destroy();
+    socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n', () => socket.destroy());
+  };
+
+  upstreamSocket.once(connectEvent, onConnect);
+  upstreamSocket.on('error', onUpstreamError);
+  socket.on('error', stop);
+  socket.on('end', onClientEnd);
+  upstreamSocket.once('close', () => {
+    if (connected && upstreamSocket.readableEnded) finishPeer(socket);
+    else stop();
+    upstreamSocket.off('error', onUpstreamError);
   });
+  socket.once('close', () => {
+    if (connected && socket.readableEnded) finishPeer(upstreamSocket);
+    else stop();
+    socket.off('error', stop);
+  });
+  if (socket.destroyed) stop();
 }
 
 export function createEdgeProxyServer(
