@@ -615,7 +615,7 @@ describe('GitService', () => {
       },
     );
 
-    it('shares the entire pending summary and rereads stats on the next poll', async () => {
+    it('shares pending summaries and reuses staged stats when only worktree content changes', async () => {
       fs.writeFileSync(path.join(repoPath, 'notes.txt'), 'note\n');
       const entered = deferred<void>();
       const upstream = deferred<string>();
@@ -647,7 +647,7 @@ describe('GitService', () => {
       fs.writeFileSync(path.join(repoPath, 'notes.txt'), 'note\nsecond\n');
       const next = await service.getStatusSummary(repoPath);
       expect(next.unstaged.additions).toBe(2);
-      expect(numstat).toHaveBeenCalledTimes(4);
+      expect(numstat).toHaveBeenCalledTimes(3);
       expect(untracked).toHaveBeenCalledTimes(2);
       expect(getUpstream).toHaveBeenCalledTimes(2);
       expect(counts).toHaveBeenCalledTimes(2);

@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, Query, Logger } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  Logger,
+  Req,
+} from '@nestjs/common';
+import type { Request } from 'express';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 import { ChangeReviewService } from './change-review.service.js';
 import type {
@@ -71,21 +80,33 @@ export class GitController {
     @Query('forceFileLoad') forceFileLoad?: string,
     @Query('fullFile') fullFile?: string,
     @Query('allowUnchanged') allowUnchanged?: string,
+    @Req() request?: Request,
   ): Promise<ChangeReviewFileWindow> {
-    return this.changeReviewService.getFileWindow(
-      decodeURIComponent(worktreePath),
-      scope,
-      decodeURIComponent(filePath),
-      {
-        offset: offset ? Number.parseInt(offset, 10) : undefined,
-        limit: limit ? Number.parseInt(limit, 10) : undefined,
-        context: context ? Number.parseInt(context, 10) : undefined,
-        forceLoad: forceLoad === 'true',
-        forceFileLoad: forceFileLoad === 'true',
-        fullFile: fullFile === 'true',
-        allowUnchanged: allowUnchanged === 'true',
-      },
-    );
+    const controller = new AbortController();
+    const closed = () => {
+      if (!request?.res?.writableEnded)
+        controller.abort(new Error('Diff request closed'));
+    };
+    request?.res?.once('close', closed);
+    try {
+      return await this.changeReviewService.getFileWindow(
+        decodeURIComponent(worktreePath),
+        scope,
+        decodeURIComponent(filePath),
+        {
+          offset: offset ? Number.parseInt(offset, 10) : undefined,
+          limit: limit ? Number.parseInt(limit, 10) : undefined,
+          context: context ? Number.parseInt(context, 10) : undefined,
+          forceLoad: forceLoad === 'true',
+          forceFileLoad: forceFileLoad === 'true',
+          fullFile: fullFile === 'true',
+          allowUnchanged: allowUnchanged === 'true',
+          ...(request ? { signal: controller.signal } : {}),
+        },
+      );
+    } finally {
+      request?.res?.off('close', closed);
+    }
   }
 
   @Get('change-review/window')
@@ -100,6 +121,7 @@ export class GitController {
     @Query('forceFileLoad') forceFileLoad?: string,
     @Query('fullFile') fullFile?: string,
     @Query('allowUnchanged') allowUnchanged?: string,
+    @Req() request?: Request,
   ): Promise<ChangeReviewFileWindow> {
     return this.getChangeReviewFile(
       worktreePath,
@@ -112,6 +134,7 @@ export class GitController {
       forceFileLoad,
       fullFile,
       allowUnchanged,
+      request,
     );
   }
 

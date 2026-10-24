@@ -4,6 +4,7 @@ import { worktreeSimpleGit } from '../config/system-paths.js';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { isMissingWorktreePath } from './worktree-path.js';
+import { releaseGitWorktreeCaches } from '../git/git-worktree-cache-lifecycle.js';
 
 export interface BranchLastCommit {
   hash: string;
@@ -164,6 +165,9 @@ export class WorktreesService {
 
     try {
       await git.raw(['worktree', 'remove', worktreePath]);
+      releaseGitWorktreeCaches(worktreePath);
+      if (normalizedWorktreePath !== path.resolve(worktreePath))
+        releaseGitWorktreeCaches(normalizedWorktreePath);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new BadRequestException(`Failed to remove worktree: ${message}`);
