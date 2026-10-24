@@ -2358,6 +2358,12 @@ export class ChangeReviewService {
     base: ReviewBase,
     summary: ChangeReviewFileSummary,
   ): Promise<ReviewFileLines> {
+    // Capture before choosing the content key: a queued build must not publish
+    // newer file contents under an identity calculated before the queue wait.
+    const currentVersion =
+      scope === 'last-commit'
+        ? null
+        : await readPathVersion(path.join(worktreePath, summary.path));
     const cacheKey = await this.fileArtifactKey(
       'lines',
       git,
@@ -2386,9 +2392,6 @@ export class ChangeReviewService {
             : (base.headSha ?? 'HEAD');
       const newRef = scope === 'last-commit' ? (base.headSha ?? 'HEAD') : null;
       const oldPath = summary.oldPath ?? summary.path;
-      const currentVersion = newRef
-        ? null
-        : await readPathVersion(path.join(worktreePath, summary.path));
 
       const record = this.fileVersions.get(summary)?.record;
       const readBlob = (
@@ -2421,7 +2424,13 @@ export class ChangeReviewService {
           : newRef
             ? readBlob(record?.newOid, record?.newMode, newRef, summary.path)
             : record?.newMode === '160000'
-              ? Promise.resolve(`Subproject commit ${record.newOid}\n`)
+              ? Promise.resolve(
+                  `Subproject commit ${
+                    currentVersion?.startsWith('gitlink:')
+                      ? currentVersion.slice('gitlink:'.length)
+                      : record.newOid
+                  }\n`,
+                )
               : this.readWorktreeFile(worktreePath, summary.path),
       ]);
       if (
@@ -2549,7 +2558,7 @@ export class ChangeReviewService {
     forceFileLoad: boolean,
   ): Promise<CachedRows> {
     const absolutePath = path.join(worktreePath, summary.path);
-    const stat = await fs.stat(absolutePath);
+    const stat = await fs.lstat(absolutePath);
     if (
       stat.size > MAX_FORCED_FILE_BYTES ||
       (stat.size > LARGE_FILE_BYTES && !forceFileLoad)
@@ -3024,8 +3033,10 @@ export class ChangeReviewService {
   }
 
   releaseWorktree(worktreePath: string): void {
-    for (const scope of ['branch', 'uncommitted', 'last-commit'] as const)
+    for (const scope of ['branch', 'uncommitted', 'last-commit'] as const) {
       this.clearScopeCache(worktreePath, scope);
+      this.refreshBuilds.delete([worktreePath, scope].join('\0'));
+    }
     this.worktreeRefs.delete(worktreePath);
     clearWorktreeFingerprintCache(worktreePath);
     clearLocalRefState(worktreePath);

@@ -35,7 +35,208 @@
     "formatting": "passed for added modules/tests and changed review/fingerprint sources",
     "diffWhitespace": "passed",
     "environmentCorrection": "An initial backend-shell run selected Node 26 and could not load the Node 24 SQLite addon. Re-running on an explicit Node 24 executable passed; shared dependencies were not rebuilt.",
-    "optimizedBenchmarkErrors": 0
+    "optimizedBenchmarkErrors": 0,
+    "followupReview": {
+      "checkedAt": "2026-10-24T20:13:58.585Z",
+      "baseCommit": "20903f840423af65d1036b692a064f7a406fdbb9",
+      "fixes": [
+        "Use lstat when opening untracked symlinks, including dangling links and links to large targets.",
+        "Resolve working gitlink context from the nested HEAD instead of the zero OID in raw worktree diffs.",
+        "Detach pending explicit refreshes when releasing a worktree so reuse cannot join the old base.",
+        "Capture path versions before choosing queued file-line cache keys and reject changed content before publication.",
+        "Reject cache entries exceeding the whole byte budget without evicting useful warm entries."
+      ],
+      "regressionProof": "All five cases failed before their fixes; four new tests and expanded nested-HEAD context assertions pass afterward.",
+      "sourceSha256": {
+        "apps/backend/src/git/change-review.service.ts": "fb64eda00cad18189f638419a9734b9d7f6b4b3563ad44b4c53bf3e1ceca9029",
+        "apps/backend/src/git/change-review.service.spec.ts": "33eb1541c9d5a4e5615cb9bf941264c6abda4a55ab8502ec0b4c6aaf99255e5e",
+        "apps/backend/src/git/git-cache.ts": "54112bc910230e8455b3ce407cd46b9a8747aa50cea1799c5894a402c2149598",
+        "apps/backend/src/git/git-cache.spec.ts": "2d5566b9d1b231af1bbbd9fda3318c2c99a95b7b7b8fce18333d5958b956ad6d"
+      },
+      "node": "v24.22.1",
+      "tests": {
+        "status": "passed",
+        "suites": 12,
+        "tests": 317,
+        "command": "cd apps/backend && node node_modules/jest/bin/jest.js --runInBand --testPathPatterns=\"src/git/.*spec.ts|tasks.service.spec.ts|worktrees.service.spec.ts|system-paths.spec.ts\""
+      },
+      "typecheck": {
+        "status": "passed",
+        "command": "node apps/backend/node_modules/typescript/bin/tsc -p apps/backend/tsconfig.build.json --outDir /tmp/elevenex-git-review-build --incremental false"
+      },
+      "lint": {
+        "addedFindings": 0,
+        "existingServiceErrors": 13,
+        "existingTestErrors": 8,
+        "note": "Compared rule/severity/message multisets against the base commit for both modified review files; cache files are clean."
+      },
+      "formatting": "passed for all four modified TypeScript files",
+      "diffWhitespace": "passed",
+      "benchmark": {
+        "command": "NODE_PATH=\"$PWD/apps/backend/node_modules\" node --expose-gc scripts/benchmark-change-review.cjs /tmp/elevenex-git-review-build /tmp/elevenex-git-review-benchmark.json",
+        "benchmarkSha256": "9dfa2f9740cfbc4be145eb68577a4aae7cbea67e528619b18793632a60c9c417",
+        "moduleHashes": {
+          "git/change-review.service.js": "677c8f634dc7cc7bc8d71b1d87540b6a11814813b69e4dffbb6cf8f05073b2af",
+          "git/git-worktree-fingerprint.js": "d30e04e35307b15855bd44034e0e84b60c6edceadb3ebeced6cc00a94f85446a",
+          "git/git.service.js": "4b87159be75cbddd2e7e8f94dca3b0cbb0334c389764500f3634af9a38459043",
+          "git/git-local-state.js": "20f8a5af84853717421ea2f38823998a9ea48f40afe670a42184407cb2dc85d0",
+          "git/git-cache.js": "e95c32b698e18b6fcdc32378eeeb733dad05092695f7a88e17271e2da28e8d7a",
+          "git/git-read-scheduler.js": "4dd1a2842bbeb924c57176e1ec2cd22777c5cbe8f6925ce096f74f9670ff39ed",
+          "git/git-diff-records.js": "31573acb726dcd5d231151a89032684bfbe930ff53b2e874cef7ddb6c060fcb6",
+          "git/git-file-stats.js": "fa1512ebe955c0084b9968c6b2627277dda65accafae665d5fde9ad7d578edd1",
+          "git/git-review-index.js": "4950382ef51c4e2f484038c4f195a090df6736b7b1489b7cdcac443f4d7110de",
+          "git/git-worktree-cache-lifecycle.js": "38fd41b2a876b71bc474673c0aac9d5d0611e2b6bd156ab116c59d997c7620e8",
+          "config/system-paths.js": "aa03057ebce4f739df5ad289d3634b11ca833066889dc26cbbbfcde122f242b6"
+        },
+        "fixture": {
+          "tracked": 6001,
+          "dirty": 600,
+          "untracked": 300,
+          "commits": 1501,
+          "branches": 502,
+          "worktrees": 2
+        },
+        "config": {
+          "optionalLocks": 0,
+          "userConfig": false,
+          "network": false,
+          "autoMaintenance": false,
+          "fsmonitor": false,
+          "untrackedCache": false,
+          "maintenance": false
+        },
+        "workloads": 15,
+        "samples": 115,
+        "errors": 0,
+        "maxRetainedReviewCacheBytes": 61360280,
+        "reviewCacheBudgetBytes": 71303168,
+        "peakScheduledGitProcesses": 2,
+        "peakScheduledGitProcessesPerRepository": 2,
+        "results": [
+          {
+            "workload": "cold-branch-summary",
+            "rounds": 11,
+            "p50Ms": 285.56704200000013,
+            "p95Ms": 415.397375,
+            "gitProcessesP50": 5,
+            "nodeStatCallsP50": 601
+          },
+          {
+            "workload": "cached-file-window",
+            "rounds": 11,
+            "p50Ms": 3.3514580000000933,
+            "p95Ms": 4.144666999999572,
+            "gitProcessesP50": 0,
+            "nodeStatCallsP50": 4
+          },
+          {
+            "workload": "unrelated-edit-window",
+            "rounds": 11,
+            "p50Ms": 3.5020000000004075,
+            "p95Ms": 4.092959000000519,
+            "gitProcessesP50": 0,
+            "nodeStatCallsP50": 4
+          },
+          {
+            "workload": "selected-edit-window",
+            "rounds": 11,
+            "p50Ms": 52.37008400000013,
+            "p95Ms": 58.10179100000005,
+            "gitProcessesP50": 2,
+            "nodeStatCallsP50": 14
+          },
+          {
+            "workload": "dirty-untracked-summary",
+            "rounds": 7,
+            "p50Ms": 81.46345800000017,
+            "p95Ms": 323.33795800000007,
+            "gitProcessesP50": 1,
+            "nodeStatCallsP50": 901
+          },
+          {
+            "workload": "status-poll-unchanged",
+            "rounds": 7,
+            "p50Ms": 109.73966700000074,
+            "p95Ms": 269.0608750000001,
+            "gitProcessesP50": 3,
+            "nodeStatCallsP50": 902
+          },
+          {
+            "workload": "status-poll-edit",
+            "rounds": 7,
+            "p50Ms": 216.28616599999987,
+            "p95Ms": 229.34541700000045,
+            "gitProcessesP50": 4,
+            "nodeStatCallsP50": 902
+          },
+          {
+            "workload": "multi-worktree-clients-32",
+            "rounds": 7,
+            "p50Ms": 135.45170899999903,
+            "p95Ms": 584.7416249999987,
+            "gitProcessesP50": 2,
+            "nodeStatCallsP50": 18
+          },
+          {
+            "workload": "fetched-ref-update",
+            "rounds": 7,
+            "p50Ms": 16.947833000000173,
+            "p95Ms": 241.74783300000126,
+            "gitProcessesP50": 0,
+            "nodeStatCallsP50": 901
+          },
+          {
+            "workload": "deep-history-merge-base",
+            "rounds": 7,
+            "p50Ms": 242.47899999999936,
+            "p95Ms": 294.41041700000096,
+            "gitProcessesP50": 4,
+            "nodeStatCallsP50": 902
+          },
+          {
+            "workload": "rename-heavy-summary",
+            "rounds": 7,
+            "p50Ms": 166.4542079999992,
+            "p95Ms": 238.0694169999988,
+            "gitProcessesP50": 4,
+            "nodeStatCallsP50": 201
+          },
+          {
+            "workload": "large-historical-window",
+            "rounds": 5,
+            "p50Ms": 86.46245799999815,
+            "p95Ms": 121.9552909999984,
+            "gitProcessesP50": 2,
+            "nodeStatCallsP50": 7
+          },
+          {
+            "workload": "large-current-forced-window",
+            "rounds": 5,
+            "p50Ms": 297.50483299999905,
+            "p95Ms": 348.66549999999916,
+            "gitProcessesP50": 3,
+            "nodeStatCallsP50": 11
+          },
+          {
+            "workload": "cache-pressure-16-files-32-clients",
+            "rounds": 7,
+            "p50Ms": 279.9807919999985,
+            "p95Ms": 634.0223750000005,
+            "gitProcessesP50": 1,
+            "nodeStatCallsP50": 125
+          },
+          {
+            "workload": "restored-untracked-net-comparison",
+            "rounds": 5,
+            "p50Ms": 206.44450000000143,
+            "p95Ms": 208.86533399999826,
+            "gitProcessesP50": 4,
+            "nodeStatCallsP50": 10
+          }
+        ],
+        "note": "Fresh follow-up run. Timings depend on machine load; cached and unrelated-edit windows started zero Git processes in every sample, and all samples respected retained-cache and process budgets."
+      }
+    }
   },
   "baselineCommit": "3babb05695d5951e14a91787daf033d7487bcad8",
   "implementation": "Uncommitted working tree based on baselineCommit; module hashes identify both builds",

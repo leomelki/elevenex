@@ -61,6 +61,11 @@ export class GitCacheBudget {
   }
   add(token: object, bytes: number, evict: () => void): void {
     this.remove(token);
+    // An entry that cannot fit must not flush all of the warm caches first.
+    if (bytes > this.maxBytes) {
+      evict();
+      return;
+    }
     this.entries.set(token, { bytes, evict });
     this.bytes += bytes;
     while (this.bytes > this.maxBytes) {

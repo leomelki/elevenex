@@ -1,6 +1,17 @@
 import { GitByteLru, GitCacheBudget } from './git-cache.js';
 
 describe('Git byte budget', () => {
+  it('does not evict useful entries for a value larger than the whole budget', () => {
+    const budget = new GitCacheBudget(800);
+    const cache = new GitByteLru<string>(budget);
+    cache.set('kept', 'x'.repeat(100));
+    const retained = budget.bytes;
+    cache.set('oversized', 'x'.repeat(1000));
+    expect(cache.has('oversized')).toBe(false);
+    expect(cache.get('kept')).toBe('x'.repeat(100));
+    expect(budget.bytes).toBe(retained);
+  });
+
   it('evicts the least recently used value across cache types and drops oversized entries', () => {
     const budget = new GitCacheBudget(800);
     const rows = new GitByteLru<string>(budget),

@@ -172,6 +172,35 @@ describe('ChangeReviewService', () => {
     expect(summary.totals).toEqual({ files: 1, additions: 1, deletions: 0 });
   });
 
+  it('renders untracked symlink contents without following their targets', async () => {
+    fs.symlinkSync('missing-target', path.join(repoPath, 'dangling'));
+    const target = path.join(tmpDir, 'large-target');
+    fs.writeFileSync(target, 'x'.repeat(1_000_001));
+    fs.symlinkSync(target, path.join(repoPath, 'large-link'));
+
+    const summary = await service.getSummary(repoPath, 'uncommitted');
+    expect(summary.files.map((file) => file.path)).toEqual([
+      'dangling',
+      'large-link',
+    ]);
+    for (const [filePath, content] of [
+      ['dangling', 'missing-target'],
+      ['large-link', target],
+    ]) {
+      const window = await service.getFileWindow(
+        repoPath,
+        'uncommitted',
+        filePath,
+      );
+      expect(window.large).toBe(false);
+      expect(
+        window.rows
+          .filter((row) => row.type === 'add')
+          .map((row) => row.content),
+      ).toEqual([content]);
+    }
+  });
+
   it('refreshes gitlink windows on nested HEAD changes while ignoring nested dirtiness', async () => {
     const relativePath = '.worktrees/nested';
     const nested = path.join(repoPath, relativePath);
@@ -185,6 +214,15 @@ describe('ChangeReviewService', () => {
     const firstHead = git('rev-parse HEAD', nested).trim();
     const first = await read();
     expect(JSON.stringify(first.rows)).toContain(firstHead);
+    const context = () =>
+      service.getContextWindow(repoPath, 'uncommitted', relativePath, {
+        oldStart: 1,
+        newStart: 1,
+        count: 1,
+      });
+    expect((await context()).rows[0].content).toBe(
+      `Subproject commit ${firstHead}`,
+    );
     const firstSummary = await service.getSummary(repoPath, 'uncommitted');
 
     write(`${relativePath}/README.md`, 'nested dirty contents\n');
@@ -198,6 +236,9 @@ describe('ChangeReviewService', () => {
     const second = await read();
     expect(JSON.stringify(second.rows)).toContain(secondHead);
     expect(second.rows).not.toEqual(first.rows);
+    expect((await context()).rows[0].content).toBe(
+      `Subproject commit ${secondHead}`,
+    );
     expect(
       (await service.getSummary(repoPath, 'uncommitted')).worktreeFingerprint,
     ).not.toBe(firstSummary.worktreeFingerprint);
@@ -1414,6 +1455,75 @@ describe('ChangeReviewService', () => {
     expect((await service.getSummary(repoPath, 'branch')).headSha).toBe(
       fresh[0].headSha,
     );
+  });
+
+  it('detaches pending refreshes when a worktree is released and reused', async () => {
+    setupOrigin();
+    const entered = deferred();
+    const release = deferred();
+    jest.spyOn(internals(), 'refreshLikelyBase').mockResolvedValue();
+    jest
+      .spyOn(internals(), 'readPullRequestInfo')
+      .mockImplementationOnce(async () => {
+        entered.resolve();
+        await release.promise;
+        return null;
+      })
+      .mockResolvedValue(null);
+    const oldRefresh = service.getSummary(repoPath, 'branch', true);
+    await entered.promise;
+    service.releaseWorktree(repoPath);
+    write('README.md', 'new head\n');
+    git('commit -am "Reuse worktree"');
+    try {
+      const current = await service.getSummary(repoPath, 'branch');
+      const refresh = service.getSummary(repoPath, 'branch', true);
+      release.resolve();
+      expect((await refresh).headSha).toBe(current.headSha);
+      expect((await oldRefresh).headSha).not.toBe(current.headSha);
+    } finally {
+      release.resolve();
+      await oldRefresh;
+    }
+  });
+
+  it('rejects file lines that changed while their content build was queued', async () => {
+    write('README.md', 'one\ntwo\n');
+    const entered = deferred();
+    const release = deferred();
+    const original = service['getOrBuild'].bind(service);
+    const builds = jest
+      .spyOn(internals(), 'getOrBuild')
+      .mockImplementation((map, key, build) =>
+        original(
+          map,
+          key,
+          map === internals().fileLinesBuilds
+            ? async () => {
+                entered.resolve();
+                await release.promise;
+                return build();
+              }
+            : build,
+        ),
+      );
+    const read = () =>
+      service.getContextWindow(repoPath, 'uncommitted', 'README.md', {
+        oldStart: 1,
+        newStart: 1,
+        count: 1,
+      });
+    const old = read();
+    const rejected = expect(old).rejects.toThrow('File changed while reading');
+    await entered.promise;
+    write('README.md', 'changed while queued\n');
+    release.resolve();
+    await rejected;
+    builds.mockRestore();
+    expect(internals().fileLinesCache.size).toBe(0);
+    expect(internals().contextWindowCache.size).toBe(0);
+    write('README.md', 'one\ntwo\n');
+    expect((await read()).rows[0].content).toBe('one');
   });
 
   it('does not cache old rows, file lines, or context when they finish during replacement builds', async () => {
