@@ -45,6 +45,8 @@ describe("GitBar motion ownership", () => {
       addEventListener: (_type: string, callback: () => void) => {
         motionChanged = callback;
       },
+      addListener: () => undefined,
+      removeListener: () => undefined,
       removeEventListener: mediaRemoved,
     }));
     vi.stubGlobal(
@@ -158,5 +160,101 @@ describe("GitBar motion ownership", () => {
     expect(mediaRemoved).toHaveBeenCalledWith("change", expect.any(Function));
     for (const animation of animations)
       expect(animation.cancel).toHaveBeenCalled();
+  });
+
+  it("commits then merges a sub-task through the same persistent button", async () => {
+    const fixture = TestBed.createComponent(GitBarComponent);
+    fixture.componentRef.setInput("files", 2);
+    fixture.componentRef.setInput("ahead", 3);
+    fixture.componentRef.setInput("mergeInto", "leo/flaky-checkout");
+    const actions = vi.fn();
+    fixture.componentInstance.action.subscribe(actions);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const button: HTMLButtonElement =
+      fixture.nativeElement.querySelector(".primary");
+    button.click();
+    expect(actions).toHaveBeenLastCalledWith("commit");
+    fixture.componentRef.setInput("files", 0);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector(".primary")).toBe(button);
+    expect(button.getAttribute("aria-label")).toBe("Merge into flaky-checkout");
+    button.click();
+    expect(actions).toHaveBeenLastCalledWith("merge");
+    fixture.componentRef.setInput("busy", "merge");
+    fixture.detectChanges();
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-label")).toBe("Merging…");
+  });
+
+  it("shows supplied job progress, opens its steps and emits session/cancel intents", async () => {
+    const fixture = TestBed.createComponent(GitBarComponent);
+    const job = {
+      id: "merge-1",
+      title: "Merge into flaky-checkout",
+      steps: [
+        { id: "sync", status: "done", label: "Synced with flaky-checkout" },
+        {
+          id: "resolve",
+          status: "running",
+          label: "Resolving 3 conflicts",
+          short: "resolving 3 conflicts",
+          session: { id: "helper", title: "Resolve merge conflicts" },
+        },
+        { id: "merge", status: "queued", label: "Merge 2 commits" },
+      ],
+    } as const;
+    fixture.componentRef.setInput("job", job);
+    fixture.componentRef.setInput("files", 7);
+    const sessions = vi.fn();
+    const cancelled = vi.fn();
+    fixture.componentInstance.jobSessionRequested.subscribe(sessions);
+    fixture.componentInstance.jobCancelled.subscribe(cancelled);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const button: HTMLButtonElement =
+      fixture.nativeElement.querySelector(".primary");
+    expect(button.getAttribute("aria-label")).toBe(
+      "Merging · resolving 3 conflicts",
+    );
+    expect(button.disabled).toBe(false);
+    expect(
+      fixture.nativeElement.querySelector(".stat-slot").hasAttribute("inert"),
+    ).toBe(true);
+    button.focus();
+    button.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(
+      document.querySelector("ex-git-job-menu")?.getAttribute("aria-label"),
+    ).toBe(job.title);
+    const sessionButton = document.querySelector<HTMLButtonElement>(
+      "ex-git-job-menu .session",
+    );
+    sessionButton?.focus();
+    fixture.componentRef.setInput("job", { ...job, note: "Progress updated" });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(sessionButton);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    document
+      .querySelector<HTMLButtonElement>("ex-git-job-menu .session")
+      ?.click();
+    expect(sessions).toHaveBeenLastCalledWith("helper");
+    document
+      .querySelector<HTMLButtonElement>("ex-git-job-menu footer button")
+      ?.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(cancelled).toHaveBeenLastCalledWith("merge-1");
+    fixture.componentRef.setInput("job", { ...job, waiting: true });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(button.getAttribute("aria-label")).toBe("Merge waiting on you");
+    button.click();
+    expect(sessions).toHaveBeenLastCalledWith("helper");
+    fixture.destroy();
+    expect(document.querySelector("ex-git-job-menu")).toBeNull();
   });
 });

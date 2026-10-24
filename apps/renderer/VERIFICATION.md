@@ -1,5 +1,70 @@
 # Component system verification
 
+## Updated design system, 2026-10-24
+
+Validated on macOS with Node 24.22.1, cached repository-pinned pnpm 8.15.4 and
+the locked Angular/CDK/Electron dependencies. No dependencies, lockfiles, tokens,
+legacy application files, Electron/preload/protocol code or IPC contracts changed.
+All 86 imported project specification/token/index files match the supplied
+extraction byte for byte. The ZIP and local extraction/comparison directories
+remain outside the tracked change.
+
+The updated public components and typed intents are documented in
+[the project guide](src/app/projects/README.md),
+[settings APIs](src/app/projects/project-settings/README.md),
+[sheet APIs](src/app/ui/sheet/README.md) and
+[task APIs](src/app/tasks/README.md). `pnpm desktop:preview` exposes Projects,
+Settings, Sub-tasks and Git helpers alongside the existing examples. Fixtures and
+their simulated folder providers stay in the separate preview entry.
+
+| Check | Result |
+| --- | --- |
+| `pnpm desktop:lint` | Passed, including the isolated previews |
+| `pnpm desktop:test` | 140 renderer tests across 37 files, 4 preload/security tests and 7 capture-tool tests passed; IPC negative types checked through `tsc` |
+| `pnpm desktop:build` | Passed; initial renderer 246.62 kB, workbench loaded lazily |
+| Preview TypeScript | Passed through the installed TypeScript compiler |
+| Source review | `git diff --check` passed; source, public barrels, ownership/cleanup and dependency boundaries reviewed |
+| Native UI | Actual Angular preview and live reference rendered in Electron; no `--fixture` evidence |
+
+Final product reports under `artifacts/desktop-capture/` all say `verified: true`:
+
+| Directory | Checkpoints | Coverage |
+| --- | ---: | --- |
+| `run-brMRSJ` | 8 | NewProject repository/name/look, light/dark, modal dismissal and opener focus |
+| `run-kbh8cy` | 5 | Project launch at 0/300/600/940ms and landing into New task |
+| `run-NgEww3` | 4 | Interrupted launch, reduced motion, ProjectMenu keyboard and archive intent |
+| `project-states-verified` | 6 | Busy/disabled Look in both themes, exact popup width/offset, async loading/error/empty |
+| `settings-final` | 14 | Wide/narrow light/dark, inline edits, nested Delete/Remove, focus, async folder states |
+| `settings-final-motion-continuity` | 7 | Actual surface origin, synchronized shell/modal motion, both reversal boundaries, reduced motion and opener focus |
+| `retained-activity-verified` | 6 | Typing during project landing, preserved draft, retained/inert NewProject and repository-add exits, popup cleanup, navigation cleanup and restored opener focus |
+| `task-update-verified` | 12 | Sub-task hierarchy/path/overflow/merged states; repository-specific branches; existing-branch From/Create focus; disabled/empty and reduced motion |
+| `git-jobs-final` | 4 | Merge/job/waiting states, step popover, helper/cancel intents, Escape focus, JobBrief, both themes |
+| `close-task-final` | 4 | Shared recession, light/dark, Escape/opener focus and push/ticket confirmation intent |
+| `design-update-git-motion` | 60 | Existing persistent-button, full/compact, interpolation, interruption and reduced-motion regression |
+| `design-update-sidebar-motion` | 56 | Add/remove 100 tasks, sparse survivors, stable identities, reversals, stage/filter/session changes, scrolling and reduced motion |
+
+These 186 product checkpoints include PNGs, layout/focus/accessibility snapshots
+and motion diagnostics. Representative PNGs in both themes were inspected.
+There are no renderer errors. Some development previews report Angular NG0956
+for intentional single-label animation layers or draft-remount fixtures; the
+Git, sidebar, settings, CloseTask and job-popover final runs have no warnings.
+Preliminary failed captures are retained for diagnosis and excluded above.
+
+Live reference reports are `run-ToEHmB` (NewProject), `run-DjhfG8`
+(ProjectMenu), `settings-reference-final` (General/narrow settings) and
+`task-reference-verified` (TaskGroup/NewTask with identical supplied data).
+The temporary reference server used the supplied bundle, externalized its inline
+scripts for the existing CSP and served the same bundled fonts. Reference source
+bytes were preserved. Matched measurement results, subpixel label-width rounding
+and the reference's stale pre-font width cache are recorded in
+[DESIGN_REVIEW.md](DESIGN_REVIEW.md); raw PNG identity is not asserted.
+
+Native captures and the motion probes verify the unpackaged macOS app. Packaging
+and Windows/Linux runtime validation were outside this component update. The
+native smoke was not rerun because Electron/preload/protocol code was unchanged.
+The sandboxed Angular builder aborted; the required production build passed on
+the host with the same installed tools and security configuration.
+
 Checked on macOS, 2026-10-22, using the workspace's locked dependencies and the
 already installed Node 26 runtime. No dependency versions or lockfile changed.
 

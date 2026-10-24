@@ -1,0 +1,183 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+.head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding-right: 4px;
+  border-radius: var(--radius-sm);
+}
+.head:hover {
+  background: var(--surface-sunken);
+}
+.toggle {
+  font: inherit;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color var(--dur-base) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ready {
+  flex: none;
+  font-size: 10.5px;
+  line-height: 16px;
+  font-weight: 700;
+  padding: 0 6px;
+  margin-right: 4px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  animation: ready-in var(--dur-glide) var(--ease-spring) both;
+}
+.tree {
+  margin-left: 13px;
+  padding: 0 0 2px 8px;
+  box-shadow: inset 1px 0 0 var(--line);
+  transition: box-shadow var(--dur-base) var(--ease-out);
+}
+:host(.lit) ex-subtask-glyph {
+  color: var(--accent);
+}
+:host(.lit) .tree {
+  box-shadow: inset 1.5px 0 0 var(--accent);
+}
+.signal {
+  display: inline-flex;
+  flex: none;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.signal > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.ask {
+  padding: 1px 6px 1px 4px;
+  border-radius: var(--radius-full);
+  background: var(--attention-soft);
+  color: var(--attention);
+  font-weight: 600;
+}
+.running,
+.count {
+  color: var(--ink-muted);
+}
+.add {
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.head:hover .add,
+.head:focus-within .add {
+  opacity: 1;
+}
+.tip {
+  position: absolute;
+  z-index: 5;
+  left: 6px;
+  top: calc(100% + 2px);
+  display: block;
+  max-width: calc(100% - 12px);
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--ink-inverse);
+  font-size: 11.5px;
+  line-height: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+  animation: tip-in var(--dur-slow) var(--ease-glide) both;
+}
+.tip span {
+  opacity: 0.72;
+}
+.finished-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  text-align: left;
+  cursor: pointer;
+}
+.finished-toggle:hover {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.chevron {
+  flex: none;
+  color: var(--ink-muted);
+  transition: transform var(--dur-glide) var(--ease-glide);
+}
+.chevron.closed {
+  transform: rotate(-90deg);
+}
+@keyframes ready-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes tip-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.96);
+  }
+}
+@media (hover: none) {
+  .add {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toggle,
+  .tree,
+  .add,
+  .chevron {
+    transition: none;
+  }
+  .ready,
+  .tip {
+    animation: none;
+  }
+}

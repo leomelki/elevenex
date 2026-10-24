@@ -8,6 +8,10 @@ void bootstrapApplication(PreviewComponent, {
     provideZonelessChangeDetection(),
     provideRouter(
       [
+        { path: 'task-update', loadComponent: () => import('./task-update-demo.component').then(module => module.TaskUpdateDemoComponent) },
+        { path: 'project-settings', loadComponent: () => import('./settings-demo.component').then(module => module.SettingsDemoComponent) },
+        { path: 'projects', loadComponent: () => import('./project-creation-demo.component').then(module => module.ProjectCreationDemoComponent) },
+        { path: 'git-jobs', loadComponent: () => import('./git-jobs-demo.component').then(module => module.GitJobsDemoComponent) },
         { path: 'sidebar-motion', loadComponent: () => import('./sidebar-motion-demo.component').then(module => module.SidebarMotionDemoComponent) },
         { path: 'git-motion', loadComponent: () => import('./git-motion-demo.component').then(module => module.GitMotionDemoComponent) },
         {

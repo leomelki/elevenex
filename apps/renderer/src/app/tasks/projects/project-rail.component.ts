@@ -2,12 +2,14 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  DestroyRef,
   afterRenderEffect,
   computed,
   inject,
   input,
   output,
   signal,
+  viewChild,
 } from '@angular/core';
 import { IconComponent, StatusGlyphComponent } from '../../ui';
 import type { Project, ProjectActivity } from '../task.models';
@@ -27,11 +29,15 @@ export class ProjectRailComponent {
   readonly selectProject = output<string>();
   readonly addProject = output<void>();
   readonly reorderProjects = output<readonly string[]>();
+  readonly projectMenuRequested = output<{ readonly projectId: string; readonly x: number; readonly y: number }>();
   protected readonly allActivity = computed(() => this.all() || {});
   protected readonly indicatorY = signal<number | null>(null);
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private draggedId: string | undefined;
+  private readonly indicator = viewChild<ElementRef<HTMLElement>>('indicator');
+  private indicatorAnimation?: Animation;
+  private previousActive?: string;
 
   constructor() {
     afterRenderEffect({
@@ -48,6 +54,24 @@ export class ProjectRailComponent {
       },
       write: (position) => this.indicatorY.set(position()),
     });
+    afterRenderEffect(() => {
+      const active = this.activeId();
+      if (this.previousActive !== undefined && this.previousActive !== active) {
+        this.indicatorAnimation?.cancel();
+        const element = this.indicator()?.nativeElement;
+        if (element?.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          const style = getComputedStyle(element);
+          this.indicatorAnimation = element.animate([{ transform: 'scaleY(1)' }, { transform: 'scaleY(1.7)', offset: .35 }, { transform: 'scaleY(1)' }], { duration: parseFloat(style.getPropertyValue('--dur-glide')) || 340, easing: style.getPropertyValue('--ease-out').trim() || 'ease-out' });
+        }
+      }
+      this.previousActive = active;
+    });
+    inject(DestroyRef).onDestroy(() => this.indicatorAnimation?.cancel());
+  }
+
+  protected contextMenu(event: MouseEvent, projectId: string): void {
+    event.preventDefault();
+    this.projectMenuRequested.emit({ projectId, x: event.clientX, y: event.clientY });
   }
 
   protected dragStart(event: DragEvent, id: string): void {

@@ -258,6 +258,20 @@ export class GitBarMotion {
     );
   }
 
+  leaveMenu(event: AnimationCallbackEvent, done: () => void): void {
+    const element = event.target;
+    element.setAttribute('inert', '');
+    element.setAttribute('aria-hidden', 'true');
+    const style = getComputedStyle(element);
+    const from = { opacity: style.opacity, transform: style.transform };
+    for (const animation of element.getAnimations()) animation.cancel();
+    if (this.destroyed || this.motion?.matches || !element.animate) { done(); return; }
+    this.play(element, [from, { opacity: 0, transform: 'translateY(4px) scale(.98)' }], {
+      duration: parseFloat(style.getPropertyValue('--dur-fast')) || 140,
+      easing: style.getPropertyValue('--ease-in').trim() || 'ease-in',
+    }, done);
+  }
+
   private play(
     element: Element,
     frames: Keyframe[],

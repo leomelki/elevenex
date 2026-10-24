@@ -1,5 +1,11 @@
 @if (logo() && failedLogo() !== logo()) {
   <img [src]="logo()" alt="" (error)="failedLogo.set(logo())" />
 } @else {
-  {{ monogram() }}
+  @if (emoji()) {
+    <span class="emoji-face">{{ emoji() }}</span>
+  } @else if (icon()) {
+    <ex-icon [name]="icon() || ''" [size]="iconSize()" />
+  } @else {
+    {{ monogram() }}
+  }
 }

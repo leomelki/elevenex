@@ -9,6 +9,8 @@
   transition-duration: var(--dur-slow);
 }
 .clip {
+  margin: 0 -6px;
+  padding: 0 6px;
   min-height: 0;
   overflow: clip;
 }

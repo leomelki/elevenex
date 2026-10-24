@@ -1,0 +1,8 @@
+<ng-template cdkPortal>
+  <div class="modal ex-modal-layer" [class.top]="align() === 'top'" [class.leaving]="leaving()"
+    [attr.inert]="!open() ? '' : null"
+    [cdkTrapFocus]="open()" [cdkTrapFocusAutoCapture]="true" tabindex="-1"
+    (keydown.escape)="dismiss($event)" (mousedown)="backdrop($event)">
+    <ng-content />
+  </div>
+</ng-template>

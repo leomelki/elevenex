@@ -1,5 +1,12 @@
-<div class="list" role="listbox" [attr.aria-label]="label()" [id]="listId()">
-  @for (row of rows(); track row.kind + ':' + row.name; let i = $index) {
+<div
+  class="list"
+  exFittedHighlight='[aria-selected="true"]'
+  [highlightKey]="highlightKey()"
+  role="listbox"
+  [attr.aria-label]="label()"
+  [id]="listId()"
+>
+  @for (row of rows(); track row.kind + ":" + row.name; let i = $index) {
     <button
       type="button"
       role="option"
@@ -13,7 +20,7 @@
       (mousedown)="$event.preventDefault()"
       (click)="choose(row)"
     >
-      @if (row.kind === 'invalid') {
+      @if (row.kind === "invalid") {
         <ex-icon name="x" [size]="13" /><span class="grow"
           >Not a valid branch name. Avoid spaces, .. and special
           characters.</span
@@ -23,7 +30,7 @@
           [name]="row.kind === 'create' ? 'plus' : 'branch'"
           [size]="13"
         />
-        @if (row.kind === 'create') {
+        @if (row.kind === "create") {
           <span class="verb">Create</span>
         }
         <span class="mono grow">

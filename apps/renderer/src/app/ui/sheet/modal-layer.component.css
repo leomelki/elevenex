@@ -1,0 +1,16 @@
+ex-modal-layer { display: contents; }
+.ex-modal-layer { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; background: color-mix(in srgb, #08101c 22%, transparent); animation: ex-modal-layer-fade var(--dur-glide) var(--ease-out) both; outline: 0; -webkit-app-region: no-drag; }
+.ex-modal-layer.top { align-items: flex-start; padding-top: 52px; }
+.ex-modal-layer > * { animation: ex-modal-layer-pop 560ms cubic-bezier(.32, .72, 0, 1) both; }
+.ex-modal-layer.top > * { animation-name: ex-modal-layer-enter; }
+.ex-modal-layer.leaving { animation: ex-modal-layer-away var(--dur-base) var(--ease-in) both; pointer-events: none; }
+.ex-modal-layer.leaving > * { animation: ex-modal-layer-surface-away var(--dur-base) var(--ease-in) both; pointer-events: none; }
+.ex-modal-layer.ex-modal-layer-retargeting, .ex-modal-layer.ex-modal-layer-retargeting > * { animation: none; }
+.ex-modal-layer.ex-modal-layer-retargeting.leaving { opacity: 0; }
+.ex-modal-layer.ex-modal-layer-retargeting.leaving > * { opacity: 0; transform: translateY(-8px) scale(.985); }
+@keyframes ex-modal-layer-fade { from { opacity: 0; } }
+@keyframes ex-modal-layer-away { to { opacity: 0; } }
+@keyframes ex-modal-layer-pop { from { transform: translateY(8px) scale(.97); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes ex-modal-layer-enter { from { transform: translateY(-18px) scale(.97); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes ex-modal-layer-surface-away { to { transform: translateY(-8px) scale(.985); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .ex-modal-layer, .ex-modal-layer > * { animation: none; } .ex-modal-layer.ex-modal-layer-retargeting.leaving > * { transform: none; } }

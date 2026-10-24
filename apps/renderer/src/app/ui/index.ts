@@ -20,3 +20,6 @@ export * from "./feedback/skeleton.component";
 export * from "./feedback/new-messages-pill.component";
 export * from "./feedback/toast.component";
 export * from "./feedback/toast-stack.component";
+export * from './sheet';
+export * from "./feedback/ticker.component";
+export * from "./motion/fitted-highlight.directive";

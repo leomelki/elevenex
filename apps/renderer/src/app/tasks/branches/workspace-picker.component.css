@@ -7,14 +7,15 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  min-height: var(--control-height);
-  padding: 0 6px;
+  height: 26px;
+  padding: 0 var(--space-2) 0 6px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
   font: inherit;
   font-size: 12.5px;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
 }
@@ -33,7 +34,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-caption-size);
+  font-size: inherit;
+  font-weight: 400;
   color: var(--ink-muted);
 }
 .mono {

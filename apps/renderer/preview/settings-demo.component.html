@@ -1,0 +1,15 @@
+<div class="window" data-modal-window>
+  <ex-app-shell>
+    <span shellTitle class="machine"><span></span>dev-box</span>
+    <ex-project-rail shellRail [projects]="railProjects()" [all]="{running: 2}" activeId="co" />
+    <div shellSidebar class="sidebar">
+      <div class="head"><span class="project"><ex-project-mark [name]="project().name" [initials]="project().initials" [emoji]="project().emoji" [icon]="project().icon" [hue]="project().hue ?? 'ocean'" [size]="20" [decorative]="true" />{{ project().name }}</span><button exButton size="sm" variant="ghost" aria-label="Project settings" (click)="show()"><ex-icon name="more" /></button><button exButton size="sm" variant="primary">New task</button></div>
+      <ex-task-list [tasks]="tasks()" selected="s1" />
+    </div>
+    <div shellMain class="main">
+      <ex-task-header title="Refund button on the order page" stage="active" [project]="project()" [repo]="repos()[1]" branch="leo/refund-button" meta="Wire the endpoint" [git]="{files: 2, add: 17, del: 0}" />
+      <div class="content"><p>{{ note() }}</p><div class="actions"><button id="open-settings" exButton variant="primary" (click)="show()">Project settings</button><button id="add-repository" exButton (click)="show('repos', true)">Add a repository</button></div></div>
+    </div>
+  </ex-app-shell>
+  <ex-project-settings [open]="open()" [project]="project()" [repos]="repos()" machine="dev-box" [section]="section()" [openRepo]="openRepo()" [adding]="adding()" addQuery="~/code/sh" [listFolders]="listFolders" [preferences]="preferences()" [presets]="presets" since="Created 3 weeks ago" [tasks]="3" [sessions]="7" [running]="2" (closed)="open.set(false)" (projectChanged)="changeProject($event)" (preferencesChanged)="changePreferences($event)" (repoChanged)="changeRepository($event)" (repoAdded)="addRepository($event)" (repoRemoved)="removeRepository($event)" (archiveRequested)="archive()" (deleteConfirmed)="deleted()" />
+</div>

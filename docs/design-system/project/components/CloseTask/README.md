@@ -7,4 +7,4 @@ The confirmation shown when closing a task. It says plainly what will happen: ru
 - Do skip the dialog when nothing would be lost (no running sessions, nothing unpushed): close at once and offer Undo in a toast.
 - Do reopen a closed task with its sessions and files restored from its last pushed state.
 - Don't use `danger` styling; closing is reversible.
-- Show it centred over `.ex-backdrop` (the canvas, dimmed and blurred); it pops in on `dur-slow`.
+- Show it in a `ModalLayer` (centred): the window recedes behind it (see `Sheet`), and it pops in.

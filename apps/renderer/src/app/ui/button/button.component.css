@@ -1,4 +1,5 @@
 :host {
+  --kbd-margin: 2px;
   font: inherit;
   font-weight: var(--text-ui-weight);
   height: var(--control-height);
@@ -6,7 +7,7 @@
   display: inline-flex;
   justify-content: center;
   align-items: center;
-  gap: var(--space-1);
+  gap: 6px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   cursor: pointer;
@@ -18,11 +19,16 @@
     transform var(--dur-glide) var(--ease-spring);
 }
 :host([data-size="sm"]) {
+  gap: var(--space-1);
   height: var(--space-6);
   padding: 0 var(--space-2);
   font-size: var(--text-caption-size);
 }
 :host([data-variant="primary"]) {
+  --kbd-background: transparent;
+  --kbd-color: var(--on-accent);
+  --kbd-border: currentColor;
+  --kbd-opacity: .8;
   background: var(--accent);
   color: var(--on-accent);
 }

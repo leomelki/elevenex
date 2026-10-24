@@ -9,6 +9,7 @@ import { A11yModule } from '@angular/cdk/a11y';
 import { ButtonComponent, IconComponent, StatusGlyphComponent } from '../../ui';
 import type { CloseTaskIntent } from '../task.models';
 import { LinkChipComponent } from './link-chip.component';
+import { ModalLayerComponent } from '../../ui/sheet/modal-layer.component';
 @Component({
   selector: 'ex-close-task',
   imports: [
@@ -17,12 +18,14 @@ import { LinkChipComponent } from './link-chip.component';
     IconComponent,
     StatusGlyphComponent,
     LinkChipComponent,
+    ModalLayerComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './close-task.component.html',
   styleUrl: './close-task.component.css',
 })
 export class CloseTaskComponent {
+  readonly open = input(true);
   readonly title = input.required<string>();
   readonly sessions = input(0);
   readonly running = input(0);

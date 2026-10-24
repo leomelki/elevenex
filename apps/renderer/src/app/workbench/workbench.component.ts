@@ -21,6 +21,7 @@ import type {
   Project,
   SummaryStatus,
   TaskOutline,
+  TaskSession,
 } from "../tasks/task.models";
 
 /** Composes supplied view data and emits intent; repository and agent state stay outside. */
@@ -59,6 +60,10 @@ export class WorkbenchComponent {
   readonly taskRequested = output<void>();
   readonly closedTasksRequested = output<void>();
   readonly sessionRequested = output<string>();
+  readonly subtaskSessionRequested = output<{
+    readonly taskId: string;
+    readonly subtaskId: string;
+  }>();
   readonly machineRequested = output<void>();
   protected readonly filter = signal<SummaryStatus | null>(null);
   protected readonly tabs: readonly PanelTab[] = [
@@ -70,14 +75,20 @@ export class WorkbenchComponent {
   ];
   protected readonly counts = computed(() => {
     const counts = { attention: 0, running: 0, review: 0, done: 0 };
-    for (const task of this.tasks())
-      for (const session of task.sessions) {
-        if (session.status === "failed") counts.attention++;
-        else if (session.status === "attention") counts.attention++;
-        else if (session.status === "running") counts.running++;
-        else if (session.status === "review") counts.review++;
-        else if (session.status === "done") counts.done++;
+    const count = (session: TaskSession): void => {
+      if (session.status === "failed" || session.status === "attention")
+        counts.attention++;
+      else if (session.status === "running") counts.running++;
+      else if (session.status === "review") counts.review++;
+      else if (session.status === "done") counts.done++;
+    };
+    for (const task of this.tasks()) {
+      for (const session of task.sessions) count(session);
+      for (const subtask of task.subtasks ?? []) {
+        if (subtask.merged) continue;
+        for (const session of subtask.sessions ?? []) count(session);
       }
+    }
     return counts;
   });
   protected readonly projectLabel = computed(

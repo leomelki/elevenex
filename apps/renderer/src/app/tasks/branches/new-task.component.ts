@@ -11,13 +11,15 @@ import {
   output,
   signal,
   viewChild,
-} from '@angular/core';
+} from "@angular/core";
 import {
+  AutoHeightDirective,
   ButtonComponent,
+  EaseSwapComponent,
   FoldComponent,
   IconComponent,
   KbdComponent,
-} from '../../ui';
+} from "../../ui";
 import type {
   BranchInfo,
   BranchRow,
@@ -25,48 +27,60 @@ import type {
   PlannedTask,
   ProjectMark,
   TaskLink,
+  TaskRepository,
   Workspace,
-} from '../task.models';
-import { ProjectMarkComponent } from '../projects/project-mark.component';
-import { LinkChipComponent } from '../lifecycle/link-chip.component';
-import { BranchPickerComponent } from './branch-picker.component';
-import { WorkspacePickerComponent } from './workspace-picker.component';
+} from "../task.models";
+import { ProjectMarkComponent } from "../projects/project-mark.component";
+import { LinkChipComponent } from "../lifecycle/link-chip.component";
+import { RepoTagComponent } from "../lifecycle/repo-tag.component";
+import { BranchPickerComponent } from "./branch-picker.component";
+import { WorkspacePickerComponent } from "./workspace-picker.component";
 import {
   branchFromTitle,
   branchItems,
   selectableBranch,
   validBranchName,
-} from './branch-options';
+} from "./branch-options";
 
-export type NewTaskStep = 'name' | 'branch' | 'base';
+export type NewTaskStep = "name" | "repo" | "branch" | "base";
 
 @Component({
-  selector: 'ex-new-task',
+  selector: "ex-new-task",
   imports: [
+    AutoHeightDirective,
     ButtonComponent,
+    EaseSwapComponent,
     FoldComponent,
     IconComponent,
     KbdComponent,
     ProjectMarkComponent,
     LinkChipComponent,
+    RepoTagComponent,
     BranchPickerComponent,
     WorkspacePickerComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  templateUrl: './new-task.component.html',
-  styleUrl: './new-task.component.css',
+  templateUrl: "./new-task.component.html",
+  styleUrl: "./new-task.component.css",
 })
 export class NewTaskComponent implements OnInit {
   readonly project = input.required<ProjectMark>();
+  readonly repos = input<readonly TaskRepository[]>([]);
+  /** Initial repository, usually the current task's or the last used one. */
+  readonly repo = input<string>();
   readonly branches = input<readonly BranchInfo[]>([]);
+  /** Pure supplied data lookup. Platform access belongs to the owning feature. */
+  readonly branchesFor = input<(repoId: string) => readonly BranchInfo[]>();
   readonly bases = input<readonly BranchInfo[]>();
-  readonly base = input('main');
-  readonly branchPrefix = input('');
+  readonly base = input("main");
+  readonly branchPrefix = input("");
   /** Initial form values are read once. Recreate the form for a different draft. */
-  readonly title = input('');
-  readonly step = input<NewTaskStep>('name');
+  readonly title = input("");
+  readonly step = input<NewTaskStep>("name");
   readonly branchQuery = input<string>();
-  readonly workspace = input('auto');
+  readonly baseQuery = input("");
+  readonly hi = input(0);
+  readonly workspace = input("auto");
   readonly workspaces = input<readonly Workspace[]>([]);
   readonly links = input<readonly TaskLink[]>([]);
   readonly autoFocus = input(true);
@@ -75,50 +89,73 @@ export class NewTaskComponent implements OnInit {
   readonly cancelled = output<void>();
   readonly linkRequested = output<void>();
   readonly projectRequested = output<void>();
-  readonly workspaceRequested = output<'new' | 'manage'>();
-  protected readonly titleValue = signal('');
-  protected readonly currentStep = signal<NewTaskStep>('name');
+  readonly addRepository = output<void>();
+  readonly workspaceRequested = output<"new" | "manage">();
+  protected readonly titleValue = signal("");
+  protected readonly currentStep = signal<NewTaskStep>("name");
   protected readonly branchQueryValue = signal<string | null>(null);
-  protected readonly baseQuery = signal('');
+  protected readonly baseQueryValue = signal("");
   protected readonly highlighted = signal(0);
   protected readonly pickedBranch = signal<BranchRow | null>(null);
   protected readonly pickedBase = signal<string | null>(null);
   protected readonly pickedWorkspace = signal<string | null>(null);
+  private readonly pickedRepo = signal<string | null>(null);
+  protected readonly multipleRepos = computed(() => this.repos().length > 1);
+  protected readonly currentRepo = computed(
+    () =>
+      this.repos().find(
+        (repo) => repo.id === (this.pickedRepo() ?? this.repo()),
+      ) ?? this.repos()[0],
+  );
+  protected readonly defaultBase = computed(
+    () => this.currentRepo()?.base || this.base(),
+  );
+  private readonly currentBranches = computed(() => {
+    const repo = this.currentRepo();
+    const lookup = this.branchesFor();
+    return repo && lookup ? lookup(repo.id) : this.branches();
+  });
   protected readonly branchValue = computed(
     () =>
       this.branchQueryValue() ??
       branchFromTitle(this.titleValue(), this.branchPrefix()),
   );
   protected readonly branchRows = computed(() =>
-    branchItems(this.branchValue(), this.branches(), true),
+    branchItems(this.branchValue(), this.currentBranches(), true),
   );
   protected readonly baseBranches = computed(() =>
-    (this.bases() ?? this.branches())
+    (this.branchesFor()
+      ? this.currentBranches()
+      : (this.bases() ?? this.currentBranches())
+    )
       .filter((branch) => !branch.task)
-      .map((branch) => ({ ...branch, isDefault: branch.name === this.base() })),
+      .map((branch) => ({
+        ...branch,
+        isDefault: branch.name === this.defaultBase(),
+      })),
   );
   protected readonly baseRows = computed(() =>
-    branchItems(this.baseQuery(), this.baseBranches()),
+    branchItems(this.baseQueryValue(), this.baseBranches()),
   );
   protected readonly branch = computed(() => {
     const picked = this.pickedBranch();
     if (picked) return picked;
     const row =
-      this.branchRows()[
-        this.currentStep() === 'branch' ? this.highlighted() : 0
-      ];
+      this.currentStep() === "branch"
+        ? this.branchRows()[this.highlighted()]
+        : this.branchRows().find(selectableBranch);
     return this.branchValue().trim() && row && selectableBranch(row)
       ? row
       : null;
   });
   protected readonly baseValue = computed(
-    () => this.pickedBase() ?? this.base(),
+    () => this.pickedBase() ?? this.defaultBase(),
   );
   protected readonly workspaceValue = computed(
     () => this.pickedWorkspace() ?? this.workspace(),
   );
   protected readonly existing = computed(
-    () => this.branch()?.kind === 'branch',
+    () => this.branch()?.kind === "branch",
   );
   protected readonly canCreate = computed(
     () =>
@@ -128,24 +165,50 @@ export class NewTaskComponent implements OnInit {
       (this.existing() ||
         this.baseBranches().some((branch) => branch.name === this.baseValue())),
   );
-  protected readonly branchAvailable = computed(() => {
+  protected readonly canNext = computed(() => {
+    switch (this.currentStep()) {
+      case "name":
+        return !!this.titleValue().trim();
+      case "repo":
+        return !!this.repos()[this.highlighted()];
+      case "branch": {
+        const row = this.branchRows()[this.highlighted()];
+        return !!row && selectableBranch(row);
+      }
+      case "base": {
+        const row = this.baseRows()[this.highlighted()];
+        return (
+          this.branchAvailable() &&
+          !!this.titleValue().trim() &&
+          (this.existing() ? this.canCreate() : !!row && selectableBranch(row))
+        );
+      }
+    }
+  });
+  private readonly branchAvailable = computed(() => {
     const chosen = this.branch();
     if (!chosen) return false;
-    const current = this.branches().find(
+    const current = this.currentBranches().find(
       (branch) => branch.name === chosen.name,
     );
-    return chosen.kind === 'branch'
+    return chosen.kind === "branch"
       ? !!current && !current.task
       : !current && validBranchName(chosen.name);
   });
   protected readonly nameField =
-    viewChild<ElementRef<HTMLInputElement>>('nameField');
+    viewChild<ElementRef<HTMLInputElement>>("nameField");
+  protected readonly repoList = viewChild<ElementRef<HTMLElement>>("repoList");
   protected readonly branchField =
-    viewChild<ElementRef<HTMLInputElement>>('branchField');
+    viewChild<ElementRef<HTMLInputElement>>("branchField");
   protected readonly baseField =
-    viewChild<ElementRef<HTMLInputElement>>('baseField');
+    viewChild<ElementRef<HTMLInputElement>>("baseField");
+  protected readonly mainButton = viewChild<
+    ButtonComponent,
+    ElementRef<HTMLButtonElement>
+  >("mainButton", { read: ElementRef });
   protected readonly branchListId = `new-task-branches-${crypto.randomUUID()}`;
   protected readonly baseListId = `new-task-bases-${crypto.randomUUID()}`;
+  protected readonly repoListId = `new-task-repos-${crypto.randomUUID()}`;
   private readonly injector = inject(Injector);
   constructor() {
     afterNextRender(() => {
@@ -154,8 +217,21 @@ export class NewTaskComponent implements OnInit {
   }
   ngOnInit(): void {
     this.titleValue.set(this.title());
-    this.currentStep.set(this.step());
+    this.currentStep.set(
+      this.step() === "repo" && !this.multipleRepos() ? "branch" : this.step(),
+    );
     this.branchQueryValue.set(this.branchQuery() ?? null);
+    this.baseQueryValue.set(this.baseQuery());
+    this.highlighted.set(
+      this.step() === "repo"
+        ? Math.max(
+            0,
+            this.repos().findIndex(
+              (repo) => repo.id === this.currentRepo()?.id,
+            ),
+          )
+        : this.hi(),
+    );
   }
   protected nameChanged(value: string): void {
     this.titleValue.set(value);
@@ -167,47 +243,91 @@ export class NewTaskComponent implements OnInit {
     this.highlighted.set(0);
   }
   protected baseChanged(value: string): void {
-    this.baseQuery.set(value);
+    this.baseQueryValue.set(value);
     this.highlighted.set(0);
   }
   protected go(step: NewTaskStep): void {
     this.currentStep.set(step);
-    this.highlighted.set(0);
+    this.highlighted.set(
+      step === "repo"
+        ? Math.max(
+            0,
+            this.repos().findIndex(
+              (repo) => repo.id === this.currentRepo()?.id,
+            ),
+          )
+        : 0,
+    );
     afterNextRender(() => this.focusCurrent(), { injector: this.injector });
   }
-  protected state(step: NewTaskStep): 'active' | 'done' | 'todo' | 'skip' {
-    if (step === 'base' && this.existing()) return 'skip';
-    if (this.currentStep() === step) return 'active';
-    const order: readonly NewTaskStep[] = ['name', 'branch', 'base'];
+  protected state(step: NewTaskStep): "active" | "done" | "todo" | "skip" {
+    if (this.currentStep() === step) return "active";
+    if (step === "base" && this.existing()) return "skip";
+    const order: readonly NewTaskStep[] = ["name", "repo", "branch", "base"];
     return order.indexOf(this.currentStep()) > order.indexOf(step)
-      ? 'done'
-      : 'todo';
+      ? "done"
+      : "todo";
+  }
+  protected pickRepo(id: string): void {
+    if (!this.repos().some((repo) => repo.id === id)) return;
+    this.pickedRepo.set(id);
+    this.pickedBranch.set(null);
+    this.pickedBase.set(null);
+    this.baseQueryValue.set("");
+    this.go("branch");
   }
   protected pickBranch(row: BranchRow): void {
     if (!selectableBranch(row)) return;
     this.pickedBranch.set(row);
-    if (row.kind === 'branch') this.submit();
-    else this.go('base');
+    this.go("base");
   }
   protected pickBase(row: BranchRow): void {
-    if (!selectableBranch(row) || row.kind !== 'branch') return;
+    if (!selectableBranch(row) || row.kind !== "branch") return;
     this.pickedBase.set(row.name);
     this.submit();
+  }
+  protected next(): void {
+    if (!this.canNext()) return;
+    switch (this.currentStep()) {
+      case "name":
+        this.go(this.multipleRepos() ? "repo" : "branch");
+        break;
+      case "repo": {
+        const repo = this.repos()[this.highlighted()];
+        if (repo) this.pickRepo(repo.id);
+        break;
+      }
+      case "branch": {
+        const row = this.branchRows()[this.highlighted()];
+        if (row) this.pickBranch(row);
+        break;
+      }
+      case "base": {
+        if (this.existing()) this.submit();
+        else {
+          const row = this.baseRows()[this.highlighted()];
+          if (row) this.pickBase(row);
+        }
+        break;
+      }
+    }
   }
   protected submit(): void {
     const branch = this.branch();
     if (!this.canCreate() || !branch) return;
     this.create.emit({
+      ...(this.multipleRepos() ? { repo: this.currentRepo()?.id } : {}),
       title: this.titleValue().trim(),
       branch: branch.name,
-      existing: branch.kind === 'branch',
-      base: branch.kind === 'branch' ? null : this.baseValue(),
+      existing: branch.kind === "branch",
+      base: branch.kind === "branch" ? null : this.baseValue(),
       workspace: this.workspaceValue(),
     });
   }
   protected savePlanned(): void {
     if (!this.titleValue().trim()) return;
     this.plan.emit({
+      ...(this.multipleRepos() ? { repo: this.currentRepo()?.id } : {}),
       title: this.titleValue().trim(),
       branch: this.branch()?.name,
       base: this.existing() ? undefined : this.baseValue(),
@@ -215,44 +335,55 @@ export class NewTaskComponent implements OnInit {
     });
   }
   protected onKey(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
+    if (event.key === "Escape") {
       event.preventDefault();
       this.cancelled.emit();
       return;
     }
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       this.submit();
       return;
     }
-    if (event.key === 'Enter' && event.altKey) {
+    if (event.key === "Enter" && event.altKey) {
       event.preventDefault();
       this.savePlanned();
       return;
     }
-    if (!(event.target instanceof HTMLInputElement)) return;
     if (
-      event.key === 'Tab' &&
+      event.key === "Tab" &&
       event.shiftKey &&
-      this.currentStep() !== 'name'
+      this.currentStep() !== "name"
     ) {
       event.preventDefault();
-      this.go(this.currentStep() === 'base' ? 'branch' : 'name');
+      this.go(
+        this.currentStep() === "base"
+          ? "branch"
+          : this.currentStep() === "branch" && this.multipleRepos()
+            ? "repo"
+            : "name",
+      );
       return;
     }
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || target.closest("footer")) return;
+    // Native buttons retain their own activation (including Add repository).
+    if (target instanceof HTMLButtonElement) return;
     const rows =
-      this.currentStep() === 'branch'
-        ? this.branchRows()
-        : this.currentStep() === 'base'
-          ? this.baseRows()
-          : null;
-    if (rows && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+      this.currentStep() === "repo"
+        ? this.repos()
+        : this.currentStep() === "branch"
+          ? this.branchRows()
+          : this.currentStep() === "base"
+            ? this.baseRows()
+            : null;
+    if (rows && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
-      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      const direction = event.key === "ArrowDown" ? 1 : -1;
       let next = this.highlighted() + direction;
       while (next >= 0 && next < rows.length) {
         const row = rows[next];
-        if (row && selectableBranch(row)) {
+        if (row && (!("kind" in row) || selectableBranch(row))) {
           this.highlighted.set(next);
           break;
         }
@@ -260,25 +391,27 @@ export class NewTaskComponent implements OnInit {
       }
       return;
     }
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    if (this.currentStep() === 'name') {
-      if (this.titleValue().trim()) this.go('branch');
-      return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      this.next();
     }
-    const row = rows?.[this.highlighted()];
-    if (!row) return;
-    if (this.currentStep() === 'branch') this.pickBranch(row);
-    else this.pickBase(row);
   }
   private focusCurrent(): void {
+    if (this.currentStep() === "repo") {
+      this.repoList()?.nativeElement.focus();
+      return;
+    }
+    if (this.currentStep() === "base" && this.existing()) {
+      this.mainButton()?.nativeElement.focus();
+      return;
+    }
     const field =
-      this.currentStep() === 'name'
+      this.currentStep() === "name"
         ? this.nameField()
-        : this.currentStep() === 'branch'
+        : this.currentStep() === "branch"
           ? this.branchField()
           : this.baseField();
     field?.nativeElement.focus();
-    if (this.currentStep() !== 'name') field?.nativeElement.select();
+    if (this.currentStep() !== "name") field?.nativeElement.select();
   }
 }

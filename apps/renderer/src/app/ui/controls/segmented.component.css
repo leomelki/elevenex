@@ -1,38 +1,44 @@
 :host {
   display: inline-flex;
+  flex: none;
 }
 div {
   position: relative;
   display: flex;
   gap: 2px;
-  padding: 3px;
+  padding: 2px;
   background: var(--surface-sunken);
-  border-radius: var(--radius-sm);
+  border-radius: calc(var(--radius-sm) + 2px);
 }
 .thumb {
   position: absolute;
-  inset-block: 3px;
+  inset-block: 2px;
   left: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: var(--surface-raised);
   box-shadow: var(--shadow-raised);
   transition:
-    transform var(--dur-fast) var(--ease-in-out),
-    width var(--dur-fast) var(--ease-in-out);
+    transform var(--dur-glide) var(--ease-glide),
+    width var(--dur-glide) var(--ease-glide);
   pointer-events: none;
 }
+:host(.resizing) .thumb { transition: none; }
 button {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-1);
+  gap: 5px;
   border: 0;
-  border-radius: var(--radius-xs);
-  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  height: 24px;
+  padding: 0 var(--space-2);
   background: transparent;
   color: var(--ink-muted);
   font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
   transition: color var(--dur-fast);
 }
@@ -47,10 +53,12 @@ button:focus-visible {
   color: var(--ink);
 }
 .small button {
+  height: 22px;
   font-size: var(--text-caption-size);
-  padding-block: 2px;
+  padding: 0 7px;
 }
 button:disabled {
   opacity: 0.45;
   cursor: default;
 }
+@media (prefers-reduced-motion: reduce) { .thumb { transition: none; } }

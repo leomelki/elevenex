@@ -17,6 +17,7 @@ export * from "./turns/turn.component";
 export * from "./decisions/approval-card.component";
 export * from "./decisions/question-card.component";
 export * from "./decisions/plan-card.component";
+export * from "./decisions/job-brief.component";
 export * from "./composer/mode-toggle.component";
 export * from "./composer/agent-picker.component";
 export * from "./composer/permission-picker.component";

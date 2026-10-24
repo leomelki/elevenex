@@ -40,6 +40,7 @@
       [showProjects]="activeProject() === 'all'"
       (selectSession)="selectedSession.set($event)"
       (addSession)="sessionRequested.emit($event)"
+      (addSubtaskSession)="subtaskSessionRequested.emit($event)"
       (closedRequested)="closedTasksRequested.emit()"
     />
   </div>

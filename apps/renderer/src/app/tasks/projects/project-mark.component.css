@@ -8,7 +8,11 @@
   font-weight: 600;
   letter-spacing: 0.01em;
   vertical-align: middle;
+  line-height: 1;
 }
+:host.medium { border-radius: 6px; }
+:host.emoji { letter-spacing: 0; }
+.emoji-face { font-size: 1.5em; line-height: 1; font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
 :host.large {
   border-radius: var(--radius-md);
 }

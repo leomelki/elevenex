@@ -1,16 +1,56 @@
 <nav aria-label="Tasks" [exFlip]="motionOrder()" [exFlipReorderOnly]="true">
   @for (entry of presence.rows(); track entry.key) {
     @let row = entry.value;
-    <ex-fold [attr.data-flip]="entry.key" [class.leaving]="!entry.present" [class.entering]="entry.entering" [open]="entry.present && !entry.entering && row.visible" (transitionend)="presence.settled(entry.key, $event)">
+    <ex-fold
+      [attr.data-flip]="entry.key"
+      [class.leaving]="!entry.present"
+      [class.entering]="entry.entering"
+      [open]="entry.present && !entry.entering && row.visible"
+      (transitionend)="presence.settled(entry.key, $event)"
+    >
       <div class="row-content">
         @switch (row.kind) {
-          @case ('stage') { <h3>{{ labels[row.stage] }}<span>{{ row.count }}</span></h3> }
-          @case ('task') {
-            <ex-task-group [task]="row.task" [selected]="selected()" [filter]="filter()" [showProject]="showProjects()"
-              (selectSession)="selectSession.emit({ taskId: row.task.id, sessionId: $event })" (addSession)="addSession.emit($event)" />
+          @case ("stage") {
+            <h3>
+              {{ labels[row.stage] }}<span>{{ row.count }}</span>
+            </h3>
           }
-          @case ('empty') { <p class="empty">{{ filter() ? 'No sessions match this filter.' : 'Your tasks will appear here.' }}</p> }
-          @case ('closed') { <button class="closed" type="button" (click)="closedRequested.emit()">Closed<span>{{ row.count }}</span></button> }
+          @case ("task") {
+            <ex-task-group
+              [task]="row.task"
+              [selected]="selected()"
+              [filter]="filter()"
+              [showProject]="showProjects()"
+              (selectSession)="
+                selectSession.emit({ taskId: row.task.id, sessionId: $event })
+              "
+              (addSession)="addSession.emit($event)"
+              (addSubtaskSession)="
+                addSubtaskSession.emit({
+                  taskId: row.task.id,
+                  subtaskId: $event,
+                })
+              "
+            />
+          }
+          @case ("empty") {
+            <p class="empty">
+              {{
+                filter()
+                  ? "No sessions match this filter."
+                  : "Your tasks will appear here."
+              }}
+            </p>
+          }
+          @case ("closed") {
+            <button
+              class="closed"
+              type="button"
+              (click)="closedRequested.emit()"
+            >
+              Closed<span>{{ row.count }}</span>
+            </button>
+          }
         }
       </div>
     </ex-fold>

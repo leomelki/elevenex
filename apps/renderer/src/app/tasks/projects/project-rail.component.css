@@ -4,7 +4,7 @@
   width: var(--rail-width);
   border-radius: var(--radius-lg);
   background: var(--glass);
-  backdrop-filter: blur(var(--blur-glass));
+  backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
   box-shadow: var(--shadow-glass);
 }
 nav {
@@ -44,15 +44,17 @@ nav {
 }
 .all {
   background: var(--surface-raised);
-  box-shadow: var(--shadow-raised);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 .add {
   color: var(--ink-muted);
   box-shadow: inset 0 0 0 1px var(--line-strong);
 }
-.muted {
-  opacity: 0.45;
+.muted ex-project-mark {
+  opacity: 0.4;
+  filter: saturate(.2);
 }
+ex-project-mark { transition: opacity var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out); }
 .separator {
   width: 20px;
   height: 1px;
@@ -65,11 +67,11 @@ nav {
   left: 0;
   width: 3px;
   height: 20px;
-  background: var(--ink);
   border-radius: var(--radius-full);
   transition: transform var(--dur-glide) var(--ease-glide);
   pointer-events: none;
 }
+.indicator i { display: block; width: 100%; height: 100%; border-radius: inherit; background: var(--ink); transform-origin: center; }
 .pip {
   position: absolute;
   right: -5px;
@@ -86,6 +88,7 @@ nav {
   font-weight: 700;
   line-height: 16px;
   text-align: center;
+  animation: mark var(--dur-glide) var(--ease-spring) both;
 }
 .running {
   position: absolute;
@@ -96,10 +99,13 @@ nav {
   border-radius: var(--radius-full);
   background: var(--surface-raised);
   box-shadow: 0 0 0 2px var(--surface);
+  animation: mark var(--dur-glide) var(--ease-spring) both;
 }
+@keyframes mark { from { opacity: 0; transform: scale(.5); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .tile,
   .indicator {
     transition: none;
   }
+  .pip, .running { animation: none; }
 }

@@ -41,6 +41,7 @@ import {
 
 @Component({
   selector: 'ex-tasks-demo',
+  host: { 'data-modal-window': '' },
   imports: [
     ButtonComponent,
     IconComponent,

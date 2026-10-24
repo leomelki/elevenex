@@ -94,13 +94,13 @@ describe('task component intents', () => {
     const confirmed = vi.fn();
     fixture.componentInstance.confirmed.subscribe(confirmed);
     fixture.detectChanges();
-    const checkbox: HTMLInputElement =
-      fixture.nativeElement.querySelector('input');
+    const checkbox = document.querySelector('input');
+    if (!(checkbox instanceof HTMLInputElement)) throw new Error('Missing close-task checkbox');
     checkbox.checked = false;
     checkbox.dispatchEvent(new Event('change'));
     fixture.detectChanges();
     const buttons: NodeListOf<HTMLButtonElement> =
-      fixture.nativeElement.querySelectorAll('footer button');
+      document.querySelectorAll('footer button');
     buttons[buttons.length - 1]?.click();
     expect(confirmed).toHaveBeenCalledWith({ push: true, moveTicket: false });
     buttons[buttons.length - 2]?.click();

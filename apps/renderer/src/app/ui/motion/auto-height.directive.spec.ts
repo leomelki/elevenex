@@ -76,8 +76,17 @@ describe("AutoHeight box sizing", () => {
       { duration: 200, easing: "ease-out" },
     );
 
+    const parent = section.parentElement!;
+    section.remove();
+    contentHeight = 300;
+    resized?.();
+    expect(animate).toHaveBeenCalledTimes(2);
+    parent.appendChild(section);
+
     fixture.destroy();
     expect(disconnected).toHaveBeenCalledOnce();
     expect(cancelled).toHaveBeenCalledTimes(2);
+    resized?.();
+    expect(animate).toHaveBeenCalledTimes(2);
   });
 });

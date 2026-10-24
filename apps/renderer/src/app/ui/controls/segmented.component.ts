@@ -50,6 +50,7 @@ export class SegmentedComponent {
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private observer?: ResizeObserver;
+  private resizeFrame = 0;
 
   constructor() {
     const measure = () => {
@@ -70,11 +71,29 @@ export class SegmentedComponent {
     });
     afterNextRender(() => {
       if (typeof ResizeObserver !== "undefined") {
-        this.observer = new ResizeObserver(measure);
+        this.observer = new ResizeObserver(() => {
+          this.root.classList.add('resizing');
+          measure();
+          // ResizeObserver runs before paint: fit the row now instead of
+          // easing from the old dimensions while a surrounding fold opens.
+          const selected = this.root.querySelector<HTMLElement>('[aria-checked="true"]');
+          const thumb = this.root.querySelector<HTMLElement>('.thumb');
+          if (selected && thumb) {
+            thumb.style.width = `${selected.offsetWidth}px`;
+            thumb.style.transform = `translateX(${selected.offsetLeft}px)`;
+          }
+          cancelAnimationFrame(this.resizeFrame);
+          this.resizeFrame = requestAnimationFrame(() => {
+            this.resizeFrame = requestAnimationFrame(() => this.root.classList.remove('resizing'));
+          });
+        });
         this.observer.observe(this.root);
       }
     });
-    inject(DestroyRef).onDestroy(() => this.observer?.disconnect());
+    inject(DestroyRef).onDestroy(() => {
+      this.observer?.disconnect();
+      cancelAnimationFrame(this.resizeFrame);
+    });
   }
 
   protected keydown(event: KeyboardEvent, index: number): void {

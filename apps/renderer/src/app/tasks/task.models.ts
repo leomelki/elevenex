@@ -12,6 +12,8 @@ export interface ProjectMark {
   readonly name: string;
   readonly logo?: string;
   readonly initials?: string;
+  readonly emoji?: string;
+  readonly icon?: string;
   readonly hue?: ProjectHue;
 }
 export interface Project extends ProjectMark {
@@ -49,7 +51,20 @@ export interface Workspace {
   readonly note?: string;
   readonly task?: string;
 }
+/** Repository identity supplied by the owning project feature. */
+export interface Repo {
+  readonly id?: string;
+  readonly name: string;
+  readonly short?: string;
+  readonly hue?: ProjectHue;
+  readonly path?: string;
+  readonly base?: string;
+}
+/** Stable identities are required when repositories can be picked. */
+export interface TaskRepository extends Repo { readonly id: string }
+export interface TaskParentContext { readonly id?: string; readonly title: string; readonly branch?: string }
 export interface CreatedTask {
+  readonly repo?: string;
   readonly title: string;
   readonly branch: string;
   readonly existing: boolean;
@@ -57,6 +72,7 @@ export interface CreatedTask {
   readonly workspace: string;
 }
 export interface PlannedTask {
+  readonly repo?: string;
   readonly title: string;
   readonly branch?: string;
   readonly base?: string;
@@ -66,11 +82,21 @@ export interface TaskSession {
   readonly id: string;
   readonly title: string;
   readonly status: SessionStatus;
-  readonly kind?: 'main' | 'fork' | 'side';
+  readonly kind?: 'main' | 'fork' | 'side' | 'auto';
   readonly diff?: { readonly add: number; readonly del: number };
   readonly meta?: string;
   readonly unread?: boolean;
   readonly fresh?: boolean;
+}
+export interface SubTask {
+  readonly id: string;
+  readonly title: string;
+  readonly branch?: string;
+  readonly parent?: string | null;
+  readonly sessions?: readonly TaskSession[];
+  readonly ready?: boolean;
+  readonly merged?: boolean;
+  readonly diff?: { readonly add: number; readonly del: number };
 }
 export interface TaskOutline {
   readonly id: string;
@@ -79,7 +105,8 @@ export interface TaskOutline {
   readonly stage?: TaskStage;
   readonly project?: ProjectMark;
   readonly links?: readonly TaskLink[];
-  readonly repo?: string;
+  readonly repo?: Repo | string;
+  readonly subtasks?: readonly SubTask[];
   readonly fresh?: boolean;
   readonly collapsed?: boolean;
 }
@@ -105,7 +132,28 @@ export interface GitState {
   readonly add?: number;
   readonly del?: number;
   readonly ahead?: number;
-  readonly busy?: 'commit' | 'push';
+  readonly busy?: 'commit' | 'push' | 'merge';
+  readonly mergeInto?: string;
+  readonly job?: GitJob;
+}
+/** Supplied job data. The owner runs the job and opens the named helper session. */
+export interface GitJobStep {
+  readonly id: string;
+  readonly status: SessionStatus;
+  readonly label: string;
+  readonly detail?: string;
+  readonly short?: string;
+  readonly session?: { readonly id: string; readonly title: string };
+}
+export interface GitJob {
+  readonly id: string;
+  readonly verb?: string;
+  readonly noun?: string;
+  readonly title?: string;
+  readonly steps: readonly GitJobStep[];
+  readonly waiting?: boolean;
+  readonly open?: boolean;
+  readonly note?: string;
 }
 export type GitAction =
   | 'commit'
@@ -114,7 +162,11 @@ export type GitAction =
   | 'commit-pr'
   | 'push-pr'
   | 'push-new-name'
-  | 'sync';
+  | 'sync'
+  | 'merge'
+  | 'commit-merge'
+  | 'merge-commit'
+  | 'rebase-parent';
 export interface CloseTaskIntent {
   readonly push: boolean;
   readonly moveTicket: boolean;

@@ -1,0 +1,24 @@
+
+    <span
+      class="ask"
+      [class.hidden]="!attention()"
+      [attr.aria-hidden]="!attention()"
+      ><ex-status-glyph status="attention" [size]="12" /><ex-ticker
+        [value]="attention() || 1"
+    /></span>
+    <span
+      class="running"
+      [class.hidden]="!running() || !!attention()"
+      [attr.aria-hidden]="!running() || !!attention()"
+      ><ex-status-glyph status="running" [size]="12" /><ex-ticker
+        [value]="running() || 1"
+    /></span>
+    <span
+      class="count"
+      [class.hidden]="!!attention() || !!running() || !collapsed() || !total()"
+      [attr.aria-hidden]="
+        !!attention() || !!running() || !collapsed() || !total()
+      "
+      ><ex-ticker [value]="total()"
+    /></span>
+  

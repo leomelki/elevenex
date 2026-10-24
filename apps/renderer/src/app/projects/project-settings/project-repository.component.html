@@ -1,0 +1,24 @@
+<div class="repo" [class.open]="open()">
+  <button type="button" class="head" [attr.aria-expanded]="open()" (click)="toggled.emit()">
+    <span class="icon"><ex-icon name="repo" [size]="15" /></span>
+    <span class="title"><b>{{ repo().name }}</b><span class="mono">{{ repo().path }}</span></span>
+    <span class="meta">
+      @if (draftTag()) { <ex-repo-tag [repo]="shownRepo()" /> }
+      @if (repo().base) { <span class="mono">{{ repo().base }}</span> }
+    </span>
+    <ex-icon name="chevron-down" [size]="13" class="chevron" [class.open]="open()" />
+  </button>
+  <ex-fold [open]="open()">
+    <div class="body">
+      <div class="group"><div class="group-title">Its tasks</div>
+        <div class="line"><span class="label">Tag</span><ex-set-value [field]="true" [value]="repo().short ?? ''" [placeholder]="repo().name" label="Tag" [mono]="true" (inputChanged)="tagInput($event)" (changed)="changed.emit({short: $event})" /><span class="sub">Shown next to its tasks</span></div>
+        <div class="line"><span class="label">Start from</span><ex-set-choice [options]="branches()" [value]="repo().base ?? 'main'" label="Start from" icon="branch" [mono]="true" (changed)="changed.emit({base: $event})" /><span class="sub">New task branches are made from it</span></div>
+      </div>
+      <div class="group"><div class="group-title">Commands</div>
+        <div class="command"><span class="label">When a workspace is prepared</span><ex-set-value [value]="repo().setup ?? ''" label="Setup" [mono]="true" [well]="true" [prompt]="true" placeholder="Nothing to run" (changed)="changed.emit({setup: $event})" /></div>
+        <div class="command"><span class="label">Before merging</span><ex-set-value [value]="repo().check ?? ''" label="Checks" [mono]="true" [well]="true" [prompt]="true" placeholder="Nothing to run" (changed)="changed.emit({check: $event})" /></div>
+      </div>
+      <div class="foot"><span class="sub">{{ repo().tasks ? repo().tasks + (repo().tasks === 1 ? ' task' : ' tasks') : 'No tasks' }}{{ repo().sync ? ' · ' + repo().sync : ' in this repository' }}</span><span class="grow"></span><button exButton size="sm" variant="ghost" class="remove" (click)="removeRequested.emit()">Remove from project</button></div>
+    </div>
+  </ex-fold>
+</div>

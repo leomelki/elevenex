@@ -3,6 +3,7 @@ import {
   Component,
   DestroyRef,
   ElementRef,
+  type AnimationCallbackEvent,
   afterNextRender,
   inject,
   input,
@@ -10,54 +11,13 @@ import {
   viewChild,
 } from "@angular/core";
 
-/** Keep the control mounted while its text crossfades and its width eases. */
+/** Keep the control mounted while outgoing ink clears before its replacement.
+ * Width retargets from the painted frame, so rapid changes never restart a jump. */
 @Component({
   selector: "ex-ease-swap",
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `@for (label of [value()]; track label) {
-    <span
-      #text
-      [animate.enter]="ready() ? 'enter' : ''"
-      animate.leave="leave"
-      >{{ label }}</span
-    >
-  }`,
-  styles: `
-    :host {
-      position: relative;
-      display: inline-flex;
-      vertical-align: middle;
-      white-space: nowrap;
-    }
-    span {
-      display: inline-block;
-    }
-    .enter {
-      animation: fade-in var(--dur-base) var(--ease-out);
-    }
-    .leave {
-      position: absolute;
-      inset-inline-start: 0;
-      animation: fade-out var(--dur-fast) var(--ease-in);
-      pointer-events: none;
-    }
-    @keyframes fade-in {
-      from {
-        opacity: 0;
-      }
-    }
-    @keyframes fade-out {
-      to {
-        opacity: 0;
-      }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .enter,
-      .leave {
-        animation: none;
-      }
-    }
-  `,
+  templateUrl: "./ease-swap.component.html",
+  styleUrl: "./ease-swap.component.css",
 })
 export class EaseSwapComponent {
   readonly value = input.required<string>();
@@ -65,10 +25,27 @@ export class EaseSwapComponent {
   private readonly element =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly text = viewChild<ElementRef<HTMLElement>>("text");
+  private readonly motion =
+    typeof matchMedia === "function"
+      ? matchMedia("(prefers-reduced-motion: reduce)")
+      : undefined;
   private observer?: ResizeObserver;
-  private animation?: Animation;
+  private widthAnimation?: Animation;
+  private readonly leaving = new Map<Animation, () => void>();
+  private destroyed = false;
 
   constructor() {
+    const settle = () => {
+      if (!this.motion?.matches) return;
+      this.widthAnimation?.cancel();
+      this.widthAnimation = undefined;
+      for (const [animation, done] of this.leaving) {
+        animation.cancel();
+        done();
+      }
+      this.leaving.clear();
+    };
+    this.motion?.addEventListener("change", settle);
     afterNextRender(() => {
       this.ready.set(true);
       if (typeof ResizeObserver === "undefined") return;
@@ -76,34 +53,78 @@ export class EaseSwapComponent {
       this.observer = new ResizeObserver(() => {
         const next =
           this.text()?.nativeElement.getBoundingClientRect().width ?? width;
-        const previous = this.animation
+        if (next === width) return;
+        const previous = this.widthAnimation
           ? this.element.getBoundingClientRect().width
           : width;
-        if (next === width) return;
         width = next;
-        this.animation?.cancel();
-        if (
-          !this.element.animate ||
-          matchMedia("(prefers-reduced-motion: reduce)").matches
-        )
-          return;
+        this.widthAnimation?.cancel();
+        this.widthAnimation = undefined;
+        if (!this.element.animate || this.motion?.matches) return;
         const style = getComputedStyle(this.element);
-        this.animation = this.element.animate(
+        const animation = this.element.animate(
           [{ width: `${previous}px` }, { width: `${next}px` }],
           {
-            duration: parseFloat(style.getPropertyValue("--dur-base")),
-            easing: style.getPropertyValue("--ease-in-out").trim(),
+            duration: parseFloat(style.getPropertyValue("--dur-slow")) || 280,
+            easing:
+              style.getPropertyValue("--ease-in-out").trim() || "ease-in-out",
           },
         );
-        this.animation.onfinish = () => {
-          this.animation = undefined;
+        this.widthAnimation = animation;
+        animation.onfinish = () => {
+          if (this.widthAnimation === animation)
+            this.widthAnimation = undefined;
         };
       });
       this.observer.observe(this.element);
     });
     inject(DestroyRef).onDestroy(() => {
+      this.destroyed = true;
       this.observer?.disconnect();
-      this.animation?.cancel();
+      this.widthAnimation?.cancel();
+      this.motion?.removeEventListener("change", settle);
+      for (const [animation, done] of this.leaving) {
+        animation.cancel();
+        done();
+      }
+      this.leaving.clear();
     });
+  }
+  protected leave(event: AnimationCallbackEvent): void {
+    const element = event.target;
+    const style = getComputedStyle(element);
+    const from = {
+      opacity: style.opacity,
+      transform: style.transform,
+      filter: style.filter,
+    };
+    element.setAttribute("aria-hidden", "true");
+    element.setAttribute("inert", "");
+    element.classList.add("leave");
+    for (const animation of element.getAnimations?.() ?? []) animation.cancel();
+    if (this.destroyed || this.motion?.matches || !element.animate) {
+      event.animationComplete();
+      return;
+    }
+    const animation = element.animate(
+      [
+        from,
+        { opacity: 0, filter: "blur(3px)", transform: "translateY(-3px)" },
+      ],
+      {
+        duration: 120,
+        easing: style.getPropertyValue("--ease-in").trim() || "ease-in",
+      },
+    );
+    let complete = false;
+    const done = () => {
+      if (!complete) {
+        complete = true;
+        this.leaving.delete(animation);
+        event.animationComplete();
+      }
+    };
+    this.leaving.set(animation, done);
+    animation.onfinish = animation.oncancel = done;
   }
 }

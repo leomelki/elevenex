@@ -11,6 +11,7 @@ import {
 export class AutoHeightDirective {
   private readonly element =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+  private readonly destroyRef = inject(DestroyRef);
   private animation?: Animation;
   private observer?: ResizeObserver;
 
@@ -20,6 +21,9 @@ export class AutoHeightDirective {
       if (!content || typeof ResizeObserver === "undefined") return;
       let previous = this.element.getBoundingClientRect().height;
       this.observer = new ResizeObserver(() => {
+        // A queued observation can outlive portal detachment or destruction.
+        // Detached elements no longer inherit the motion tokens either.
+        if (this.destroyRef.destroyed || !this.element.isConnected) return;
         const style = getComputedStyle(this.element);
         // Height belongs to the outer border box. Measuring only the inner
         // content clips padded cards and makes them jump when motion finishes.
@@ -59,7 +63,7 @@ export class AutoHeightDirective {
       });
       this.observer.observe(content);
     });
-    inject(DestroyRef).onDestroy(() => {
+    this.destroyRef.onDestroy(() => {
       this.observer?.disconnect();
       this.animation?.cancel();
     });

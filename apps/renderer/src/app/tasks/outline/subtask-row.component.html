@@ -1,0 +1,82 @@
+<div
+  class="head"
+  (mouseenter)="pathHover.emit(subtask().id)"
+  (mouseleave)="pathHover.emit(null)"
+  (focusin)="pathHover.emit(subtask().id)"
+  (focusout)="blur($event)"
+>
+  <button
+    class="toggle"
+    type="button"
+    [attr.aria-expanded]="open()"
+    [attr.aria-label]="label()"
+    [attr.aria-describedby]="tip() ? tooltipId : null"
+    (click)="open.set(!open())"
+  >
+    <ex-subtask-glyph [depth]="depth()" /><span class="title">{{
+      subtask().title
+    }}</span>
+  </button>
+  @if (tip()) {
+    <span class="tip" role="tooltip" [id]="tooltipId"
+      ><span>In </span>{{ tipText() }}</span
+    >
+  }
+  @if (subtask().ready && !attention()) {
+    <span
+      class="ready"
+      [title]="'Committed and checked: ready to merge into ' + path().at(-1)"
+      >Ready</span
+    >
+  } @else {
+    <ex-task-signal
+      [attention]="attention()"
+      [running]="running()"
+      [total]="sessions().length"
+      [collapsed]="!open()"
+    />
+  }
+  @if (allowAdd()) {
+    <ex-icon-button
+      class="add"
+      icon="plus"
+      label="New session in this sub-task"
+      size="sm"
+      (pressed)="addSession.emit(subtask().id)"
+    />
+  }
+</div>
+<ex-fold [open]="open() || !!filter()"
+  ><div class="tree" [exFlip]="motionOrder()" [exFlipReorderOnly]="true">
+    @for (entry of presence.rows(); track entry.key) {
+      @let row = entry.value;
+      <ex-fold
+        [attr.data-flip]="entry.key"
+        [open]="entry.present && !entry.entering && row.visible"
+        (transitionend)="presence.settled(entry.key, $event)"
+      >
+        @if (row.kind === "session") {
+          <ex-session-row
+            [session]="row.session"
+            [selected]="selected() === row.session.id"
+            (activated)="selectSession.emit($event)"
+          />
+        } @else {
+          <button
+            class="finished-toggle"
+            type="button"
+            [attr.aria-expanded]="finishedOpen()"
+            (click)="toggleFinished()"
+          >
+            <ex-icon
+              class="chevron"
+              name="chevron-down"
+              [size]="12"
+              [class.closed]="!finishedOpen()"
+            /><ex-ticker [value]="row.count" /> finished
+          </button>
+        }
+      </ex-fold>
+    }
+  </div></ex-fold
+>

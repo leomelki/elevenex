@@ -22,3 +22,24 @@ The chevron holds the combinations for the current step. On Commit: Commit and p
 - Counts use fixed-width digits and roll when they change.
 - Measured frame by frame through seven state changes (edits → committing → 1 to push → pushing → up to date → new edits → committed again → 3 to push): the button is never replaced, its own width moves at most 4px in a frame, the title and right edge never move, and the bar's left edge glides (at most 14px in a frame at 120 fps) with no jump at the end.
 - Checked with frozen filmstrips, 20ms apart: appearing and leaving both end exactly where the settled layout is (no snap when the slot goes back to auto width).
+
+**On a sub-task** (`mergeInto`, the parent's branch): the way back is a merge, not a push.
+- With changes, the button commits as usual (its menu offers Commit and merge).
+- Once committed, the next step is **Merge into flaky-checkout**: the merge icon, no count. Its title says how many commits.
+- The chevron has Squash and merge (the default), Merge commit, Rebase on the parent, and Push this branch.
+- While it runs, the button says **Merging…**. When it's done:
+  - the sub-task's branch and workspace go away;
+  - its sessions move into the parent's history;
+  - you stay where you were; the session you're in now belongs to the task (its header becomes the task's), and messaging it again carries on, on the task's branch;
+  - a toast says what merged, with Undo. No session gets a line, and no other session is told anything: Elevenex never messages or interrupts sessions on its own. If a running session in the task is editing the same files, the merge waits for it.
+- A conflict opens a card instead, in the session where you pressed Merge (Let the agent resolve it, Open in Changes). Nothing merges until it's clean.
+
+**Jobs** (`job`): merging, syncing and pushing are jobs Elevenex runs itself, and the button is their home while they run.
+- **The label is the step:** “Merging · 2 of 4”, or the current step's short name (“Merging · resolving 3 conflicts”), with a running ring. The stat and the counts step aside.
+- **Its menu lists the steps** (click the button or the chevron): each with its glyph, a detail, and who does it. Steps are what Elevenex can know for certain: commits synced, files in conflict, the command it runs and how long it has run. A step only shows progress (like 41 / 78) when the command reports it; otherwise elapsed time.
+- **When the job needs judgement**, Elevenex starts one session for it (a `SessionRow` with `kind: 'auto'`, ⚡, opening on a `JobBrief`). The step names it, with a chip that opens it. You aren't moved there; a `Toast` says it started, with Open.
+- **When that session needs you**, the button reads **Merge waiting on you** in `attention` and opens the session.
+- **Done:** the job leaves the button (it eases back to Push or Up to date) and a toast says what happened, with Undo.
+- Cancel stops the job and puts the branches back as they were.
+
+**Provide (job):** `{ verb, noun, title, steps: [{ status, label, detail, short, session }], waiting, open, note, onOpen, onCancel }`.

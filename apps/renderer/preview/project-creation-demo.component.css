@@ -1,0 +1,40 @@
+:host { display: block; }
+.demo { display: flex; flex-direction: column; gap: 14px; padding: 16px 20px 24px; }
+.caption { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; font-size: 13px; color: var(--ink-muted); }
+.caption b { color: var(--ink); font-weight: 600; white-space: nowrap; }
+.grow { flex: 1; min-width: 0; }
+.frame { position: relative; width: 1160px; max-width: 100%; height: 640px; border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line); background: var(--canvas); }
+.stage { position: relative; height: calc(100% - 40px); }
+.app { position: absolute; inset: 0; display: flex; transform-origin: 50% 40%; transition: transform 920ms cubic-bezier(.4,0,.2,1), filter 920ms cubic-bezier(.4,0,.2,1), opacity 920ms cubic-bezier(.4,0,.2,1); }
+.app.veiled { transform: scale(.96); filter: blur(12px) saturate(.6); opacity: .5; }
+.shell { display: flex; flex: 1; gap: var(--space-2); padding: var(--space-2); }
+.sidebar { width: var(--sidebar-width); flex: none; display: flex; flex-direction: column; padding: var(--space-2); box-sizing: border-box; overflow: hidden; border-radius: var(--radius-lg); background: var(--glass); backdrop-filter: blur(var(--blur-glass)) saturate(1.4); box-shadow: var(--shadow-glass); }
+.side-head { display: flex; align-items: center; gap: 6px; padding: 2px 2px 8px 4px; min-height: 30px; }
+.name-wrap { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.side-name { display: inline-block; }
+.menu-button { width: 24px; height: 24px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink-muted); cursor: pointer; }
+.menu-button:hover { background: var(--surface-sunken); color: var(--ink); }
+.menu-button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.empty { padding: 10px 8px; display: flex; flex-direction: column; gap: 6px; }
+.empty b { font-size: 11px; line-height: 14px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted); }
+.empty p { margin: 0; font-size: 12.5px; color: var(--ink-muted); }
+.ghost { display: flex; flex-direction: column; gap: 8px; padding: 8px 6px; }
+.ghost i { height: 22px; border-radius: 7px; background: var(--surface-sunken); }
+.ghost i:nth-child(2) { width: 80%; }.ghost i:nth-child(3) { width: 64%; }
+main { flex: 1; min-width: 0; border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-glass); overflow: hidden; }
+.task { width: 560px; max-width: calc(100% - 48px); margin: 64px auto 0; }
+.arriving .rise { animation: rise 820ms cubic-bezier(.4,0,.2,1) 220ms both; }
+.over { position: absolute; inset: 0; z-index: 10; display: flex; justify-content: center; align-items: flex-start; padding-top: 96px; }
+.over ex-new-project { width: 540px; max-width: calc(100% - 32px); animation: enter 560ms cubic-bezier(.4,0,.2,1) both; }
+.over.leaving { pointer-events: none; }
+.over.leaving ex-new-project { animation: leave 420ms var(--ease-out) both; }
+.examples { display: flex; gap: 20px; align-items: flex-start; margin-bottom: 20px; }
+.examples ex-new-project { flex: none; width: 540px; max-width: 100%; }
+.intent { color: var(--ink-muted); font-size: var(--text-caption-size); }
+.modal-card { width: 540px; max-width: calc(100vw - 32px); }
+select { padding: var(--space-1); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--ink); font: inherit; }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes enter { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes leave { from { opacity: 1; transform: none; filter: none; } to { opacity: 0; transform: scale(.97); filter: blur(6px); } }
+@media (prefers-reduced-motion: reduce) { .app, .over ex-new-project, .rise { transition: none !important; animation: none !important; } }
+@media (max-width: 900px) { .examples { flex-direction: column; } .caption { flex-wrap: wrap; } }

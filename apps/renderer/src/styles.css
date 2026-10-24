@@ -1,5 +1,9 @@
 @import '@angular/cdk/overlay-prebuilt.css';
 @import './design-system/tokens.css';
+@import './app/ui/sheet/modal-recession.css';
+
+/* Projected brief content belongs to the caller, so its inline code needs a scoped global rule. */
+ex-job-brief code { font-family: var(--font-mono); font-size: var(--text-caption-size); padding: 0 var(--space-1); border-radius: var(--radius-xs); background: var(--surface-raised); }
 
 @font-face { font-family: 'Instrument Sans'; src: url('/fonts/instrument-sans.woff2') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; }
 @font-face { font-family: 'Geist Mono'; src: url('/fonts/geist-mono.woff2') format('woff2'); font-weight: 100 900; font-style: normal; font-display: swap; }

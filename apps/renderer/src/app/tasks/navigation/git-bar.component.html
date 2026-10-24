@@ -52,13 +52,32 @@
     [attr.inert]="!step() ? '' : null"
     [attr.aria-hidden]="!step()"
   >
-    <span class="split">
+    <span
+      class="split"
+      [class.waiting]="job()?.waiting"
+      cdkOverlayOrigin
+      #jobOrigin="cdkOverlayOrigin"
+    >
       <button
         exButton
         class="primary"
-        [variant]="compact() ? 'secondary' : 'primary'"
+        [variant]="job() || compact() ? 'secondary' : 'primary'"
         [disabled]="!!busy() || !step()"
-        [attr.aria-busy]="!!busy()"
+        [attr.aria-busy]="!!busy() || (!!job() && !job()?.waiting)"
+        [attr.aria-expanded]="job() && !job()?.waiting ? jobOpen() : null"
+        [attr.aria-haspopup]="job() ? 'dialog' : null"
+        [title]="
+          job()
+            ? job()?.waiting
+              ? 'Open the session that needs you'
+              : 'Show the steps'
+            : step() === 'merge'
+              ? 'Merge ' +
+                ahead() +
+                (ahead() === 1 ? ' commit into ' : ' commits into ') +
+                mergeInto()
+              : ''
+        "
         [attr.aria-label]="actionLabel()"
         (click)="primary()"
       >
@@ -71,9 +90,15 @@
                 (animate.leave)="leaveInk($event)"
               >
                 @if (view.busy) {
-                  <ex-status-glyph status="running" [size]="13" />
+                  <ex-status-glyph
+                    [status]="view.waiting ? 'attention' : 'running'"
+                    [size]="13"
+                  />
                 } @else {
-                  <ex-icon [name]="view.step" [size]="14" />
+                  <ex-icon
+                    [name]="view.step === 'merge' ? 'merged' : view.step"
+                    [size]="14"
+                  />
                 }
                 <span>{{ view.label }}</span>
                 @if (view.count) {
@@ -98,9 +123,12 @@
       <button
         exButton
         class="more"
-        [variant]="compact() ? 'secondary' : 'primary'"
+        [variant]="job() || compact() ? 'secondary' : 'primary'"
         [disabled]="!!busy() || !step()"
-        [cdkMenuTriggerFor]="menu"
+        [cdkMenuTriggerFor]="job() ? null : menu"
+        [attr.aria-expanded]="job() ? jobOpen() : null"
+        [attr.aria-haspopup]="job() ? 'dialog' : 'menu'"
+        (click)="job() && toggleJob()"
         aria-label="More git actions"
       >
         <span class="chevron-ink"
@@ -155,4 +183,35 @@
       </button>
     }
   </div>
+</ng-template>
+<ng-template
+  cdkConnectedOverlay
+  [cdkConnectedOverlayOrigin]="jobOrigin"
+  [cdkConnectedOverlayOpen]="menuRetained()"
+  [cdkConnectedOverlayPositions]="[
+    {
+      originX: 'end',
+      originY: 'bottom',
+      overlayX: 'end',
+      overlayY: 'top',
+      offsetY: 6,
+    },
+  ]"
+  (overlayOutsideClick)="outsideJob($event)"
+  (overlayKeydown)="$event.key === 'Escape' && closeJob()"
+>
+  @if (jobOpen() && job(); as activeJob) {
+    <ex-git-job-menu
+      #jobMenu
+      [job]="activeJob"
+      [cdkTrapFocus]="jobOpen()"
+      [cdkTrapFocusAutoCapture]="false"
+      [attr.inert]="jobOpen() ? null : ''"
+      [attr.aria-hidden]="!jobOpen()"
+      animate.enter="job-enter"
+      (animate.leave)="leaveJob($event)"
+      (sessionRequested)="jobSessionRequested.emit($event)"
+      (cancelled)="jobCancelled.emit(activeJob.id); closeJob()"
+    />
+  }
 </ng-template>

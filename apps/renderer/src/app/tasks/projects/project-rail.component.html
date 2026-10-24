@@ -4,7 +4,7 @@
       class="indicator"
       aria-hidden="true"
       [style.transform]="'translateY(' + indicatorY() + 'px)'"
-    ></span>
+    ><i #indicator></i></span>
   }
   @if (all() !== false) {
     <button
@@ -17,9 +17,7 @@
     >
       <ex-icon name="layers" />
       @if (!allActivity().muted && allActivity().attention) {
-        <span class="pip" aria-hidden="true">{{
-          allActivity().attention
-        }}</span>
+        @for (count of [allActivity().attention]; track count) { <span class="pip" aria-hidden="true">{{ count }}</span> }
       } @else if (!allActivity().muted && allActivity().running) {
         <span class="running" aria-hidden="true"
           ><ex-status-glyph status="running" [size]="14"
@@ -36,7 +34,9 @@
       [attr.aria-current]="activeId() === project.id ? 'true' : null"
       [attr.aria-label]="label(project.name, project)"
       [title]="project.name + (i < 9 ? ' ⌘' + (i + 1) : '')"
+      [attr.data-project-id]="project.id"
       (click)="selectProject.emit(project.id)"
+      (contextmenu)="contextMenu($event, project.id)"
       (keydown)="onKey($event, i)"
       [draggable]="true"
       (dragstart)="dragStart($event, project.id)"
@@ -48,11 +48,13 @@
         [name]="project.name"
         [logo]="project.logo"
         [initials]="project.initials"
+        [emoji]="project.emoji"
+        [icon]="project.icon"
         [hue]="project.hue ?? 'steel'"
         [decorative]="true"
       />
       @if (!project.muted && project.attention) {
-        <span class="pip" aria-hidden="true">{{ project.attention }}</span>
+        @for (count of [project.attention]; track count) { <span class="pip" aria-hidden="true">{{ count }}</span> }
       } @else if (!project.muted && project.running) {
         <span class="running" aria-hidden="true"
           ><ex-status-glyph status="running" [size]="14"

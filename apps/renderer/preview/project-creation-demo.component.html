@@ -1,0 +1,34 @@
+<div class="demo" data-modal-window>
+  <div data-modal-background>
+    <div class="caption"><b>First run on dev-box</b><span>The face lands in the rail and New task opens.</span><span class="grow"></span><button exButton size="sm" variant="ghost" (click)="reset()">Start over</button><button id="prepare-project-launch" exButton size="sm" (click)="reset(true)">Prepare launch</button><button id="open-new-project" exButton size="sm" (click)="openModal()">New project in modal</button></div>
+    <div class="frame" #frame>
+      <ex-title-bar><ex-title-island contentKey="machine"><ex-island-name [machine]="machine" /></ex-title-island></ex-title-bar>
+      <div class="stage">
+        <div class="app" [class.veiled]="phase() === 'form'" [class.arriving]="phase() === 'launch'" [attr.inert]="phase() === 'form' ? '' : null">
+          <div class="shell">
+            <ex-project-rail [projects]="railProjects()" [all]="false" activeId="created-project" (addProject)="openModal()" />
+            <aside class="sidebar">
+              <div class="side-head"><span class="grow name-wrap">@if (created()) { <ex-project-mark [name]="face().name" [initials]="face().initials" [emoji]="face().emoji" [icon]="face().icon" [hue]="face().hue || 'steel'" [size]="20" [decorative]="true" /> }<span class="side-name">{{ created()?.name || '' }}</span></span><button type="button" class="menu-button" aria-label="Project" [cdkMenuTriggerFor]="projectMenu"><ex-icon name="more" [size]="14" /></button><button exButton size="sm" variant="primary" [disabled]="!created()">New task</button></div>
+              @if (created()) { <div class="empty rise"><b>In progress</b><p>No tasks yet.</p></div> }
+              @else { <div class="ghost"><i></i><i></i><i></i></div> }
+            </aside>
+            <main>@if (created(); as project) { <div class="task rise"><ex-new-task [project]="face()" [repos]="project.repos" [branches]="branches" branchPrefix="leo/" [autoFocus]="false" (create)="lastIntent.set('Create task: ' + $event.title)" /></div> }</main>
+          </div>
+        </div>
+        @if (phase() !== 'done') {
+          <div class="over" [class.leaving]="phase() === 'launch'" [cdkTrapFocus]="phase() === 'form'" [cdkTrapFocusAutoCapture]="false">
+            @for (key of [formKey()]; track key) { <ex-new-project [draft]="replayDraft()" machine="dev-box" [listFolders]="listFolders()" [autoFocus]="false" [active]="phase() === 'form'" [launching]="phase() === 'launch'" (create)="launch($event)" /> }
+          </div>
+        }
+      </div>
+    </div>
+    <div class="caption"><b>The steps</b><span>Two repositories in step 1; an icon face in step 3.</span><span class="grow"></span><button id="toggle-project-busy" exButton size="sm" [attr.aria-pressed]="busy()" (click)="busy.set(!busy())">{{ busy() ? 'Set ready' : 'Set creating' }}</button></div>
+    <div class="examples"><ex-new-project [draft]="repoDraft" machine="dev-box" [listFolders]="listFolders()" [autoFocus]="false" (create)="lastIntent.set('Create: ' + $event.project.name)" /><ex-new-project [draft]="lookDraft" machine="dev-box" [listFolders]="listFolders()" [autoFocus]="false" [busy]="busy()" (create)="lastIntent.set('Create: ' + $event.project.name)" /></div>
+    <div class="caption"><b>Supplied folder states</b><label>Response <select [value]="sourceState()" (change)="onSourceChanged($event)"><option value="ready">Ready</option><option value="loading">Loading</option><option value="error">Error</option><option value="empty">Empty</option></select></label><span class="grow"></span><button exButton [cdkMenuTriggerFor]="projectMenu">Project menu</button></div>
+    <p class="intent" role="status">{{ lastIntent() || 'No intent yet.' }}</p>
+  </div>
+  <ng-template #projectMenu><ex-project-menu [project]="created() ? face() : menuProject" [repoCount]="created()?.repos?.length || 3" machine="dev-box" [closed]="24" (action)="menu($event)" /></ng-template>
+  <ex-modal-layer [open]="modalOpen()" (closeRequested)="modalOpen.set(false)">
+    @for (version of [modalVersion()]; track version) { <div class="modal-card" role="dialog" aria-label="New project"><ex-new-project machine="dev-box" [listFolders]="listFolders()" [cancelable]="true" [autoFocus]="false" [active]="modalOpen()" (cancelled)="modalOpen.set(false)" (create)="modalCreated($event)" /></div> }
+  </ex-modal-layer>
+</div>

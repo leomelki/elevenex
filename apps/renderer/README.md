@@ -12,7 +12,7 @@ pnpm desktop:preview
 ```
 
 Open `http://127.0.0.1:4310`. The workspace preview composes real components;
-Foundations, Tasks, Conversation, and Machines and views exercise their public
+Foundations, Tasks, Projects, Settings, Sub-tasks, Git helpers, Conversation, and Machines and views exercise their public
 APIs. Example data lives only in `preview/`, under a separate Angular build
 configuration. It is absent from the production entry graph and packaged app.
 
@@ -35,6 +35,7 @@ differences from the supplied component and motion specifications.
 | --- | --- | --- |
 | `src/app/ui` | Native actions, glyphs, feedback, choices, tooltip, motion | `ui/index.ts` |
 | `src/app/tasks` | Projects, task lifecycle, branch/workspace choice, sidebar, git and panel tabs | [Task APIs](src/app/tasks/README.md) |
+| `src/app/projects` | Project creation, appearance, project menu, settings and confirmations | [Project APIs](src/app/projects/README.md) |
 | `src/app/conversation` | Messages, turns, work evidence, decisions, composer, presets, Markdown, scroll | [Conversation APIs](src/app/conversation/README.md) |
 | `src/app/machines` | Machine home, connection steps, title island, launch transition | [Machine and view APIs](src/app/machines/README.md) |
 | `src/app/views` | Changes review, change list, Browser and Terminal frames | `views/index.ts` |
@@ -121,8 +122,9 @@ specifications were imported verbatim from `elevenex-design-system.local`.
 by the desktop commands. The two licensed fonts are bundled locally; the
 reference's runtime Google Fonts import is not shipped.
 
-All designed component families are implemented. Features the designer marked
-as not designed (Code/Actions content, Settings, command palette, split diff,
+The updated component families include project creation and project settings,
+repository tags, sub-task navigation and git-helper job presentation. Features the designer marked
+as not designed (Code/Actions content, global Settings, command palette, split diff,
 multi-line review comments) were not invented. The existing desktop CSP is
 preserved: HTML reply cards emit an Open in Browser intent rather than creating
 an untrusted frame; external media needs a confined platform resolver. Mermaid

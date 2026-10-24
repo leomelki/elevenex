@@ -9,10 +9,13 @@ import type {
   GitAction,
   GitState,
   ProjectMark,
+  Repo,
+  TaskParentContext,
   TaskLink,
   TaskStage,
 } from '../task.models';
 import { ProjectMarkComponent } from '../projects/project-mark.component';
+import { RepoTagComponent } from './repo-tag.component';
 import { BranchChipComponent } from '../branches/branch-chip.component';
 import { GitBarComponent } from '../navigation/git-bar.component';
 import { TaskStageComponent } from './task-stage.component';
@@ -28,6 +31,7 @@ import { LinkChipComponent } from './link-chip.component';
     GitBarComponent,
     TaskStageComponent,
     LinkChipComponent,
+    RepoTagComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-header.component.html',
@@ -35,6 +39,9 @@ import { LinkChipComponent } from './link-chip.component';
 })
 export class TaskHeaderComponent {
   readonly title = input.required<string>();
+  readonly repo = input<Repo | string>();
+  readonly parent = input<TaskParentContext>();
+  readonly parentRequested = output<TaskParentContext>();
   readonly stage = input<TaskStage>('active');
   readonly branch = input<string>();
   readonly links = input<readonly TaskLink[]>([]);
@@ -52,5 +59,7 @@ export class TaskHeaderComponent {
   readonly linkRequested = output<void>();
   readonly linkActivated = output<TaskLink>();
   readonly gitAction = output<GitAction>();
+  readonly gitJobSessionRequested = output<string>();
+  readonly gitJobCancelled = output<string>();
   readonly changesRequested = output<void>();
 }

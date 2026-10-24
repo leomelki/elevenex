@@ -1,4 +1,7 @@
 <header>
+  @if (parent(); as parent) {
+    <button class="parent" type="button" [title]="'Open ' + parent.title" (click)="parentRequested.emit(parent)"><ex-icon name="subtask" [size]="12" />Sub-task of <b>{{ parent.title }}</b>@if (parent.branch) { <span class="mono">{{ parent.branch }}</span> }</button>
+  }
   <div class="row">
     <div class="heading">
       @if (project(); as mark) {
@@ -6,6 +9,8 @@
           [name]="mark.name"
           [logo]="mark.logo"
           [initials]="mark.initials"
+          [emoji]="mark.emoji"
+          [icon]="mark.icon"
           [hue]="mark.hue ?? 'steel'"
           [size]="20"
           [decorative]="true"
@@ -43,6 +48,7 @@
   </div>
   <div class="row">
     <div class="metadata">
+      @if (repo(); as repo) { <ex-repo-tag [repo]="repo" size="md" /> }
       @if (branch(); as name) {
         <ex-branch-chip
           [name]="name"
@@ -77,8 +83,12 @@
         [del]="state.del ?? 0"
         [ahead]="state.ahead ?? 0"
         [busy]="state.busy"
+        [mergeInto]="state.mergeInto"
+        [job]="state.job"
         [compact]="true"
         (action)="gitAction.emit($event)"
+        (jobSessionRequested)="gitJobSessionRequested.emit($event)"
+        (jobCancelled)="gitJobCancelled.emit($event)"
         (changesRequested)="changesRequested.emit()"
       />
     }

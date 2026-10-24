@@ -1,17 +1,8 @@
-<div class="backdrop" tabindex="-1" (keydown.escape)="cancelled.emit()">
-  <button
-    class="dismiss-backdrop"
-    type="button"
-    aria-label="Cancel closing task"
-    tabindex="-1"
-    (click)="cancelled.emit()"
-  ></button>
+<ex-modal-layer [open]="open()" (closeRequested)="cancelled.emit()">
   <section
     role="dialog"
     aria-modal="true"
     aria-label="Close task"
-    cdkTrapFocus
-    [cdkTrapFocusAutoCapture]="true"
   >
     <h2>Close “{{ title() }}”?</h2>
     <ul>
@@ -68,4 +59,4 @@
       </button>
     </footer>
   </section>
-</div>
+</ex-modal-layer>

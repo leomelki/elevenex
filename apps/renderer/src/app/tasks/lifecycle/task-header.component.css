@@ -81,3 +81,9 @@ ex-git-bar {
     display: none;
   }
 }
+
+.parent { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; margin: 0 0 2px; padding: 2px 6px 2px 4px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--ink-muted); font: inherit; font-size: var(--text-caption-size); cursor: pointer; }
+.parent:hover { background: var(--surface-sunken); color: var(--ink); }
+.parent b { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parent .mono { font-family: var(--font-mono); font-size: 11px; margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parent:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }

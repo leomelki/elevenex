@@ -18,3 +18,5 @@ export * from './outline/task-group.component';
 export * from './outline/task-list.component';
 export * from './navigation/panel-tabs.component';
 export * from './navigation/git-bar.component';
+export * from './lifecycle/repo-tag.component';
+export * from './outline/subtask-glyph.component';

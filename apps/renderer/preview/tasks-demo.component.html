@@ -1,4 +1,4 @@
-<div class="workspace">
+<div class="workspace" data-modal-background>
   <ex-project-rail
     [projects]="projects"
     [activeId]="scope()"
@@ -218,8 +218,8 @@
     </button>
   </section>
 </div>
-@if (closeOpen()) {
   <ex-close-task
+    [open]="closeOpen()"
     title="Rate-limit refunds"
     [sessions]="4"
     [running]="1"
@@ -228,4 +228,3 @@
     (cancelled)="closeOpen.set(false)"
     (confirmed)="closed($event)"
   />
-}
