@@ -1,0 +1,476 @@
+{
+  "measuredAt": "2026-10-23T18:12:23.474Z",
+  "scope": "Isolated HTTP + real FilesService/FileWatcherService/FileChangeGateway; independent load-client process. Browser lifecycle tests exercise the real runtime separately.",
+  "environment": {
+    "node": "v24.22.1",
+    "platform": "darwin-arm64"
+  },
+  "fixture": {
+    "files": 10000,
+    "directories": 100,
+    "branches": 401
+  },
+  "budgets": {
+    "probeP99Ms": 50,
+    "eventLoopP99Ms": 20,
+    "eventLoopMaxMs": 100,
+    "probeTimeouts": 0
+  },
+  "budgetsPassed": true,
+  "search": [
+    {
+      "candidates": 10000,
+      "baseline": {
+        "coldIndexAndQueryMs": 40.44,
+        "warmQueryMedianMs": 18.85,
+        "warmQueryP95Ms": 29.57,
+        "warmQueryP99Ms": 30.95,
+        "warmProbeP99Ms": 25.02,
+        "warmLoopMaxMs": 29.18,
+        "typingProbeP99Ms": 142.91,
+        "typingProbeTimeouts": 0,
+        "typingQueuePeaks": {
+          "searchQueueActive": 0,
+          "searchQueuePending": 0,
+          "refreshQueueActive": 0,
+          "refreshQueuePending": 0,
+          "ioQueueActive": 0,
+          "ioQueuePending": 0
+        },
+        "warmRssMiB": 122.56
+      },
+      "current": {
+        "coldIndexAndQueryMs": 33.95,
+        "warmQueryMedianMs": 0.8,
+        "warmQueryP95Ms": 2.24,
+        "warmQueryP99Ms": 2.36,
+        "warmProbeP99Ms": 1.09,
+        "warmLoopMaxMs": 1.5,
+        "typingProbeP99Ms": 5.43,
+        "typingProbeTimeouts": 0,
+        "typingQueuePeaks": {
+          "searchQueueActive": 2,
+          "searchQueuePending": 5,
+          "refreshQueueActive": 0,
+          "refreshQueuePending": 0,
+          "ioQueueActive": 0,
+          "ioQueuePending": 0
+        },
+        "warmRssMiB": 88.59
+      }
+    },
+    {
+      "candidates": 50000,
+      "baseline": {
+        "coldIndexAndQueryMs": 102.8,
+        "warmQueryMedianMs": 99.03,
+        "warmQueryP95Ms": 107.79,
+        "warmQueryP99Ms": 110.37,
+        "warmProbeP99Ms": 102.79,
+        "warmLoopMaxMs": 108.2,
+        "typingProbeP99Ms": 656.5,
+        "typingProbeTimeouts": 4,
+        "typingQueuePeaks": {
+          "searchQueueActive": 0,
+          "searchQueuePending": 0,
+          "refreshQueueActive": 0,
+          "refreshQueuePending": 0,
+          "ioQueueActive": 0,
+          "ioQueuePending": 0
+        },
+        "warmRssMiB": 273.13
+      },
+      "current": {
+        "coldIndexAndQueryMs": 108.81,
+        "warmQueryMedianMs": 3.79,
+        "warmQueryP95Ms": 9.82,
+        "warmQueryP99Ms": 10.91,
+        "warmProbeP99Ms": 1.12,
+        "warmLoopMaxMs": 3.4,
+        "typingProbeP99Ms": 4.98,
+        "typingProbeTimeouts": 0,
+        "typingQueuePeaks": {
+          "searchQueueActive": 2,
+          "searchQueuePending": 6,
+          "refreshQueueActive": 0,
+          "refreshQueuePending": 0,
+          "ioQueueActive": 0,
+          "ioQueuePending": 0
+        },
+        "warmRssMiB": 127.52
+      }
+    },
+    {
+      "candidates": 100000,
+      "baseline": {
+        "coldIndexAndQueryMs": 222.77,
+        "warmQueryMedianMs": 219.16,
+        "warmQueryP95Ms": 233.88,
+        "warmQueryP99Ms": 251.46,
+        "warmProbeP99Ms": 240.48,
+        "warmLoopMaxMs": 251.13,
+        "typingProbeP99Ms": 852.8,
+        "typingProbeTimeouts": 9,
+        "typingQueuePeaks": {
+          "searchQueueActive": 0,
+          "searchQueuePending": 0,
+          "refreshQueueActive": 0,
+          "refreshQueuePending": 0,
+          "ioQueueActive": 0,
+          "ioQueuePending": 0
+        },
+        "warmRssMiB": 341.88
+      },
+      "current": {
+        "coldIndexAndQueryMs": 286.24,
+        "warmQueryMedianMs": 13.37,
+        "warmQueryP95Ms": 27.75,
+        "warmQueryP99Ms": 36.07,
+        "warmProbeP99Ms": 3.89,
+        "warmLoopMaxMs": 3.17,
+        "typingProbeP99Ms": 7.81,
+        "typingProbeTimeouts": 0,
+        "typingQueuePeaks": {
+          "searchQueueActive": 2,
+          "searchQueuePending": 6,
+          "refreshQueueActive": 0,
+          "refreshQueuePending": 0,
+          "ioQueueActive": 0,
+          "ioQueuePending": 0
+        },
+        "warmRssMiB": 173.55
+      }
+    }
+  ],
+  "workloadResults": {
+    "baseline": {
+      "realCold": {
+        "elapsedMs": 41.48254100000122,
+        "probe": {
+          "n": 11,
+          "medianMs": 0.47779199999786215,
+          "p95Ms": 5.75354100000186,
+          "p99Ms": 5.75354100000186,
+          "maxMs": 5.75354100000186,
+          "timeouts": 0
+        },
+        "server": {
+          "eventLoopP95Ms": 1.759231,
+          "eventLoopP99Ms": 9.175039,
+          "eventLoopMaxMs": 9.175039,
+          "rss": 349323264,
+          "peaks": {
+            "searchQueueActive": 0,
+            "searchQueuePending": 0,
+            "refreshQueueActive": 0,
+            "refreshQueuePending": 0,
+            "ioQueueActive": 0,
+            "ioQueuePending": 0
+          },
+          "watchers": 0,
+          "gatewayWorktrees": 0,
+          "pendingBatches": 0,
+          "remainingSearches": 0,
+          "activeHandles": {
+            "Pipe": 1,
+            "Server": 1,
+            "Socket": 19
+          }
+        },
+        "beforeRss": 347668480
+      },
+      "directories": {
+        "requests": 200,
+        "probe": {
+          "n": 10,
+          "medianMs": 6.784499999997934,
+          "p95Ms": 22.650166999999783,
+          "p99Ms": 22.650166999999783,
+          "maxMs": 22.650166999999783,
+          "timeouts": 0
+        },
+        "server": {
+          "eventLoopP95Ms": 3.067903,
+          "eventLoopP99Ms": 6.262783,
+          "eventLoopMaxMs": 6.262783,
+          "rss": 350994432,
+          "peaks": {
+            "searchQueueActive": 0,
+            "searchQueuePending": 0,
+            "refreshQueueActive": 0,
+            "refreshQueuePending": 0,
+            "ioQueueActive": 0,
+            "ioQueuePending": 0
+          },
+          "watchers": 0,
+          "gatewayWorktrees": 0,
+          "pendingBatches": 0,
+          "remainingSearches": 0,
+          "activeHandles": {
+            "Pipe": 1,
+            "Server": 1,
+            "Socket": 202
+          }
+        },
+        "beforeRss": 348291072
+      },
+      "edits": {
+        "editors": 6,
+        "changedPaths": 5000,
+        "frames": 30048,
+        "notifications": 30048,
+        "probe": {
+          "n": 712,
+          "medianMs": 0.6447499999994761,
+          "p95Ms": 3.4219169999996666,
+          "p99Ms": 7.842499999998836,
+          "maxMs": 13.68254099999831,
+          "timeouts": 0
+        },
+        "server": {
+          "eventLoopP95Ms": 1.826815,
+          "eventLoopP99Ms": 3.821567,
+          "eventLoopMaxMs": 11.165695,
+          "rss": 355500032,
+          "peaks": {
+            "searchQueueActive": 0,
+            "searchQueuePending": 0,
+            "refreshQueueActive": 0,
+            "refreshQueuePending": 0,
+            "ioQueueActive": 0,
+            "ioQueuePending": 0
+          },
+          "watchers": 1,
+          "gatewayWorktrees": 1,
+          "pendingBatches": 0,
+          "remainingSearches": 0,
+          "activeHandles": {
+            "Pipe": 1,
+            "Server": 1,
+            "Socket": 8,
+            "FSWatcher": 1
+          }
+        },
+        "beforeRss": 351453184
+      },
+      "afterDisconnect": {
+        "eventLoopP95Ms": 1.822719,
+        "eventLoopP99Ms": 3.813375,
+        "eventLoopMaxMs": 11.165695,
+        "rss": 355598336,
+        "peaks": {
+          "searchQueueActive": 0,
+          "searchQueuePending": 0,
+          "refreshQueueActive": 0,
+          "refreshQueuePending": 0,
+          "ioQueueActive": 0,
+          "ioQueuePending": 0
+        },
+        "watchers": 0,
+        "gatewayWorktrees": 0,
+        "pendingBatches": 0,
+        "remainingSearches": 0,
+        "activeHandles": {
+          "Pipe": 1,
+          "Server": 1,
+          "Socket": 2
+        }
+      }
+    },
+    "current": {
+      "realCold": {
+        "elapsedMs": 51.87474999999904,
+        "probe": {
+          "n": 14,
+          "medianMs": 0.5392920000012964,
+          "p95Ms": 1.0487500000017462,
+          "p99Ms": 1.0487500000017462,
+          "maxMs": 1.0487500000017462,
+          "timeouts": 0
+        },
+        "server": {
+          "eventLoopP95Ms": 2.042879,
+          "eventLoopP99Ms": 2.797567,
+          "eventLoopMaxMs": 3.303423,
+          "rss": 183844864,
+          "peaks": {
+            "searchQueueActive": 1,
+            "searchQueuePending": 0,
+            "refreshQueueActive": 1,
+            "refreshQueuePending": 0,
+            "ioQueueActive": 0,
+            "ioQueuePending": 0
+          },
+          "watchers": 0,
+          "gatewayWorktrees": 0,
+          "pendingBatches": 0,
+          "remainingSearches": 0,
+          "activeHandles": {
+            "Pipe": 1,
+            "Server": 1,
+            "Socket": 15
+          }
+        },
+        "beforeRss": 182091776
+      },
+      "directories": {
+        "requests": 200,
+        "probe": {
+          "n": 13,
+          "medianMs": 0.7877919999991718,
+          "p95Ms": 7.3087500000001455,
+          "p99Ms": 7.3087500000001455,
+          "maxMs": 7.3087500000001455,
+          "timeouts": 0
+        },
+        "server": {
+          "eventLoopP95Ms": 1.481727,
+          "eventLoopP99Ms": 2.791423,
+          "eventLoopMaxMs": 6.037503,
+          "rss": 184860672,
+          "peaks": {
+            "searchQueueActive": 0,
+            "searchQueuePending": 0,
+            "refreshQueueActive": 0,
+            "refreshQueuePending": 0,
+            "ioQueueActive": 8,
+            "ioQueuePending": 67
+          },
+          "watchers": 0,
+          "gatewayWorktrees": 0,
+          "pendingBatches": 0,
+          "remainingSearches": 0,
+          "activeHandles": {
+            "Pipe": 1,
+            "Server": 1,
+            "Socket": 202
+          }
+        },
+        "beforeRss": 182501376
+      },
+      "edits": {
+        "editors": 6,
+        "changedPaths": 5000,
+        "frames": 84,
+        "notifications": 5382,
+        "probe": {
+          "n": 673,
+          "medianMs": 0.6194579999973939,
+          "p95Ms": 0.9924580000006245,
+          "p99Ms": 1.962999999999738,
+          "maxMs": 9.072125000002416,
+          "timeouts": 0
+        },
+        "server": {
+          "eventLoopP95Ms": 1.745919,
+          "eventLoopP99Ms": 1.992703,
+          "eventLoopMaxMs": 9.486335,
+          "rss": 242352128,
+          "peaks": {
+            "searchQueueActive": 0,
+            "searchQueuePending": 0,
+            "refreshQueueActive": 0,
+            "refreshQueuePending": 0,
+            "ioQueueActive": 0,
+            "ioQueuePending": 0
+          },
+          "watchers": 1,
+          "gatewayWorktrees": 1,
+          "pendingBatches": 0,
+          "remainingSearches": 0,
+          "activeHandles": {
+            "Pipe": 1,
+            "Server": 1,
+            "Socket": 8,
+            "FSWatcher": 3
+          }
+        },
+        "beforeRss": 185401344
+      },
+      "afterDisconnect": {
+        "eventLoopP95Ms": 1.740799,
+        "eventLoopP99Ms": 2.019327,
+        "eventLoopMaxMs": 9.486335,
+        "rss": 242532352,
+        "peaks": {
+          "searchQueueActive": 0,
+          "searchQueuePending": 0,
+          "refreshQueueActive": 0,
+          "refreshQueuePending": 0,
+          "ioQueueActive": 0,
+          "ioQueuePending": 0
+        },
+        "watchers": 0,
+        "gatewayWorktrees": 0,
+        "pendingBatches": 0,
+        "remainingSearches": 0,
+        "activeHandles": {
+          "Pipe": 1,
+          "Server": 1,
+          "Socket": 2
+        }
+      }
+    }
+  },
+  "compression": {
+    "rawBytes": 11886423,
+    "brotliBytes": 2871681,
+    "gzipBytes": 3283561,
+    "brotliQuality": 5,
+    "roundTripVerified": true
+  },
+  "browserConfirmed": {
+    "coldUsableWorkspaceMs": 5399,
+    "observedWorkers": 1,
+    "unsavedDocumentRetainedAfterMove": true,
+    "themeUpdatedWithoutNavigation": true,
+    "missingExtensionFiniteErrorAndSuccessfulRetry": true,
+    "lightAndDarkScreenshotsVerified": true
+  },
+  "checks": {
+    "backendFocusedTests": 239,
+    "frontendFocusedTests": 25,
+    "browserRegressions": 2,
+    "backendBuild": true,
+    "filesystemExtensionBuild": true,
+    "scmExtensionBuild": true,
+    "compressionRoundTrip": true,
+    "frontendAngularCompile": true
+  },
+  "bounds": {
+    "startupDeadlineMs": 30000,
+    "bridgeDeadlineMs": 28000,
+    "httpDeadlineMs": 15000,
+    "searchActive": 2,
+    "searchPending": 16,
+    "refreshActive": 2,
+    "refreshPending": 8,
+    "filesystemHttpActive": 8,
+    "filesystemHttpPending": 64,
+    "backendIoActive": 8,
+    "backendIoPending": 128,
+    "watcherStatActive": 8,
+    "watcherPendingPaths": 2048,
+    "gatewayBatchPaths": 512,
+    "cleanWarmEditors": 3,
+    "maxEditorsIncludingDirtyOrUnknown": 12,
+    "gitContentCacheBytes": 16777216,
+    "gitContentCacheEntries": 256,
+    "deferredSessionSetupDeadlineMs": 30000
+  },
+  "reproduction": {
+    "benchmark": "node scripts/benchmark-vscode-responsiveness.cjs BASELINE_DIST CURRENT_DIST OUTPUT.json",
+    "browser": "VSCODE_E2E_BACKEND_URL=http://127.0.0.1:11115 node e2e/node_modules/@playwright/test/cli.js test --config e2e/vscode.config.ts",
+    "rawLocalResults": "artifacts/vscode-responsiveness/results.json"
+  },
+  "limitations": [
+    "Synthetic search phases exclude git enumeration; realCold covers git enumeration in the 10k-file, 401-branch fixture.",
+    "100k cold index construction is slower overall (222.77ms to 286.24ms) while yielding to unrelated requests.",
+    "HTTP load results measure the selected services behind a lightweight server, not the complete production backend, paired SSH transport or WAN latency.",
+    "Short-run RSS and zero resources after disconnect do not prove long-run memory stability. A production soak and paired-device cold/warm transfer profile remain necessary.",
+    "An OS filesystem syscall already issued cannot be cancelled in Node; I/O stays in its bounded slot until the OS returns. Browser deadlines settle callers, and new requests cannot bypass the queue bound.",
+    "Precompressed assets are generated during runtime staging; a development install without generated .br/.gz files serves raw assets."
+  ],
+  "baselineCommit": "3babb05695d5951e14a91787daf033d7487bcad8",
+  "currentRevision": "uncommitted working tree"
+}

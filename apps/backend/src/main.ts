@@ -1,3 +1,7 @@
+import {
+  resolveVSCodeAssetVersion,
+  vscodeStatic,
+} from './config/vscode-static.js';
 import { interceptProcessStreams } from './backend-logs/log-interceptor.js';
 interceptProcessStreams();
 
@@ -111,6 +115,7 @@ async function bootstrap() {
   );
 
   const vscodeStaticPath = getBackendVSCodeStaticPath();
+  const vscodeAssetVersion = await resolveVSCodeAssetVersion(vscodeStaticPath);
 
   // workbench.html ships with {{WORKBENCH_WEB_BASE_URL}}-style placeholders
   // that VS Code's own server would substitute. Render it ourselves and inject
@@ -126,7 +131,11 @@ async function bootstrap() {
       const raw = await readFile(sourcePath, 'utf-8');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
-      res.send(renderVSCodeWorkbenchHtml(raw));
+      res.send(
+        renderVSCodeWorkbenchHtml(raw, {
+          baseUrl: `/vscode-static/v/${vscodeAssetVersion}`,
+        }),
+      );
     } catch (error) {
       next(error);
     }
@@ -181,13 +190,11 @@ async function bootstrap() {
   );
 
   app.use(
-    '/vscode-static',
-    express.static(vscodeStaticPath, {
-      setHeaders: (res) => {
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      },
-    }),
+    `/vscode-static/v/${vscodeAssetVersion}`,
+    vscodeStatic(vscodeStaticPath, true),
   );
+  // Older bookmarks remain usable but never receive immutable caching.
+  app.use('/vscode-static', vscodeStatic(vscodeStaticPath));
 
   // Serve FileSystemProvider extension bundle
   const ext1Path = join(runtimeRoot, 'vscode-filesystem-provider');

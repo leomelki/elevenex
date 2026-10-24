@@ -75,13 +75,11 @@ describe('renderVSCodeWorkbenchHtml', () => {
 
     expect(html).toContain("workspaceUrl.searchParams.get('worktreePath')");
     expect(html).toContain(
-      "new BroadcastChannel('elevenex-vscode:' + workspacePath)",
+      "new BroadcastChannel('elevenex-vscode:' + workspacePath + ':' + generation)",
     );
-    expect(html).toContain("event.data.type !== 'elevenex-open-file'");
-    expect(html).toContain(
-      "event.data.type !== 'elevenex-file-bridge-ready'",
-    );
-    expect(html).toContain('pendingFileRequests.push(event.data)');
+    expect(html).toContain("data.type === 'elevenex-open-file'");
+    expect(html).toContain("data.type === 'elevenex-file-bridge-ready'");
+    expect(html).toContain('pendingFileRequests.push(data)');
   });
 
   it('is idempotent when rendered twice', () => {

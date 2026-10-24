@@ -65,98 +65,148 @@ const WORKBENCH_BOOTSTRAP_SCRIPT = `${WORKBENCH_BOOTSTRAP_MARKER}
 
   window.product = product;
 
-  // VS Code web extensions run in a Web Worker, so a message sent to the
-  // workbench window cannot be observed directly by extension code. Relay
-  // file-open requests over a workspace-scoped BroadcastChannel instead.
-  // Keep requests queued until the filesystem extension confirms that its
-  // listener is active; the workbench DOM can be ready before extensions are.
-  var fileBridge = null;
+  var generation = params.get('generation') || '';
+  var requestId = '';
+  var workbenchReady = false;
   var fileBridgeReady = false;
+  var workspaceReady = false;
+  var startupError = '';
+  var fileBridge = null;
   var pendingFileRequests = [];
+  var pendingTheme = null;
+  var observer = null;
+  var startupTimer = null;
+  var cancelled = false;
+
+  function post(type, extra) {
+    if (window.parent !== window && requestId) window.parent.postMessage(Object.assign({ type: type, generation: generation, requestId: requestId }, extra || {}), '*');
+  }
+  function report() {
+    if (startupError) { post('elevenex-editor-startup-error', { message: startupError }); return; }
+    if (workbenchReady) post('elevenex-editor-stage', { stage: 'workbench' });
+    if (fileBridgeReady) post('elevenex-editor-stage', { stage: 'bridge' });
+    if (workbenchReady && fileBridgeReady && workspaceReady && !cancelled) {
+      clearTimeout(startupTimer);
+      post('vscode-workbench-ready', { bridgeReady: true, workspaceReady: true });
+    }
+  }
+  function fail(message) {
+    startupError = message;
+    clearTimeout(startupTimer);
+    if (observer) observer.disconnect();
+    if (fileBridge) fileBridge.postMessage({ type: 'elevenex-editor-cancel' });
+    report();
+  }
+  function probe() {
+    if (!fileBridge) { fail('The filesystem bridge is unavailable in this browser.'); return; }
+    fileBridge.postMessage({ type: 'elevenex-file-bridge-probe', requestId: requestId });
+  }
+
   if (workspace && typeof BroadcastChannel !== 'undefined') {
     try {
       var workspaceUrl = new URL(workspace, window.location.origin);
-      var workspacePath = workspaceUrl.searchParams.get('worktreePath') ||
-        decodeURIComponent(workspaceUrl.host || workspaceUrl.pathname);
-      fileBridge = new BroadcastChannel('elevenex-vscode:' + workspacePath);
+      var workspacePath = workspaceUrl.searchParams.get('worktreePath') || decodeURIComponent(workspaceUrl.host || workspaceUrl.pathname);
+      fileBridge = new BroadcastChannel('elevenex-vscode:' + workspacePath + ':' + generation);
       fileBridge.addEventListener('message', function (event) {
-        if (event.data && event.data.type === 'elevenex-editor-check-result') {
-          window.parent.postMessage(event.data, '*');
+        var data = event.data;
+        if (!data) return;
+        if (data.type === 'elevenex-editor-check-result') {
+          window.parent.postMessage(data, '*');
           return;
         }
-        if (!event.data || event.data.type !== 'elevenex-file-bridge-ready') return;
-        fileBridgeReady = true;
-        pendingFileRequests.splice(0).forEach(function (request) {
-          fileBridge.postMessage(request);
-        });
+        if (cancelled) return;
+        if (data.type === 'elevenex-file-bridge-ready') {
+          fileBridgeReady = true;
+          if (pendingTheme) fileBridge.postMessage(pendingTheme);
+          probe();
+          report();
+        } else if (data.type === 'elevenex-workspace-ready' && data.requestId === requestId) {
+          fileBridgeReady = true;
+          workspaceReady = true;
+          pendingFileRequests.splice(0).forEach(function (request) { fileBridge.postMessage(request); });
+          report();
+        } else if (data.type === 'elevenex-editor-sync-error') {
+          workspaceReady = false;
+          post(data.type, { message: data.message });
+        } else if (data.type === 'elevenex-editor-file-changes') {
+          post(data.type, { changes: data.changes });
+        } else if (data.type === 'elevenex-editor-reconnected') {
+          probe();
+        }
       });
-    } catch (error) {
-      console.error('Failed to initialize Elevenex file bridge', error);
-    }
+    } catch (error) { fail('Could not initialize the filesystem bridge.'); }
   }
 
   window.addEventListener('message', function (event) {
-    if (event.source !== window.parent || !event.data ||
-        (event.data.type !== 'elevenex-open-file' && event.data.type !== 'elevenex-editor-check')) {
-      return;
-    }
-    if (!fileBridge) {
-      console.error('Elevenex file bridge is unavailable');
-      return;
-    }
-    if (fileBridgeReady) {
-      fileBridge.postMessage(event.data);
-    } else {
-      pendingFileRequests.push(event.data);
-    }
-  });
-
-  function postReady() {
-    if (window.parent !== window) {
-      window.parent.postMessage({ type: 'vscode-workbench-ready' }, '*');
-    }
-  }
-
-  var readyScheduled = false;
-  function scheduleReady() {
-    if (readyScheduled) return;
-    readyScheduled = true;
-    requestAnimationFrame(function () {
-      requestAnimationFrame(postReady);
-    });
-  }
-
-  window.addEventListener('message', function (event) {
-    if (event.data && event.data.type === 'vscode-workbench-check-ready') {
-      // Reply to a parent probe even if we already signalled ready, so
-      // reattached panels can resync without waiting for a new workbench.
-      readyScheduled = false;
-      if (document.querySelector('.monaco-workbench')) {
-        scheduleReady();
-      }
+    if (event.source !== window.parent || !event.data) return;
+    var data = event.data;
+    if (data.generation && data.generation !== generation) return;
+    if (data.type === 'vscode-workbench-check-ready') {
+      requestId = data.requestId;
+      cancelled = false;
+      clearTimeout(startupTimer);
+      startupTimer = setTimeout(function () { fail('The workbench or filesystem extension did not become ready. Retry the connection.'); }, 28000);
+      probe();
+      report();
+    } else if (data.type === 'elevenex-editor-cancel') {
+      cancelled = true;
+      clearTimeout(startupTimer);
+      pendingFileRequests.length = 0;
+      if (fileBridge) fileBridge.postMessage(data);
+      // Stop pending runtime requests too, without destroying loaded documents.
+      window.stop();
+    } else if (data.type === 'elevenex-editor-theme') {
+      pendingTheme = data;
+      if (fileBridgeReady) fileBridge.postMessage(data);
+    } else if (data.type === 'elevenex-editor-retry') {
+      cancelled = false;
+      startupError = '';
+      if (fileBridge) fileBridge.postMessage(data);
+    } else if (data.type === 'elevenex-editor-check') {
+      // Release checks must work even after a failed startup attempt.
+      if (fileBridge) fileBridge.postMessage(data);
+    } else if (data.type === 'elevenex-editor-visibility') {
+      if (!data.visible) clearTimeout(startupTimer);
+      if (fileBridge) fileBridge.postMessage(data);
+    } else if (data.type === 'elevenex-open-file') {
+      if (!fileBridge || cancelled) return;
+      if (workspaceReady) fileBridge.postMessage(data);
+      else { pendingFileRequests.length = 0; pendingFileRequests.push(data); }
     }
   });
+
+  window.addEventListener('error', function (event) {
+    if (event.target && (event.target.tagName === 'SCRIPT' || event.target.tagName === 'LINK')) fail('A required editor runtime asset failed to load. Retry the connection.');
+  }, true);
+  window.addEventListener('unhandledrejection', function (event) {
+    var message = String(event.reason && event.reason.message || event.reason);
+    // VS Code probes workspace configuration before the lazy filesystem
+    // provider has activated. These expected failures must not cancel it.
+    if (!workspaceReady && !cancelled && !/ENOPRO|Canceled|Cancelled|EntryNotFound|FileNotFound/.test(message)) {
+      fail('An editor extension or runtime failed during startup: ' + message.slice(0, 200));
+    }
+  });
+  window.addEventListener('pagehide', function () {
+    clearTimeout(startupTimer);
+    if (observer) observer.disconnect();
+    if (fileBridge) fileBridge.close();
+    pendingFileRequests.length = 0;
+  }, { once: true });
 
   function watchForWorkbench() {
-    if (document.querySelector('.monaco-workbench')) {
-      scheduleReady();
-      return;
+    function check() {
+      if (!document.querySelector('.monaco-workbench')) return false;
+      workbenchReady = true;
+      if (observer) observer.disconnect();
+      report();
+      return true;
     }
-    var target = document.body || document.documentElement;
-    var observer = new MutationObserver(function () {
-      if (document.querySelector('.monaco-workbench')) {
-        observer.disconnect();
-        scheduleReady();
-      }
-    });
-    observer.observe(target, { childList: true, subtree: true });
+    if (check()) return;
+    observer = new MutationObserver(check);
+    observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
   }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', watchForWorkbench, { once: true });
-  } else {
-    watchForWorkbench();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchForWorkbench, { once: true });
+  else watchForWorkbench();
 })();
 </script>
 `;

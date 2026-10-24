@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as path from 'node:path';
@@ -137,15 +138,13 @@ describe('FilesController', () => {
 
   it('streams external media with decoded query paths, range headers, and disconnect cleanup', async () => {
     const stream = Readable.from(['test']);
-    service.readLocalMedia = jest
-      .fn()
-      .mockResolvedValue({
-        stream,
-        mimeType: 'video/mp4',
-        statusCode: 206,
-        contentRange: 'bytes 2-5/10',
-        length: 4,
-      });
+    service.readLocalMedia = jest.fn().mockResolvedValue({
+      stream,
+      mimeType: 'video/mp4',
+      statusCode: 206,
+      contentRange: 'bytes 2-5/10',
+      length: 4,
+    });
     const res = { status: jest.fn(), setHeader: jest.fn(), once: jest.fn() };
     const file = await filesystemController.readMedia(
       '/tmp/été #1%,demo.mp4',
@@ -165,14 +164,12 @@ describe('FilesController', () => {
   });
 
   it('prevents caching worktree images', async () => {
-    service.readFileRaw = jest
-      .fn()
-      .mockResolvedValue({
-        stream: Readable.from(['image']),
-        mimeType: 'image/png',
-        length: 5,
-        statusCode: 200,
-      });
+    service.readFileRaw = jest.fn().mockResolvedValue({
+      stream: Readable.from(['image']),
+      mimeType: 'image/png',
+      length: 5,
+      statusCode: 200,
+    });
     const res = { status: jest.fn(), setHeader: jest.fn(), once: jest.fn() };
     await controller.readFileRaw('/tmp/worktree', 'shot.png', res as never);
     expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
@@ -311,7 +308,12 @@ describe('FilesController', () => {
       );
 
       expect(result).toEqual([{ path: 'src/app.ts', name: 'app.ts' }]);
-      expect(searchFiles).toHaveBeenCalledWith('/tmp/worktree path', 'app', 25);
+      expect(searchFiles).toHaveBeenCalledWith(
+        '/tmp/worktree path',
+        'app',
+        25,
+        expect.any(AbortSignal),
+      );
     });
 
     it('defaults missing query and limit', async () => {
@@ -320,7 +322,12 @@ describe('FilesController', () => {
 
       await controller.searchFiles('/tmp/worktree');
 
-      expect(searchFiles).toHaveBeenCalledWith('/tmp/worktree', '', undefined);
+      expect(searchFiles).toHaveBeenCalledWith(
+        '/tmp/worktree',
+        '',
+        undefined,
+        expect.any(AbortSignal),
+      );
     });
   });
 
@@ -613,5 +620,28 @@ describe('FilesController', () => {
         controller.deleteEntry('/tmp/worktree', 'missing.ts'),
       ).rejects.toThrow(BadRequestException);
     });
+  });
+});
+
+describe('file-search HTTP cancellation', () => {
+  it('aborts actual service work and removes the response close listener', async () => {
+    let signal!: AbortSignal;
+    const service = {
+      searchFiles: jest.fn((_path, _query, _limit, abort) => {
+        signal = abort;
+        return new Promise((_resolve, reject) =>
+          abort.addEventListener('abort', () => reject(abort.reason)),
+        );
+      }),
+    };
+    const controller = new FilesController(service as any, {} as any);
+    const response = new EventEmitter();
+    const work = controller.searchFiles('/tmp', 'file', '100', response as any);
+    const rejected = expect(work).rejects.toMatchObject({ status: 499 });
+    await Promise.resolve();
+    response.emit('close');
+    await rejected;
+    expect(signal.aborted).toBe(true);
+    expect(response.listenerCount('close')).toBe(0);
   });
 });

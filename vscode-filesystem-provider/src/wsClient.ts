@@ -2,282 +2,152 @@ import {
   FileChangeType,
   FileChangeEvent,
   EventEmitter,
-  Event as VsCodeEvent,
-  Disposable
-} from 'vscode';
-import { toWorkspaceVfsUri } from './workspaceUri';
+  Disposable,
+} from "vscode";
+import { toWorkspaceVfsUri } from "./workspaceUri";
 
-type BrowserLocationLike = {
-  protocol?: string;
-  host?: string;
-};
-
-type BrowserWebSocketCtor = new (url: string) => WebSocket;
-
-function getBrowserLocation(): BrowserLocationLike | undefined {
-  return (globalThis as typeof globalThis & { location?: BrowserLocationLike }).location;
-}
-
-function getWebSocketCtor(): BrowserWebSocketCtor {
-  return (globalThis as typeof globalThis & { WebSocket: BrowserWebSocketCtor }).WebSocket;
-}
-
-/**
- * BackendFileChangeEvent - File change event from backend FileChangeGateway
- *
- * Phase 08 (FileChangeGateway) broadcasts events via WebSocket:
- * Endpoint: ws://localhost:3001/ws/file-changes/:worktreeId
- * Event format: { type: 'add'|'change'|'unlink', path: string, worktreeId: string }
- */
-interface BackendFileChangeEvent {
-  type?: 'add' | 'change' | 'unlink' | 'file-change';
-  event?: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir';
-  path: string;
-  worktreePath: string;
-}
-
-function mapBackendEventType(
-  backendEvent: BackendFileChangeEvent,
-): FileChangeType {
-  const eventType = backendEvent.type === 'file-change' ? backendEvent.event : backendEvent.type;
-
-  switch (eventType) {
-    case 'add':
-      return FileChangeType.Created;
-    case 'change':
-      return FileChangeType.Changed;
-    case 'unlink':
-      return FileChangeType.Deleted;
-    case 'addDir':
-      return FileChangeType.Created;
-    case 'unlinkDir':
-      return FileChangeType.Deleted;
-    default:
-      console.warn(`Unknown backend event type: ${backendEvent.type}`, backendEvent);
-      return FileChangeType.Changed;
-  }
-}
-
-/**
- * WebSocketClient - WebSocket connection manager for FileChangeGateway
- *
- * Connects to Phase 08 backend WebSocket endpoint for real-time file sync.
- * Maps backend file change events to VS Code FileChangeEvent format.
- *
- * Flow:
- * 1. Extension activates → WebSocketClient.connect()
- * 2. Backend file changes → WebSocket message
- * 3. handleMessage() → Map to VS Code FileChangeEvent
- * 4. Fire fileChangeEmitter → FileSystemProvider._onDidChangeFile
- * 5. VS Code invalidates cache → Refetch file
- *
- * Reconnection:
- * - Auto-reconnect on WebSocket close with exponential backoff
- * - Max 5 attempts: 1s → 2s → 4s → 8s → 16s
- *
- * Browser-compatible:
- * - Uses native WebSocket API (no Node.js net module)
- * - Works in VS Code Web (WebWorker environment)
- */
+/** One socket per editor. Connect and retry budgets also cover sockets stuck CONNECTING. */
 export class WebSocketClient implements Disposable {
-  private worktreePath: string;
-  private baseUrl: string;
   private ws: WebSocket | null = null;
+  private stopped = true;
+  private attempts = 0;
+  private retryTimer?: ReturnType<typeof setTimeout>;
+  private connectTimer?: ReturnType<typeof setTimeout>;
+  private fileChanges = new EventEmitter<FileChangeEvent[]>();
+  private status = new EventEmitter<"connected" | "error">();
+  private rawChanges = new EventEmitter<
+    Array<{ event: string; path: string }>
+  >();
+  readonly onDidChangeFile = this.fileChanges.event;
+  readonly onStatus = this.status.event;
+  readonly onRawChanges = this.rawChanges.event;
 
-  /**
-   * EventEmitter for file change notifications
-   *
-   * Fires when backend sends file change events via WebSocket
-   */
-  private fileChangeEmitter = new EventEmitter<FileChangeEvent[]>();
+  constructor(
+    private worktreePath: string,
+    private baseUrl = `${globalThis.location?.protocol === "https:" ? "wss:" : "ws:"}//${globalThis.location?.host ?? "localhost:3000"}`,
+  ) {}
 
-  /**
-   * Public event for FileSystemProvider to subscribe
-   *
-   * FileSystemProvider wires this to its _onDidChangeFile emitter
-   */
-  onDidChangeFile: VsCodeEvent<FileChangeEvent[]> = this.fileChangeEmitter.event;
-
-  /**
-   * Reconnection tracking
-   */
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private baseReconnectDelay = 1000; // 1 second
-  private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  /**
-   * Create WebSocketClient instance
-   *
-   * @param worktreeId - Worktree identifier (matches backend subscription)
-   * @param baseUrl - WebSocket base URL (default: ws://localhost:3001)
-   *                   Note: Backend uses /ws/file-changes/:worktreeId path
-   */
-  constructor(worktreePath: string, baseUrl: string = (() => {
-    const browserLocation = getBrowserLocation();
-    const protocol = browserLocation?.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = browserLocation?.host ?? 'localhost:3000';
-    return `${protocol}//${host}`;
-  })()) {
-    this.worktreePath = worktreePath;
-    this.baseUrl = baseUrl;
-  }
-
-  /**
-   * Connect to backend FileChangeGateway WebSocket
-   *
-   * URL format: ${baseUrl}/ws/file-changes/${worktreeId}
-   *
-   * Sets up message handler for file change events
-   * Auto-reconnects on close with exponential backoff
-   */
   connect(): void {
-    // Build WebSocket URL
-    const url = `${this.baseUrl}/file-changes?worktreePath=${encodeURIComponent(this.worktreePath)}`;
-
-    console.log(`WebSocketClient connecting to: ${url}`);
-
+    if (this.ws || this.retryTimer) return;
+    this.stopped = false;
+    let socket: WebSocket;
     try {
-      // Create WebSocket connection
-      const WebSocketCtor = getWebSocketCtor();
-      this.ws = new WebSocketCtor(url);
-
-      // Handle incoming messages (file change events)
-      this.ws.onmessage = (event: MessageEvent) => {
-        this.handleMessage(event);
-      };
-
-      // Handle WebSocket errors
-      this.ws.onerror = (error: Event) => {
-        console.error('WebSocket error:', error);
-      };
-
-      // Handle WebSocket close (trigger reconnection)
-      this.ws.onclose = () => {
-        this.handleClose();
-      };
-
-      // Handle WebSocket open (connection established)
-      this.ws.onopen = () => {
-        this.reconnectAttempts = 0; // Reset on successful connection
-        console.log('WebSocket connected successfully');
-      };
-    } catch (error) {
-      console.error('WebSocket connection failed:', error);
-      // Trigger reconnection attempt
-      this.handleClose();
+      socket = new WebSocket(
+        `${this.baseUrl}/file-changes?worktreePath=${encodeURIComponent(this.worktreePath)}`,
+      );
+    } catch {
+      this.scheduleReconnect();
+      return;
     }
-  }
-
-  /**
-   * Handle incoming WebSocket message
-   *
-   * Parses backend FileChangeEvent and maps to VS Code format:
-   * - Backend 'add' → FileChangeType.Added (1)
-   * - Backend 'change' → FileChangeType.Updated (0)
-   * - Backend 'unlink' → FileChangeType.Deleted (2)
-   *
-   * Fires fileChangeEmitter for FileSystemProvider to handle
-   *
-   * @param event - WebSocket MessageEvent with JSON data
-   */
-  private handleMessage(event: MessageEvent): void {
-    try {
-      // Parse backend event data
-      // Backend sends array of BackendFileChangeEvent
-      const payload = JSON.parse(event.data);
-      const backendEvents: BackendFileChangeEvent[] = Array.isArray(payload) ? payload : [payload];
-
-      // Map each backend event to VS Code FileChangeEvent
-      const vsCodeEvents: FileChangeEvent[] = backendEvents.map(backendEvent => {
-        // Build VS Code URI for the changed file
-        const uri = toWorkspaceVfsUri(backendEvent.worktreePath, backendEvent.path);
-
-        return { type: mapBackendEventType(backendEvent), uri };
-      });
-
-      // Fire emitter to notify FileSystemProvider
-      if (vsCodeEvents.length > 0) {
-        this.fileChangeEmitter.fire(vsCodeEvents);
+    this.ws = socket;
+    this.connectTimer = setTimeout(() => this.closed(socket), 4000);
+    socket.onopen = () => {
+      if (this.ws !== socket || this.stopped) return;
+      clearTimeout(this.connectTimer);
+      // Do not reset attempts on open: an accept/close loop must also exhaust.
+      this.fileChanges.fire([
+        {
+          type: FileChangeType.Changed,
+          uri: toWorkspaceVfsUri(this.worktreePath),
+        },
+      ]);
+      this.status.fire("connected");
+    };
+    socket.onmessage = (event) => {
+      if (this.ws !== socket || this.stopped) return;
+      try {
+        const parsed = JSON.parse(event.data);
+        const payload = Array.isArray(parsed) ? parsed : [parsed];
+        const events: FileChangeEvent[] = [];
+        const raw: Array<{ event: string; path: string }> = [];
+        for (const item of payload.slice(0, 1024)) {
+          if (item.worktreePath !== this.worktreePath) continue;
+          if (item.type === "resync") {
+            events.push({
+              type: FileChangeType.Changed,
+              uri: toWorkspaceVfsUri(this.worktreePath),
+            });
+            raw.push({ event: "resync", path: "" });
+            continue;
+          }
+          const kind = item.event || item.type;
+          if (kind === "git") {
+            raw.push({ event: "git", path: "" });
+            continue;
+          }
+          if (
+            !["add", "change", "unlink", "addDir", "unlinkDir"].includes(
+              kind,
+            ) ||
+            typeof item.path !== "string"
+          )
+            continue;
+          events.push({
+            type: kind.startsWith("unlink")
+              ? FileChangeType.Deleted
+              : kind.startsWith("add")
+                ? FileChangeType.Created
+                : FileChangeType.Changed,
+            uri: toWorkspaceVfsUri(this.worktreePath, item.path),
+          });
+          raw.push({ event: kind, path: item.path });
+        }
+        if (events.length) this.fileChanges.fire(events);
+        if (raw.length) this.rawChanges.fire(raw);
+      } catch (error) {
+        console.error("Invalid file-change payload", error);
       }
-    } catch (error) {
-      console.error('Failed to parse WebSocket message:', error);
-    }
+    };
+    socket.onerror = () => this.closed(socket);
+    socket.onclose = () => this.closed(socket);
   }
 
-  /**
-   * Handle WebSocket close
-   *
-   * Auto-reconnect with exponential backoff:
-   * - Attempt 1: 1s delay
-   * - Attempt 2: 2s delay
-   * - Attempt 3: 4s delay
-   * - Attempt 4: 8s delay
-   * - Attempt 5: 16s delay
-   * - After 5: Stop, log error
-   */
-  private handleClose(): void {
-    // Clear existing WebSocket reference
+  private closed(socket: WebSocket): void {
+    if (this.ws !== socket) return;
+    clearTimeout(this.connectTimer);
+    socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null;
     this.ws = null;
-
-    // Check reconnection limit
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      // Calculate exponential backoff delay
-      const delay = this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts);
-
-      console.log(`WebSocket closed. Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts})`);
-
-      // Schedule reconnection
-      this.reconnectTimeout = setTimeout(() => {
-        this.connect();
-      }, delay);
-
-      this.reconnectAttempts++;
-    } else {
-      console.error('WebSocket max reconnection attempts reached. File sync disabled.');
-    }
+    socket.close();
+    this.scheduleReconnect();
   }
 
-  /**
-   * Disconnect WebSocket and cleanup
-   *
-   * Called when extension deactivates or worktree changes
-   */
+  private scheduleReconnect(): void {
+    if (this.stopped || this.retryTimer) return;
+    if (this.attempts >= 4) {
+      this.status.fire("error");
+      return;
+    }
+    const delay = 500 * 2 ** this.attempts++;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      this.connect();
+    }, delay);
+  }
+
+  retry(): void {
+    this.disconnect();
+    this.attempts = 0;
+    this.connect();
+  }
   disconnect(): void {
-    // Clear any pending reconnection
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
+    this.stopped = true;
+    clearTimeout(this.retryTimer);
+    clearTimeout(this.connectTimer);
+    this.retryTimer = undefined;
+    const socket = this.ws;
+    this.ws = null;
+    if (socket) {
+      socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null;
+      socket.close();
     }
-
-    // Reset reconnection attempts
-    this.reconnectAttempts = 0;
-
-    // Close WebSocket if connected
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-
-    console.log('WebSocket disconnected');
   }
-
-  /**
-   * Check if WebSocket is connected
-   *
-   * @returns true if WebSocket is open and ready
-   */
   isConnected(): boolean {
-    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+    return this.ws?.readyState === 1;
   }
-
-  /**
-   * Dispose WebSocket client resources
-   *
-   * Implements Disposable interface for cleanup
-   */
   dispose(): void {
     this.disconnect();
-    this.fileChangeEmitter.dispose();
+    this.fileChanges.dispose();
+    this.status.dispose();
+    this.rawChanges.dispose();
   }
 }

@@ -51,3 +51,22 @@ pnpm report        # open the last HTML report
 
 `.github/workflows/e2e.yml` runs this on pushes to `main`/`master` and on pull
 requests. Reports, traces and videos are uploaded as artifacts.
+
+### VS Code lifecycle regressions
+
+`node node_modules/@playwright/test/cli.js test --config vscode.config.ts` runs
+against existing preview servers (frontend `4205`, backend `11111`). Override
+`VSCODE_E2E_FRONTEND_URL` and `VSCODE_E2E_BACKEND_URL` when using other ports.
+The repository screenshot command can start isolated localhost previews using
+`--frontend-url` and `--backend-url`; it binds runtime assets to this checkout.
+This suite creates a temporary filesystem fixture and does not seed or reset the
+application database. It verifies full extension readiness, unsaved document
+retention during iframe moves, live theme updates, and missing-asset recovery.
+
+The repeatable service load harness is
+`node scripts/benchmark-vscode-responsiveness.cjs BASELINE_DIST CURRENT_DIST OUTPUT.json`
+from the repository root. Build each revision's backend into its own directory
+first. It uses a separate HTTP client process, temporary repositories, 10k/50k/100k
+candidate sets, six editors, directory expansion, 5,000 edits, and 401 branches.
+The measured budgets and validation limits are recorded in
+`docs/performance/vscode-responsiveness.json`.

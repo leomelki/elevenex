@@ -1,0 +1,65 @@
+<div #container class="relative h-full w-full overflow-hidden bg-background">
+  <div
+    class="vscode-loader absolute inset-0 z-30 overflow-hidden transition-opacity duration-300"
+    [class.opacity-100]="isLoading() || !!startupIssue()"
+    [class.opacity-0]="!isLoading() && !startupIssue()"
+    [class.pointer-events-none]="!isLoading() && !startupIssue()"
+    [attr.aria-hidden]="!isLoading() && !startupIssue()"
+  >
+    <div class="absolute inset-0 vscode-loader__mesh"></div>
+    <div class="absolute inset-0 vscode-loader__glow"></div>
+    <div
+      class="absolute left-1/2 top-1/2 h-[30rem] w-[30rem] -translate-x-1/2 -translate-y-1/2 rounded-full vscode-loader__halo"
+    ></div>
+
+    <div class="relative z-10 flex h-full items-center justify-center p-6">
+      <div
+        class="w-full max-w-sm rounded-[28px] border border-[color-mix(in_oklch,var(--border)_84%,var(--surface-tint)_12%)] bg-[color-mix(in_oklch,var(--background)_82%,var(--surface-tint)_10%)] px-7 py-8 shadow-[0_28px_90px_color-mix(in_oklch,var(--surface-shade)_18%,transparent)] backdrop-blur-2xl"
+      >
+        <div class="flex flex-col items-center text-center">
+          <div
+            class="relative mb-6 flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-[color-mix(in_oklch,var(--primary)_28%,var(--border))] bg-[color-mix(in_oklch,var(--background)_74%,var(--surface-tint))] shadow-[0_18px_45px_color-mix(in_oklch,var(--primary)_18%,transparent)]"
+          >
+            @if (isLoading()) {
+              <div class="vscode-loader__orb"></div>
+            }
+            @if (isLoading()) {
+              <div class="vscode-loader__orb vscode-loader__orb--delayed"></div>
+            }
+            <div
+              class="relative h-8 w-8 rounded-xl border border-[color-mix(in_oklch,var(--primary)_42%,var(--border))] bg-[linear-gradient(180deg,color-mix(in_oklch,var(--primary)_20%,var(--surface-tint)),color-mix(in_oklch,var(--primary)_32%,var(--background)))] shadow-inner shadow-[color-mix(in_oklch,var(--surface-tint)_70%,transparent)]"
+            ></div>
+          </div>
+
+          <div class="space-y-2">
+            <p class="text-[15px] font-semibold tracking-[-0.01em] text-foreground">
+              {{ startupIssue() ? 'VS Code needs attention' : 'Opening VS Code' }}
+            </p>
+            <p class="mx-auto max-w-[18rem] text-sm leading-6 text-muted-foreground">
+              {{ stageLabel() }}
+            </p>
+          </div>
+
+          <div
+            class="mt-6 flex items-center gap-2 rounded-full border border-[color-mix(in_oklch,var(--border)_82%,var(--surface-tint)_12%)] bg-[color-mix(in_oklch,var(--muted)_64%,var(--surface-tint)_12%)] px-3 py-2 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground"
+          >
+            @if (isLoading()) {
+              <span class="vscode-loader__pulse"></span>
+            }
+            <span>{{ startupIssue() ? 'Startup stopped' : 'Booting workspace' }}</span>
+          </div>
+
+          @if (startupIssue()) {
+            <p class="mt-4 text-xs leading-5 text-destructive">{{ startupIssue() }}</p>
+            <div class="mt-4 flex flex-wrap justify-center gap-2">
+              <button z-button (click)="retry()">Retry connection</button>
+              @if (canShowEditor()) {
+                <button z-button zType="outline" (click)="showEditor()">Show editor</button>
+              }
+            </div>
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

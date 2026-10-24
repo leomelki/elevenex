@@ -1,3 +1,5 @@
+import { yieldEditorWork } from '../files/editor-work.js';
+import { EditorBaselines } from './editor-baselines.js';
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
@@ -139,6 +141,58 @@ export class GitService {
   constructor(
     private readonly textAgentGenerationService: TextAgentGenerationService,
   ) {}
+
+  async getEditorStatus(
+    worktreePath: string,
+    signal?: AbortSignal,
+  ): Promise<FileStatus[]> {
+    const raw = await this.editorBaselines.status(worktreePath, signal);
+    const files: FileStatus[] = [];
+    let start = 0,
+      count = 0;
+    while (start < raw.length) {
+      signal?.throwIfAborted();
+      const end = raw.indexOf('\0', start);
+      if (end === -1) break;
+      const x = raw[start],
+        y = raw[start + 1];
+      const file = raw.slice(start + 3, end);
+      start = end + 1;
+      let oldPath: string | undefined;
+      if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
+        const oldEnd = raw.indexOf('\0', start);
+        oldPath = raw.slice(start, oldEnd);
+        start = oldEnd + 1;
+      }
+      if (['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'].includes(x + y))
+        files.push({ path: file, status: 'conflicted', staged: false });
+      else if (x === '?')
+        files.push({ path: file, status: 'untracked', staged: false });
+      else
+        for (const [code, staged] of [
+          [x, true],
+          [y, false],
+        ] as const) {
+          if (!code || code === ' ' || code === '!') continue;
+          const status =
+            code === 'A'
+              ? 'added'
+              : code === 'D'
+                ? 'deleted'
+                : code === 'R' || code === 'C'
+                  ? 'renamed'
+                  : 'modified';
+          files.push({
+            path: file,
+            status,
+            staged,
+            ...(oldPath ? { oldPath } : {}),
+          });
+        }
+      if (++count % 2048 === 0) await yieldEditorWork();
+    }
+    return files;
+  }
 
   async getStatus(worktreePath: string): Promise<FileStatus[]> {
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
@@ -694,15 +748,25 @@ export class GitService {
     return git.diff(args);
   }
 
-  async show(worktreePath: string, ref: string, path: string): Promise<string> {
-    const git: SimpleGit = worktreeSimpleGit(worktreePath);
+  private readonly editorBaselines = new EditorBaselines();
 
+  async show(
+    worktreePath: string,
+    ref: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
     if (!isValidGitRef(ref)) {
       throw new BadRequestException(`Invalid git ref: ${ref}`);
     }
 
     try {
-      const content = await git.show([`${ref}:${path}`]);
+      const content = await this.editorBaselines.read(
+        worktreePath,
+        ref,
+        path,
+        signal,
+      );
       return content;
     } catch (error: any) {
       throw new Error(

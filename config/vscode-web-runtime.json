@@ -1,4 +1,5 @@
 {
+  "brotliQuality": 5,
   "rootFiles": [
     "manifest.json",
     "package.json",
@@ -6,9 +7,5 @@
     "code-192.png",
     "code-512.png"
   ],
-  "directories": [
-    "out",
-    "node_modules",
-    "extensions"
-  ]
+  "directories": ["out", "node_modules", "extensions"]
 }

@@ -1,4 +1,5 @@
-import { Uri, FileType, FileSystemError } from 'vscode';
+import { RequestPool } from "./requestPool";
+import { Uri, FileType, FileSystemError } from "vscode";
 import {
   BackendFileSearchResult,
   BackendFileStat,
@@ -6,101 +7,131 @@ import {
   BackendTextSearchOptions,
   BackendTextSearchResult,
   BackendTextSearchSummary,
-} from './types';
-import { toWorkspaceVfsUri } from './workspaceUri';
+} from "./types";
+import { toWorkspaceVfsUri } from "./workspaceUri";
 
 type BrowserLocationLike = {
   origin?: string;
 };
 
 function getBrowserLocation(): BrowserLocationLike | undefined {
-  return (globalThis as typeof globalThis & { location?: BrowserLocationLike }).location;
+  return (globalThis as typeof globalThis & { location?: BrowserLocationLike })
+    .location;
 }
 
 /**
  * BackendClient - REST API client for NestJS file operations
- * 
+ *
  * Connects to Phase 08 backend endpoints:
  * - GET /api/files/:worktreeId/stat?path=... → BackendFileStat
  * - GET /api/files/:worktreeId/read?path=... → ArrayBuffer
  * - GET /api/files/:worktreeId/list?path=... → BackendDirectoryEntry[]
  * - POST /api/files/:worktreeId/write → { path, content }
- * 
+ *
  * Uses native fetch() API (browser-compatible, no Node.js http module)
- * 
+ *
  * Error mapping:
  * - 404 → FileSystemError.FileNotFound
  * - 403 → FileSystemError.NoPermissions
  * - 500 → FileSystemError.Unavailable
  */
 export class BackendClient {
+  private requests = new RequestPool();
+  private fetch(input: string, init: RequestInit = {}): Promise<Response> {
+    return this.requests.fetch(input, {
+      ...init,
+      headers: { ...this.mutationHeaders(), ...init.headers },
+    });
+  }
+  cancelPending(): void {
+    this.requests.cancel();
+  }
+  dispose(): void {
+    this.requests.dispose();
+  }
   private baseUrl: string;
 
   /**
    * Create BackendClient instance
-   * 
+   *
    * @param baseUrl - Backend API base URL (default: http://localhost:3001/api/files)
    *                   Production: configurable via extension settings
    */
-  constructor(baseUrl: string = `${getBrowserLocation()?.origin ?? 'http://localhost:3000'}/api/worktrees`, private readonly taskId?: number) {
+  constructor(
+    baseUrl: string = `${getBrowserLocation()?.origin ?? "http://localhost:3000"}/api/worktrees`,
+    private readonly taskId?: number,
+  ) {
     this.baseUrl = baseUrl;
   }
 
-  private mutationHeaders(contentType = 'application/json'): Record<string, string> {
-    return { 'Content-Type': contentType, ...(this.taskId ? { 'x-elevenex-task-id': String(this.taskId) } : {}) };
+  private mutationHeaders(
+    contentType = "application/json",
+  ): Record<string, string> {
+    return {
+      "Content-Type": contentType,
+      ...(this.taskId ? { "x-elevenex-task-id": String(this.taskId) } : {}),
+    };
   }
 
   /**
    * Build URL for backend endpoint with query parameters
-   * 
+   *
    * @param worktreeId - Worktree identifier
    * @param path - File/directory path relative to worktree root
    * @param endpoint - Endpoint name (stat, read, list, write)
    * @returns Full URL with encoded query params
    */
-  private buildUrl(worktreePath: string, path: string, endpoint: 'stat' | 'files' | 'raw'): string {
+  private buildUrl(
+    worktreePath: string,
+    path: string,
+    endpoint: "stat" | "files" | "raw",
+  ): string {
     const encodedWorktreePath = encodeURIComponent(worktreePath);
     const encodedPath = path
-      .split('/')
+      .split("/")
       .filter(Boolean)
-      .map(segment => encodeURIComponent(segment))
-      .join('/');
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
 
-    const suffix = encodedPath ? `/${encodedPath}` : '';
+    const suffix = encodedPath ? `/${encodedPath}` : "";
     return `${this.baseUrl}/${encodedWorktreePath}/${endpoint}${suffix}`;
   }
 
-  private buildQueryUrl(worktreePath: string, endpoint: 'stat' | 'file' | 'raw', path: string): string {
+  private buildQueryUrl(
+    worktreePath: string,
+    endpoint: "stat" | "file" | "raw",
+    path: string,
+  ): string {
     const encodedWorktreePath = encodeURIComponent(worktreePath);
     const params = new URLSearchParams();
     if (path) {
-      params.set('path', path);
+      params.set("path", path);
     }
     const query = params.toString();
-    return `${this.baseUrl}/${encodedWorktreePath}/${endpoint}${query ? `?${query}` : ''}`;
+    return `${this.baseUrl}/${encodedWorktreePath}/${endpoint}${query ? `?${query}` : ""}`;
   }
 
   private buildMutationUrl(
     worktreePath: string,
-    endpoint: 'directories' | 'files',
+    endpoint: "directories" | "files",
     path: string,
     params?: Record<string, string>,
   ): string {
     const encodedWorktreePath = encodeURIComponent(worktreePath);
     const encodedPath = path
-      .split('/')
+      .split("/")
       .filter(Boolean)
-      .map(segment => encodeURIComponent(segment))
-      .join('/');
-    const query = params ? new URLSearchParams(params).toString() : '';
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
+    const query = params ? new URLSearchParams(params).toString() : "";
 
-    return `${this.baseUrl}/${encodedWorktreePath}/${endpoint}/${encodedPath}${query ? `?${query}` : ''}`;
+    return `${this.baseUrl}/${encodedWorktreePath}/${endpoint}/${encodedPath}${query ? `?${query}` : ""}`;
   }
 
   private assertSafePath(worktreePath: string, path: string): Uri {
     const uri = toWorkspaceVfsUri(worktreePath, path);
 
-    if (path.includes('..')) {
+    if (path.includes("..")) {
       throw FileSystemError.NoPermissions(uri);
     }
 
@@ -109,12 +140,12 @@ export class BackendClient {
 
   /**
    * Map HTTP status codes to VS Code FileSystemError
-   * 
+   *
    * VS Code UI displays FileSystemError appropriately:
    * - FileNotFound: Shows "File not found" dialog
    * - NoPermissions: Shows permission denied message
    * - Unavailable: Shows connection error
-   * 
+   *
    * @param status - HTTP response status code
    * @param uri - VS Code URI for error context
    * @returns FileSystemError instance
@@ -132,56 +163,59 @@ export class BackendClient {
 
   /**
    * Get file/directory metadata
-   * 
+   *
    * Backend endpoint: GET /api/files/:worktreeId/stat?path=...
-   * 
+   *
    * @param worktreeId - Worktree identifier
    * @param path - File/directory path
    * @returns FileStat with type, ctime, mtime, size
    * @throws FileSystemError if backend returns error
    */
-  async stat(worktreePath: string, path: string): Promise<{ type: FileType; ctime: number; mtime: number; size: number }> {
-    const url = this.buildQueryUrl(worktreePath, 'stat', path);
+  async stat(
+    worktreePath: string,
+    path: string,
+  ): Promise<{ type: FileType; ctime: number; mtime: number; size: number }> {
+    const url = this.buildQueryUrl(worktreePath, "stat", path);
     const uri = toWorkspaceVfsUri(worktreePath, path);
 
-    const response = await fetch(url);
+    const response = await this.fetch(url);
 
     if (!response.ok) {
       throw this.mapHttpError(response.status, uri);
     }
 
-    const data = await response.json() as BackendFileStat;
+    const data = (await response.json()) as BackendFileStat;
 
     // Map backend type string to VS Code FileType enum
-    const type = data.type === 'file' ? FileType.File : FileType.Directory;
+    const type = data.type === "file" ? FileType.File : FileType.Directory;
 
     return {
       type,
       ctime: data.ctime,
       mtime: data.mtime,
-      size: data.size
+      size: data.size,
     };
   }
 
   /**
    * Read file content as Uint8Array
-   * 
+   *
    * Backend endpoint: GET /api/worktrees/:worktreePath/raw/:path
    * Response: ArrayBuffer (binary file content)
-   * 
+   *
    * @param worktreeId - Worktree identifier
    * @param path - File path
    * @returns Uint8Array with file content
    * @throws FileSystemError if backend returns error
    */
   async readFile(worktreePath: string, path: string): Promise<Uint8Array> {
-    const url = this.buildUrl(worktreePath, path, 'raw');
+    const url = this.buildUrl(worktreePath, path, "raw");
     const uri = toWorkspaceVfsUri(worktreePath, path);
 
     // Read every file as bytes: decoding binary content as UTF-8 corrupts it.
     // The raw endpoint is cacheable for image embeds, but editor reads must
     // reflect current disk contents after saves and external changes.
-    const response = await fetch(url, { cache: 'no-store' });
+    const response = await this.fetch(url, { cache: "no-store" });
 
     if (!response.ok) {
       throw this.mapHttpError(response.status, uri);
@@ -192,52 +226,55 @@ export class BackendClient {
 
   /**
    * List directory contents
-   * 
+   *
    * Backend endpoint: GET /api/files/:worktreeId/list?path=...
    * Response: BackendDirectoryEntry[] (array of {name, type})
-   * 
+   *
    * @param worktreeId - Worktree identifier
    * @param path - Directory path
    * @returns Array of [name, FileType] tuples
    * @throws FileSystemError if backend returns error
    */
-  async readDirectory(worktreePath: string, path: string): Promise<[string, FileType][]> {
+  async readDirectory(
+    worktreePath: string,
+    path: string,
+  ): Promise<[string, FileType][]> {
     const encodedWorktreePath = encodeURIComponent(worktreePath);
-    const url = `${this.baseUrl}/${encodedWorktreePath}/files${path ? `?dir=${encodeURIComponent(path)}` : ''}`;
+    const url = `${this.baseUrl}/${encodedWorktreePath}/files${path ? `?dir=${encodeURIComponent(path)}` : ""}`;
     const uri = toWorkspaceVfsUri(worktreePath, path);
 
-    const response = await fetch(url);
+    const response = await this.fetch(url);
 
     if (!response.ok) {
       throw this.mapHttpError(response.status, uri);
     }
 
-    const data = await response.json() as Array<{
+    const data = (await response.json()) as Array<{
       label: string;
-      data: { type: 'file' | 'directory' };
+      data: { type: "file" | "directory" };
     }>;
 
     // Map backend entries to [name, FileType] tuples
-    return data.map(entry => [
+    return data.map((entry) => [
       entry.label,
-      entry.data.type === 'file' ? FileType.File : FileType.Directory
+      entry.data.type === "file" ? FileType.File : FileType.Directory,
     ]);
   }
 
   async searchFiles(
     worktreePath: string,
-    query: string = '',
+    query: string = "",
     limit: number = 100,
     abortSignal?: AbortSignal,
   ): Promise<BackendFileSearchResult[]> {
     const encodedWorktreePath = encodeURIComponent(worktreePath);
     const params = new URLSearchParams();
     if (query) {
-      params.set('query', query);
+      params.set("query", query);
     }
-    params.set('limit', String(limit));
+    params.set("limit", String(limit));
 
-    const response = await fetch(
+    const response = await this.fetch(
       `${this.baseUrl}/${encodedWorktreePath}/file-search?${params.toString()}`,
       { signal: abortSignal },
     );
@@ -249,29 +286,31 @@ export class BackendClient {
     return response.json() as Promise<BackendFileSearchResult[]>;
   }
 
-  private buildTextSearchParams(options: BackendTextSearchOptions): URLSearchParams {
+  private buildTextSearchParams(
+    options: BackendTextSearchOptions,
+  ): URLSearchParams {
     const params = new URLSearchParams();
-    params.set('query', options.query);
+    params.set("query", options.query);
     if (options.isRegExp !== undefined) {
-      params.set('isRegExp', String(options.isRegExp));
+      params.set("isRegExp", String(options.isRegExp));
     }
     if (options.isCaseSensitive !== undefined) {
-      params.set('isCaseSensitive', String(options.isCaseSensitive));
+      params.set("isCaseSensitive", String(options.isCaseSensitive));
     }
     if (options.isWordMatch !== undefined) {
-      params.set('isWordMatch', String(options.isWordMatch));
+      params.set("isWordMatch", String(options.isWordMatch));
     }
     if (options.useIgnoreFiles !== undefined) {
-      params.set('useIgnoreFiles', String(options.useIgnoreFiles));
+      params.set("useIgnoreFiles", String(options.useIgnoreFiles));
     }
     if (options.maxResults !== undefined) {
-      params.set('maxResults', String(options.maxResults));
+      params.set("maxResults", String(options.maxResults));
     }
     for (const include of options.includes ?? []) {
-      params.append('include', include);
+      params.append("include", include);
     }
     for (const exclude of options.excludes ?? []) {
-      params.append('exclude', exclude);
+      params.append("exclude", exclude);
     }
 
     return params;
@@ -285,7 +324,7 @@ export class BackendClient {
     const encodedWorktreePath = encodeURIComponent(worktreePath);
     const params = this.buildTextSearchParams(options);
 
-    const response = await fetch(
+    const response = await this.fetch(
       `${this.baseUrl}/${encodedWorktreePath}/text-search?${params.toString()}`,
       { signal: abortSignal },
     );
@@ -313,9 +352,9 @@ export class BackendClient {
     const encodedWorktreePath = encodeURIComponent(worktreePath);
     const params = this.buildTextSearchParams(options);
 
-    const response = await fetch(
+    const response = await this.fetch(
       `${this.baseUrl}/${encodedWorktreePath}/text-search/stream?${params.toString()}`,
-      { signal: abortSignal, headers: { Accept: 'application/x-ndjson' } },
+      { signal: abortSignal, headers: { Accept: "application/x-ndjson" } },
     );
 
     if (!response.ok) {
@@ -328,13 +367,14 @@ export class BackendClient {
       onResults(results);
       return {
         limitHit:
-          options.maxResults !== undefined && results.length >= options.maxResults,
+          options.maxResults !== undefined &&
+          results.length >= options.maxResults,
       };
     }
 
     const reader = body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '';
+    let buffer = "";
     let limitHit = false;
 
     const handleLine = (line: string): void => {
@@ -350,20 +390,20 @@ export class BackendClient {
         return;
       }
 
-      if (message?.type === 'results' && Array.isArray(message.results)) {
+      if (message?.type === "results" && Array.isArray(message.results)) {
         if (message.results.length > 0) {
           onResults(message.results as BackendTextSearchResult[]);
         }
         return;
       }
 
-      if (message?.type === 'done') {
+      if (message?.type === "done") {
         limitHit = Boolean(message.limitHit);
         return;
       }
 
-      if (message?.type === 'error') {
-        throw new Error(String(message.message ?? 'Text search failed'));
+      if (message?.type === "error") {
+        throw new Error(String(message.message ?? "Text search failed"));
       }
     };
 
@@ -376,12 +416,12 @@ export class BackendClient {
 
         buffer += decoder.decode(value, { stream: true });
 
-        let newlineIndex = buffer.indexOf('\n');
+        let newlineIndex = buffer.indexOf("\n");
         while (newlineIndex !== -1) {
           const line = buffer.slice(0, newlineIndex);
           buffer = buffer.slice(newlineIndex + 1);
           handleLine(line);
-          newlineIndex = buffer.indexOf('\n');
+          newlineIndex = buffer.indexOf("\n");
         }
       }
 
@@ -397,30 +437,34 @@ export class BackendClient {
 
   /**
    * Write file content to backend
-   * 
+   *
    * Backend endpoint: PUT /api/worktrees/:worktreePath/raw?path=...
    * Request body: raw bytes, streamed to disk by the backend.
-   * 
+   *
    * Security:
    * - Extension-side path traversal check (prevents '..')
    * - Backend also validates (Phase 08 FILESYSTEM-07)
    * - Extension-side check prevents unnecessary network call
-   * 
+   *
    * @param worktreeId - Worktree identifier
    * @param path - File path
    * @param content - File content as Uint8Array
    * @throws FileSystemError.NoPermissions if path contains '..' (path traversal)
    * @throws FileSystemError if backend returns error
    */
-  async writeFile(worktreePath: string, path: string, content: Uint8Array): Promise<void> {
-    const url = this.buildQueryUrl(worktreePath, 'raw', path);
+  async writeFile(
+    worktreePath: string,
+    path: string,
+    content: Uint8Array,
+  ): Promise<void> {
+    const url = this.buildQueryUrl(worktreePath, "raw", path);
     const uri = this.assertSafePath(worktreePath, path);
 
-    const response = await fetch(url, {
-      method: 'PUT',
-      headers: this.mutationHeaders('application/octet-stream'),
+    const response = await this.fetch(url, {
+      method: "PUT",
+      headers: this.mutationHeaders("application/octet-stream"),
       // Copy only this view, including when VS Code supplies a sliced buffer.
-      body: new Uint8Array(content).buffer
+      body: new Uint8Array(content).buffer,
     });
 
     if (!response.ok) {
@@ -430,8 +474,11 @@ export class BackendClient {
 
   async createDirectory(worktreePath: string, path: string): Promise<void> {
     const uri = this.assertSafePath(worktreePath, path);
-    const url = this.buildMutationUrl(worktreePath, 'directories', path);
-    const response = await fetch(url, { method: 'POST', headers: this.mutationHeaders() });
+    const url = this.buildMutationUrl(worktreePath, "directories", path);
+    const response = await this.fetch(url, {
+      method: "POST",
+      headers: this.mutationHeaders(),
+    });
 
     if (!response.ok) {
       throw this.mapHttpError(response.status, uri);
@@ -446,11 +493,11 @@ export class BackendClient {
   ): Promise<void> {
     const uri = this.assertSafePath(worktreePath, oldPath);
     this.assertSafePath(worktreePath, newPath);
-    const url = this.buildMutationUrl(worktreePath, 'files', oldPath);
-    const response = await fetch(url, {
-      method: 'PATCH',
+    const url = this.buildMutationUrl(worktreePath, "files", oldPath);
+    const response = await this.fetch(url, {
+      method: "PATCH",
       headers: this.mutationHeaders(),
-      body: JSON.stringify({ newPath, overwrite })
+      body: JSON.stringify({ newPath, overwrite }),
     });
 
     if (!response.ok) {
@@ -458,12 +505,19 @@ export class BackendClient {
     }
   }
 
-  async deleteEntry(worktreePath: string, path: string, recursive: boolean): Promise<void> {
+  async deleteEntry(
+    worktreePath: string,
+    path: string,
+    recursive: boolean,
+  ): Promise<void> {
     const uri = this.assertSafePath(worktreePath, path);
-    const url = this.buildMutationUrl(worktreePath, 'files', path, {
-      recursive: recursive ? 'true' : 'false'
+    const url = this.buildMutationUrl(worktreePath, "files", path, {
+      recursive: recursive ? "true" : "false",
     });
-    const response = await fetch(url, { method: 'DELETE', headers: this.mutationHeaders() });
+    const response = await this.fetch(url, {
+      method: "DELETE",
+      headers: this.mutationHeaders(),
+    });
 
     if (!response.ok) {
       throw this.mapHttpError(response.status, uri);

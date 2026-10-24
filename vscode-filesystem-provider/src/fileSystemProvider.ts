@@ -8,35 +8,36 @@ import {
   Event,
   EventEmitter,
   FileChangeEvent,
-  FileChangeType
-} from 'vscode';
-import { BackendClient } from './backendClient';
-import { WebSocketClient } from './wsClient';
-import { parseUri, isValidWorkspaceVfsUri } from './uriParser';
+  FileChangeType,
+} from "vscode";
+import { BackendClient } from "./backendClient";
+import { WebSocketClient } from "./wsClient";
+import { parseUri, isValidWorkspaceVfsUri } from "./uriParser";
+import { compileWatchExclude, watchIncludes } from "./watchRules";
 
 /**
  * WorkspaceVfsProvider - FileSystemProvider implementation for VS Code Web
- * 
+ *
  * Implements VS Code FileSystemProvider interface to provide virtual file system
  * backed by NestJS backend REST API.
- * 
+ *
  * URI scheme: workspace-vfs://worktreeId/path
  * - workspace-vfs: Custom scheme registered with VS Code
  * - worktreeId: Authority component (worktree identifier)
  * - path: File/directory path relative to worktree root
- * 
+ *
  * Read operations (Plan 01):
  * - stat() → BackendClient.stat()
  * - readFile() → BackendClient.readFile()
  * - readDirectory() → BackendClient.readDirectory()
- * 
+ *
  * Write operations (Plan 01):
  * - writeFile() → BackendClient.writeFile()
- * 
+ *
  * Real-time sync (Plan 02):
  * - watch() stub (returns Disposable, actual watching via WebSocket)
  * - onDidChangeFile EventEmitter (fires when backend file changes)
- * 
+ *
  * Security:
  * - URI scheme validation (workspace-vfs only)
  * - Backend validates path traversal (Phase 08 FILESYSTEM-07)
@@ -45,10 +46,118 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
   private backendClient: BackendClient;
   private worktreeId: string;
   private wsClient: WebSocketClient | null = null;
+  private socketSubscription?: Disposable;
+  private watches = new Set<{
+    uri: Uri;
+    path: string;
+    recursive: boolean;
+    excludes: RegExp[];
+  }>();
+  private inFlight = new Map<string, Promise<unknown>>();
+  private generation = 0;
+  private inFlightPaths = new Map<string, { kind: string; path: string }>();
+  private recentReads = new Map<string, Uri>();
+
+  private coalesce<T>(
+    kind: string,
+    uri: Uri,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    const key = `${this.generation}:${kind}:${uri.toString()}`;
+    const current = this.inFlight.get(key);
+    if (current) return current as Promise<T>;
+    if (this.inFlight.size >= 128)
+      return Promise.reject(
+        FileSystemError.Unavailable("The editor is busy. Retry shortly."),
+      );
+    const version = this.generation;
+    const promise = work()
+      .then((value) => {
+        // Return current disk metadata after an event, never an obsolete result.
+        if (version !== this.generation || this.inFlight.get(key) !== promise)
+          throw FileSystemError.Unavailable(
+            "Workspace changed. Retry the operation.",
+          );
+        return value;
+      })
+      .finally(() => {
+        if (this.inFlight.get(key) === promise) {
+          this.inFlight.delete(key);
+          this.inFlightPaths.delete(key);
+        }
+      });
+    this.inFlight.set(key, promise);
+    this.inFlightPaths.set(key, {
+      kind,
+      path: parseUri(uri, this.worktreeId).path,
+    });
+    return promise;
+  }
+
+  private invalidateChanges(changes: FileChangeEvent[]): void {
+    const paths = changes.map(
+      (change) => parseUri(change.uri, this.worktreeId).path,
+    );
+    for (const [key, request] of this.inFlightPaths) {
+      const affected = paths.some(
+        (changed) =>
+          changed === request.path ||
+          request.path.startsWith(`${changed}/`) ||
+          (request.kind === "list" &&
+            changed.slice(0, Math.max(0, changed.lastIndexOf("/"))) ===
+              request.path),
+      );
+      if (affected) {
+        this.inFlight.delete(key);
+        this.inFlightPaths.delete(key);
+      }
+    }
+  }
+
+  resynchronize(): void {
+    this.generation++;
+    const changes = [...this.watches].map((watch) => ({
+      type: FileChangeType.Changed,
+      uri: watch.uri,
+    }));
+    for (const uri of this.recentReads.values())
+      changes.push({ type: FileChangeType.Changed, uri });
+    if (changes.length) this._onDidChangeFile.fire(changes);
+  }
+
+  private acceptExternalChanges(changes: FileChangeEvent[]): void {
+    this.invalidateChanges(changes);
+    const notifications = new Map<string, FileChangeEvent>();
+    for (const change of changes) {
+      const { path } = parseUri(change.uri, this.worktreeId);
+      if (!path) {
+        this.resynchronize();
+        continue;
+      }
+      for (const watch of this.watches) {
+        if (!watchIncludes(watch.path, path, watch.recursive, watch.excludes))
+          continue;
+        notifications.set(change.uri.toString(), change);
+        // Native watching cannot always distinguish a newly created file from
+        // a modification. Refresh its parent too, covering rename/delete pairs.
+        const parent = change.uri.with({
+          path:
+            change.uri.path.slice(0, change.uri.path.lastIndexOf("/")) || "/",
+        });
+        notifications.set(parent.toString(), {
+          type: FileChangeType.Changed,
+          uri: parent,
+        });
+        break;
+      }
+    }
+    if (notifications.size)
+      this._onDidChangeFile.fire([...notifications.values()]);
+  }
 
   /**
    * EventEmitter for file change notifications
-   * 
+   *
    * Plan 02: WebSocket client will fire events from backend FileChangeGateway
    * Format: FileChangeEvent[] with type (Updated/Added/Deleted) and uri
    */
@@ -56,23 +165,28 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
 
   /**
    * Public event for VS Code to subscribe to file changes
-   * 
+   *
    * VS Code invalidates cache and refetches when this event fires
    */
   onDidChangeFile: Event<FileChangeEvent[]> = this._onDidChangeFile.event;
 
   private emitChanges(changes: FileChangeEvent[]): void {
+    this.invalidateChanges(changes);
     this._onDidChangeFile.fire(changes);
   }
 
   /**
    * Create WorkspaceVfsProvider instance
-   * 
+   *
    * @param backendClient - Backend REST API client
    * @param worktreeId - Worktree identifier (from extension context)
    * @param wsClient - WebSocket client for real-time file sync (optional for Plan 02)
    */
-  constructor(backendClient: BackendClient, worktreeId: string, wsClient?: WebSocketClient) {
+  constructor(
+    backendClient: BackendClient,
+    worktreeId: string,
+    wsClient?: WebSocketClient,
+  ) {
     this.backendClient = backendClient;
     this.worktreeId = worktreeId;
     this.wsClient = wsClient ?? null;
@@ -80,21 +194,21 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
     // Wire WebSocket client onDidChangeFile to provider's _onDidChangeFile
     // Backend file changes → WebSocket → provider emitter → VS Code cache invalidation
     if (this.wsClient) {
-      this.wsClient.onDidChangeFile((changes: FileChangeEvent[]) => {
-        this._onDidChangeFile.fire(changes);
-      });
+      this.socketSubscription = this.wsClient.onDidChangeFile((changes) =>
+        this.acceptExternalChanges(changes),
+      );
     }
   }
 
   /**
    * Get file/directory metadata
-   * 
+   *
    * FileSystemProvider interface method
    * Called by VS Code when:
    * - Opening file in editor
    * - Expanding directory in Explorer
    * - Checking file existence
-   * 
+   *
    * @param uri - VS Code URI with workspace-vfs scheme
    * @returns FileStat with type, ctime, mtime, size
    * @throws FileSystemError if URI invalid or backend error
@@ -110,7 +224,9 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
       const { worktreeId, path } = parseUri(uri, this.worktreeId);
 
       // Call backend stat endpoint
-      const stat = await this.backendClient.stat(worktreeId, path);
+      const stat = await this.coalesce("stat", uri, () =>
+        this.backendClient.stat(worktreeId, path),
+      );
 
       return stat;
     } catch (error) {
@@ -121,12 +237,12 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
 
   /**
    * Read file content
-   * 
+   *
    * FileSystemProvider interface method
    * Called by VS Code when:
    * - Opening file in editor (text files)
    * - Loading binary files (images, etc.)
-   * 
+   *
    * @param uri - VS Code URI with workspace-vfs scheme
    * @returns Uint8Array with file content
    * @throws FileSystemError if URI invalid or backend error
@@ -142,7 +258,12 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
       const { worktreeId, path } = parseUri(uri, this.worktreeId);
 
       // Call backend read endpoint
-      const content = await this.backendClient.readFile(worktreeId, path);
+      this.recentReads.set(uri.toString(), uri);
+      while (this.recentReads.size > 256)
+        this.recentReads.delete(this.recentReads.keys().next().value!);
+      const content = await this.coalesce("read", uri, () =>
+        this.backendClient.readFile(worktreeId, path),
+      );
 
       return content;
     } catch (error) {
@@ -153,12 +274,12 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
 
   /**
    * List directory contents
-   * 
+   *
    * FileSystemProvider interface method
    * Called by VS Code when:
    * - Expanding directory in Explorer
    * - Refreshing file tree
-   * 
+   *
    * @param uri - VS Code URI with workspace-vfs scheme
    * @returns Array of [name, FileType] tuples
    * @throws FileSystemError if URI invalid or backend error
@@ -174,7 +295,9 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
       const { worktreeId, path } = parseUri(uri, this.worktreeId);
 
       // Call backend list endpoint
-      const entries = await this.backendClient.readDirectory(worktreeId, path);
+      const entries = await this.coalesce("list", uri, () =>
+        this.backendClient.readDirectory(worktreeId, path),
+      );
 
       return entries;
     } catch (error) {
@@ -185,12 +308,12 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
 
   /**
    * Write file content
-   * 
+   *
    * FileSystemProvider interface method (optional, implemented for write support)
    * Called by VS Code when:
    * - Saving file in editor
    * - Creating new file
-   * 
+   *
    * Option handling per VS Code FileSystemProvider contract:
    * - create=false, overwrite=false: Check file exists first
    *   - If exists: throw FileExists (can't overwrite)
@@ -202,7 +325,7 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
    *   - If missing: throw FileNotFound
    *   - If exists: proceed with write
    * - create=true, overwrite=true: Create or overwrite (always succeeds)
-   * 
+   *
    * @param uri - VS Code URI with workspace-vfs scheme
    * @param content - File content as Uint8Array
    * @param options - Write options (create, overwrite)
@@ -213,7 +336,7 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
   async writeFile(
     uri: Uri,
     content: Uint8Array,
-    options: { create: boolean; overwrite: boolean }
+    options: { create: boolean; overwrite: boolean },
   ): Promise<void> {
     // Validate URI scheme
     if (!isValidWorkspaceVfsUri(uri)) {
@@ -231,25 +354,30 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
           // Check if file exists by calling stat()
           await this.backendClient.stat(worktreeId, path);
           // File exists
-          
+
           // If create=true and overwrite=false: can't overwrite existing file
           if (options.create && !options.overwrite) {
             throw FileSystemError.FileExists(uri);
           }
-          
+
           // If create=false and overwrite=false: can't overwrite existing file
           if (!options.create && !options.overwrite) {
             throw FileSystemError.FileExists(uri);
           }
-          
+
           // create=false, overwrite=true: proceed (overwrite existing)
           // create=true, overwrite=true: proceed (overwrite existing)
         } catch (error) {
           // File doesn't exist (stat threw FileNotFound)
           // Check error code directly (more reliable than instanceof check)
           // FileSystemError.FileNotFound can have code 'FileNotFound' or 'EntryNotFound' depending on VS Code version
-          if (error && typeof error === 'object' && 'code' in error && 
-              ((error as any).code === 'EntryNotFound' || (error as any).code === 'FileNotFound')) {
+          if (
+            error &&
+            typeof error === "object" &&
+            "code" in error &&
+            ((error as any).code === "EntryNotFound" ||
+              (error as any).code === "FileNotFound")
+          ) {
             // If create=false: can't create new file
             if (!options.create) {
               throw FileSystemError.FileNotFound(uri);
@@ -270,8 +398,8 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
       this.emitChanges([
         {
           type: FileChangeType.Changed,
-          uri
-        }
+          uri,
+        },
       ]);
     } catch (error) {
       // Backend errors already mapped to FileSystemError
@@ -281,40 +409,44 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
 
   /**
    * Watch file/directory for changes
-   * 
+   *
    * FileSystemProvider interface method
-   * 
+   *
    * Plan 02: WebSocket integration with FileChangeGateway
    * - WebSocket client subscribes to ws://localhost:3001/ws/file-changes/:worktreeId
    * - Receives real-time file change events from backend
    * - Fires onDidChangeFile event for VS Code to refetch
-   * 
+   *
    * Note: watch() returns Disposable per API contract, but actual file watching
    * is handled by WebSocket client in constructor (wsClient.onDidChangeFile wired)
-   * 
+   *
    * @param uri - VS Code URI to watch
    * @param options - Watch options (recursive, excludes)
    * @returns Disposable for cleanup
    */
   watch(
     uri: Uri,
-    options: { recursive: boolean; excludes: string[] }
+    options: { recursive: boolean; excludes: string[] },
   ): Disposable {
-    // WebSocket client handles actual watching
-    // This just returns Disposable per VS Code FileSystemProvider contract
-    return new Disposable(() => {
-      // Cleanup if needed (WebSocket cleanup handled in dispose())
-    });
+    const { path } = parseUri(uri, this.worktreeId);
+    const watch = {
+      uri,
+      path,
+      recursive: options.recursive,
+      excludes: options.excludes.map(compileWatchExclude),
+    };
+    this.watches.add(watch);
+    return new Disposable(() => this.watches.delete(watch));
   }
 
   /**
    * Create directory
-   * 
+   *
    * FileSystemProvider interface method
-   * 
+   *
    * Note: Backend does not currently support directory creation via API.
    * This is a stub implementation for API completeness.
-   * 
+   *
    * @param uri - VS Code URI for directory to create
    * @throws FileSystemError.NoPermissions (directory creation not supported)
    */
@@ -330,12 +462,12 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
 
   /**
    * Delete file/directory
-   * 
+   *
    * FileSystemProvider interface method
-   * 
+   *
    * Note: Backend does not currently support file deletion via API.
    * This is a stub implementation for API completeness.
-   * 
+   *
    * @param uri - VS Code URI for file/directory to delete
    * @param options - Delete options (recursive for directories)
    * @throws FileSystemError.NoPermissions (deletion not supported)
@@ -352,41 +484,56 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
 
   /**
    * Rename file/directory
-   * 
+   *
    * FileSystemProvider interface method
-   * 
+   *
    * Note: Backend does not currently support file renaming via API.
    * This is a stub implementation for API completeness.
-   * 
+   *
    * @param oldUri - Current VS Code URI
    * @param newUri - New VS Code URI
    * @param options - Rename options (overwrite existing file)
    * @throws FileSystemError.NoPermissions (renaming not supported)
    */
-  async rename(oldUri: Uri, newUri: Uri, options: { overwrite: boolean }): Promise<void> {
+  async rename(
+    oldUri: Uri,
+    newUri: Uri,
+    options: { overwrite: boolean },
+  ): Promise<void> {
     if (!isValidWorkspaceVfsUri(oldUri) || !isValidWorkspaceVfsUri(newUri)) {
       throw FileSystemError.NoPermissions(oldUri);
     }
 
-    const { worktreeId: oldWorktreeId, path: oldPath } = parseUri(oldUri, this.worktreeId);
-    const { worktreeId: newWorktreeId, path: newPath } = parseUri(newUri, this.worktreeId);
+    const { worktreeId: oldWorktreeId, path: oldPath } = parseUri(
+      oldUri,
+      this.worktreeId,
+    );
+    const { worktreeId: newWorktreeId, path: newPath } = parseUri(
+      newUri,
+      this.worktreeId,
+    );
 
     if (oldWorktreeId !== newWorktreeId) {
       throw FileSystemError.NoPermissions(oldUri);
     }
 
-    await this.backendClient.rename(oldWorktreeId, oldPath, newPath, options.overwrite);
+    await this.backendClient.rename(
+      oldWorktreeId,
+      oldPath,
+      newPath,
+      options.overwrite,
+    );
     this.emitChanges([
       { type: FileChangeType.Deleted, uri: oldUri },
-      { type: FileChangeType.Created, uri: newUri }
+      { type: FileChangeType.Created, uri: newUri },
     ]);
   }
 
   /**
    * Fire file change event
-   * 
+   *
    * Used by WebSocket client (Plan 02) to notify VS Code of backend changes
-   * 
+   *
    * @param changes - Array of file change events
    */
   fireFileChange(changes: FileChangeEvent[]): void {
@@ -395,10 +542,16 @@ export class WorkspaceVfsProvider implements FileSystemProvider {
 
   /**
    * Dispose provider resources
-   * 
+   *
    * Called by VS Code when extension deactivates
    */
   dispose(): void {
+    this.socketSubscription?.dispose();
+    this.watches.clear();
+    this.recentReads.clear();
+    this.inFlight.clear();
+    this.inFlightPaths.clear();
+    this.generation++;
     // Dispose WebSocket client (disconnects and cleans up)
     if (this.wsClient) {
       this.wsClient.dispose();

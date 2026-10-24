@@ -1,6 +1,12 @@
-import { TextDocumentContentProvider, Uri, CancellationToken, ProviderResult, EventEmitter } from 'vscode';
-import { BackendGitClient } from './backendGitClient';
-import { parseGitUri } from './uriParser';
+import {
+  TextDocumentContentProvider,
+  Uri,
+  CancellationToken,
+  ProviderResult,
+  EventEmitter,
+} from "vscode";
+import { BackendGitClient } from "./backendGitClient";
+import { parseGitUri } from "./uriParser";
 
 /**
  * GitContentProvider - Serves file content from git history
@@ -26,6 +32,14 @@ export class GitContentProvider implements TextDocumentContentProvider {
    * VS Code uses this to refresh documents when content might have changed
    */
   private _onDidChange = new EventEmitter<Uri>();
+  private observed = new Map<string, Uri>();
+  invalidate(): void {
+    for (const uri of this.observed.values()) this._onDidChange.fire(uri);
+  }
+  dispose(): void {
+    this.observed.clear();
+    this._onDidChange.dispose();
+  }
 
   /**
    * Create GitContentProvider instance
@@ -35,7 +49,7 @@ export class GitContentProvider implements TextDocumentContentProvider {
    */
   constructor(
     private backendClient: BackendGitClient,
-    private worktreeId: string
+    private worktreeId: string,
   ) {}
 
   /**
@@ -55,7 +69,10 @@ export class GitContentProvider implements TextDocumentContentProvider {
    * @param token - Cancellation token for aborting requests
    * @returns File content as string, or empty string if not found
    */
-  async provideTextDocumentContent(uri: Uri, token: CancellationToken): Promise<string> {
+  async provideTextDocumentContent(
+    uri: Uri,
+    token: CancellationToken,
+  ): Promise<string> {
     try {
       // Parse git-vfs:// URI to extract ref and path
       const { worktreeId, ref, path } = parseGitUri(uri);
@@ -63,24 +80,41 @@ export class GitContentProvider implements TextDocumentContentProvider {
       // Validate worktreeId matches provider instance
       // (Security check to prevent cross-worktree access)
       if (worktreeId !== this.worktreeId) {
-        console.warn(`Worktree ID mismatch: expected ${this.worktreeId}, got ${worktreeId}`);
-        return '';
+        console.warn(
+          `Worktree ID mismatch: expected ${this.worktreeId}, got ${worktreeId}`,
+        );
+        return "";
       }
 
       // Check if request was cancelled
       if (token.isCancellationRequested) {
-        return '';
+        return "";
       }
 
-      // Fetch original content from backend
-      const content = await this.backendClient.getOriginalContent(ref, path);
+      this.observed.set(uri.toString(), uri);
+      while (this.observed.size > 256)
+        this.observed.delete(this.observed.keys().next().value!);
+      const controller = new AbortController();
+      const cancellation = token.onCancellationRequested(() =>
+        controller.abort(),
+      );
+      let content: string;
+      try {
+        content = await this.backendClient.getOriginalContent(
+          ref,
+          path,
+          controller.signal,
+        );
+      } finally {
+        cancellation.dispose();
+      }
 
       return content;
     } catch (error: any) {
       // File not found in git history or network error
       // Return empty string (VS Code will show empty document)
       console.error(`Failed to get content for ${uri.path}:`, error.message);
-      return '';
+      return "";
     }
   }
 }

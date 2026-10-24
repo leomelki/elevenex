@@ -1,0 +1,126 @@
+:host {
+  display: block;
+  height: 100%;
+}
+
+.vscode-loader {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--background) 96%, var(--surface-tint) 4%),
+    color-mix(in oklch, var(--background) 98%, transparent)
+  );
+}
+
+.vscode-loader__mesh {
+  background:
+    radial-gradient(
+      circle at 20% 20%,
+      color-mix(in oklch, var(--primary) 18%, transparent),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 80% 30%,
+      color-mix(in oklch, var(--primary) 12%, transparent),
+      transparent 26%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in oklch, var(--muted-foreground) 14%, transparent),
+      transparent 60%
+    );
+  opacity: 1;
+}
+
+.vscode-loader__glow {
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--primary) 18%, transparent),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: vscode-loader-scan 2.8s ease-in-out infinite;
+  opacity: 0.9;
+}
+
+.vscode-loader__halo {
+  background: radial-gradient(
+    circle,
+    color-mix(in oklch, var(--primary) 18%, transparent),
+    color-mix(in oklch, var(--primary) 6%, transparent) 38%,
+    transparent 68%
+  );
+  filter: blur(16px);
+  animation: vscode-loader-breathe 3.2s ease-in-out infinite;
+  opacity: 0.85;
+}
+
+.vscode-loader__orb {
+  position: absolute;
+  inset: -42%;
+  background: conic-gradient(
+    from 180deg,
+    transparent,
+    color-mix(in oklch, var(--primary) 55%, transparent),
+    transparent 70%
+  );
+  animation: vscode-loader-spin 2.4s linear infinite;
+}
+
+.vscode-loader__orb--delayed {
+  animation-direction: reverse;
+  animation-duration: 3.4s;
+  opacity: 0.45;
+}
+
+.vscode-loader__pulse {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 9999px;
+  background: var(--primary);
+  box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 35%, transparent);
+  animation: vscode-loader-pulse 1.8s ease-out infinite;
+}
+
+@keyframes vscode-loader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes vscode-loader-breathe {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) scale(0.94);
+    opacity: 0.72;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.06);
+    opacity: 1;
+  }
+}
+
+@keyframes vscode-loader-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 35%, transparent);
+    opacity: 1;
+  }
+  70% {
+    box-shadow: 0 0 0 12px color-mix(in oklch, var(--primary) 0%, transparent);
+    opacity: 0.75;
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 0%, transparent);
+    opacity: 0.75;
+  }
+}
+
+@keyframes vscode-loader-scan {
+  0% {
+    transform: translateX(-100%);
+  }
+  55%,
+  100% {
+    transform: translateX(100%);
+  }
+}

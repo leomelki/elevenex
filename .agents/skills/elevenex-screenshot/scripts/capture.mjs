@@ -209,14 +209,14 @@ async function waitUntilHealthy(url, child, timeoutMs, label) {
   throw new Error(`${label} did not become ready within ${timeoutMs / 1000}s${child ? `. See ${child.logPath}` : ''}`);
 }
 
-async function startServer(command, args, logName) {
+async function startServer(command, args, logName, environment = {}) {
   const logPath = path.join(process.env.TMPDIR || '/tmp', logName);
   const log = await open(logPath, 'w');
   const child = spawn(command, args, {
     cwd: repoRoot,
     detached: process.platform !== 'win32',
     stdio: ['ignore', log.fd, log.fd],
-    env: process.env,
+    env: { ...process.env, ...environment },
   });
   child.logPath = logPath;
   child.logHandle = log;
@@ -374,11 +374,11 @@ async function main() {
       if (args['reuse-only']) {
         throw new Error(`Backend is not reachable at ${backendUrl}; --reuse-only leaves application processes untouched`);
       }
-      if (backendUrl !== DEFAULT_BACKEND_URL) {
-        throw new Error(`Backend is not reachable at ${backendUrl}; custom backends are not started automatically`);
+      if (!['127.0.0.1', 'localhost'].includes(new URL(backendUrl).hostname)) {
+        throw new Error(`Backend is not reachable at ${backendUrl}; only local preview servers can be started automatically`);
       }
       console.log('Starting backend...');
-      backend = await startServer('pnpm', ['backend:dev'], 'elevenex-screenshot-backend.log');
+      backend = await startServer('pnpm', ['backend:dev'], 'elevenex-screenshot-backend.log', { ELEVENEX_PROXY_PORT: new URL(backendUrl).port || '11111', ELEVENEX_BACKEND_RUNTIME_ROOT: repoRoot });
       await waitUntilHealthy(`${backendUrl}/api/info`, backend, 180_000, 'Backend');
     } else {
       console.log(`Reusing backend at ${backendUrl}`);
@@ -395,11 +395,12 @@ async function main() {
       if (args['reuse-only']) {
         throw new Error(`Frontend is not reachable at ${frontendUrl}; --reuse-only leaves application processes untouched`);
       }
-      if (frontendUrl !== DEFAULT_FRONTEND_URL) {
-        throw new Error(`Frontend is not reachable at ${frontendUrl}; custom frontends are not started automatically`);
+      const preview = new URL(frontendUrl);
+      if (!['127.0.0.1', 'localhost'].includes(preview.hostname)) {
+        throw new Error(`Frontend is not reachable at ${frontendUrl}; only local preview servers can be started automatically`);
       }
       console.log('Starting frontend...');
-      frontend = await startServer('pnpm', ['frontend:dev'], 'elevenex-screenshot-frontend.log');
+      frontend = await startServer('pnpm', ['frontend:dev', '--port', new URL(frontendUrl).port || '4200'], 'elevenex-screenshot-frontend.log');
       await waitUntilHealthy(frontendUrl, frontend, 180_000, 'Frontend');
     } else {
       console.log(`Reusing frontend at ${frontendUrl}`);

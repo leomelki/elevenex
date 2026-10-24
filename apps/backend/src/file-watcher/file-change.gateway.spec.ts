@@ -25,6 +25,7 @@ describe('FileChangeGateway', () => {
   let mockServer: jest.Mocked<HttpServer>;
 
   beforeEach(async () => {
+    jest.useFakeTimers();
     // Create mock WebSocketServer
     mockWss = {
       handleUpgrade: jest.fn(),
@@ -65,6 +66,8 @@ describe('FileChangeGateway', () => {
   });
 
   afterEach(() => {
+    gateway.onModuleDestroy();
+    jest.useRealTimers();
     jest.clearAllMocks();
   });
 
@@ -82,6 +85,7 @@ describe('FileChangeGateway', () => {
         handlers.set(name, handler);
       }),
       send: jest.fn(),
+      close: jest.fn(),
       terminate: jest.fn(() => handlers.get('close')?.()),
     };
     const healthy = {
@@ -100,9 +104,10 @@ describe('FileChangeGateway', () => {
         worktreePath: '/test/worktree',
       });
     }
+    jest.advanceTimersByTime(50);
     expect(slow.send).not.toHaveBeenCalled();
     expect(slow.terminate).toHaveBeenCalledTimes(1);
-    expect(healthy.send).toHaveBeenCalledTimes(100);
+    expect(healthy.send).toHaveBeenCalledTimes(1);
     expect(mockFileWatcher.unwatchWorktree).not.toHaveBeenCalled();
   });
 
@@ -318,13 +323,16 @@ describe('FileChangeGateway', () => {
       };
 
       gateway.broadcast('/test/worktree', event);
+      jest.advanceTimersByTime(50);
 
-      const expectedMessage = JSON.stringify({
-        type: 'file-change',
-        event: 'change',
-        path: 'src/file.ts',
-        worktreePath: '/test/worktree',
-      });
+      const expectedMessage = JSON.stringify([
+        {
+          type: 'file-change',
+          event: 'change',
+          path: 'src/file.ts',
+          worktreePath: '/test/worktree',
+        },
+      ]);
 
       expect(mockWs1.send).toHaveBeenCalledWith(
         expectedMessage,
@@ -382,6 +390,7 @@ describe('FileChangeGateway', () => {
       };
 
       gateway.broadcast('/test/worktree1', event);
+      jest.advanceTimersByTime(50);
 
       expect(mockWs1.send).toHaveBeenCalled();
       expect(mockWs2.send).not.toHaveBeenCalled();
@@ -424,6 +433,7 @@ describe('FileChangeGateway', () => {
       };
 
       gateway.broadcast('/test/worktree', event);
+      jest.advanceTimersByTime(50);
 
       expect(mockWsOpen.send).toHaveBeenCalled();
       expect(mockWsClosed.send).not.toHaveBeenCalled();
@@ -468,6 +478,7 @@ describe('FileChangeGateway', () => {
       };
 
       gateway.broadcast('/test/worktree', event);
+      jest.advanceTimersByTime(50);
 
       expect(mockWs.send).not.toHaveBeenCalled();
     });
@@ -623,6 +634,7 @@ describe('FileChangeGateway', () => {
       };
 
       gateway.broadcast('/test/worktree', event);
+      jest.advanceTimersByTime(50);
 
       // send was called once during onModuleDestroy, not during broadcast
       expect(mockWs.send).toHaveBeenCalledTimes(0);
@@ -666,8 +678,34 @@ describe('FileChangeGateway', () => {
       };
 
       gateway.broadcast('/test/worktree', event);
+      jest.advanceTimersByTime(50);
 
       expect(mockWs.send).not.toHaveBeenCalled();
     });
+  });
+  it('bounds thousands of distinct paths with one resync and cleans pending timers', () => {
+    const ws = {
+      on: jest.fn(),
+      close: jest.fn(),
+      send: jest.fn(),
+      readyState: WebSocket.OPEN,
+      bufferedAmount: 0,
+    };
+    (gateway as any).handleConnection(ws, '/test/worktree');
+    for (let i = 0; i < 5000; i++)
+      gateway.broadcast('/test/worktree', {
+        event: 'change',
+        path: `file-${i}`,
+        worktreePath: '/test/worktree',
+      });
+    expect((gateway as any).pending.size).toBe(1);
+    expect((gateway as any).pending.get('/test/worktree').events.size).toBe(0);
+    jest.advanceTimersByTime(50);
+    expect(JSON.parse(ws.send.mock.calls[0][0])).toEqual([
+      { type: 'resync', worktreePath: '/test/worktree' },
+    ]);
+    expect((gateway as any).pending.size).toBe(0);
+    gateway.onModuleDestroy();
+    expect(jest.getTimerCount()).toBe(0);
   });
 });

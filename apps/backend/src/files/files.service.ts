@@ -7,6 +7,12 @@ import * as os from 'node:os';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { StringDecoder } from 'node:string_decoder';
+import {
+  EditorWorkQueue,
+  sortEditorItems,
+  waitForEditorWork,
+  yieldEditorWork,
+} from './editor-work.js';
 
 export interface FileTreeNode {
   key: string; // Relative path from worktree root
@@ -402,9 +408,12 @@ function isFuzzyMatch(candidate: string, query: string): boolean {
   return queryIndex === query.length;
 }
 
-function rankSearchPath(relativePath: string, query: string): number | null {
-  const normalizedPath = relativePath.toLowerCase();
-  const basename = path.posix.basename(normalizedPath);
+function rankSearchPath(
+  candidate: SearchCandidate,
+  query: string,
+): number | null {
+  const normalizedPath = candidate.lowerPath;
+  const basename = candidate.lowerName;
 
   if (!query) {
     return 0;
@@ -429,45 +438,68 @@ function rankSearchPath(relativePath: string, query: string): number | null {
   return null;
 }
 
-function runGitLsFiles(worktreePath: string): Promise<string[]> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      'git',
-      [
-        '-C',
-        worktreePath,
-        'ls-files',
-        '--cached',
-        '--others',
-        '--exclude-standard',
-        '-z',
-      ],
-      {
-        windowsHide: true,
-      },
-    );
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-
-    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+async function runGitLsFiles(
+  worktreePath: string,
+  signal: AbortSignal,
+): Promise<string[]> {
+  const child = spawn(
+    'git',
+    [
+      '-C',
+      worktreePath,
+      'ls-files',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+      '-z',
+    ],
+    {
+      windowsHide: true,
+      signal,
+      killSignal: 'SIGKILL',
+    },
+  );
+  const completed = new Promise<void>((resolve, reject) => {
     child.on('error', reject);
-    child.on('close', (code) => {
-      if (code !== 0) {
-        reject(
-          new Error(
-            Buffer.concat(stderr).toString('utf8') ||
-              `git ls-files exited with code ${code}`,
-          ),
-        );
-        return;
-      }
-
-      resolve(
-        Buffer.concat(stdout).toString('utf8').split('\0').filter(Boolean),
-      );
-    });
+    child.on('close', (code) =>
+      code === 0
+        ? resolve()
+        : reject(new Error(`git ls-files exited with code ${code}`)),
+    );
   });
+  // Observe errors even while consuming stdout. Stream decoding avoids a large
+  // Buffer.concat/split on the event loop when enumeration completes.
+  void completed.catch(() => undefined);
+  child.stderr.resume();
+  const results: string[] = [];
+  const decoder = new StringDecoder('utf8');
+  let remainder = '',
+    bytes = 0;
+  try {
+    for await (const chunk of child.stdout) {
+      signal.throwIfAborted();
+      bytes += chunk.length;
+      if (bytes > 64 * 1024 * 1024)
+        throw new Error('Candidate list exceeds 64 MiB');
+      const text = remainder + decoder.write(chunk);
+      let start = 0,
+        end = text.indexOf('\0');
+      while (end !== -1) {
+        if (end > start) results.push(text.slice(start, end));
+        start = end + 1;
+        end = text.indexOf('\0', start);
+        if (results.length % 2048 === 0) {
+          await yieldEditorWork();
+          signal.throwIfAborted();
+        }
+      }
+      remainder = text.slice(start);
+    }
+    await completed;
+    return results;
+  } finally {
+    if (child.exitCode === null) child.kill('SIGKILL');
+  }
 }
 
 async function resolveExistingParentDirectory(
@@ -505,10 +537,74 @@ async function resolveExistingParentDirectory(
   };
 }
 
+export interface SearchCandidate extends FileSearchResult {
+  lowerPath: string;
+  lowerName: string;
+}
+
+export async function prepareSearchCandidates(
+  paths: string[],
+  signal?: AbortSignal,
+): Promise<SearchCandidate[]> {
+  const candidates: SearchCandidate[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < paths.length; index++) {
+    const relative = paths[index].replace(/\\/g, '/');
+    if (isSearchableRelativePath(relative) && !seen.has(relative)) {
+      seen.add(relative);
+      const name = path.posix.basename(relative);
+      candidates.push({
+        path: relative,
+        name,
+        lowerPath: relative.toLowerCase(),
+        lowerName: name.toLowerCase(),
+      });
+    }
+    if (index % 2048 === 0) {
+      await yieldEditorWork();
+      signal?.throwIfAborted();
+    }
+  }
+  return sortEditorItems(
+    candidates,
+    (a, b) =>
+      a.lowerName !== b.lowerName
+        ? a.lowerName.localeCompare(b.lowerName)
+        : a.path.localeCompare(b.path),
+    signal,
+  );
+}
+
+export async function rankSearchCandidates(
+  candidates: SearchCandidate[],
+  query: string,
+  limit: number,
+  signal: AbortSignal,
+): Promise<FileSearchResult[]> {
+  const buckets: FileSearchResult[][] = [[], [], [], []];
+  for (let index = 0; index < candidates.length; index++) {
+    const candidate = candidates[index];
+    const rank = rankSearchPath(candidate, query);
+    if (rank !== null && buckets[rank].length < limit)
+      buckets[rank].push({ path: candidate.path, name: candidate.name });
+    // Candidates are already sorted by the exact legacy tie breakers. A full
+    // rank-zero bucket cannot be displaced by any later candidate.
+    if (buckets[0].length === limit) break;
+    if (index % 2048 === 0) {
+      await yieldEditorWork();
+      signal.throwIfAborted();
+    }
+  }
+  signal.throwIfAborted();
+  return buckets.flat().slice(0, limit);
+}
+
 interface FileSearchCandidateCacheEntry {
-  paths: string[] | null;
+  paths: SearchCandidate[] | null;
   loadedAt: number;
-  inFlight: Promise<string[]> | null;
+  inFlight: Promise<SearchCandidate[]> | null;
+  controller?: AbortController;
+  revision?: number;
 }
 
 @Injectable()
@@ -518,59 +614,90 @@ export class FilesService {
     FileSearchCandidateCacheEntry
   >();
 
+  private readonly searchQueue = new EditorWorkQueue(2, 16);
+  private readonly refreshQueue = new EditorWorkQueue(2, 8);
+  private readonly searches = new Map<
+    string,
+    {
+      controller: AbortController;
+      promise: Promise<FileSearchResult[]>;
+      users: number;
+    }
+  >();
+
+  markEditorWorkspaceChanged(worktreePath: string): void {
+    const entry = this.fileSearchCandidateCache.get(path.resolve(worktreePath));
+    for (const requestKey of this.ioRequests.keys())
+      if (requestKey.includes(`:${path.resolve(worktreePath)}:`))
+        this.ioRequests.delete(requestKey);
+    if (entry) {
+      entry.loadedAt = 0;
+      entry.revision = (entry.revision || 0) + 1;
+    }
+  }
+
+  /** Drop ownership immediately; old refresh completions cannot populate a reused checkout. */
+  invalidateEditorWorkspace(worktreePath: string): void {
+    const key = path.resolve(worktreePath);
+    this.fileSearchCandidateCache.get(key)?.controller?.abort();
+    this.fileSearchCandidateCache.delete(key);
+    for (const requestKey of this.ioRequests.keys())
+      if (requestKey.includes(`:${key}:`)) this.ioRequests.delete(requestKey);
+    for (const [id, search] of this.searches)
+      if (id.startsWith(`${key}\0`)) search.controller.abort();
+  }
+
   async searchFiles(
     worktreePath: string,
-    query: string = '',
+    query = '',
     limit?: number,
+    signal?: AbortSignal,
   ): Promise<FileSearchResult[]> {
+    const deadline = AbortSignal.any([
+      ...(signal ? [signal] : []),
+      AbortSignal.timeout(15_000),
+    ]);
     const resolvedWorktree = path.resolve(worktreePath);
-    let stat;
-    try {
-      stat = await fs.stat(resolvedWorktree);
-    } catch {
-      throw new BadRequestException(
-        `Directory does not exist: ${worktreePath}`,
-      );
-    }
-
-    if (!stat.isDirectory()) {
-      throw new BadRequestException(`Path is not a directory: ${worktreePath}`);
-    }
-
+    deadline.throwIfAborted();
     const normalizedQuery = normalizeFileSearchQuery(query);
+    if (normalizedQuery.length > 1024)
+      throw new BadRequestException('File query is too long');
     const normalizedLimit = normalizeFileSearchLimit(limit);
-    const candidates = await this.listSearchCandidatePaths(resolvedWorktree);
-
-    return candidates
-      .map((candidate) => {
-        const relativePath = candidate.replace(/\\/g, '/');
-        const rank = rankSearchPath(relativePath, normalizedQuery);
-        return rank === null
-          ? null
-          : {
-              rank,
-              path: relativePath,
-              name: path.posix.basename(relativePath),
-            };
-      })
-      .filter(
-        (item): item is FileSearchResult & { rank: number } => item !== null,
-      )
-      .sort((left, right) => {
-        if (left.rank !== right.rank) {
-          return left.rank - right.rank;
-        }
-
-        const leftName = left.name.toLowerCase();
-        const rightName = right.name.toLowerCase();
-        if (leftName !== rightName) {
-          return leftName.localeCompare(rightName);
-        }
-
-        return left.path.localeCompare(right.path);
-      })
-      .slice(0, normalizedLimit)
-      .map(({ path: resultPath, name }) => ({ path: resultPath, name }));
+    const key = `${resolvedWorktree}\0${normalizedQuery}\0${normalizedLimit}`;
+    let search = this.searches.get(key);
+    if (!search || search.controller.signal.aborted) {
+      const controller = new AbortController();
+      const workSignal = AbortSignal.any([
+        controller.signal,
+        AbortSignal.timeout(15_000),
+      ]);
+      const promise = this.searchQueue.run(workSignal, async () => {
+        const candidates = await waitForEditorWork(
+          this.listSearchCandidatePaths(resolvedWorktree),
+          workSignal,
+        );
+        return rankSearchCandidates(
+          candidates,
+          normalizedQuery,
+          normalizedLimit,
+          workSignal,
+        );
+      });
+      search = { controller, promise, users: 0 };
+      this.searches.set(key, search);
+      const owned = search;
+      void promise
+        .finally(() => {
+          if (this.searches.get(key) === owned) this.searches.delete(key);
+        })
+        .catch(() => undefined);
+    }
+    search.users++;
+    try {
+      return await waitForEditorWork(search.promise, deadline);
+    } finally {
+      if (--search.users === 0) search.controller.abort();
+    }
   }
 
   /**
@@ -909,7 +1036,7 @@ export class FilesService {
    */
   private async listSearchCandidatePaths(
     worktreePath: string,
-  ): Promise<string[]> {
+  ): Promise<SearchCandidate[]> {
     const cached = this.fileSearchCandidateCache.get(worktreePath);
     const cachedPaths = cached?.paths ?? null;
 
@@ -924,25 +1051,57 @@ export class FilesService {
 
     // Stale-while-revalidate: answer from the previous list immediately and let
     // the refresh land in the cache for the next keystroke.
-    return cachedPaths !== null ? cachedPaths : refresh;
+    if (cachedPaths !== null) {
+      void refresh.catch(() => undefined);
+      return cachedPaths;
+    }
+    return refresh;
   }
 
-  private loadSearchCandidatePaths(worktreePath: string): Promise<string[]> {
+  private loadSearchCandidatePaths(
+    worktreePath: string,
+  ): Promise<SearchCandidate[]> {
     const existing = this.fileSearchCandidateCache.get(worktreePath);
-    if (existing?.inFlight) {
-      return existing.inFlight;
+    if (existing?.inFlight) return existing.inFlight;
+    this.evictStaleCandidateCacheEntries();
+    if (
+      !existing &&
+      this.fileSearchCandidateCache.size >= FILE_SEARCH_CACHE_MAX_ENTRIES
+    ) {
+      const victim = [...this.fileSearchCandidateCache].find(
+        ([, entry]) => !entry.inFlight,
+      );
+      if (!victim)
+        return Promise.reject(
+          new BadRequestException('Candidate refresh busy. Retry shortly.'),
+        );
+      this.fileSearchCandidateCache.delete(victim[0]);
     }
-
-    const load = (async () => {
+    const controller = new AbortController();
+    const revision = existing?.revision || 0;
+    const signal = AbortSignal.any([
+      controller.signal,
+      AbortSignal.timeout(15_000),
+    ]);
+    const load = this.refreshQueue.run(signal, async () => {
+      const directory = await fs.stat(worktreePath).catch(() => {
+        throw new BadRequestException(
+          `Directory does not exist: ${worktreePath}`,
+        );
+      });
+      if (!directory.isDirectory())
+        throw new BadRequestException(
+          `Path is not a directory: ${worktreePath}`,
+        );
+      let paths: string[];
       try {
-        const gitPaths = await runGitLsFiles(worktreePath);
-        return gitPaths
-          .map((item) => item.replace(/\\/g, '/'))
-          .filter(isSearchableRelativePath);
+        paths = await runGitLsFiles(worktreePath, signal);
       } catch {
-        return this.walkSearchCandidatePaths(worktreePath);
+        signal.throwIfAborted();
+        paths = await this.walkSearchCandidatePaths(worktreePath, signal);
       }
-    })();
+      return prepareSearchCandidates(paths, signal);
+    });
 
     const entry: FileSearchCandidateCacheEntry = existing ?? {
       paths: null,
@@ -950,13 +1109,19 @@ export class FilesService {
       inFlight: null,
     };
     entry.inFlight = load;
+    entry.controller = controller;
     this.fileSearchCandidateCache.set(worktreePath, entry);
     this.evictStaleCandidateCacheEntries();
 
     void load
       .then((paths) => {
+        if (
+          this.fileSearchCandidateCache.get(worktreePath) !== entry ||
+          signal.aborted
+        )
+          return;
         entry.paths = paths;
-        entry.loadedAt = Date.now();
+        entry.loadedAt = (entry.revision || 0) === revision ? Date.now() : 0;
       })
       .catch(() => undefined)
       .finally(() => {
@@ -967,7 +1132,8 @@ export class FilesService {
         entry.inFlight = null;
         if (entry.paths === null) {
           // Nothing usable to serve later; drop the placeholder entry.
-          this.fileSearchCandidateCache.delete(worktreePath);
+          if (this.fileSearchCandidateCache.get(worktreePath) === entry)
+            this.fileSearchCandidateCache.delete(worktreePath);
         }
       });
 
@@ -1000,12 +1166,15 @@ export class FilesService {
 
   private async walkSearchCandidatePaths(
     worktreePath: string,
+    signal: AbortSignal,
   ): Promise<string[]> {
     const results: string[] = [];
     const queue = [''];
+    let cursor = 0;
 
-    while (queue.length > 0 && results.length < FALLBACK_WALK_MAX_FILES) {
-      const relativeDirectory = queue.shift()!;
+    while (cursor < queue.length && results.length < FALLBACK_WALK_MAX_FILES) {
+      signal.throwIfAborted();
+      const relativeDirectory = queue[cursor++];
       const absoluteDirectory = relativeDirectory
         ? path.join(worktreePath, relativeDirectory)
         : worktreePath;
@@ -1017,7 +1186,11 @@ export class FilesService {
         continue;
       }
 
-      for (const entry of entries) {
+      for (const [index, entry] of entries.entries()) {
+        if (index % 2048 === 0) {
+          await yieldEditorWork();
+          signal.throwIfAborted();
+        }
         if (entry.name === '.git' || entry.name === 'node_modules') {
           continue;
         }
@@ -1027,7 +1200,7 @@ export class FilesService {
           : entry.name;
 
         if (entry.isDirectory()) {
-          queue.push(relativePath);
+          if (queue.length < 20_000) queue.push(relativePath);
           continue;
         }
 
@@ -1131,7 +1304,47 @@ export class FilesService {
     });
   }
 
-  async stat(
+  private readonly ioQueue = new EditorWorkQueue(8, 128);
+  private readonly ioRequests = new Map<string, Promise<unknown>>();
+
+  private coalesceIO<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const current = this.ioRequests.get(key);
+    if (current) return current as Promise<T>;
+    const signal = AbortSignal.timeout(15_000);
+    const work = this.ioQueue.run(signal, async () => {
+      signal.throwIfAborted();
+      const result = await operation();
+      signal.throwIfAborted();
+      return result;
+    });
+    // Keep the actual OS operation in the bounded slot until it returns, even
+    // when the caller times out; aborting an fs.stat cannot cancel a kernel I/O.
+    const promise = waitForEditorWork(work, signal);
+    this.ioRequests.set(key, promise);
+    void work
+      .finally(() => {
+        if (this.ioRequests.get(key) === promise) this.ioRequests.delete(key);
+      })
+      .catch(() => undefined);
+    return promise;
+  }
+
+  stat(
+    targetPath: string,
+    worktreePath: string,
+  ): Promise<{
+    type: 'file' | 'directory';
+    ctime: number;
+    mtime: number;
+    size: number;
+  }> {
+    return this.coalesceIO(
+      `stat:${path.resolve(worktreePath)}:${path.resolve(targetPath)}`,
+      () => this.statUnshared(targetPath, worktreePath),
+    );
+  }
+
+  private async statUnshared(
     targetPath: string,
     worktreePath: string,
   ): Promise<{
@@ -1167,7 +1380,14 @@ export class FilesService {
    * @param worktreePath - Absolute path to the worktree root
    * @param dirPath - Relative path from worktree root to the directory to list
    */
-  async listFiles(
+  listFiles(worktreePath: string, dirPath = ''): Promise<FileTreeNode[]> {
+    return this.coalesceIO(
+      `list:${path.resolve(worktreePath)}:${dirPath}`,
+      () => this.listFilesUnshared(worktreePath, dirPath),
+    );
+  }
+
+  private async listFilesUnshared(
     worktreePath: string,
     dirPath: string = '',
   ): Promise<FileTreeNode[]> {
@@ -1208,7 +1428,8 @@ export class FilesService {
 
     const nodes: FileTreeNode[] = [];
 
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
+      if (index % 2048 === 0) await yieldEditorWork();
       // Keep project configuration visible without listing Git internals or dependencies.
       if (entry.name === '.git' || entry.name === 'node_modules') {
         continue;
@@ -1238,7 +1459,7 @@ export class FilesService {
     }
 
     // Sort: directories first (leaf: false), then files (leaf: true), both alphabetically
-    return nodes.sort((a, b) => {
+    return sortEditorItems(nodes, (a, b) => {
       // Directories before files
       if (a.leaf !== b.leaf) {
         return a.leaf ? 1 : -1;
@@ -1390,6 +1611,7 @@ export class FilesService {
 
     // Write the file
     await fs.writeFile(filePath, content, 'utf-8');
+    this.invalidateEditorWorkspace(worktreePath);
   }
 
   /** Stream without buffering the upload or exposing partially written files. */
@@ -1442,6 +1664,7 @@ export class FilesService {
       if (existing) await fs.chmod(temporary, existing.mode);
       await beforeCommit?.();
       await fs.rename(temporary, destination);
+      this.invalidateEditorWorkspace(worktreePath);
     } finally {
       await fs.rm(temporary, { force: true });
     }
@@ -1453,6 +1676,7 @@ export class FilesService {
     }
 
     await fs.mkdir(dirPath, { recursive: true });
+    this.invalidateEditorWorkspace(worktreePath);
   }
 
   async rename(
@@ -1532,6 +1756,7 @@ export class FilesService {
       // Let the OS handle these without ever removing the source's identity.
       if (source.dev === destination.dev && source.ino === destination.ino) {
         await fs.rename(oldPath, newPath);
+        this.invalidateEditorWorkspace(worktreePath);
         return;
       }
       if (!overwrite) {
@@ -1542,6 +1767,7 @@ export class FilesService {
     try {
       // Prefer an atomic replacement; a failed rename leaves the target intact.
       await fs.rename(oldPath, newPath);
+      this.invalidateEditorWorkspace(worktreePath);
       return;
     } catch (error) {
       if (
@@ -1560,6 +1786,7 @@ export class FilesService {
     await fs.rename(newPath, backup);
     try {
       await fs.rename(oldPath, newPath);
+      this.invalidateEditorWorkspace(worktreePath);
     } catch (error) {
       try {
         await fs.rename(backup, newPath);
@@ -1590,5 +1817,6 @@ export class FilesService {
     }
 
     await fs.rm(targetPath, { recursive, force: false });
+    this.invalidateEditorWorkspace(worktreePath);
   }
 }

@@ -130,21 +130,43 @@ export class FilesController {
   async statRoot(
     @Param('worktreePath') worktreePath: string,
     @Query('path') targetPath?: string,
+    @Headers('x-elevenex-task-id') taskId?: string,
   ) {
+    await this.assertTaskWrite(worktreePath, taskId);
     const absolutePath = targetPath
       ? path.join(worktreePath, targetPath)
       : worktreePath;
-    return this.filesService.stat(absolutePath, worktreePath);
+    try {
+      return await this.filesService.stat(absolutePath, worktreePath);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes('Path does not exist')
+      )
+        throw new NotFoundException(error.message);
+      throw error;
+    }
   }
 
   @Get(':worktreePath/stat/*path')
   async statPath(
     @Param('worktreePath') worktreePath: string,
     @Param('path') filePath: string | string[],
+    @Headers('x-elevenex-task-id') taskId?: string,
   ) {
+    await this.assertTaskWrite(worktreePath, taskId);
     const decodedFile = joinWildcardPath(filePath);
     const absolutePath = path.join(worktreePath, decodedFile);
-    return this.filesService.stat(absolutePath, worktreePath);
+    try {
+      return await this.filesService.stat(absolutePath, worktreePath);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes('Path does not exist')
+      )
+        throw new NotFoundException(error.message);
+      throw error;
+    }
   }
 
   /**
@@ -157,7 +179,9 @@ export class FilesController {
   async listFiles(
     @Param('worktreePath') worktreePath: string,
     @Query('dir') dir?: string,
+    @Headers('x-elevenex-task-id') taskId?: string,
   ) {
+    await this.assertTaskWrite(worktreePath, taskId);
     return this.filesService.listFiles(worktreePath, dir ?? '');
   }
 
@@ -166,13 +190,30 @@ export class FilesController {
     @Param('worktreePath') worktreePath: string,
     @Query('query') query?: string,
     @Query('limit') limit?: string,
+    @Res({ passthrough: true }) res?: Response,
+    @Headers('x-elevenex-task-id') taskId?: string,
   ) {
+    await this.assertTaskWrite(worktreePath, taskId);
     const parsedLimit = limit === undefined ? undefined : Number(limit);
-    return this.filesService.searchFiles(
-      worktreePath,
-      query ?? '',
-      parsedLimit,
-    );
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    res?.once('close', abort);
+    try {
+      return await this.filesService.searchFiles(
+        worktreePath,
+        query ?? '',
+        parsedLimit,
+        controller.signal,
+      );
+    } catch (error) {
+      if (controller.signal.aborted)
+        throw new HttpException('File search cancelled', 499);
+      if (error instanceof Error && error.name === 'TimeoutError')
+        throw new HttpException('File search timed out. Retry shortly.', 504);
+      throw error;
+    } finally {
+      res?.removeListener('close', abort);
+    }
   }
 
   /**
@@ -335,7 +376,9 @@ export class FilesController {
     @Param('path') filePath: string | string[],
     @Res({ passthrough: true }) res: Response,
     @Headers('range') range?: string,
+    @Headers('x-elevenex-task-id') taskId?: string,
   ): Promise<StreamableFile> {
+    await this.assertTaskWrite(worktreePath, taskId);
     const decodedFile = joinWildcardPath(filePath);
     const absolutePath = path.join(worktreePath, decodedFile);
 

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import chokidar from 'chokidar';
 import { watch as fsWatch } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { stat, readFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { isWithinWorktree } from '../files/files.service.js';
 
@@ -16,7 +16,14 @@ import { isWithinWorktree } from '../files/files.service.js';
  */
 export interface FileChangeEvent {
   /** The type of file system event */
-  event: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir';
+  event:
+    | 'add'
+    | 'change'
+    | 'unlink'
+    | 'addDir'
+    | 'unlinkDir'
+    | 'git'
+    | 'resync';
   /** Relative path from the worktree root */
   path: string;
   /** Absolute path to the worktree root */
@@ -38,6 +45,8 @@ interface WorktreeWatcher {
 
 interface WatcherRegistration {
   watcher?: WorktreeWatcher;
+  metadata?: WorktreeWatcher;
+  metadataGeneration?: object;
 }
 
 /**
@@ -225,6 +234,7 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
             false,
             registration,
           );
+      void this.watchGitMetadata(worktreePath, emitIfCurrent, registration);
     } catch (error) {
       // fs.watch and chokidar.watch can both fail synchronously before an
       // 'error' listener can be attached (for example, native recursive watch
@@ -232,6 +242,87 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
       // must not take down the API and every other active session.
       this.watchers.delete(worktreePath);
       this.logWatcherError(worktreePath, error);
+    }
+  }
+
+  /** Watch only Git metadata relevant to this checkout. Never enumerate refs. */
+  private async watchGitMetadata(
+    worktreePath: string,
+    onEvent: (event: FileChangeEvent) => void,
+    registration: WatcherRegistration,
+  ): Promise<void> {
+    const generation = {};
+    registration.metadataGeneration = generation;
+    await registration.metadata?.close();
+    const handles: ReturnType<typeof fsWatch>[] = [];
+    const current = () =>
+      !this.destroyed &&
+      this.watchers.get(worktreePath) === registration &&
+      registration.metadataGeneration === generation;
+    try {
+      let gitDir = path.join(worktreePath, '.git');
+      if ((await stat(gitDir)).isFile()) {
+        const pointer = await readFile(gitDir, 'utf8');
+        gitDir = path.resolve(
+          worktreePath,
+          pointer.replace(/^gitdir:\s*/, '').trim(),
+        );
+      }
+      const commonFile = await readFile(
+        path.join(gitDir, 'commondir'),
+        'utf8',
+      ).catch(() => '.');
+      const common = path.resolve(gitDir, commonFile.trim());
+      const directories = new Map<string, Set<string>>();
+      const add = (directory: string, name: string) => {
+        if (!directories.has(directory)) directories.set(directory, new Set());
+        directories.get(directory)!.add(name);
+      };
+      add(gitDir, 'HEAD');
+      add(gitDir, 'index');
+      add(common, 'packed-refs');
+      // Watching refs/heads non-recursively observes all direct branch updates,
+      // even with hundreds of branches, without reading any of them.
+      add(path.join(common, 'refs', 'heads'), '*');
+      const head = await readFile(path.join(gitDir, 'HEAD'), 'utf8').catch(
+        () => '',
+      );
+      if (head.startsWith('ref: ')) {
+        const ref = path.resolve(common, head.slice(5).trim());
+        add(path.dirname(ref), path.basename(ref));
+      }
+      if (!current()) return;
+      for (const [directory, names] of directories) {
+        try {
+          const handle = fsWatch(directory, (_event, name) => {
+            if (
+              current() &&
+              (!name || names.has('*') || names.has(name.toString()))
+            ) {
+              onEvent({ event: 'git', path: '', worktreePath });
+              if (directory === gitDir && name?.toString() === 'HEAD')
+                void this.watchGitMetadata(worktreePath, onEvent, registration);
+            }
+          });
+          handle.on('error', (error) =>
+            this.logWatcherError(worktreePath, error),
+          );
+          handles.push(handle);
+        } catch {
+          /* Unborn repositories may not have a refs directory yet. */
+        }
+      }
+      if (!current()) {
+        for (const handle of handles) handle.close();
+        return;
+      }
+      registration.metadata = {
+        close: async () => {
+          for (const handle of handles) handle.close();
+        },
+      };
+    } catch {
+      for (const handle of handles) handle.close();
     }
   }
 
@@ -274,28 +365,53 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
     worktreePath: string,
     onEvent: (event: FileChangeEvent) => void,
   ): WorktreeWatcher {
-    // Coalesce the burst of events a single save/atomic-write produces.
-    const debounceTimers = new Map<string, NodeJS.Timeout>();
+    // One timer and bounded pending paths per shared watcher. A large checkout
+    // no longer schedules thousands of simultaneous stat calls/timers.
+    const pending = new Map<string, { due: number; event: string }>();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let active = 0;
+    let overflow = false;
     let closed = false;
-
-    const scheduleEmit = (absolutePath: string): void => {
-      const existing = debounceTimers.get(absolutePath);
-      if (existing) {
-        clearTimeout(existing);
+    const drain = () => {
+      timer = undefined;
+      if (closed) return;
+      if (overflow) {
+        overflow = false;
+        onEvent({ event: 'resync', path: '', worktreePath });
       }
-      debounceTimers.set(
-        absolutePath,
-        setTimeout(() => {
-          debounceTimers.delete(absolutePath);
-          if (!closed) {
-            void this.emitNativeEvent(
-              worktreePath,
-              absolutePath,
-              onEvent,
-            ).catch((error) => this.logWatcherError(worktreePath, error));
-          }
-        }, NATIVE_EVENT_DEBOUNCE_MS),
-      );
+      const now = Date.now();
+      for (const [absolutePath, { due, event }] of pending) {
+        if (active >= 8) break;
+        if (due > now) continue;
+        pending.delete(absolutePath);
+        active++;
+        void this.emitNativeEvent(
+          worktreePath,
+          absolutePath,
+          (change) => {
+            if (!closed) onEvent(change);
+          },
+          event,
+        )
+          .catch((error) => this.logWatcherError(worktreePath, error))
+          .finally(() => {
+            active--;
+            if (!closed && pending.size && !timer) timer = setTimeout(drain, 0);
+          });
+      }
+      if (pending.size && active < 8 && !timer)
+        timer = setTimeout(drain, NATIVE_EVENT_DEBOUNCE_MS);
+    };
+    const scheduleEmit = (absolutePath: string, event: string): void => {
+      if (pending.size >= 2048 && !pending.has(absolutePath)) {
+        pending.clear();
+        overflow = true;
+      }
+      pending.set(absolutePath, {
+        due: Date.now() + NATIVE_EVENT_DEBOUNCE_MS,
+        event: pending.get(absolutePath)?.event === 'rename' ? 'rename' : event,
+      });
+      if (!timer) timer = setTimeout(drain, NATIVE_EVENT_DEBOUNCE_MS);
     };
 
     const watcher = fsWatch(
@@ -316,7 +432,7 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
           return;
         }
 
-        scheduleEmit(absolutePath);
+        scheduleEmit(absolutePath, _eventType);
       },
     );
 
@@ -327,10 +443,8 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
     return {
       close: () => {
         closed = true;
-        for (const timer of debounceTimers.values()) {
-          clearTimeout(timer);
-        }
-        debounceTimers.clear();
+        if (timer) clearTimeout(timer);
+        pending.clear();
         watcher.close();
         return Promise.resolve();
       },
@@ -351,11 +465,16 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
     worktreePath: string,
     absolutePath: string,
     onEvent: (event: FileChangeEvent) => void,
+    nativeEvent = 'change',
   ): Promise<void> {
     let event: FileEventType;
     try {
       const stats = await stat(absolutePath);
-      event = stats.isDirectory() ? 'addDir' : 'change';
+      event = stats.isDirectory()
+        ? 'addDir'
+        : nativeEvent === 'rename'
+          ? 'add'
+          : 'change';
     } catch {
       // Path no longer exists -> treated as a removal.
       event = 'unlink';
@@ -488,9 +607,11 @@ export class FileWatcherService implements OnModuleInit, OnModuleDestroy {
     // backend is still releasing resources. Close completion never edits owners.
     this.watchers.delete(worktreePath);
     this.fdExhaustionWarned.delete(worktreePath);
-    return registration.watcher
-      ? this.closeWatcher(worktreePath, registration.watcher)
-      : Promise.resolve();
+    return Promise.all(
+      [registration.watcher, registration.metadata]
+        .filter((watcher): watcher is WorktreeWatcher => Boolean(watcher))
+        .map((watcher) => this.closeWatcher(worktreePath, watcher)),
+    ).then(() => undefined);
   }
 
   private closeWatcher(

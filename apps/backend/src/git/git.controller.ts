@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, Query, Logger } from '@nestjs/common';
+import type { Response } from 'express';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  Res,
+  Logger,
+  HttpException,
+} from '@nestjs/common';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 import { ChangeReviewService } from './change-review.service.js';
 import type {
@@ -26,6 +36,28 @@ export class GitController {
     private readonly gitService: GitService,
     private readonly changeReviewService: ChangeReviewService,
   ) {}
+
+  @Get('editor-status')
+  async getEditorStatus(
+    @Query('worktreePath') worktreePath: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<FileStatus[]> {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    res.once('close', abort);
+    try {
+      return await this.gitService.getEditorStatus(
+        worktreePath,
+        controller.signal,
+      );
+    } catch (error) {
+      if (controller.signal.aborted)
+        throw new HttpException('Editor status cancelled', 499);
+      throw error;
+    } finally {
+      res.removeListener('close', abort);
+    }
+  }
 
   @Get('status')
   async getStatus(
@@ -269,12 +301,25 @@ export class GitController {
     @Query('worktreePath') worktreePath: string,
     @Query('path') path: string,
     @Query('ref') ref?: string,
+    @Res({ passthrough: true }) res?: Response,
   ): Promise<{ content: string }> {
-    const content = await this.gitService.show(
-      decodeURIComponent(worktreePath),
-      ref || 'HEAD',
-      decodeURIComponent(path),
-    );
-    return { content };
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    res?.once('close', abort);
+    try {
+      const content = await this.gitService.show(
+        decodeURIComponent(worktreePath),
+        ref || 'HEAD',
+        decodeURIComponent(path),
+        ...(res ? [controller.signal] : []),
+      );
+      return { content };
+    } catch (error) {
+      if (controller.signal.aborted)
+        throw new HttpException('Editor baseline cancelled', 499);
+      throw error;
+    } finally {
+      res?.removeListener('close', abort);
+    }
   }
 }

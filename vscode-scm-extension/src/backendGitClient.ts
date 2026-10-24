@@ -1,77 +1,84 @@
-import { FileStatus, BackendGitStatusResponse, BackendGitContentResponse } from './types';
+import { FileStatus, BackendGitContentResponse } from "./types";
 
-/**
- * BackendGitClient - REST API client for git operations
- *
- * Connects to Phase 10 backend git endpoints:
- * - GET /api/git/status?worktreePath=... → BackendGitStatusResponse
- * - GET /api/git/original?worktreePath=...&ref=...&path=... → BackendGitContentResponse
- *
- * Uses native fetch() API (browser-compatible, no Node.js dependencies)
- * Pattern: Reuse Phase 9 BackendClient architecture for git endpoints
- */
 export class BackendGitClient {
-  /**
-   * Create BackendGitClient instance
-   *
-   * @param baseUrl - Backend API base URL (default: http://localhost:3000/api)
-   * @param worktreeId - Worktree identifier for all git operations
-   */
+  private controllers = new Set<AbortController>();
+  private status?: Promise<FileStatus[]>;
   constructor(
-    private baseUrl: string = `${globalThis.location?.origin ?? 'http://localhost:3000'}/api`,
-    private worktreePath: string
+    private baseUrl = `${globalThis.location?.origin ?? "http://localhost:3000"}/api`,
+    private worktreePath: string,
   ) {}
+  cancel(): void {
+    for (const controller of this.controllers) controller.abort();
+  }
+  dispose(): void {
+    this.cancel();
+  }
 
-  /**
-   * Get git status (list of changed files)
-   *
-   * Backend endpoint: GET /api/git/status?worktreePath=...
-   *
-   * @returns FileStatus[] array with path, status, staged, oldPath
-   * @throws Error if network failure or HTTP error (400, 500)
-   */
-  async getStatus(): Promise<FileStatus[]> {
-    const url = `${this.baseUrl}/git/status?worktreePath=${encodeURIComponent(this.worktreePath)}`;
-
+  private async request<T>(
+    route: string,
+    params: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    if (this.controllers.size >= 32)
+      throw new Error("Git editor requests are busy");
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    this.controllers.add(controller);
+    let rejectAbort!: (error: Error) => void;
+    const cancelled = new Promise<never>((_, reject) => {
+      rejectAbort = reject;
+    });
+    const onAbort = () =>
+      rejectAbort(new Error("Git editor request cancelled or timed out"));
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(abort, 15_000);
     try {
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      return await response.json() as FileStatus[];
-    } catch (error: any) {
-      // Handle network errors
-      throw new Error(`Failed to fetch git status: ${error.message}`);
+      if (signal?.aborted) throw new Error("Git editor request cancelled");
+      return await Promise.race([
+        (async () => {
+          const query = new URLSearchParams({
+            worktreePath: this.worktreePath,
+            ...params,
+          });
+          const response = await fetch(
+            `${this.baseUrl}/git/${route}?${query}`,
+            { signal: controller.signal },
+          );
+          if (!response.ok)
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          return response.json() as Promise<T>;
+        })(),
+        cancelled,
+      ]);
+    } finally {
+      clearTimeout(timer);
+      this.controllers.delete(controller);
+      signal?.removeEventListener("abort", abort);
+      controller.signal.removeEventListener("abort", onAbort);
     }
   }
 
-  /**
-   * Get file content from git history
-   *
-   * Backend endpoint: GET /api/git/original?worktreePath=...&ref=...&path=...
-   *
-   * @param ref - Git ref (HEAD, branch name, commit hash)
-   * @param path - File path relative to worktree root
-   * @returns File content as string
-   * @throws Error if network failure, HTTP error (400, 404, 500)
-   */
-  async getOriginalContent(ref: string, path: string): Promise<string> {
-    const url = `${this.baseUrl}/git/original?worktreePath=${encodeURIComponent(this.worktreePath)}&ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`;
-
-    try {
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data: BackendGitContentResponse = await response.json() as BackendGitContentResponse;
-      return data.content;
-    } catch (error: any) {
-      // Handle network errors
-      throw new Error(`Failed to fetch original content: ${error.message}`);
-    }
+  getStatus(): Promise<FileStatus[]> {
+    if (!this.status)
+      this.status = this.request<FileStatus[]>("editor-status", {}).finally(
+        () => {
+          this.status = undefined;
+        },
+      );
+    return this.status;
+  }
+  async getOriginalContent(
+    ref: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    return (
+      await this.request<BackendGitContentResponse>(
+        "original",
+        { ref, path },
+        signal,
+      )
+    ).content;
   }
 }

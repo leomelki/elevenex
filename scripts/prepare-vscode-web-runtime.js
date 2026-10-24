@@ -1,12 +1,34 @@
-const { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } = require('fs');
-const path = require('path');
+const {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} = require("fs");
+const path = require("path");
+const { promises: fs } = require("fs");
+const { promisify } = require("util");
+const zlib = require("zlib");
+const brotli = promisify(zlib.brotliCompress);
+const gzip = promisify(zlib.gzip);
 
-const repoRoot = path.resolve(__dirname, '..');
-const stageBaseRoot = path.join(repoRoot, 'apps', 'electron', '.stage');
-const stagedAssetsRoot = path.join(stageBaseRoot, 'runtime-assets');
-const stagedVSCodeRoot = path.join(stagedAssetsRoot, 'vscode-web-dist');
-const sourceVSCodeRoot = path.join(repoRoot, 'apps', 'backend', 'node_modules', 'vscode-web', 'dist');
-const runtimeConfig = require(path.join(repoRoot, 'config', 'vscode-web-runtime.json'));
+const repoRoot = path.resolve(__dirname, "..");
+const stageBaseRoot = path.join(repoRoot, "apps", "electron", ".stage");
+const stagedAssetsRoot = path.join(stageBaseRoot, "runtime-assets");
+const stagedVSCodeRoot = path.join(stagedAssetsRoot, "vscode-web-dist");
+const sourceVSCodeRoot = path.join(
+  repoRoot,
+  "apps",
+  "backend",
+  "node_modules",
+  "vscode-web",
+  "dist",
+);
+const runtimeConfig = require(
+  path.join(repoRoot, "config", "vscode-web-runtime.json"),
+);
 
 function ensureDir(dirPath) {
   mkdirSync(dirPath, { recursive: true });
@@ -35,19 +57,19 @@ function removeSourceMaps(rootDir) {
       continue;
     }
 
-    if (fullPath.endsWith('.map')) {
+    if (fullPath.endsWith(".map")) {
       rmSync(fullPath, { force: true });
     }
   }
 }
 
 const GIT_ARTIFACT_NAMES = new Set([
-  '.git',
-  '.github',
-  '.gitignore',
-  '.gitattributes',
-  '.gitmodules',
-  '.gitkeep',
+  ".git",
+  ".github",
+  ".gitignore",
+  ".gitattributes",
+  ".gitmodules",
+  ".gitkeep",
 ]);
 
 function removeGitArtifacts(rootDir) {
@@ -124,9 +146,38 @@ function buildIndexHtml() {
 `;
 }
 
-function assembleRuntime() {
+async function precompressRuntime(root) {
+  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+    const file = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      await precompressRuntime(file);
+      continue;
+    }
+    if (
+      !/\.(?:js|css|json|svg|wasm)$/.test(file) ||
+      (await fs.stat(file)).size < 1024
+    )
+      continue;
+    const content = await fs.readFile(file);
+    const [br, gz] = await Promise.all([
+      brotli(content, {
+        params: {
+          [zlib.constants.BROTLI_PARAM_QUALITY]:
+            runtimeConfig.brotliQuality || 5,
+        },
+      }),
+      gzip(content, { level: 6 }),
+    ]);
+    if (br.length < content.length) await fs.writeFile(file + ".br", br);
+    if (gz.length < content.length) await fs.writeFile(file + ".gz", gz);
+  }
+}
+
+async function assembleRuntime() {
   if (!existsSync(sourceVSCodeRoot)) {
-    throw new Error(`VS Code Web package dist is missing at ${sourceVSCodeRoot}`);
+    throw new Error(
+      `VS Code Web package dist is missing at ${sourceVSCodeRoot}`,
+    );
   }
 
   rmSync(stagedVSCodeRoot, { recursive: true, force: true });
@@ -146,12 +197,14 @@ function assembleRuntime() {
     );
   }
 
-  writeFileSync(path.join(stagedVSCodeRoot, 'index.html'), buildIndexHtml());
+  writeFileSync(path.join(stagedVSCodeRoot, "index.html"), buildIndexHtml());
 
   removeSourceMaps(stagedVSCodeRoot);
   removeGitArtifacts(stagedVSCodeRoot);
 
-  const stagedExtensionsRoot = path.join(stagedVSCodeRoot, 'extensions');
+  await precompressRuntime(stagedVSCodeRoot);
+
+  const stagedExtensionsRoot = path.join(stagedVSCodeRoot, "extensions");
   const extensionCount = countChildDirectories(stagedExtensionsRoot);
   const totalSize = getDirectorySize(stagedVSCodeRoot);
   console.log(
@@ -160,16 +213,15 @@ function assembleRuntime() {
 }
 
 if (require.main === module) {
-  try {
-    assembleRuntime();
-  } catch (error) {
+  assembleRuntime().catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
-  }
+  });
 }
 
 module.exports = {
   assembleRuntime,
+  precompressRuntime,
   formatSize,
   countChildDirectories,
   getDirectorySize,
