@@ -157,7 +157,7 @@ describe('git worktree fingerprint cache', () => {
     'revalidates a replacement snapshot after an awaited stat (%j)',
     async ({ invalidate, changedStat }) => {
       const fileStat = await fs.stat(__filename);
-      const stat = jest.spyOn(fs, 'stat').mockResolvedValue(fileStat);
+      const stat = jest.spyOn(fs, 'lstat').mockResolvedValue(fileStat);
       const oldStatus = status({ modified: ['file.txt'], current: 'old' });
       const git = {
         status: jest.fn().mockResolvedValue(oldStatus),
@@ -169,6 +169,7 @@ describe('git worktree fingerprint cache', () => {
       const validation = readWorktreeStatusSnapshot('/tmp/repo', git, {
         validateCached: true,
       });
+      await Promise.resolve(); // The shared stat budget starts work asynchronously.
       expect(stat).toHaveBeenCalledTimes(2);
       if (invalidate) clearWorktreeFingerprintCache('/tmp/repo');
       const freshStatus = status({ modified: ['file.txt'], current: 'fresh' });
@@ -191,7 +192,7 @@ describe('git worktree fingerprint cache', () => {
 
   it('starts a fresh scan when invalidated during cached stat validation', async () => {
     const fileStat = await fs.stat(__filename);
-    const stat = jest.spyOn(fs, 'stat').mockResolvedValue(fileStat);
+    const stat = jest.spyOn(fs, 'lstat').mockResolvedValue(fileStat);
     const freshStatus = status({ current: 'fresh' });
     const git = {
       status: jest
@@ -217,7 +218,7 @@ describe('git worktree fingerprint cache', () => {
     async (clearAll) => {
       const fileStat = await fs.stat(__filename);
       const oldStat = deferred<typeof fileStat>();
-      jest.spyOn(fs, 'stat').mockImplementationOnce(() => oldStat.promise);
+      jest.spyOn(fs, 'lstat').mockImplementationOnce(() => oldStat.promise);
       const freshStatus = status({ current: 'fresh' });
       const git = {
         status: jest.fn().mockResolvedValue(freshStatus),
@@ -239,7 +240,7 @@ describe('git worktree fingerprint cache', () => {
   it('does not let older supplied status overwrite a newer publication', async () => {
     const fileStat = await fs.stat(__filename);
     const oldStat = deferred<typeof fileStat>();
-    jest.spyOn(fs, 'stat').mockImplementationOnce(() => oldStat.promise);
+    jest.spyOn(fs, 'lstat').mockImplementationOnce(() => oldStat.promise);
     const git = { status: jest.fn() } as unknown as jest.Mocked<SimpleGit>;
     const old = readWorktreeFingerprint(
       '/tmp/repo',
@@ -275,7 +276,7 @@ describe('git worktree fingerprint cache', () => {
 
   it('does not rejoin an older scan when supplied status needs a fresh stat validation', async () => {
     const fileStat = await fs.stat(__filename);
-    const stat = jest.spyOn(fs, 'stat').mockResolvedValue(fileStat);
+    const stat = jest.spyOn(fs, 'lstat').mockResolvedValue(fileStat);
     const pending = deferred<StatusResult>();
     const latestStatus = status({ current: 'latest' });
     const git = {
@@ -307,7 +308,7 @@ describe('git worktree fingerprint cache', () => {
 
   it('expires snapshots and rescans files whose stat signature changes', async () => {
     const fileStat = await fs.stat(__filename);
-    const stat = jest.spyOn(fs, 'stat').mockResolvedValue(fileStat);
+    const stat = jest.spyOn(fs, 'lstat').mockResolvedValue(fileStat);
     const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
     const git = {
       status: jest.fn().mockResolvedValue(status({ modified: ['file.txt'] })),
@@ -353,5 +354,54 @@ describe('git worktree fingerprint cache', () => {
     expect(git.status.mock.calls).toHaveLength(1_004);
     pending.resolve(status());
     expect(await concurrent).toBe(await active);
+  });
+
+  it('rescans new paths on an absolute deadline under continuous supplied-status reuse', async () => {
+    const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+    const firstStatus = status();
+    const newStatus = status({ not_added: ['new.txt'] });
+    const git = {
+      status: jest
+        .fn()
+        .mockResolvedValueOnce(firstStatus)
+        .mockResolvedValue(newStatus),
+    } as unknown as jest.Mocked<SimpleGit>;
+    const first = await readWorktreeStatusSnapshot('/tmp/repo', git);
+    for (const time of [1_500, 2_000]) {
+      now.mockReturnValue(time);
+      await readWorktreeFingerprint('/tmp/repo', git, first.status);
+      expect(
+        (await readWorktreeStatusSnapshot('/tmp/repo', git)).scannedAt,
+      ).toBe(first.scannedAt);
+    }
+    now.mockReturnValue(2_500);
+    await readWorktreeFingerprint('/tmp/repo', git, first.status);
+    const fresh = await readWorktreeStatusSnapshot('/tmp/repo', git);
+    expect(fresh.status.not_added).toEqual(['new.txt']);
+    expect(fresh.scannedAt).toBe(2_500);
+    expect(git.status).toHaveBeenCalledTimes(2);
+  });
+
+  it('coalesces validation passes without extending the authoritative scan deadline', async () => {
+    const fileStat = await fs.stat(__filename);
+    const stat = jest.spyOn(fs, 'lstat').mockResolvedValue(fileStat);
+    const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+    const git = {
+      status: jest.fn().mockResolvedValue(status({ modified: ['a', 'b'] })),
+    } as unknown as jest.Mocked<SimpleGit>;
+    const initial = await readWorktreeStatusSnapshot('/tmp/repo', git);
+    now.mockReturnValue(2_000);
+    await Promise.all(
+      Array.from({ length: 32 }, () =>
+        readWorktreeStatusSnapshot('/tmp/repo', git, { validateCached: true }),
+      ),
+    );
+    expect(stat).toHaveBeenCalledTimes(4);
+    now.mockReturnValue(2_500);
+    expect(await readWorktreeStatusSnapshot('/tmp/repo', git)).not.toBe(
+      initial,
+    );
+    expect(git.status).toHaveBeenCalledTimes(2);
+    expect(git.status).toHaveBeenLastCalledWith(['--no-ahead-behind']);
   });
 });

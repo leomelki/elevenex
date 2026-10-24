@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { execFileSync, execSync } from 'node:child_process';
 import * as systemPaths from '../config/system-paths.js';
 import { ChangeReviewService } from './change-review.service.js';
+import { clearWorktreeFingerprintCache } from './git-worktree-fingerprint.js';
 
 describe('ChangeReviewService', () => {
   // These integration tests create repositories and exercise thousands of paths.
@@ -117,6 +118,27 @@ describe('ChangeReviewService', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it('preserves row hash bytes and yields while hashing a large window', async () => {
+    const rows = Array.from({ length: 1025 }, (_, index) => ({
+      id: String(index),
+      type: 'add' as const,
+      oldLine: null,
+      newLine: index + 1,
+      content: `text 😃\0\n${index}`,
+      path: 'tab\tline\nfile',
+    }));
+    let yielded = false;
+    setImmediate(() => {
+      yielded = true;
+    });
+    const hash = await service['hashRows'](rows);
+    expect(yielded).toBe(true);
+    // Existing per-field SHA-256 serialization, including Unicode and NULs.
+    expect(hash).toBe(
+      '598f9c1227533180857583f30608341f3dad73550f8ca5b9c08aa6e35ebe4718',
+    );
+  });
+
   it('summarizes staged, unstaged, and untracked changes', async () => {
     write('README.md', 'one\ntwo\n');
     write('src/new.ts', 'export const value = 1;\n');
@@ -148,6 +170,86 @@ describe('ChangeReviewService', () => {
 
     expect(summary.files.map((file) => file.path)).toEqual(['README.md']);
     expect(summary.totals).toEqual({ files: 1, additions: 1, deletions: 0 });
+  });
+
+  it('renders untracked symlink contents without following their targets', async () => {
+    fs.symlinkSync('missing-target', path.join(repoPath, 'dangling'));
+    const target = path.join(tmpDir, 'large-target');
+    fs.writeFileSync(target, 'x'.repeat(1_000_001));
+    fs.symlinkSync(target, path.join(repoPath, 'large-link'));
+
+    const summary = await service.getSummary(repoPath, 'uncommitted');
+    expect(summary.files.map((file) => file.path)).toEqual([
+      'dangling',
+      'large-link',
+    ]);
+    for (const [filePath, content] of [
+      ['dangling', 'missing-target'],
+      ['large-link', target],
+    ]) {
+      const window = await service.getFileWindow(
+        repoPath,
+        'uncommitted',
+        filePath,
+      );
+      expect(window.large).toBe(false);
+      expect(
+        window.rows
+          .filter((row) => row.type === 'add')
+          .map((row) => row.content),
+      ).toEqual([content]);
+    }
+  });
+
+  it('refreshes gitlink windows on nested HEAD changes while ignoring nested dirtiness', async () => {
+    const relativePath = '.worktrees/nested';
+    const nested = path.join(repoPath, relativePath);
+    git(`worktree add -b nested "${nested}"`);
+    git(`add -- ${relativePath}`);
+    git('commit -m "Track nested worktree"');
+    const read = () =>
+      service.getFileWindow(repoPath, 'uncommitted', relativePath);
+    write(`${relativePath}/README.md`, 'nested commit one\n');
+    git('commit -am "Nested one"', nested);
+    const firstHead = git('rev-parse HEAD', nested).trim();
+    const first = await read();
+    expect(JSON.stringify(first.rows)).toContain(firstHead);
+    const context = () =>
+      service.getContextWindow(repoPath, 'uncommitted', relativePath, {
+        oldStart: 1,
+        newStart: 1,
+        count: 1,
+      });
+    expect((await context()).rows[0].content).toBe(
+      `Subproject commit ${firstHead}`,
+    );
+    const firstSummary = await service.getSummary(repoPath, 'uncommitted');
+
+    write(`${relativePath}/README.md`, 'nested dirty contents\n');
+    expect((await read()).rows).toEqual(first.rows);
+    expect(
+      (await service.getSummary(repoPath, 'uncommitted')).worktreeFingerprint,
+    ).toBe(firstSummary.worktreeFingerprint);
+
+    git('commit -am "Nested two"', nested);
+    const secondHead = git('rev-parse HEAD', nested).trim();
+    const second = await read();
+    expect(JSON.stringify(second.rows)).toContain(secondHead);
+    expect(second.rows).not.toEqual(first.rows);
+    expect((await context()).rows[0].content).toBe(
+      `Subproject commit ${secondHead}`,
+    );
+    expect(
+      (await service.getSummary(repoPath, 'uncommitted')).worktreeFingerprint,
+    ).not.toBe(firstSummary.worktreeFingerprint);
+    git(`add -- ${relativePath}`);
+    git('commit -m "Update gitlink"');
+    const historical = await service.getFileWindow(
+      repoPath,
+      'last-commit',
+      relativePath,
+    );
+    expect(JSON.stringify(historical.rows)).toContain(secondHead);
   });
 
   it('pauses large uncommitted change sets before loading file summaries or rows', async () => {
@@ -184,6 +286,348 @@ describe('ChangeReviewService', () => {
     expect(before.headSha).toBe(after.headSha);
     expect(before.worktreeFingerprint).not.toBe(after.worktreeFingerprint);
     expect(after.totals.additions).toBeGreaterThan(before.totals.additions);
+  });
+
+  it('reuses selected rows and content after unrelated edits and commits with bounded path validation', async () => {
+    setupOrigin();
+    git('checkout -b feature');
+    write('README.md', 'one\nselected\n');
+    for (let i = 0; i < 150; i++) write(`dirty-${i}.txt`, 'dirty\n');
+    const rows = jest.spyOn(internals(), 'buildRows');
+    const reads = jest.spyOn(internals(), 'readGitFile');
+    const first = await service.getFileWindow(repoPath, 'branch', 'README.md');
+    const stat = jest.spyOn(fs.promises, 'stat');
+    const lstat = jest.spyOn(fs.promises, 'lstat');
+    write('dirty-0.txt', 'other\n');
+    const second = await service.getFileWindow(repoPath, 'branch', 'README.md');
+    expect(second.rows).toEqual(first.rows);
+    expect(rows).toHaveBeenCalledTimes(1);
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(stat.mock.calls.length + lstat.mock.calls.length).toBeLessThan(20);
+    expect(internals().rowCache.size).toBe(1);
+    git('add dirty-0.txt');
+    git('commit -m "unrelated"');
+    const third = await service.getFileWindow(repoPath, 'branch', 'README.md');
+    expect(third.changeHash).toBe(first.changeHash);
+    expect(rows).toHaveBeenCalledTimes(1);
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+
+  it('discards obsolete row/content/context versions during repeated selected-file edits', async () => {
+    for (let i = 0; i < 20; i++) {
+      write('README.md', `one\nedit ${i}\n`);
+      await service.getFileWindow(repoPath, 'uncommitted', 'README.md');
+      await service.getContextWindow(repoPath, 'uncommitted', 'README.md', {
+        oldStart: 1,
+        newStart: 1,
+        count: 1,
+      });
+      expect(internals().rowCache.size).toBe(1);
+      expect(internals().fileLinesCache.size).toBe(1);
+      expect(internals().contextWindowCache.size).toBe(1);
+      expect(service.cacheDiagnostics().bytes).toBeLessThanOrEqual(
+        service.cacheDiagnostics().maxBytes,
+      );
+    }
+    service.releaseWorktree(repoPath);
+    expect(internals().rowCache.size).toBe(0);
+    expect(internals().fileLinesCache.size).toBe(0);
+    expect(internals().contextWindowCache.size).toBe(0);
+  });
+
+  it('reuses immutable blobs between linked worktrees', async () => {
+    setupOrigin();
+    git('checkout -b feature');
+    write('README.md', 'one\nfeature\n');
+    git('commit -am "feature"');
+    const reads = jest.spyOn(internals(), 'readGitFile');
+    await service.getFileWindow(repoPath, 'branch', 'README.md');
+    const linked = path.join(tmpDir, 'linked');
+    git(`worktree add -b linked "${linked}"`);
+    await service.getFileWindow(linked, 'branch', 'README.md');
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+
+  it('detects same-size atomic edits, stage and unstage without reusing stale rows', async () => {
+    write('README.md', 'one\nAAA\n');
+    const before = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+    );
+    write('replacement', 'one\nBBB\n');
+    fs.renameSync(
+      path.join(repoPath, 'replacement'),
+      path.join(repoPath, 'README.md'),
+    );
+    const edited = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+    );
+    expect(edited.changeHash).not.toBe(before.changeHash);
+    expect(edited.fingerprint).not.toBe(before.fingerprint);
+    git('add README.md');
+    expect(
+      (await service.getFileWindow(repoPath, 'uncommitted', 'README.md'))
+        .changeHash,
+    ).toBe(edited.changeHash);
+    git('reset HEAD -- README.md');
+    expect(
+      (await service.getFileWindow(repoPath, 'uncommitted', 'README.md'))
+        .changeHash,
+    ).toBe(edited.changeHash);
+  });
+
+  it('keeps net branch semantics when worktree edits undo committed changes', async () => {
+    setupOrigin();
+    git('checkout -b feature');
+    write('README.md', 'committed change\n');
+    git('commit -am "feature"');
+    await service.getFileWindow(repoPath, 'branch', 'README.md');
+    write('README.md', 'one\n');
+    clearWorktreeFingerprintCache(repoPath);
+    const summary = await service.getSummary(repoPath, 'branch');
+    expect(summary.files).toEqual([]);
+    await expect(
+      service.getFileWindow(repoPath, 'branch', 'README.md'),
+    ).rejects.toThrow(/not changed/);
+  });
+
+  it.each(['branch', 'uncommitted'] as const)(
+    'compares restored untracked deletions to final content in %s scope',
+    async (scope) => {
+      setupOrigin();
+      if (scope === 'branch') git('checkout -b feature');
+      git('rm README.md');
+      if (scope === 'branch') git('commit -m "delete"');
+      const index = fs.readFileSync(path.join(repoPath, '.git/index'));
+      write('README.md', 'one\n');
+      expect((await service.getSummary(repoPath, scope)).files).toEqual([]);
+      write('README.md', 'changed\n');
+      const summary = await service.getSummary(repoPath, scope);
+      expect(summary.files).toEqual([
+        expect.objectContaining({
+          path: 'README.md',
+          status: 'modified',
+          additions: 1,
+          deletions: 1,
+        }),
+      ]);
+      const window = await service.getFileWindow(repoPath, scope, 'README.md');
+      expect(window.rows.some((row) => row.content === 'changed')).toBe(true);
+      expect(fs.readFileSync(path.join(repoPath, '.git/index'))).toEqual(index);
+    },
+  );
+
+  it('updates both rename endpoints when an old path is restored as untracked', async () => {
+    setupOrigin();
+    git('checkout -b feature');
+    git('mv README.md next.md');
+    git('commit -m "rename"');
+    await service.getFileWindow(repoPath, 'branch', 'next.md');
+    write('README.md', 'one\n');
+    clearWorktreeFingerprintCache(repoPath);
+    const restored = await service.getFileWindow(repoPath, 'branch', 'next.md');
+    expect(restored.status).toBe('added');
+    expect((await service.getSummary(repoPath, 'branch')).files).toEqual([
+      expect.objectContaining({
+        path: 'next.md',
+        status: 'added',
+        oldPath: null,
+      }),
+    ]);
+    fs.unlinkSync(path.join(repoPath, 'README.md'));
+    expect(
+      (await service.getFileWindow(repoPath, 'branch', 'next.md')).status,
+    ).toBe('renamed');
+  });
+
+  it('does not guard a large net-unchanged set of restored untracked paths', async () => {
+    for (let i = 0; i < 1001; i++) write(`restored-${i}.txt`, 'original\n');
+    git('add .');
+    git('commit -m "sources"');
+    setupOrigin();
+    git('checkout -b feature');
+    execFileSync(
+      'git',
+      [
+        'rm',
+        '--',
+        ...Array.from({ length: 1001 }, (_, i) => `restored-${i}.txt`),
+      ],
+      { cwd: repoPath },
+    );
+    git('commit -m "delete sources"');
+    for (let i = 0; i < 1001; i++) write(`restored-${i}.txt`, 'original\n');
+    const summary = await service.getSummary(repoPath, 'branch');
+    expect(summary.loadGuard).toBeNull();
+    expect(summary.files).toEqual([]);
+  });
+
+  it('preserves case-only renames when validating changed modes', async () => {
+    if (process.platform === 'win32') return;
+    setupOrigin();
+    git('checkout -b feature');
+    git('mv README.md readme.md');
+    git('commit -m "rename case"');
+    await service.getFileWindow(repoPath, 'branch', 'readme.md');
+    fs.chmodSync(path.join(repoPath, 'readme.md'), 0o755);
+    expect(
+      (await service.getFileWindow(repoPath, 'branch', 'readme.md')).status,
+    ).toBe('renamed');
+  });
+
+  it('handles restored NUL-framed paths with a split index and releases temporary state', async () => {
+    const name = 'restored\twith\nlines.txt';
+    write(name, 'original\n');
+    git('add .');
+    git('commit -m "source"');
+    setupOrigin();
+    git('checkout -b feature');
+    git('config core.splitIndex true');
+    git('update-index --split-index');
+    execFileSync('git', ['rm', '--', name], { cwd: repoPath });
+    git('commit -m "delete source"');
+    write(name, 'changed\n');
+    const indexPath = path.join(repoPath, '.git/index');
+    const before = fs.readFileSync(indexPath);
+    const shared = fs
+      .readdirSync(path.join(repoPath, '.git'))
+      .filter((file) => file.startsWith('sharedindex.'))
+      .sort();
+    const temporaryDirectories = jest.spyOn(fs.promises, 'mkdtemp');
+    const window = await service.getFileWindow(repoPath, 'branch', name);
+    expect(window.status).toBe('modified');
+    expect(window.rows.some((row) => row.content === 'changed')).toBe(true);
+    expect(fs.readFileSync(indexPath)).toEqual(before);
+    expect(
+      fs
+        .readdirSync(path.join(repoPath, '.git'))
+        .filter((file) => file.startsWith('sharedindex.'))
+        .sort(),
+    ).toEqual(shared);
+    const created = await Promise.all(
+      temporaryDirectories.mock.results
+        .filter((result) => result.type === 'return')
+        .map((result) => result.value as Promise<string>),
+    );
+    expect(created.length).toBeGreaterThan(0);
+    for (const directory of created)
+      expect(fs.existsSync(directory)).toBe(false);
+  });
+
+  it('discovers new paths by the scan deadline during continuous summary requests', async () => {
+    const now = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+    await service.getSummary(repoPath, 'uncommitted');
+    write('new.txt', 'new\n');
+    for (const time of [1_500, 2_000]) {
+      now.mockReturnValue(time);
+      await service.getSummary(repoPath, 'uncommitted');
+    }
+    now.mockReturnValue(2_500);
+    const summary = await service.getSummary(repoPath, 'uncommitted');
+    expect(summary.files.map((file) => file.path)).toEqual(['new.txt']);
+  });
+
+  it('parses real rename numstats and NUL-safe paths containing tabs and newlines', async () => {
+    const old = 'old\tname\n.txt',
+      next = 'new\tname\n.txt';
+    write(old, 'rename\n'.repeat(30));
+    git('add .');
+    git('commit -m "path"');
+    fs.renameSync(path.join(repoPath, old), path.join(repoPath, next));
+    fs.appendFileSync(path.join(repoPath, next), 'extra\n');
+    git('add -A');
+    const summary = await service.getSummary(repoPath, 'uncommitted');
+    expect(summary.files).toEqual([
+      expect.objectContaining({
+        path: next,
+        oldPath: old,
+        status: 'renamed',
+        additions: 1,
+        deletions: 0,
+      }),
+    ]);
+    const window = await service.getFileWindow(repoPath, 'uncommitted', next);
+    expect(window.rows.some((row) => row.content === 'extra')).toBe(true);
+  });
+
+  it('supports an unborn HEAD and compares merge commits to their first parent', async () => {
+    const unborn = path.join(tmpDir, 'unborn');
+    fs.mkdirSync(unborn);
+    git('init -b fresh', unborn);
+    fs.writeFileSync(path.join(unborn, 'first.txt'), 'first\n');
+    git('add .', unborn);
+    const initial = await service.getSummary(unborn, 'uncommitted');
+    expect(initial.headSha).toBeNull();
+    expect(initial.branch).toBe('fresh');
+    expect(
+      (
+        await service.getFileWindow(unborn, 'uncommitted', 'first.txt')
+      ).rows.some((row) => row.content === 'first'),
+    ).toBe(true);
+    git('checkout -b side');
+    write('side.txt', 'side\n');
+    git('add .');
+    git('commit -m "side"');
+    git('checkout main');
+    write('main.txt', 'main\n');
+    git('add .');
+    git('commit -m "main"');
+    git('merge --no-ff side -m "merge"');
+    const merge = await service.getSummary(repoPath, 'last-commit');
+    expect(merge.files.map((file) => file.path)).toEqual(['side.txt']);
+    expect(
+      (
+        await service.getFileWindow(repoPath, 'last-commit', 'side.txt')
+      ).rows.some((row) => row.content === 'side'),
+    ).toBe(true);
+  });
+
+  it('guards large historical blobs and caps forced output without stack overflow', async () => {
+    write('README.md', 'large\n'.repeat(180_000));
+    git('commit -am "large historical file"');
+    write('README.md', 'small\n');
+    const guarded = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+    );
+    expect(guarded.large).toBe(true);
+    expect(guarded.truncated).toBe(true);
+    const forced = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+      { forceFileLoad: true },
+    );
+    expect(forced.totalRows).toBeLessThanOrEqual(50_000);
+    expect(forced.truncated).toBe(true);
+    write('README.md', 'x'.repeat(9 * 1024 * 1024));
+    const oversized = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+      { forceFileLoad: true },
+    );
+    expect(oversized.truncated).toBe(true);
+    expect(oversized.message).toMatch(/byte.*limit/);
+  });
+
+  it('bounds synthesized full-file rows for a forced mode-only change', async () => {
+    if (process.platform === 'win32') return;
+    write('README.md', 'context\n'.repeat(50_001));
+    git('commit -am "long context"');
+    fs.chmodSync(path.join(repoPath, 'README.md'), 0o755);
+    const window = await service.getFileWindow(
+      repoPath,
+      'uncommitted',
+      'README.md',
+      { fullFile: true, forceFileLoad: true },
+    );
+    expect(window.totalRows).toBeLessThanOrEqual(50_000);
+    expect(window.truncated).toBe(true);
   });
 
   it('updates viewed fingerprints when worktree file content changes without loading diff rows', async () => {
@@ -936,8 +1380,10 @@ describe('ChangeReviewService', () => {
     expect(summaries).toHaveBeenCalledTimes(1);
     expect(rows).toHaveBeenCalledTimes(1);
     expect(
-      diffArgs.mock.calls.filter(([, , flags]) =>
-        flags.includes('--name-only'),
+      diffArgs.mock.calls.filter(
+        ([, , flags]) =>
+          flags.includes('--name-only') ||
+          (flags.includes('--raw') && !flags.includes('--numstat')),
       ),
     ).toHaveLength(1);
     expect(
@@ -1011,6 +1457,75 @@ describe('ChangeReviewService', () => {
     );
   });
 
+  it('detaches pending refreshes when a worktree is released and reused', async () => {
+    setupOrigin();
+    const entered = deferred();
+    const release = deferred();
+    jest.spyOn(internals(), 'refreshLikelyBase').mockResolvedValue();
+    jest
+      .spyOn(internals(), 'readPullRequestInfo')
+      .mockImplementationOnce(async () => {
+        entered.resolve();
+        await release.promise;
+        return null;
+      })
+      .mockResolvedValue(null);
+    const oldRefresh = service.getSummary(repoPath, 'branch', true);
+    await entered.promise;
+    service.releaseWorktree(repoPath);
+    write('README.md', 'new head\n');
+    git('commit -am "Reuse worktree"');
+    try {
+      const current = await service.getSummary(repoPath, 'branch');
+      const refresh = service.getSummary(repoPath, 'branch', true);
+      release.resolve();
+      expect((await refresh).headSha).toBe(current.headSha);
+      expect((await oldRefresh).headSha).not.toBe(current.headSha);
+    } finally {
+      release.resolve();
+      await oldRefresh;
+    }
+  });
+
+  it('rejects file lines that changed while their content build was queued', async () => {
+    write('README.md', 'one\ntwo\n');
+    const entered = deferred();
+    const release = deferred();
+    const original = service['getOrBuild'].bind(service);
+    const builds = jest
+      .spyOn(internals(), 'getOrBuild')
+      .mockImplementation((map, key, build) =>
+        original(
+          map,
+          key,
+          map === internals().fileLinesBuilds
+            ? async () => {
+                entered.resolve();
+                await release.promise;
+                return build();
+              }
+            : build,
+        ),
+      );
+    const read = () =>
+      service.getContextWindow(repoPath, 'uncommitted', 'README.md', {
+        oldStart: 1,
+        newStart: 1,
+        count: 1,
+      });
+    const old = read();
+    const rejected = expect(old).rejects.toThrow('File changed while reading');
+    await entered.promise;
+    write('README.md', 'changed while queued\n');
+    release.resolve();
+    await rejected;
+    builds.mockRestore();
+    expect(internals().fileLinesCache.size).toBe(0);
+    expect(internals().contextWindowCache.size).toBe(0);
+    write('README.md', 'one\ntwo\n');
+    expect((await read()).rows[0].content).toBe('one');
+  });
+
   it('does not cache old rows, file lines, or context when they finish during replacement builds', async () => {
     write('README.md', 'one\ntwo\n');
     git('commit -am "second"');
@@ -1018,16 +1533,26 @@ describe('ChangeReviewService', () => {
     const newEntered = deferred();
     const releaseOld = deferred();
     const releaseNew = deferred();
-    const readGitFile = service['readGitFile'].bind(service);
-    let reads = 0;
-    const fileReads = jest
-      .spyOn(internals(), 'readGitFile')
-      .mockImplementation(async (...args) => {
-        const group = reads++ < 2 ? 'old' : 'new';
-        const text = await readGitFile(...args);
-        (group === 'old' ? oldEntered : newEntered).resolve();
-        await (group === 'old' ? releaseOld : releaseNew).promise;
-        return text;
+    const originalGetOrBuild = service['getOrBuild'].bind(service);
+    let reads = 0,
+      requests = 0;
+    const builds = jest
+      .spyOn(internals(), 'getOrBuild')
+      .mockImplementation((map, key, build) => {
+        if (map === internals().fileLinesBuilds && ++requests === 2)
+          oldEntered.resolve();
+        return originalGetOrBuild(
+          map,
+          key,
+          map === internals().fileLinesBuilds
+            ? async () => {
+                const old = reads++ === 0;
+                if (!old) newEntered.resolve();
+                await (old ? releaseOld : releaseNew).promise;
+                return build();
+              }
+            : build,
+        );
       });
     const windows = () =>
       Promise.all([
@@ -1057,7 +1582,8 @@ describe('ChangeReviewService', () => {
     const joinedWindows = windows();
     releaseNew.resolve();
     await Promise.all([newWindows, joinedWindows]);
-    expect(fileReads).toHaveBeenCalledTimes(4);
+    expect(reads).toBe(2);
+    builds.mockRestore();
     expect(internals().rowCache.size).toBe(1);
     expect(internals().fileLinesCache.size).toBe(1);
     expect(internals().contextWindowCache.size).toBe(1);
@@ -1082,7 +1608,11 @@ describe('ChangeReviewService', () => {
     expect(summary.files).toEqual([]);
     expect(summaries).not.toHaveBeenCalled();
     expect(
-      diffArgs.mock.calls.every(([, , flags]) => flags.includes('--name-only')),
+      diffArgs.mock.calls.every(
+        ([, , flags]) =>
+          !flags.includes('--numstat') &&
+          (flags.includes('--name-only') || flags.includes('--raw')),
+      ),
     ).toBe(true);
     await expect(
       service.getFileWindow(repoPath, 'last-commit', 'bulk/file-0.txt'),
@@ -1108,12 +1638,14 @@ describe('ChangeReviewService', () => {
     expect(summary.loadGuard).toBeNull();
     expect(summary.files).toHaveLength(1_001);
     expect(summary.files.every((file) => file.status === 'renamed')).toBe(true);
-    const counts = diffArgs.mock.calls.filter(([, , flags]) =>
-      flags.includes('--name-only'),
+    const counts = diffArgs.mock.calls.filter(
+      ([, , flags]) =>
+        flags.includes('--name-only') ||
+        (flags.includes('--raw') && !flags.includes('--numstat')),
     );
     expect(counts.map(([, , flags]) => flags)).toEqual([
       expect.arrayContaining(['--no-renames', '-z']),
-      expect.arrayContaining(['--find-renames', '-z']),
+      expect.arrayContaining(['--raw', '--find-renames', '-z']),
     ]);
   });
 

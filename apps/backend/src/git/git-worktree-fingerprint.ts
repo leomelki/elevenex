@@ -1,9 +1,16 @@
 import { createHash } from 'node:crypto';
-import { stat } from 'node:fs/promises';
+import { lstat as stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import type { SimpleGit, StatusResult } from 'simple-git';
 
 import { worktreeSimpleGit } from '../config/system-paths.js';
+import {
+  gitReadScheduler,
+  gitFileScheduler,
+  gitRepositoryKey,
+} from './git-read-scheduler.js';
+import { readGitDirectoryHead } from './git-local-state.js';
+import { GitCacheBudget, retainedBytes } from './git-cache.js';
 
 const STAT_CONCURRENCY = 32;
 const WORKTREE_STATUS_CACHE_TTL_MS = 1_500;
@@ -14,43 +21,70 @@ export interface WorktreeStatusFingerprintSnapshot {
   fingerprint: string;
   statSignature: string;
   createdAt: number;
+  /** Start of the authoritative Git scan; validation never extends it. */
+  scannedAt: number;
+  pathSizes: ReadonlyMap<string, number | null>;
+  pathVersions: ReadonlyMap<string, string>;
 }
 
 interface StatusCacheEntry {
   snapshot?: WorktreeStatusFingerprintSnapshot;
   inFlight?: Promise<WorktreeStatusFingerprintSnapshot>;
   publication?: object;
+  validation?: Promise<WorktreeStatusFingerprintSnapshot>;
 }
 
 // Entry identity is the generation: invalidation discards it without retaining
 // version counters for worktrees that are no longer used.
 const statusSnapshotCache = new Map<string, StatusCacheEntry>();
+const statusScanTimes = new WeakMap<StatusResult, number>();
+const snapshotBudget = new GitCacheBudget(16 * 1024 * 1024);
+
+function publishSnapshot(
+  key: string,
+  entry: StatusCacheEntry,
+  snapshot: WorktreeStatusFingerprintSnapshot,
+): void {
+  entry.snapshot = snapshot;
+  snapshotBudget.add(entry, retainedBytes(snapshot), () => {
+    entry.snapshot = undefined;
+    snapshotBudget.remove(entry);
+    releaseStatusCacheEntry(key, entry);
+  });
+}
 
 export async function readWorktreeFingerprint(
   worktreePath: string,
-  git: SimpleGit = worktreeSimpleGit(worktreePath),
+  git: SimpleGit = worktreeSimpleGit(worktreePath, { readOnly: true }),
   status?: StatusResult,
 ): Promise<string> {
   if (status) {
     const key = path.resolve(worktreePath);
     const entry = getStatusCacheEntry(key);
+    // Reusing status may revalidate its paths, but never gives it a new scan deadline.
+    const scannedAt = statusScanTimes.get(status) ?? Date.now();
+    statusScanTimes.set(status, scannedAt);
     // Supplied status supersedes a scan that started before it. Its callers
     // may finish, but new readers must not join that older scan.
     entry.inFlight = undefined;
+    entry.validation = undefined;
     const publication = (entry.publication = {});
     try {
-      const { fingerprint, statSignature } =
+      const { fingerprint, statSignature, pathSizes, pathVersions } =
         await buildStatusWorktreeFingerprint(worktreePath, status);
       if (
         statusSnapshotCache.get(key) === entry &&
         entry.publication === publication
       ) {
-        entry.snapshot = {
+        publishSnapshot(key, entry, {
           status,
           fingerprint,
           statSignature,
           createdAt: Date.now(),
-        };
+          scannedAt,
+          pathSizes,
+          pathVersions,
+        });
       }
       return fingerprint;
     } finally {
@@ -68,7 +102,7 @@ export async function readWorktreeFingerprint(
 
 export async function readWorktreeStatusSnapshot(
   worktreePath: string,
-  git: SimpleGit = worktreeSimpleGit(worktreePath),
+  git: SimpleGit = worktreeSimpleGit(worktreePath, { readOnly: true }),
   options: { validateCached?: boolean } = {},
 ): Promise<WorktreeStatusFingerprintSnapshot> {
   const key = path.resolve(worktreePath);
@@ -77,39 +111,59 @@ export async function readWorktreeStatusSnapshot(
     if (!cached) break;
     if (!options.validateCached) return cached;
 
-    const statSignature = await readStatusStatSignature(
-      worktreePath,
-      cached.status,
-    );
-    // A mutation or another reader may have replaced the snapshot while stat
-    // was pending. Validate the replacement rather than returning/deleting it.
-    if (getCachedStatusSnapshot(key) !== cached) continue;
-    if (statSignature === cached.statSignature) return cached;
-    statusSnapshotCache.get(key)!.snapshot = undefined;
-    break;
+    const entry = getStatusCacheEntry(key);
+    if (entry.validation) return entry.validation;
+    const validate = async (): Promise<WorktreeStatusFingerprintSnapshot> => {
+      const statSignature = await readStatusStatSignature(
+        worktreePath,
+        cached.status,
+      );
+      // A mutation or another reader may have replaced the snapshot while stat
+      // was pending. Validate the replacement rather than returning/deleting it.
+      if (getCachedStatusSnapshot(key) !== cached) {
+        if (entry.validation === validation) entry.validation = undefined;
+        return readWorktreeStatusSnapshot(worktreePath, git, options);
+      }
+      if (statSignature === cached.statSignature) return cached;
+      statusSnapshotCache.get(key)!.snapshot = undefined;
+      snapshotBudget.remove(entry);
+      return readWorktreeStatusSnapshot(worktreePath, git);
+    };
+    const validation = validate().finally(() => {
+      if (entry.validation === validation) entry.validation = undefined;
+      releaseStatusCacheEntry(key, entry);
+    });
+    entry.validation = validation;
+    return validation;
   }
 
   const entry = getStatusCacheEntry(key);
   if (entry.inFlight) return entry.inFlight;
 
   const publication = (entry.publication = {});
+  const scannedAt = Date.now();
   const promise = (async () => {
-    const status = await git.status();
-    const { fingerprint, statSignature } = await buildStatusWorktreeFingerprint(
-      worktreePath,
-      status,
+    const status = await gitReadScheduler.run(
+      gitRepositoryKey(worktreePath),
+      () => git.status(['--no-ahead-behind']),
     );
+    statusScanTimes.set(status, scannedAt);
+    const { fingerprint, statSignature, pathSizes, pathVersions } =
+      await buildStatusWorktreeFingerprint(worktreePath, status);
     const snapshot = {
       status,
       fingerprint,
       statSignature,
       createdAt: Date.now(),
+      scannedAt,
+      pathSizes,
+      pathVersions,
     };
     if (
       statusSnapshotCache.get(key) === entry &&
       entry.publication === publication
     ) {
-      entry.snapshot = snapshot;
+      publishSnapshot(key, entry, snapshot);
     }
     return snapshot;
   })().finally(() => {
@@ -123,10 +177,15 @@ export async function readWorktreeStatusSnapshot(
 
 export function clearWorktreeFingerprintCache(worktreePath?: string): void {
   if (!worktreePath) {
+    for (const entry of statusSnapshotCache.values())
+      snapshotBudget.remove(entry);
     statusSnapshotCache.clear();
     return;
   }
-  statusSnapshotCache.delete(path.resolve(worktreePath));
+  const key = path.resolve(worktreePath);
+  const entry = statusSnapshotCache.get(key);
+  if (entry) snapshotBudget.remove(entry);
+  statusSnapshotCache.delete(key);
 }
 
 async function readRawWorktreeFingerprint(
@@ -159,10 +218,12 @@ function getCachedStatusSnapshot(
   const entry = statusSnapshotCache.get(key);
   const cached = entry?.snapshot;
   if (!cached) return null;
-  if (Date.now() - cached.createdAt > WORKTREE_STATUS_CACHE_TTL_MS) {
+  if (Date.now() - cached.scannedAt >= WORKTREE_STATUS_CACHE_TTL_MS) {
     entry.snapshot = undefined;
+    snapshotBudget.remove(entry);
     return null;
   }
+  snapshotBudget.touch(entry);
   return cached;
 }
 
@@ -179,6 +240,7 @@ function releaseStatusCacheEntry(key: string, entry: StatusCacheEntry): void {
   if (
     !entry.snapshot &&
     !entry.inFlight &&
+    !entry.validation &&
     !entry.publication &&
     statusSnapshotCache.get(key) === entry
   )
@@ -187,8 +249,14 @@ function releaseStatusCacheEntry(key: string, entry: StatusCacheEntry): void {
   // is being read. Only completed, inactive entries may be evicted.
   for (const [cachedKey, cachedEntry] of statusSnapshotCache) {
     if (statusSnapshotCache.size <= MAX_STATUS_CACHE_ENTRIES) break;
-    if (!cachedEntry.inFlight && !cachedEntry.publication)
+    if (
+      !cachedEntry.inFlight &&
+      !cachedEntry.publication &&
+      !cachedEntry.validation
+    ) {
       statusSnapshotCache.delete(cachedKey);
+      snapshotBudget.remove(cachedEntry);
+    }
   }
 }
 
@@ -203,7 +271,12 @@ export async function readStatusWorktreeFingerprint(
 async function buildStatusWorktreeFingerprint(
   worktreePath: string,
   status: StatusResult,
-): Promise<{ fingerprint: string; statSignature: string }> {
+): Promise<{
+  fingerprint: string;
+  statSignature: string;
+  pathSizes: ReadonlyMap<string, number | null>;
+  pathVersions: ReadonlyMap<string, string>;
+}> {
   const hash = createHash('sha256');
   for (const row of statusFingerprintRows(status)) {
     hash.update(row);
@@ -219,6 +292,18 @@ async function buildStatusWorktreeFingerprint(
   return {
     fingerprint: hash.digest('hex'),
     statSignature: statRows.join('\n'),
+    pathSizes: new Map(
+      statRows.map((row) => {
+        const [filePath, size] = row.split('\0', 2);
+        return [filePath, size === 'missing' ? null : Number(size)];
+      }),
+    ),
+    pathVersions: new Map(
+      statRows.map((row) => {
+        const [filePath, , version] = row.split('\0', 3);
+        return [filePath, version ?? 'missing'];
+      }),
+    ),
   };
 }
 
@@ -317,19 +402,27 @@ async function statFingerprint(
   worktreePath: string,
   filePath: string,
 ): Promise<string> {
-  const fileStat = await stat(path.join(worktreePath, filePath)).catch(
-    () => null,
-  );
-  if (!fileStat?.isFile()) {
-    return `${filePath}\0missing`;
-  }
-  return [
-    filePath,
-    fileStat.size,
-    Math.floor(fileStat.mtimeMs),
-    Math.floor(fileStat.ctimeMs),
-    fileStat.mode,
-  ].join('\0');
+  return gitFileScheduler.run(gitRepositoryKey(worktreePath), async () => {
+    const absolute = path.join(worktreePath, filePath);
+    const fileStat = await stat(absolute, { bigint: true }).catch(() => null);
+    if (fileStat?.isDirectory()) {
+      const head = await readGitDirectoryHead(absolute);
+      return head
+        ? [filePath, 'missing', `gitlink:${head}`].join('\0')
+        : `${filePath}\0missing`;
+    }
+    if (!fileStat || (!fileStat.isFile() && !fileStat.isSymbolicLink()))
+      return `${filePath}\0missing`;
+    const version = [
+      fileStat.dev,
+      fileStat.ino,
+      fileStat.mode,
+      fileStat.size,
+      fileStat.mtimeNs,
+      fileStat.ctimeNs,
+    ].join(':');
+    return [filePath, fileStat.size, version].join('\0');
+  });
 }
 
 async function mapWithConcurrency<T, R>(

@@ -669,7 +669,10 @@ function ensureUtf8Locale(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 // has been globally augmented with the user's *default* nvm/fnm version,
 // not the one the worktree pins via `.nvmrc`. Without the override, hooks
 // resolve to the wrong node and bail or behave inconsistently.
-export function worktreeSimpleGit(worktreePath: string): SimpleGit {
+export function worktreeSimpleGit(
+  worktreePath: string,
+  options: { readOnly?: boolean } = {},
+): SimpleGit {
   const env = buildAugmentedEnv(process.env, worktreePath);
   delete env.GIT_PAGER;
   delete env.PAGER;
@@ -677,9 +680,31 @@ export function worktreeSimpleGit(worktreePath: string): SimpleGit {
   // inside them cannot be committed by the parent repository; only a change
   // to the recorded commit can. Keep status, diffs, and fingerprints aligned
   // without scanning their contents or changing the repository's config.
-  return simpleGit(worktreePath, {
+  const controller = options.readOnly ? new AbortController() : null;
+  if (options.readOnly) {
+    env.GIT_OPTIONAL_LOCKS = '0';
+    env.GIT_NO_LAZY_FETCH = '1';
+  }
+  const client = simpleGit(worktreePath, {
     config: ['diff.ignoreSubmodules=dirty'],
+    ...(controller
+      ? { abort: controller.signal, timeout: { block: 15_000 } }
+      : {}),
   }).env(env);
+  if (controller)
+    client.outputHandler((_command, stdout, stderr) => {
+      let bytes = 0;
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      timer.unref();
+      stdout.once('close', () => clearTimeout(timer));
+      const account = (chunk: Buffer | string) => {
+        bytes += Buffer.byteLength(chunk);
+        if (bytes > 16 * 1024 * 1024) controller.abort();
+      };
+      stdout.on('data', account);
+      stderr.on('data', account);
+    });
+  return client;
 }
 
 // POSIX-compliant single-quote shell escape. Wraps the value in single quotes

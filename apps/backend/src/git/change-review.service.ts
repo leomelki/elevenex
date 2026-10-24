@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import { createXXHash3, xxhash3 } from 'hash-wasm/dist/xxhash3.umd.min.js';
 import { diffChars, diffWordsWithSpace, type Change } from 'diff';
 import { SimpleGit, StatusResult } from 'simple-git';
@@ -17,7 +18,6 @@ import {
   ChangeReviewContextRange,
   ChangeReviewFileFingerprint,
   ChangeReviewFileFingerprintsResponse,
-  ChangeReviewFileStatus,
   ChangeReviewFileSummary,
   ChangeReviewFileWindow,
   ChangeReviewLoadGuard,
@@ -28,12 +28,47 @@ import {
 } from './change-review.types.js';
 import {
   clearWorktreeFingerprintCache,
-  readWorktreeFingerprint,
+  WorktreeStatusFingerprintSnapshot,
   readWorktreeStatusSnapshot,
 } from './git-worktree-fingerprint.js';
 
+import {
+  clearLocalRefState,
+  readLocalRefSnapshot,
+  readOriginHead,
+  readPathVersion,
+  type LocalRefSnapshot,
+} from './git-local-state.js';
+import {
+  parseGitDiffRecords,
+  renameDetectionMayBeLimited,
+  type GitDiffRecord,
+} from './git-diff-records.js';
+
+import {
+  restoredComparisonSources,
+  withReviewIndex,
+} from './git-review-index.js';
+import { GitByteLru, GitCacheBudget, copyCacheString } from './git-cache.js';
+import { readWorktreeTextStats } from './git-file-stats.js';
+import { registerWorktreeCache } from './git-worktree-cache-lifecycle.js';
+
+import {
+  scheduledReadGit,
+  gitReadScheduler,
+  gitHashScheduler,
+  gitRenderScheduler,
+  gitFileScheduler,
+  gitRepositoryKey,
+  gitAbortError,
+  consumeSharedGitWork,
+} from './git-read-scheduler.js';
+
 const DEFAULT_CHANGE_REVIEW_FILE_LIMIT = 2_000;
+const MAX_FORCED_CHANGE_REVIEW_FILE_LIMIT = 20_000;
 const LARGE_FILE_BYTES = 1_000_000;
+const MAX_FORCED_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_PATCH_ROWS = 50_000;
 const LARGE_FILE_LINES = 25_000;
 const DEFAULT_CONTEXT = 8;
 /**
@@ -65,8 +100,23 @@ const INLINE_CHANGE_SIMILARITY_THRESHOLD = 0.55;
 const INLINE_CHANGE_MAX_LINE_LENGTH = 2_000;
 const INLINE_CHANGE_MAX_EDIT_LENGTH = 512;
 
+interface FileWindowOptions {
+  offset?: number;
+  limit?: number;
+  context?: number;
+  /** Render the whole file instead of hunks with limited context. */
+  fullFile?: boolean;
+  /** Allow opening a file that has no diff in this scope. */
+  allowUnchanged?: boolean;
+  forceLoad?: boolean;
+  forceFileLoad?: boolean;
+  signal?: AbortSignal;
+}
+
 interface ReviewBase {
   cacheGeneration: number;
+  commonDir: string;
+  indexVersion: string;
   repoRoot: string;
   branch: string;
   baseRef: string | null;
@@ -79,6 +129,12 @@ interface ReviewBase {
   pullRequest: ChangeReviewPullRequestInfo | null;
 }
 
+interface FileArtifactVersion {
+  slot: string;
+  identity: string;
+  keys: Set<string>;
+}
+
 interface CachedRows {
   key: string;
   createdAt: number;
@@ -89,6 +145,7 @@ interface CachedRows {
   large: boolean;
   truncated: boolean;
   changeHash: string;
+  backingTexts?: readonly string[];
 }
 
 interface CachedFileSummaries {
@@ -111,31 +168,37 @@ interface CachedPullRequest {
 interface CachedFileCount {
   createdAt: number;
   count: number;
+  renameDetectionLimited: boolean;
+}
+
+interface ReviewFileLines {
+  oldLines: string[];
+  newLines: string[];
+  backingTexts?: readonly string[];
 }
 
 interface CachedFileLines {
   key: string;
   createdAt: number;
-  lines: {
-    oldLines: string[];
-    newLines: string[];
-  };
+  lines: ReviewFileLines;
 }
 
 interface CachedContextWindow {
   key: string;
   createdAt: number;
   window: ChangeReviewContextWindow;
+  backingTexts?: readonly string[];
 }
 
 interface WorktreeReviewState {
+  snapshot?: WorktreeStatusFingerprintSnapshot;
   fingerprint: string;
   status: StatusResult | null;
 }
 
 interface ChangeReviewLoadCheck {
   guard: ChangeReviewLoadGuard | null;
-  status: StatusResult | null;
+  snapshot: WorktreeStatusFingerprintSnapshot | null;
 }
 
 interface WorktreeChangeCounts {
@@ -148,33 +211,77 @@ interface WorktreeChangeCounts {
 interface FileSummarySet {
   files: ChangeReviewFileSummary[];
   untrackedPaths: ReadonlySet<string>;
+  renameDetectionLimited?: boolean;
+  restoredSources?: readonly GitDiffRecord[];
+  originalOldPaths?: ReadonlyMap<string, string>;
 }
 
 interface FileSummaryLookup {
   summary: ChangeReviewFileSummary;
   untracked: boolean;
+  restoredSources?: readonly GitDiffRecord[];
+  graphFingerprint?: string;
 }
 
 @Injectable()
 export class ChangeReviewService {
+  private readonly unregisterCache = registerWorktreeCache(this);
+  private readonly memoryBudget = new GitCacheBudget();
+  // Keep selected-path metadata available when large row entries churn.
+  private readonly lookupBudget = new GitCacheBudget(4 * 1024 * 1024);
+  private readonly fileVersions = new WeakMap<
+    ChangeReviewFileSummary,
+    { record: GitDiffRecord }
+  >();
+  private readonly fileLookups = new GitByteLru<{
+    createdAt: number;
+    lookup: FileSummaryLookup;
+    version: string;
+  }>(this.lookupBudget);
+  private readonly blobContent = new GitByteLru<string>(this.memoryBudget);
+  private readonly blobBuilds = new Map<string, Promise<string>>();
+  private readonly blobSizes = new GitByteLru<number>(this.memoryBudget);
+  private readonly contentHashes = new GitByteLru<{
+    version: string;
+    identity: string;
+  }>(this.memoryBudget);
+  private readonly hashBuilds = new Map<string, Promise<string>>();
+  private readonly fileArtifactVersions = new Map<
+    string,
+    FileArtifactVersion
+  >();
+  private readonly artifactOwners = new Map<string, FileArtifactVersion>();
   private nextCacheGeneration = 0;
   private readonly scopeGenerations = new Map<string, number>();
   private readonly worktreeRefs = new Map<string, string>();
   private readonly baseCache = new Map<string, CachedBase>();
   private readonly pullRequestCache = new Map<string, CachedPullRequest>();
   private readonly fileCountCache = new Map<string, CachedFileCount>();
-  private readonly summaryCache = new Map<string, CachedFileSummaries>();
-  private readonly rowCache = new Map<string, CachedRows>();
-  private readonly fileLinesCache = new Map<string, CachedFileLines>();
-  private readonly contextWindowCache = new Map<string, CachedContextWindow>();
+  private readonly summaryCache = new GitByteLru<CachedFileSummaries>(
+    this.memoryBudget,
+  );
+  private readonly rowCache = new GitByteLru<CachedRows>(this.memoryBudget);
+  private readonly fileLinesCache = new GitByteLru<CachedFileLines>(
+    this.memoryBudget,
+  );
+  private readonly contextWindowCache = new GitByteLru<CachedContextWindow>(
+    this.memoryBudget,
+  );
   private readonly summaryBuilds = new Map<string, Promise<FileSummarySet>>();
+  private readonly fileLookupBuilds = new Map<
+    string,
+    Promise<FileSummaryLookup>
+  >();
   private readonly rowBuilds = new Map<string, Promise<CachedRows>>();
   private readonly baseBuilds = new Map<string, Promise<ReviewBase>>();
   private readonly refreshBuilds = new Map<string, Promise<ReviewBase>>();
-  private readonly fileCountBuilds = new Map<string, Promise<number>>();
+  private readonly fileCountBuilds = new Map<
+    string,
+    Promise<{ count: number; renameDetectionLimited: boolean }>
+  >();
   private readonly fileLinesBuilds = new Map<
     string,
-    Promise<{ oldLines: string[]; newLines: string[] }>
+    Promise<ReviewFileLines>
   >();
   private readonly contextWindowBuilds = new Map<
     string,
@@ -188,7 +295,10 @@ export class ChangeReviewService {
     forceLoad = false,
   ): Promise<ChangeReviewSummary> {
     this.assertScope(scope);
-    const git = worktreeSimpleGit(worktreePath);
+    const git = scheduledReadGit(
+      worktreeSimpleGit(worktreePath, { readOnly: true }),
+      worktreePath,
+    );
     const base = await this.resolveBase(git, worktreePath, scope, refreshBase);
     const loadCheck = await this.readLoadCheck(
       git,
@@ -211,7 +321,7 @@ export class ChangeReviewService {
       worktreePath,
       scope,
       true,
-      loadCheck.status,
+      loadCheck.snapshot,
     );
     const summaries = await this.readFileSummaries(
       git,
@@ -244,24 +354,29 @@ export class ChangeReviewService {
       },
       files,
       loadGuard: loadCheck.guard,
+      renameDetectionLimited: Boolean(summaries.renameDetectionLimited),
     };
   }
 
-  async getFileWindow(
+  getFileWindow(
     worktreePath: string,
     scope: ChangeReviewScope,
     filePath: string,
-    options: {
-      offset?: number;
-      limit?: number;
-      context?: number;
-      /** Render the whole file instead of hunks with limited context. */
-      fullFile?: boolean;
-      /** Allow opening a file that has no diff in this scope. */
-      allowUnchanged?: boolean;
-      forceLoad?: boolean;
-      forceFileLoad?: boolean;
-    } = {},
+    options: FileWindowOptions = {},
+  ): Promise<ChangeReviewFileWindow> {
+    if (options.signal?.aborted)
+      return Promise.reject(gitAbortError(options.signal));
+    return consumeSharedGitWork(
+      this.loadFileWindow(worktreePath, scope, filePath, options),
+      options.signal,
+    );
+  }
+
+  private async loadFileWindow(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    filePath: string,
+    options: FileWindowOptions = {},
   ): Promise<ChangeReviewFileWindow> {
     this.assertScope(scope);
     const offset = Math.max(0, Number(options.offset) || 0);
@@ -274,14 +389,20 @@ export class ChangeReviewService {
       ? FULL_FILE_CONTEXT
       : Math.max(0, Math.min(200, Number(options.context) || DEFAULT_CONTEXT));
 
-    const git = worktreeSimpleGit(worktreePath);
+    const git = scheduledReadGit(
+      worktreeSimpleGit(worktreePath, { readOnly: true }),
+      worktreePath,
+      10,
+    );
     const base = await this.resolveBase(git, worktreePath, scope, false);
+    options.signal?.throwIfAborted();
     const loadCheck = await this.readLoadCheck(
       git,
       worktreePath,
       scope,
       base,
       Boolean(options.forceLoad),
+      false,
     );
     if (loadCheck.guard?.blocked) {
       throw new BadRequestException(this.loadGuardMessage(loadCheck.guard));
@@ -292,7 +413,7 @@ export class ChangeReviewService {
       worktreePath,
       scope,
       false,
-      loadCheck.status,
+      loadCheck.snapshot,
     );
     // An "open any file" request targets a path with no diff in this scope, so
     // the diff-driven summary lookup has nothing to return. Fall back to
@@ -309,27 +430,35 @@ export class ChangeReviewService {
       return null;
     });
     if (!lookup) {
-      return this.buildUnchangedFileWindow(worktreePath, scope, filePath, {
-        offset,
-        limit,
-        forceFileLoad: Boolean(options.forceFileLoad),
-      });
+      return gitRenderScheduler.run(
+        gitRepositoryKey(worktreePath),
+        () =>
+          this.buildUnchangedFileWindow(worktreePath, scope, filePath, {
+            offset,
+            limit,
+            forceFileLoad: Boolean(options.forceFileLoad),
+          }),
+        10,
+        options.signal,
+      );
     }
+    options.signal?.throwIfAborted();
     const summary = lookup.summary;
-    const cacheKey = [
+    const cacheKey = await this.fileArtifactKey(
+      'rows',
+      git,
       worktreePath,
       scope,
-      base.cacheGeneration,
-      base.mergeBaseSha ?? base.baseSha ?? '',
-      base.headSha ?? '',
-      scope === 'last-commit' ? '' : worktreeState.fingerprint,
-      filePath,
-      context,
-      options.forceFileLoad ? 'force-file' : 'guarded-file',
-      summary.additions,
-      summary.deletions,
-      summary.status,
-    ].join('\0');
+      base,
+      summary,
+      [
+        context,
+        options.forceFileLoad ? 'force-file' : 'guarded-file',
+        summary.additions,
+        summary.deletions,
+        summary.status,
+      ],
+    );
     const rowsPromise = this.getOrBuildRows(
       cacheKey,
       git,
@@ -338,7 +467,6 @@ export class ChangeReviewService {
       base,
       lookup,
       context,
-      worktreeState.fingerprint,
       Boolean(options.forceFileLoad),
       fullFile,
     );
@@ -393,7 +521,10 @@ export class ChangeReviewService {
       };
     }
 
-    const git = worktreeSimpleGit(worktreePath);
+    const git = scheduledReadGit(
+      worktreeSimpleGit(worktreePath, { readOnly: true }),
+      worktreePath,
+    );
     const base = await this.resolveBase(git, worktreePath, scope, false);
     const loadCheck = await this.readLoadCheck(
       git,
@@ -411,7 +542,7 @@ export class ChangeReviewService {
       worktreePath,
       scope,
       false,
-      loadCheck.status,
+      loadCheck.snapshot,
     );
     const summaries = await this.readFileSummaries(
       git,
@@ -465,8 +596,31 @@ export class ChangeReviewService {
       MAX_LIMIT,
       Math.max(1, Number(range.limit) || DEFAULT_CONTEXT_RANGE_LIMIT),
     );
+    if (
+      Math.max(oldStart, newStart) + Math.min(count, limit) >
+      MAX_PATCH_ROWS
+    ) {
+      return {
+        scope,
+        path: filePath,
+        oldStart,
+        newStart,
+        count,
+        limit,
+        rows: [
+          this.metaRow(
+            filePath,
+            `Context reads are capped at ${MAX_PATCH_ROWS} lines.`,
+          ),
+        ],
+      };
+    }
 
-    const git = worktreeSimpleGit(worktreePath);
+    const git = scheduledReadGit(
+      worktreeSimpleGit(worktreePath, { readOnly: true }),
+      worktreePath,
+      10,
+    );
     const base = await this.resolveBase(git, worktreePath, scope, false);
     const loadCheck = await this.readLoadCheck(
       git,
@@ -474,6 +628,7 @@ export class ChangeReviewService {
       scope,
       base,
       Boolean(range.forceLoad),
+      false,
     );
     if (loadCheck.guard?.blocked) {
       throw new BadRequestException(this.loadGuardMessage(loadCheck.guard));
@@ -484,7 +639,7 @@ export class ChangeReviewService {
       worktreePath,
       scope,
       false,
-      loadCheck.status,
+      loadCheck.snapshot,
     );
     const { summary } = await this.readFileSummary(
       git,
@@ -494,56 +649,95 @@ export class ChangeReviewService {
       filePath,
       worktreeState,
     );
-    const contextCacheKey = [
+    const contextCacheKey = await this.fileArtifactKey(
+      'context',
+      git,
       worktreePath,
       scope,
-      base.cacheGeneration,
-      base.mergeBaseSha ?? base.baseSha ?? '',
-      base.headSha ?? '',
-      scope === 'last-commit' ? '' : worktreeState.fingerprint,
-      filePath,
-      oldStart,
-      newStart,
-      count,
-      limit,
-      range.forceFileLoad ? 'force-file' : 'guarded-file',
-      summary.additions,
-      summary.deletions,
-      summary.status,
-    ].join('\0');
+      base,
+      summary,
+      [
+        oldStart,
+        newStart,
+        count,
+        limit,
+        range.forceFileLoad ? 'force-file' : 'guarded-file',
+        summary.additions,
+        summary.deletions,
+        summary.status,
+      ],
+    );
     const cached = this.getCachedContextWindow(contextCacheKey);
     if (cached) return cached;
+    if (summary.binary)
+      return {
+        scope,
+        path: summary.path,
+        oldStart,
+        newStart,
+        count,
+        limit,
+        rows: [this.metaRow(summary.path, 'Binary file has no text context.')],
+      };
 
-    return this.getOrBuild(
-      this.contextWindowBuilds,
-      contextCacheKey,
-      async () => {
-        const fileLines = await this.readReviewFileLines(
-          git,
-          worktreePath,
-          scope,
-          base,
-          summary,
-          worktreeState.fingerprint,
-        );
-        const rows = this.buildContextRows(
-          summary.path,
-          fileLines,
-          oldStart,
-          newStart,
-          Math.min(count, limit),
-        );
+    const byteGuard = await this.fileByteGuard(
+      git,
+      base,
+      summary,
+      Boolean(range.forceFileLoad),
+    );
+    if (byteGuard || (summary.large && !range.forceFileLoad)) {
+      return {
+        scope,
+        path: summary.path,
+        oldStart,
+        newStart,
+        count,
+        limit,
+        rows: [
+          this.metaRow(
+            summary.path,
+            byteGuard ?? 'Large file context is hidden by default.',
+          ),
+        ],
+      };
+    }
 
-        return this.cachedContextWindow(contextCacheKey, {
-          scope,
-          path: summary.path,
-          oldStart,
-          newStart,
-          count,
-          limit,
-          rows,
-        });
-      },
+    return this.getOrBuild(this.contextWindowBuilds, contextCacheKey, () =>
+      gitRenderScheduler.run(
+        gitRepositoryKey(worktreePath),
+        async () => {
+          const fileLines = await this.readReviewFileLines(
+            git,
+            worktreePath,
+            scope,
+            base,
+            summary,
+          );
+          const rows = this.buildContextRows(
+            summary.path,
+            fileLines,
+            oldStart,
+            newStart,
+            Math.min(count, limit),
+          );
+
+          return this.cachedContextWindow(
+            contextCacheKey,
+            {
+              scope,
+              path: summary.path,
+              oldStart,
+              newStart,
+              count,
+              limit,
+              rows,
+            },
+            fileLines.backingTexts,
+          );
+        },
+        10,
+      ),
     );
   }
 
@@ -560,6 +754,7 @@ export class ChangeReviewService {
       if (refreshing) return refreshing;
       this.clearScopeCache(worktreePath, scope);
       clearWorktreeFingerprintCache(worktreePath);
+      clearLocalRefState(worktreePath);
       return this.getOrBuild(this.refreshBuilds, scopeKey, () =>
         this.resolveCurrentBase(git, worktreePath, scope, true),
       );
@@ -576,20 +771,9 @@ export class ChangeReviewService {
     const generation = this.scopeGeneration(worktreePath, scope);
     const buildKey = [worktreePath, scope, generation, 'base'].join('\0');
     return this.getOrBuild(this.baseBuilds, buildKey, async () => {
-      // Always inspect local refs, including on cache hits. Enumerating branches
-      // or refreshing network metadata here would make polling scale poorly.
-      const [repoRoot, branch, headSha] = await Promise.all([
-        git.revparse(['--show-toplevel']).then((value) => value.trim()),
-        git
-          .raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])
-          .then((value) => value.trim() || 'HEAD')
-          .catch(() => 'HEAD'),
-        git
-          .revparse(['--verify', 'HEAD'])
-          .then((value) => value.trim())
-          .catch(() => null),
-      ]);
-      const refs = [branch, headSha ?? ''].join('\0');
+      const localRefs = await readLocalRefSnapshot(git, worktreePath);
+      const { repoRoot, branch, headSha } = localRefs;
+      const refs = [branch, headSha ?? '', localRefs.indexVersion].join('\0');
       const previousRefs = this.worktreeRefs.get(worktreePath);
       if (previousRefs !== undefined && previousRefs !== refs) {
         // A commit/checkout can change status without changing file stats
@@ -627,21 +811,19 @@ export class ChangeReviewService {
             pullRequest?.baseRefName ?? null,
           );
         }
-        baseRef = await this.detectBaseRef(
+        const detected = await this.detectBaseRef(
           git,
           pullRequest?.baseRefName ?? null,
+          localRefs,
         );
-        baseSha = baseRef
-          ? await git
-              .revparse(['--verify', baseRef])
-              .then((value) => value.trim())
-              .catch(() => null)
-          : null;
+        baseRef = detected?.ref ?? null;
+        baseSha = detected?.sha ?? null;
       }
       const cacheKey = [
         buildKey,
         branch,
         headSha ?? '',
+        localRefs.indexVersion,
         baseRef ?? '',
         baseSha ?? '',
         JSON.stringify(pullRequest),
@@ -684,6 +866,8 @@ export class ChangeReviewService {
       }
       return this.cachedBase(cacheKey, {
         cacheGeneration: generation,
+        commonDir: localRefs.commonDir,
+        indexVersion: localRefs.indexVersion,
         repoRoot,
         branch,
         baseRef,
@@ -739,48 +923,68 @@ export class ChangeReviewService {
     worktreeState: WorktreeReviewState,
     cacheKey: string,
   ): Promise<FileSummarySet> {
-    const [statusOutput, numstatOutput] = await Promise.all([
-      git.raw(
-        this.buildDiffArgs(scope, base, [
-          '--name-status',
-          '-z',
-          '--find-renames',
-        ]),
-      ),
-      git.raw(
-        this.buildDiffArgs(scope, base, ['--numstat', '-z', '--find-renames']),
-      ),
-    ]);
-    const stats = this.parseNumstat(numstatOutput);
+    if (!base.headSha) {
+      const paths = [
+        ...new Set(worktreeState.status?.files.map((file) => file.path) ?? []),
+      ];
+      const files =
+        scope === 'last-commit'
+          ? []
+          : await this.readUntrackedSummaries(worktreePath, paths);
+      return this.cachedFileSummaries(cacheKey, {
+        files,
+        untrackedPaths: new Set(paths),
+      });
+    }
+    const flags = [
+      '--raw',
+      '--numstat',
+      '--no-abbrev',
+      '-z',
+      '--find-renames',
+      '-l200',
+    ];
+    const readRecords = async (reader: SimpleGit) =>
+      parseGitDiffRecords(
+        await reader.raw(this.buildDiffArgs(scope, base, flags)),
+      );
+    let records = await readRecords(git);
+    const originalOldPaths = new Map(
+      records
+        .filter((record) => record.oldPath)
+        .map((record) => [record.path, record.oldPath!]),
+    );
+    const restoredSources =
+      scope === 'last-commit'
+        ? []
+        : restoredComparisonSources(
+            records,
+            new Set(worktreeState.status?.not_added),
+          );
+    if (restoredSources.length)
+      records = await withReviewIndex(
+        git,
+        worktreePath,
+        restoredSources,
+        readRecords,
+      );
+    const restoredPaths = new Set(restoredSources.map((source) => source.path));
     const untrackedPaths = new Set<string>();
-    const tracked: ChangeReviewFileSummary[] = await mapWithConcurrency(
-      this.parseNameStatus(statusOutput),
+    const renameDetectionLimited = renameDetectionMayBeLimited(records);
+    const tracked = await mapWithConcurrency(
+      records,
       FILE_SUMMARY_CONCURRENCY,
-      async (file) => {
-        const stat = stats.get(file.path) ??
-          stats.get(file.oldPath ?? '') ?? {
-            additions: 0,
-            deletions: 0,
-            binary: false,
-          };
-        const size = await this.readCurrentFileSize(worktreePath, file.path);
-        return {
-          ...file,
-          additions: stat.additions,
-          deletions: stat.deletions,
-          binary: stat.binary,
-          large:
-            stat.additions + stat.deletions > LARGE_FILE_LINES ||
-            (size !== null && size > LARGE_FILE_BYTES),
-          size,
-        };
-      },
+      (file) =>
+        this.summarizeRecord(worktreePath, file, worktreeState.snapshot),
     );
 
     if (scope !== 'last-commit' && worktreeState.status) {
       const untracked = await this.readUntrackedSummaries(
         worktreePath,
-        worktreeState.status.not_added,
+        worktreeState.status.not_added.filter(
+          (filePath) => !restoredPaths.has(filePath),
+        ),
+        worktreeState.snapshot,
       );
       const seen = new Set(tracked.map((file) => file.path));
       for (const file of untracked) {
@@ -794,6 +998,9 @@ export class ChangeReviewService {
     return this.cachedFileSummaries(cacheKey, {
       files: tracked.sort((left, right) => left.path.localeCompare(right.path)),
       untrackedPaths,
+      renameDetectionLimited,
+      restoredSources,
+      originalOldPaths,
     });
   }
 
@@ -803,15 +1010,18 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     base: ReviewBase,
     forceLoad: boolean,
+    validateCached = true,
   ): Promise<ChangeReviewLoadCheck> {
-    if (forceLoad) {
-      return { guard: null, status: null };
-    }
+    const threshold = forceLoad
+      ? MAX_FORCED_CHANGE_REVIEW_FILE_LIMIT
+      : DEFAULT_CHANGE_REVIEW_FILE_LIMIT;
 
     const snapshot =
       scope === 'last-commit'
         ? null
-        : await readWorktreeStatusSnapshot(worktreePath, git);
+        : await readWorktreeStatusSnapshot(worktreePath, git, {
+            validateCached,
+          });
     const status = snapshot?.status ?? null;
     const worktreeCounts = status
       ? this.countWorktreeChanges(status)
@@ -822,12 +1032,12 @@ export class ChangeReviewService {
           conflictedFiles: 0,
         };
 
-    if (worktreeCounts.totalFiles > DEFAULT_CHANGE_REVIEW_FILE_LIMIT) {
+    if (worktreeCounts.totalFiles > threshold) {
       return {
-        status,
+        snapshot,
         guard: {
           blocked: true,
-          threshold: DEFAULT_CHANGE_REVIEW_FILE_LIMIT,
+          threshold,
           totalFiles: worktreeCounts.totalFiles,
           stagedFiles: worktreeCounts.stagedFiles,
           unstagedFiles: worktreeCounts.unstagedFiles,
@@ -837,9 +1047,9 @@ export class ChangeReviewService {
       };
     }
 
-    const scopedFiles =
-      scope === 'uncommitted'
-        ? worktreeCounts.totalFiles
+    const scopedCount =
+      scope === 'uncommitted' || !base.headSha
+        ? { count: worktreeCounts.totalFiles, renameDetectionLimited: false }
         : await this.countScopedFiles(
             git,
             worktreePath,
@@ -848,22 +1058,24 @@ export class ChangeReviewService {
             status,
             snapshot?.fingerprint ?? LAST_COMMIT_WORKTREE_FINGERPRINT,
           );
-    if (scopedFiles > DEFAULT_CHANGE_REVIEW_FILE_LIMIT) {
+    const scopedFiles = scopedCount.count;
+    if (scopedFiles > threshold) {
       return {
-        status,
+        snapshot,
         guard: {
           blocked: true,
-          threshold: DEFAULT_CHANGE_REVIEW_FILE_LIMIT,
+          threshold,
           totalFiles: scopedFiles,
           stagedFiles: worktreeCounts.stagedFiles,
           unstagedFiles: worktreeCounts.unstagedFiles,
           conflictedFiles: worktreeCounts.conflictedFiles,
           reason: 'scope',
+          renameDetectionLimited: scopedCount.renameDetectionLimited,
         },
       };
     }
 
-    return { guard: null, status };
+    return { guard: null, snapshot };
   }
 
   private countWorktreeChanges(status: StatusResult): WorktreeChangeCounts {
@@ -922,7 +1134,7 @@ export class ChangeReviewService {
     base: ReviewBase,
     status: StatusResult | null,
     worktreeFingerprint: string,
-  ): Promise<number> {
+  ): Promise<{ count: number; renameDetectionLimited: boolean }> {
     const cacheKey = [
       worktreePath,
       scope,
@@ -933,37 +1145,62 @@ export class ChangeReviewService {
       'count',
     ].join('\0');
     const cached = this.getFresh(this.fileCountCache, cacheKey);
-    if (cached) return cached.count;
+    if (cached) return cached;
     return this.getOrBuild(this.fileCountBuilds, cacheKey, async () => {
-      const countPaths = (output: string): number => {
-        let count = 0;
-        for (let index = 0; index < output.length; index += 1) {
-          if (output.charCodeAt(index) === 0) count += 1;
-        }
-        return count;
-      };
       const flags = ['--name-only', '-z', '--no-ext-diff', '--no-textconv'];
       const output = await git.raw(
         this.buildDiffArgs(scope, base, [...flags, '--no-renames']),
       );
-      const untrackedCount =
-        scope !== 'last-commit' && status ? status.not_added.length : 0;
-      let count = countPaths(output) + untrackedCount;
-      // A rename counts as two paths without detection. Only pay for rename
-      // matching when that upper bound would otherwise pause the review.
+      const untracked = new Set(
+        scope === 'last-commit' ? [] : status?.not_added,
+      );
+      const names = output.split('\0').filter(Boolean);
+      let count = names.length + untracked.size;
+      let renameDetectionLimited = false;
       if (count > DEFAULT_CHANGE_REVIEW_FILE_LIMIT) {
-        count =
-          countPaths(
-            await git.raw(
-              this.buildDiffArgs(scope, base, [...flags, '--find-renames']),
-            ),
-          ) + untrackedCount;
+        let restoredSources: GitDiffRecord[] = [];
+        if (names.some((filePath) => untracked.has(filePath))) {
+          const raw = await git.raw(
+            this.buildDiffArgs(scope, base, [
+              '--raw',
+              '--no-abbrev',
+              '-z',
+              '--no-renames',
+            ]),
+          );
+          restoredSources = restoredComparisonSources(
+            parseGitDiffRecords(raw),
+            untracked,
+          );
+        }
+        await withReviewIndex(
+          git,
+          worktreePath,
+          restoredSources,
+          async (reader) => {
+            const raw = await reader.raw(
+              this.buildDiffArgs(scope, base, [
+                '--raw',
+                '--no-abbrev',
+                '-z',
+                '--find-renames',
+                '-l200',
+                '--no-ext-diff',
+                '--no-textconv',
+              ]),
+            );
+            const records = parseGitDiffRecords(raw);
+            count = records.length + untracked.size - restoredSources.length;
+            renameDetectionLimited = renameDetectionMayBeLimited(records);
+          },
+        );
       }
       this.cacheValue(this.fileCountCache, cacheKey, {
         createdAt: Date.now(),
         count,
+        renameDetectionLimited,
       });
-      return count;
+      return { count, renameDetectionLimited };
     });
   }
 
@@ -1002,6 +1239,8 @@ export class ChangeReviewService {
   }
 
   private loadGuardMessage(guard: ChangeReviewLoadGuard): string {
+    if (guard.threshold === MAX_FORCED_CHANGE_REVIEW_FILE_LIMIT)
+      return `Diff loading is capped at ${guard.threshold} changed files. Narrow the change set to continue.`;
     return `Diff loading is paused because this scope has ${guard.totalFiles} changed files. Load the summary with forceLoad=true to continue.`;
   }
 
@@ -1013,25 +1252,299 @@ export class ChangeReviewService {
     filePath: string,
     worktreeState: WorktreeReviewState,
   ): Promise<FileSummaryLookup> {
-    const summaries = await this.readFileSummaries(
+    const key = [
+      worktreePath,
+      scope,
+      base.cacheGeneration,
+      filePath,
+      'lookup',
+    ].join('\0');
+    const cached = this.getFresh(this.fileLookups, key);
+    const version = await this.fileLookupVersion(
+      worktreePath,
+      scope,
+      base,
+      filePath,
+      worktreeState,
+      cached?.lookup,
+    );
+    if (cached?.version === version) return cached.lookup;
+    return this.getOrBuild(
+      this.fileLookupBuilds,
+      [key, version].join('\0'),
+      async () => {
+        let lookup: FileSummaryLookup;
+        if (
+          cached &&
+          (!cached.lookup.graphFingerprint ||
+            cached.lookup.graphFingerprint === worktreeState.fingerprint)
+        ) {
+          const paths = [
+            ...new Set(
+              [
+                filePath,
+                cached.lookup.summary.path,
+                cached.lookup.summary.oldPath,
+                ...(cached.lookup.restoredSources?.map(
+                  (source) => source.path,
+                ) ?? []),
+              ].filter((value): value is string => value !== null),
+            ),
+          ];
+          const flags = [
+            '--raw',
+            '--numstat',
+            '--no-abbrev',
+            '-z',
+            '--find-renames',
+            '-l200',
+          ];
+          const read = async (reader: SimpleGit) =>
+            parseGitDiffRecords(
+              await reader.raw([
+                ...this.buildDiffArgs(scope, base, flags),
+                '--',
+                ...paths,
+              ]),
+            );
+          const original = await read(git);
+          const sources =
+            scope === 'last-commit'
+              ? []
+              : restoredComparisonSources(
+                  original,
+                  new Set(worktreeState.status?.not_added),
+                );
+          const records = sources.length
+            ? await withReviewIndex(git, worktreePath, sources, read, 10)
+            : original;
+          const record = records.find(
+            (file) => file.path === filePath || file.oldPath === filePath,
+          );
+          if (record) {
+            const summary = await this.summarizeRecord(worktreePath, record);
+            lookup = this.makeFileLookup(
+              summary,
+              false,
+              sources,
+              original.find((file) => file.path === summary.path)?.oldPath,
+              worktreeState.fingerprint,
+            );
+          } else {
+            if (sources.length)
+              throw new BadRequestException(
+                `File is not changed in this scope: ${filePath}`,
+              );
+            const files = worktreeState.status?.not_added.includes(filePath)
+              ? await this.readUntrackedSummaries(worktreePath, [filePath])
+              : [];
+            if (!files[0])
+              throw new BadRequestException(
+                `File is not changed in this scope: ${filePath}`,
+              );
+            lookup = { summary: files[0], untracked: true };
+          }
+        } else {
+          const summaries = await this.readFileSummaries(
+            git,
+            worktreePath,
+            scope,
+            base,
+            worktreeState,
+          );
+          const summary = summaries.files.find(
+            (file) => file.path === filePath || file.oldPath === filePath,
+          );
+          if (!summary)
+            throw new BadRequestException(
+              `File is not changed in this scope: ${filePath}`,
+            );
+          lookup = this.makeFileLookup(
+            summary,
+            summaries.untrackedPaths.has(summary.path),
+            summaries.restoredSources ?? [],
+            summaries.originalOldPaths?.get(summary.path),
+            worktreeState.fingerprint,
+          );
+        }
+        const observedVersion = await this.fileLookupVersion(
+          worktreePath,
+          scope,
+          base,
+          filePath,
+          worktreeState,
+          cached?.lookup,
+        );
+        const storedVersion = await this.fileLookupVersion(
+          worktreePath,
+          scope,
+          base,
+          filePath,
+          worktreeState,
+          lookup,
+        );
+        if (observedVersion === version)
+          this.cacheValue(this.fileLookups, key, {
+            createdAt: Date.now(),
+            lookup,
+            version: storedVersion,
+          });
+        return lookup;
+      },
+    );
+  }
+
+  private makeFileLookup(
+    summary: ChangeReviewFileSummary,
+    untracked: boolean,
+    sources: readonly GitDiffRecord[],
+    originalOldPath: string | null | undefined,
+    fingerprint: string,
+  ): FileSummaryLookup {
+    const related = new Set([summary.path, summary.oldPath, originalOldPath]);
+    const restoredSources = sources.filter((source) =>
+      related.has(source.path),
+    );
+    const lookup: FileSummaryLookup = {
+      summary,
+      untracked,
+      ...(restoredSources.length ? { restoredSources } : {}),
+    };
+    if (
+      summary.oldPath ||
+      restoredSources.some((source) => source.path !== summary.path)
+    )
+      lookup.graphFingerprint = fingerprint;
+    return lookup;
+  }
+
+  private async fileLookupVersion(
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    filePath: string,
+    state: WorktreeReviewState,
+    lookup?: FileSummaryLookup,
+  ): Promise<string> {
+    if (scope === 'last-commit') return [base.baseSha, base.headSha].join('\0');
+    const paths = [
+      ...new Set(
+        [
+          filePath,
+          lookup?.summary.path,
+          lookup?.summary.oldPath,
+          ...(lookup?.restoredSources?.map((source) => source.path) ?? []),
+        ].filter((value): value is string => Boolean(value)),
+      ),
+    ];
+    const versions = await Promise.all(
+      paths
+        .sort()
+        .map((name) => readPathVersion(path.join(worktreePath, name))),
+    );
+    return [
+      base.mergeBaseSha ?? base.baseSha,
+      base.indexVersion,
+      ...(lookup?.graphFingerprint ? [state.fingerprint] : []),
+      ...versions,
+    ].join('\0');
+  }
+
+  private async summarizeRecord(
+    worktreePath: string,
+    record: GitDiffRecord,
+    snapshot?: WorktreeStatusFingerprintSnapshot,
+  ): Promise<ChangeReviewFileSummary> {
+    const size = snapshot?.pathSizes.has(record.path)
+      ? snapshot.pathSizes.get(record.path)!
+      : await this.readCurrentFileSize(worktreePath, record.path);
+    const summary: ChangeReviewFileSummary = {
+      path: record.path,
+      oldPath: record.oldPath,
+      status: record.status,
+      additions: record.additions,
+      deletions: record.deletions,
+      binary: record.binary,
+      large:
+        record.additions + record.deletions > LARGE_FILE_LINES ||
+        (size !== null && size > LARGE_FILE_BYTES),
+      size,
+    };
+    this.fileVersions.set(summary, { record });
+    return summary;
+  }
+
+  private async fileArtifactKey(
+    kind: string,
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    summary: ChangeReviewFileSummary,
+    options: unknown[],
+  ): Promise<string> {
+    const identity = await this.fileContentKey(
       git,
       worktreePath,
       scope,
       base,
-      worktreeState,
-    );
-    const summary = summaries.files.find(
-      (file) => file.path === filePath || file.oldPath === filePath,
-    );
-    if (!summary) {
-      throw new BadRequestException(
-        `File is not changed in this scope: ${filePath}`,
-      );
-    }
-    return {
       summary,
-      untracked: summaries.untrackedPaths.has(summary.path),
-    };
+    );
+    const prefix = [worktreePath, scope, base.cacheGeneration];
+    const slot = [...prefix, summary.path].join('\0');
+    let state = this.fileArtifactVersions.get(slot);
+    if (!state || state.identity !== identity) {
+      if (state) for (const key of state.keys) this.removeArtifact(key);
+      state = { slot, identity, keys: new Set() };
+      this.fileArtifactVersions.set(slot, state);
+      this.pruneCache(this.fileArtifactVersions);
+    }
+    const key = [...prefix, kind, identity, ...options].join('\0');
+    state.keys.add(key);
+    this.artifactOwners.delete(key);
+    this.artifactOwners.set(key, state);
+    while (this.artifactOwners.size > MAX_CACHE_ENTRIES * 3) {
+      for (const oldest of this.artifactOwners.keys()) {
+        this.removeArtifact(oldest);
+        break;
+      }
+    }
+    return key;
+  }
+
+  private removeArtifact(key: string): void {
+    this.rowCache.delete(key);
+    this.fileLinesCache.delete(key);
+    this.contextWindowCache.delete(key);
+    this.artifactOwners.get(key)?.keys.delete(key);
+    this.artifactOwners.delete(key);
+  }
+
+  private async fileContentKey(
+    git: SimpleGit,
+    worktreePath: string,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    summary: ChangeReviewFileSummary,
+  ): Promise<string> {
+    const record = this.fileVersions.get(summary)?.record;
+    const oldIdentity = record?.oldOid ?? 'missing';
+    const newIdentity =
+      scope === 'last-commit'
+        ? (record?.newOid ?? 'missing')
+        : summary.status === 'deleted'
+          ? 'missing'
+          : await this.readWorktreeContentIdentity(worktreePath, summary.path);
+    return [
+      base.commonDir,
+      oldIdentity,
+      newIdentity,
+      record?.oldMode,
+      record?.newMode,
+      summary.path,
+      summary.oldPath,
+      summary.status,
+    ].join('\0');
   }
 
   private indexSummariesByPath(
@@ -1081,6 +1594,11 @@ export class ChangeReviewService {
     base: ReviewBase,
     summary: ChangeReviewFileSummary,
   ): Promise<string> {
+    const record = this.fileVersions.get(summary)?.record;
+    if (record && (scope === 'last-commit' || summary.status === 'deleted')) {
+      const oid = summary.status === 'deleted' ? record.oldOid : record.newOid;
+      return /^0+$/.test(oid) ? 'missing' : `git-blob:${oid}`;
+    }
     if (scope === 'last-commit') {
       const ref =
         summary.status === 'deleted'
@@ -1125,12 +1643,41 @@ export class ChangeReviewService {
     filePath: string,
   ): Promise<string> {
     const absolutePath = path.join(worktreePath, filePath);
-    const stat = await fs.stat(absolutePath).catch(() => null);
-    if (!stat?.isFile()) {
-      return 'missing';
-    }
-    const digest = await this.hashWorktreeFile(absolutePath, stat.size);
-    return `xxh3-64:${digest}`;
+    const version = await readPathVersion(absolutePath);
+    if (version === 'missing') return 'missing';
+    if (version.startsWith('gitlink:')) return version;
+    const cached = this.contentHashes.get(absolutePath);
+    if (cached?.version === version) return cached.identity;
+    return this.getOrBuild(
+      this.hashBuilds,
+      [absolutePath, version].join('\0'),
+      async () => {
+        const info = await fs.lstat(absolutePath);
+        if (!info.isFile() && !info.isSymbolicLink()) return 'missing';
+        if (info.size > MAX_FORCED_FILE_BYTES) {
+          const identity = `oversized:${version}`;
+          this.contentHashes.set(absolutePath, { version, identity });
+          return identity;
+        }
+        const digest = await gitHashScheduler.run(
+          gitRepositoryKey(worktreePath),
+          () =>
+            info.isSymbolicLink()
+              ? fs
+                  .readlink(absolutePath)
+                  .then((link) => xxhash3(Buffer.from(link)))
+              : this.hashWorktreeFile(absolutePath, info.size),
+          10,
+        );
+        const identity = `xxh3-64:${digest}`;
+        if ((await readPathVersion(absolutePath)) !== version)
+          throw new BadRequestException(
+            'File changed while reading; retry the request.',
+          );
+        this.contentHashes.set(absolutePath, { version, identity });
+        return identity;
+      },
+    );
   }
 
   private async hashWorktreeFile(
@@ -1138,12 +1685,20 @@ export class ChangeReviewService {
     size: number,
   ): Promise<string> {
     if (size <= FINGERPRINT_STREAM_THRESHOLD_BYTES) {
-      return xxhash3(await fs.readFile(absolutePath));
+      return xxhash3(await this.readBoundedFileContents(absolutePath));
     }
 
     const hasher = await createXXHash3();
     hasher.init();
-    for await (const chunk of createReadStream(absolutePath)) {
+    let bytes = 0;
+    for await (const chunk of createReadStream(absolutePath, {
+      end: MAX_FORCED_FILE_BYTES,
+    })) {
+      bytes += (chunk as Buffer).length;
+      if (bytes > MAX_FORCED_FILE_BYTES)
+        throw new BadRequestException(
+          'File grew beyond the byte limit; retry the request.',
+        );
       hasher.update(chunk as Buffer);
     }
     return hasher.digest('hex');
@@ -1157,7 +1712,6 @@ export class ChangeReviewService {
     base: ReviewBase,
     lookup: FileSummaryLookup,
     context: number,
-    worktreeFingerprint: string,
     forceFileLoad: boolean,
     fullFile: boolean,
   ): Promise<CachedRows> {
@@ -1165,17 +1719,21 @@ export class ChangeReviewService {
     if (cached) return cached;
 
     return this.getOrBuild(this.rowBuilds, cacheKey, () =>
-      this.buildRows(
-        git,
-        worktreePath,
-        scope,
-        base,
-        lookup,
-        context,
-        cacheKey,
-        worktreeFingerprint,
-        forceFileLoad,
-        fullFile,
+      gitRenderScheduler.run(
+        gitRepositoryKey(worktreePath),
+        () =>
+          this.buildRows(
+            git,
+            worktreePath,
+            scope,
+            base,
+            lookup,
+            context,
+            cacheKey,
+            forceFileLoad,
+            fullFile,
+          ),
+        10,
       ),
     );
   }
@@ -1188,7 +1746,6 @@ export class ChangeReviewService {
     lookup: FileSummaryLookup,
     context: number,
     cacheKey: string,
-    worktreeFingerprint: string,
     forceFileLoad: boolean,
     fullFile = false,
   ): Promise<CachedRows> {
@@ -1196,7 +1753,7 @@ export class ChangeReviewService {
     const summary = lookup.summary;
 
     if (summary.binary) {
-      result = this.cached(cacheKey, {
+      result = await this.cached(cacheKey, {
         rows: [this.metaRow(summary.path, 'Binary file changed')],
         contextRanges: [],
         message: 'Binary file changed.',
@@ -1207,13 +1764,18 @@ export class ChangeReviewService {
       return result;
     }
 
-    if (summary.large && !forceFileLoad) {
-      result = this.cached(cacheKey, {
+    const byteGuard =
+      summary.large && !forceFileLoad
+        ? null
+        : await this.fileByteGuard(git, base, summary, forceFileLoad);
+    if ((summary.large && !forceFileLoad) || byteGuard) {
+      result = await this.cached(cacheKey, {
         rows: [
           this.metaRow(summary.path, 'Large file diff is hidden by default.'),
         ],
         contextRanges: [],
-        message: 'Large file diff omitted from automatic rendering.',
+        message:
+          byteGuard ?? 'Large file diff omitted from automatic rendering.',
         binary: false,
         large: true,
         truncated: true,
@@ -1239,7 +1801,6 @@ export class ChangeReviewService {
       scope,
       base,
       summary,
-      worktreeFingerprint,
     );
 
     const fileLineCount = Math.max(
@@ -1252,16 +1813,41 @@ export class ChangeReviewService {
       ? FULL_FILE_FALLBACK_CONTEXT
       : context;
 
-    const patch = await git.raw([
-      ...this.buildDiffArgs(scope, base, [
-        '--diff-algorithm=histogram',
-        `--unified=${effectiveContext}`,
-        '--find-renames',
-      ]),
-      '--',
-      summary.path,
-    ]);
-    const parsed = this.parsePatchRows(summary.path, patch, fileLines);
+    const readPatch = (reader: SimpleGit) =>
+      reader.raw([
+        ...this.buildDiffArgs(scope, base, [
+          '--diff-algorithm=histogram',
+          `--unified=${effectiveContext}`,
+          '--find-renames',
+        ]),
+        '--',
+        ...new Set(
+          [summary.oldPath, summary.path].filter(
+            (value): value is string => value !== null,
+          ),
+        ),
+      ]);
+    const patch = await withReviewIndex(
+      git,
+      worktreePath,
+      lookup.restoredSources ?? [],
+      readPatch,
+      10,
+    );
+    if (scope !== 'last-commit') {
+      const expected = this.contentHashes.get(
+        path.join(worktreePath, summary.path),
+      )?.version;
+      if (
+        expected &&
+        (await readPathVersion(path.join(worktreePath, summary.path))) !==
+          expected
+      )
+        throw new BadRequestException(
+          'File changed while reading; retry the request.',
+        );
+    }
+    const parsed = await this.parsePatchRows(summary.path, patch, fileLines);
 
     // Patches that carry no hunks — pure renames, mode changes — still emit
     // preamble lines, so "no rows" is the wrong test. What full-file mode
@@ -1274,17 +1860,24 @@ export class ChangeReviewService {
       fullFile && !cappedFullFile,
     );
 
-    result = this.cached(cacheKey, {
+    result = await this.cached(cacheKey, {
+      backingTexts: rows === parsed.rows ? [patch] : fileLines.backingTexts,
       rows: rows.length
         ? rows
         : [this.metaRow(summary.path, 'No textual diff for this file.')],
       contextRanges: parsed.contextRanges,
-      message: cappedFullFile
-        ? `Whole-file view is capped at ${FULL_FILE_MAX_LINES.toLocaleString()} lines; showing wide context instead.`
-        : null,
+      message:
+        rows.length >= MAX_PATCH_ROWS || fileLineCount > MAX_PATCH_ROWS
+          ? `Diff output is capped at ${MAX_PATCH_ROWS} rows.`
+          : cappedFullFile
+            ? `Whole-file view is capped at ${FULL_FILE_MAX_LINES.toLocaleString()} lines; showing wide context instead.`
+            : null,
       binary: false,
       large: false,
-      truncated: cappedFullFile,
+      truncated:
+        cappedFullFile ||
+        rows.length >= MAX_PATCH_ROWS ||
+        fileLineCount > MAX_PATCH_ROWS,
     });
     return result;
   }
@@ -1311,7 +1904,13 @@ export class ChangeReviewService {
     }
     if (covered.size >= lineCount) return rows;
 
-    return this.buildContextRows(summary.path, fileLines, 1, 1, lineCount);
+    return this.buildContextRows(
+      summary.path,
+      fileLines,
+      1,
+      1,
+      Math.min(lineCount, MAX_PATCH_ROWS),
+    );
   }
 
   /**
@@ -1332,7 +1931,10 @@ export class ChangeReviewService {
     }
 
     const base = this.unchangedWindowBase(scope, filePath, options);
-    if (stat.size > LARGE_FILE_BYTES && !options.forceFileLoad) {
+    if (
+      stat.size > MAX_FORCED_FILE_BYTES ||
+      (stat.size > LARGE_FILE_BYTES && !options.forceFileLoad)
+    ) {
       return {
         ...base,
         message: 'Large file omitted from automatic rendering.',
@@ -1343,7 +1945,7 @@ export class ChangeReviewService {
       };
     }
 
-    const buffer = await fs.readFile(absolutePath);
+    const buffer = await this.readBoundedWorktreeFile(absolutePath);
     if (buffer.includes(0)) {
       return {
         ...base,
@@ -1375,7 +1977,7 @@ export class ChangeReviewService {
       truncated,
       totalRows: allRows.length,
       hasMore: options.offset + rows.length < allRows.length,
-      changeHash: this.hashRows(allRows),
+      changeHash: await this.hashRows(allRows),
       fingerprint:
         options.offset === 0
           ? await this.readWorktreeContentIdentity(worktreePath, filePath)
@@ -1418,6 +2020,8 @@ export class ChangeReviewService {
     flags: string[],
   ): string[] {
     if (scope === 'last-commit') {
+      if (base.baseSha && base.headSha)
+        return ['diff', ...flags, base.baseSha, base.headSha];
       return [
         'diff-tree',
         '--root',
@@ -1439,7 +2043,7 @@ export class ChangeReviewService {
     worktreePath: string,
     scope: ChangeReviewScope,
     validateCached = false,
-    knownStatus: StatusResult | null = null,
+    knownSnapshot: WorktreeStatusFingerprintSnapshot | null = null,
   ): Promise<WorktreeReviewState> {
     if (scope === 'last-commit') {
       return {
@@ -1448,96 +2052,26 @@ export class ChangeReviewService {
       };
     }
 
-    if (knownStatus) {
-      return {
-        fingerprint: await readWorktreeFingerprint(
-          worktreePath,
-          git,
-          knownStatus,
-        ),
-        status: knownStatus,
-      };
-    }
-
-    const snapshot = await readWorktreeStatusSnapshot(worktreePath, git, {
-      validateCached,
-    });
+    const snapshot =
+      knownSnapshot ??
+      (await readWorktreeStatusSnapshot(worktreePath, git, {
+        validateCached,
+      }));
     return {
       fingerprint: snapshot.fingerprint,
       status: snapshot.status,
+      snapshot,
     };
   }
 
-  private parseNameStatus(
-    output: string,
-  ): Array<Pick<ChangeReviewFileSummary, 'path' | 'oldPath' | 'status'>> {
-    const tokens = output.split('\0').filter(Boolean);
-    const files: Array<
-      Pick<ChangeReviewFileSummary, 'path' | 'oldPath' | 'status'>
-    > = [];
-    for (let index = 0; index < tokens.length; ) {
-      const rawStatus = tokens[index++] ?? '';
-      if (rawStatus.startsWith('R')) {
-        const oldPath = tokens[index++] ?? '';
-        const nextPath = tokens[index++] ?? oldPath;
-        files.push({ path: nextPath, oldPath, status: 'renamed' });
-        continue;
-      }
-      const filePath = tokens[index++] ?? '';
-      files.push({
-        path: filePath,
-        oldPath: null,
-        status: this.toFileStatus(rawStatus),
-      });
-    }
-    return files;
-  }
-
-  private parseNumstat(
-    output: string,
-  ): Map<string, { additions: number; deletions: number; binary: boolean }> {
-    const tokens = output.split('\0').filter(Boolean);
-    const stats = new Map<
-      string,
-      { additions: number; deletions: number; binary: boolean }
-    >();
-    for (let index = 0; index < tokens.length; index += 1) {
-      const parts = tokens[index].split('\t');
-      if (parts.length >= 3) {
-        const [additions, deletions, filePath] = parts;
-        stats.set(filePath, {
-          additions:
-            additions === '-' ? 0 : Number.parseInt(additions, 10) || 0,
-          deletions:
-            deletions === '-' ? 0 : Number.parseInt(deletions, 10) || 0,
-          binary: additions === '-' || deletions === '-',
-        });
-        continue;
-      }
-      if (parts.length === 2 && index + 2 < tokens.length) {
-        const [additions, deletions] = parts;
-        const oldPath = tokens[++index];
-        const nextPath = tokens[++index];
-        const stat = {
-          additions:
-            additions === '-' ? 0 : Number.parseInt(additions, 10) || 0,
-          deletions:
-            deletions === '-' ? 0 : Number.parseInt(deletions, 10) || 0,
-          binary: additions === '-' || deletions === '-',
-        };
-        stats.set(nextPath, stat);
-        stats.set(oldPath, stat);
-      }
-    }
-    return stats;
-  }
-
-  private parsePatchRows(
+  private async parsePatchRows(
     filePath: string,
     patch: string,
     fileLines: { oldLines: string[]; newLines: string[] },
-  ): { rows: ChangeReviewRow[]; contextRanges: ChangeReviewContextRange[] } {
-    const lines = patch.split('\n');
+  ): Promise<{
+    rows: ChangeReviewRow[];
+    contextRanges: ChangeReviewContextRange[];
+  }> {
     const rows: ChangeReviewRow[] = [];
     const contextRanges: ChangeReviewContextRange[] = [];
     let oldLine: number | null = null;
@@ -1546,7 +2080,9 @@ export class ChangeReviewService {
     let previousNewEnd = 0;
     let rowIndex = 0;
 
-    for (const line of lines) {
+    for (const line of this.textLines(patch)) {
+      if (rows.length >= MAX_PATCH_ROWS) break;
+      if (rowIndex > 0 && rowIndex % 512 === 0) await yieldToEventLoop();
       if (
         !line ||
         line.startsWith('diff --git') ||
@@ -1650,7 +2186,7 @@ export class ChangeReviewService {
       fileLines.oldLines.length - previousOldEnd,
       fileLines.newLines.length - previousNewEnd,
     );
-    if (previousOldEnd > 0 && trailingGap > 0) {
+    if (rows.length < MAX_PATCH_ROWS && previousOldEnd > 0 && trailingGap > 0) {
       const range = {
         id: `${filePath}:gap:${contextRanges.length}`,
         oldStart: previousOldEnd + 1,
@@ -1671,14 +2207,18 @@ export class ChangeReviewService {
       });
     }
 
-    return { rows: this.collapseModifiedRows(rows), contextRanges };
+    return { rows: await this.collapseModifiedRows(rows), contextRanges };
   }
 
-  private collapseModifiedRows(rows: ChangeReviewRow[]): ChangeReviewRow[] {
+  private async collapseModifiedRows(
+    rows: ChangeReviewRow[],
+  ): Promise<ChangeReviewRow[]> {
     const collapsed: ChangeReviewRow[] = [];
     let index = 0;
+    let remainingComparisons = 256;
 
     while (index < rows.length) {
+      if (index % 512 === 0) await yieldToEventLoop();
       if (rows[index]?.type !== 'delete') {
         collapsed.push(rows[index]);
         index += 1;
@@ -1692,18 +2232,28 @@ export class ChangeReviewService {
 
       const deletedRows = rows.slice(deleteStart, addStart);
       const addedRows = rows.slice(addStart, index);
-      const canCollapse =
+      let canCollapse =
         deletedRows.length > 0 &&
         deletedRows.length === addedRows.length &&
-        deletedRows.every((row, rowIndex) =>
-          this.shouldCollapseModifiedLine(
-            row.content,
-            addedRows[rowIndex]?.content ?? '',
-          ),
-        );
+        deletedRows.length <= remainingComparisons;
+      if (canCollapse)
+        for (let rowIndex = 0; rowIndex < deletedRows.length; rowIndex++) {
+          if (rowIndex % 8 === 0) await yieldToEventLoop();
+          remainingComparisons--;
+          if (
+            !this.shouldCollapseModifiedLine(
+              deletedRows[rowIndex].content,
+              addedRows[rowIndex].content,
+            )
+          ) {
+            canCollapse = false;
+            break;
+          }
+        }
 
       if (!canCollapse) {
-        collapsed.push(...deletedRows, ...addedRows);
+        for (const row of deletedRows) collapsed.push(row);
+        for (const row of addedRows) collapsed.push(row);
         continue;
       }
 
@@ -1741,6 +2291,7 @@ export class ChangeReviewService {
     const wordSimilarity = this.diffSimilarity(
       diffWordsWithSpace(oldContent, newContent, {
         maxEditLength: INLINE_CHANGE_MAX_EDIT_LENGTH,
+        timeout: 5,
       }),
     );
     if (wordSimilarity >= INLINE_CHANGE_SIMILARITY_THRESHOLD) return true;
@@ -1749,6 +2300,7 @@ export class ChangeReviewService {
       this.diffSimilarity(
         diffChars(oldContent, newContent, {
           maxEditLength: INLINE_CHANGE_MAX_EDIT_LENGTH,
+          timeout: 5,
         }),
       ) >= INLINE_CHANGE_SIMILARITY_THRESHOLD
     );
@@ -1805,22 +2357,29 @@ export class ChangeReviewService {
     scope: ChangeReviewScope,
     base: ReviewBase,
     summary: ChangeReviewFileSummary,
-    worktreeFingerprint: string,
-  ): Promise<{ oldLines: string[]; newLines: string[] }> {
-    const cacheKey = [
+  ): Promise<ReviewFileLines> {
+    // Capture before choosing the content key: a queued build must not publish
+    // newer file contents under an identity calculated before the queue wait.
+    const currentVersion =
+      scope === 'last-commit'
+        ? null
+        : await readPathVersion(path.join(worktreePath, summary.path));
+    const cacheKey = await this.fileArtifactKey(
+      'lines',
+      git,
       worktreePath,
       scope,
-      base.cacheGeneration,
-      base.mergeBaseSha ?? base.baseSha ?? '',
-      base.headSha ?? '',
-      scope === 'last-commit' ? '' : worktreeFingerprint,
-      summary.oldPath ?? '',
-      summary.path,
-      summary.status,
-      summary.additions,
-      summary.deletions,
-      'lines',
-    ].join('\0');
+      base,
+      summary,
+      [
+        summary.oldPath ?? '',
+        summary.path,
+        summary.status,
+        summary.additions,
+        summary.deletions,
+        'lines',
+      ],
+    );
     const cached = this.getCachedFileLines(cacheKey);
     if (cached) return cached;
 
@@ -1834,20 +2393,59 @@ export class ChangeReviewService {
       const newRef = scope === 'last-commit' ? (base.headSha ?? 'HEAD') : null;
       const oldPath = summary.oldPath ?? summary.path;
 
+      const record = this.fileVersions.get(summary)?.record;
+      const readBlob = (
+        oid: string | undefined,
+        mode: string | undefined,
+        ref: string,
+        filePath: string,
+      ) => {
+        // Gitlinks reference commits in the nested repository. The parent
+        // object store need not contain those objects.
+        if (mode === '160000')
+          return Promise.resolve(`Subproject commit ${oid}\n`);
+        if (!oid || /^0+$/.test(oid))
+          return this.readGitFile(git, ref, filePath);
+        const key = [base.commonDir, oid].join('\0');
+        const cached = this.blobContent.get(key);
+        if (cached !== undefined) return Promise.resolve(cached);
+        return this.getOrBuild(this.blobBuilds, key, async () => {
+          const text = await this.readGitFile(git, oid, '');
+          this.blobContent.set(key, text);
+          return text;
+        });
+      };
       const [oldText, newText] = await Promise.all([
         summary.status === 'added'
           ? Promise.resolve('')
-          : this.readGitFile(git, oldRef, oldPath),
+          : readBlob(record?.oldOid, record?.oldMode, oldRef, oldPath),
         summary.status === 'deleted'
           ? Promise.resolve('')
           : newRef
-            ? this.readGitFile(git, newRef, summary.path)
-            : this.readWorktreeFile(worktreePath, summary.path),
+            ? readBlob(record?.newOid, record?.newMode, newRef, summary.path)
+            : record?.newMode === '160000'
+              ? Promise.resolve(
+                  `Subproject commit ${
+                    currentVersion?.startsWith('gitlink:')
+                      ? currentVersion.slice('gitlink:'.length)
+                      : record.newOid
+                  }\n`,
+                )
+              : this.readWorktreeFile(worktreePath, summary.path),
       ]);
+      if (
+        currentVersion !== null &&
+        (await readPathVersion(path.join(worktreePath, summary.path))) !==
+          currentVersion
+      )
+        throw new BadRequestException(
+          'File changed while reading; retry the request.',
+        );
 
       return this.cachedFileLines(cacheKey, {
         oldLines: this.splitFileLines(oldText),
         newLines: this.splitFileLines(newText),
+        backingTexts: [oldText, newText],
       });
     });
   }
@@ -1857,25 +2455,100 @@ export class ChangeReviewService {
     ref: string,
     filePath: string,
   ): Promise<string> {
-    return git.raw(['show', `${ref}:${filePath}`]).catch(() => '');
+    return git.raw(['show', filePath ? `${ref}:${filePath}` : ref]);
   }
 
   private async readWorktreeFile(
     worktreePath: string,
     filePath: string,
   ): Promise<string> {
-    return fs
-      .readFile(path.join(worktreePath, filePath), 'utf8')
-      .catch(() => '');
+    return this.readBoundedWorktreeFile(path.join(worktreePath, filePath)).then(
+      (buffer) => buffer.toString('utf8'),
+    );
+  }
+
+  private async readBoundedWorktreeFile(absolutePath: string): Promise<Buffer> {
+    return gitHashScheduler.run(
+      gitRepositoryKey(absolutePath),
+      () => this.readBoundedFileContents(absolutePath),
+      10,
+    );
+  }
+
+  private async readBoundedFileContents(
+    absolutePath: string,
+    maxBytes = MAX_FORCED_FILE_BYTES,
+  ): Promise<Buffer> {
+    const info = await fs.lstat(absolutePath);
+    if (info.isSymbolicLink())
+      return Buffer.from(await fs.readlink(absolutePath));
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    for await (const chunk of createReadStream(absolutePath, {
+      end: maxBytes,
+    })) {
+      const buffer = chunk as Buffer;
+      bytes += buffer.length;
+      if (bytes > maxBytes)
+        throw new BadRequestException(
+          'File exceeds the forced-load byte limit.',
+        );
+      chunks.push(buffer);
+    }
+    return Buffer.concat(chunks, bytes);
+  }
+
+  private async fileByteGuard(
+    git: SimpleGit,
+    base: ReviewBase,
+    summary: ChangeReviewFileSummary,
+    force: boolean,
+  ): Promise<string | null> {
+    const record = this.fileVersions.get(summary)?.record;
+    const sizes = [summary.size ?? 0];
+    const blobs = [
+      record?.oldMode === '160000' ? null : record?.oldOid,
+      record?.newMode === '160000' ? null : record?.newOid,
+    ];
+    for (const oid of new Set(blobs)) {
+      if (!oid || /^0+$/.test(oid)) continue;
+      const key = [base.commonDir, oid, 'size'].join('\0');
+      let size = this.blobSizes.get(key);
+      if (size === undefined) {
+        size = Number((await git.raw(['cat-file', '-s', oid])).trim());
+        this.blobSizes.set(key, size);
+      }
+      sizes.push(size);
+    }
+    const max = Math.max(...sizes);
+    if (max > MAX_FORCED_FILE_BYTES)
+      return `File exceeds the ${MAX_FORCED_FILE_BYTES} byte forced-load limit.`;
+    return !force && max > LARGE_FILE_BYTES
+      ? 'Large historical or current file omitted from automatic rendering.'
+      : null;
   }
 
   private splitFileLines(text: string): string[] {
     if (!text) return [];
-    const lines = text.split(/\r?\n/);
-    if (text.endsWith('\n')) {
-      lines.pop();
+    const lines: string[] = [];
+    for (const line of this.textLines(text)) {
+      lines.push(line.endsWith('\r') ? line.slice(0, -1) : line);
+      if (lines.length > MAX_PATCH_ROWS) break;
     }
     return lines;
+  }
+
+  private *textLines(text: string): Generator<string> {
+    let start = 0;
+    while (start < text.length) {
+      const end = text.indexOf('\n', start);
+      if (end < 0) {
+        yield text.slice(start);
+        return;
+      }
+      yield text.slice(start, end);
+      start = end + 1;
+    }
   }
 
   private async buildUntrackedRows(
@@ -1885,8 +2558,11 @@ export class ChangeReviewService {
     forceFileLoad: boolean,
   ): Promise<CachedRows> {
     const absolutePath = path.join(worktreePath, summary.path);
-    const stat = await fs.stat(absolutePath);
-    if (stat.size > LARGE_FILE_BYTES && !forceFileLoad) {
+    const stat = await fs.lstat(absolutePath);
+    if (
+      stat.size > MAX_FORCED_FILE_BYTES ||
+      (stat.size > LARGE_FILE_BYTES && !forceFileLoad)
+    ) {
       return this.cached(cacheKey, {
         rows: [
           this.metaRow(
@@ -1901,7 +2577,7 @@ export class ChangeReviewService {
         truncated: true,
       });
     }
-    const buffer = await fs.readFile(absolutePath);
+    const buffer = await this.readBoundedWorktreeFile(absolutePath);
     if (buffer.includes(0)) {
       return this.cached(cacheKey, {
         rows: [this.metaRow(summary.path, 'Binary file changed')],
@@ -1913,7 +2589,7 @@ export class ChangeReviewService {
       });
     }
     const text = buffer.toString('utf8');
-    const lines = text.split('\n');
+    const lines = this.splitFileLines(text);
     const truncated = lines.length > LARGE_FILE_LINES;
     const visible = truncated ? lines.slice(0, LARGE_FILE_LINES) : lines;
     const rows: ChangeReviewRow[] = [
@@ -1935,6 +2611,7 @@ export class ChangeReviewService {
       })),
     ];
     return this.cached(cacheKey, {
+      backingTexts: [text],
       rows,
       contextRanges: [],
       message: truncated ? 'Large untracked file was truncated.' : null,
@@ -1947,26 +2624,35 @@ export class ChangeReviewService {
   private async readUntrackedSummaries(
     worktreePath: string,
     notAddedPaths: readonly string[],
+    snapshot?: WorktreeStatusFingerprintSnapshot,
   ): Promise<ChangeReviewFileSummary[]> {
     const files = await mapWithConcurrency(
       notAddedPaths,
       UNTRACKED_SUMMARY_CONCURRENCY,
       async (filePath): Promise<ChangeReviewFileSummary | null> => {
-        const absolutePath = path.join(worktreePath, filePath);
-        const stat = await fs.stat(absolutePath).catch(() => null);
-        if (!stat?.isFile()) {
-          return null;
-        }
-        const stats = await this.readTextStats(absolutePath, stat.size);
+        const size = snapshot?.pathSizes.has(filePath)
+          ? snapshot.pathSizes.get(filePath)!
+          : await this.readCurrentFileSize(worktreePath, filePath);
+        if (size === null) return null;
+        const shared = await readWorktreeTextStats(
+          worktreePath,
+          filePath,
+          snapshot?.pathVersions.get(filePath),
+          size,
+        );
+        const stats = {
+          lines: shared.lines ?? LARGE_FILE_LINES + 1,
+          binary: shared.binary,
+        };
         return {
-          path: filePath,
+          path: copyCacheString(filePath),
           oldPath: null,
           status: 'added' as const,
           additions: stats.binary ? 0 : stats.lines,
           deletions: 0,
           binary: stats.binary,
-          large: stat.size > LARGE_FILE_BYTES || stats.lines > LARGE_FILE_LINES,
-          size: stat.size,
+          large: size > LARGE_FILE_BYTES || stats.lines > LARGE_FILE_LINES,
+          size,
         };
       },
     );
@@ -1975,59 +2661,33 @@ export class ChangeReviewService {
     );
   }
 
-  private async readTextStats(
-    absolutePath: string,
-    size: number,
-  ): Promise<{ lines: number; binary: boolean }> {
-    if (size > LARGE_FILE_BYTES) {
-      return { lines: LARGE_FILE_LINES + 1, binary: false };
-    }
-    const buffer = await fs.readFile(absolutePath);
-    if (buffer.includes(0)) {
-      return { lines: 0, binary: true };
-    }
-    if (size === 0) {
-      return { lines: 0, binary: false };
-    }
-    const text = buffer.toString('utf8');
-    return {
-      lines: text.endsWith('\n')
-        ? text.split('\n').length - 1
-        : text.split('\n').length,
-      binary: false,
-    };
-  }
-
   private async readCurrentFileSize(
     worktreePath: string,
     relativePath: string,
   ): Promise<number | null> {
-    const stat = await fs
-      .stat(path.join(worktreePath, relativePath))
+    const stat = await gitFileScheduler
+      .run(gitRepositoryKey(worktreePath), () =>
+        fs.lstat(path.join(worktreePath, relativePath)),
+      )
       .catch(() => null);
-    return stat?.isFile() ? stat.size : null;
+    return stat && (stat.isFile() || stat.isSymbolicLink()) ? stat.size : null;
   }
 
   private async detectBaseRef(
     git: SimpleGit,
     prBaseRef: string | null,
-  ): Promise<string | null> {
+    refs: LocalRefSnapshot,
+  ): Promise<{ ref: string; sha: string } | null> {
     const candidates = [
       prBaseRef ? `origin/${prBaseRef}` : null,
-      await git
-        .raw(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])
-        .then((value) => value.trim())
-        .catch(() => null),
+      await readOriginHead(refs),
       'origin/main',
       'origin/master',
-    ].filter((value): value is string => Boolean(value));
-
-    for (const candidate of candidates) {
-      const exists = await git
-        .raw(['rev-parse', '--verify', '--quiet', candidate])
-        .then((value) => Boolean(value.trim()))
-        .catch(() => false);
-      if (exists) return candidate;
+    ];
+    for (const ref of new Set(candidates)) {
+      if (!ref) continue;
+      const sha = await refs.resolveRef(ref);
+      if (sha) return { ref, sha };
     }
     return null;
   }
@@ -2138,12 +2798,6 @@ export class ChangeReviewService {
     });
   }
 
-  private toFileStatus(raw: string): ChangeReviewFileStatus {
-    if (raw.startsWith('A')) return 'added';
-    if (raw.startsWith('D')) return 'deleted';
-    return 'modified';
-  }
-
   private metaRow(filePath: string, content: string): ChangeReviewRow {
     return {
       id: `${filePath}:meta`,
@@ -2161,35 +2815,41 @@ export class ChangeReviewService {
     return cached;
   }
 
-  private cached(
+  private async cached(
     key: string,
     value: Omit<CachedRows, 'key' | 'createdAt' | 'changeHash'>,
-  ): CachedRows {
+  ): Promise<CachedRows> {
     const cached = {
       key,
       createdAt: Date.now(),
       ...value,
-      changeHash: this.hashRows(value.rows),
+      changeHash: await this.hashRows(value.rows),
     };
     this.cacheValue(this.rowCache, key, cached);
     return cached;
   }
 
-  private hashRows(rows: ChangeReviewRow[]): string {
+  private async hashRows(rows: ChangeReviewRow[]): Promise<string> {
     const hash = createHash('sha256');
-    for (const row of rows) {
-      hash.update(row.type);
-      hash.update('\0');
-      hash.update(String(row.oldLine ?? ''));
-      hash.update('\0');
-      hash.update(String(row.newLine ?? ''));
-      hash.update('\0');
-      hash.update(row.content);
-      hash.update('\0');
-      hash.update(row.oldContent ?? '');
-      hash.update('\0');
-      hash.update(row.path);
-      hash.update('\n');
+    // Preserve the serialized bytes while avoiding twelve native crypto calls
+    // per row. Bound temporary input and yield between visible-row batches.
+    for (let offset = 0; offset < rows.length; offset += 256) {
+      const input = rows
+        .slice(offset, offset + 256)
+        .map(
+          (row) =>
+            [
+              row.type,
+              String(row.oldLine ?? ''),
+              String(row.newLine ?? ''),
+              row.content,
+              row.oldContent ?? '',
+              row.path,
+            ].join('\0') + '\n',
+        )
+        .join('');
+      hash.update(input);
+      if (offset + 256 < rows.length) await yieldToEventLoop();
     }
     return hash.digest('hex');
   }
@@ -2219,16 +2879,14 @@ export class ChangeReviewService {
     return summaries;
   }
 
-  private getCachedFileLines(
-    key: string,
-  ): { oldLines: string[]; newLines: string[] } | null {
+  private getCachedFileLines(key: string): ReviewFileLines | null {
     return this.getFresh(this.fileLinesCache, key)?.lines ?? null;
   }
 
   private cachedFileLines(
     key: string,
-    lines: { oldLines: string[]; newLines: string[] },
-  ): { oldLines: string[]; newLines: string[] } {
+    lines: ReviewFileLines,
+  ): ReviewFileLines {
     this.cacheValue(this.fileLinesCache, key, {
       key,
       createdAt: Date.now(),
@@ -2246,11 +2904,13 @@ export class ChangeReviewService {
   private cachedContextWindow(
     key: string,
     window: ChangeReviewContextWindow,
+    backingTexts: readonly string[] = [],
   ): ChangeReviewContextWindow {
     this.cacheValue(this.contextWindowCache, key, {
       key,
       createdAt: Date.now(),
       window,
+      backingTexts,
     });
     return window;
   }
@@ -2264,6 +2924,10 @@ export class ChangeReviewService {
     if (Date.now() - cached.createdAt > CACHE_TTL_MS) {
       cache.delete(key);
       return null;
+    }
+    if (!(cache instanceof GitByteLru)) {
+      cache.delete(key);
+      cache.set(key, cached);
     }
     return cached;
   }
@@ -2313,6 +2977,14 @@ export class ChangeReviewService {
     ) {
       return;
     }
+    if (
+      (cache as object) === this.rowCache ||
+      (cache as object) === this.fileLinesCache ||
+      (cache as object) === this.contextWindowCache
+    ) {
+      const owner = this.artifactOwners.get(key);
+      if (!owner || this.fileArtifactVersions.get(owner.slot) !== owner) return;
+    }
     cache.set(key, value);
     this.pruneCache(cache);
   }
@@ -2332,10 +3004,15 @@ export class ChangeReviewService {
     this.clearCacheMap(this.contextWindowBuilds, prefix);
     this.clearCacheMap(this.summaryCache, prefix);
     this.clearCacheMap(this.rowCache, prefix);
+    this.clearCacheMap(this.fileLookups, prefix);
     this.clearCacheMap(this.fileLinesCache, prefix);
     this.clearCacheMap(this.contextWindowCache, prefix);
     this.clearCacheMap(this.summaryBuilds, prefix);
     this.clearCacheMap(this.rowBuilds, prefix);
+    this.clearCacheMap(this.fileLookupBuilds, prefix);
+    for (const key of this.artifactOwners.keys())
+      if (key.startsWith(prefix)) this.removeArtifact(key);
+    this.clearCacheMap(this.fileArtifactVersions, prefix);
   }
 
   private clearCacheMap<T>(cache: Map<string, T>, prefix: string): void {
@@ -2344,6 +3021,37 @@ export class ChangeReviewService {
         cache.delete(key);
       }
     }
+  }
+
+  cacheDiagnostics() {
+    return {
+      bytes: this.memoryBudget.bytes + this.lookupBudget.bytes,
+      maxBytes: this.memoryBudget.maxBytes + this.lookupBudget.maxBytes,
+      hits: this.memoryBudget.hits,
+      queue: gitReadScheduler.diagnostics(),
+    };
+  }
+
+  releaseWorktree(worktreePath: string): void {
+    for (const scope of ['branch', 'uncommitted', 'last-commit'] as const) {
+      this.clearScopeCache(worktreePath, scope);
+      this.refreshBuilds.delete([worktreePath, scope].join('\0'));
+    }
+    this.worktreeRefs.delete(worktreePath);
+    clearWorktreeFingerprintCache(worktreePath);
+    clearLocalRefState(worktreePath);
+    const prefix = path.resolve(worktreePath) + path.sep;
+    for (const key of this.contentHashes.keys())
+      if (key.startsWith(prefix)) this.contentHashes.delete(key);
+  }
+
+  onModuleDestroy(): void {
+    this.unregisterCache();
+    for (const worktreePath of this.worktreeRefs.keys())
+      this.releaseWorktree(worktreePath);
+    this.blobContent.clear();
+    this.blobSizes.clear();
+    this.contentHashes.clear();
   }
 
   private assertScope(scope: ChangeReviewScope): void {

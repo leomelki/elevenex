@@ -34,6 +34,8 @@ export interface ChangeReviewLoadGuard {
   unstagedFiles: number;
   conflictedFiles: number;
   reason: 'worktree' | 'scope';
+  /** Rename matching hit its bounded candidate budget; counts are conservative. */
+  renameDetectionLimited?: boolean;
 }
 
 export interface ChangeReviewSummary {
@@ -58,6 +60,7 @@ export interface ChangeReviewSummary {
   };
   files: ChangeReviewFileSummary[];
   loadGuard: ChangeReviewLoadGuard | null;
+  renameDetectionLimited?: boolean;
 }
 
 export type ChangeReviewRowType =

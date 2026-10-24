@@ -2,7 +2,7 @@ import { yieldEditorWork } from '../files/editor-work.js';
 import { EditorBaselines } from './editor-baselines.js';
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { execFile, spawn, type ExecFileOptions } from 'node:child_process';
 import * as path from 'node:path';
 import { SimpleGit, StatusResult, LogResult } from 'simple-git';
@@ -22,13 +22,23 @@ import {
   readWorktreeStatusSnapshot,
 } from './git-worktree-fingerprint.js';
 
+import { GitByteLru, GitCacheBudget } from './git-cache.js';
+import {
+  readLocalRefSnapshot,
+  clearLocalRefState,
+  readPathVersion,
+} from './git-local-state.js';
+import { scheduledReadGit } from './git-read-scheduler.js';
+import { readWorktreeTextStats } from './git-file-stats.js';
+import type { WorktreeStatusFingerprintSnapshot } from './git-worktree-fingerprint.js';
+import { registerWorktreeCache } from './git-worktree-cache-lifecycle.js';
+
 const SAFE_REF_PATTERN = /^[a-zA-Z0-9\/_.-]+$/;
 const MAX_COMMIT_MESSAGE_DIFF_CHARS = 24_000;
 const MAX_COMMIT_MESSAGE_LOG_ENTRIES = 8;
 const MAX_COMMIT_MESSAGE_STATUS_FILES = 16;
 const COMMIT_MESSAGE_MAX_ATTEMPTS = 3;
 const UNTRACKED_STATS_CONCURRENCY = 16;
-const MAX_UNTRACKED_STATS_FILE_BYTES = 1_000_000;
 const CONVENTIONAL_COMMIT_TYPES_EXAMPLE =
   'feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert';
 const MAX_COMMIT_SUBJECT_LENGTH = 200;
@@ -132,7 +142,20 @@ export interface CommitResult {
 
 @Injectable()
 export class GitService {
+  private readonly unregisterCache = registerWorktreeCache(this);
   private readonly logger = new Logger(GitService.name);
+  private readonly statsBudget = new GitCacheBudget(8 * 1024 * 1024);
+  private readonly scopeStatsCache = new GitByteLru<{
+    version: string;
+    stats: GitScopeSummary;
+  }>(this.statsBudget);
+  private readonly divergenceCache = new GitByteLru<{
+    ahead: number;
+    behind: number;
+  }>(this.statsBudget);
+  private readonly observedLocalState = new GitByteLru<string>(
+    this.statsBudget,
+  );
   private readonly statusSummaryInFlight = new Map<
     string,
     Promise<GitStatusSummary>
@@ -192,6 +215,20 @@ export class GitService {
       if (++count % 2048 === 0) await yieldEditorWork();
     }
     return files;
+  }
+
+  releaseWorktree(worktreePath: string): void {
+    this.invalidateStatusSummaries(worktreePath);
+    this.observedLocalState.delete(worktreePath);
+    for (const staged of [false, true])
+      this.scopeStatsCache.delete([worktreePath, staged].join('\0'));
+  }
+
+  onModuleDestroy(): void {
+    this.unregisterCache();
+    this.scopeStatsCache.clear();
+    this.divergenceCache.clear();
+    this.observedLocalState.clear();
   }
 
   async getStatus(worktreePath: string): Promise<FileStatus[]> {
@@ -289,6 +326,7 @@ export class GitService {
   private invalidateStatusSummaries(worktreePath: string): void {
     const normalizedPath = path.resolve(worktreePath);
     clearWorktreeFingerprintCache(normalizedPath);
+    clearLocalRefState(normalizedPath);
     // A request can still be waiting for remote metadata after its local scan.
     // New readers after a mutation must not join that pre-mutation summary.
     for (const conflictsOnly of [false, true]) {
@@ -302,31 +340,58 @@ export class GitService {
     worktreePath: string,
     conflictsOnly: boolean,
   ): Promise<GitStatusSummary> {
-    const git: SimpleGit = worktreeSimpleGit(worktreePath);
-    if (conflictsOnly) {
-      return this.getConflictsOnlySummary(git);
-    }
-
-    const [statusSnapshot, headSha] = await Promise.all([
-      readWorktreeStatusSnapshot(worktreePath, git, { validateCached: true }),
-      git
-        .revparse(['HEAD'])
-        .then((value) => value.trim())
-        .catch(() => null),
-    ]);
+    const git = scheduledReadGit(
+      worktreeSimpleGit(worktreePath, { readOnly: true }),
+      worktreePath,
+      -5,
+    );
+    if (conflictsOnly) return this.getConflictsOnlySummary(git);
+    const local = await readLocalRefSnapshot(git, worktreePath);
+    const { headSha } = local;
+    const localVersion = [local.branch, headSha, local.indexVersion].join('\0');
+    const observed = this.observedLocalState.get(worktreePath);
+    if (observed !== undefined && observed !== localVersion)
+      clearWorktreeFingerprintCache(worktreePath);
+    this.observedLocalState.set(worktreePath, localVersion);
+    const statusSnapshot = await readWorktreeStatusSnapshot(worktreePath, git, {
+      validateCached: true,
+    });
     const status = statusSnapshot.status;
     const files = this.toFileStatuses(status);
     const [stagedStats, unstagedStats] = await Promise.all([
-      this.getScopeStats(worktreePath, true, files),
-      this.getScopeStats(worktreePath, false, files),
+      this.getScopeStats(
+        worktreePath,
+        true,
+        files,
+        [headSha, local.indexVersion].join('\0'),
+        statusSnapshot,
+      ),
+      this.getScopeStats(
+        worktreePath,
+        false,
+        files,
+        [local.indexVersion, statusSnapshot.fingerprint].join('\0'),
+        statusSnapshot,
+      ),
     ]);
 
-    const branch = status.current || 'HEAD';
+    const branch = local.branch;
     let upstream = await this.getUpstream(git);
     let ahead = 0;
     let behind = 0;
+    const divergenceScope = [
+      local.commonDir,
+      await readPathVersion(path.join(local.commonDir, 'shallow')),
+    ].join('\0');
     if (upstream) {
-      ({ ahead, behind } = await this.getAheadBehind(git, branch, upstream));
+      ({ ahead, behind } = await this.getAheadBehind(
+        git,
+        branch,
+        upstream,
+        headSha,
+        await local.resolveRef(upstream),
+        divergenceScope,
+      ));
     } else {
       // Preserve same-named remote branch detection for branches without -u,
       // including repos whose fetch refspec excludes the current branch.
@@ -338,8 +403,9 @@ export class GitService {
       if (remoteMatch) {
         const counts = await this.getAheadBehindBySha(
           git,
-          branch,
+          headSha ?? branch,
           remoteMatch.sha,
+          divergenceScope,
         );
         // A remote can advertise an object we have never fetched. Keep upstream
         // unresolved in that case; upstream + zero counts would imply synced.
@@ -865,7 +931,12 @@ export class GitService {
     worktreePath: string,
     staged: boolean,
     files?: FileStatus[],
+    version?: string,
+    snapshot?: WorktreeStatusFingerprintSnapshot,
   ): Promise<GitScopeSummary> {
+    const key = [worktreePath, staged].join('\0');
+    const cached = this.scopeStatsCache.get(key);
+    if (version && cached?.version === version) return cached.stats;
     const allFiles = files ?? (await this.getStatus(worktreePath));
     const scopeFiles = allFiles.filter((file) => file.staged === staged);
     const diffStats = await this.readNumstat(worktreePath, staged);
@@ -880,7 +951,13 @@ export class GitService {
       const untrackedStats = await mapWithConcurrency(
         untrackedFiles,
         UNTRACKED_STATS_CONCURRENCY,
-        (file) => this.readUntrackedFileStats(worktreePath, file.path),
+        (file) =>
+          this.readUntrackedFileStats(
+            worktreePath,
+            file.path,
+            snapshot?.pathVersions.get(file.path),
+            snapshot?.pathSizes.get(file.path) ?? undefined,
+          ),
       );
       additions += untrackedStats.reduce(
         (sum, stat) => sum + stat.additions,
@@ -892,11 +969,9 @@ export class GitService {
       );
     }
 
-    return {
-      files: scopeFiles.length,
-      additions,
-      deletions,
-    };
+    const stats = { files: scopeFiles.length, additions, deletions };
+    if (version) this.scopeStatsCache.set(key, { version, stats });
+    return stats;
   }
 
   private async getUpstream(git: SimpleGit): Promise<string | null> {
@@ -1091,21 +1166,32 @@ export class GitService {
     git: SimpleGit,
     branch: string,
     upstream: string,
+    headSha?: string | null,
+    upstreamSha?: string | null,
+    cacheScope = '',
   ): Promise<{ ahead: number; behind: number }> {
+    const pair =
+      headSha && upstreamSha
+        ? [cacheScope, headSha, upstreamSha].join('\0')
+        : null;
+    const cached = pair ? this.divergenceCache.get(pair) : null;
+    if (cached) return cached;
     try {
       const counts = (
         await git.raw([
           'rev-list',
           '--left-right',
           '--count',
-          `${branch}...${upstream}`,
+          `${headSha ?? branch}...${upstreamSha ?? upstream}`,
         ])
       ).trim();
       const [aheadCount, behindCount] = counts.split(/\s+/);
-      return {
+      const countsResult = {
         ahead: Number(aheadCount) || 0,
         behind: Number(behindCount) || 0,
       };
+      if (pair) this.divergenceCache.set(pair, countsResult);
+      return countsResult;
     } catch {
       return { ahead: 0, behind: 0 };
     }
@@ -1121,7 +1207,13 @@ export class GitService {
     git: SimpleGit,
     branch: string,
     remoteSha: string,
+    cacheScope = '',
   ): Promise<{ ahead: number; behind: number } | null> {
+    const pair = /^[a-f0-9]{40,64}$/.test(branch)
+      ? [cacheScope, branch, remoteSha].join('\0')
+      : null;
+    const cached = pair ? this.divergenceCache.get(pair) : null;
+    if (cached) return cached;
     try {
       // A partial clone must not lazily fetch an advertised, missing object
       // outside the bounded remote lookup above.
@@ -1136,10 +1228,12 @@ export class GitService {
           ])
       ).trim();
       const [aheadCount, behindCount] = counts.split(/\s+/);
-      return {
+      const result = {
         ahead: Number(aheadCount) || 0,
         behind: Number(behindCount) || 0,
       };
+      if (pair) this.divergenceCache.set(pair, result);
+      return result;
     } catch {
       return null;
     }
@@ -1149,64 +1243,45 @@ export class GitService {
     worktreePath: string,
     staged: boolean,
   ): Promise<{ additions: number; deletions: number }> {
-    const git: SimpleGit = worktreeSimpleGit(worktreePath);
-    const args = staged
-      ? ['diff', '--cached', '--numstat', '--find-renames']
-      : ['diff', '--numstat', '--find-renames'];
-    const output = await git.raw(args).catch(() => '');
-    const lines = output
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    return lines.reduce(
-      (stats, line) => {
-        const [additions, deletions] = line.split('\t');
-        const parsedAdditions =
-          additions === '-' ? 0 : Number.parseInt(additions, 10);
-        const parsedDeletions =
-          deletions === '-' ? 0 : Number.parseInt(deletions, 10);
-        return {
-          additions:
-            stats.additions +
-            (Number.isFinite(parsedAdditions) ? parsedAdditions : 0),
-          deletions:
-            stats.deletions +
-            (Number.isFinite(parsedDeletions) ? parsedDeletions : 0),
-        };
-      },
-      { additions: 0, deletions: 0 },
+    const git = scheduledReadGit(
+      worktreeSimpleGit(worktreePath, { readOnly: true }),
+      worktreePath,
+      -5,
     );
+    const output = await git.raw([
+      'diff',
+      ...(staged ? ['--cached'] : []),
+      '--numstat',
+      '-z',
+      '--find-renames',
+      '-l200',
+    ]);
+    const totals = { additions: 0, deletions: 0 };
+    const tokens = output.split('\0');
+    for (let index = 0; index < tokens.length; index++) {
+      const match = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/.exec(tokens[index]);
+      if (!match) continue;
+      if (match[3] === '') index += 2;
+      if (match[1] !== '-') totals.additions += Number(match[1]);
+      if (match[2] !== '-') totals.deletions += Number(match[2]);
+    }
+    return totals;
   }
 
   private async readUntrackedFileStats(
     worktreePath: string,
     relativePath: string,
+    version?: string,
+    size?: number,
   ): Promise<{ additions: number; deletions: number }> {
     try {
-      const absolutePath = path.join(worktreePath, relativePath);
-      const fileStat = await stat(absolutePath);
-      if (
-        !fileStat.isFile() ||
-        fileStat.size > MAX_UNTRACKED_STATS_FILE_BYTES
-      ) {
-        return { additions: 0, deletions: 0 };
-      }
-
-      const contents = await readFile(absolutePath);
-      if (contents.includes(0)) {
-        return { additions: 0, deletions: 0 };
-      }
-
-      const text = contents.toString('utf8');
-      if (!text.length) {
-        return { additions: 0, deletions: 0 };
-      }
-
-      const additions = text.endsWith('\n')
-        ? text.split('\n').length - 1
-        : text.split('\n').length;
-      return { additions, deletions: 0 };
+      const stats = await readWorktreeTextStats(
+        worktreePath,
+        relativePath,
+        version,
+        size,
+      );
+      return { additions: stats.binary ? 0 : (stats.lines ?? 0), deletions: 0 };
     } catch {
       return { additions: 0, deletions: 0 };
     }

@@ -29,6 +29,7 @@ import { realpath } from 'node:fs/promises';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
+import { releaseGitWorktreeCaches } from '../git/git-worktree-cache-lifecycle.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { BranchesService } from '../branches/branches.service.js';
@@ -1449,6 +1450,7 @@ export class TasksService
             : {}),
         });
         this.branches.invalidateCache(repo.path);
+        releaseGitWorktreeCaches(current.path);
         return this.get(id);
       } catch (error) {
         await this.update(id, {
@@ -1836,6 +1838,7 @@ export class TasksService
         });
         this.navigationEvents?.invalidate();
         this.branches.invalidateCache(repo.path);
+        releaseGitWorktreeCaches(current.path);
         return this.get(id);
       } catch (error) {
         // Failed process cleanup retains ownership and keeps execution blocked.
