@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
-const { mkdtemp, rm } = require('node:fs/promises');
+const { mkdtemp, readFile, rm, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
@@ -28,7 +28,7 @@ test('Retry now during background authentication promotes exactly one interactiv
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const firstAttempt = deferred(); const prompts = []; const attempts = [];
   let active = 0; let maximumActive = 0;
-  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test', forwardAgent: false }, release: async () => release,
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test' }, release: async () => release,
     changed: () => undefined, healthInterval: 10000,
     connect: async options => {
       active++; maximumActive = Math.max(maximumActive, active); attempts.push(options.interactive);
@@ -50,6 +50,32 @@ test('Retry now during background authentication promotes exactly one interactiv
   await connection.dispose(); assert.throws(() => connection.acquire(2, true), /disposed/);
 });
 
+test('Retry now cancels stalled background authentication and waits for cleanup before prompting', { timeout: 5000 }, async t => {
+  const server = createServer((_req, res) => res.end(JSON.stringify({ backendSha: version })));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const cleaning = deferred(); const cleaned = deferred(); const attempts = [];
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test' }, release: async () => release,
+    changed: () => undefined, healthInterval: 10000,
+    connect: async options => {
+      attempts.push(options.interactive);
+      if (!options.interactive) {
+        try { await delay(30000, undefined, { signal: options.signal }); }
+        finally { cleaning.resolve(); await cleaned.promise; }
+      }
+      const exit = deferred();
+      return { instance: 'runtime', exited: exit.promise, health: async () => ({ ready: true, instance: 'runtime' }),
+        forward: async () => ({ port: server.address().port, reachable: true, authorization: null, close: async () => undefined }), close: async () => exit.resolve() };
+    },
+  });
+  t.after(async () => { cleaned.resolve(); await connection.dispose(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  connection.acquire(1, false); await until(() => attempts.length === 1);
+  connection.retry(1); connection.retry(1);
+  await Promise.race([cleaning.promise, delay(500).then(() => assert.fail('Retry now waited for the background authentication timeout'))]);
+  assert.deepEqual(attempts, [false], 'interactive authentication must wait for old process cleanup');
+  cleaned.resolve(); await until(() => connection.snapshot().phase === 'ready');
+  assert.deepEqual(attempts, [false, true]);
+});
+
 test('draft bursts retain one pending snapshot and persist the latest complete state', async t => {
   const root = await mkdtemp(join(tmpdir(), 'ex-draft-burst-')); t.after(() => rm(root, { recursive: true, force: true }));
   const store = new RemoteSettingsStore(join(root, 'settings.json')); const window = emptyWindow(); const settings = { hosts: [], windows: [window] }; const promises = [];
@@ -58,6 +84,19 @@ test('draft bursts retain one pending snapshot and persist the latest complete s
   }
   assert.equal(new Set(promises).size, 1, 'a typing burst must coalesce rather than queue 1000 snapshots'); await Promise.all(promises);
   assert.equal((await store.load()).windows[0].contexts.local.draft, window.contexts.local.draft);
+});
+
+test('saved host migration discards old forwarding toggles and retains SSH settings', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ex-forwarding-config-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, 'settings.json');
+  const hosts = [false, true].map((forwardAgent, index) => ({ id: `host-${index}`, name: 'config-owned forwarding', host: 'dev-alias', configFile: '/chosen/config', forwardAgent }));
+  await writeFile(path, JSON.stringify({ version: 1, hosts, windows: [] }));
+  const store = new RemoteSettingsStore(path);
+  const settings = await store.load();
+  assert.deepEqual(settings.hosts, hosts.map(host => ({ id: host.id, name: host.name, host: host.host, configFile: host.configFile })));
+  await store.save(settings);
+  assert.equal((await readFile(path, 'utf8')).includes('forwardAgent'), false);
 });
 
 test('daemon discovery uses an available TCP port and never discloses its token to a stale endpoint', async t => {
@@ -123,7 +162,7 @@ test('a draft from an old environment is rejected without replacing the current 
   const manager = new RemoteManager({ root, settingsPath: join(root, 'settings.json'), helper: '', release: async () => release,
     connect: async () => { throw failure('authentication', 'authentication', 'Fixture key is locked.', 'authenticate'); } });
   t.after(async () => { await manager.dispose(); await rm(root, { recursive: true, force: true }); });
-  await manager.load(); manager.attach(1); const host = await manager.saveHost({ name: 'test', host: 'test', forwardAgent: false }, null);
+  await manager.load(); manager.attach(1); const host = await manager.saveHost({ name: 'test', host: 'test' }, null);
   const remote = { kind: 'remote', hostId: host.id }; const local = { kind: 'local' };
   await manager.select(1, remote); await manager.saveContext(1, { ...emptyContext(), draft: 'remote input' }, remote);
   await manager.select(1, local); await manager.saveContext(1, { ...emptyContext(), draft: 'local input' }, local);
@@ -137,8 +176,8 @@ test('host progress and draft updates notify only windows in their scope', async
     connect: async options => { attempts.set(options.host.id, options); await delay(30000, undefined, { signal: options.signal }); throw new Error('Fixture connection unexpectedly completed'); } });
   t.after(async () => { await manager.dispose(); await rm(root, { recursive: true, force: true }); });
   await manager.load(); manager.attach(1); manager.attach(2); manager.attach(3);
-  const first = await manager.saveHost({ name: 'one', host: 'one', forwardAgent: false }, null);
-  const second = await manager.saveHost({ name: 'two', host: 'two', forwardAgent: false }, null);
+  const first = await manager.saveHost({ name: 'one', host: 'one' }, null);
+  const second = await manager.saveHost({ name: 'two', host: 'two' }, null);
   await manager.select(1, { kind: 'remote', hostId: first.id });
   await manager.select(2, { kind: 'remote', hostId: second.id });
   await until(() => attempts.size === 2);

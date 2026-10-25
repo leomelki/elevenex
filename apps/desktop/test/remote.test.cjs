@@ -21,7 +21,7 @@ const validate = require('../dist/remote/validation');
 
 const version = 'a'.repeat(40);
 const release = backendRelease({ version, tag: `runtime-${version}` }, process.platform, process.arch);
-const host = { name: 'Development', host: 'dev-alias', forwardAgent: false };
+const host = { name: 'Development', host: 'dev-alias' };
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 async function until(work, predicate, timeout = 5000) {
   const end = Date.now() + timeout;
@@ -66,12 +66,37 @@ const ready = (manager, window = 1) => until(() => manager.snapshot(window), val
 
 test('remote inputs reject shell syntax, extra properties, credentials and unsafe forwarding addresses', () => {
   for (const input of [ { ...host, host: '-oProxyCommand=evil' }, { ...host, host: 'x;id' }, { ...host, password: 'secret' }, { ...host, port: 0 }, { ...host, identityFile: '../key' }, { ...host, user: 'me$(id)' } ]) assert.throws(() => validate.hostInput(input));
-  assert.deepEqual(validate.hostInput({ ...host, host: '::1', forwardAgent: true }), { ...host, host: '::1', forwardAgent: true });
+  assert.deepEqual(validate.hostInput({ ...host, host: '::1' }), { ...host, host: '::1' });
   assert.throws(() => validate.forward({ remotePort: 8000, localPort: 3000, label: 'dev', bind: '0.0.0.0' }));
   assert.throws(() => validate.forward({ remotePort: 8000, localPort: 22, label: 'dev' }));
   assert.throws(() => validate.context({ projectId: null, taskId: null, sessionId: null, draft: 'x'.repeat(100001), cursor: null }));
   assert.equal(sshFailure('REMOTE HOST IDENTIFICATION HAS CHANGED', 'transport').failure.transient, false);
   assert.equal(sshFailure('Permission denied (publickey,password)', 'authentication').failure.action, 'authenticate');
+  assert.throws(() => validate.hostInput({ ...host, forwardAgent: false }), /Invalid remote operation arguments/);
+});
+
+test('permanent SSH negotiation, account and configuration failures pause recovery', () => {
+  for (const stderr of [
+    'Unable to negotiate with 127.0.0.1 port 22: no matching key exchange method found. Their offer: obsolete',
+    'Unable to negotiate with 127.0.0.1 port 22: no matching host key type found. Their offer: obsolete',
+    'Unable to negotiate with 127.0.0.1 port 22: no matching cipher found. Their offer: obsolete',
+    'Unable to negotiate with 127.0.0.1 port 22: no matching MAC found. Their offer: obsolete',
+    'Bad server host key: Invalid key length',
+  ]) {
+    const problem = sshFailure(stderr, 'authentication').failure;
+    assert.equal(problem.code, 'compatibility', stderr); assert.equal(problem.transient, false, stderr);
+  }
+  for (const stderr of [
+    'Received disconnect from 127.0.0.1 port 22:2: Your account has expired; please contact your system administrator',
+    'You are required to change your password immediately (administrator enforced).',
+    'shell request failed on channel 0',
+    'exec request failed on channel 0',
+    'Invalid IdentityAgent environment variable name $broken-name',
+    'vdollar_percent_expand: env var ${MISSING_SSH_VAR} has no value',
+  ]) assert.equal(sshFailure(stderr, 'authentication').failure.transient, false, stderr);
+  for (const stderr of ['Connection refused', 'Connection reset by peer', 'Connection timed out', 'No route to host', 'Could not resolve hostname host: Temporary failure in name resolution']) {
+    assert.equal(sshFailure(stderr, 'authentication').failure.transient, true, stderr);
+  }
 });
 
 test('windows coalesce startup and disconnect/pause only their own leases; context survives outages', async t => {
@@ -197,6 +222,53 @@ test('askpass broker authenticates callers, returns transient credentials and de
   assert.equal((await fetch(`http://127.0.0.1:${background.env.ELEVENEX_ASKPASS_PORT}/`, { method: 'POST', headers: { Authorization: `Bearer ${background.env.ELEVENEX_ASKPASS_TOKEN}` }, body: 'Password:' })).status, 403);
 });
 
+test('askpass supports configured fingerprint hashes, confirmations and cancellable hardware notifications', async t => {
+  const controller = new AbortController(); const prompts = []; let answer = 'yes'; let notificationSignal;
+  const broker = await createAskpass(async (challenge, signal) => {
+    prompts.push(challenge);
+    if (challenge.kind !== 'notification') return answer;
+    notificationSignal = signal;
+    return new Promise(resolve => signal.addEventListener('abort', () => resolve(null), { once: true }));
+  }, true, controller.signal);
+  t.after(() => broker.close());
+  const headers = { Authorization: `Bearer ${broker.env.ELEVENEX_ASKPASS_TOKEN}` };
+  const url = `http://127.0.0.1:${broker.env.ELEVENEX_ASKPASS_PORT}/`;
+  const fingerprint = Array.from({ length: 16 }, () => 'ab').join(':');
+  assert.equal((await fetch(url, { method: 'POST', headers, body: `MD5:${fingerprint}\nAre you sure you want to continue connecting?` })).status, 200);
+  assert.equal(prompts.at(-1).kind, 'trust');
+  answer = 'no';
+  assert.equal((await fetch(url, { method: 'POST', headers: { ...headers, 'X-Elevenex-Askpass-Prompt': 'confirm' }, body: 'Add key to agent?' })).status, 403);
+  assert.equal(prompts.at(-1).kind, 'confirmation');
+  answer = 'yes';
+  assert.equal((await fetch(url, { method: 'POST', headers: { ...headers, 'X-Elevenex-Askpass-Prompt': 'confirm' }, body: 'Add key to agent?' })).status, 200);
+  const pending = new AbortController();
+  const notification = fetch(url, { method: 'POST', headers: { ...headers, 'X-Elevenex-Askpass-Prompt': 'none' }, body: 'Touch your security key', signal: pending.signal });
+  const cancelled = assert.rejects(notification, /abort/i);
+  await until(() => notificationSignal, Boolean);
+  assert.equal(prompts.at(-1).kind, 'notification');
+  assert.equal((await fetch(url, { method: 'POST', headers, body: 'Security key PIN:' })).status, 200, 'PIN requests coexist with informational prompts');
+  pending.abort(); await cancelled;
+  await until(() => notificationSignal.aborted, Boolean);
+});
+
+test('default SSH config discovery and the real display environment are delegated to the native client', async t => {
+  if (process.platform === 'win32') return t.skip('POSIX launcher fixture');
+  const root = await mkdtemp(join(tmpdir(), 'ex-ssh-native-defaults-'));
+  const previousPath = process.env.PATH; const previousDisplay = process.env.DISPLAY;
+  await writeFile(join(root, 'ssh'), '#!/bin/sh\nprintf "%s" "$DISPLAY"\n', { mode: 0o700 });
+  process.env.PATH = `${root}:${previousPath}`; process.env.DISPLAY = 'fixture-real-display';
+  t.after(async () => {
+    if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    if (previousDisplay === undefined) delete process.env.DISPLAY; else process.env.DISPLAY = previousDisplay;
+    await rm(root, { recursive: true, force: true });
+  });
+  const session = await spawnSsh({ ...host, id: 'defaults' }, 'true', async () => null, true, new AbortController().signal, '');
+  let output = ''; session.child.stdout.on('data', bytes => { output += bytes; }); await session.exited; await session.stop();
+  assert.equal(session.child.spawnargs.includes('-F'), false, 'OpenSSH selects its own user and system configuration');
+  assert.equal(session.child.spawnargs.some(value => value.startsWith('BatchMode=')), false, 'interactive connections retain configured BatchMode');
+  assert.equal(output, 'fixture-real-display');
+});
+
 test('bridge forwards binary data with backpressure and closes accepted sockets on disposal', async t => {
   const toRemote = new PassThrough(); const toLocal = new PassThrough();
   const local = new Wire(toLocal, toRemote); const remote = new Wire(toRemote, toLocal);
@@ -215,20 +287,30 @@ test('bridge forwards binary data with backpressure and closes accepted sockets 
   toRemote.write(`${'x'.repeat(100000)}\n`); assert.equal(remote.listenerCount('message'), 0); bounded.close(); assert.equal(closed, true);
 });
 
-test('native OpenSSH configuration keeps aliases/jumps/identities and overrides unsafe or conflicting session settings', async t => {
+test('native OpenSSH configuration owns connection policy while the app reserves its command session', async t => {
   const root = await mkdtemp(join(tmpdir(), 'ex-ssh-config-')); const config = join(root, 'config');
-  await writeFile(config, 'Host dev-alias\n HostName 127.0.0.1\n User nobody\n Port 1\n ProxyJump jump-alias\n ForwardAgent yes\n StrictHostKeyChecking no\n LocalForward 9999 localhost:80\nHost jump-alias\n HostName 127.0.0.1\n Port 1\n');
+  const clients = new Set();
+  const blackhole = tcpServer(socket => { clients.add(socket); socket.once('close', () => clients.delete(socket)); });
+  const jumpPort = await listen(blackhole);
+  t.after(async () => { for (const socket of clients) socket.destroy(); await new Promise(resolve => blackhole.close(resolve)); });
+  await writeFile(config, 'Host dev-alias\n HostName 127.0.0.1\n User nobody\n Port 1\n ProxyJump jump-alias\n ForwardAgent yes\n StrictHostKeyChecking no\n VerifyHostKeyDNS yes\n UpdateHostKeys yes\n FingerprintHash md5\n ForwardX11 yes\n Tunnel yes\n PermitLocalCommand yes\n LocalCommand true\n ConnectTimeout 42\n ConnectionAttempts 3\n ServerAliveInterval 17\n ServerAliveCountMax 8\n NumberOfPasswordPrompts 4\n LogLevel QUIET\n ControlMaster auto\n ControlPath /chosen/control.sock\n ControlPersist 90\n RequestTTY force\n RemoteCommand false\n StdinNull yes\n ForkAfterAuthentication yes\n SessionType none\n LocalForward 9999 localhost:80\n RemoteForward 9998 localhost:81\n DynamicForward 9997\nHost jump-alias\n HostName 127.0.0.1\n Port 1\n');
+  await writeFile(config, (await readFile(config, 'utf8')).replace('Host jump-alias\n HostName 127.0.0.1\n Port 1', `Host jump-alias\n HostName 127.0.0.1\n Port ${jumpPort}\n IdentityAgent none\n IdentityFile none`));
   const controller = new AbortController();
   const ssh = await spawnSsh({ ...host, id: 'host', configFile: config }, 'true', async () => null, false, controller.signal, '');
   ssh.child.stdout.resume(); ssh.child.stderr.resume();
   t.after(async () => { controller.abort(); await ssh.stop(); await rm(root, { recursive: true, force: true }); });
-  const actualConfig = ssh.child.spawnargs[ssh.child.spawnargs.indexOf('-F') + 1];
   const output = await new Promise((resolve, reject) => {
-    const child = spawn('ssh', ['-G', '-F', actualConfig, host.host], { stdio: ['ignore', 'pipe', 'pipe'] }); let out = ''; let err = '';
+    const child = spawn('ssh', ['-G', ...ssh.child.spawnargs.slice(1, -1)], { stdio: ['ignore', 'pipe', 'pipe'] }); let out = ''; let err = '';
     child.stdout.on('data', bytes => { out += bytes; }); child.stderr.on('data', bytes => { err += bytes; }); child.once('error', reject); child.once('exit', code => code === 0 ? resolve(out) : reject(new Error(err)));
   });
-  for (const line of ['hostname 127.0.0.1', 'user nobody', 'port 1', 'proxyjump jump-alias', 'forwardagent no', 'stricthostkeychecking ask', 'clearallforwardings yes', 'controlmaster false']) assert.ok(output.includes(line), line);
-  assert.equal(output.includes('localforward '), false);
+  for (const line of ['hostname 127.0.0.1', 'user nobody', 'port 1', 'proxyjump jump-alias', 'forwardagent yes',
+    'stricthostkeychecking false', 'verifyhostkeydns true', 'updatehostkeys true', 'fingerprinthash MD5',
+    'forwardx11 yes', 'tunnel point-to-point', 'permitlocalcommand yes', 'localcommand true', 'connecttimeout 42',
+    'connectionattempts 3', 'serveraliveinterval 17', 'serveralivecountmax 8', 'numberofpasswordprompts 4', 'loglevel QUIET',
+    'clearallforwardings no', 'controlmaster false', 'controlpath /chosen/control.sock', 'controlpersist 90', 'requesttty false',
+    'stdinnull no', 'forkafterauthentication no', 'sessiontype default',
+    'localforward 9999 [localhost]:80', 'remoteforward 9998 [localhost]:81', 'dynamicforward 9997']) assert.ok(output.includes(line), `${line}\n${output}`);
+  assert.equal(output.includes('remotecommand false'), false);
 });
 
 test('a real SSH connection hanging before its server banner is cancelled and its local resources are removed', async t => {

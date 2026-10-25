@@ -31,6 +31,7 @@ public static class ElevenexAskpass {
       request.Timeout = 125000;
       request.ReadWriteTimeout = 125000;
       request.Headers["Authorization"] = "Bearer " + token;
+      request.Headers["X-Elevenex-Askpass-Prompt"] = Environment.GetEnvironmentVariable("SSH_ASKPASS_PROMPT") ?? "";
       request.ContentLength = prompt.Length;
       using (Stream output = request.GetRequestStream()) output.Write(prompt, 0, prompt.Length);
       using (HttpWebResponse response = (HttpWebResponse)request.GetResponse()) {

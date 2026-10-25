@@ -21,7 +21,7 @@ function port(value: unknown, zero = false): number {
   return value;
 }
 export function hostInput(value: unknown): RemoteHostInput {
-  const input = object(value, ['name', 'host', 'user', 'port', 'identityFile', 'configFile', 'forwardAgent']);
+  const input = object(value, ['name', 'host', 'user', 'port', 'identityFile', 'configFile']);
   const host = text(input['host'], 253);
   // Destination also reaches ProxyCommand token expansion in the user's config.
   if (isIP(host) !== 6 && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(host)) throw new Error('Use a hostname or SSH config alias, with user and port in their separate fields');
@@ -33,9 +33,8 @@ export function hostInput(value: unknown): RemoteHostInput {
     if (!isAbsolute(result)) throw new Error('SSH files must use absolute paths');
     return result;
   };
-  if (typeof input['forwardAgent'] !== 'boolean') throw new Error('Agent forwarding requires an explicit setting');
   return {
-    name: text(input['name'], 160), host, forwardAgent: input['forwardAgent'],
+    name: text(input['name'], 160), host,
     ...(user === undefined ? {} : { user }),
     ...(input['port'] === undefined ? {} : { port: port(input['port']) }),
     ...(input['identityFile'] === undefined ? {} : { identityFile: file(input['identityFile']) }),

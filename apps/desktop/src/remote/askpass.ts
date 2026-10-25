@@ -17,11 +17,18 @@ export async function createAskpass(ask: Ask, interactive: boolean, signal: Abor
     if (request.method !== 'POST' || request.url !== '/' || authorization.length !== expected.length || !timingSafeEqual(authorization, expected)) {
       response.writeHead(403).end(); request.resume(); return;
     }
-    if (!interactive || busy || ++count > 16) { response.writeHead(403).end(); request.resume(); return; }
-    busy = true;
-    void respond(request, response).finally(() => { busy = false; });
+    const notification = request.headers['x-elevenex-askpass-prompt'] === 'none';
+    if (!interactive || !notification && busy || ++count > 16) { response.writeHead(403).end(); request.resume(); return; }
+    // A hardware-key notification may coexist with its PIN prompt. Do not let
+    // an informational message replace an active credential question.
+    if (notification && busy) { response.writeHead(200).end(); request.resume(); return; }
+    if (!notification) busy = true;
+    void respond(request, response).finally(() => { if (!notification) busy = false; });
   });
   async function respond(request: import('node:http').IncomingMessage, response: ServerResponse): Promise<void> {
+    const lifetime = new AbortController();
+    const closed = () => lifetime.abort();
+    response.once('close', closed);
     try {
       let prompt = '';
       for await (const chunk of request) {
@@ -30,15 +37,20 @@ export async function createAskpass(ask: Ask, interactive: boolean, signal: Abor
       }
       // OpenSSH supplies its actual fingerprint for the trust confirmation.
       const trust = /Are you sure you want to continue connecting/i.test(prompt);
+      const hint = request.headers['x-elevenex-askpass-prompt'];
+      const kind = trust ? 'trust' : hint === 'confirm' ? 'confirmation' : hint === 'none' ? 'notification' : 'credential';
       const challenge: RemoteChallenge = {
-        id: randomUUID(), kind: trust ? 'trust' : 'credential',
+        id: randomUUID(), kind,
         prompt: [...prompt].filter(char => char === '\n' || char === '\t' || char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127).join('').slice(0, 4096), expiresAt: Date.now() + 120_000,
       };
-      if (trust && !/SHA256:[A-Za-z0-9+/]+/.test(prompt)) throw failure('authentication', 'host-trust', 'SSH did not provide a host fingerprint. Verify this host in a terminal before connecting.', 'verify-host');
-      const answer = await ask(challenge, AbortSignal.any([signal, AbortSignal.timeout(120_000)]));
-      if (answer === null || signal.aborted || (trust && answer !== 'yes')) response.writeHead(403).end();
+      if (trust && !/(?:SHA256:[A-Za-z0-9+/]+|MD5:(?:[a-f0-9]{2}:){15}[a-f0-9]{2})/i.test(prompt)) throw failure('authentication', 'host-trust', 'SSH did not provide a host fingerprint. Verify this host in a terminal before connecting.', 'verify-host');
+      const requestSignal = AbortSignal.any([signal, lifetime.signal, AbortSignal.timeout(120_000)]);
+      const answer = await ask(challenge, requestSignal);
+      if (response.destroyed) return;
+      if (answer === null || requestSignal.aborted || (kind !== 'credential' && answer !== 'yes')) response.writeHead(403).end();
       else response.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end(answer);
     } catch { if (!response.destroyed) response.writeHead(403).end(); }
+    finally { response.removeListener('close', closed); }
   }
   server.requestTimeout = 5000;
   server.headersTimeout = 5000;

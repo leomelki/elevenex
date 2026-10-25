@@ -7,8 +7,6 @@ export interface RemoteHostInput {
   readonly port?: number;
   readonly identityFile?: string;
   readonly configFile?: string;
-  /** Explicit consent; permits configured forwarding, including custom sockets. */
-  readonly forwardAgent: boolean;
 }
 export interface RemoteHost extends RemoteHostInput { readonly id: string }
 export type EnvironmentSelection = { readonly kind: 'local' } | { readonly kind: 'remote'; readonly hostId: string };
@@ -30,7 +28,7 @@ export interface RemoteFailure {
 }
 export interface RemoteChallenge {
   readonly id: string;
-  readonly kind: 'credential' | 'trust';
+  readonly kind: 'credential' | 'trust' | 'confirmation' | 'notification';
   readonly prompt: string;
   readonly expiresAt: number;
 }

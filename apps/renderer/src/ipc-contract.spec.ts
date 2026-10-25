@@ -34,7 +34,9 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   // @ts-expect-error Trust replies do not accept arbitrary Electron objects.
   void invoke('remote:answer', 'challenge-id', { sender: 'other-window' });
   // @ts-expect-error Hosts have no saved credential field.
-  void invoke('remote:save-host', { name: 'dev', host: 'dev', forwardAgent: false, password: 'secret' }, null);
+  void invoke('remote:save-host', { name: 'dev', host: 'dev', password: 'secret' }, null);
+  // @ts-expect-error Agent forwarding belongs to SSH config, not an app override.
+  void invoke('remote:save-host', { name: 'dev', host: 'dev', forwardAgent: true }, null);
   // @ts-expect-error Forwarded services cannot select a public bind address.
   void invoke('remote:add-forward', { remotePort: 8000, localPort: 0, label: 'web', bind: '0.0.0.0' });
   // @ts-expect-error A renderer cannot choose a runtime URL or executable.

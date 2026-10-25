@@ -62,7 +62,7 @@ void (async () => {
   const remote = await window.webContents.executeJavaScript(`(async () => {
     const hosts = await window.elevenex.remoteHosts();
     const state = await window.elevenex.environmentStatus();
-    const invalid = await window.elevenex.saveRemoteHost({name:'bad',host:'-oProxyCommand=evil',forwardAgent:false},null).then(()=>false,()=>true);
+    const invalid = await window.elevenex.saveRemoteHost({name:'bad',host:'-oProxyCommand=evil'},null).then(()=>false,()=>true);
     await window.elevenex.saveEnvironmentContext({projectId:null,taskId:2,sessionId:3,draft:'unsent',cursor:'cursor'}, {kind:'local'});
     return {hosts,state,invalid};
   })()`);

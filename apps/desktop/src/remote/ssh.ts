@@ -8,9 +8,15 @@ import { signalBackendTree } from '../backend/process-tree';
 import { windowsAskpass } from './windows-askpass';
 
 export const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
-const configQuote = (value: string): string => `"${value.replaceAll('\\', '/').replaceAll('%', '%%').replaceAll('"', '\\"')}"`;
+function includePath(value: string): string {
+  const path = process.platform === 'win32' ? value.replaceAll('\\', '/') : value;
+  // Include expands variables, tokens and globs even inside quotes. Preserve
+  // the exact file the user chose, including literal ${...}, %, [ and * names.
+  const pattern = path.replace(/[\\*?[\]$]/g, char => char === '$' ? '[$]' : `\\${char}`);
+  return `"${pattern.replaceAll('\\', '\\\\').replaceAll('%', '%%').replaceAll('"', '\\"')}"`;
+}
 
-/** One fresh SSH process: user multiplexing cannot outlive our ownership or bypass consent. */
+/** OpenSSH owns configuration; these arguments only reserve the app's stdio session. */
 export async function spawnSsh(host: RemoteHost, command: string, ask: Ask, interactive: boolean, signal: AbortSignal, helper: string): Promise<{
   child: ChildProcessWithoutNullStreams; exited: Promise<void>; diagnostics(): string; stop(): Promise<void>;
 }> {
@@ -20,34 +26,33 @@ export async function spawnSsh(host: RemoteHost, command: string, ask: Ask, inte
   try {
     await chmod(directory, 0o700);
     broker = await createAskpass(ask, interactive, signal);
-    const config = join(directory, 'config');
-    const defaultConfig = join(homedir(), '.ssh/config');
-    const systemConfig = process.platform === 'win32' ? join(process.env['PROGRAMDATA'] ?? 'C:/ProgramData', 'ssh/ssh_config') : '/etc/ssh/ssh_config';
-    // ProxyJump's nested ssh inherits -F, so the same trust and forwarding rules
-    // apply at each hop. Include preserves Host/Match/Include and user proxies.
-    await writeFile(config, [
-      `Host ${host.forwardAgent ? `!${host.host} *` : '*'}`, '  ForwardAgent no',
-      'Host *', '  StrictHostKeyChecking ask', '  VerifyHostKeyDNS no', '  UpdateHostKeys no',
-      '  ForwardX11 no', '  ClearAllForwardings yes', '  PermitLocalCommand no',
-      '  ControlMaster no', '  ControlPath none', '  ControlPersist no',
-      '  RequestTTY no', '  RemoteCommand none', '  SessionType default', '  StdinNull no', '  ForkAfterAuthentication no',
-      '  ConnectTimeout 15', '  ConnectionAttempts 1', '  ServerAliveInterval 10', '  ServerAliveCountMax 2',
-      '  LogLevel ERROR', '  EscapeChar none',
-      '  NumberOfPasswordPrompts 1', `  BatchMode ${interactive ? 'no' : 'yes'}`, 'Host *',
-      `  Include ${configQuote(host.configFile ?? defaultConfig)}`,
-      ...(host.configFile ? [] : ['Host *', `  Include ${configQuote(systemConfig)}`]),
-      ...(host.forwardAgent ? [`Host ${host.host}`, '  ForwardAgent yes'] : []), '',
-    ].join('\n'), { mode: 0o600 });
+    // Do not build a parallel SSH policy or parse/rewrite the user's settings.
+    // With no -F, OpenSSH reads its native user and system configuration.
+    const args = ['-T', '-o', 'RemoteCommand=none', '-o', 'SessionType=default',
+      '-o', 'StdinNull=no', '-o', 'ForkAfterAuthentication=no', '-o', 'ControlMaster=no'];
+    // Reusing an existing ControlPath is safe. Publishing a shared master here
+    // would let stopping this app's process kill other windows or terminal work.
+    if (!interactive) args.push('-o', 'BatchMode=yes');
+    if (host.configFile) {
+      const config = join(directory, 'config');
+      // ProxyJump embeds -F in a shell command without quoting its pathname on
+      // some clients. Include-only indirection preserves literal chosen paths.
+      await writeFile(config, `Include ${includePath(host.configFile)}\n`, { mode: 0o600 });
+      args.push('-F', config);
+    }
     const wrapper = process.platform === 'win32' && interactive ? await windowsAskpass(directory, signal) : join(directory, 'askpass');
-    if (process.platform !== 'win32') await writeFile(wrapper, `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(helper)} "$@"\n`, { mode: 0o700 });
+    if (process.platform !== 'win32') await writeFile(wrapper, `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${shellQuote(process.execPath)} ${shellQuote(helper)} "$@"\n`, { mode: 0o700 });
     signal.throwIfAborted();
-    const args = ['-T', '-F', config];
     if (host.user) args.push('-l', host.user);
     if (host.port) args.push('-p', String(host.port));
-    if (host.identityFile) args.push('-i', host.identityFile.replaceAll('%', '%%'));
+    // -i stats its argument before token expansion. Supply the selected path
+    // through one environment expansion instead: its value is copied literally,
+    // so %, ${...}, spaces and quotes in real filenames are never reinterpreted.
+    if (host.identityFile) args.push('-o', 'IdentityFile="${ELEVENEX_SSH_IDENTITY}"');
     args.push('--', host.host, command);
-    const env: NodeJS.ProcessEnv = { ...process.env, ...broker.env, SSH_ASKPASS: wrapper, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: 'elevenex:0', ELECTRON_RUN_AS_NODE: '1' };
-    delete env['NODE_OPTIONS']; delete env['NODE_PATH'];
+    const env: NodeJS.ProcessEnv = { ...process.env, ...broker.env, SSH_ASKPASS: wrapper, SSH_ASKPASS_REQUIRE: 'force' };
+    if (host.identityFile) env['ELEVENEX_SSH_IDENTITY'] = host.identityFile;
+    delete env['NODE_OPTIONS']; delete env['NODE_PATH']; delete env['ELECTRON_RUN_AS_NODE']; delete env['SSH_ASKPASS_PROMPT'];
     const child = spawn('ssh', args, { cwd: homedir(), env, detached: process.platform !== 'win32', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let diagnostics = '';
     child.stderr.on('data', (bytes: Buffer) => { diagnostics = (diagnostics + bytes.toString('utf8')).slice(-16384); });

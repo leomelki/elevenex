@@ -13,34 +13,52 @@ not run competing SSH reconnect loops. Separate aliases pointing at the same
 remote account can have separate transports, but the remote daemon's kernel
 lock still permits only one backend/database owner.
 
-`remote/ssh.ts` launches the installed **OpenSSH client** with explicit arguments
-and a private generated config. It includes the user's config (or a selected
-custom config), retaining aliases, Include/Match, ProxyJump, ProxyCommand,
-identities, identity agents, certificates, users and ports. Config files are
-trusted executable configuration: Match exec and ProxyCommand can run programs.
+`remote/ssh.ts` launches the installed **OpenSSH client** and lets it resolve its
+normal user and system configuration. There is no app implementation or whitelist
+of SSH settings, and no extra `ssh -G` evaluation during connection. A selected
+custom config uses `-F`, through a private Include-only file: some clients embed
+the `-F` pathname unquoted in ProxyJump commands, so this indirection preserves
+chosen paths containing spaces or shell syntax. As with native `ssh -F`, a custom
+file replaces default user/system configuration. Config files are trusted
+executable configuration: Match exec, ProxyCommand and enabled LocalCommand can run programs.
 Custom config/identity paths must come from the main-process native file picker
 or an already saved host. Renderer-provided arbitrary file paths are rejected.
+Selected paths are treated literally, including spaces, quotes, percent signs,
+glob characters and environment-like text. Identity overrides retain precedence
+over configured identities without changing the keys used by a jump host.
 
-The following settings intentionally override user configuration:
+Connection policy follows OpenSSH configuration: aliases, Include/Match,
+ProxyJump/ProxyCommand, identities/agents/certificates, authentication, trust,
+DNS host verification, host-key updates, fingerprint display, forwarding, X11,
+tunnels, LocalCommand, timeouts, keep-alives, retries and logging. ProxyJump
+children evaluate their own matching rules. Configured user and port apply
+unless the user supplies an explicit override in the saved host. The remote account's
+`SSH_AUTH_SOCK` is preserved, whether supplied by SSH or a remote shell setup.
+There is no separate application consent toggle. Old saved host toggles are
+discarded when settings load; saved hosts retain their other settings.
 
-- Host checking is `ask`, DNS-based implicit trust and automatic key updates are
-  disabled, and changed/revoked keys are never accepted automatically. OpenSSH
-  manages the user's configured known_hosts files. Unknown hosts require an
-  explicit fingerprint decision. A changed key requires independent verification
-  and repair of known_hosts in a terminal; Retry cannot bypass it.
-- Agent forwarding is off unless the saved host explicitly enables it. An
-  unlocked local agent can still authenticate without forwarding it. ProxyJump
-  children inherit the generated config and keep forwarding disabled. Enabling
-  forwarding preserves a configured custom ForwardAgent socket; an explicit
-  `ForwardAgent no` still disables it and produces an actionable setup error.
-- ClearAllForwardings prevents configured LocalForward, RemoteForward or
-  DynamicForward entries from opening listeners or breaking initialization.
-  Recreate desired development forwards with the managed-forward API. We never
-  confuse an SSH forwarding warning with a healthy application connection.
-- User ControlMaster/ControlPath/ControlPersist, RemoteCommand, backgrounding,
-  TTY allocation, X11 forwarding and LocalCommand cannot take over the app's
-  process lifecycle. User-supplied ProxyCommand programs remain the user's trust
-  boundary, including the behavior of programs they themselves launch.
+Only the app's session requirements are supplied as command-line options:
+
+- `-T`, `RemoteCommand=none`, `SessionType=default`, `StdinNull=no` and
+  `ForkAfterAuthentication=no` reserve a foreground, non-PTY stdio command for
+  the bridge. A configured terminal or RemoteCommand cannot replace that program.
+- `ControlMaster=no` prevents this owned process from publishing a shared master
+  whose termination would disrupt other sessions. An existing configured
+  ControlPath is reused normally; neither its master nor its listeners are
+  stopped by app disconnect. ControlPath and ControlPersist are not rewritten.
+- Background restoration adds `BatchMode=yes` and denies UI prompts. Explicit
+  connect/retry retains the user's BatchMode. Interactive asks use the app's
+  SSH_ASKPASS broker; the real DISPLAY environment is preserved.
+
+Configured LocalForward, RemoteForward and DynamicForward listeners are managed
+by OpenSSH, separately from the app's managed-forward API. Conflicts and server
+restrictions obey ExitOnForwardFailure: fatal failures pause with configuration
+guidance, while nonfatal warnings retain native behavior. OpenSSH owns whether
+configured listeners expose loopback or other interfaces. Enabled LocalCommand
+runs normally; background commands must redirect their output rather than write
+into the bridge's protocol stream. User-owned proxy programs retain their own
+process behavior. App deadlines and cancellation still bound operations even
+when an SSH configuration requests a longer wait.
 
 One SSH stdio channel runs an uploaded Node bridge. It multiplexes bounded TCP
 streams, so initialization does not depend on SSH TCP forwarding permissions,
@@ -135,7 +153,8 @@ leave remote backend work running.** Tasks, sessions and active agent runs belon
 to the remote backend, not the tunnel. Forwarded-agent access is a short-lived
 lease refreshed by bridge health checks and removed on disconnect/expiry; it
 is not permanently captured by the daemon. After all clients disconnect,
-operations that need a forwarded agent must wait for a new consenting client.
+operations that need a client-provided agent must wait for a new client whose
+SSH configuration or remote account environment supplies a socket.
 The stable agent proxy tries another live lease if an agent socket has died,
 before consuming any authentication/signing bytes. It never retries a signing
 request after connecting. Revoking one lease closes only that lease's clients;
@@ -168,7 +187,7 @@ const stop = window.elevenex.onEnvironmentChanged(snapshot => {
 const initial = await window.elevenex.environmentStatus();
 const configFile = await window.elevenex.chooseRemoteSshFile('config');
 const host = await window.elevenex.saveRemoteHost({
-  name: 'Development', host: 'my-ssh-alias', forwardAgent: false,
+  name: 'Development', host: 'my-ssh-alias',
   ...(configFile ? { configFile } : {}),
 }, null);
 await window.elevenex.selectEnvironment({ kind: 'remote', hostId: host.id });
@@ -217,12 +236,21 @@ setup stages, downloads, bridge requests and application health.
 One retry coordinator uses exponential backoff with jitter capped at 30 seconds.
 Transient failures retry automatically; authentication, trust, configuration and
 compatibility failures pause. Only explicit connect/retry can present a challenge.
-Retry now during a background attempt queues one interactive attempt after the
-current attempt cleans up, rather than losing the request or connecting twice.
-Trust replies require `yes`, null cancels, challenges expire after two minutes,
+Unsupported SSH algorithms, expired/restricted accounts, denied shell execution
+and invalid config environment references pause with an actionable error.
+Retry now cancels stalled background authentication and queues one interactive
+attempt after its owned processes finish cleanup. Setup already past
+authentication can finish without restarting a download; repeated retries never connect twice.
+Host trust follows the configured OpenSSH policy; the app does not force ask,
+disable DNS verification or override automatic host-key updates. Trust and
+confirmation replies require `yes`, null declines, challenges expire after two minutes,
 and only the owning window can answer their current ID. Each attempt allows a
 bounded number of interactive prompts. Passwords/passphrases pass through a fresh
 authenticated loopback askpass broker, never disk, argv, diagnostics or settings.
+The broker supports SHA-256/MD5 fingerprint prompts, confirmations such as
+AddKeysToAgent ask, and informational agent/security-key notifications. A PIN
+prompt can coexist with a notification. Closing an SSH helper cancels its stale
+challenge; informational notifications require no credential response.
 
 Every successful reconnection increments `generation`; a restarted daemon also
 changes `instanceId`. Consumers must discard asynchronous results from an older
@@ -236,6 +264,9 @@ queries; connecting/recovering performs no repository or history rescan.
 
 `remoteDiagnostics()` returns at most 100 structured stage/code/timestamp/revision
 entries. Raw SSH/agent/backend output and credentials are deliberately excluded.
+OpenSSH's bounded stderr tail is classified in memory; its configured LogLevel
+is retained. QUIET logging can therefore reduce available failure detail. Raw
+messages never enter IPC or saved logs.
 For compatibility errors, verify the installed bundled Node with `--version`,
 remote Git and the selected release's platform prerequisites in a terminal.
 
@@ -260,9 +291,19 @@ Where `/usr/sbin/sshd` is available for a non-root listener, a permanent native
 test uses disposable keys, an isolated known_hosts file and an owned ssh-agent.
 It covers real host trust, changed keys, wrong passphrases, background agent
 authentication, jump aliases, custom agent sockets, conflicting configured
-forwards, full runtime bootstrap, the authenticated backend tunnel, and the
-persistent backend's forwarded-agent access/revocation. It never uses personal
-SSH credentials or writes its runtime into the real home directory.
+local/remote/SOCKS forwards, forward conflicts, LocalCommand, MD5 fingerprints,
+configured trust and password-prompt policies, literal config/identity paths,
+explicit user/port/key overrides, incompatible cipher rejection, full runtime
+bootstrap with server TCP forwarding disabled, the authenticated backend tunnel,
+and the persistent backend's agent access/revocation. Forwarding regressions cover
+yes/no/unset settings, custom sockets, environment references, Match final and
+different rules on the jump and target.
+Native tests also verify existing master reuse and survival after app cleanup,
+AddKeysToAgent confirmations and native default config discovery. Hardware-key
+notifications and overlapping PIN requests have broker-level regression tests;
+no physical security key or privileged tunnel/X11 server is certified by them.
+It never uses personal SSH credentials or writes its runtime into the real home
+directory.
 
 On the development macOS host, that loopback SSH fixture with one jump and
 programmatic encrypted-key unlocks measured approximately **0.7–1.1 seconds**

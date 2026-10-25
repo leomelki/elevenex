@@ -1,7 +1,7 @@
 const calls = [
   ['remoteHosts', 'remote:hosts', []],
   ['chooseRemoteSshFile', 'remote:choose-file', ['identity']],
-  ['saveRemoteHost', 'remote:save-host', [{ name: 'dev', host: 'dev', forwardAgent: false }, null]],
+  ['saveRemoteHost', 'remote:save-host', [{ name: 'dev', host: 'dev' }, null]],
   ['removeRemoteHost', 'remote:remove-host', ['host-id']],
   ['environmentStatus', 'environment:status', []],
   ['environmentBackendStatus', 'environment:backend-status', []],

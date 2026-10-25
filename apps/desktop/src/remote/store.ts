@@ -28,7 +28,10 @@ export class RemoteSettingsStore {
       const input = validate.object(JSON.parse(await readFile(this.path, 'utf8')), ['version', 'hosts', 'windows']);
       if (input['version'] !== 1 || !Array.isArray(input['hosts']) || input['hosts'].length > 100 || !Array.isArray(input['windows']) || input['windows'].length > 32) throw new Error('Invalid remote settings');
       const hosts = input['hosts'].map((value: unknown) => {
-        const { id, ...host } = validate.object(value, ['id', 'name', 'host', 'user', 'port', 'identityFile', 'configFile', 'forwardAgent']);
+        // Older saved hosts had an app-level forwarding toggle. Discard it:
+        // OpenSSH configuration is now the sole owner of forwarding policy.
+        const { id, forwardAgent, ...host } = validate.object(value, ['id', 'name', 'host', 'user', 'port', 'identityFile', 'configFile', 'forwardAgent']);
+        if (forwardAgent !== undefined && typeof forwardAgent !== 'boolean') throw new Error('Invalid legacy forwarding setting');
         return { ...validate.hostInput(host), id: validate.id(id) };
       });
       if (new Set(hosts.map(host => host.id)).size !== hosts.length) throw new Error('Duplicate saved host');

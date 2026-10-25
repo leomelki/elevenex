@@ -118,7 +118,6 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
     });
     ssh.child.stdout.resume();
     const hello = await greeting;
-    if (options.host.forwardAgent && !hello.agentForwarding) throw failure('authentication', 'configuration', 'Agent forwarding was requested but SSH did not provide an agent socket. Check ForwardAgent in SSH config, server AllowAgentForwarding, and the local agent.', 'edit');
     const channels = new SocketChannels(channel);
     const servers = new Map<Server, Set<import('node:net').Socket>>();
     let closing = false;

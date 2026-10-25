@@ -57,6 +57,10 @@ export class RemoteConnection {
       this.paused = false;
       if (this.loop && this.attemptInteractive && ['connecting', 'awaiting-input', 'setting-up'].includes(this.status.phase)) this.interactiveOwner = windowId;
       else this.requestedInteractiveOwner = windowId;
+      // A restored connection may be waiting on a locked agent or dead proxy.
+      // Stop its noninteractive authentication promptly; the coordinator waits
+      // for owned process cleanup before starting the requested interactive try.
+      if (this.loop && !this.attemptInteractive && this.status.stage === 'authentication') this.lifetime?.abort();
     }
     this.ensureLoop();
   }
@@ -82,6 +86,8 @@ export class RemoteConnection {
   answer(windowId: number, challengeId: string, answer: string | null): void {
     if (!this.challenge || this.challenge.owner !== windowId || this.challenge.value.id !== challengeId || this.challenge.value.expiresAt <= Date.now()) throw new Error('This SSH challenge is no longer active in this window');
     if (this.challenge.value.kind === 'trust' && answer !== null && answer !== 'yes') throw new Error('Host trust requires the explicit answer yes');
+    if (this.challenge.value.kind === 'confirmation' && answer !== null && answer !== 'yes') throw new Error('SSH confirmation requires the explicit answer yes');
+    if (this.challenge.value.kind === 'notification') throw new Error('This SSH notification needs no reply; disconnect to cancel the operation');
     this.challenge.resolve(answer);
   }
   async dispose(): Promise<void> {

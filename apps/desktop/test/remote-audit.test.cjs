@@ -11,7 +11,7 @@ const { backendRelease } = require('../dist/backend/release');
 
 const version = 'a'.repeat(40);
 const release = backendRelease({ version, tag: `runtime-${version}` }, process.platform, process.arch);
-const host = { name: 'Development', host: 'dev-alias', forwardAgent: false };
+const host = { name: 'Development', host: 'dev-alias' };
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 async function until(work, predicate, timeout = 5000) {
   const end = Date.now() + timeout;
