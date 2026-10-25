@@ -12,6 +12,7 @@ describe("GitBar motion ownership", () => {
   let motionChanged: (() => void) | undefined;
   let paintedPrimary: number | undefined;
   let paintedAction: number | undefined;
+  let paintedCount: number | undefined;
   const animations: { cancel: ReturnType<typeof vi.fn> }[] = [];
   const animate = vi.fn(function (
     this: HTMLElement,
@@ -38,6 +39,7 @@ describe("GitBar motion ownership", () => {
     motionChanged = undefined;
     paintedPrimary = undefined;
     paintedAction = undefined;
+    paintedCount = undefined;
     vi.stubGlobal("matchMedia", () => ({
       get matches() {
         return media.matches;
@@ -72,6 +74,10 @@ describe("GitBar motion ownership", () => {
         if (this.matches(".stat-measure"))
           width = this.textContent?.includes("Up to date") ? 80 : 110;
         if (this.matches(".more")) width = 24;
+        if (this.parentElement?.matches(".rolling"))
+          width = (this.textContent?.trim().length ?? 0) * 6;
+        if (this.matches(".count.rolling") && paintedCount !== undefined)
+          width = paintedCount;
         if (this.matches(".primary") && paintedPrimary !== undefined)
           width = paintedPrimary;
         if (this.matches(".action-slot") && paintedAction !== undefined)
@@ -160,6 +166,43 @@ describe("GitBar motion ownership", () => {
     expect(mediaRemoved).toHaveBeenCalledWith("change", expect.any(Function));
     for (const animation of animations)
       expect(animation.cancel).toHaveBeenCalled();
+  });
+
+  it("eases changing digit widths and retargets an interrupted count from its painted width", async () => {
+    const fixture = TestBed.createComponent(GitBarComponent);
+    fixture.componentRef.setInput("files", 7);
+    fixture.componentRef.setInput("add", 214);
+    fixture.componentRef.setInput("del", 38);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const count: HTMLElement =
+      fixture.nativeElement.querySelector(".count.rolling");
+    const initial = parseFloat(count.style.width);
+    expect(animate).not.toHaveBeenCalled();
+
+    fixture.componentRef.setInput("files", 128);
+    fixture.componentRef.setInput("add", 12214);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector(".count.rolling")).toBe(count);
+    const countCalls = () =>
+      animate.mock.calls.filter(
+        (_call, index) => animate.mock.contexts[index] === count,
+      );
+    expect(countCalls().at(-1)?.[0]).toEqual([
+      { width: `${initial}px` },
+      { width: `${initial + 12}px` },
+    ]);
+
+    paintedCount = initial + 4;
+    fixture.componentRef.setInput("files", 12);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(countCalls().at(-1)?.[0]).toEqual([
+      { width: `${paintedCount}px` },
+      { width: `${initial + 6}px` },
+    ]);
+    fixture.destroy();
   });
 
   it("commits then merges a sub-task through the same persistent button", async () => {

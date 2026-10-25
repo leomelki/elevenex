@@ -17,6 +17,7 @@ export class GitBarMotion {
   private readonly animations = new Set<Animation>();
   private readonly widths = new Map<HTMLElement, Animation>();
   private readonly fades = new Map<HTMLElement, Animation>();
+  private readonly countWidths = new Map<HTMLElement, number>();
   private readonly preferenceChanged = (): void => {
     if (!this.motion?.matches) return;
     for (const animation of this.animations) animation.cancel();
@@ -50,7 +51,7 @@ export class GitBarMotion {
     for (const animation of this.animations) animation.cancel();
   }
 
-  /** Read intrinsic content once, then animate only the two bounded slots. */
+  /** Read intrinsic sizes before resizing the bounded slots and count badges. */
   private layout(animate: boolean): void {
     if (this.destroyed) return;
     const primary = this.root.querySelector<HTMLButtonElement>(".primary");
@@ -70,6 +71,42 @@ export class GitBarMotion {
     )
       return;
     const style = getComputedStyle(primary);
+    // Intrinsic copies inherit from the bar, so copy the button's keyboard-hint
+    // spacing instead of duplicating a button style in GitBar's stylesheet.
+    const keyboardMargin = style.getPropertyValue("--kbd-margin");
+    if (actionMeasure.style.getPropertyValue("--kbd-margin") !== keyboardMargin)
+      actionMeasure.style.setProperty("--kbd-margin", keyboardMargin);
+    const move = animate && !this.motion?.matches;
+    // The DOM already contains the new digits here. Keep the previous layout
+    // width, or the current painted width when interrupted, as the origin.
+    const counts = new Set(
+      [...this.root.querySelectorAll<HTMLElement>(".rolling")].filter(
+        (element) => !element.closest(".leaving"),
+      ),
+    );
+    for (const element of this.countWidths.keys()) {
+      if (!counts.has(element)) this.countWidths.delete(element);
+    }
+    const countTargets = [...counts].map((element) => {
+      const content = element.querySelector<HTMLElement>("span:not(.leaving)");
+      const countStyle = getComputedStyle(element);
+      const width =
+        (content?.getBoundingClientRect().width ?? 0) +
+        [
+          countStyle.paddingLeft,
+          countStyle.paddingRight,
+          countStyle.borderLeftWidth,
+          countStyle.borderRightWidth,
+        ].reduce((sum, value) => sum + (parseFloat(value) || 0), 0);
+      return {
+        element,
+        width,
+        from: this.widths.has(element)
+          ? element.getBoundingClientRect().width
+          : (this.countWidths.get(element) ?? width),
+        initialized: this.countWidths.has(element),
+      };
+    });
     const primaryWidth =
       actionMeasure.getBoundingClientRect().width +
       [
@@ -112,7 +149,17 @@ export class GitBarMotion {
       ...target,
       from: target.element.getBoundingClientRect().width,
     }));
-    const move = animate && !this.motion?.matches;
+    for (const target of countTargets) {
+      this.countWidths.set(target.element, target.width);
+      this.resize(
+        target.element,
+        target.from,
+        target.width,
+        move && target.initialized,
+        false,
+        style,
+      );
+    }
     for (const target of targets)
       this.resize(
         target.element,

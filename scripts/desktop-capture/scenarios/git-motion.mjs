@@ -75,7 +75,7 @@ async function probeGit(options) {
       for (let parent = element; parent && parent !== bar; parent = parent.parentElement) {
         opacity *= Number(getComputedStyle(parent).opacity);
       }
-      return { text: element.textContent.trim().replace(/\s+/g, ' '), opacity: Math.round(opacity * 1000) / 1000 };
+      return { text: element.textContent.trim().replace(/\s+/g, ' '), opacity: Math.round(opacity * 1000) / 1000, offset: element.getBoundingClientRect().left - primary.getBoundingClientRect().left, countHeight: element.querySelector(".rolling")?.getBoundingClientRect().height ?? null };
     });
     const widthAnimation = animations.find(animation => animation.effect?.target === primary && animation.effect.getKeyframes().some(keyframe => keyframe.width));
     const widthFrames = widthAnimation?.effect.getKeyframes();
@@ -168,7 +168,11 @@ async function probeGit(options) {
     }
   }
   const before = samples[0];
+  const outgoing = before.inks.find(ink => ink.opacity > .9);
+  const synchronous = samples[1].inks.find(ink => ink.text === outgoing?.text);
   return {
+    inkJump: outgoing && synchronous ? Math.abs(outgoing.offset - synchronous.offset) : 0,
+    countCollapsed: outgoing?.countHeight > 0 && synchronous?.countHeight === 0,
     samples, transitions, boundaries, maximum, longestFrame,
     initialShift: delta(before, frames[0]), settledShift: delta(frames.at(-1), final),
     initiallyHidden: before.boxes.action[2] < .5,
@@ -207,6 +211,8 @@ async function* measure(capture, name, options) {
   yield { name, inspect, metadata: { probe: result } };
   assert.equal(result.unfinished, 0, `${name}: finite motion must finish`);
   assert.equal(result.pending, 0, `${name}: outgoing ink must be removed`);
+  assert.equal(result.countCollapsed, false, `${name}: outgoing count collapsed before fading`);
+  assert.ok(result.inkJump <= .5, `${name}: outgoing label jumped ${result.inkJump}px before fading`);
   assert.equal(result.sameButton, true, `${name}: native action and menu buttons must persist`);
   assert.ok(result.fixedDrift <= .5, `${name}: title, branch or link moved ${result.fixedDrift}px`);
   assert.ok(result.rightDrift <= .5, `${name}: right edge moved ${result.rightDrift}px`);
@@ -254,9 +260,14 @@ export default async function* (capture) {
         await capture.reducedMotion(false);
         await capture.component(root, (component, value) => { component.compact.set(value); component.select(0); }, compact);
         await settleGit(capture);
+        let direct = 0;
         const prefix = `${theme}-${compact ? 'compact' : 'full'}`;
         yield { name: `${prefix}-initial`, inspect };
         for (let index = 1; index < ids.length; index++) yield* measure(capture, `${prefix}-${ids[index]}`, { index });
+        // Direct Push → Commit changes used to let the wider incoming grid
+        // track shove and clip the outgoing icon, label and count in one frame.
+        for (const index of [7, 0, 7, 8, 0, 8, 0])
+          yield* measure(capture, `${prefix}-direct-${index}-${direct++}`, { index });
         yield* measure(capture, `${prefix}-interruptions`, { indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 4, 0] });
         await capture.reducedMotion(true);
         for (const index of [1, 2, 4, 5, 8]) yield* measure(capture, `${prefix}-reduced-${ids[index]}`, { index, reduced: true });

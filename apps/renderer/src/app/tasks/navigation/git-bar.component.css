@@ -109,8 +109,9 @@
 .action-content {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-content: center;
+  display: flex;
+  align-items: center;
+  margin-inline: var(--space-3);
 }
 .action-ink {
   display: inline-flex;
@@ -119,6 +120,12 @@
   gap: 6px;
   white-space: nowrap;
   grid-area: 1 / 1;
+}
+/* Each layer keeps its own intrinsic width. A wider incoming label must not
+   resize a shared grid track and displace the outgoing label before it fades. */
+.action-content > .action-ink {
+  position: absolute;
+  inset-inline-start: 0;
 }
 .split > button:first-child {
   border-top-right-radius: 0;
@@ -143,9 +150,12 @@
   display: inline-grid;
   position: relative;
   overflow: clip;
+  /* Nested leave animations must not collapse the outgoing badge line box. */
+  height: 1lh;
 }
 .rolling > span {
   grid-area: 1 / 1;
+  width: max-content;
 }
 .rolling > .leaving {
   position: absolute;
