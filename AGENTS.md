@@ -60,6 +60,31 @@ The project must support repositories with thousands of files and folders, hundr
 - Prefer native semantic controls. Provide accessible names, keyboard operation, visible focus, and correct disabled/loading states. Overlays must manage focus and restore it on close; hidden panels must not leave focusable controls in the tab order.
 - Use Angular lifecycle cleanup such as `DestroyRef` or `takeUntilDestroyed` for long-lived subscriptions. Keep async requests cancellable or reject stale replies when the selected task/session changes.
 
+### Finding and using renderer components
+
+- Start with [the renderer component guide](apps/renderer/README.md) for architecture, composition slots, ownership and preview instructions. Read the owning family's README and `index.ts`, then the component's signal inputs, outputs, template and nearby tests before using or extending it. The Angular implementation defines the current API; `docs/design-system/project/components/<Name>/README.md` describes the intended design and interaction. Reference React/gallery code is not application code.
+- Find existing components before building another control. Search within the relevant family, for example `rg --files apps/renderer/src/app/ui` or `rg -n 'DropdownComponent|ex-dropdown' apps/renderer/src/app apps/renderer/preview`. Design names use PascalCase, source filenames use kebab-case, and selectors generally use `ex-`; native-button enhancements such as `button[exButton]` are exceptions.
+
+| Need | Implementation and usage guide |
+| --- | --- |
+| Buttons, icons, choices, status, feedback, tooltips and motion | `apps/renderer/src/app/ui/index.ts`; see `ui/icon/icon-paths.ts` for available icon names |
+| Single-choice dropdowns and action menus | [Dropdown guide](apps/renderer/src/app/ui/dropdown/README.md), exported by `ui/dropdown` and `ui` |
+| Modal dialogs, settings sheets and setting rows/fields | [Sheet guide](apps/renderer/src/app/ui/sheet/README.md), exported by `ui/sheet` and `ui` |
+| Project rail, task/session outline, lifecycle, branches/workspaces, git actions and panel tabs | [Task guide](apps/renderer/src/app/tasks/README.md), exports in `tasks/index.ts` |
+| Project creation, appearance, project menus and repository settings | [Project guide](apps/renderer/src/app/projects/README.md) and [settings guide](apps/renderer/src/app/projects/project-settings/README.md), exports in `projects/index.ts` |
+| Chat, turns, Markdown, composer, presets and decision cards | [Conversation guide](apps/renderer/src/app/conversation/README.md), exports in `conversation/index.ts` |
+| Machine home, onboarding, launch and title island | [Machine guide](apps/renderer/src/app/machines/README.md), exports in `machines/index.ts` |
+| Changes review/list, Browser and Terminal frames | [Side-view guide](apps/renderer/src/app/views/README.md), exports in `views/index.ts` |
+| Shell regions and workspace composition | `apps/renderer/src/app/shell/app-shell.component.*` and `apps/renderer/src/app/workbench/workbench.component.*`; projection slots are documented in the renderer guide |
+
+- Import standalone components and their readonly view models from the relevant family's public barrel using relative paths, and add the components/directives to the consuming component's `imports`. Keep family-internal helpers private unless they represent a supported reusable API. Renderer view models stay in their family; serializable platform contracts belong in `packages/shared`.
+- Supply readonly data and handle typed intent outputs in the owner. Apply controlled values explicitly after an action succeeds; children own unfinished drafts, disclosures and local selection. Use two-way binding only for documented model inputs. Preserve stable IDs in keyed lists and replace changed objects/collections so OnPush and Signals receive updates. Platform operations, busy/error state, cancellation and stale-response checks belong to the integrating container.
+- Reuse the existing primitives: `<button exButton variant="primary">Create task</button>` for native actions, `<ex-icon-button icon="panel" label="Toggle side panel" (pressed)="togglePanel()" />` for icon actions, and `exTooltip` for control tooltips. `IconComponent` is decorative; the owning control needs its accessible name. Use the shared status, feedback and choice components rather than reproducing their markup and styles.
+- Use `DropdownComponent` for ordinary controlled single choices. Compose `DropdownMenuComponent` with `exDropdownItem`/`exDropdownRadio` and CDK menu triggers for custom action menus. Searchable branch/preset pickers and forms remain specialized dialogs; menus must not contain arbitrary form controls. Supply bounded option windows.
+- Use `ModalLayerComponent` for custom modal boundaries and `SheetComponent` with the exported settings controls for settings surfaces. Follow the sheet guide for labels, projection, focus and trigger origins. Retain the layer and its projected data during exit, drive its `open` input, and deactivate retained interactive children as closing begins. Let the layer own focus trapping/restoration and background recession.
+- Reuse `FoldComponent`, `AutoHeightDirective`, `PresenceComponent`, `EaseSwapComponent`, `FlipDirective` and `FittedHighlightDirective` where their existing behavior fits. Read the renderer guide's motion rules before combining them; preserve keyed identities, reduced-motion behavior and resource cleanup rather than adding competing animations.
+- Run `pnpm desktop:preview` and open `http://127.0.0.1:4310` to exercise real component APIs. `apps/renderer/preview/*-demo.component.ts` and their templates are working composition examples. Keep fixtures and synthetic activity under `preview/`, outside the production import graph. When changing a public component API, update its barrel as needed, family guide, preview consumers and relevant tests together. Verify UI changes through the desktop capture workflow below, using `--url http://127.0.0.1:4310` when capturing the preview.
+
 ### Design system and motion
 
 - Before writing UI, read `docs/design-system/project/README.md`, especially Motion, and inspect `project/tokens.css`. If these inputs are missing, request them and continue independent infrastructure work; do not invent replacement brand tokens or claim the designed UI is complete.
