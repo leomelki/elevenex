@@ -9,7 +9,7 @@
       @if (current()?.server; as server) { <span class="server" [title]="server + ' · this task’s dev server'">{{ server }}</span> }
       <span>{{ current()?.url ?? 'No page open' }}</span>
     </div>
-    <span class="driver" [attr.data-driver]="driver()" role="status">
+    <span class="driver" [hidden]="!current()" [attr.data-driver]="driver()" role="status">
       @if (driver() === 'agent') { <span class="agent-mark" aria-hidden="true">Ag</span> }
       @else { <ex-icon [name]="driver() === 'needs' ? 'hand' : 'cursor'" [size]="12" /> }
       <ex-ease-swap [value]="driver() === 'agent' ? 'Driving' : driver() === 'needs' ? 'Your turn' : 'You'" />
@@ -20,7 +20,7 @@
       <ex-icon-button icon="more" label="More browser actions" size="sm" (pressed)="moreRequested.emit()" />
     </div>
   </div>
-  <ex-fold [open]="driver() === 'needs'">
+  <ex-fold [open]="!!current() && driver() === 'needs'">
     <div class="needs" role="status">
       <ex-icon name="hand" [size]="16" />
       <span><b>{{ needsTitle() }}</b><small>{{ needsText() }}</small></span>
@@ -28,7 +28,7 @@
     </div>
   </ex-fold>
   <div #preview class="preview" tabindex="0" aria-label="Page preview" [class.agent-driving]="driver() === 'agent'" [attr.aria-busy]="loading()" (pointerdown)="takeOver()" (keydown)="takeOver()">
-    <div class="page" [class.phone]="width() === 'phone'">
+    <div class="page" [hidden]="!current()" [class.phone]="width() === 'phone'">
       <ng-content select="[browserPreview]" />
       @if (target(); as target) {
         <span class="target" [class.picked]="!!picked()" [style.transform]="targetTransform()" [style.width.px]="coordinate(target.w) + 8" [style.height.px]="coordinate(target.h) + 8" aria-hidden="true">
@@ -42,17 +42,20 @@
         </span>
       }
     </div>
-    @if (driver() === 'agent') { <span class="driving-frame" aria-hidden="true"><span class="takeover-hint">Click anywhere to take over</span></span> }
-    @if (picked(); as picked) {
+    @if (current() && driver() === 'agent') { <span class="driving-frame" aria-hidden="true"><span class="takeover-hint">Click anywhere to take over</span></span> }
+    @if (current() && picked(); as picked) {
       <form class="question" (submit)="$event.preventDefault(); ask()" (pointerdown)="$event.stopPropagation()" (keydown)="$event.stopPropagation()">
-        <div class="target-name"><ex-icon name="target" [size]="12" />{{ picked.label }}@if (picked.file) { <small>{{ picked.file }}</small> }</div>
+        <div class="question-header">
+          <div class="target-name"><ex-icon name="target" [size]="12" /><span [title]="picked.label">{{ picked.label }}</span>@if (picked.file) { <small [title]="picked.file">{{ picked.file }}</small> }</div>
+          <ex-icon-button icon="x" label="Dismiss question (Esc)" size="sm" (pressed)="pickingChange.emit(false)" />
+        </div>
         <textarea #askInput rows="2" aria-label="What should change here?" placeholder="What should change here?" [value]="askText()" (input)="askText.set(askInput.value)" (keydown)="askKeydown($event)"></textarea>
         <footer><span>Ask about the selected element</span><button exButton variant="primary" size="sm" type="submit" [disabled]="!askText().trim()">Ask</button></footer>
       </form>
     }
     @if (!current()) { <div class="empty"><ex-icon name="globe" [size]="24" /><p>Open a page for this task.</p><button exButton variant="secondary" (click)="added.emit()">New tab</button></div> }
   </div>
-  <ex-fold [open]="driver() === 'agent' && !!step()">
+  <ex-fold [open]="!!current() && driver() === 'agent' && !!step()">
     @if (step(); as step) {
       <div class="foot agent-step">
         <span class="agent-mark" aria-hidden="true">Ag</span>
@@ -62,10 +65,10 @@
       </div>
     }
   </ex-fold>
-  <ex-fold [open]="driver() === 'you' && agentWaiting()">
+  <ex-fold [open]="!!current() && driver() === 'you' && agentWaiting()">
     <div class="foot"><ex-icon name="cursor" [size]="14" /><span>You’re driving; the agent waits</span><button exButton size="sm" variant="secondary" (click)="handBack()">Hand back</button></div>
   </ex-fold>
-  <ex-fold [open]="driver() !== 'agent' && errors() > 0">
+  <ex-fold [open]="!!current() && driver() !== 'agent' && errors() > 0">
     <div class="foot errors" role="status"><ex-icon name="bug" [size]="14" /><span><b>{{ errors() }} {{ errors() === 1 ? 'error' : 'errors' }}</b> {{ errorText() }}</span><button exButton size="sm" variant="secondary" (click)="sendErrorsRequested.emit()">Send to agent</button></div>
   </ex-fold>
 </section>

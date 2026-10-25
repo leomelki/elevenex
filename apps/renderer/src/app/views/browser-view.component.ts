@@ -98,7 +98,7 @@ export class BrowserViewComponent {
     this.askText.set('');
   }
   protected askKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); this.ask(); }
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); this.ask(); }
     if (event.key === 'Escape') { event.stopPropagation(); this.pickingChange.emit(false); }
   }
   protected keydown(event: KeyboardEvent): void {

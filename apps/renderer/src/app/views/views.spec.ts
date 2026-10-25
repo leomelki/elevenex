@@ -102,6 +102,45 @@ describe('Side-view interactions', () => {
     expect(takeover).toHaveBeenCalledTimes(1);
   });
 
+  it('clears page chrome and questions when the last browser tab closes', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Checkout', url: 'localhost' }]);
+    fixture.componentRef.setInput('driver', 'needs');
+    fixture.componentRef.setInput('picked', { x: 10, y: 20, w: 100, h: 30, label: 'Pay' });
+    fixture.componentRef.setInput('errors', 2);
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelector<HTMLDivElement>('.page')?.hidden).toBe(false);
+    expect(root.querySelector('.question')).not.toBeNull();
+    fixture.componentRef.setInput('tabs', []);
+    fixture.detectChanges();
+    expect(root.querySelector<HTMLDivElement>('.page')?.hidden).toBe(true);
+    expect(root.querySelector<HTMLElement>('.driver')?.hidden).toBe(true);
+    expect(root.querySelector('.question, .driving-frame')).toBeNull();
+    expect(root.querySelector('.needs')?.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
+    expect(root.querySelector('.errors')?.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
+    expect(root.querySelector('.empty')?.textContent).toContain('New tab');
+  });
+
+  it('dismisses a browser question and preserves IME confirmation before sending', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Checkout', url: 'localhost' }]);
+    fixture.componentRef.setInput('picked', { x: 10, y: 20, w: 100, h: 30, label: 'Pay' });
+    fixture.detectChanges();
+    const asked = vi.fn(), picking = vi.fn();
+    fixture.componentInstance.asked.subscribe(asked);
+    fixture.componentInstance.pickingChange.subscribe(picking);
+    const root: HTMLElement = fixture.nativeElement;
+    const input = root.querySelector('textarea')!;
+    input.value = 'Change the label'; input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }));
+    expect(asked).not.toHaveBeenCalled();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(asked).toHaveBeenCalledWith(expect.objectContaining({ tabId: 'one', text: 'Change the label' }));
+    root.querySelector<HTMLButtonElement>('[aria-label="Dismiss question (Esc)"]')!.click();
+    expect(picking).toHaveBeenCalledWith(false);
+  });
+
   it('shows bounded workflow progress and the active agent tab, then clears driving UI on takeover', () => {
     const fixture = TestBed.createComponent(BrowserViewComponent);
     fixture.componentRef.setInput('tabs', [{ id: 'checkout', title: 'Checkout', by: 'agent' }, { id: 'docs', title: 'Docs', by: 'agent' }]);
