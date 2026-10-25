@@ -1,5 +1,6 @@
 /** Original Elevenex line icons, on a 16px grid. */
 export const ICON_PATHS: Readonly<Record<string, string>> = {
+  bag: 'M3 5.5h10l.5 8h-11zM5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5',
   subtask: 'M4 3v6.5a1.5 1.5 0 0 0 1.5 1.5H12M9.5 8.5L12 11l-2.5 2.5',
   'chevron-up': 'M4.5 9.5L8 6l3.5 3.5',
   plus: "M8 3v10M3 8h10",

@@ -101,6 +101,34 @@ describe('Side-view interactions', () => {
     preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
     expect(takeover).toHaveBeenCalledTimes(1);
   });
+
+  it('shows bounded workflow progress and the active agent tab, then clears driving UI on takeover', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'checkout', title: 'Checkout', by: 'agent' }, { id: 'docs', title: 'Docs', by: 'agent' }]);
+    fixture.componentRef.setInput('active', 'checkout');
+    fixture.componentRef.setInput('driver', 'agent');
+    fixture.componentRef.setInput('action', { x: 20, y: 80, w: 100, h: 30, label: 'Pay' });
+    fixture.componentRef.setInput('step', { n: 50, total: 100, text: 'Checking payment' });
+    fixture.componentRef.setInput('errors', 2);
+    fixture.componentRef.setInput('agentWaiting', true);
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelectorAll('.step-dots i')).toHaveLength(12);
+    expect(root.querySelectorAll('.step-dots .now')).toHaveLength(1);
+    expect(root.querySelectorAll('[aria-label="The agent is using this tab"]')).toHaveLength(1);
+    expect(root.querySelector('[data-tab-id="checkout"] .driving')).not.toBeNull();
+    expect(root.querySelector('.agent-cursor')).not.toBeNull();
+    expect(root.querySelector('.driving-frame')).not.toBeNull();
+    expect(root.querySelector('.errors')?.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
+    fixture.componentRef.setInput('driver', 'you');
+    fixture.detectChanges();
+    expect(root.querySelector('.agent-cursor, .driving-frame, .agent.driving')).toBeNull();
+    expect(root.querySelector('.errors')?.closest('ex-fold')?.hasAttribute('inert')).toBe(false);
+    expect(root.textContent).toContain('You’re driving; the agent waits');
+    fixture.componentRef.setInput('step', { n: 1, total: Infinity, text: 'Invalid total' });
+    fixture.detectChanges();
+    expect(root.querySelectorAll('.step-dots i')).toHaveLength(0);
+  });
 });
 
 describe('Diff review boundaries', () => {

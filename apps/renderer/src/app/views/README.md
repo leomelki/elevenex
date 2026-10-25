@@ -17,6 +17,15 @@ does not promise secret-field masking; the browser integration must enforce it.
 `asked` carries the selected target, text and active tab identity. Screenshot
 capture and source resolution also belong to the future browser integration.
 
+While the agent drives, the active agent tab breathes and an overlay paints the
+accent frame above the projected page. The target ring and cursor follow page
+coordinates, including phone width and scrolling. The workflow bar crossfades
+step text and bounds its dots to twelve for long workflows. Errors are shown
+after control returns to you, matching the design’s single driving status bar.
+Reduced motion stops the cursor pulse, tab breathing and target travel. The
+isolated `BrowserDemo` measures its sample button with an owned ResizeObserver;
+the production browser owner must supply its own page coordinates.
+
 `TerminalView` accepts `[terminalContent]` for a future terminal adapter. Its text
 preview uses escaped `TerminalLine` objects and CDK virtualization, bounded to the
 latest 2,000 lines; any omitted history is labelled. It emits typed script,

@@ -152,6 +152,16 @@ both themes, reduced motion and a narrow dialog with restored focus. The focused
 motion scenario measures card/trigger origins, uniform view scaling, interrupted
 launch/modal reversals and focus after reopening, in both themes.
 
+The Browser state regression uses the same preview:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/browser-view.mjs --url http://127.0.0.1:4310
+```
+
+It checks target alignment at full, phone and 440px panel widths, cursor
+interpolation, takeover/hand-back, needs-you, point-and-ask focus restoration,
+and reduced motion in both themes. Its checkout data stays in the preview.
+
 Run them sequentially so another Electron capture window does not throttle the
 one being measured. They sample in the renderer before mutation and at each real
 animation frame, then continue through retained-row and animation cleanup.

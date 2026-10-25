@@ -1,0 +1,21 @@
+<div class="controls" role="group" aria-label="Browser preview state">
+  <button exButton size="sm" [variant]="driver() === 'agent' ? 'primary' : 'secondary'" [attr.aria-pressed]="driver() === 'agent'" (click)="selectDriver('agent')">Agent drives</button>
+  <button exButton size="sm" [variant]="driver() === 'you' ? 'primary' : 'secondary'" [attr.aria-pressed]="driver() === 'you'" (click)="selectDriver('you')">You drive</button>
+  <button exButton size="sm" [variant]="driver() === 'needs' ? 'primary' : 'secondary'" [attr.aria-pressed]="driver() === 'needs'" (click)="selectDriver('needs')">Needs you</button>
+</div>
+<div class="browser-demo">
+  <ex-browser-view [tabs]="tabs()" [active]="active()" [driver]="driver()" [step]="{ n: 5, total: 9, text: 'Checking the payment form' }" [action]="action()" [agentWaiting]="true" [width]="width()" [picking]="picking()" [picked]="picked()" [errors]="2" errorText="· POST /charges 504 after 8s" needsTitle="The agent needs you to sign in"
+    (selected)="active.set($event)" (closed)="closeTab($event)" (added)="addTab()" (takeOverRequested)="driver.set('you')" (handBackRequested)="selectDriver('agent')" (pickingChange)="picking.set($event)" (asked)="event.emit('Ask: ' + $event.text); picking.set(false)" (sendErrorsRequested)="event.emit('Send browser errors to agent')" (widthChange)="width.set($event)" (reloadRequested)="event.emit('Reload page')" (moreRequested)="event.emit('Open browser tools')">
+    <div browserPreview #checkout class="checkout">
+      <header class="shop-header"><span class="shop-mark"><ex-icon name="bag" [size]="16" /></span><b>A small shop</b><span>Cart · 1</span></header>
+      <div class="checkout-body">
+        <div class="checkout-heading"><span class="eyebrow">Secure checkout</span><h3>Finish your order</h3></div>
+        <div class="order"><span class="product-mark"><ex-icon name="bag" [size]="24" /></span><span><b>Everyday canvas tote</b><small>Natural · Quantity 1</small></span><b>€24.00</b></div>
+        <div class="email"><span>Email</span><div>leo@example.com</div></div>
+        <div class="order-total"><span>Total</span><b>€24.00</b></div>
+        <button #pay exButton variant="primary" class="pay" (click)="event.emit('Preview payment clicked')">Pay €24.00<ex-icon name="chevron-right" [size]="14" /></button>
+        <small class="example">Example checkout · no payment is made</small>
+      </div>
+    </div>
+  </ex-browser-view>
+</div>

@@ -4,7 +4,7 @@
       <button type="button" role="tab" [attr.data-tab-id]="item.id" [attr.aria-selected]="selectedId() === item.id" [tabIndex]="selectedId() === item.id ? 0 : -1" [title]="item.tip ?? item.title" [disabled]="disabled()" (click)="selected.emit(item.id)" (keydown)="keydown($event, item.id)" (auxclick)="middleClick($event, item.id)">
         @if (item.status === 'running') { <ex-status-glyph status="running" [size]="12" /> }
         @else if (item.status === 'failed') { <ex-status-glyph status="failed" [size]="12" /> }
-        @else if (item.agent) { <span class="agent" aria-label="Opened by the agent">Ag</span> }
+        @else if (item.agent) { <span class="agent" [class.driving]="item.agentDriving" [attr.aria-label]="item.agentDriving ? 'The agent is using this tab' : 'Opened by the agent'">Ag</span> }
         @else { <ex-icon [name]="item.icon ?? 'terminal'" [size]="13" /> }
         <span class="title">{{ item.title }}</span>
         @if (item.status === 'serving') { <span class="serving" aria-label="Server running"></span> }

@@ -1,13 +1,14 @@
+import { BrowserDemoComponent } from './browser-demo.component';
 import { MachineFlowDemoComponent } from './machine-flow-demo.component';
 import { TitleIslandDemoComponent } from './title-island-demo.component';
-import { ChangeDetectionStrategy, Component, computed, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { ButtonComponent } from '../src/app/ui';
 import { GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, Machine, MachineCardComponent, PairingTextComponent, PairPasteComponent, SshHost } from '../src/app/machines';
-import { BrowserDriver, BrowserViewComponent, ChangeFile, ChangeListComponent, DiffContextRequest, DiffFileContent, DiffFileRequest, DiffReviewComponent, ReviewMode, TerminalLine, TerminalTab, TerminalViewComponent } from '../src/app/views';
+import { ChangeFile, ChangeListComponent, DiffContextRequest, DiffFileContent, DiffFileRequest, DiffReviewComponent, ReviewMode, TerminalLine, TerminalTab, TerminalViewComponent } from '../src/app/views';
 
 @Component({
   selector: 'ex-machines-views-demo',
-  imports: [MachineFlowDemoComponent, TitleIslandDemoComponent, ButtonComponent, GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, MachineCardComponent, PairingTextComponent, PairPasteComponent, BrowserViewComponent, TerminalViewComponent, DiffReviewComponent, ChangeListComponent],
+  imports: [MachineFlowDemoComponent, TitleIslandDemoComponent, ButtonComponent, GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, MachineCardComponent, PairingTextComponent, PairPasteComponent, BrowserDemoComponent, TerminalViewComponent, DiffReviewComponent, ChangeListComponent],
   templateUrl: './machines-views-demo.component.html',
   styleUrl: './machines-views-demo.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -24,12 +25,6 @@ export class MachinesViewsDemoComponent {
   protected readonly hostPicked = signal(false);
   protected readonly copied = signal(false);
   protected readonly pairText = signal('');
-  protected readonly driver = signal<BrowserDriver>('agent');
-  protected readonly phone = signal<'full' | 'phone'>('full');
-  protected readonly picking = signal(false);
-  protected readonly picked = computed(() => this.picking() ? { x: 40, y: 120, w: 190, h: 38, label: 'button.pay', file: 'CheckoutForm.tsx:88' } : undefined);
-  protected readonly browserActive = signal('checkout');
-  protected readonly browserTabs = signal([{ id: 'checkout', title: 'Checkout', url: 'http://localhost:3000/checkout', server: 'web', by: 'agent' as const }, { id: 'docs', title: 'API docs', url: 'https://docs.example.com', by: 'you' as const }]);
   protected readonly terminalTabs = signal<readonly TerminalTab[]>([{ id: 'web', title: 'web :3000', status: 'serving', port: 3000, cwd: '~/elevenex/tasks/retry', branch: 'fix/retry' }, { id: 'test', title: 'Tests', status: 'failed', cwd: '~/elevenex/tasks/retry', unread: true }]);
   protected readonly terminalActive = signal('test');
   protected readonly terminalFailure = signal<{ code: number; cmd: string } | null>({ code: 1, cmd: 'pnpm test retry' });
@@ -55,8 +50,6 @@ export class MachinesViewsDemoComponent {
 
   protected log(message: string): void { this.event.set(message); }
   protected pickHost(host: SshHost): void { this.hostQuery.set(host.name); this.hostPicked.set(true); this.log(`Select SSH host: ${host.name}`); }
-  protected newBrowserTab(): void { const id = `preview-${++this.nextTab}`; this.browserTabs.update(tabs => [...tabs, { id, title: 'New tab', url: 'about:blank', by: 'you' }]); this.browserActive.set(id); }
-  protected closeBrowser(id: string): void { this.browserTabs.update(tabs => tabs.filter(tab => tab.id !== id)); if (this.browserActive() === id) this.browserActive.set(this.browserTabs()[0]?.id ?? ''); }
   protected closeTerminal(id: string): void { this.terminalTabs.update(tabs => tabs.filter(tab => tab.id !== id)); this.terminalActive.set(this.terminalTabs()[0]?.id ?? ''); }
   protected newTerminal(): void { const id = `terminal-${++this.nextTab}`; this.terminalTabs.update(tabs => [...tabs, { id, title: 'Shell', cwd: '~/elevenex/tasks/retry', status: 'idle' }]); this.terminalActive.set(id); }
   protected viewed(event: { fileId: string; viewed: boolean }): void { this.files.update(files => files.map(file => file.id === event.fileId ? { ...file, viewed: event.viewed, changedSinceViewed: false } : file)); this.log(`${event.viewed ? 'Viewed' : 'Reopened'} ${event.fileId}`); }

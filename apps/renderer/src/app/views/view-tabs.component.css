@@ -14,6 +14,9 @@ button[role="tab"] { max-width: 160px; }
 .close:hover, .new:hover { background: var(--surface-sunken); }
 .new { flex: none; justify-content: center; width: var(--control-height); height: var(--control-height); padding: 0; border-radius: var(--radius-sm); }
 .agent { display: grid; place-items: center; width: var(--space-4); height: var(--space-4); border-radius: var(--radius-xs); color: var(--accent); background: var(--accent-soft); font-size: 8px; font-weight: 600; flex: none; }
+.agent.driving { position: relative; }
+.agent.driving::after { content: ''; position: absolute; inset: -3px; border-radius: var(--radius-sm); box-shadow: 0 0 0 1px var(--accent); animation: agent-breathe calc(var(--dur-base) * 8) var(--ease-in-out) infinite; }
+@keyframes agent-breathe { 50% { opacity: .25; } }
 .serving, .unread { width: 5px; height: 5px; flex: none; border-radius: var(--radius-full); background: var(--accent); }
 .unread { background: var(--code-function); }
 .enter { animation: tab-in var(--dur-slow) var(--ease-in-out); }
@@ -21,4 +24,4 @@ button[role="tab"] { max-width: 160px; }
 @keyframes tab-in { from { max-width: 0; opacity: 0; overflow: hidden; } }
 @keyframes tab-out { to { max-width: 0; opacity: 0; overflow: hidden; } }
 @media (hover: none) { .close { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .enter, .leave { animation: none; } .tab-shell, .close { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .enter, .leave, .agent.driving::after { animation: none; } .tab-shell, .close { transition: none; } }

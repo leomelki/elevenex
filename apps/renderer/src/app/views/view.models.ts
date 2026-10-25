@@ -6,6 +6,7 @@ export interface ViewTab {
   readonly status?: 'idle' | 'running' | 'serving' | 'failed';
   readonly unread?: boolean;
   readonly agent?: boolean;
+  readonly agentDriving?: boolean;
 }
 
 export interface BrowserTab extends ViewTab {

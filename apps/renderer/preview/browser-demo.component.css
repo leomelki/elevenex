@@ -1,0 +1,22 @@
+:host { display: block; }
+.controls { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
+.browser-demo { height: 580px; border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; }
+.checkout { min-height: 100%; background: var(--surface); color: var(--ink); font-size: var(--text-ui-size); }
+.shop-header { display: flex; align-items: center; gap: var(--space-2); min-height: calc(var(--control-height) + var(--space-6)); padding: 0 var(--space-4); border-bottom: 1px solid var(--line); background: var(--surface-raised); }
+.shop-header > b { flex: 1; font-weight: 600; }
+.shop-header > span:last-child { color: var(--ink-muted); font-size: var(--text-caption-size); }
+.shop-mark { display: grid; place-items: center; width: var(--control-height); height: var(--control-height); border-radius: var(--radius-sm); background: var(--surface-sunken); }
+.checkout-body { display: flex; flex-direction: column; gap: var(--space-4); max-width: 360px; margin: auto; padding: var(--space-6) var(--space-4); }
+.checkout-heading { display: flex; flex-direction: column; gap: var(--space-1); }
+.eyebrow { color: var(--ink-muted); font-size: var(--text-overline-size); }
+h3 { margin: 0; font-size: var(--text-title-size); font-weight: var(--text-title-weight); line-height: var(--text-title-line); letter-spacing: var(--text-title-tracking); }
+.order { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: var(--shadow-raised); }
+.product-mark { display: grid; place-items: center; width: calc(var(--space-6) * 2); height: calc(var(--space-6) * 2); flex: none; border-radius: var(--radius-sm); background: var(--surface-sunken); color: var(--ink-muted); }
+.order > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; gap: var(--space-1); }
+b { font-weight: 600; }
+small { color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-caption-line); }
+.email { display: flex; flex-direction: column; gap: var(--space-1); color: var(--ink-muted); font-size: var(--text-caption-size); }
+.email > div { padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--ink); font-size: var(--text-ui-size); }
+.order-total { display: flex; justify-content: space-between; padding-top: var(--space-1); }
+.pay { width: 100%; height: calc(var(--control-height) + var(--space-2)); justify-content: space-between; margin-top: var(--space-2); }
+.example { text-align: center; }

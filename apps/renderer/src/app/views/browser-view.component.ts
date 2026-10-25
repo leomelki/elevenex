@@ -41,13 +41,26 @@ export class BrowserViewComponent {
   readonly moreRequested = output<void>();
   protected readonly askText = signal('');
   protected readonly current = computed(() => this.tabs().find(tab => tab.id === this.active()) ?? this.tabs()[0]);
-  protected readonly tabItems = computed<readonly ViewTab[]>(() => this.tabs().map(tab => ({ ...tab, icon: 'globe', agent: tab.by === 'agent' })));
+  protected readonly tabItems = computed<readonly ViewTab[]>(() => this.tabs().map(tab => ({ ...tab, icon: 'globe', agent: tab.by === 'agent', agentDriving: this.driver() === 'agent' && tab.id === this.current()?.id })));
   protected readonly target = computed(() => this.picked() ?? (this.driver() === 'agent' ? this.action() : undefined));
   protected readonly targetTransform = computed(() => {
     const target = this.target();
-    return target ? `translate(${this.coordinate(target.x)}px, ${this.coordinate(target.y)}px)` : '';
+    return target ? `translate(${this.coordinate(target.x) - 4}px, ${this.coordinate(target.y) - 4}px)` : '';
+  });
+  protected readonly cursorTransform = computed(() => {
+    const target = this.action();
+    return target ? `translate(${this.coordinate(target.x) + this.coordinate(target.w) * .62}px, ${this.coordinate(target.y) + this.coordinate(target.h) * .55}px)` : '';
+  });
+  protected readonly stepDots = computed(() => {
+    const step = this.step();
+    if (!step?.total || !Number.isFinite(step.total) || step.total < 1) return [];
+    const count = Math.min(12, Math.floor(step.total));
+    // Keep long workflows bounded while still showing their current position.
+    const current = Math.min(count - 1, Math.max(0, Math.floor((step.n - 1) * count / step.total)));
+    return Array.from({ length: count }, (_, index) => index < current ? 'done' : index === current ? 'now' : 'next');
   });
   private readonly askInput = viewChild<ElementRef<HTMLTextAreaElement>>('askInput');
+  private readonly preview = viewChild<ElementRef<HTMLElement>>('preview');
   private previousAskInput?: HTMLTextAreaElement;
   private returnFocus?: HTMLElement;
 
@@ -67,6 +80,15 @@ export class BrowserViewComponent {
   protected coordinate(value: number): number { return Number.isFinite(value) ? Math.max(0, value) : 0; }
 
   protected takeOver(): void { if (this.driver() === 'agent') this.takeOverRequested.emit(); }
+  protected takeOverFromBar(): void {
+    this.preview()?.nativeElement.focus({ preventScroll: true });
+    this.takeOver();
+  }
+  protected handBack(): void {
+    // Move focus before the owning control's Fold becomes inert and hidden.
+    this.preview()?.nativeElement.focus({ preventScroll: true });
+    this.handBackRequested.emit();
+  }
   protected ask(): void {
     const target = this.picked();
     const tab = this.current();
