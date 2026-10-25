@@ -33,7 +33,8 @@ button:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-r
 .name-input::placeholder { color: var(--ink-muted); font-weight: 500; }
 .repos { position: relative; border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow var(--dur-fast) var(--ease-out); }
 .repos:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
-.repo-list { display: grid; grid-template-columns: minmax(0, 1fr); max-height: 240px; overflow: auto; }
+/* Fold gutters must not create a horizontal scrollbar in the repository list. */
+.repo-list { display: grid; grid-template-columns: minmax(0, 1fr); max-height: 240px; overflow-x: hidden; overflow-y: auto; }
 .repo { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 8px 0 12px; box-shadow: inset 0 -1px 0 var(--line); }
 .repo-icon { flex: none; width: 28px; height: 28px; border-radius: var(--radius-sm); display: grid; place-items: center; background: var(--surface-sunken); color: var(--ink-muted); }
 .repo-title { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 17px; }
