@@ -5,12 +5,10 @@ import {
   input,
   model,
   output,
-  signal,
 } from "@angular/core";
 import { AppShellComponent } from "../shell/app-shell.component";
 import { IconButtonComponent, IconComponent, ButtonComponent } from "../ui";
 import { ProjectRailComponent } from "../tasks/projects/project-rail.component";
-import { StatusSummaryComponent } from "../tasks/projects/status-summary.component";
 import { TaskListComponent } from "../tasks/outline/task-list.component";
 import { PanelTabsComponent } from "../tasks/navigation/panel-tabs.component";
 import { TitleIslandComponent } from "../machines/title-island.component";
@@ -19,9 +17,7 @@ import type { Machine } from "../machines/machine.models";
 import type {
   PanelTab,
   Project,
-  SummaryStatus,
   TaskOutline,
-  TaskSession,
 } from "../tasks/task.models";
 
 /** Composes supplied view data and emits intent; repository and agent state stay outside. */
@@ -30,7 +26,6 @@ import type {
   imports: [
     AppShellComponent,
     ProjectRailComponent,
-    StatusSummaryComponent,
     TaskListComponent,
     PanelTabsComponent,
     TitleIslandComponent,
@@ -65,7 +60,6 @@ export class WorkbenchComponent {
     readonly subtaskId: string;
   }>();
   readonly machineRequested = output<void>();
-  protected readonly filter = signal<SummaryStatus | null>(null);
   protected readonly tabs: readonly PanelTab[] = [
     { id: "terminal", label: "Terminal", icon: "terminal" },
     { id: "code", label: "Code", icon: "code" },
@@ -73,24 +67,6 @@ export class WorkbenchComponent {
     { id: "actions", label: "Actions", icon: "actions" },
     { id: "browser", label: "Browser", icon: "globe" },
   ];
-  protected readonly counts = computed(() => {
-    const counts = { attention: 0, running: 0, review: 0, done: 0 };
-    const count = (session: TaskSession): void => {
-      if (session.status === "failed" || session.status === "attention")
-        counts.attention++;
-      else if (session.status === "running") counts.running++;
-      else if (session.status === "review") counts.review++;
-      else if (session.status === "done") counts.done++;
-    };
-    for (const task of this.tasks()) {
-      for (const session of task.sessions) count(session);
-      for (const subtask of task.subtasks ?? []) {
-        if (subtask.merged) continue;
-        for (const session of subtask.sessions ?? []) count(session);
-      }
-    }
-    return counts;
-  });
   protected readonly projectLabel = computed(
     () =>
       this.projects().find((project) => project.id === this.activeProject())

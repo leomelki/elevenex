@@ -58,7 +58,7 @@ describe('task outline ownership', () => {
       sessionId: 'two',
     });
   });
-  it('keeps task DOM identity through stage moves and filtering', () => {
+  it('keeps task DOM identity through stage changes and filtering', () => {
     const fixture = TestBed.createComponent(TaskListComponent);
     fixture.componentRef.setInput('tasks', tasks);
     fixture.detectChanges();
@@ -86,7 +86,7 @@ describe('task outline ownership', () => {
     );
     fixture.destroy();
   });
-  it.each([false, true])('keeps collapsed tasks closed throughout stage moves (reduced motion: %s)', (reduced) => {
+  it.each([false, true])('keeps manually collapsed tasks closed through stage changes (reduced motion: %s)', (reduced) => {
     vi.useFakeTimers();
     vi.stubGlobal('matchMedia', () => ({ matches: reduced, addEventListener: () => undefined, removeEventListener: () => undefined }));
     const fixture = TestBed.createComponent(TaskListComponent);
@@ -97,6 +97,7 @@ describe('task outline ownership', () => {
     const second = fixture.nativeElement.querySelector('[data-task-id="second"]') as HTMLElement;
     const toggle = first.querySelector('header button') as HTMLButtonElement;
     toggle.click();
+    (second.querySelector('header button') as HTMLButtonElement).click();
     fixture.detectChanges();
     const assertClosed = () => {
       for (const article of [first, second]) {
@@ -121,15 +122,19 @@ describe('task outline ownership', () => {
     fixture.destroy();
   });
 
-  it('still lets an expanded task glide before collapsing in Waiting', () => {
+  it('keeps open tasks in supplied order and never folds them because of stage changes', () => {
     vi.useFakeTimers();
     vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: () => undefined, removeEventListener: () => undefined }));
     const fixture = TestBed.createComponent(TaskListComponent);
     fixture.nativeElement.style.setProperty('--dur-glide', '340ms');
-    fixture.componentRef.setInput('tasks', tasks);
+    const planned: TaskOutline = { id: 'planned', title: 'Planned task', stage: 'planned', sessions: [] };
+    fixture.componentRef.setInput('tasks', [tasks[1]!, planned, tasks[0]!]);
     fixture.detectChanges();
     const toggle = fixture.nativeElement.querySelector('[data-task-id="first"] header button') as HTMLButtonElement;
-    fixture.componentRef.setInput('tasks', [{ ...tasks[0]!, stage: 'waiting' }, tasks[1]!]);
+    const order = () => [...fixture.nativeElement.querySelectorAll('[data-task-id]')].map((task: HTMLElement) => task.dataset['taskId']);
+    expect(order()).toEqual(['second', 'planned', 'first']);
+    expect([...fixture.nativeElement.querySelectorAll('h3')].map((heading: HTMLElement) => heading.textContent?.replace(/\d/g, '').trim())).toEqual(['Needs you', 'Tasks']);
+    fixture.componentRef.setInput('tasks', [tasks[1]!, planned, { ...tasks[0]!, stage: 'waiting' }]);
     fixture.detectChanges();
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     vi.advanceTimersByTime(170);
@@ -137,8 +142,104 @@ describe('task outline ownership', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     vi.advanceTimersByTime(170);
     fixture.detectChanges();
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(order()).toEqual(['second', 'planned', 'first']);
     fixture.destroy();
+  });
+
+  it('offers attention shortcuts with task context, including failures and open subtasks only', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    fixture.componentRef.setInput('tasks', [
+      ...tasks,
+      { id: 'nested', title: 'Parent task', project: { name: 'Project' }, sessions: [], subtasks: [
+        { id: 'open', title: 'Child branch', sessions: [{ id: 'question', title: 'Child question', status: 'attention' }] },
+        { id: 'merged', title: 'Merged branch', merged: true, sessions: [{ id: 'old', title: 'Old question', status: 'attention' }] },
+      ] },
+      { id: 'closed', title: 'Closed task', stage: 'closed', sessions: [{ id: 'archived', title: 'Archived question', status: 'attention' }] },
+    ]);
+    fixture.detectChanges();
+    const shortcuts = fixture.nativeElement.querySelectorAll('ex-session-row button.with-context');
+    expect(shortcuts).toHaveLength(3);
+    expect([...shortcuts].map((row: HTMLElement) => row.querySelector('.title')?.textContent)).toEqual(['Later question', 'Failure', 'Child question']);
+    expect(shortcuts[2].textContent).toContain('Project · Parent task › Child branch');
+    expect(shortcuts[1].classList.contains('failed')).toBe(true);
+    const selected = vi.fn();
+    fixture.componentInstance.selectSession.subscribe(selected);
+    shortcuts[2].click();
+    expect(selected).toHaveBeenCalledWith({ taskId: 'nested', sessionId: 'question' });
+    fixture.componentRef.setInput('showProjects', false);
+    fixture.detectChanges();
+    expect(shortcuts[2].querySelector('.context')?.textContent).toBe('Parent task › Child branch');
+  });
+
+  it('bounds the attention area to three shortcuts and lets people reveal the rest', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    const task: TaskOutline = { id: 'many', title: 'Many questions', sessions: Array.from({ length: 5 }, (_, index) => ({ id: `question-${index}`, title: `Question ${index}`, status: 'attention' })) };
+    fixture.componentRef.setInput('tasks', [task]);
+    fixture.detectChanges();
+    const visible = () => [...fixture.nativeElement.querySelectorAll('button.with-context')].filter((button: HTMLElement) => !button.closest('[inert]'));
+    const more = fixture.nativeElement.querySelector('button.more') as HTMLButtonElement;
+    expect(visible()).toHaveLength(3);
+    expect(more.textContent).toContain('Show 2 more');
+    fixture.componentRef.setInput('tasks', [{ ...task, sessions: [...task.sessions].reverse() }]);
+    fixture.detectChanges();
+    expect(visible().map((button: HTMLElement) => button.querySelector('.title')?.textContent)).toEqual(['Question 0', 'Question 1', 'Question 2']);
+    more.click();
+    fixture.detectChanges();
+    expect(visible()).toHaveLength(5);
+    expect(more.getAttribute('aria-expanded')).toBe('true');
+    more.click();
+    fixture.detectChanges();
+    expect(visible()).toHaveLength(3);
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('removes resolved shortcuts without moving the canonical sessions and hides shortcuts under a filter', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    fixture.componentRef.setInput('tasks', tasks);
+    fixture.detectChanges();
+    const first = fixture.nativeElement.querySelector('[data-task-id="first"]') as HTMLElement;
+    const session = first.querySelectorAll('ex-session-row')[1];
+    fixture.componentRef.setInput('tasks', [{ ...tasks[0]!, sessions: tasks[0]!.sessions.map(row => row.id === 'two' ? { ...row, status: 'running' } : row) }, tasks[1]!]);
+    fixture.detectChanges();
+    expect(first.querySelectorAll('ex-session-row')[1]).toBe(session);
+    expect(fixture.nativeElement.querySelectorAll('button.with-context')).toHaveLength(1);
+    fixture.componentRef.setInput('filter', 'attention');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('button.with-context')).toHaveLength(0);
+    expect(fixture.nativeElement.querySelector('[data-task-id="second"]')?.closest('[inert]')).toBeNull();
+    fixture.componentRef.setInput('filter', 'review');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('p.empty')?.closest('[inert]')).toBeNull();
+  });
+
+  it('reveals a selected shortcut inside a manually folded task and subtask', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    fixture.componentRef.setInput('tasks', [{ id: 'parent', title: 'Parent', collapsed: true, sessions: [], subtasks: [{ id: 'child', title: 'Child', sessions: [{ id: 'question', title: 'Question', status: 'attention' }] }] }]);
+    fixture.detectChanges();
+    const parentToggle = fixture.nativeElement.querySelector('[data-task-id="parent"] header button') as HTMLButtonElement;
+    expect(parentToggle.getAttribute('aria-expanded')).toBe('false');
+    parentToggle.click();
+    fixture.detectChanges();
+    const childToggle = fixture.nativeElement.querySelector('[data-subtask-id="child"] button') as HTMLButtonElement;
+    childToggle.click();
+    parentToggle.click();
+    fixture.detectChanges();
+    fixture.componentRef.setInput('selected', 'question');
+    fixture.detectChanges();
+    const canonical = fixture.nativeElement.querySelector('[data-subtask-id="child"] [aria-current="true"]') as HTMLElement;
+    expect(canonical).not.toBeNull();
+    expect(canonical.closest('[inert]')).toBeNull();
+    expect(parentToggle.getAttribute('aria-expanded')).toBe('true');
+    expect(childToggle.getAttribute('aria-expanded')).toBe('true');
+    childToggle.click();
+    parentToggle.click();
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('button.with-context') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(canonical.closest('[inert]')).toBeNull();
+    expect(parentToggle.getAttribute('aria-expanded')).toBe('true');
+    expect(childToggle.getAttribute('aria-expanded')).toBe('true');
   });
 
   it('includes failed sessions under Needs you and reveals the selected finished session', () => {

@@ -9,7 +9,10 @@ nav {
   /* Spacing is inside each folding row, so closed rows leave no empty gaps. */
   gap: 0;
 }
-.row-content { padding-bottom: var(--space-1); min-width: 0; }
+.row-content {
+  padding-bottom: var(--space-1);
+  min-width: 0;
+}
 h3 {
   display: flex;
   align-items: center;
@@ -22,13 +25,17 @@ h3 {
   letter-spacing: var(--text-overline-tracking);
   text-transform: uppercase;
 }
-h3:first-child {
-  margin-top: var(--space-2);
-}
 h3 span {
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   opacity: 0.8;
+}
+.attention-heading span {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--attention-soft);
+  color: var(--attention);
+  opacity: 1;
 }
 .empty {
   margin: var(--space-4) var(--space-2);
@@ -36,7 +43,8 @@ h3 span {
   line-height: var(--text-caption-line);
   color: var(--ink-muted);
 }
-.closed {
+.closed,
+.more {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -53,11 +61,16 @@ h3 span {
   text-align: left;
   cursor: pointer;
 }
-.closed:hover {
+.more {
+  margin-top: 0;
+}
+.closed:hover,
+.more:hover {
   background: var(--surface-sunken);
   color: var(--ink);
 }
-.closed:focus-visible {
+.closed:focus-visible,
+.more:focus-visible {
   outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }

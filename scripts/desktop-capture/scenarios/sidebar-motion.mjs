@@ -213,6 +213,17 @@ async function* measure(capture, theme, name, options, expected = {}) {
       assert.ok(sample.fold.height <= 1, `${name}: hidden sessions grew to ${sample.fold.height}px`);
     }
   }
+  if (options.stationary) {
+    // Status ink can still settle after a filter. Stage changes must not move
+    // the outline, regardless of unrelated finite animations elsewhere in the demo.
+    const initial = result.samples[0].boxes;
+    for (const sample of result.samples) {
+      for (const [target, box] of Object.entries(sample.boxes)) {
+        if (!box || !initial[target]) continue;
+        assertContinuous(`${name} stationary`, { [target]: Math.max(...box.map((value, index) => Math.abs(value - initial[target][index]))) });
+      }
+    }
+  }
   if (options.interrupt) {
     assert.ok(result.interruption?.focused, 'Native keyboard input remains focused during reversal');
     // The key event's intermediate DOM can precede post-render FLIP inversion;
@@ -284,12 +295,12 @@ export default async function* (capture) {
       await reset();
       yield* measure(capture, theme, 'needs-you', { action: 'filter', args: ['attention'], moves: true }, { visible: ['task-2', 'task-4', 'task-6', 'task-10'], filter: 'attention' });
       yield* measure(capture, theme, 'clear-filter', { action: 'filter', args: [null], moves: true }, { visible: originals });
-      yield* measure(capture, theme, 'move-stage', { action: 'move', args: ['waiting'], moves: true }, { count: 10 });
+      yield* measure(capture, theme, 'change-stage', { action: 'move', args: ['waiting'], stationary: true }, { count: 10 });
 
       await reset();
       await collapseTarget();
-      yield* measure(capture, theme, 'collapsed-to-waiting', { action: 'move', args: ['waiting'], moves: true, keepCollapsed: true });
-      yield* measure(capture, theme, 'collapsed-to-active', { action: 'move', args: ['active'], moves: true, keepCollapsed: true });
+      yield* measure(capture, theme, 'collapsed-to-waiting', { action: 'move', args: ['waiting'], stationary: true, keepCollapsed: true });
+      yield* measure(capture, theme, 'collapsed-to-active', { action: 'move', args: ['active'], stationary: true, keepCollapsed: true });
 
       await reset();
       yield* measure(capture, theme, 'add-session', { action: 'addSession', moves: true }, { sessions: 4 });

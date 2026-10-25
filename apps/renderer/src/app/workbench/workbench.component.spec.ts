@@ -29,7 +29,7 @@ describe('Workbench composition', () => {
     expect(closed).toHaveBeenCalledOnce();
   });
 
-  it('counts live sub-task sessions and forwards their new-session intent', async () => {
+  it('surfaces actionable sessions and forwards selection and new-session intents', async () => {
     const fixture = TestBed.createComponent(WorkbenchComponent);
     fixture.componentRef.setInput('tasks', [{
       id: 'task', title: 'Checkout',
@@ -52,8 +52,11 @@ describe('Workbench composition', () => {
     fixture.detectChanges();
     await fixture.whenStable();
     const root: HTMLElement = fixture.nativeElement;
-    const summary = Array.from(root.querySelectorAll('ex-status-summary button')).map(button => button.textContent?.replace(/\s/g, ''));
-    expect(summary).toEqual(['2Needsyou', '1Running', '1Review', '1Done']);
+    expect(root.querySelector('ex-status-summary')).toBeNull();
+    const shortcuts = [...root.querySelectorAll<HTMLButtonElement>('button.with-context')];
+    expect(shortcuts.map(button => button.querySelector('.title')?.textContent)).toEqual(['Root failure', 'Needs an answer']);
+    shortcuts[1]!.click();
+    expect(fixture.componentInstance.selectedSession()).toEqual({ taskId: 'task', sessionId: 'question' });
     root.querySelector<HTMLButtonElement>('[data-subtask-id="work"] button[aria-label="New session in this sub-task"]')?.click();
     expect(requested).toHaveBeenCalledWith({ taskId: 'task', subtaskId: 'work' });
     fixture.destroy();

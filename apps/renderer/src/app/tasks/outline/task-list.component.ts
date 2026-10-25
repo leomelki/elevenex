@@ -6,23 +6,39 @@ import {
   computed,
   inject,
   input,
+  linkedSignal,
   output,
+  signal,
 } from "@angular/core";
-import { FlipDirective, FoldComponent } from "../../ui";
+import { FlipDirective, FoldComponent, TickerComponent } from "../../ui";
 import {
-  TASK_STAGE_LABELS,
   matchesSessionFilter,
   type SessionStatus,
   type TaskOutline,
-  type TaskStage,
+  type TaskSession,
 } from "../task.models";
 import { TaskGroupComponent } from "./task-group.component";
+import { SessionRowComponent } from "./session-row.component";
 import { ListPresence } from "../../ui/motion/list-presence";
 type OutlineRow =
   | {
-      readonly kind: "stage";
+      readonly kind: "heading";
       readonly key: string;
-      readonly stage: TaskStage;
+      readonly label: "Needs you" | "Tasks";
+      readonly count: number;
+      readonly visible: boolean;
+    }
+  | {
+      readonly kind: "attention";
+      readonly key: string;
+      readonly taskId: string;
+      readonly session: TaskSession;
+      readonly context: string;
+      readonly visible: boolean;
+    }
+  | {
+      readonly kind: "more";
+      readonly key: string;
       readonly count: number;
       readonly visible: boolean;
     }
@@ -39,9 +55,16 @@ type OutlineRow =
       readonly visible: boolean;
       readonly count: number;
     };
+type AttentionRow = Extract<OutlineRow, { kind: "attention" }>;
 @Component({
   selector: "ex-task-list",
-  imports: [FlipDirective, FoldComponent, TaskGroupComponent],
+  imports: [
+    FlipDirective,
+    FoldComponent,
+    TickerComponent,
+    TaskGroupComponent,
+    SessionRowComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: "./task-list.component.html",
   styleUrl: "./task-list.component.css",
@@ -61,48 +84,116 @@ export class TaskListComponent {
     readonly subtaskId: string;
   }>();
   readonly closedRequested = output<void>();
-  protected readonly labels = TASK_STAGE_LABELS;
-  /** One keyed outline keeps each task's local fold state when its stage changes. */
+  protected readonly attentionExpanded = signal(false);
+  protected readonly revealRequest = signal<{
+    readonly sessionId: string;
+  } | null>(null);
+  /** Keep requests in arrival order even if the owner reorders its task window. */
+  private readonly attention = linkedSignal<
+    readonly AttentionRow[],
+    readonly AttentionRow[]
+  >({
+    source: () => {
+      const rows: AttentionRow[] = [];
+      for (const task of this.tasks()) {
+        if (task.stage === "closed") continue;
+        const context = [
+          this.showProjects() ? task.project?.name : null,
+          task.title,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        const visit = (session: TaskSession, sessionContext: string): void => {
+          if (matchesSessionFilter(session.status, "attention"))
+            rows.push({
+              kind: "attention",
+              key: `attention:${task.id}:${session.id}`,
+              taskId: task.id,
+              session,
+              context: sessionContext,
+              visible: true,
+            });
+        };
+        for (const session of task.sessions) visit(session, context);
+        for (const subtask of task.subtasks ?? []) {
+          if (!subtask.merged)
+            for (const session of subtask.sessions ?? [])
+              visit(session, `${context} › ${subtask.title}`);
+        }
+      }
+      return rows;
+    },
+    computation: (rows, previous) => {
+      const remaining = new Map(rows.map((row) => [row.key, row]));
+      const ordered: AttentionRow[] = [];
+      for (const row of previous?.value ?? []) {
+        const current = remaining.get(row.key);
+        if (current) {
+          ordered.push(current);
+          remaining.delete(row.key);
+        }
+      }
+      return [...ordered, ...remaining.values()];
+    },
+  });
+  /** Attention shortcuts leave the canonical task order and local folds intact. */
   protected readonly rows = computed<readonly OutlineRow[]>(() => {
     const rows: OutlineRow[] = [];
-    const stages: readonly TaskStage[] = ["active", "waiting", "planned"];
-    for (const stage of stages) {
-      const tasks = this.tasks().filter(
-        (task) => (task.stage ?? "active") === stage,
-      );
-      if (!tasks.length) continue;
-      const visible = (task: TaskOutline): boolean =>
-        !this.filter() ||
-        task.sessions
-          .concat(
-            (task.subtasks ?? [])
-              .filter((subtask) => !subtask.merged)
-              .flatMap((subtask) => subtask.sessions ?? []),
-          )
-          .some((session) =>
-            matchesSessionFilter(session.status, this.filter()),
-          );
-      const count = tasks.filter(visible).length;
-      rows.push({
-        kind: "stage",
-        key: `stage:${stage}`,
-        stage,
-        count,
-        visible: count > 0,
-      });
-      for (const task of tasks)
-        rows.push({
-          kind: "task",
-          key: `task:${task.id}`,
-          task,
-          visible: visible(task),
-        });
+    const tasks: OutlineRow[] = [];
+    const filter = this.filter();
+    const attention = filter
+      ? []
+      : this.attention().map((row, index) => ({
+          ...row,
+          visible: this.attentionExpanded() || index < 3,
+        }));
+    let visibleTasks = 0;
+    let closed = 0;
+    for (const task of this.tasks()) {
+      if (task.stage === "closed") {
+        closed++;
+        continue;
+      }
+      const visible =
+        !filter ||
+        task.sessions.some((session) =>
+          matchesSessionFilter(session.status, filter),
+        ) ||
+        (task.subtasks ?? []).some(
+          (subtask) =>
+            !subtask.merged &&
+            subtask.sessions?.some((session) =>
+              matchesSessionFilter(session.status, filter),
+            ),
+        );
+      if (visible) visibleTasks++;
+      tasks.push({ kind: "task", key: `task:${task.id}`, task, visible });
     }
-    const empty = !rows.some((row) => row.kind === "task" && row.visible);
-    const closed = this.tasks().filter(
-      (task) => task.stage === "closed",
-    ).length;
-    rows.push({ kind: "empty", key: "empty", visible: empty });
+    rows.push(
+      {
+        kind: "heading",
+        key: "heading:attention",
+        label: "Needs you",
+        count: attention.length,
+        visible: attention.length > 0,
+      },
+      ...attention,
+      {
+        kind: "more",
+        key: "more:attention",
+        count: Math.max(0, attention.length - 3),
+        visible: attention.length > 3,
+      },
+      {
+        kind: "heading",
+        key: "heading:tasks",
+        label: "Tasks",
+        count: visibleTasks,
+        visible: visibleTasks > 0,
+      },
+      ...tasks,
+    );
+    rows.push({ kind: "empty", key: "empty", visible: visibleTasks === 0 });
     rows.push({
       kind: "closed",
       key: "closed",
@@ -123,4 +214,9 @@ export class TaskListComponent {
       .map((row) => row.key)
       .join("\n"),
   );
+  protected openAttention(taskId: string, sessionId: string): void {
+    // A fresh request also reveals an already-selected session after a manual fold.
+    this.revealRequest.set({ sessionId });
+    this.selectSession.emit({ taskId, sessionId });
+  }
 }

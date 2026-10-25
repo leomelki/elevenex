@@ -28,14 +28,9 @@
         <ex-icon name="plus" [size]="13" />New task
       </button>
     </div>
-    <ex-status-summary
-      [counts]="{ attention: 2, running: 3, review: 1, done: 4 }"
-      [active]="filter()"
-      (selectStatus)="filter.set($event)"
-    /><ex-task-list
+    <ex-task-list
       [tasks]="visibleTasks()"
       [selected]="selected()"
-      [filter]="filter()"
       [showProjects]="activeProject() === 'all'"
       (selectSession)="selected.set($event.sessionId)"
     />

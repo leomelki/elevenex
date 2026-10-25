@@ -93,6 +93,7 @@ type SessionOutlineRow =
 export class TaskGroupComponent implements OnChanges {
   readonly task = input.required<TaskOutline>();
   readonly selected = input<string | null>(null);
+  readonly reveal = input<{ readonly sessionId: string } | null>(null);
   readonly filter = input<SessionStatus | null>(null);
   readonly showProject = input(true);
   readonly showLink = input(false);
@@ -163,11 +164,7 @@ export class TaskGroupComponent implements OnChanges {
   protected readonly collapsed = computed(() =>
     this.filter()
       ? false
-      : (this.collapsedValue() ??
-        this.task().collapsed ??
-        ["waiting", "planned", "closed"].includes(
-          this.task().stage ?? "active",
-        )),
+      : (this.collapsedValue() ?? this.task().collapsed ?? false),
   );
   protected readonly working = computed(() =>
     this.task().sessions.filter(
@@ -202,7 +199,6 @@ export class TaskGroupComponent implements OnChanges {
       this.task().links?.find((link) => link.kind === "pr") ??
       this.task().links?.[0],
   );
-  private foldTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   protected readonly sessionRows = computed<readonly SessionOutlineRow[]>(
@@ -265,36 +261,22 @@ export class TaskGroupComponent implements OnChanges {
   );
   constructor() {
     inject(DestroyRef).onDestroy(() => {
-      clearTimeout(this.foldTimer);
       clearTimeout(this.tipTimer);
     });
   }
   ngOnChanges(changes: SimpleChanges): void {
-    const previousTask: TaskOutline | undefined = changes["task"]?.previousValue;
-    const stage = this.task().stage ?? "active";
-    if (previousTask && (previousTask.stage ?? "active") !== stage) {
-      clearTimeout(this.foldTimer);
-      // Carry the painted fold state through the move, including stage defaults.
-      // Only an expanded task needs the glide-then-collapse sequence.
-      const wasCollapsed =
-        this.collapsedValue() ??
-        previousTask.collapsed ??
-        ["waiting", "planned", "closed"].includes(previousTask.stage ?? "active");
-      this.collapsedValue.set(wasCollapsed);
-      if (!wasCollapsed && (stage === "waiting" || stage === "planned")) {
-        const duration = matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? 0
-          : parseFloat(
-              getComputedStyle(this.root).getPropertyValue("--dur-glide"),
-            ) || 0;
-        if (duration)
-          this.foldTimer = setTimeout(
-            () => this.collapsedValue.set(true),
-            duration,
-          );
-        else this.collapsedValue.set(true);
-      }
-    }
+    // A shortcut selection must reveal its canonical row, even in a folded task.
+    const sessionId =
+      changes["reveal"] && this.reveal()
+        ? this.reveal()?.sessionId
+        : changes["selected"]
+          ? this.selected()
+          : null;
+    if (
+      sessionId &&
+      this.everyone().some((session) => session.id === sessionId)
+    )
+      this.collapsedValue.set(false);
   }
   protected hoverSubtask(id: string | null): void {
     clearTimeout(this.tipTimer);

@@ -8,3 +8,5 @@ One session in the sidebar, the second level under its task: a 28px row, 12.5 re
 - Do prefer the diff over the time when there are changes.
 - Do set `fresh` on a row you just created: it flashes `accent-soft` once (1.6s) so the eye finds it.
 - Don't show more than one trailing item.
+
+In the Needs you area, supply `context` (the project/task/sub-task path). This makes a two-line shortcut: session title above the muted context, without diff or time metadata. Attention rows use `attention-soft`; failed rows use `danger-soft`. Selection keeps the usual raised surface and status glyph. The normal outline keeps the compact single-line row.

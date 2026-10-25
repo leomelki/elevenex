@@ -10,15 +10,38 @@
     >
       <div class="row-content">
         @switch (row.kind) {
-          @case ("stage") {
-            <h3>
-              {{ labels[row.stage] }}<span>{{ row.count }}</span>
+          @case ("heading") {
+            <h3 [class.attention-heading]="row.label === 'Needs you'">
+              {{ row.label }}<span><ex-ticker [value]="row.count" /></span>
             </h3>
+          }
+          @case ("attention") {
+            <ex-session-row
+              [session]="row.session"
+              [context]="row.context"
+              [selected]="selected() === row.session.id"
+              (activated)="openAttention(row.taskId, $event)"
+            />
+          }
+          @case ("more") {
+            <button
+              class="more"
+              type="button"
+              [attr.aria-expanded]="attentionExpanded()"
+              (click)="attentionExpanded.set(!attentionExpanded())"
+            >
+              {{
+                attentionExpanded()
+                  ? "Show fewer"
+                  : "Show " + row.count + " more"
+              }}
+            </button>
           }
           @case ("task") {
             <ex-task-group
               [task]="row.task"
               [selected]="selected()"
+              [reveal]="revealRequest()"
               [filter]="filter()"
               [showProject]="showProjects()"
               (selectSession)="

@@ -28,15 +28,9 @@
         (pressed)="taskRequested.emit()"
       />
     </div>
-    <ex-status-summary
-      [counts]="counts()"
-      [active]="filter()"
-      (selectStatus)="filter.set($event)"
-    />
     <ex-task-list
       [tasks]="tasks()"
       [selected]="selectedSession()?.sessionId ?? null"
-      [filter]="filter()"
       [showProjects]="activeProject() === 'all'"
       (selectSession)="selectedSession.set($event)"
       (addSession)="sessionRequested.emit($event)"

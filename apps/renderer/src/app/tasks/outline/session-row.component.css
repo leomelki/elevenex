@@ -36,14 +36,34 @@ button:focus-visible {
 button.attention {
   background: var(--attention-soft);
 }
-.title {
+button.failed {
+  background: var(--danger-soft);
+}
+button.with-context {
+  height: auto;
+  min-height: calc(var(--row-height) + var(--space-3));
+  padding-block: var(--space-1);
+}
+.label {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.title,
+.context {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.title {
   font-size: 12.5px;
   font-weight: 400;
+}
+.context {
+  color: var(--ink-muted);
+  font-size: var(--text-overline-size);
+  line-height: var(--text-caption-line);
 }
 button[aria-current="true"] .title {
   font-weight: 500;

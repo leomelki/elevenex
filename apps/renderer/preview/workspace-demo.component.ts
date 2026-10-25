@@ -8,7 +8,6 @@ import {
 } from "@angular/core";
 import { AppShellComponent } from "../src/app/shell/app-shell.component";
 import { ProjectRailComponent } from "../src/app/tasks/projects/project-rail.component";
-import { StatusSummaryComponent } from "../src/app/tasks/projects/status-summary.component";
 import { TaskListComponent } from "../src/app/tasks/outline/task-list.component";
 import { TaskHeaderComponent } from "../src/app/tasks/lifecycle/task-header.component";
 import { NewTaskComponent } from "../src/app/tasks/branches/new-task.component";
@@ -33,7 +32,6 @@ import type {
   CreatedTask,
   PanelTab,
   Project,
-  SummaryStatus,
   TaskOutline,
 } from "../src/app/tasks/task.models";
 import type {
@@ -57,7 +55,6 @@ import type {
     OverlayModule,
     AppShellComponent,
     ProjectRailComponent,
-    StatusSummaryComponent,
     TaskListComponent,
     TaskHeaderComponent,
     NewTaskComponent,
@@ -204,7 +201,6 @@ export class WorkspaceDemoComponent {
   ]);
   readonly activeProject = signal("all");
   readonly selected = signal("reproduce");
-  readonly filter = signal<SummaryStatus | null>(null);
   readonly panelOpen = signal(true);
   readonly panel = signal("changes");
   readonly wide = signal(false);

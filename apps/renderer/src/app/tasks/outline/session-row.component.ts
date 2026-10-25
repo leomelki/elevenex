@@ -18,6 +18,8 @@ export class SessionRowComponent {
   readonly session = input.required<TaskSession>();
   readonly selected = input(false);
   readonly depth = input(0);
+  /** Task context for a shortcut outside the task outline. */
+  readonly context = input<string | null>(null);
   readonly activated = output<string>();
   protected readonly kindIcon = computed(() =>
     this.session().kind === "fork"
