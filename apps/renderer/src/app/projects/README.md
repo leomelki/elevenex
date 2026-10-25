@@ -48,6 +48,12 @@ window-level overlay, arrow keys/typeahead, Escape and focus restoration.
 Named outputs are also available: `settingsRequested`, `addRepositoryRequested`,
 `closedTasksRequested`, `archiveRequested`, `deleteRequested`.
 
+The repository settings' Start from control reuses task creation's branch rows
+and search matching. It searches every supplied `ProjectRepository.branches`
+entry while rendering at most seven matches. The owner handles the emitted
+`{base}` patch. Closing the sheet or repository also closes the picker; its CDK
+overlay owns search focus, Escape dismissal and focus restoration.
+
 `projectFace(appearance)` returns `ProjectMark` props. `jumpHome(root, from, to,
 options)` reproduces the single bell-shaped launch arc, growth and height-dependent
 shadow, hides the destination until landing, and returns an owned `Animation`.

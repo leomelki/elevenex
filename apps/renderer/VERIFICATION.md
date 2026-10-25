@@ -1,5 +1,51 @@
 # Component system verification
 
+## Anchored modal launch motion, 2026-10-25 ZIP
+
+Compared all archive files against the previous committed ZIP: 7 changed, none
+added or removed. Imported the changed brand book, AddMachine/Sheet specifications
+and design index verbatim. Tokens, dependencies, IPC and the legacy app are unchanged.
+
+Anchored modals now use the supplied launch curve and times (560ms open, 500ms
+close): a travelling clipped box, uniformly scaled dialog content, fading source
+face and a separate following shadow. Geometry/keyframes and animation ownership
+are separate from the Angular portal/focus lifecycle. WAAPI runs the frames;
+application code measures at transition boundaries, without a per-frame loop.
+Exit presence follows animation completion instead of a fixed cleanup timer.
+
+Regression work also corrected component CSS overriding the copied face's position,
+opacity discontinuities on rapid reversals, stale AutoHeight measurements across
+reused portals, and focus falling onto the page when an ordinary sheet reopened
+during its exit. Return destinations exclude in-progress entry/recession transforms;
+replacement faces stay inert and have no duplicate IDs or machine/list identities.
+
+Passed `pnpm desktop:lint`, `pnpm desktop:test` (158 renderer tests in 39 files,
+IPC negative-type checks, 4 preload/security and 7 capture-tool tests), preview
+TypeScript, `pnpm desktop:build`, and `git diff --check`. Used the cached pinned
+pnpm 8.15.4 with Node 24.22.1. The production build passed on the host; Angular's
+sandboxed production build aborted with SIGABRT.
+
+Final native reports under `artifacts/desktop-capture/`:
+
+| Directory | Captures | Coverage |
+| --- | ---: | --- |
+| `oct25-dialog-verified` | 42 | SSH/pair card and footer origins, uniform cover fit, all-layer continuity in both reversal directions, returning into the current card, replacement faces, keyboard/focus, reduced motion initially and during entry, both themes |
+| `oct25-onboarding` | 40 | Full SSH/key/pair preparation and machine flows, error/disabled/empty states, narrow layouts, reduced motion, focus restoration, both themes |
+| `oct25-live-final` | 10 | Live frame probes, narrow dialogs with motion enabled, plain-sheet reversals and restored keyboard/focus in both themes |
+| `oct25-machine-motion-final` | 16 | Saved machine-launch/modal regression, now checking content, face and shadow continuity as well as geometry, in both themes |
+
+All four reports say `verified: true`, with zero errors/warnings. Representative
+PNGs were inspected. The 108 checkpoints use real product components in the
+isolated preview, never `--fixture`. The live opening probes sampled at most
+31.2px of travel per frame and frame intervals at most 17.2ms in these runs;
+they verify continuity for this transition, not a general frame-rate guarantee.
+Disposable detailed scenarios remain in ignored capture artifacts. The saved
+machine-motion scenario retains focused regression coverage.
+
+Capture processes exited. The pre-existing preview server was reused and left
+running; no validation-owned server remains. These are unpackaged macOS renderer
+checks; packaged-app and Windows/Linux runtime launches were not performed.
+
 ## Complete title-island review, 2026-10-25
 
 Reviewed the latest ZIP's TitleIsland, IslandName, IslandEvent, MachinePanel,

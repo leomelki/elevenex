@@ -29,3 +29,11 @@ This archive contains 3 added, 3 removed and 21 modified files (including genera
 gallery/reference files). The Angular runtime ships none of the reference React.
 Both token files are unchanged. The comparison is preserved locally in
 `elevenex-design-system-update.local/latest-files.json` and `latest.diff`.
+
+The 2026-10-25 ZIP changes 7 files: the brand book, AddMachine/Sheet specifications,
+design index, and reference CSS/JavaScript/types. Its anchored ModalLayer now uses
+a launch-style box/face/content/shadow morph (560ms open, 500ms close), replacing
+the scale-from-trigger animation. The four changed vendored specification/index
+files were imported verbatim. Tokens, dependencies and other component specs are
+unchanged. The archive comparison is in the ignored local `oct25-files.json` and
+`oct25.diff`; reference runtime files remain outside the Angular application.

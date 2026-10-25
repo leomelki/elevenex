@@ -182,6 +182,19 @@ describe("NewTask keyboard flow", () => {
     key(input, "Enter");
     expect(create).not.toHaveBeenCalled();
   });
+  it("highlights the live starting-branch search without inserting spaces into the name", () => {
+    fixture.componentRef.setInput("branches", [{ name: "main" }, { name: "develop" }]);
+    fixture.componentRef.setInput("step", "base");
+    fixture.componentRef.setInput("title", "New feature");
+    fixture.detectChanges();
+    const input = field("Start from");
+    input.value = "de";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    fixture.detectChanges();
+    const label = input.closest(".body")?.querySelector('[role="option"] .mono');
+    expect(label?.textContent).toBe("develop");
+    expect(label?.querySelector("mark")?.textContent).toBe("de");
+  });
   it("saves Planned with Alt Enter, creates immediately with Cmd Enter, and cancels with Escape", () => {
     const plans: PlannedTask[] = [];
     const created: CreatedTask[] = [];

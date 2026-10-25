@@ -19,7 +19,7 @@ describe("AutoHeight box sizing", () => {
     vi.unstubAllGlobals();
   });
 
-  it('seeds its first attached portal size and animates only later changes', async () => {
+  it('seeds each attached portal size and animates only changes within that attachment', async () => {
     let resized: (() => void) | undefined;
     vi.stubGlobal('ResizeObserver', class {
       constructor(callback: () => void) { resized = callback; }
@@ -42,6 +42,15 @@ describe("AutoHeight box sizing", () => {
     height = 160; resized?.();
     expect(animate).toHaveBeenCalledWith(
       [{ height: '126px', overflow: 'clip', boxSizing: 'border-box' }, { height: '186px', overflow: 'clip', boxSizing: 'border-box' }],
+      { duration: 200, easing: 'ease-out' },
+    );
+    fixture.nativeElement.remove(); resized?.();
+    height = 240;
+    parent.appendChild(fixture.nativeElement); resized?.();
+    expect(animate).toHaveBeenCalledTimes(1);
+    height = 280; resized?.();
+    expect(animate).toHaveBeenLastCalledWith(
+      [{ height: '266px', overflow: 'clip', boxSizing: 'border-box' }, { height: '306px', overflow: 'clip', boxSizing: 'border-box' }],
       { duration: 200, easing: 'ease-out' },
     );
     fixture.destroy();

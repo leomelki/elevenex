@@ -77,10 +77,11 @@ describe('project settings supplied data and intents', () => {
     expect(fixture.nativeElement.querySelector('[aria-busy]')?.getAttribute('aria-busy')).toBe('true');
   });
 
-  it('emits repository branch and command patches without changing supplied data', () => {
+  it('emits repository branch and command patches without changing supplied data', async () => {
     const fixture = TestBed.createComponent(ProjectRepositoryComponent); fixture.componentRef.setInput('repo', REPO); fixture.componentRef.setInput('open', true);
     const changed = vi.fn(); fixture.componentInstance.changed.subscribe(changed); fixture.detectChanges();
-    const branch = fixture.nativeElement.querySelector('select') as HTMLSelectElement; branch.value = 'develop'; branch.dispatchEvent(new Event('change'));
+    (fixture.nativeElement.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement).click(); fixture.detectChanges(); await fixture.whenStable();
+    const branch = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]')).find(option => option.textContent?.includes('develop'))!; branch.click(); fixture.detectChanges();
     expect(changed).toHaveBeenLastCalledWith({base: 'develop'}); expect(REPO.base).toBe('main');
     const setup = fixture.nativeElement.querySelector('[aria-label="Setup: pnpm install, edit"]') as HTMLButtonElement; setup.click(); fixture.detectChanges();
     const command = fixture.nativeElement.querySelector('input[aria-label="Setup"]') as HTMLInputElement; command.value = 'pnpm fetch'; command.dispatchEvent(new Event('input')); command.dispatchEvent(new Event('blur'));

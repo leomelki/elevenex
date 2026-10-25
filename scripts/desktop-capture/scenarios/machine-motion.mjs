@@ -47,28 +47,38 @@ export default async function* (capture) {
     await owner(component => component.reset(true)); await settled();
     const trigger = await capture.evaluate(() => {
       const rect = document.querySelector('ex-machine-add[kind="ssh"] button').getBoundingClientRect();
-      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
     });
     await capture.motion.freeze(); await capture.click('ex-machine-add[kind="ssh"] button');
     await capture.waitFor(() => !!document.querySelector('.ex-modal-has-from'));
     await seek('.ex-modal-layer', 0); await capture.settle();
     const anchor = await capture.evaluate(() => {
-      const surface = document.querySelector('ex-add-machine');
+      const surface = document.querySelector('ex-add-machine'), face = document.querySelector('.ex-modal-face');
       const matrix = new window.DOMMatrixReadOnly(getComputedStyle(surface).transform);
-      const origin = getComputedStyle(surface).transformOrigin.split(' ').map(Number.parseFloat);
-      return { scale: matrix.a, x: (innerWidth - surface.offsetWidth) / 2 + origin[0], y: (innerHeight - surface.offsetHeight) / 2 + origin[1], origin, width: surface.offsetWidth, height: surface.offsetHeight };
+      const rect = face.getBoundingClientRect();
+      return { scaleX: matrix.a, scaleY: matrix.d, x: rect.x, y: rect.y, width: rect.width, height: rect.height };
     });
-    assert.ok(Math.abs(anchor.scale - .42) < .001);
-    yield { name: `${theme}-modal-origin`, inspect: ['ex-add-machine'], metadata: { anchor, trigger } };
-    assert.ok(Math.abs(anchor.x - trigger.x) < 1 && Math.abs(anchor.y - trigger.y) < 1, 'The dialog grows from the actual trigger');
-    await seek('.ex-modal-layer', 170); await capture.settle();
-    const matrix = () => capture.evaluate(() => getComputedStyle(document.querySelector('ex-add-machine')).transform.match(/-?[\d.]+/g).map(Number));
-    const modalBefore = await matrix();
+    assert.ok(Math.abs(anchor.scaleX - anchor.scaleY) < .0001, 'The dialog uses uniform cover-fit scaling');
+    for (const key of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(anchor[key] - trigger[key]) < 1, 'The face starts on the actual trigger');
+    yield { name: `${theme}-modal-origin`, inspect: ['ex-add-machine', '.ex-modal-face', '.ex-modal-shadow'], metadata: { anchor, trigger } };
+    await seek('.ex-modal-layer', 85); await capture.settle();
+    const modalPose = () => capture.evaluate(() => {
+      const surface = document.querySelector('ex-add-machine');
+      const nodes = [surface, ...surface.children, document.querySelector('.ex-modal-face'), document.querySelector('.ex-modal-shadow')];
+      return nodes.map(node => {
+        const style = getComputedStyle(node);
+        return [...new window.DOMMatrixReadOnly(style.transform).toFloat64Array(), Number(style.opacity)];
+      });
+    });
+    const sameModal = (before, after) => before.forEach((node, index) => node.forEach((value, key) => assert.ok(Math.abs(value - after[index][key]) < .005, 'Every modal layer resumes its painted frame')));
+    const modalBefore = await modalPose();
     await owner(component => component.closeDialog()); await seek('.ex-modal-layer', 0); await capture.settle();
-    const modalAfter = await matrix(); modalBefore.forEach((value, i) => assert.ok(Math.abs(value - modalAfter[i]) < .01));
+    const modalAfter = await modalPose(); sameModal(modalBefore, modalAfter);
     yield { name: `${theme}-modal-reversed`, metadata: { modalBefore, modalAfter } };
+    await seek('.ex-modal-layer', 90); const modalClosing = await modalPose();
     await owner(component => component.dialogOpen.set(true)); await seek('.ex-modal-layer', 0); await capture.settle();
-    yield { name: `${theme}-modal-reopened` };
+    const modalReopened = await modalPose(); sameModal(modalClosing, modalReopened);
+    yield { name: `${theme}-modal-reopened`, metadata: { modalClosing, modalReopened } };
     await capture.motion.play(); await settled();
     await capture.evaluate(() => document.querySelector('ex-host-field input').focus());
     assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-host-field input')), true);

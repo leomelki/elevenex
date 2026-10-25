@@ -27,8 +27,8 @@
   },
   "lastChange": {
     "by": "Léo",
-    "at": "2026-10-24T15:30:00Z",
+    "at": "2026-10-25T10:00:00Z",
     "via": "Cowork",
-    "note": "MachineLaunch: back to the exact launch motion from before (Home's zoom and fade timings, keyframes); only where it starts changed."
+    "note": "ModalLayer from: dialogs opened from a card (Add a server, Pair) open like a machine launch and close back into the same place."
   }
 }

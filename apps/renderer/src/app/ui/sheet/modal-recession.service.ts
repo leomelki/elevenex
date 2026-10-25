@@ -16,7 +16,7 @@ export class ModalRecessionService {
   acquire(origin: HTMLElement, overlay?: HTMLElement): ModalRecessionLease {
     const window = origin.closest<HTMLElement>('[data-modal-window], .ex-window, ex-app-shell');
     const background = window
-      ? window.querySelector<HTMLElement>(':scope > .ex-shell, :scope > .regions, ex-app-shell > .regions, [data-modal-background]')
+      ? window.querySelector<HTMLElement>(':scope > .ex-shell, :scope > .regions, ex-app-shell > .regions, [data-modal-background], ex-machine-launch .launch:not(.open) > .home')
       : this.document.querySelector<HTMLElement>('[data-modal-background], ex-app-shell > .regions');
     const token = {};
     this.layers.at(-1)?.overlay?.setAttribute('inert', '');

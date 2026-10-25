@@ -18,7 +18,7 @@
     <p class="section-note">Each task works in one. New tasks ask which, once there are two or more.</p>
     <div class="repositories">
       @for (repo of visibleRepos(); track (project().id ?? id()) + ':' + repo.id) {
-        <ex-project-repository [repo]="repo" [open]="expandedRepo() === repo.id" (toggled)="expandedRepo.set(expandedRepo() === repo.id ? null : repo.id)" (changed)="repoChanged.emit({repo, patch: $event})" (removeRequested)="requestRemove(repo)" />
+        <ex-project-repository [repo]="repo" [active]="open()" [open]="expandedRepo() === repo.id" (toggled)="expandedRepo.set(expandedRepo() === repo.id ? null : repo.id)" (changed)="repoChanged.emit({repo, patch: $event})" (removeRequested)="requestRemove(repo)" />
       }
       @if (totalRepos() > visibleRepos().length) { <button exButton size="sm" variant="ghost" (click)="moreReposRequested.emit()">Show more repositories</button> }
       <ex-add-project-repository [active]="open()" [adding]="isAdding()" [machine]="machine() || 'this machine'" [query]="addQuery()" [listFolders]="listFolders()" [context]="project().id ?? id()" [listId]="id() + '-folders'" (started)="isAdding.set(true)" (cancelled)="isAdding.set(false)" (added)="add($event)" />

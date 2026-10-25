@@ -4,25 +4,43 @@
 `top`), and optional `from: HTMLElement | null` and emits `closeRequested` for Escape or the dim. Supply a labelled
 `dialog`/`alertdialog` inside it. The layer owns a CDK portal, focus trap and
 focus restoration. Keep the component mounted and change `open` to retain its
-220ms exit; reopening interrupts that exit safely. Reduced motion disposes it
-without movement. The layer's owner always disposes its timer and overlay.
-The actual projected dialog is the animation surface, so its transform origin
-matches its own box. With `from`, the origin is the clicked element's center,
-measured once in unscaled coordinates; disposal restores the projected surface's
-original transform origin. The dialog grows from scale .42 over
-460ms and returns there over `dur-base`; the origin survives exit/reversal.
-Keep the projected dialog/data present while the layer closes. Initial entry uses the reference CSS; reversals snapshot
-the painted opacity/transform before cancelling owned animations and retarget
-from that frame. Reduced-motion updates and disposal cancel those handles.
+exit. Presence follows the actual animation's completion, with no independent
+cleanup timer; reopening cancels the stale completion without replacing the view.
+Keep the projected dialog/data present while the layer closes.
+
+With `from`, the dialog morphs out of the painted trigger over 560ms and returns
+over 500ms on the machine-launch curve. The box clips a uniformly cover-fit
+dialog, while the trigger's copied face rides it and fades. A separate shadow
+follows the box outside the clip. Closing resolves what now occupies the origin
+within the same window; it measures the destination without entry/recession
+transforms, so the return meets the card after Home comes forward. If the opener
+has been replaced, focus can return to that replacement.
+
+`modal-morph.ts` owns bounded keyframe generation, coordinate measurement and
+inert, identity-free face copies. `ModalMotion` owns animation handles, copies,
+the media listener and interrupted progress. Geometry is read at transition
+boundaries; animation frames run through WAAPI, with no application rAF loop or
+repository-sized observation. Every moving layer snapshots its painted values
+before a reversal, including content/face/shadow opacity. Completion removes the
+decorations and restores natural sizing. Disposal also restores the projected
+surface's original transform origin.
+
+Unanchored sheets/confirmations keep the plain pop and `dur-base` exit.
+Reduced motion skips the morph; a preference change finishes existing movement
+and releases its resources. AutoHeight resets its baseline when a portal detaches,
+so a reused dialog can open with a different body without an obsolete height.
 The opener is captured before the portal attaches, so an autofocusing child
 cannot replace the element that receives focus when the modal closes.
+Reopening a retained layer also recaptures focus if inert blurred the outgoing
+control, while preserving focus already inside the destination.
 
 The portal escapes the transformed/inert background. A scoped
 `ModalRecessionService` lease counts sheets and confirmations together. Only
 the top modal receives dismissal; lower overlays become inert until it closes.
 The service finds the nearest `ex-app-shell`, `.ex-window`, or
 `[data-modal-window]`, then its `.regions`, `.ex-shell`, or
-`[data-modal-background]`. Import `modal-recession.css` once in the application
+`[data-modal-background]`, or a machine launch's Home when there is no shell.
+Import `modal-recession.css` once in the application
 styles. Multiple scoped windows retain independent background counts.
 
 For a custom CDK modal boundary, the exported `ModalRecessionService` is the

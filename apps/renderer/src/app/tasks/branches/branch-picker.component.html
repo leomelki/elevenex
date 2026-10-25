@@ -34,11 +34,12 @@
           <span class="verb">Create</span>
         }
         <span class="mono grow">
+          <!-- Inline elements keep template whitespace out of branch identifiers. -->
           @for (part of highlights(row.name, query()); track $index) {
             @if (part.match) {
               <mark>{{ part.text }}</mark>
             } @else {
-              {{ part.text }}
+              <span>{{ part.text }}</span>
             }
           }
         </span>

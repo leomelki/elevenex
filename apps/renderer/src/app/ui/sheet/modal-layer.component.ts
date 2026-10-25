@@ -1,4 +1,4 @@
-import { A11yModule } from '@angular/cdk/a11y';
+import { A11yModule, CdkTrapFocus } from '@angular/cdk/a11y';
 import { Overlay, type OverlayRef } from '@angular/cdk/overlay';
 import { CdkPortal, PortalModule } from '@angular/cdk/portal';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, ViewEncapsulation, afterRenderEffect, inject, input, output, signal, viewChild } from '@angular/core';
@@ -22,6 +22,7 @@ export class ModalLayerComponent {
   readonly closeRequested = output<void>();
   protected readonly leaving = signal(false);
   private readonly portal = viewChild(CdkPortal);
+  private readonly trap = viewChild(CdkTrapFocus);
   private readonly origin = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly overlay = inject(Overlay);
   private readonly recession = inject(ModalRecessionService);
@@ -30,14 +31,13 @@ export class ModalLayerComponent {
   private motion?: ModalMotion;
   private mode?: 'open' | 'closing';
   private lease?: ReturnType<ModalRecessionService['acquire']>;
-  private exitTimer?: ReturnType<typeof setTimeout>;
 
   constructor() {
     afterRenderEffect(() => {
       const portal = this.portal();
       if (this.open() && portal) {
-        clearTimeout(this.exitTimer);
-        if (this.overlayRef && this.mode === 'closing') this.motion?.retarget(true);
+        const reopening = this.overlayRef && this.mode === 'closing';
+        if (reopening) void this.motion?.retarget(true);
         // A newly attached portal must read the entry state on its first template check.
         this.leaving.set(false);
         if (!this.overlayRef) {
@@ -54,20 +54,25 @@ export class ModalLayerComponent {
         }
         this.mode = 'open';
         this.lease ??= this.recession.acquire(this.origin, this.overlayRef.overlayElement);
+        if (reopening) {
+          const layer = this.overlayRef.overlayElement.querySelector<HTMLElement>('.ex-modal-layer');
+          // Inert blurs the outgoing control. CDK's initial auto-capture does
+          // not repeat when the same trap is enabled again after a reversal.
+          if (layer && !layer.contains(layer.ownerDocument.activeElement)
+            && !this.trap()?.focusTrap.focusInitialElement({ preventScroll: true })) layer.focus({ preventScroll: true });
+        }
       } else if (this.overlayRef && this.mode !== 'closing') {
-        this.motion?.retarget(false);
         this.mode = 'closing';
-        this.leaving.set(true);
         this.lease?.release();
         this.lease = undefined;
-        const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-        this.exitTimer = setTimeout(() => {
-          this.disposeOverlay();
-        }, reduced ? 0 : 220);
+        const exit = this.motion?.retarget(false) ?? Promise.resolve(true);
+        this.leaving.set(true);
+        void exit.then(completed => {
+          if (completed && this.mode === 'closing' && !this.open()) this.disposeOverlay();
+        });
       }
     });
     inject(DestroyRef).onDestroy(() => {
-      clearTimeout(this.exitTimer);
       this.lease?.release();
       this.disposeOverlay();
     });
@@ -85,13 +90,13 @@ export class ModalLayerComponent {
   }
 
   private disposeOverlay(): void {
+    const opener = this.returnFocus?.isConnected ? this.returnFocus : this.motion?.returnTarget;
     this.motion?.dispose();
     this.motion = undefined;
     this.mode = undefined;
     this.overlayRef?.dispose();
     this.overlayRef = undefined;
     // CDK can observe a child's early autofocus as its opener. Keep the actual pre-portal opener instead.
-    const opener = this.returnFocus;
     this.returnFocus = undefined;
     if (opener?.isConnected && !opener.closest('[inert]')) opener.focus({ preventScroll: true });
   }

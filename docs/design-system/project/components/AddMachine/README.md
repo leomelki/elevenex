@@ -6,7 +6,7 @@ Adding a machine, in a dialog over Home: **a server** (pick the host, then check
 - A server: `step` (`host`, then `key`), `query`, `hosts` (from `~/.ssh/config`), `picked`, `fingerprint`, `keyType`. Connect ↵ stays off until a host is picked; on `key` it reads Trust and connect ↵ (the label eases, `EaseSwap`), and Back returns.
 - Another computer: `text` (what was pasted), `found` (once understood). Pair ↵ stays off until it's found.
 
-**Where it opens:** in a `ModalLayer` whose `from` is what was clicked (`MachineHome` hands it back: a dashed `MachineAdd` card on the first run, the foot's buttons later). It grows out of that element and, closing, goes back to the same place. Between steps the body crossfades and its height eases (`AutoHeight`).
+**Where it opens:** in a `ModalLayer` whose `from` is what was clicked (`MachineHome` hands it back: a dashed `MachineAdd` card on the first run, the foot's buttons later). It opens like a machine launch: the box grows out of that card (its face rides along and fades), the dialog's content scales up inside and fades in, Home recedes behind. Closing runs backwards into the same place, where the new machine's card now sits. Between steps the body crossfades and its height eases (`AutoHeight`).
 
 - Do reuse what's there: the SSH config, the agent's keys, ProxyJump.
 - Do keep the waiting out of the dialog: installing and connecting happen on the card.

@@ -12,7 +12,7 @@
     <div class="body">
       <div class="group"><div class="group-title">Its tasks</div>
         <div class="line"><span class="label">Tag</span><ex-set-value [field]="true" [value]="repo().short ?? ''" [placeholder]="repo().name" label="Tag" [mono]="true" (inputChanged)="tagInput($event)" (changed)="changed.emit({short: $event})" /><span class="sub">Shown next to its tasks</span></div>
-        <div class="line"><span class="label">Start from</span><ex-set-choice [options]="branches()" [value]="repo().base ?? 'main'" label="Start from" icon="branch" [mono]="true" (changed)="changed.emit({base: $event})" /><span class="sub">New task branches are made from it</span></div>
+        <div class="line"><span class="label">Start from</span><ex-repository-branch-picker [repo]="repo()" [active]="active() && open()" (changed)="changed.emit({base: $event})" /><span class="sub">New task branches are made from it</span></div>
       </div>
       <div class="group"><div class="group-title">Commands</div>
         <div class="command"><span class="label">When a workspace is prepared</span><ex-set-value [value]="repo().setup ?? ''" label="Setup" [mono]="true" [well]="true" [prompt]="true" placeholder="Nothing to run" (changed)="changed.emit({setup: $event})" /></div>

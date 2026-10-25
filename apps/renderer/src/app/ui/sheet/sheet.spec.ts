@@ -46,12 +46,13 @@ describe('settings surfaces', () => {
   beforeEach(() => vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => undefined, removeEventListener: () => undefined, addListener: () => undefined, removeListener: () => undefined })));
   afterEach(() => vi.unstubAllGlobals());
 
-  it('returns projected surface styles to their owner after anchored modal disposal', () => {
+  it('leaves projected surface styles alone under reduced motion', () => {
     const layer = document.createElement('div'), surface = document.createElement('section'), trigger = document.createElement('button');
     surface.style.transformOrigin = '10px 20px';
     layer.append(surface); document.body.append(layer, trigger);
     const motion = new ModalMotion(layer, trigger);
-    expect(surface.style.transformOrigin).toBe('0px 0px');
+    expect(surface.style.transformOrigin).toBe('10px 20px');
+    expect(layer.querySelector('.ex-modal-face')).toBeNull();
     motion.dispose();
     expect(surface.style.transformOrigin).toBe('10px 20px');
     layer.remove(); trigger.remove();
@@ -102,10 +103,12 @@ describe('settings surfaces', () => {
     const surface = document.querySelector('[role="dialog"][aria-label="Settings"]');
     fixture.componentInstance.sheet.set(false); fixture.detectChanges();
     expect(surface?.closest('[inert]')).not.toBeNull();
+    surface?.querySelector<HTMLElement>('button')?.blur();
     fixture.componentInstance.sheet.set(true); fixture.detectChanges(); await fixture.whenStable();
     await new Promise(resolve => setTimeout(resolve, 240));
     expect(document.querySelector('[role="dialog"][aria-label="Settings"]')).toBe(surface);
     expect(surface?.closest('[inert]')).toBeNull();
+    expect(surface?.closest('.ex-modal-layer')?.contains(document.activeElement)).toBe(true);
     const background = fixture.nativeElement.querySelector('.ex-shell') as HTMLElement;
     expect(background.getAttribute('data-recede')).toBe('1');
     fixture.destroy(); expect(background.getAttribute('data-recede')).toBe('0');
@@ -119,6 +122,20 @@ describe('settings surfaces', () => {
     const lease = TestBed.inject(ModalRecessionService).acquire(origin);
     expect(background.hasAttribute('data-recede')).toBe(false);
     lease.release(); otherWindow.remove(); ownWindow.remove();
+  });
+
+  it('recedes a launch Home when the window has no shell, without touching the machine view', () => {
+    const window = document.createElement('div'); window.setAttribute('data-modal-window', '');
+    window.innerHTML = '<ex-machine-launch><div class="launch"><div class="home"></div><div class="pane"></div></div></ex-machine-launch><span></span>';
+    document.body.append(window);
+    const home = window.querySelector('.home')!, pane = window.querySelector('.pane')!;
+    const lease = TestBed.inject(ModalRecessionService).acquire(window.querySelector('span')!);
+    expect(home.classList.contains('is-receded')).toBe(true);
+    expect(home.hasAttribute('inert')).toBe(true);
+    expect(pane.hasAttribute('inert')).toBe(false);
+    lease.release();
+    expect(home.hasAttribute('inert')).toBe(false);
+    window.remove();
   });
 
   it('restores the pre-portal opener after a child autofocuses and an exit is interrupted', async () => {

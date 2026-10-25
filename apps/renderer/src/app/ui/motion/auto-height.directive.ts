@@ -27,7 +27,15 @@ export class AutoHeightDirective {
       this.observer = new ResizeObserver(() => {
         // A queued observation can outlive portal detachment or destruction.
         // Detached elements no longer inherit the motion tokens either.
-        if (this.destroyRef.destroyed || !this.element.isConnected) return;
+        if (this.destroyRef.destroyed) return;
+        if (!this.element.isConnected) {
+          // Portals can reuse the same view with different content. A detached
+          // view has no painted height to animate from on its next attachment.
+          this.animation?.cancel();
+          this.animation = undefined;
+          previous = undefined;
+          return;
+        }
         const style = getComputedStyle(this.element);
         const painted = this.element.getBoundingClientRect().height;
         const scale = (this.element.offsetHeight ? painted / this.element.offsetHeight : 1) || 1;
