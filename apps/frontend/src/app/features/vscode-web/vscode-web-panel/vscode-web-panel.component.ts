@@ -45,8 +45,6 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
   private probeId = '';
   private iframeGeneration = '';
   private removeLoadListener?: () => void;
-  private revealTimer?: ReturnType<typeof setTimeout>;
-  private pendingAutoReveal: string | null = null;
   private destroyed = false;
   private recoveryVersion = 0;
   private startupDeadlineAt = 0;
@@ -70,10 +68,6 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
       data.type === 'elevenex-editor-sync-error'
     ) {
       this.failStartup(data.message || 'The editor connection failed. Retry to reconnect.');
-    } else if (data.type === 'elevenex-editor-file-changes') {
-      this.handleFileChangeSocketMessage({
-        data: JSON.stringify(data.changes),
-      } as MessageEvent<string>);
     } else if (data.type === 'elevenex-editor-stage' && !this.startupIssue()) {
       this.stageLabel.set(
         data.stage === 'workbench'
@@ -310,51 +304,7 @@ export class VSCodeWebPanelComponent implements AfterViewInit, OnDestroy {
     this.clearReadyTimeout();
     this.removeLoadListener?.();
     this.removeLoadListener = undefined;
-    if (this.revealTimer) clearTimeout(this.revealTimer);
-    this.revealTimer = undefined;
-    this.pendingAutoReveal = null;
     this.probeId = '';
-  }
-
-  private handleFileChangeSocketMessage(event: MessageEvent<string>): void {
-    const payload = this.parseFileChangePayload(event.data);
-    for (const change of payload) {
-      if (change.event === 'addDir' || change.event === 'unlinkDir') {
-        continue;
-      }
-
-      if (change.event !== 'add' && change.event !== 'change') {
-        continue;
-      }
-
-      if (!change.path) {
-        continue;
-      }
-
-      this.pendingAutoReveal = change.path;
-    }
-    if (this.pendingAutoReveal && !this.revealTimer) {
-      this.revealTimer = setTimeout(() => {
-        this.revealTimer = undefined;
-        const path = this.pendingAutoReveal;
-        this.pendingAutoReveal = null;
-        if (path && !this.isLoading() && !this.startupIssue()) this.openOrRevealChangedFile(path);
-      }, 750);
-    }
-  }
-
-  private parseFileChangePayload(data: string): Array<{ event?: string; path?: string }> {
-    try {
-      const parsed = JSON.parse(data);
-      return Array.isArray(parsed) ? parsed : [parsed];
-    } catch (error) {
-      console.error('Failed to parse file change bridge payload', error);
-      return [];
-    }
-  }
-
-  private openOrRevealChangedFile(path: string): void {
-    this.openFile({ path }, true);
   }
 
   openFile(target: string | LocalFileTarget, preserveFocus = false): void {

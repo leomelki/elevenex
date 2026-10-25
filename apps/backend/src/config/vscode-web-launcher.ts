@@ -128,8 +128,6 @@ const WORKBENCH_BOOTSTRAP_SCRIPT = `${WORKBENCH_BOOTSTRAP_MARKER}
         } else if (data.type === 'elevenex-editor-sync-error') {
           workspaceReady = false;
           post(data.type, { message: data.message });
-        } else if (data.type === 'elevenex-editor-file-changes') {
-          post(data.type, { changes: data.changes });
         } else if (data.type === 'elevenex-editor-reconnected') {
           probe();
         }

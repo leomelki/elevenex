@@ -164,32 +164,40 @@ describe('VSCodeWebPanelComponent lifecycle', () => {
     expect(panel.startupIssue()).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('coalesces thousands of edits to one preview and keeps explicit file positions', async () => {
-    const panel = setup();
-    usable(panel);
-    const iframe = frames.get(panel.currentIframeKey)!;
-    const post = vi.spyOn(iframe.contentWindow!, 'postMessage');
-    post.mockClear();
-    message(panel, {
-      type: 'elevenex-editor-file-changes',
-      changes: Array.from({ length: 5000 }, (_, i) => ({ event: 'change', path: `${i}.ts` })),
-    });
-    await vi.advanceTimersByTimeAsync(750);
-    expect(post).toHaveBeenCalledTimes(1);
-    expect(post.mock.calls[0][0]).toMatchObject({
-      path: '4999.ts',
-      preview: true,
-      preserveFocus: true,
-    });
-    panel.openFile({ path: 'notes.md', rootPath: '/tmp', line: 12, column: 3 });
-    expect(post.mock.calls[1][0]).toMatchObject({
-      path: 'notes.md',
-      rootPath: '/tmp',
-      line: 12,
-      column: 3,
-      preview: false,
-    });
-  });
+  it.each(['startup', 'ready'])(
+    'does not open added or edited files during %s and keeps explicit file positions',
+    async (stage) => {
+      const panel = setup();
+      if (stage === 'ready') usable(panel);
+      const iframe = frames.get(panel.currentIframeKey)!;
+      const post = vi.spyOn(iframe.contentWindow!, 'postMessage');
+      post.mockClear();
+      message(panel, {
+        type: 'elevenex-editor-file-changes',
+        changes: Array.from({ length: 5000 }, (_, i) => ({
+          event: i % 2 ? 'change' : 'add',
+          path: `${i}.ts`,
+        })),
+      });
+      if (stage === 'startup') usable(panel);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(post).not.toHaveBeenCalled();
+
+      panel.openFile({ path: 'notes.md', rootPath: '/tmp', line: 12, column: 3 });
+      expect(post).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          type: 'elevenex-open-file',
+          path: 'notes.md',
+          rootPath: '/tmp',
+          line: 12,
+          column: 3,
+          preview: false,
+          preserveFocus: false,
+        }),
+        new URL(iframe.src).origin,
+      );
+    },
+  );
   it('does not extend the startup deadline indefinitely across repeated iframe reloads', async () => {
     const panel = setup();
     const iframe = frames.get(panel.currentIframeKey)!;
