@@ -17,7 +17,7 @@ export async function createAskpass(ask: Ask, interactive: boolean, signal: Abor
     if (request.method !== 'POST' || request.url !== '/' || authorization.length !== expected.length || !timingSafeEqual(authorization, expected)) {
       response.writeHead(403).end(); request.resume(); return;
     }
-    if (!interactive || busy || ++count > 6) { response.writeHead(403).end(); request.resume(); return; }
+    if (!interactive || busy || ++count > 16) { response.writeHead(403).end(); request.resume(); return; }
     busy = true;
     void respond(request, response).finally(() => { busy = false; });
   });

@@ -11,6 +11,7 @@ import { RemoteManager } from './remote/manager';
 import { registerRemoteIpc } from './remote/ipc';
 import { readBackendRelease } from './backend/release';
 import { homedir } from 'node:os';
+import { RemoteArchiveCache } from './remote/archives';
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true },
@@ -35,8 +36,11 @@ const rendererRoot = join(__dirname, '../renderer');
 const backend = createApplicationBackend(app.isPackaged
   ? join(process.resourcesPath, 'app.asar.unpacked/dist/backend/host.js')
   : join(__dirname, 'backend/host.js'));
+const remoteRoot = join(homedir(), '.elevenex', 'desktop');
+const remoteArchives = new RemoteArchiveCache(remoteRoot);
 const remote = new RemoteManager({
-  root: join(homedir(), '.elevenex', 'desktop'),
+  root: remoteRoot,
+  prepareArchive: (release, signal, progress) => remoteArchives.prepare(release, signal, progress),
   settingsPath: join(app.getPath('userData'), 'remote-settings.json'),
   helper: app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked/dist/remote/askpass-helper.js') : join(__dirname, 'remote/askpass-helper.js'),
   release: () => readBackendRelease(__dirname),
@@ -45,9 +49,10 @@ const remote = new RemoteManager({
 // Several windows share one backend and database. A second application process
 // must hand control to the first instead of starting another database owner.
 const ownsInstance = app.requestSingleInstanceLock();
+let windowsReady = false;
 if (!ownsInstance) app.exit(0);
 app.on('second-instance', () => {
-  if (!app.isReady()) return;
+  if (!windowsReady) return;
   const window = BrowserWindow.getAllWindows()[0] ?? createWindow();
   if (window.isMinimized()) window.restore();
   window.show();
@@ -179,7 +184,7 @@ void app.whenReady().then(async () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
     { label: 'File', submenu: [
-      { label: 'New Window', accelerator: 'CmdOrCtrl+Shift+N', click: () => { createWindow(); } },
+      { label: 'New Window', accelerator: 'CmdOrCtrl+Shift+N', click: () => { if (windowsReady) createWindow(); } },
       { role: 'close' },
     ] },
     { role: 'editMenu' },
@@ -191,6 +196,7 @@ void app.whenReady().then(async () => {
     { role: 'windowMenu' },
   ]));
   await Promise.all([state.load(), remote.load()]);
+  windowsReady = true;
   createWindow();
   // Window creation is independent of downloading: a future frontend can read
   // the current snapshot and subscribe immediately, including after a reload.
@@ -200,7 +206,7 @@ void app.whenReady().then(async () => {
   });
 }).catch((error: unknown) => {
   console.error(error);
-  void Promise.allSettled([backend.dispose(), remote.dispose()]).then(() => app.exit(1));
+  void Promise.allSettled([backend.dispose(), remote.dispose(), remoteArchives.dispose()]).then(() => app.exit(1));
 });
 
 app.on('window-all-closed', () => {
@@ -211,5 +217,5 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  void Promise.allSettled([state.save(), backend.dispose(), remote.dispose()]).then(() => app.quit());
+  void Promise.allSettled([state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose()]).then(() => app.quit());
 });

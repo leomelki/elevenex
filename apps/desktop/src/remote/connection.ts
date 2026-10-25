@@ -11,6 +11,7 @@ export interface ConnectionOptions {
   readonly helper: string;
   readonly release: () => Promise<BackendRelease>;
   readonly connect?: (options: ConnectOptions) => Promise<RemoteTransport>;
+  readonly prepareArchive?: ConnectOptions['prepareArchive'];
   readonly changed: () => void;
   readonly random?: () => number;
   readonly healthInterval?: number;
@@ -32,6 +33,9 @@ export class RemoteConnection {
   private wakeup: AbortController | undefined;
   private paused = false;
   private interactiveOwner: number | undefined;
+  private requestedInteractiveOwner: number | undefined;
+  private attemptInteractive = false;
+  private disposed = false;
   private challenge: { value: RemoteChallenge; owner: number; resolve: (value: string | null) => void } | undefined;
   private transport: RemoteTransport | undefined;
   private backendForward: Awaited<ReturnType<RemoteTransport['forward']>> | undefined;
@@ -47,13 +51,19 @@ export class RemoteConnection {
   challengeFor(windowId: number): RemoteChallenge | null { return this.challenge?.owner === windowId ? { ...this.challenge.value } : null; }
 
   acquire(windowId: number, interactive: boolean): void {
+    if (this.disposed) throw new Error('This remote connection has been disposed');
     this.owners.add(windowId);
-    if (interactive) { this.interactiveOwner = windowId; this.paused = false; }
+    if (interactive && this.status.phase !== 'ready') {
+      this.paused = false;
+      if (this.loop && this.attemptInteractive && ['connecting', 'awaiting-input', 'setting-up'].includes(this.status.phase)) this.interactiveOwner = windowId;
+      else this.requestedInteractiveOwner = windowId;
+    }
     this.ensureLoop();
   }
   async release(windowId: number): Promise<void> {
     this.owners.delete(windowId);
     if (this.interactiveOwner === windowId) this.interactiveOwner = undefined;
+    if (this.requestedInteractiveOwner === windowId) this.requestedInteractiveOwner = undefined;
     if (this.challenge?.owner === windowId) {
       const next = this.owners.values().next().value;
       if (next !== undefined) { this.challenge.owner = next; this.interactiveOwner = next; }
@@ -66,8 +76,7 @@ export class RemoteConnection {
     if (!this.active) this.publish({ ...disconnected(this.options.host.id), generation: this.status.generation });
   }
   retry(windowId: number): void {
-    this.owners.add(windowId); this.interactiveOwner = windowId; this.paused = false;
-    this.wakeup?.abort(); this.ensureLoop();
+    this.acquire(windowId, true); this.wakeup?.abort();
   }
   networkChanged(): void { if (this.active && !this.paused) this.wakeup?.abort(); }
   answer(windowId: number, challengeId: string, answer: string | null): void {
@@ -76,6 +85,7 @@ export class RemoteConnection {
     this.challenge.resolve(answer);
   }
   async dispose(): Promise<void> {
+    this.disposed = true;
     this.owners.clear(); this.lifetime?.abort(); this.wakeup?.abort(); await this.loop;
   }
 
@@ -105,7 +115,7 @@ export class RemoteConnection {
   };
 
   private ensureLoop(): void {
-    if (this.loop || !this.active || this.paused) return;
+    if (this.disposed || this.loop || !this.active || this.paused) return;
     const lifetime = new AbortController(); this.lifetime = lifetime;
     this.loop = this.coordinate(lifetime.signal).catch(() => {
       // The coordinator classifies all operational errors. This guard protects
@@ -124,7 +134,10 @@ export class RemoteConnection {
   private async coordinate(signal: AbortSignal): Promise<void> {
     let attempt = 0;
     while (!signal.aborted && this.active && !this.paused) {
+      this.interactiveOwner = this.requestedInteractiveOwner;
+      this.requestedInteractiveOwner = undefined;
       const interactive = this.interactiveOwner !== undefined;
+      this.attemptInteractive = interactive;
       let stage: RemoteStage = 'authentication';
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new AbortController();
@@ -142,7 +155,7 @@ export class RemoteConnection {
         this.log(stage, 'revision', `Expected backend revision ${release.version}; attempt ${attempt}.`);
         setupSignal.throwIfAborted();
         const transport = await (this.options.connect ?? connectRemote)({
-          host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask,
+          host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, prepareArchive: this.options.prepareArchive,
           progress: (next, value) => {
             if (setupSignal.aborted) return;
             if (stage !== next) { stage = next; resetDeadline(stage); this.log(stage, 'stage', `Remote ${stage} started.`); }
@@ -159,6 +172,7 @@ export class RemoteConnection {
         const ready = await this.check(transport, url, release.version, setupSignal);
         if (timer) { clearTimeout(timer); timer = undefined; }
         this.interactiveOwner = undefined;
+        this.requestedInteractiveOwner = undefined;
         this.log('application', 'ready', 'Remote application readiness verified.');
         this.publish({ ...this.status, phase: 'ready', stage: 'application', authenticated: true, transport: 'healthy', application: 'ready',
           generation: this.status.generation + 1, instanceId: ready.instance, failure: null, progress: null, retryAt: null });
@@ -181,7 +195,7 @@ export class RemoteConnection {
         const problem = asFailure(deadline.signal.aborted ? deadline.signal.reason : error, stage);
         this.log(problem.stage, problem.code, problem.message);
         this.interactiveOwner = undefined;
-        this.paused = !problem.transient;
+        this.paused = !problem.transient && this.requestedInteractiveOwner === undefined;
         this.publish({ ...this.status, phase: this.paused ? 'paused' : 'recovering', stage: problem.stage,
           transport: 'unresponsive', application: 'unavailable', failure: problem, progress: null, retryAt: null });
       } finally {
@@ -194,6 +208,7 @@ export class RemoteConnection {
         await transport?.close(); await forward?.close();
       }
       if (signal.aborted || this.paused || !this.active) break;
+      if (this.requestedInteractiveOwner !== undefined) continue;
       const backoff = Math.min(30_000, (this.options.backoff ?? 500) * 2 ** Math.min(attempt - 1, 8));
       const wait = Math.min(30_000, Math.round(backoff * (0.8 + (this.options.random ?? Math.random)() * 0.4)));
       this.publish({ ...this.status, retryAt: Date.now() + wait });

@@ -27,7 +27,7 @@ export function registerRemoteIpc(remote: RemoteManager, backend: BackendManager
   register('remote:remove-host', 1, (_window, id) => remote.removeHost(id));
   register('environment:status', 0, window => remote.snapshot(window));
   register('environment:select', 1, (window, input) => remote.select(window, input));
-  register('environment:context', 1, (window, input) => remote.saveContext(window, input));
+  register('environment:context', 2, (window, input, expected) => remote.saveContext(window, input, expected));
   register('environment:backend-status', 0, window => remote.backendStatus(window, backend.snapshot()));
   register('remote:retry', 0, window => remote.retry(window));
   register('remote:pause', 0, window => remote.disconnect(window, true));

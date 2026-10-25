@@ -6,7 +6,8 @@ import { backendRelease } from '../backend/release';
 import type { DownloadProgress } from '../backend/download';
 import { RemoteError, failure, sshFailure } from './failure';
 import { spawnSsh } from './ssh';
-import { archiveFor, bootstrapScript } from './runtime-install';
+import { bootstrapScript } from './runtime-install';
+import { archiveFor, type PrepareRemoteArchive } from './archives';
 import type { Ask } from './askpass';
 import { Wire, SocketChannels, type WireMessage } from './wire';
 import { createServer, type Server } from 'node:net';
@@ -28,6 +29,7 @@ export interface ConnectOptions {
   readonly interactive: boolean;
   readonly ask: Ask;
   readonly progress: (stage: RemoteStage, progress?: DownloadProgress) => void;
+  readonly prepareArchive?: PrepareRemoteArchive;
   /** Process boundary injection for native failure-path tests; never exposed over IPC. */
   readonly spawn?: typeof spawnSsh;
 }
@@ -41,12 +43,10 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
     if (error instanceof RemoteError) throw error;
     throw sshFailure(error instanceof Error ? error.message : '', 'authentication');
   });
-  let stderr = '';
   let stage: RemoteStage = 'authentication';
-  ssh.child.stderr.on('data', (bytes: Buffer) => { stderr = (stderr + bytes.toString('utf8')).slice(-16384); });
-  ssh.child.on('error', error => { stderr = error.message; });
   ssh.child.stdin.on('error', () => undefined);
   const transportEnded = ssh.exited.then(() => {
+    const stderr = ssh.diagnostics();
     if (/EX11_COMPATIBILITY/.test(stderr)) throw failure(stage, 'compatibility', 'Remote prerequisites or runtime compatibility need attention. Verify Git, tar, head, sha256sum/shasum, and a supported Linux glibc or macOS host.', 'install-prerequisites');
     if (/EX11_CONFIGURATION/.test(stderr)) throw failure(stage, 'configuration', 'Remote setup could not safely continue. Check disk space, permissions, runtime cache integrity, and the daemon control-port conflict described in the remote development guide.', 'edit');
     if (/EX11_RUNTIME/.test(stderr)) throw failure('runtime', 'compatibility', 'The remote backend did not become ready. Check OS/libc compatibility and the backend prerequisites.', 'install-prerequisites');
@@ -79,7 +79,8 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
             const release = remoteRelease;
             work = (async () => {
               stage = 'download'; progress(stage);
-              const archive = await archiveFor(options.root, release, signal, value => progress('download', value));
+              const downloadProgress = (value: DownloadProgress) => progress('download', value);
+              const archive = options.prepareArchive ? await options.prepareArchive(release, signal, downloadProgress) : await archiveFor(options.root, release, signal, downloadProgress);
               signal.throwIfAborted(); stage = 'installation'; progress(stage);
               ssh.child.stdin.write(`${archive.bytes} ${archive.digest}\n`);
               const input = createReadStream(archive.path, { signal });
@@ -117,7 +118,7 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
     });
     ssh.child.stdout.resume();
     const hello = await greeting;
-    if (options.host.forwardAgent && !hello.agentForwarding) throw failure('authentication', 'configuration', 'Agent forwarding was requested but the SSH server did not provide an agent socket. Check AllowAgentForwarding and the local SSH agent.', 'edit');
+    if (options.host.forwardAgent && !hello.agentForwarding) throw failure('authentication', 'configuration', 'Agent forwarding was requested but SSH did not provide an agent socket. Check ForwardAgent in SSH config, server AllowAgentForwarding, and the local agent.', 'edit');
     const channels = new SocketChannels(channel);
     const servers = new Map<Server, Set<import('node:net').Socket>>();
     let closing = false;
@@ -138,7 +139,7 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
       if (closing) throw new Error('Remote transport is closing');
       const sockets = new Set<import('node:net').Socket>();
       const authorization = remotePort === 0 ? `Bearer ${randomBytes(32).toString('hex')}` : null;
-      const server = createServer({ highWaterMark: 16 * 1024 }, socket => {
+      const server = createServer({ highWaterMark: 16 * 1024, allowHalfOpen: true }, socket => {
         sockets.add(socket); socket.once('close', () => sockets.delete(socket));
         if (authorization === null) { channels.open(socket, remotePort, onServiceChanged); return; }
         // The backend is a privileged API, unlike an explicitly forwarded dev

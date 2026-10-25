@@ -18,7 +18,8 @@ export const environmentKey = (value: EnvironmentSelection): string => value.kin
 
 /** One application owner serializes atomic writes. Never stores challenge replies. */
 export class RemoteSettingsStore {
-  private writes: Promise<void> = Promise.resolve();
+  private pending: { body: string; promise: Promise<void>; resolve(): void; reject(error: unknown): void } | undefined;
+  private writing = false;
   constructor(private readonly path: string) {}
 
   async load(): Promise<RemoteSettings> {
@@ -60,16 +61,29 @@ export class RemoteSettingsStore {
   save(settings: RemoteSettings): Promise<void> {
     const body = JSON.stringify({ version: 1, ...settings });
     if (Buffer.byteLength(body) > 16 * 1024 * 1024) return Promise.reject(new Error('Remote settings exceed their size limit'));
-    const write = this.writes.catch(() => undefined).then(async () => {
-      await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    if (this.pending) { this.pending.body = body; return this.pending.promise; }
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+    this.pending = { body, promise, resolve, reject };
+    if (!this.writing) { this.writing = true; queueMicrotask(() => { void this.flush(); }); }
+    return promise;
+  }
+
+  private async flush(): Promise<void> {
+    // At most one active snapshot and one latest pending snapshot are retained,
+    // even if several windows type faster than the filesystem can fsync.
+    while (this.pending) {
+      const job = this.pending; this.pending = undefined;
       const temporary = `${this.path}.${randomUUID()}.tmp`;
       try {
+        await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
         const file = await open(temporary, 'wx', 0o600);
-        try { await file.writeFile(body); await file.sync(); } finally { await file.close(); }
-        await rename(temporary, this.path);
-      } finally { await rm(temporary, { force: true }); }
-    });
-    this.writes = write;
-    return write;
+        try { await file.writeFile(job.body); await file.sync(); } finally { await file.close(); }
+        await rename(temporary, this.path); job.resolve();
+      } catch (error) { job.reject(error); }
+      finally { await rm(temporary, { force: true }).catch(() => undefined); }
+    }
+    this.writing = false;
   }
 }

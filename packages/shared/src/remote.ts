@@ -7,7 +7,7 @@ export interface RemoteHostInput {
   readonly port?: number;
   readonly identityFile?: string;
   readonly configFile?: string;
-  /** Explicit consent; overrides ForwardAgent in ssh_config. */
+  /** Explicit consent; permits configured forwarding, including custom sockets. */
   readonly forwardAgent: boolean;
 }
 export interface RemoteHost extends RemoteHostInput { readonly id: string }

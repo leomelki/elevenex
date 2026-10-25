@@ -1,49 +1,13 @@
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { gzip } from 'node:zlib';
 import type { BackendRelease } from '../backend/release';
-import { downloadBackend, type DownloadProgress } from '../backend/download';
-import { extractBackend } from '../backend/archive';
-import { failure } from './failure';
 import { shellQuote } from './ssh';
-
-export async function archiveFor(root: string, release: BackendRelease, signal: AbortSignal, progress: (value: DownloadProgress) => void): Promise<{ path: string; digest: string; bytes: number }> {
-  const cache = join(root, 'remote-archives');
-  await mkdir(cache, { recursive: true, mode: 0o700 });
-  const path = join(cache, `${release.tag}-${release.target}.tar.gz`);
-  try {
-    const digest = await readFile(`${path}.sha256`, 'utf8');
-    const hash = createHash('sha256');
-    for await (const bytes of createReadStream(path, { signal })) hash.update(bytes);
-    if (/^[a-f0-9]{64}$/.test(digest) && hash.digest('hex') === digest) return { path, digest, bytes: (await stat(path)).size };
-  } catch { signal.throwIfAborted(); }
-  const staging = await mkdtemp(join(cache, '.download-'));
-  try {
-    const archive = join(staging, 'runtime.tar.gz');
-    const digest = await downloadBackend(release, archive, signal, progress);
-    // Reuse the local installer's path/type/size validation before remote tar
-    // ever sees these bytes. The publisher's archives contain no symlinks.
-    await extractBackend(archive, join(staging, 'verified'), signal);
-    signal.throwIfAborted();
-    await rename(archive, path);
-    const marker = join(staging, 'sha256');
-    await writeFile(marker, digest, { mode: 0o600 });
-    await rename(marker, `${path}.sha256`);
-    return { path, digest, bytes: (await stat(path)).size };
-  } catch (error) {
-    signal.throwIfAborted();
-    const message = error instanceof Error ? error.message : '';
-    if (/HTTP (404|403|401)/.test(message)) throw failure('download', 'compatibility', `The backend runtime for ${release.target} is not available for this desktop revision. Use a desktop release with a published matching runtime.`, 'edit');
-    if (/checksum|archive|PAX|tar|expanded|unsafe|traversal/i.test(message)) throw failure('download', 'compatibility', 'The runtime archive failed validation. No remote installation was changed. Check the published release before retrying.', 'edit');
-    throw error;
-  } finally { await rm(staging, { recursive: true, force: true, maxRetries: 3 }); }
-}
 
 /** All script substitutions are application-owned revisions, source and nonces. */
 export async function bootstrapScript(release: BackendRelease, nonce: string): Promise<string> {
-  const modules = ['wire', 'runtime', 'host', 'process-tree'];
+  const modules = ['wire', 'runtime', 'runtime-control', 'agent-proxy', 'host', 'process-tree'];
   const sources = await Promise.all(modules.map(name => readFile(join(__dirname, name === 'host' || name === 'process-tree' ? `../backend/${name}.js` : `${name}.js`), 'utf8')));
   const clientId = createHash('sha256').update(sources.join('\n')).digest('hex');
   const script = `set -eu
@@ -99,14 +63,13 @@ exec "$cache/backend/node/bin/node" "$client/runtime.js" bridge "$root" "$cache"
   const loader = `set -eu
 umask 077
 for tool in base64 gzip mktemp; do command -v "$tool" >/dev/null 2>&1 || { printf 'EX11_COMPATIBILITY: Install %s\\n' "$tool" >&2; exit 1; }; done
-packed=$(mktemp)
-script=$(mktemp)
-trap 'rm -f "$packed" "$script"' EXIT HUP INT TERM
-if printf '%s' '${packed.toString('base64')}' | base64 -d > "$packed" 2>/dev/null; then :;
-else printf '%s' '${packed.toString('base64')}' | base64 -D > "$packed"; fi
-gzip -dc "$packed" > "$script"
-rm -f "$packed"
-sh "$script"
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT HUP INT TERM
+printf '%s' '${packed.toString('base64')}' > "$stage/source.b64"
+if base64 -d < "$stage/source.b64" > "$stage/source.gz" 2>/dev/null; then :;
+else base64 -D < "$stage/source.b64" > "$stage/source.gz"; fi
+gzip -dc "$stage/source.gz" > "$stage/source.sh"
+sh "$stage/source.sh"
 `;
   return `sh -c ${shellQuote(loader)}`;
 }

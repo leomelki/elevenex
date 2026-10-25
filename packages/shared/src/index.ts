@@ -33,7 +33,7 @@ export interface InvokeContracts {
   'environment:status': { args: []; result: EnvironmentSnapshot };
   'environment:backend-status': { args: []; result: BackendStatus };
   'environment:select': { args: [selection: EnvironmentSelection]; result: EnvironmentSnapshot };
-  'environment:context': { args: [context: EnvironmentContext]; result: EnvironmentSnapshot };
+  'environment:context': { args: [context: EnvironmentContext, expectedEnvironment: EnvironmentSelection]; result: EnvironmentSnapshot };
   'remote:retry': { args: []; result: EnvironmentSnapshot };
   'remote:pause': { args: []; result: EnvironmentSnapshot };
   'remote:disconnect': { args: []; result: EnvironmentSnapshot };
@@ -77,7 +77,7 @@ export interface ElevenexBridge {
   environmentStatus(): Promise<EnvironmentSnapshot>;
   environmentBackendStatus(): Promise<BackendStatus>;
   selectEnvironment(selection: EnvironmentSelection): Promise<EnvironmentSnapshot>;
-  saveEnvironmentContext(context: EnvironmentContext): Promise<EnvironmentSnapshot>;
+  saveEnvironmentContext(context: EnvironmentContext, expectedEnvironment: EnvironmentSelection): Promise<EnvironmentSnapshot>;
   retryRemote(): Promise<EnvironmentSnapshot>;
   pauseRemoteRecovery(): Promise<EnvironmentSnapshot>;
   disconnectRemote(): Promise<EnvironmentSnapshot>;

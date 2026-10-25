@@ -30,7 +30,9 @@ The following settings intentionally override user configuration:
   and repair of known_hosts in a terminal; Retry cannot bypass it.
 - Agent forwarding is off unless the saved host explicitly enables it. An
   unlocked local agent can still authenticate without forwarding it. ProxyJump
-  children inherit the generated config and keep forwarding disabled.
+  children inherit the generated config and keep forwarding disabled. Enabling
+  forwarding preserves a configured custom ForwardAgent socket; an explicit
+  `ForwardAgent no` still disables it and produces an actionable setup error.
 - ClearAllForwardings prevents configured LocalForward, RemoteForward or
   DynamicForward entries from opening listeners or breaking initialization.
   Recreate desired development forwards with the managed-forward API. We never
@@ -50,10 +52,17 @@ TCP acceptance, not the arbitrary service's application protocol. Retry forward
 rebinds/rechecks it; connection recovery recreates forwards once per generation.
 
 `wire.ts` bounds frames to 96 KiB, data chunks to 64 KiB, aggregate pending output
-to 4 MiB and concurrent stream channels to 64 per transport. Each direction has
-one unacknowledged data frame, with socket backpressure. Removing a forward
+to 4 MiB and concurrent stream channels to 64 per transport. Each channel has a
+512 KiB byte-credit window in each direction. Readable-mode pumping splits large
+prefetched chunks, preserves TCP half-closes, and respects shared transport
+backpressure. A stalled channel cannot consume another channel's credits or
+block a separate service. Removing a forward
 closes its accepted sockets; disconnecting one window cannot close another
 window's listeners or shared connection lease.
+
+Host progress reaches only windows selecting that host; draft and forward
+updates reach only their owning window. Unrelated windows do not repeatedly
+receive cloned context snapshots during a download or typing burst.
 
 ## Setup and remote work lifetime
 
@@ -68,13 +77,16 @@ Use a modern OpenSSH client (9+). macOS is the validated client host. Linux uses
 the same POSIX launcher. Windows client support uses installed OpenSSH and a
 small credential-free .NET askpass executable compiled with built-in Windows
 PowerShell Add-Type into the attempt's temporary directory; there is no command
-shell interpolation of prompts. Restricted PowerShell compilation requires an
-unlocked SSH agent or administrator policy changes. Windows/Linux client runtime
+shell interpolation of prompts. Interactive prompting requires policy to allow
+that compiler; agent-only background restoration does not compile it. Windows/Linux client runtime
 verification and release-platform certification remain outstanding.
 
 The selected desktop release's `elevenex-backend-<target>.tar.gz` and checksum are
 downloaded **locally**, using the existing GitHub allowlist, redirect, checksum
-and archive validators. A verified local archive cache avoids repeat downloads.
+and archive validators. An application-owned archive cache coalesces concurrent
+downloads, hashing and extraction across hosts. Cancelling one host only releases
+its own lease; preparation aborts after its last owner leaves. A verified local
+archive cache avoids repeat downloads.
 The archive streams over the already authenticated SSH channel into a private
 remote staging directory. The remote independently checks its checksum, tests
 bundled Node, and atomically publishes the immutable installation. A healthy
@@ -94,12 +106,18 @@ legacy remote data and local desktop data:
 | `data/` | Database, tasks, sessions, agent workspaces and app-owned caches |
 | `backend.sock`, `agent.sock` | Private, mode-0600 runtime sockets |
 | `control-token` | Mode-0600 daemon authentication token; never renderer-visible |
+| `daemon.json` | Atomic mode-0600 discovery record for the current control listener |
 
 The daemon reserves a deterministic remote loopback UDP port in 20000–39999 as
-its kernel database ownership lock. An HTTP control listener on the same TCP
-port authenticates with that token; neither is an exposed backend API. The
+its kernel database ownership lock. The HTTP control listener uses an
+OS-allocated TCP port recorded in `daemon.json`, so an unrelated TCP service
+cannot prevent setup. Requests and responses authenticate with fresh nonces,
+timestamps and HMAC proofs; the token is never sent to a stale/reused TCP port.
+Neither listener is an exposed backend API. The
 reservation is separate from health traffic so a retained supervisor handle
 cannot swallow health requests. A conflicting service is never killed or adopted.
+An unrelated UDP reservation on the ownership port still requires intervention;
+it is never treated as permission to start a second database owner.
 The backend itself uses the private Unix socket through the opt-in
 `ELEVENEX_DESKTOP_SOCKET` setting. Existing launchers continue to use TCP.
 This requires a backend release containing this change; the earlier local-only
@@ -118,6 +136,10 @@ to the remote backend, not the tunnel. Forwarded-agent access is a short-lived
 lease refreshed by bridge health checks and removed on disconnect/expiry; it
 is not permanently captured by the daemon. After all clients disconnect,
 operations that need a forwarded agent must wait for a new consenting client.
+The stable agent proxy tries another live lease if an agent socket has died,
+before consuming any authentication/signing bytes. It never retries a signing
+request after connecting. Revoking one lease closes only that lease's clients;
+agent connection attempts and idle time are bounded.
 Backend/daemon crashes or host reboots can interrupt agents; this layer does not
 invent automatic agent-run resumption.
 
@@ -174,9 +196,12 @@ integration must use focused typed domain adapters or a separately reviewed,
 constrained protocol; do not loosen CSP or expose a generic shell/HTTP IPC method.
 
 Subscribe before reading a snapshot. Save selection context with
-`saveEnvironmentContext` (project/task/session IDs, draft and last event cursor).
+`saveEnvironmentContext(context, expectedEnvironment)` (project/task/session IDs,
+draft and last event cursor). Main rejects a late update from an old environment.
 Each environment has its own context. Drafts are bounded to 100,000 characters
-and saved atomically in the desktop's private `remote-settings.json`. This is a
+and saved atomically in the desktop's private `remote-settings.json`. Rapid
+updates coalesce to one active write and one latest pending snapshot rather than
+queuing every keystroke. This is a
 local recovery copy, not an offline mutation queue. Window slots are restored
 in creation order on launch; a recreated connected slot reconnects without
 interactive prompts. Intentional disconnect and pause persist until explicit
@@ -192,6 +217,8 @@ setup stages, downloads, bridge requests and application health.
 One retry coordinator uses exponential backoff with jitter capped at 30 seconds.
 Transient failures retry automatically; authentication, trust, configuration and
 compatibility failures pause. Only explicit connect/retry can present a challenge.
+Retry now during a background attempt queues one interactive attempt after the
+current attempt cleans up, rather than losing the request or connecting twice.
 Trust replies require `yes`, null cancels, challenges expire after two minutes,
 and only the owning window can answer their current ID. Each attempt allows a
 bounded number of interactive prompts. Passwords/passphrases pass through a fresh
@@ -218,11 +245,32 @@ remote Git and the selected release's platform prerequisites in a terminal.
 upload cleanup, binary tunneling/backpressure, OpenSSH config evaluation,
 authentication/trust failure classification, stale replies, cancellation,
 concurrent-window leases/challenges, forward conflicts and restore/draft tests.
+Manager race tests cover rapid A → local → A switches, host edits while a
+selection is saving, retired-connection cleanup, shutdown and failed settings
+writes. Stream tests cover 2 MiB responses after EOF, oversized prefetched
+chunks, full channel capacity, stalled peers, shared output backpressure and
+delayed acknowledgements.
 The existing backend tests continue to check process-tree cleanup and revision
 readiness. IPC tests cover sender ownership, runtime validation, event cleanup
 and negative TypeScript contracts. The native Electron smoke verifies the real
 sandboxed preload and multiple-window isolation using an isolated backend and
 protocol fixture, not a packaged or fully rendered product.
+
+Where `/usr/sbin/sshd` is available for a non-root listener, a permanent native
+test uses disposable keys, an isolated known_hosts file and an owned ssh-agent.
+It covers real host trust, changed keys, wrong passphrases, background agent
+authentication, jump aliases, custom agent sockets, conflicting configured
+forwards, full runtime bootstrap, the authenticated backend tunnel, and the
+persistent backend's forwarded-agent access/revocation. It never uses personal
+SSH credentials or writes its runtime into the real home directory.
+
+On the development macOS host, that loopback SSH fixture with one jump and
+programmatic encrypted-key unlocks measured approximately **0.7–1.1 seconds**
+for a new daemon and **0.5–0.6 seconds** for a warm reconnect. The fixture backend
+is small and its runtime is already cached; these figures exclude a real release
+download and human input. A separate 4 MiB stream fixture with 40 ms ACK delay
+took approximately **0.3 seconds**, demonstrating pipelining rather than WAN
+throughput. These are diagnostic measurements, not performance promises.
 
 No live customer SSH server, real MFA provider, Windows/Linux client launch, or
 download of a newly published socket-capable runtime is asserted by these tests.

@@ -27,6 +27,8 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   expectTypeOf(invoke('app:version')).toEqualTypeOf<Promise<string>>();
   expectTypeOf(invoke('backend:status')).toEqualTypeOf<Promise<BackendStatus>>();
   expectTypeOf(invoke('environment:select', { kind: 'remote', hostId: 'host-id' })).toEqualTypeOf<Promise<EnvironmentSnapshot>>();
+  // @ts-expect-error Draft updates must name the environment they belong to.
+  void invoke('environment:context', { projectId: null, taskId: null, sessionId: null, draft: '', cursor: null });
   // @ts-expect-error Window ownership comes from the sender, never a renderer id.
   void invoke('remote:disconnect', 42);
   // @ts-expect-error Trust replies do not accept arbitrary Electron objects.

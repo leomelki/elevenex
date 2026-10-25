@@ -6,7 +6,7 @@ const calls = [
   ['environmentStatus', 'environment:status', []],
   ['environmentBackendStatus', 'environment:backend-status', []],
   ['selectEnvironment', 'environment:select', [{ kind: 'local' }]],
-  ['saveEnvironmentContext', 'environment:context', [{ projectId: null, taskId: null, sessionId: null, draft: '', cursor: null }]],
+  ['saveEnvironmentContext', 'environment:context', [{ projectId: null, taskId: null, sessionId: null, draft: '', cursor: null }, { kind: 'local' }]],
   ['retryRemote', 'remote:retry', []],
   ['pauseRemoteRecovery', 'remote:pause', []],
   ['disconnectRemote', 'remote:disconnect', []],

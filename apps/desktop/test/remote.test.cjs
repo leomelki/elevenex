@@ -7,6 +7,7 @@ const { createServer } = require('node:http');
 const { createServer: tcpServer, connect } = require('node:net');
 const { spawn } = require('node:child_process');
 const { PassThrough } = require('node:stream');
+const { createHash } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { RemoteManager } = require('../dist/remote/manager');
 const { backendRelease } = require('../dist/backend/release');
@@ -78,7 +79,7 @@ test('windows coalesce startup and disconnect/pause only their own leases; conte
   await Promise.all([manager.select(1, remote), manager.select(2, remote)]);
   await ready(manager); await ready(manager, 2); assert.equal(starts(), 1);
   const context = { projectId: 1, taskId: 2, sessionId: 3, draft: 'unsent\nmessage', cursor: 'event-25' };
-  await manager.saveContext(1, context);
+  await manager.saveContext(1, context, remote);
   await manager.disconnect(1, true);
   assert.equal(manager.snapshot(1).connection.phase, 'paused');
   assert.equal(manager.snapshot(2).connection.phase, 'ready'); assert.equal(stops(), 0);
@@ -170,7 +171,7 @@ test('forward bind conflicts are visible and retryable, and removing one window 
 
 test('settings restore connections without interactive authentication and retain disconnected intent and drafts', async t => {
   const { manager, remote, root, options } = await setup(t); await manager.select(1, remote); await ready(manager);
-  await manager.saveContext(1, { projectId: null, taskId: 4, sessionId: 5, draft: 'offline draft', cursor: 'delta' });
+  await manager.saveContext(1, { projectId: null, taskId: 4, sessionId: 5, draft: 'offline draft', cursor: 'delta' }, remote);
   await manager.disconnect(1); await manager.dispose();
   const calls = [];
   const restored = new RemoteManager({ ...options, connect: async input => { calls.push(input.interactive); throw failure('authentication', 'authentication', 'Unlock the key.', 'authenticate'); } });
@@ -251,14 +252,20 @@ test('real bootstrap reuses a healthy runtime and daemon across dropped transpor
   await mkdir(join(installation, 'backend/node/bin'), { recursive: true });
   await symlink(process.execPath, join(installation, 'backend/node/bin/node'));
   await writeFile(join(installation, 'installation.sha256'), 'verified-fixture');
-  await writeFile(join(installation, 'backend/main.cjs'), `const http=require('http'),fs=require('fs');fs.appendFileSync(${JSON.stringify(join(home, 'starts'))},'1');const server=http.createServer((req,res)=>res.end(JSON.stringify({backendSha:${JSON.stringify(version)},pid:process.pid})));server.listen(process.env.ELEVENEX_DESKTOP_SOCKET);process.on('SIGTERM',()=>server.close(()=>process.exit(0)));`);
+  await writeFile(join(installation, 'backend/main.cjs'), `const http=require('http'),fs=require('fs');fs.appendFileSync(${JSON.stringify(join(home, 'starts'))},'1');const ignoreTerm=fs.readFileSync(${JSON.stringify(join(home, 'starts'))},'utf8').length===1;const server=http.createServer((req,res)=>res.end(JSON.stringify({backendSha:${JSON.stringify(version)},pid:process.pid})));server.listen(process.env.ELEVENEX_DESKTOP_SOCKET);process.on('SIGTERM',()=>{if(!ignoreTerm)server.close(()=>process.exit(0));});`);
+  // A conflicting TCP service must neither block initialization nor be killed.
+  const controlPort = 20000 + createHash('sha256').update(`${home}:${process.getuid?.() ?? ''}:elevenex-desktop`).digest().readUInt32BE(0) % 20000;
+  const occupied = createServer((_req, res) => res.writeHead(403).end());
+  await new Promise((resolve, reject) => { occupied.once('error', reject); occupied.listen(controlPort, '127.0.0.1', resolve); });
+  t.after(() => new Promise(resolve => occupied.close(resolve)));
   const children = [];
   const spawnFixture = async (_host, command, _ask, _interactive, signal) => {
     const child = spawn('sh', ['-c', command], { cwd: home, env: { ...process.env, HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child);
+    let diagnostics = ''; child.stderr.on('data', bytes => { diagnostics = (diagnostics + bytes).slice(-16384); });
     const exited = new Promise(resolve => { child.once('error', resolve); child.once('close', resolve); });
     const stop = async () => { child.stdin.end(); child.kill('SIGTERM'); await exited; };
     signal.addEventListener('abort', () => { void stop(); }, { once: true });
-    return { child, exited, stop };
+    return { child, exited, diagnostics: () => diagnostics, stop };
   };
   const daemonPids = async () => {
     const processes = await new Promise(resolve => { const child = spawn('ps', ['-axo', 'pid=,command=']); let body = ''; child.stdout.on('data', bytes => { body += bytes; }); child.on('close', () => resolve(body)); });
@@ -273,7 +280,9 @@ test('real bootstrap reuses a healthy runtime and daemon across dropped transpor
     await delay(1500); await rm(home, { recursive: true, force: true });
   });
   const options = { host: { ...host, id: 'host' }, root: home, helper: '', release, signal: AbortSignal.timeout(15000), interactive: false, ask: async () => null, progress: () => undefined, spawn: spawnFixture };
+  const coldStarted = performance.now();
   const first = await connectRemote(options); const initial = await first.health(AbortSignal.timeout(3000)); assert.equal(initial.ready, true);
+  const coldMilliseconds = performance.now() - coldStarted;
   const backend = await first.forward(0, 0); assert.equal(backend.reachable, true);
   assert.equal((await fetch(`http://127.0.0.1:${backend.port}/api/info`)).status, 403);
   const initialInfo = await fetch(`http://127.0.0.1:${backend.port}/api/info`, { headers: { Authorization: backend.authorization } }).then(res => res.json());
@@ -283,12 +292,14 @@ test('real bootstrap reuses a healthy runtime and daemon across dropped transpor
   await new Promise(resolve => { const socket = connect(absent.port, '127.0.0.1'); socket.on('error', () => undefined); socket.once('close', resolve); });
   assert.deepEqual(serviceStatus, [false]); await absent.close();
   await first.close();
-  const second = await connectRemote({ ...options, signal: AbortSignal.timeout(15000) });
+  const warmStarted = performance.now(); const second = await connectRemote({ ...options, signal: AbortSignal.timeout(15000) });
+  t.diagnostic(`Cached runtime, new daemon: ${Math.round(coldMilliseconds)} ms; warm daemon reconnect: ${Math.round(performance.now() - warmStarted)} ms (subprocess fixture, no SSH/network latency).`);
   assert.equal(second.instance, first.instance); assert.equal(await readFile(join(home, 'starts'), 'utf8'), '1'); await second.close();
   const pids = await daemonPids(); assert.equal(pids.length, 1); process.kill(pids[0], 'SIGKILL');
   const third = await connectRemote({ ...options, signal: AbortSignal.timeout(15000) });
   assert.notEqual(third.instance, second.instance); assert.equal(await readFile(join(home, 'starts'), 'utf8'), '11');
   assert.throws(() => process.kill(initialInfo.pid, 0), { code: 'ESRCH' }); await third.close();
+  assert.equal(occupied.listening, true);
   const script = await bootstrapScript(release, 'abc123'); assert.ok(script.includes('base64')); assert.ok(Buffer.byteLength(script) < 30000);
 });
 

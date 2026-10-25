@@ -15,6 +15,7 @@ interface WindowState {
   readonly saved: SavedWindow;
   intent: 'connected' | 'paused' | 'disconnected';
   revision: number;
+  pendingHost: string | undefined;
   readonly forwards: Map<string, WindowForward>;
 }
 export interface RemoteManagerOptions extends Omit<ConnectionOptions, 'host' | 'changed'> { readonly settingsPath: string }
@@ -24,6 +25,7 @@ export class RemoteManager {
   private settings: RemoteSettings = { hosts: [], windows: [] };
   private readonly windows = new Map<number, WindowState>();
   private readonly connections = new Map<string, RemoteConnection>();
+  private readonly retiringConnections = new Set<Promise<void>>();
   private readonly listeners = new Set<(windowId: number, snapshot: EnvironmentSnapshot) => void>();
   private readonly store: RemoteSettingsStore;
   private readonly fileGrants = { identity: new Set<string>(), config: new Set<string>() };
@@ -55,17 +57,17 @@ export class RemoteManager {
       if (this.settings.windows.length >= 32) throw new Error('Too many saved desktop windows');
       this.settings.windows.push(saved);
     }
-    this.windows.set(windowId, { saved, intent: saved.connect ? 'connected' : 'disconnected', revision: 0, forwards: new Map() });
+    this.windows.set(windowId, { saved, intent: saved.connect ? 'connected' : 'disconnected', revision: 0, pendingHost: undefined, forwards: new Map() });
     // Launch restoration is deliberately noninteractive. Unknown trust or a
     // locked key pauses rather than presenting a background credential dialog.
     if (saved.connect && saved.selection.kind === 'remote') this.connection(saved.selection.hostId).acquire(windowId, false);
-    this.changed();
+    this.changed({ windowId });
   }
   async detach(windowId: number): Promise<void> {
     const window = this.windows.get(windowId); if (!window) return;
     this.windows.delete(windowId);
-    await this.closeForwards(window);
-    if (window.saved.selection.kind === 'remote') await this.connections.get(window.saved.selection.hostId)?.release(windowId);
+    const release = window.saved.selection.kind === 'remote' ? this.connections.get(window.saved.selection.hostId)?.release(windowId) : undefined;
+    await Promise.all([this.closeForwards(window), release]);
   }
   snapshot(windowId: number): EnvironmentSnapshot {
     const window = this.window(windowId);
@@ -103,62 +105,91 @@ export class RemoteManager {
     if (validated.configFile && !this.fileGrants.config.has(validated.configFile)) throw new Error('Choose the SSH config file with the desktop file picker first');
     const current = hostId === null ? undefined : this.settings.hosts.find(host => host.id === validate.id(hostId));
     if (hostId !== null && !current) throw new Error('Unknown saved host');
-    if (current && this.connections.get(current.id)?.active) throw new Error('Disconnect this host in every window before editing its shared settings');
+    if (current && this.hostInUse(current.id)) throw new Error('Disconnect this host in every window before editing its shared settings');
     if (!current && this.settings.hosts.length >= 100) throw new Error('Saved host limit reached');
     const host = { ...validated, id: current?.id ?? randomUUID() };
-    if (current) { this.settings.hosts.splice(this.settings.hosts.indexOf(current), 1, host); await this.connections.get(host.id)?.dispose(); this.connections.delete(host.id); }
+    if (current) {
+      this.settings.hosts.splice(this.settings.hosts.indexOf(current), 1, host);
+      await this.retireConnection(host.id);
+    }
     else this.settings.hosts.push(host);
     await this.save(); this.changed(); return { ...host };
   }
   async removeHost(hostId: string): Promise<void> {
     this.assertWritable(); validate.id(hostId);
-    if (this.connections.get(hostId)?.active) throw new Error('Disconnect this host in every window before removing it');
+    if (this.hostInUse(hostId)) throw new Error('Disconnect this host in every window before removing it');
     if (!this.settings.hosts.some(host => host.id === hostId)) throw new Error('Unknown saved host');
     this.settings.hosts = this.settings.hosts.filter(host => host.id !== hostId);
-    await this.connections.get(hostId)?.dispose(); this.connections.delete(hostId);
+    const retirement = this.retireConnection(hostId);
     for (const window of this.settings.windows) {
       delete window.contexts[hostId]; delete window.forwards[hostId];
       if (window.selection.kind === 'remote' && window.selection.hostId === hostId) { window.selection = { kind: 'local' }; window.connect = false; }
     }
+    await retirement;
     await this.save(); this.changed();
   }
   async select(windowId: number, input: EnvironmentSelection): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const next = validate.selection(input); const window = this.window(windowId);
-    const revision = ++window.revision;
     if (next.kind === 'remote' && !this.settings.hosts.some(host => host.id === next.hostId)) throw new Error('Unknown saved host');
-    const previous = window.saved.selection;
-    if (environmentKey(previous) !== environmentKey(next)) {
-      window.saved.selection = next; window.intent = 'disconnected';
-      await this.closeForwards(window);
-      if (previous.kind === 'remote') await this.connections.get(previous.hostId)?.release(windowId);
-    }
-    if (window.revision !== revision) return this.snapshot(windowId);
-    window.intent = 'connected'; window.saved.connect = next.kind === 'remote';
-    await this.save();
-    if (this.windows.get(windowId) !== window || window.revision !== revision) return this.snapshot(windowId);
-    if (next.kind === 'remote') this.connection(next.hostId).acquire(windowId, true);
-    this.changed(); return this.snapshot(windowId);
+    const revision = ++window.revision;
+    window.pendingHost = next.kind === 'remote' ? next.hostId : undefined;
+    try {
+      const previous = window.saved.selection;
+      if (environmentKey(previous) !== environmentKey(next)) {
+        window.saved.selection = next; window.intent = 'disconnected'; window.saved.connect = false;
+        // Relinquish the old lease before yielding: another selection may acquire
+        // that same host while its forwarded sockets are still closing.
+        const release = previous.kind === 'remote' ? this.connections.get(previous.hostId)?.release(windowId) : undefined;
+        await Promise.all([this.closeForwards(window), release]);
+      }
+      this.assertWritable();
+      if (this.windows.get(windowId) !== window || window.revision !== revision) return this.snapshot(windowId);
+      window.intent = 'connected'; window.saved.connect = next.kind === 'remote';
+      await this.save();
+      this.assertWritable();
+      if (this.windows.get(windowId) !== window || window.revision !== revision) return this.snapshot(windowId);
+      if (next.kind === 'remote') this.connection(next.hostId).acquire(windowId, true);
+      this.changed({ windowId }); return this.snapshot(windowId);
+    } catch (error) {
+      if (this.windows.get(windowId) === window && window.revision === revision) {
+        window.intent = 'disconnected'; window.saved.connect = false;
+        if (next.kind === 'remote') await this.connections.get(next.hostId)?.release(windowId);
+      }
+      throw error;
+    } finally { if (window.revision === revision) window.pendingHost = undefined; }
   }
-  async saveContext(windowId: number, input: EnvironmentContext): Promise<EnvironmentSnapshot> {
+  async saveContext(windowId: number, input: EnvironmentContext, expected: EnvironmentSelection): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.window(windowId);
+    if (environmentKey(validate.selection(expected)) !== environmentKey(window.saved.selection)) throw new Error('The selected environment changed; discard this stale context update');
     window.saved.contexts[environmentKey(window.saved.selection)] = validate.context(input);
-    await this.save(); this.changed(); return this.snapshot(windowId);
+    await this.save(); this.changed({ windowId }); return this.snapshot(windowId);
   }
   async retry(windowId: number): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.remoteWindow(windowId);
     const revision = ++window.revision;
-    window.intent = 'connected'; window.saved.connect = true; await this.save();
-    if (this.windows.get(windowId) !== window || window.revision !== revision) return this.snapshot(windowId);
-    this.connection(this.hostId(window)).retry(windowId); this.changed(); return this.snapshot(windowId);
+    window.pendingHost = this.hostId(window);
+    try {
+      window.intent = 'connected'; window.saved.connect = true; await this.save();
+      this.assertWritable();
+      if (this.windows.get(windowId) !== window || window.revision !== revision) return this.snapshot(windowId);
+      this.connection(this.hostId(window)).retry(windowId); this.changed({ windowId }); return this.snapshot(windowId);
+    } catch (error) {
+      if (this.windows.get(windowId) === window && window.revision === revision) {
+        window.intent = 'disconnected'; window.saved.connect = false;
+        await this.connections.get(this.hostId(window))?.release(windowId);
+      }
+      throw error;
+    } finally { if (window.revision === revision) window.pendingHost = undefined; }
   }
   async disconnect(windowId: number, pause = false): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.remoteWindow(windowId);
     ++window.revision;
+    window.pendingHost = undefined;
     const hostId = this.hostId(window);
     window.intent = pause ? 'paused' : 'disconnected'; window.saved.connect = false;
     const release = this.connections.get(hostId)?.release(windowId);
     await this.closeForwards(window); await this.save(); await release;
-    this.changed(); return this.snapshot(windowId);
+    this.changed({ windowId }); return this.snapshot(windowId);
   }
   answer(windowId: number, challengeId: string, answer: string | null): void {
     validate.id(challengeId);
@@ -174,56 +205,74 @@ export class RemoteManager {
     const inputs = this.forwardInputs(window); if (inputs.length >= 32) throw new Error('Forward limit reached');
     if (inputs.some(value => value.remotePort === validated.remotePort || (validated.localPort && value.localPort === validated.localPort))) throw new Error('This service or local port already has a forward in this window');
     inputs.push({ ...validated, id: randomUUID() }); window.saved.forwards[this.hostId(window)] = inputs;
-    await this.save(); this.changed(); return this.snapshot(windowId);
+    await this.save(); this.changed({ windowId }); return this.snapshot(windowId);
   }
   async retryForward(windowId: number, forwardId: string): Promise<EnvironmentSnapshot> {
+    this.assertWritable();
     const window = this.remoteWindow(windowId); validate.id(forwardId);
     if (!this.forwardInputs(window).some(input => input.id === forwardId)) throw new Error('Unknown forward');
     const previous = window.forwards.get(forwardId); window.forwards.delete(forwardId); await previous?.running?.close();
-    this.changed(); return this.snapshot(windowId);
+    this.changed({ windowId }); return this.snapshot(windowId);
   }
   async removeForward(windowId: number, forwardId: string): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.remoteWindow(windowId); validate.id(forwardId);
     if (!this.forwardInputs(window).some(input => input.id === forwardId)) throw new Error('Unknown forward');
     window.saved.forwards[this.hostId(window)] = this.forwardInputs(window).filter(input => input.id !== forwardId);
     const previous = window.forwards.get(forwardId); window.forwards.delete(forwardId); await previous?.running?.close();
-    await this.save(); this.changed(); return this.snapshot(windowId);
+    await this.save(); this.changed({ windowId }); return this.snapshot(windowId);
   }
   networkChanged(): void { for (const connection of this.connections.values()) connection.networkChanged(); }
   dispose(): Promise<void> {
     this.shutdown ??= (async () => {
       this.disposed = true;
-      await Promise.all([...this.windows.values()].map(window => this.closeForwards(window)));
-      await Promise.all([...this.connections.values()].map(connection => connection.dispose()));
+      await Promise.all([
+        ...[...this.connections.values()].map(connection => connection.dispose()),
+        ...this.retiringConnections,
+        ...[...this.windows.values()].map(window => this.closeForwards(window)),
+      ]);
       if (!this.error) await this.save();
       this.listeners.clear(); this.windows.clear(); this.connections.clear();
     })(); return this.shutdown;
   }
 
   private connection(hostId: string): RemoteConnection {
+    this.assertWritable();
     let connection = this.connections.get(hostId);
     if (!connection) {
       const host = this.settings.hosts.find(host => host.id === hostId); if (!host) throw new Error('Unknown saved host');
       connection = new RemoteConnection({ ...this.options, host,
         release: async () => { const release = await this.options.release(); this.remoteVersion = release.version; return release; },
-        changed: () => this.changed(),
+        changed: () => this.changed({ hostId }),
       }); this.connections.set(hostId, connection);
     }
     return connection;
+  }
+  private retireConnection(hostId: string): Promise<void> {
+    const previous = this.connections.get(hostId); this.connections.delete(hostId);
+    // Detach synchronously, so an overlapping connect only sees the new host.
+    // Keep cleanup owned by the application even after it leaves the registry.
+    const retiring = (previous?.dispose() ?? Promise.resolve()).finally(() => this.retiringConnections.delete(retiring));
+    this.retiringConnections.add(retiring); return retiring;
   }
   private window(id: number): WindowState { const window = this.windows.get(id); if (!window) throw new Error('Window is no longer available'); return window; }
   private remoteWindow(id: number): WindowState { const window = this.window(id); this.hostId(window); return window; }
   private hostId(window: WindowState): string { if (window.saved.selection.kind !== 'remote') throw new Error('Select a remote environment first'); return window.saved.selection.hostId; }
   private assertWritable(): void { if (this.disposed) throw new Error('Remote development is shutting down'); if (this.error) throw this.error; }
+  private hostInUse(hostId: string): boolean {
+    return !!this.connections.get(hostId)?.active || [...this.windows.values()].some(window => window.pendingHost === hostId
+      || window.intent === 'connected' && window.saved.selection.kind === 'remote' && window.saved.selection.hostId === hostId);
+  }
   private save(): Promise<void> { return this.store.save(this.settings); }
   private forwardInputs(window: WindowState) { return window.saved.selection.kind === 'remote' ? window.saved.forwards[window.saved.selection.hostId] ?? [] : []; }
   private async closeForwards(window: WindowState): Promise<void> {
     const values = [...window.forwards.values()]; window.forwards.clear();
     await Promise.all(values.map(value => value.running?.close()));
   }
-  private changed(): void {
+  private changed(scope?: { readonly hostId: string } | { readonly windowId: number }): void {
     if (this.disposed) return;
     for (const [id, window] of this.windows) {
+      if (scope && ('windowId' in scope ? id !== scope.windowId
+        : window.saved.selection.kind !== 'remote' || window.saved.selection.hostId !== scope.hostId)) continue;
       this.reconcileForwards(id, window);
       const snapshot = this.snapshot(id);
       for (const listener of this.listeners) { try { listener(id, snapshot); } catch { /* A closing window must not affect other owners. */ } }
@@ -247,18 +296,18 @@ export class RemoteManager {
         current.available = available;
         current.status = { ...input, phase: available ? 'listening' : 'unavailable', boundPort: current.running?.port ?? null,
           message: available ? null : 'The remote service could not accept a connection. Start the service or retry this forward.' };
-        this.changed();
+        this.changed({ windowId });
       }).then(async running => {
         if (this.windows.get(windowId) !== window || window.forwards.get(input.id) !== current || connection?.currentTransport() !== transport) { await running.close(); return; }
         current.running = running;
         const available = current.available ?? running.reachable;
         current.status = { ...input, phase: available ? 'listening' : 'unavailable', boundPort: running.port,
-          message: available ? null : 'The listener is open, but the remote service is not accepting connections. Start the service and choose Retry forward.' }; this.changed();
+          message: available ? null : 'The listener is open, but the remote service is not accepting connections. Start the service and choose Retry forward.' }; this.changed({ windowId });
       }).catch(error => {
         if (window.forwards.get(input.id) !== current) return;
         const conflict = error instanceof Error && 'code' in error && error.code === 'EADDRINUSE';
         current.status = { ...input, phase: conflict ? 'conflict' : 'unavailable', boundPort: null,
-          message: conflict ? 'The local port is in use. Remove this forward and choose another port, or retry when it is free.' : 'The forwarding listener could not start. Retry after checking the connection.' }; this.changed();
+          message: conflict ? 'The local port is in use. Remove this forward and choose another port, or retry when it is free.' : 'The forwarding listener could not start. Retry after checking the connection.' }; this.changed({ windowId });
       });
     }
   }
