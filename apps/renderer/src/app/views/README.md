@@ -48,6 +48,13 @@ supports upstream content pagination. This bounds DOM size even for a giant
 generated change. It deliberately replaces the reference's unbounded all-file
 stream with bounded pages while preserving a continuous review within each page.
 
+At compact widths, navigation and review tools occupy separate toolbar rows so
+filenames remain readable. `ChangeList.selected` follows arrow/Home/End navigation;
+`activated` confirms with Enter, Space or a click. The jump dialog stays open while
+browsing and restores focus to its trigger when confirmed or dismissed. Explicit
+file jumps retain their selection at the bottom of the scroll until the user
+scrolls, even when a short last file cannot align to the top.
+
 `DiffFile` owns collapse state, line-question drafts and sent local notes; the
 owner controls Viewed flags and clears them when revisions change. A changed
 revision invalidates local content/drafts. Comments include the correct old/new

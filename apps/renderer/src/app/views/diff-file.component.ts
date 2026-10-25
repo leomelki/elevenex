@@ -57,6 +57,11 @@ export class DiffFileComponent {
       return until > from ? [{ ...hunk, lines: hunk.lines.slice(from, until) }] : [];
     });
   });
+  protected readonly lineNumberWidth = computed(() => {
+    let largest = 0;
+    for (const hunk of this.hunks()) for (const line of hunk.lines) largest = Math.max(largest, line.oldNumber ?? 0, line.newNumber ?? 0);
+    return `calc(${String(largest).length}ch + var(--space-2))`;
+  });
   protected readonly currentDraft = computed(() => this.draft()?.identity === this.identity() ? this.draft() : null);
   protected readonly currentNotes = computed(() => this.notes().filter(note => note.identity === this.identity()));
   protected readonly skeletonRows = computed(() => Math.max(3, Math.min(12, this.file().add + this.file().del)));
@@ -116,7 +121,7 @@ export class DiffFileComponent {
     this.draft.set(null);
   }
   protected commentKeydown(event: KeyboardEvent): void {
-    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); this.sendComment(); }
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !event.isComposing) { event.preventDefault(); this.sendComment(); }
     if (event.key === 'Escape') { event.stopPropagation(); this.draft.set(null); }
   }
 }

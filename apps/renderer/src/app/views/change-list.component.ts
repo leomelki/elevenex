@@ -19,6 +19,7 @@ export class ChangeListComponent {
   readonly grouped = input(true);
   readonly label = input('Changed files');
   readonly selected = output<string>();
+  readonly activated = output<string>();
   protected readonly viewport = viewChild(CdkVirtualScrollViewport);
   protected readonly names = fileName;
   protected readonly folders = folderName;
@@ -53,13 +54,26 @@ export class ChangeListComponent {
     const items = this.items();
     if (!items.length) return;
     let index = items.findIndex(file => file.id === this.active());
+    if (event.key === 'Enter' || event.key === ' ') {
+      const file = items[index];
+      if (file) { event.preventDefault(); event.stopPropagation(); this.activated.emit(file.id); }
+      return;
+    }
     if (event.key === 'ArrowDown') index = Math.min(items.length - 1, index + 1);
     else if (event.key === 'ArrowUp') index = Math.max(0, index - 1);
     else if (event.key === 'Home') index = 0;
     else if (event.key === 'End') index = items.length - 1;
     else return;
     event.preventDefault();
+    event.stopPropagation();
     const file = items[index];
     if (file) this.selected.emit(file.id);
+  }
+
+  protected select(fileId: string): void {
+    // Keep focus on the listbox when virtual rows are replaced during navigation.
+    this.viewport()?.elementRef.nativeElement.focus({ preventScroll: true });
+    this.selected.emit(fileId);
+    this.activated.emit(fileId);
   }
 }

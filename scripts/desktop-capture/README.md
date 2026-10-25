@@ -162,6 +162,17 @@ It checks target alignment at full, phone and 440px panel widths, cursor
 interpolation, takeover/hand-back, needs-you, point-and-ask focus restoration,
 and reduced motion in both themes. Its checkout data stays in the preview.
 
+The Changes review regression also runs against the component preview:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/changes-review.mjs --url http://127.0.0.1:4310 --timeout 180
+```
+
+It checks compact/wide layouts, exact code whitespace, line gutters, wrapping,
+keyboard file selection and focus restoration, full-file reading position,
+loading/error/deleted/empty states, Viewed folding and a virtualized 1,000-file
+list in both themes. Its supplied content stays outside production.
+
 Run them sequentially so another Electron capture window does not throttle the
 one being measured. They sample in the renderer before mutation and at each real
 animation frame, then continue through retained-row and animation cleanup.

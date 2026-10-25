@@ -53,9 +53,9 @@ export class MachinesViewsDemoComponent {
   protected closeTerminal(id: string): void { this.terminalTabs.update(tabs => tabs.filter(tab => tab.id !== id)); this.terminalActive.set(this.terminalTabs()[0]?.id ?? ''); }
   protected newTerminal(): void { const id = `terminal-${++this.nextTab}`; this.terminalTabs.update(tabs => [...tabs, { id, title: 'Shell', cwd: '~/elevenex/tasks/retry', status: 'idle' }]); this.terminalActive.set(id); }
   protected viewed(event: { fileId: string; viewed: boolean }): void { this.files.update(files => files.map(file => file.id === event.fileId ? { ...file, viewed: event.viewed, changedSinceViewed: false } : file)); this.log(`${event.viewed ? 'Viewed' : 'Reopened'} ${event.fileId}`); }
-  protected load(request: DiffFileRequest): void { this.contents.update(contents => [...contents.filter(content => content.fileId !== request.fileId), this.sampleContent(request.fileId, request.mode, request.rev)]); this.log(`Request ${request.reason}: ${request.fileId}, ${request.mode}`); }
+  protected load(request: DiffFileRequest): void { this.contents.update(contents => [...contents.filter(content => content.fileId !== request.fileId || content.mode !== request.mode), this.sampleContent(request.fileId, request.mode, request.rev)]); this.log(`Request ${request.reason}: ${request.fileId}, ${request.mode}`); }
   protected context(request: DiffContextRequest): void { this.log(`Request ${request.count} lines ${request.direction} ${request.hunkId}`); }
-  protected changeMode(mode: ReviewMode): void { this.mode.set(mode); this.contents.update(contents => contents.map(content => ({ ...content, mode }))); }
+  protected changeMode(mode: ReviewMode): void { this.mode.set(mode); }
   private sampleContent(fileId: string, mode: ReviewMode, rev?: string | number): DiffFileContent {
     return { fileId, mode, rev, state: 'ready', hunks: [{ id: `${fileId}-hunk`, heading: '@@ −54,5 +54,10 @@ async function retryPayment()', before: 25, after: 32, lines: [
       { id: 'context', kind: 'context', oldNumber: 54, newNumber: 54, text: 'async function retryPayment(charge) {', spans: [{ text: 'async function ', token: 'keyword' }, { text: 'retryPayment', token: 'function' }, { text: '(charge) {' }] },

@@ -58,6 +58,7 @@ export class DiffReviewComponent {
   private observed: readonly HTMLElement[] = [];
   private targetId?: string;
   private scrollFrame?: number;
+  private alignedScrollTop?: number;
   private anchor?: ReadingAnchor;
   private previousContents?: readonly DiffFileContent[];
   private previousMode?: ReviewMode;
@@ -99,7 +100,7 @@ export class DiffReviewComponent {
       }
       if (this.targetId) {
         const target = elements.find(element => element.dataset['fileId'] === this.targetId);
-        if (target) this.align(target);
+        if (target) this.align(target, { preserveSelection: true });
         this.targetId = undefined;
       } else if (this.previousContents !== contents || this.previousMode !== mode || this.previousWrap !== wrap) {
         this.restoreAnchor();
@@ -112,16 +113,16 @@ export class DiffReviewComponent {
   }
 
   /** Public navigation by stable identity, also usable by chips in the owning chat. */
-  goTo(fileId: string): void {
+  goTo(fileId: string, closeList = true): void {
     const file = this.files().find(item => item.id === fileId);
     if (!file) return;
     this.targetId = fileId;
     this.localSelected.set(fileId);
     this.fileSelected.emit(fileId);
-    this.listOpen.set(false);
+    if (closeList) this.listOpen.set(false);
     this.requestVisible(file, this.mode(), 'selected');
     const existing = this.fileElements().find(element => element.nativeElement.dataset['fileId'] === fileId)?.nativeElement;
-    if (existing) { this.align(existing); this.targetId = undefined; }
+    if (existing) { this.align(existing, { preserveSelection: true }); this.targetId = undefined; }
   }
 
   protected step(direction: 1 | -1): void {
@@ -145,9 +146,14 @@ export class DiffReviewComponent {
     this.captureAnchor();
     this.viewedChange.emit(event);
   }
-  private align(element: HTMLElement, inset = 0): void {
+  private align(element: HTMLElement, options: { inset?: number; preserveSelection?: boolean } = {}): void {
     const root = this.scroller()?.nativeElement;
-    if (root) root.scrollTop += element.getBoundingClientRect().top - root.getBoundingClientRect().top - inset;
+    if (root) {
+      root.scrollTop += element.getBoundingClientRect().top - root.getBoundingClientRect().top - (options.inset ?? 0);
+      // A short last file cannot reach the top. Its clamped scroll must not
+      // replace the explicit selection with an earlier file still in view.
+      this.alignedScrollTop = options.preserveSelection ? root.scrollTop : undefined;
+    }
   }
   private captureAnchor(): void {
     const root = this.scroller()?.nativeElement;
@@ -169,6 +175,7 @@ export class DiffReviewComponent {
     if (anchor.lineId && !line) return;
     const element = line ?? file;
     root.scrollTop += element.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset;
+    if (this.alignedScrollTop !== undefined) this.alignedScrollTop = root.scrollTop;
   }
   protected scrolled(): void {
     if (this.scrollFrame !== undefined) return;
@@ -176,6 +183,11 @@ export class DiffReviewComponent {
       this.scrollFrame = undefined;
       const root = this.scroller()?.nativeElement;
       if (!root) return;
+      if (this.alignedScrollTop !== undefined && Math.abs(root.scrollTop - this.alignedScrollTop) < 1) {
+        this.captureAnchor();
+        return;
+      }
+      this.alignedScrollTop = undefined;
       const top = root.getBoundingClientRect().top;
       const element = this.fileElements().find(reference => reference.nativeElement.getBoundingClientRect().bottom > top + 40)?.nativeElement;
       const id = element?.dataset['fileId'];
@@ -189,7 +201,7 @@ export class DiffReviewComponent {
     const top = root.getBoundingClientRect().top + 40;
     const lines = Array.from(root.querySelectorAll<HTMLElement>('[data-kind="add"], [data-kind="del"]'));
     const line = backwards ? lines.reverse().find(element => element.getBoundingClientRect().top < top - 2) : lines.find(element => element.getBoundingClientRect().top > top + 2);
-    if (line) this.align(line, 40);
+    if (line) this.align(line, { inset: 40 });
   }
   protected keydown(event: KeyboardEvent): void {
     if ((event.target as HTMLElement).matches('input, textarea, select, [contenteditable="true"]')) return;
