@@ -51,6 +51,7 @@ export interface RemoteConnectionStatus {
 export interface RemoteForwardInput { readonly remotePort: number; readonly localPort: number; readonly label: string }
 export interface RemoteForward extends RemoteForwardInput {
   readonly id: string;
+  /** Stopped reflects this window's intentional pause/disconnect, even if another window stays connected. */
   readonly phase: 'waiting' | 'listening' | 'unavailable' | 'conflict' | 'stopped';
   readonly boundPort: number | null;
   readonly message: string | null;

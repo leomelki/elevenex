@@ -23,6 +23,49 @@ async function until(check) {
   assert.fail('Recovery condition did not become true');
 }
 
+test('transport loss reports recovery, wake and Retry now bypass backoff, and daemon changes advance generation', async t => {
+  const server = createServer((_req, res) => res.end(JSON.stringify({ backendSha: version })));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const events = []; let attempts = 0; let active = 0; let maximumActive = 0;
+  let lose; let instance = 'original-daemon';
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test' }, release: async () => release,
+    changed: () => events.push(connection.snapshot()), healthInterval: 60000, backoff: 30000, random: () => 0.5,
+    connect: async options => {
+      attempts++;
+      if (attempts === 2) throw failure('authentication', 'unavailable', 'The network is still unavailable.', 'retry', true);
+      active++; maximumActive = Math.max(maximumActive, active);
+      const exit = deferred(); lose = exit.resolve;
+      options.progress('runtime');
+      return { instance, exited: exit.promise, health: async () => ({ ready: true, instance }),
+        forward: async () => ({ port: server.address().port, reachable: true, authorization: null, close: async () => undefined }),
+        close: async () => { active--; exit.resolve(); } };
+    },
+  });
+  t.after(async () => { await connection.dispose(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  connection.acquire(1, true); await until(() => connection.snapshot().phase === 'ready');
+  assert.equal(connection.snapshot().generation, 1);
+  lose(); await until(() => connection.snapshot().retryAt !== null);
+  const lost = connection.snapshot();
+  assert.equal(lost.phase, 'recovering'); assert.equal(lost.application, 'unavailable');
+  assert.equal(lost.failure.stage, 'transport'); assert.equal(lost.failure.action, 'retry');
+  assert.equal(connection.backendUrl(), undefined); assert.equal(connection.currentTransport(), undefined);
+  assert.ok(lost.retryAt > Date.now() + 20000);
+  connection.networkChanged(); await until(() => attempts === 2 && connection.snapshot().retryAt !== null);
+  assert.equal(connection.snapshot().failure.message, 'The network is still unavailable.');
+  connection.retry(1); connection.retry(1); await until(() => connection.snapshot().phase === 'ready');
+  assert.equal(attempts, 3); assert.equal(maximumActive, 1);
+  assert.equal(connection.snapshot().generation, 2); assert.equal(connection.snapshot().instanceId, 'original-daemon');
+  assert.equal(connection.snapshot().retryAt, null); assert.equal(connection.snapshot().failure, null);
+  instance = 'replacement-daemon'; connection.networkChanged();
+  await until(() => connection.snapshot().retryAt !== null);
+  assert.equal(connection.snapshot().failure.stage, 'application');
+  connection.retry(1); await until(() => connection.snapshot().phase === 'ready');
+  assert.equal(connection.snapshot().generation, 3); assert.equal(connection.snapshot().instanceId, 'replacement-daemon');
+  assert.ok(events.some(value => value.phase === 'recovering' && value.failure?.stage === 'transport'));
+  await connection.release(1); const stopped = attempts; connection.networkChanged(); await delay(30);
+  assert.equal(attempts, stopped); assert.equal(connection.snapshot().phase, 'disconnected');
+});
+
 test('Retry now during background authentication promotes exactly one interactive attempt', async t => {
   const server = createServer((_req, res) => res.end(JSON.stringify({ backendSha: version })));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

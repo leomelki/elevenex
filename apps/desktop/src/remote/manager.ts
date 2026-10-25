@@ -74,10 +74,13 @@ export class RemoteManager {
     const selection = window.saved.selection;
     const connection = selection.kind === 'remote' ? this.connections.get(selection.hostId) : undefined;
     let status = selection.kind === 'remote' ? connection?.snapshot() ?? disconnected(selection.hostId) : null;
-    if (status && window.intent !== 'connected') status = { ...status, phase: window.intent === 'paused' ? 'paused' : 'disconnected', transport: 'closed', application: 'unknown', retryAt: null };
+    if (status && window.intent !== 'connected') status = { ...disconnected(status.hostId),
+      phase: window.intent === 'paused' ? 'paused' : 'disconnected', generation: status.generation, instanceId: status.instanceId };
     return structuredClone({ selection, context: window.saved.contexts[environmentKey(selection)] ?? emptyContext(), connection: status,
       challenge: window.intent === 'connected' ? connection?.challengeFor(windowId) ?? null : null,
-      forwards: selection.kind === 'remote' ? this.forwardInputs(window).map(input => window.forwards.get(input.id)?.status ?? { ...input, phase: 'waiting', boundPort: null, message: null }) : [],
+      forwards: selection.kind === 'remote' ? this.forwardInputs(window).map(input => window.intent !== 'connected'
+        ? { ...input, phase: 'stopped', boundPort: null, message: null }
+        : window.forwards.get(input.id)?.status ?? { ...input, phase: 'waiting', boundPort: null, message: null }) : [],
     });
   }
   backendStatus(windowId: number, local: BackendStatus): BackendStatus {
@@ -137,6 +140,7 @@ export class RemoteManager {
       const previous = window.saved.selection;
       if (environmentKey(previous) !== environmentKey(next)) {
         window.saved.selection = next; window.intent = 'disconnected'; window.saved.connect = false;
+        this.changed({ windowId });
         // Relinquish the old lease before yielding: another selection may acquire
         // that same host while its forwarded sockets are still closing.
         const release = previous.kind === 'remote' ? this.connections.get(previous.hostId)?.release(windowId) : undefined;
@@ -187,6 +191,9 @@ export class RemoteManager {
     window.pendingHost = undefined;
     const hostId = this.hostId(window);
     window.intent = pause ? 'paused' : 'disconnected'; window.saved.connect = false;
+    // Publish intent before slow socket/process cleanup or persistence. A window
+    // must stop presenting a usable backend as soon as its lease is relinquished.
+    this.changed({ windowId });
     const release = this.connections.get(hostId)?.release(windowId);
     await this.closeForwards(window); await this.save(); await release;
     this.changed({ windowId }); return this.snapshot(windowId);

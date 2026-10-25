@@ -232,6 +232,10 @@ an end-to-end `/api/info` response at the exact expected revision. Neither a liv
 SSH process nor an open listener qualifies. Health checks also run immediately
 after native resume/unlock notifications. Timeouts bound SSH authentication,
 setup stages, downloads, bridge requests and application health.
+Intentional pause/disconnect publishes the owning window's state before socket
+cleanup or settings writes finish. That window reports no authenticated transport
+and its saved forwards report `stopped`; another window sharing the host can
+remain ready. Connecting windows report forwards as `waiting` until restored.
 
 One retry coordinator uses exponential backoff with jitter capped at 30 seconds.
 Transient failures retry automatically; authentication, trust, configuration and

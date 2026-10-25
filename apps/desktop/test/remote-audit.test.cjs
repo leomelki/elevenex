@@ -54,6 +54,35 @@ async function setup(t, overrides = {}) {
 }
 const ready = (manager, window = 1) => until(() => manager.snapshot(window), value => value.connection?.phase === 'ready');
 
+for (const pause of [false, true]) test(`${pause ? 'pause' : 'disconnect'} publishes window state before slow forward cleanup`, async t => {
+  const { manager, remote, transports, starts } = await setup(t);
+  await manager.select(1, remote); await manager.select(2, remote); await ready(manager);
+  const closing = deferred(); const finish = deferred(); t.after(() => finish.resolve());
+  const forward = transports[0].forward;
+  transports[0].forward = async (...args) => {
+    const running = await forward(...args);
+    return { ...running, close: async () => { closing.resolve(); await finish.promise; await running.close(); } };
+  };
+  await manager.addForward(1, { remotePort: 8000, localPort: 0, label: 'service' });
+  await until(() => manager.snapshot(1).forwards[0], value => value?.phase === 'listening');
+  const events = []; const unsubscribe = manager.subscribe((id, snapshot) => { if (id === 1) events.push(snapshot); }); t.after(unsubscribe);
+  const disconnecting = manager.disconnect(1, pause); await closing.promise;
+  const snapshot = events.at(-1);
+  assert.equal(snapshot.connection.phase, pause ? 'paused' : 'disconnected');
+  assert.equal(snapshot.connection.authenticated, false);
+  assert.equal(snapshot.connection.transport, 'closed');
+  assert.equal(snapshot.connection.application, 'unknown');
+  assert.equal(snapshot.connection.failure, null);
+  assert.equal(snapshot.connection.retryAt, null);
+  assert.equal(snapshot.connection.progress, null);
+  assert.equal(snapshot.forwards[0].phase, 'stopped');
+  assert.equal(snapshot.forwards[0].boundPort, null);
+  assert.equal(manager.backendAccess(1), null);
+  assert.equal(manager.snapshot(2).connection.phase, 'ready');
+  assert.equal(starts(), 1);
+  finish.resolve(); await disconnecting;
+});
+
 test('a delayed environment switch cannot release a newly reacquired connection lease', async t => {
   const { manager, remote, transports } = await setup(t);
   await manager.select(1, remote); await manager.select(2, remote); await ready(manager);
