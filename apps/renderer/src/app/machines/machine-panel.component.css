@@ -1,13 +1,14 @@
 :host {
   display: block;
   /* Reference: 320px content plus 10px padding on each side. */
-  width: min(340px, calc(100vw - var(--space-8)));
+  width: min(340px, calc(100cqw - var(--space-8)));
   color: var(--ink-inverse);
   font-size: var(--text-caption-size);
   font-weight: 400;
   line-height: var(--text-ui-line);
 }
 .panel { display: flex; flex-direction: column; gap: var(--space-2); padding: 10px; white-space: normal; }
+.panel:focus-visible { outline: 2px solid color-mix(in oklab, var(--accent) 60%, var(--ink-inverse)); outline-offset: -4px; border-radius: 18px; }
 header, .row { display: flex; align-items: center; }
 header { gap: 10px; padding: 2px 2px 0; }
 .machine-icon {

@@ -9,14 +9,6 @@
 }
 .title {
   flex: none;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  -webkit-app-region: drag;
-}
-.title > * {
-  -webkit-app-region: no-drag;
 }
 .regions {
   min-height: 0;

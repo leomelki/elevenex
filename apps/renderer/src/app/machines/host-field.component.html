@@ -1,7 +1,6 @@
 <div class="host">
-  <label class="field"><ex-icon name="server" [size]="14" /><input #hostInput type="text" aria-label="SSH host" placeholder="user@host:port" autocomplete="off" spellcheck="false" [value]="picked()?.name ?? query()" [disabled]="disabled()" [readOnly]="!!picked()" [attr.aria-invalid]="error() ? 'true' : null" (input)="onInput(hostInput.value)" (keydown)="keydown($event)" />
+  <label class="field"><ex-icon name="server" [size]="14" /><input #hostInput type="text" aria-label="SSH host" placeholder="user@host:port" autocomplete="off" spellcheck="false" [value]="picked()?.name ?? query()" [disabled]="disabled()" [attr.aria-invalid]="error() ? 'true' : null" (input)="onInput(hostInput.value)" (keydown)="keydown($event)" />
     @if (picked()?.fromConfig) { <span class="tag">from ~/.ssh/config</span> }
-    @if (picked()) { <button exButton variant="ghost" size="sm" [disabled]="disabled()" (click)="cleared.emit()">Change</button> }
   </label>
   @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
   <ex-fold [open]="!picked()"><div class="suggestions"><span class="overline">From ~/.ssh/config</span>

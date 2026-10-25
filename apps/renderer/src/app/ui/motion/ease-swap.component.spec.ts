@@ -38,6 +38,32 @@ describe("inline action swaps", () => {
     expect(fixture.nativeElement.textContent).toBe("Create task");
     fixture.destroy();
   });
+  it('keeps the first attached portal label at natural width', async () => {
+    let resized: (() => void) | undefined;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback; }
+      observe(): void { /* driven after portal attachment */ }
+      disconnect(): void { /* no external resource in this fake */ }
+    });
+    vi.stubGlobal('matchMedia', undefined);
+    const readStyle = getComputedStyle;
+    vi.stubGlobal('getComputedStyle', (element: Element) => {
+      const style = readStyle(element);
+      Object.defineProperty(style, 'width', { value: `${(element.textContent?.length ?? 0) * 10}px` });
+      return style;
+    });
+    const fixture = TestBed.createComponent(ActionHost);
+    const parent = fixture.nativeElement.parentElement as HTMLElement;
+    fixture.nativeElement.remove(); fixture.detectChanges(); await fixture.whenStable();
+    const host = fixture.nativeElement.querySelector('ex-ease-swap') as HTMLElement;
+    const animate = vi.fn(() => ({ cancel: vi.fn(), onfinish: null }));
+    Object.defineProperty(host, 'animate', { value: animate });
+    parent.appendChild(fixture.nativeElement); resized?.();
+    expect(animate).not.toHaveBeenCalled();
+    fixture.componentInstance.label.set('Create task'); fixture.detectChanges(); await fixture.whenStable(); resized?.();
+    expect(animate).toHaveBeenCalledWith([{ width: '40px' }, { width: '110px' }], expect.anything());
+    fixture.destroy();
+  });
   it("keeps the native action mounted, retargets the painted width and settles reduced motion", async () => {
     let resize: () => void = () => undefined;
     let reduced: () => void = () => undefined;
@@ -70,12 +96,18 @@ describe("inline action swaps", () => {
           0,
           0,
           this.tagName === "EX-EASE-SWAP"
-            ? paintedWidth
-            : (this.textContent?.length ?? 0) * 10,
+            ? paintedWidth * .42
+            : (this.textContent?.length ?? 0) * 10 * .42,
           18,
         );
       },
     );
+    const readStyle = getComputedStyle;
+    vi.stubGlobal('getComputedStyle', (element: Element) => {
+      const style = readStyle(element);
+      if (element instanceof HTMLElement) Object.defineProperty(style, 'width', { value: `${element.tagName === 'EX-EASE-SWAP' ? paintedWidth : (element.textContent?.length ?? 0) * 10}px` });
+      return style;
+    });
     const animations: {
       cancel: ReturnType<typeof vi.fn>;
       onfinish: (() => void) | null;

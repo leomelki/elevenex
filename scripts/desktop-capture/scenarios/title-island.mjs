@@ -91,6 +91,10 @@ export default async function* (capture) {
     assert.equal(await capture.evaluate(() => document.activeElement.textContent.trim()), 'Change');
     yield { name: `${theme}-panel`, selector: root, inspect: [shell, '[role="dialog"]'] };
     await capture.press('Escape');
+    await seek(60);
+    const closing = await geometry();
+    assert.ok(closing.height > 24 && closing.height < guest.height + 100, 'The panel contracts instead of disappearing');
+    yield { name: `${theme}-panel-closing`, selector: root, inspect: [shell, content] };
     await capture.motion.finish();
     assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-title-island-demo .trigger')), true);
     yield { name: `${theme}-keyboard-focus`, selector: root, inspect: [trigger] };
@@ -128,13 +132,27 @@ export default async function* (capture) {
   // Verify the shell's actual title-bar composition, too.
   // Reduced-motion island checks are complete before exercising route motion.
   await capture.reducedMotion(false);
+  await capture.evaluate(() => document.querySelector('a[href="/"]').scrollIntoView({ block: 'nearest', inline: 'nearest' }));
   await capture.click('a[href="/"]');
   await capture.waitFor(() => document.querySelector('ex-workspace-demo ex-title-island'));
   await capture.viewport(1240, 1000);
-  await capture.click('ex-workspace-demo ex-title-island .trigger');
-  await capture.waitFor(() => document.querySelector('ex-workspace-demo ex-title-island ex-machine-panel'));
-  await capture.motion.finish();
-  yield { name: 'workspace-open-island', inspect: ['ex-workspace-demo ex-title-island', '[role="dialog"]'] };
-  await capture.press('Escape');
-  await capture.waitFor(() => !document.querySelector('ex-workspace-demo ex-title-island [role="dialog"]'));
+  assert.equal(await capture.evaluate(() => document.querySelector('ex-workspace-demo .title').getBoundingClientRect().height), 34);
+  assert.equal(await capture.evaluate(() => {
+    const title = document.querySelector('ex-workspace-demo .title').getBoundingClientRect();
+    const island = document.querySelector('ex-workspace-demo ex-title-island').getBoundingClientRect();
+    return island.top - title.top;
+  }), 5);
+  for (const theme of ['light', 'dark']) {
+    await capture.theme(theme);
+    await capture.click('ex-workspace-demo ex-title-island .trigger');
+    await capture.waitFor(() => document.querySelector('ex-workspace-demo ex-title-island ex-machine-panel'));
+    await capture.motion.finish();
+    // A present dialog can still be hidden behind a workspace stacking context.
+    // Check its lowest action with actual trusted input, not just DOM geometry.
+    await capture.click('ex-workspace-demo ex-title-island .new-window');
+    yield { name: `${theme}-workspace-open-island`, inspect: ['ex-workspace-demo ex-title-island', '[role="dialog"]'] };
+    await capture.press('Escape');
+    await capture.waitFor(() => !document.querySelector('ex-workspace-demo ex-title-island [role="dialog"]'));
+    await capture.motion.finish();
+  }
 }

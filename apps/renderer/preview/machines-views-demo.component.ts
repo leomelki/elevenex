@@ -1,12 +1,13 @@
+import { MachineFlowDemoComponent } from './machine-flow-demo.component';
 import { TitleIslandDemoComponent } from './title-island-demo.component';
 import { ChangeDetectionStrategy, Component, computed, signal } from '@angular/core';
 import { ButtonComponent } from '../src/app/ui';
-import { GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, IslandNameComponent, Machine, MachineCardComponent, MachineHomeComponent, MachineLaunchComponent, MachineOpenEvent, MachinePanelComponent, PairingTextComponent, PairPasteComponent, RunChoiceComponent, TitleBarComponent, TitleIslandComponent, MachineKind, SshHost } from '../src/app/machines';
+import { GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, Machine, MachineCardComponent, PairingTextComponent, PairPasteComponent, SshHost } from '../src/app/machines';
 import { BrowserDriver, BrowserViewComponent, ChangeFile, ChangeListComponent, DiffContextRequest, DiffFileContent, DiffFileRequest, DiffReviewComponent, ReviewMode, TerminalLine, TerminalTab, TerminalViewComponent } from '../src/app/views';
 
 @Component({
   selector: 'ex-machines-views-demo',
-  imports: [TitleIslandDemoComponent, ButtonComponent, GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, IslandNameComponent, MachineCardComponent, MachineHomeComponent, MachineLaunchComponent, MachinePanelComponent, PairingTextComponent, PairPasteComponent, RunChoiceComponent, TitleBarComponent, TitleIslandComponent, BrowserViewComponent, TerminalViewComponent, DiffReviewComponent, ChangeListComponent],
+  imports: [MachineFlowDemoComponent, TitleIslandDemoComponent, ButtonComponent, GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, MachineCardComponent, PairingTextComponent, PairPasteComponent, BrowserViewComponent, TerminalViewComponent, DiffReviewComponent, ChangeListComponent],
   templateUrl: './machines-views-demo.component.html',
   styleUrl: './machines-views-demo.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -19,10 +20,6 @@ export class MachinesViewsDemoComponent {
     { id: 'server', name: 'Build server', kind: 'ssh', conn: 'fail', last: 'Last tried 15 min ago', color: 'rust' },
     { id: 'update', name: 'workstation', kind: 'ssh', conn: 'idle', update: '1.5.2', color: 'steel' },
   ];
-  protected readonly opened = signal(false);
-  protected readonly machine = signal<Machine>(this.machines[0]!);
-  protected readonly panelOpen = signal(false);
-  protected readonly runChoice = signal<MachineKind>('local');
   protected readonly hostQuery = signal('dev');
   protected readonly hostPicked = signal(false);
   protected readonly copied = signal(false);
@@ -56,7 +53,6 @@ export class MachinesViewsDemoComponent {
   protected readonly event = signal('Choose an action to see the emitted intent.');
   private nextTab = 0;
 
-  protected openMachine(event: MachineOpenEvent): void { this.machine.set(event.machine); this.opened.set(true); this.log(`Open ${event.machine.name}${event.newWindow ? ' in a new window' : ''}`); }
   protected log(message: string): void { this.event.set(message); }
   protected pickHost(host: SshHost): void { this.hostQuery.set(host.name); this.hostPicked.set(true); this.log(`Select SSH host: ${host.name}`); }
   protected newBrowserTab(): void { const id = `preview-${++this.nextTab}`; this.browserTabs.update(tabs => [...tabs, { id, title: 'New tab', url: 'about:blank', by: 'you' }]); this.browserActive.set(id); }

@@ -12,7 +12,7 @@ Making a project: **1 Repositories ↵ 2 Name ↵ 3 Look ↵**, in New task's nu
 **Provide:** `machine` (its name), `listFolders(query)` → `[{ path, name?, git?, branch?, dir?, clone? }]` (`git` is the line to show, like `main · 214 commits`; `dir` marks a folder you can go into; `clone` the URL to clone), and `onCreate(project, cardElement)` with `{ name, repos, look, emoji, icon, hue }`. Optional: `onCancel`, `autoFocus`, `machineIcon`, and a state to start from (`repos`, `name`, `look`, `emoji`, `icon`, `hue`, `step`, `query`). Without `onCreate` the card shows a "Created" line, for demos. `projectFace(project)` turns the result into `ProjectMark` props.
 
 **Where it opens:**
-- **A machine with no project** (first run): the window shows only this card, over the app out of focus (blurred, a little smaller). Nothing else is asked first.
+- **A machine with no project** (first run): the machine launches from Home (`MachineLaunch`) onto this card, over the app out of focus (blurred, a little smaller). Nothing else is asked first.
 - **Later,** from the rail's +: the same card in a `ModalLayer`, so the window recedes behind it, with Esc.
 
 **The launch (Create):** everything starts together and is done in about a second.

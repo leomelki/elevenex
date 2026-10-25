@@ -1,126 +1,79 @@
-import { afterRenderEffect, ChangeDetectionStrategy, Component, DestroyRef, ElementRef, inject, input, output, viewChild } from '@angular/core';
+import { afterRenderEffect, ChangeDetectionStrategy, Component, computed, DestroyRef, ElementRef, inject, input, OnChanges, output, signal, viewChild } from '@angular/core';
+import { MACHINE_LAUNCH_OPEN } from './machine-launch-context';
+import { LaunchRect, MachineLaunchMotion, measureLaunchRect } from './machine-launch-motion';
 
-/** Owns the transition only. Both projected views stay mounted; the hidden one is inert. */
+/** Owns view/focus lifetimes. Both projections stay mounted; the hidden view is inert. */
 @Component({
   selector: 'ex-machine-launch',
+  providers: [{ provide: MACHINE_LAUNCH_OPEN, useFactory: () => inject(MachineLaunchComponent).homeHeld }],
   templateUrl: './machine-launch.component.html',
   styleUrl: './machine-launch.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class MachineLaunchComponent {
+export class MachineLaunchComponent implements OnChanges {
   readonly open = input(false);
   readonly machineId = input<string | null>(null);
   readonly transitionFinished = output<boolean>();
+  private readonly transitioning = signal(false);
+  readonly homeHeld = computed(() => this.open() || this.transitioning());
   protected readonly host = viewChild<ElementRef<HTMLElement>>('host');
   protected readonly home = viewChild<ElementRef<HTMLElement>>('home');
   protected readonly pane = viewChild<ElementRef<HTMLElement>>('pane');
   protected readonly zoom = viewChild<ElementRef<HTMLElement>>('zoom');
   protected readonly faces = viewChild<ElementRef<HTMLElement>>('faces');
+  private readonly destroyRef = inject(DestroyRef);
   private previous?: boolean;
   private lastMachine: string | null = null;
-  private animations: Animation[] = [];
-  private generation = 0;
   private returnFocus?: HTMLElement;
-  private launchingCard?: HTMLElement;
+  private from?: LaunchRect;
+  private motion?: MachineLaunchMotion;
+  private focusFrame?: number;
 
   constructor() {
-    const motion = matchMedia('(prefers-reduced-motion: reduce)');
-    const finishMotion = () => {
-      if (motion.matches) this.animations.forEach(animation => animation.finish());
-    };
-    motion.addEventListener('change', finishMotion);
-    inject(DestroyRef).onDestroy(() => {
-      this.cancel();
-      motion.removeEventListener('change', finishMotion);
-    });
+    this.destroyRef.onDestroy(() => { this.motion?.dispose(); if (this.focusFrame !== undefined) cancelAnimationFrame(this.focusFrame); });
     afterRenderEffect(() => {
-      const opening = this.open();
-      const machine = this.machineId();
+      const opening = this.open(), machine = this.machineId();
       if (machine) this.lastMachine = machine;
-      const was = this.previous;
-      this.previous = opening;
+      const was = this.previous; this.previous = opening;
       if (was === undefined || was === opening) return;
-      this.animate(opening);
+      const host = this.host()?.nativeElement, pane = this.pane()?.nativeElement, zoom = this.zoom()?.nativeElement, home = this.home()?.nativeElement, faces = this.faces()?.nativeElement;
+      if (!host || !pane || !zoom || !home || !faces) return;
+      // The destination is interactive as soon as it opens. Focus must not
+      // depend on an animation promise (which can be interrupted or reduced).
+      if (this.focusFrame !== undefined) cancelAnimationFrame(this.focusFrame);
+      if (opening) this.focusFrame = requestAnimationFrame(() => {
+        this.focusFrame = undefined;
+        // Projected components can clear their own inert state in the next
+        // render pass. Focus after that pass, before the launch has finished.
+        if (this.open() && !pane.contains(document.activeElement)) Array.from(pane.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]'))
+          .find(element => !element.closest('[inert]') && getComputedStyle(element).visibility === 'visible')?.focus({ preventScroll: true });
+      });
+      this.motion ??= new MachineLaunchMotion({ host, home, pane, zoom, faces });
+      const card = this.card(this.lastMachine), from = this.from; this.from = undefined;
+      void this.motion.play(opening, card, opening ? from : undefined).then(completed => {
+        if (!completed || this.destroyRef.destroyed) return;
+        this.transitioning.set(false);
+        const destination = opening ? pane : home;
+        // Do not take focus back from a destination control reached during motion.
+        if (!destination.contains(document.activeElement)) {
+          if (!opening) (this.returnFocus?.isConnected ? this.returnFocus : card)?.focus({ preventScroll: true });
+        }
+        this.transitionFinished.emit(opening);
+      });
     });
   }
 
-  private cancel(): void {
-    this.generation++;
-    this.animations.forEach(animation => animation.cancel());
-    this.animations = [];
-    this.faces()?.nativeElement.replaceChildren();
-    if (this.launchingCard) this.launchingCard.style.visibility = '';
-    this.launchingCard = undefined;
+  ngOnChanges(): void {
+    if (this.previous !== undefined && this.open() !== this.previous) this.transitioning.set(true);
+    if (this.open() && this.previous === false) {
+      const host = this.host()?.nativeElement, home = this.home()?.nativeElement, card = this.card(this.machineId());
+      if (host && card) this.from = measureLaunchRect(host, card);
+      // Capture before inert hides the outgoing focused descendant.
+      if (home?.contains(document.activeElement) && document.activeElement instanceof HTMLElement) this.returnFocus = document.activeElement;
+    }
   }
 
-  private animate(opening: boolean): void {
-    this.cancel();
-    const host = this.host()?.nativeElement;
-    const pane = this.pane()?.nativeElement;
-    const zoom = this.zoom()?.nativeElement;
-    const home = this.home()?.nativeElement;
-    if (!host || !pane || !zoom || !home) return;
-    const card = Array.from(home.querySelectorAll<HTMLElement>('[data-machine]')).find(element => element.dataset['machine'] === this.lastMachine);
-    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const duration = reduced ? parseFloat(getComputedStyle(host).getPropertyValue('--dur-fast')) : opening ? 560 : 500;
-    const options: KeyframeAnimationOptions = { duration, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' };
-    if (!card || reduced) {
-      this.animations = [pane.animate(opening ? [{ opacity: 0, visibility: 'visible' }, { opacity: 1, visibility: 'visible' }] : [{ opacity: 1, visibility: 'visible' }, { opacity: 0, visibility: 'visible' }], options)];
-    } else {
-      // Cover-fit the view throughout: a non-uniform scale would stretch the app's text.
-      const outer = host.getBoundingClientRect();
-      const origin = card.getBoundingClientRect();
-      const left = origin.left - outer.left;
-      const top = origin.top - outer.top;
-      const width = outer.width;
-      const height = outer.height;
-      const radius = Number.parseFloat(getComputedStyle(card).borderTopLeftRadius) || 0;
-      if (!width || !height) return;
-      const paneFrames: Keyframe[] = [];
-      const viewFrames: Keyframe[] = [];
-      const faceFrames: Keyframe[] = [];
-      for (let index = 0; index <= 14; index++) {
-        const fraction = index / 14;
-        const value = opening ? fraction : 1 - fraction;
-        const x = left * (1 - value);
-        const y = top * (1 - value);
-        const w = origin.width + (width - origin.width) * value;
-        const h = origin.height + (height - origin.height) * value;
-        const scale = Math.max(w / width, h / height);
-        paneFrames.push({ offset: fraction, visibility: 'visible', clipPath: `inset(${y}px ${width - x - w}px ${height - y - h}px ${x}px round ${radius * (1 - value)}px)` });
-        viewFrames.push({ offset: fraction, transform: `translate(${x + w / 2 - width * scale / 2}px, ${y + h / 2 - height * scale / 2}px) scale(${scale})`, opacity: Math.min(1, value / .45) });
-        faceFrames.push({ offset: fraction, transform: `translate(${x - left}px, ${y - top}px) scale(${w / origin.width}, ${h / origin.height})`, opacity: Math.max(0, 1 - value / .5) });
-      }
-      this.animations = [pane.animate(paneFrames, options), zoom.animate(viewFrames, options), home.animate(opening ? [{ transform: 'scale(1)', filter: 'blur(0)' }, { transform: 'scale(1.04)', filter: 'blur(4px)' }] : [{ transform: 'scale(1.04)', filter: 'blur(4px)' }, { transform: 'scale(1)', filter: 'blur(0)' }], options)];
-      const face = card.cloneNode(true);
-      if (face instanceof HTMLElement) {
-        face.removeAttribute('data-machine');
-        face.removeAttribute('id');
-        face.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'));
-        face.inert = true;
-        face.setAttribute('aria-hidden', 'true');
-        Object.assign(face.style, { position: 'absolute', left: `${left}px`, top: `${top}px`, width: `${origin.width}px`, height: `${origin.height}px`, transformOrigin: '0 0', pointerEvents: 'none', margin: '0' });
-        this.faces()?.nativeElement.appendChild(face);
-        this.launchingCard = card;
-        card.style.visibility = 'hidden';
-        this.animations.push(face.animate(faceFrames, options));
-      }
-    }
-    if (opening && home.contains(document.activeElement) && document.activeElement instanceof HTMLElement) this.returnFocus = document.activeElement;
-    const generation = this.generation;
-    void Promise.all(this.animations.map(animation => animation.finished)).then(() => {
-      if (generation !== this.generation) return;
-      this.faces()?.nativeElement.replaceChildren();
-      if (this.launchingCard) this.launchingCard.style.visibility = '';
-      this.launchingCard = undefined;
-      // Input remains live during the launch. Do not take focus back from a
-      // control the person already reached in the destination view.
-      const destination = opening ? pane : home;
-      if (!destination.contains(document.activeElement)) {
-        if (opening) pane.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]')?.focus({ preventScroll: true });
-        else (this.returnFocus?.isConnected ? this.returnFocus : card)?.focus({ preventScroll: true });
-      }
-      this.transitionFinished.emit(opening);
-    }).catch(() => { /* Reversing or destroying a launch cancels its owned animations. */ });
+  private card(id: string | null): HTMLElement | undefined {
+    return Array.from(this.home()?.nativeElement.querySelectorAll<HTMLElement>('[data-machine]') ?? []).find(element => element.dataset['machine'] === id);
   }
 }

@@ -8,23 +8,23 @@
 <div class="window">
   <ex-title-bar>
     <ex-title-island
-      label="This Mac details" controls="demo-machine-details"
+      [label]="machine().name + ' details'" controls="demo-machine-details"
       [contentKey]="state()" [tone]="state() === 'lost' ? 'warn' : state() === 'back' ? 'ok' : state() === 'guest' || state() === 'update' ? 'info' : 'rest'"
       [tall]="state() === 'guest'" [open]="state() === 'open'" [panel]="details"
       [progress]="state() === 'update' ? progress() : undefined"
       (pressed)="select('open')" (dismissed)="select('name')"
     >
       @switch (state()) {
-        @case ('guest') { <ex-island-event title="Leo’s MacBook Pro connected" sub="It runs agents on this Mac" action="Disconnect" (actionRequested)="guests.set(0); select('name')" /> }
+        @case ('guest') { <ex-island-event [title]="guestName() + ' connected'" sub="It runs agents on this Mac" action="Disconnect" (actionRequested)="guests.set(0); select('name')" /> }
         @case ('lost') { <ex-icon name="wifi" [size]="13" />This Mac · reconnecting in 3 s }
         @case ('back') { <ex-status-glyph status="done" [size]="12" />Back online · nothing lost }
         @case ('update') { <ex-icon name="refresh" [size]="13" />Updating This Mac {{ (progress() * 100).toFixed(0) }}% }
-        @default { <ex-island-name [machine]="machine" [guests]="guests()" /> }
+        @default { <ex-island-name [machine]="machine()" [guests]="guests()" /> }
       }
     </ex-title-island>
   </ex-title-bar>
   <div class="workspace"><span>Machine news stays above your work</span></div>
 </div>
 <ng-template #details>
-  <ex-machine-panel [machine]="machine" [guests]="guests() ? [{ id: 'guest', name: 'Leo’s MacBook Pro', since: '10:42' }] : []" (changeRequested)="select('name')" (guestDisconnected)="guests.set(0)" />
+  <ex-machine-panel [machine]="machine()" [guests]="guests() ? [{ id: 'guest', name: guestName(), since: '10:42' }] : []" [disabled]="disabled()" [highlight]="highlight()" (changeRequested)="select('name')" (guestDisconnected)="guests.set(0)" />
 </ng-template>

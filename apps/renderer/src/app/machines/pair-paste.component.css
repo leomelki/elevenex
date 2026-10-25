@@ -1,14 +1,15 @@
 :host { display: block; }
-.pair { display: flex; flex-direction: column; gap: var(--space-3); }
+.pair { display: flex; flex-direction: column; gap: 10px; }
 label { display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--text-ui-size); font-weight: 500; }
-textarea { width: 100%; box-sizing: border-box; padding: var(--space-3); resize: vertical; border: 1px solid var(--line-strong); border-radius: var(--radius-md); color: var(--ink); background: var(--surface-raised); font: var(--text-mono-meta-size)/var(--text-code-line) var(--font-mono); overflow-wrap: anywhere; }
+textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; resize: vertical; border: 1px solid var(--line-strong); border-radius: var(--radius-md); color: var(--ink); background: var(--surface-raised); font: var(--text-mono-meta-size)/17px var(--font-mono); overflow-wrap: anywhere; }
 textarea:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 textarea:disabled { opacity: .55; }
-.found { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius-md); background: var(--accent-soft); }
-.found ex-icon { color: var(--accent); }
-.found span { display: flex; flex-direction: column; gap: var(--space-1); }
-b { font-size: var(--text-ui-size); font-weight: 600; }
-small, p { color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-ui-line); }
+.found { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-md); background: var(--accent-soft); }
+.machine-icon { position: relative; flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; color: var(--ink); background: color-mix(in oklab, var(--ink) 14%, var(--surface-sunken)); }
+.presence { position: absolute; right: -2px; bottom: -2px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface-raised); }
+.found span { display: flex; flex-direction: column; gap: 0; }
+b { font-size: 13.5px; line-height: 18px; font-weight: 600; }
+small { font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+p { color: var(--ink-muted); font-size: 12.5px; line-height: var(--text-ui-line); }
 p { margin: 0; }
 .error { color: var(--danger); }
-footer { display: flex; gap: var(--space-2); }

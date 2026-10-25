@@ -18,6 +18,7 @@ import { ModalMotion } from './modal-motion';
 export class ModalLayerComponent {
   readonly open = input(true);
   readonly align = input<'center' | 'top'>('center');
+  readonly from = input<HTMLElement | null>(null);
   readonly closeRequested = output<void>();
   protected readonly leaving = signal(false);
   private readonly portal = viewChild(CdkPortal);
@@ -49,7 +50,7 @@ export class ModalLayerComponent {
           });
           this.overlayRef.attach(portal);
           const layer = this.overlayRef.overlayElement.querySelector<HTMLElement>('.ex-modal-layer');
-          if (layer) this.motion = new ModalMotion(layer);
+          if (layer) this.motion = new ModalMotion(layer, this.from());
         }
         this.mode = 'open';
         this.lease ??= this.recession.acquire(this.origin, this.overlayRef.overlayElement);

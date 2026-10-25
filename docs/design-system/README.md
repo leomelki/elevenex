@@ -1,7 +1,7 @@
 # Elevenex design inputs
 
 The brand book, tokens and component specifications in `project/` were supplied
-in `elevenex-design-system.local`. They are kept here so the component system has
+in `elevenex-design-system-standalone.zip`. They are kept here so the component system has
 durable design inputs. Reference React code and gallery build tools are not part
 of the application runtime.
 
@@ -18,3 +18,14 @@ Tokens are unchanged. Reference React/gallery code stays in the supplied local
 extraction; the application uses Angular components and the bundled fonts.
 See [the implementation review](../../apps/renderer/DESIGN_REVIEW.md) and
 [native verification](../../apps/renderer/VERIFICATION.md) for the updated scope.
+
+The later 2026-10-24 ZIP replaces RunChoice with AddMachine/MachineAdd and moves
+first-launch download/connection/installation progress onto Home's machine cards.
+MachineLaunch now waits for readiness, anchors to the visible card and holds Home
+still. ModalLayer gains a trigger origin. The changed MachineCard, MachineHome,
+MachineLaunch, GettingReady, NewProject and Sheet specifications plus the brand
+book/index were imported verbatim; obsolete RunChoice documentation was removed.
+This archive contains 3 added, 3 removed and 21 modified files (including generated
+gallery/reference files). The Angular runtime ships none of the reference React.
+Both token files are unchanged. The comparison is preserved locally in
+`elevenex-design-system-update.local/latest-files.json` and `latest.diff`.

@@ -1,16 +1,17 @@
-<button type="button" class="card" [class.idle]="!connected()" [class.highlighted]="highlighted()" [class.pressed]="pressed()"
-  [disabled]="disabled()" [attr.data-machine]="machine().id" [style.--machine-color]="color()" (click)="open($event)" (keydown)="keydown($event)">
+<button type="button" class="card" [class.idle]="!connected() && !machine().busy" [class.busy]="!!machine().busy" [class.highlighted]="highlighted()" [class.pressed]="pressed()"
+  [disabled]="disabled()" [attr.aria-busy]="machine().busy ? 'true' : null" [attr.data-machine]="machine().id" [style.--machine-color]="color()" (click)="open($event)" (keydown)="keydown($event)">
   <span class="top">
-    <span class="machine-icon"><ex-icon [name]="icons[machine().kind]" [size]="16" />
-      <span class="presence" [class.live]="connected()" [class.failed]="machine().conn === 'fail'" [class.update]="machine().update" aria-hidden="true"></span>
+    <span class="machine-icon"><ex-icon [name]="icons[machine().kind]" [size]="15" />
+      <span class="presence" [class.live]="connected()" [class.failed]="!machine().busy && machine().conn === 'fail'" [class.update]="!machine().busy && machine().update" [class.busy]="!!machine().busy" [class.settled]="settled()" aria-hidden="true"></span>
     </span>
     <span class="spacer"></span>
-    @if (machine().update) { <span class="tag update-tag">Update</span> }
-    @else if (machine().conn === 'kept') { <span class="tag">until you pick</span> }
+    @if (machine().busy) { @if (pending()) { <span class="tag pending-tag">Will open</span> } }
+    @else if (machine().update) { <span class="tag update-tag">Update</span> }
     @else if (machine().windows; as count) { <span class="tag">{{ count }} {{ count === 1 ? 'window' : 'windows' }}</span> }
+    @else if (machine().conn === 'kept') { <span class="tag">until you pick</span> }
     @if (highlighted()) { <ex-kbd>↵</ex-kbd> }
   </span>
   <span class="name">{{ machine().name }}</span>
-  <span class="description">{{ description() }}</span>
-  @if (machine().conn === 'fail') { <span class="failure">Last connection failed</span> }
+  <span class="description">@for (line of [line()]; track line.key) { <span [class.swap]="line.key !== 'initial'">{{ line.text }}@if (line.meta) { <span class="meta"> · {{ line.meta }}</span> }</span> }</span>
+  @if (machine().busy) { <span class="progress" animate.leave="progress-leaving"><ex-progress-line [value]="machine().busy?.progress" label="Machine preparation" /></span> }
 </button>

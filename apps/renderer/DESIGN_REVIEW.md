@@ -1,5 +1,56 @@
 # Component design review
 
+## Preparation title-island spacing, 2026-10-25
+
+Corrected the machine-flow composition: preparation and updating use compact
+icon/text content rather than the padded rich-event component. The previous 48px
+surface overflowed the title bar; the reference is a 24px pill in a 34px bar, with
+12px horizontal padding, a 7px gap and a 13px icon. Identical-text native measurements
+now match the supplied reference exactly in both themes (200×24px, centered, 5px
+above/below). Rich events retain their separate tall layout. The status derives
+from current machine progress and keeps its content key stable through progress
+and preparation-step changes. See [verification](VERIFICATION.md) for native images
+and regression results.
+
+## Machine flows in the latest ZIP, 2026-10-24
+
+Implemented the current machine model directly: first-run Home with dashed add
+cards, preparation/progress on machine cards, pending selection, a shared SSH/pair
+AddMachine dialog, trigger-origin ModalLayer motion, and launch onto NewProject.
+RunChoice source, styles, template, barrel export and imported specification were
+removed. The old host-trust and pairing action footers were removed; AddMachine
+owns confirmation/navigation and emits a discriminated intent. Changed-key typed
+confirmation remains required and is invalidated when identity changes.
+
+Presentation remains separate from operations. MachineHome owns keyed placement,
+filtering and scoped grid motion; stable keys avoid geometry scans for progress-only
+updates. MachineLaunchComponent owns activity/focus and its scoped Home context;
+MachineLaunchMotion owns unscaled geometry, cloned faces, interruption and cleanup.
+The animated view owns its inactive state directly. Preview orchestration alone
+owns abortable lookup examples, preparation and pending-launch timers, with a
+separate mounted project view for each machine identity.
+
+AutoHeight and EaseSwap now measure logical sizes through ancestor scale, ignore
+observations after disposal/detachment and seed the first attached size without
+animating from zero. Modal motion restores the projected surface's original
+transform origin when disposed. This also removes a source of blank/clipped labels
+and drifting modal anchors in the previous component update.
+
+The live reference and Angular dialogs are 460px wide on a normal desktop, with
+172.5×128px machine cards in the 720px reference grid. Both light/dark native modal
+origin probes measured the trigger center exactly (0px delta). Launch faces begin
+within 1px of the visible card, view scaling stays uniform, and interrupted clips
+remain within 1px in both directions. Full normal-timeline flows and focus reuse
+are checked separately from frozen surface probes. Native control affordances
+(typing, textarea editing, focus rings and changed-key confirmation) remain real
+semantic controls. Fractional font/layout rounding is not treated as pixel identity.
+
+[Verification](VERIFICATION.md) records the 150 renderer tests, runtime/type checks,
+116 native product checkpoints and four supplied-reference captures. No dependencies,
+tokens, legacy-app behavior or privileged IPC boundaries changed. This review covers
+the changed machine families and shared motion fixes; earlier unrelated design gaps
+below are historical and were not silently claimed as resolved.
+
 ## Updated reference review, 2026-10-24
 
 The updated JobBrief, NewProject, ProjectMenu, ProjectSettings and Sheet families

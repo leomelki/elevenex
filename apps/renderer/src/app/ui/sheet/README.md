@@ -1,13 +1,17 @@
 # Modal surfaces and settings controls
 
-`ModalLayerComponent` takes `open` (default `true`) and `align` (`center` or
-`top`) and emits `closeRequested` for Escape or the dim. Supply a labelled
+`ModalLayerComponent` takes `open` (default `true`), `align` (`center` or
+`top`), and optional `from: HTMLElement | null` and emits `closeRequested` for Escape or the dim. Supply a labelled
 `dialog`/`alertdialog` inside it. The layer owns a CDK portal, focus trap and
 focus restoration. Keep the component mounted and change `open` to retain its
 220ms exit; reopening interrupts that exit safely. Reduced motion disposes it
 without movement. The layer's owner always disposes its timer and overlay.
 The actual projected dialog is the animation surface, so its transform origin
-matches its own box. Initial entry uses the reference CSS; reversals snapshot
+matches its own box. With `from`, the origin is the clicked element's center,
+measured once in unscaled coordinates; disposal restores the projected surface's
+original transform origin. The dialog grows from scale .42 over
+460ms and returns there over `dur-base`; the origin survives exit/reversal.
+Keep the projected dialog/data present while the layer closes. Initial entry uses the reference CSS; reversals snapshot
 the painted opacity/transform before cancelling owned animations and retarget
 from that frame. Reduced-motion updates and disposal cancel those handles.
 The opener is captured before the portal attaches, so an autofocusing child

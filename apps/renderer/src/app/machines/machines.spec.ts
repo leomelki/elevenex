@@ -3,7 +3,7 @@ import { HostKeyCheckComponent } from './host-key-check.component';
 import { HostFieldComponent } from './host-field.component';
 import { MachineCardComponent } from './machine-card.component';
 import { MachinePanelComponent } from './machine-panel.component';
-import { PairPasteComponent } from './pair-paste.component';
+import { AddMachineComponent } from './add-machine.component';
 import { stagedSteps } from './machine.models';
 
 describe('Machine presentation boundaries', () => {
@@ -38,24 +38,36 @@ describe('Machine presentation boundaries', () => {
     fixture.componentRef.setInput('fingerprint', 'SHA256:first');
     fixture.componentRef.setInput('changed', true);
     fixture.detectChanges();
-    const trusted = vi.fn();
-    fixture.componentInstance.trusted.subscribe(trusted);
-    const button = fixture.nativeElement.querySelector('footer button') as HTMLButtonElement;
     const input = fixture.nativeElement.querySelector('input') as HTMLInputElement;
-    expect(button.disabled).toBe(true);
+    expect(fixture.componentInstance.canTrust()).toBe(false);
     input.value = 'dev-box';
     input.dispatchEvent(new Event('input'));
     fixture.detectChanges();
-    expect(button.disabled).toBe(false);
+    expect(fixture.componentInstance.canTrust()).toBe(true);
     fixture.componentRef.setInput('fingerprint', 'SHA256:replacement');
     fixture.detectChanges();
-    expect(button.disabled).toBe(true);
-    button.click();
-    expect(trusted).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.canTrust()).toBe(false);
     input.dispatchEvent(new Event('input'));
     fixture.detectChanges();
-    button.click();
-    expect(trusted).toHaveBeenCalledWith({ host: 'dev-box', fingerprint: 'SHA256:replacement', replaced: true });
+    expect(fixture.componentInstance.canTrust()).toBe(true);
+  });
+
+  it('keeps a keyboard destination when the machine panel actions become disabled', async () => {
+    const fixture = TestBed.createComponent(MachinePanelComponent);
+    fixture.componentRef.setInput('machine', { id: 'local', name: 'This Mac', kind: 'local', conn: 'live' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const host: HTMLElement = fixture.nativeElement;
+    host.querySelector<HTMLButtonElement>('button')!.focus();
+    fixture.componentRef.setInput('disabled', true);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const panel = host.querySelector<HTMLElement>('.panel')!;
+    expect(panel.tabIndex).toBe(0);
+    expect(document.activeElement).toBe(panel);
+    fixture.componentRef.setInput('disabled', false);
+    fixture.detectChanges();
+    expect(panel.hasAttribute('tabindex')).toBe(false);
   });
 
   it('shows dated history instead of live status for a disconnected machine and supports a new-window intent', () => {
@@ -71,24 +83,25 @@ describe('Machine presentation boundaries', () => {
   });
 
   it('cannot pair while discovery is pending or reports an error', () => {
-    const fixture = TestBed.createComponent(PairPasteComponent);
+    const fixture = TestBed.createComponent(AddMachineComponent);
+    fixture.componentRef.setInput('kind', 'peer');
     fixture.componentRef.setInput('text', 'pairing-text');
     fixture.componentRef.setInput('found', { id: 'peer', name: 'Studio Mac', detail: 'On your network' });
-    fixture.componentRef.setInput('finding', true);
+    fixture.componentRef.setInput('loading', true);
     fixture.detectChanges();
     const paired = vi.fn();
-    fixture.componentInstance.paired.subscribe(paired);
-    const button = fixture.nativeElement.querySelector('footer button') as HTMLButtonElement;
+    fixture.componentInstance.confirmed.subscribe(paired);
+    const button = fixture.nativeElement.querySelector('footer button:last-child') as HTMLButtonElement;
     button.click();
     expect(paired).not.toHaveBeenCalled();
-    fixture.componentRef.setInput('finding', false);
+    fixture.componentRef.setInput('loading', false);
     fixture.componentRef.setInput('error', 'Pairing text expired');
     fixture.detectChanges();
     expect(button.disabled).toBe(true);
     fixture.componentRef.setInput('error', '');
     fixture.detectChanges();
     button.click();
-    expect(paired).toHaveBeenCalledWith({ id: 'peer', name: 'Studio Mac', detail: 'On your network' });
+    expect(paired).toHaveBeenCalledWith({ kind: 'peer', text: 'pairing-text', computer: { id: 'peer', name: 'Studio Mac', detail: 'On your network' } });
   });
 
   it('opens a machine in a new window with Command or Control Enter', () => {

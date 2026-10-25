@@ -1,5 +1,119 @@
 # Component system verification
 
+## Complete title-island review, 2026-10-25
+
+Reviewed the latest ZIP's TitleIsland, IslandName, IslandEvent, MachinePanel,
+TitleBar and motion reference against the actual Angular components in Electron.
+Standard states match the live reference's geometry, typography, colors, radii,
+shadows and motion settings in both themes. The reference was extracted directly
+from the current ZIP and uses the same locally bundled fonts.
+
+Corrected the remaining workspace title-bar duplication (44px versus the designed
+34px), long-event centering and clipped actions, narrow panel sizing, outside-click
+focus stealing, and keyboard focus when all panel actions are disabled. The shell
+now reuses TitleBar. Its island keeps the 5px top anchor, fits its containing region,
+and grows above the workspace; trusted clicks verify the expanded panel's stacking.
+Long event text truncates before Disconnect; the full name remains in the panel.
+
+Passed `pnpm desktop:lint`, `pnpm desktop:test` (152 renderer tests, existing IPC
+type checks, 4 preload/security and 7 capture-tool tests), preview TypeScript,
+`pnpm desktop:build` and `git diff --check`. The production build runs on the host;
+the sandboxed Angular production process aborted with SIGABRT.
+
+Final reports under `artifacts/desktop-capture/`:
+
+| Directory | Captures | Coverage |
+| --- | ---: | --- |
+| `pill-audit-reference` | 12 | Current ZIP's live reference in both themes |
+| `pill-audit-reference-match` | 12 | Standard-state style and geometry assertions against that reference |
+| `pill-audit-final-states-confirmed` | 42 | Every tone; local/SSH/peer, guests/empty, hover/highlight/disabled; outside and keyboard focus; progress midpoint; long names at 640/400px |
+| `pill-audit-final-motion` | 24 | Spring/blur frames, panel entry/exit, interruptions, reduced motion, and visible/clickable workspace composition in both themes |
+| `pill-audit-machine-flow` | 40 | First-run preparation, connecting/installing, launch, open-machine update and failure/empty flows |
+
+All reports say `verified: true`, with zero errors/warnings. Relevant final PNGs
+were inspected, including the composed workspace, disabled focus and narrow layouts.
+The 118 product checkpoints use the real renderer preview; none uses `--fixture`.
+The existing preview server was reused and left running; the temporary reference
+server was stopped. No dependencies, tokens, IPC or privileged-process code changed.
+These are unpackaged macOS renderer checks; no packaged or cross-platform launch
+is claimed. The reusable state and motion scenarios are in the capture guide.
+
+## Preparation title-island correction, 2026-10-25
+
+The preparation island previously measured 48px high inside a 40px bar, extending
+16px below it. It incorrectly composed the padded IslandEvent notification inside
+the compact summary. Preparation and open-machine updates now use the reference's
+13px icon and one line of 12px/600 text, info tone and live progress. The shared
+TitleBar matches the reference's 34px height.
+
+Native reference and renderer measurements match in both themes for “Getting This
+Mac ready 42%”: 200×24px, 12px horizontal padding, 7px gap, 5px above/below and zero
+horizontal center offset. Progress updates and preparation-step changes keep the
+text visible rather than replaying the entry animation.
+
+Passed `pnpm desktop:lint`, `pnpm desktop:test` (150 renderer tests plus the existing
+runtime/type checks), `pnpm desktop:build` and `git diff --check`. Native reports:
+
+| Directory under `artifacts/desktop-capture/` | Captures | Coverage |
+| --- | ---: | --- |
+| `preparation-island-reference` | 2 | Supplied live reference, identical text/data, light/dark |
+| `preparation-island-fixed` | 40 | Complete machine flow with compact geometry assertions for first run, pending preparation, added server and updates |
+| `preparation-island-motion-verified` | 21 | Existing title-island spring, rich events, details, focus, reduced motion, narrow layout and workspace composition |
+| `preparation-island-comparison` | 10 | Exact measured geometry and cropped PNGs; progress/phase updates without text replay; resting and update states in both themes |
+
+All reports are `verified: true` with zero errors/warnings. Relevant PNGs were
+inspected. Temporary reference/capture processes were stopped; the pre-existing
+renderer server was reused and left running. Native Electron/window-control settings,
+IPC, tokens and dependencies are unchanged. This remains unpackaged macOS validation.
+
+## Machine onboarding redesign, 2026-10-24 (latest ZIP)
+
+The current archive replaces RunChoice with AddMachine/MachineAdd and moves
+initial engine download, connection and installation onto Home's machine cards.
+Full-window GettingReady is reserved for an update inside an already open machine.
+All 86 imported specification/token/index files match the latest ZIP byte for byte;
+3 archive files were added, 3 removed and 21 modified. Tokens and dependencies are
+unchanged. The existing frontend/backend/Electron application is untouched.
+
+Validated on macOS with Node 24.22.1, repository-pinned pnpm 8.15.4 and the locked
+Angular/CDK/Electron dependencies:
+
+| Check | Result |
+| --- | --- |
+| `pnpm desktop:lint` | Passed |
+| `pnpm desktop:test` | 150 renderer tests in 38 files; 4 preload/security and 7 capture-tool tests passed; IPC negative types checked with `tsc` |
+| `pnpm desktop:build` | Passed on the host; 246.62 kB initial renderer bundle |
+| Source/dependencies | `git diff --check` passed; no manifest/lockfile or privileged-process changes |
+
+The final native reports under `artifacts/desktop-capture/` each record
+`verified: true`, zero errors and zero warnings. Representative PNGs were inspected.
+
+| Directory | Captures | Coverage |
+| --- | ---: | --- |
+| `machine-design-final` | 40 | First run/later Home, local/server/peer preparation, SSH keyboard/key flow and Back, pairing discovery/error, last selection wins, launch onto NewProject, open-window update isolation, search/empty state, both themes, reduced motion, narrow dialog and focus restoration |
+| `machine-motion-final` | 16 | Actual card origin, uniform view scaling, both launch reversal directions, trigger-anchored modal origin, modal reversal/reopen and native focus after reuse, in both themes |
+| `machine-update-git-regression` | 60 | Existing full/compact Commit/Push transitions, interruptions and reduced motion in both themes after the shared sizing changes |
+| `machine-reference-verified` | 4 | Supplied live React reference: AddMachine light/dark, MachineCard and MachineHome; comparison evidence only |
+
+The 116 product checkpoints use the actual renderer preview in native Electron,
+never `--fixture`. The reference server uses the same bundled fonts and serves its
+inline example scripts as local files under the unchanged desktop CSP. It is not
+shipped. Surface probes isolate the measured animations; the flow captures check
+composed states. These are measured behavior/layout/motion checks, not exhaustive
+pixel-identity or WCAG certification.
+
+Regressions added for stable machine identity/grouping through preparation,
+changed-key invalidation, typed confirmation intents, first attached portal sizing,
+unscaled geometry, destination focus during motion and projected-style cleanup.
+Native validation exposed and corrected inherited inactive state on animated views,
+zero-sized initial portal measurements and interrupted geometry/focus handoffs.
+
+The two reusable machine scenarios are documented in the capture guide. All
+validation servers were stopped after verification. This is unpackaged macOS
+verification; packaged-app and Windows/Linux launches were not performed. Actual
+SSH/pairing, engines, persistence and window opening remain supplied-data/platform
+integration boundaries. The older sections below describe previous archive states.
+
 ## Updated design system, 2026-10-24
 
 Validated on macOS with Node 24.22.1, cached repository-pinned pnpm 8.15.4 and

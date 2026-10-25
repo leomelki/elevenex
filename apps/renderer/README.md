@@ -12,7 +12,7 @@ pnpm desktop:preview
 ```
 
 Open `http://127.0.0.1:4310`. The workspace preview composes real components;
-Foundations, Tasks, Projects, Settings, Sub-tasks, Git helpers, Conversation, and Machines and views exercise their public
+Foundations, Tasks, Projects, Settings, Sub-tasks, Git helpers, Conversation, Machines and views, and Machine flow exercise their public
 APIs. Example data lives only in `preview/`, under a separate Angular build
 configuration. It is absent from the production entry graph and packaged app.
 
@@ -117,13 +117,16 @@ activate shell takeover; Escape resets it through the shell. Handle
 ## Design sources and deliberate adapter boundaries
 
 The [brand book](../../docs/design-system/project/README.md), tokens and component
-specifications were imported verbatim from `elevenex-design-system.local`.
+specifications were imported verbatim from the supplied standalone ZIP.
 `docs/design-system/project/tokens.css` is authoritative and is copied verbatim
 by the desktop commands. The two licensed fonts are bundled locally; the
 reference's runtime Google Fonts import is not shipped.
 
-The updated component families include project creation and project settings,
-repository tags, sub-task navigation and git-helper job presentation. Features the designer marked
+The current component families include project creation/settings, repository
+tags, sub-task navigation, git-helper jobs and machine onboarding. Machine Home
+owns first run and card preparation; AddMachine owns SSH/pair dialogs. RunChoice
+and its old flow have been removed. Full-window GettingReady is reserved for
+updates to a machine already open in a window. Features the designer marked
 as not designed (Code/Actions content, global Settings, command palette, split diff,
 multi-line review comments) were not invented. The existing desktop CSP is
 preserved: HTML reply cards emit an Open in Browser intent rather than creating

@@ -8,10 +8,10 @@
         @case ('failed') { <ex-status-glyph status="failed" [size]="14" /> }
         @default { <span class="dot" aria-label="Not started"></span> }
       }</span>
-      <div class="body"><span>{{ step.label }}</span>@if (step.detail) { <span class="detail">{{ step.detail }}</span> }
-        @if (step.state === 'active' && step.progress !== undefined) { <progress [value]="progress(step.progress)" max="1" [attr.aria-label]="step.label + ' progress'"></progress> }
+      <div class="body"><span class="label">{{ step.label }}@if (step.detail) { <span class="detail">{{ step.detail }}</span> }</span>
+        @if (step.state === 'active' && step.progress !== undefined) { <ex-progress-line [value]="step.progress" [label]="step.label + ' progress'" /> }
       </div>@if (step.meta) { <span class="meta">{{ step.meta }}</span> }
     </li>
   }</ol>
-  <footer><ng-content select="[readyActions]" /><span>{{ note() }}</span></footer>
+  <footer><ng-content select="[readyActions]" />@if (note(); as note) { <span>{{ note }}</span> }</footer>
 </section>

@@ -82,4 +82,32 @@ describe('Title island interaction ownership', () => {
       expect(fixture.nativeElement.querySelector('[role="progressbar"]').getAttribute('aria-valuenow')).toBe(expected);
     }
   });
+
+  it('preserves outside pointer focus and still restores the trigger after Escape', async () => {
+    const fixture = TestBed.createComponent(IslandHost);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const host: HTMLElement = fixture.nativeElement;
+    const trigger = host.querySelector<HTMLButtonElement>('.trigger')!;
+    const outside = host.querySelector<HTMLButtonElement>('.outside')!;
+    trigger.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    host.querySelector<HTMLButtonElement>('[role="dialog"] button')!.focus();
+    outside.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    // JSDOM does not apply the browser's pointer default focus behavior.
+    outside.focus();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(outside);
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+
+    trigger.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    host.querySelector('[role="dialog"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(trigger);
+  });
 });

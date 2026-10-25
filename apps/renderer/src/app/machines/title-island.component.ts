@@ -39,11 +39,14 @@ export class TitleIslandComponent {
   private lastState?: string;
   private animation?: Animation;
   private wasExpanded = false;
+  private restoreFocus = true;
 
   constructor() {
     const renderer = inject(Renderer2);
     const unlisten = renderer.listen('document', 'pointerdown', (event: PointerEvent) => {
       if (this.expanded() && event.target instanceof Node && !this.element.contains(event.target)) {
+        // An outside click owns its focus; do not pull it back to the island.
+        this.restoreFocus = false;
         this.dismissed.emit();
       }
     });
@@ -62,7 +65,10 @@ export class TitleIslandComponent {
       const expanded = this.expanded();
       // The browser blurs a trigger when it becomes hidden, before CDK captures
       // the dialog's return target. Restore this persistent trigger explicitly.
-      if (this.wasExpanded && !expanded) this.trigger()?.nativeElement.focus({ preventScroll: true });
+      if (this.wasExpanded && !expanded) {
+        if (this.restoreFocus) this.trigger()?.nativeElement.focus({ preventScroll: true });
+        this.restoreFocus = true;
+      }
       this.wasExpanded = expanded;
       if (!content) return;
       if (!this.observer && typeof ResizeObserver !== 'undefined') {
@@ -93,6 +99,7 @@ export class TitleIslandComponent {
   protected dismiss(event: Event): void {
     if (!this.expanded()) return;
     event.stopPropagation();
+    this.restoreFocus = true;
     this.dismissed.emit();
   }
 

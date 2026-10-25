@@ -1,4 +1,4 @@
-<section class="panel" aria-label="Machine details">
+<section #panel class="panel" aria-label="Machine details" [attr.tabindex]="disabled() ? 0 : null">
   <header>
     <span class="machine-icon">
       <ex-icon [name]="icons[machine().kind]" [size]="16" />

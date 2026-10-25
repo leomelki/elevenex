@@ -7,10 +7,12 @@ import {
   input,
   output,
 } from "@angular/core";
+import { TitleBarComponent } from "../machines/title-bar.component";
 
 /** Region layout only. The owning feature supplies navigation, chat and side views. */
 @Component({
   selector: "ex-app-shell",
+  imports: [TitleBarComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     "[class.panel-open]": "panelOpen()",

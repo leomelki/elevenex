@@ -2,6 +2,7 @@ import { A11yModule } from '@angular/cdk/a11y';
 import { Component, ElementRef, afterRenderEffect, input, signal, viewChild } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ModalLayerComponent } from './modal-layer.component';
+import { ModalMotion } from './modal-motion';
 import { ModalRecessionService } from './modal-recession.service';
 import { SetValueComponent } from './settings-controls.component';
 import { SheetComponent } from './sheet.component';
@@ -44,6 +45,17 @@ class AutofocusHost { readonly open = signal(false); }
 describe('settings surfaces', () => {
   beforeEach(() => vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => undefined, removeEventListener: () => undefined, addListener: () => undefined, removeListener: () => undefined })));
   afterEach(() => vi.unstubAllGlobals());
+
+  it('returns projected surface styles to their owner after anchored modal disposal', () => {
+    const layer = document.createElement('div'), surface = document.createElement('section'), trigger = document.createElement('button');
+    surface.style.transformOrigin = '10px 20px';
+    layer.append(surface); document.body.append(layer, trigger);
+    const motion = new ModalMotion(layer, trigger);
+    expect(surface.style.transformOrigin).toBe('0px 0px');
+    motion.dispose();
+    expect(surface.style.transformOrigin).toBe('10px 20px');
+    layer.remove(); trigger.remove();
+  });
 
   it('counts nested modal owners and releases only its own recession lease', () => {
     const window = document.createElement('div'); window.setAttribute('data-modal-window', '');

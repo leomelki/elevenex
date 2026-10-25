@@ -19,16 +19,22 @@ export class AutoHeightDirective {
     afterNextRender(() => {
       const content = this.element.firstElementChild;
       if (!content || typeof ResizeObserver === "undefined") return;
-      let previous = this.element.getBoundingClientRect().height;
+      // Projected content can be created before its portal is attached. Its
+      // first visible size is a baseline, not a content change from zero.
+      let previous = this.element.isConnected
+        ? this.element.offsetHeight || this.element.getBoundingClientRect().height
+        : undefined;
       this.observer = new ResizeObserver(() => {
         // A queued observation can outlive portal detachment or destruction.
         // Detached elements no longer inherit the motion tokens either.
         if (this.destroyRef.destroyed || !this.element.isConnected) return;
         const style = getComputedStyle(this.element);
+        const painted = this.element.getBoundingClientRect().height;
+        const scale = (this.element.offsetHeight ? painted / this.element.offsetHeight : 1) || 1;
         // Height belongs to the outer border box. Measuring only the inner
         // content clips padded cards and makes them jump when motion finishes.
         const next =
-          content.getBoundingClientRect().height +
+          content.getBoundingClientRect().height / scale +
           [
             style.paddingTop,
             style.paddingBottom,
@@ -36,8 +42,8 @@ export class AutoHeightDirective {
             style.borderBottomWidth,
           ].reduce((total, value) => total + (parseFloat(value) || 0), 0);
         const from = this.animation
-          ? this.element.getBoundingClientRect().height
-          : previous;
+          ? painted / scale
+          : previous ?? next;
         previous = next;
         this.animation?.cancel();
         this.animation = undefined;

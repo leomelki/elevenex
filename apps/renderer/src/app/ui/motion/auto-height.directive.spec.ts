@@ -19,6 +19,34 @@ describe("AutoHeight box sizing", () => {
     vi.unstubAllGlobals();
   });
 
+  it('seeds its first attached portal size and animates only later changes', async () => {
+    let resized: (() => void) | undefined;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback; }
+      observe(): void { /* initial observation is driven after attachment */ }
+      disconnect(): void { /* no external resource in this fake */ }
+    });
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    let height = 100;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return new DOMRect(0, 0, 200, this.tagName === 'SECTION' ? height + 26 : height);
+    });
+    const fixture = TestBed.createComponent(HeightTestComponent);
+    const parent = fixture.nativeElement.parentElement as HTMLElement;
+    fixture.nativeElement.remove(); fixture.detectChanges(); await fixture.whenStable();
+    const section = fixture.nativeElement.querySelector('section') as HTMLElement;
+    const animate = vi.fn(() => ({ cancel: vi.fn(), onfinish: null }));
+    Object.defineProperty(section, 'animate', { value: animate });
+    parent.appendChild(fixture.nativeElement); resized?.();
+    expect(animate).not.toHaveBeenCalled();
+    height = 160; resized?.();
+    expect(animate).toHaveBeenCalledWith(
+      [{ height: '126px', overflow: 'clip', boxSizing: 'border-box' }, { height: '186px', overflow: 'clip', boxSizing: 'border-box' }],
+      { duration: 200, easing: 'ease-out' },
+    );
+    fixture.destroy();
+  });
+
   it("includes padding and borders, continues from interrupted height, and releases the observer", async () => {
     let resized: (() => void) | undefined;
     const disconnected = vi.fn();
@@ -35,6 +63,7 @@ describe("AutoHeight box sizing", () => {
     );
     vi.stubGlobal("matchMedia", () => ({ matches: false }));
     let contentHeight = 100;
+    let transformScale = 1;
     let displayedHeight = 126;
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
@@ -42,7 +71,7 @@ describe("AutoHeight box sizing", () => {
           0,
           0,
           200,
-          this.tagName === "SECTION" ? displayedHeight : contentHeight,
+          (this.tagName === "SECTION" ? displayedHeight : contentHeight) * transformScale,
         );
       },
     );
@@ -76,17 +105,26 @@ describe("AutoHeight box sizing", () => {
       { duration: 200, easing: "ease-out" },
     );
 
+    transformScale = .42;
+    Object.defineProperty(section, 'offsetHeight', { get: () => displayedHeight });
+    contentHeight = 200;
+    resized?.();
+    expect(animate).toHaveBeenLastCalledWith(
+      [{ height: '150px', overflow: 'clip', boxSizing: 'border-box' }, { height: '226px', overflow: 'clip', boxSizing: 'border-box' }],
+      { duration: 200, easing: 'ease-out' },
+    );
+
     const parent = section.parentElement!;
     section.remove();
     contentHeight = 300;
     resized?.();
-    expect(animate).toHaveBeenCalledTimes(2);
+    expect(animate).toHaveBeenCalledTimes(3);
     parent.appendChild(section);
 
     fixture.destroy();
     expect(disconnected).toHaveBeenCalledOnce();
-    expect(cancelled).toHaveBeenCalledTimes(2);
+    expect(cancelled).toHaveBeenCalledTimes(3);
     resized?.();
-    expect(animate).toHaveBeenCalledTimes(2);
+    expect(animate).toHaveBeenCalledTimes(3);
   });
 });

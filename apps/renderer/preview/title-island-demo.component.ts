@@ -17,7 +17,10 @@ export class TitleIslandDemoComponent {
   readonly playing = signal(false);
   readonly guests = signal(0);
   readonly progress = signal(.56);
-  readonly machine: Machine = { id: 'local', name: 'This Mac', kind: 'local', address: 'MacBook Pro · 1.6.0', conn: 'live', color: 'pine' };
+  readonly machine = signal<Machine>({ id: 'local', name: 'This Mac', kind: 'local', address: 'MacBook Pro · 1.6.0', conn: 'live', color: 'pine' });
+  readonly guestName = signal('Leo’s MacBook Pro');
+  readonly disabled = signal(false);
+  readonly highlight = signal<'change' | 'new' | undefined>(undefined);
   readonly states: readonly { id: IslandState; label: string }[] = [
     { id: 'name', label: 'Resting' }, { id: 'guest', label: 'Someone connects' },
     { id: 'lost', label: 'Reconnecting' }, { id: 'back', label: 'Back online' },

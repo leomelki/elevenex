@@ -1,3 +1,4 @@
 <!-- inert excludes the outgoing view from focus and the accessibility tree.
+     The animated wrapper owns inert directly, avoiding stale inherited state.
      A redundant aria-hidden would race the browser's focused-descendant cleanup. -->
-<div #host class="launch" [class.open]="open()"><div #home class="home" [attr.inert]="open() ? '' : null"><ng-content select="[machineHome]" /></div><div #pane class="pane" [attr.inert]="!open() ? '' : null"><div #zoom class="zoom"><ng-content select="[machineView]" /></div></div><div #faces class="faces" aria-hidden="true" inert></div></div>
+<div #host class="launch" [class.open]="open()"><div #home class="home" [attr.inert]="open() ? '' : null"><ng-content select="[machineHome]" /></div><div #pane class="pane"><div #zoom class="zoom" [attr.inert]="!open() ? '' : null"><ng-content select="[machineView]" /></div></div><div #faces class="faces" aria-hidden="true" inert></div></div>

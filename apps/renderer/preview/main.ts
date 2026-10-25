@@ -8,6 +8,7 @@ void bootstrapApplication(PreviewComponent, {
     provideZonelessChangeDetection(),
     provideRouter(
       [
+        { path: 'machine-flow', loadComponent: () => import('./machine-flow-demo.component').then(module => module.MachineFlowDemoComponent) },
         { path: 'task-update', loadComponent: () => import('./task-update-demo.component').then(module => module.TaskUpdateDemoComponent) },
         { path: 'project-settings', loadComponent: () => import('./settings-demo.component').then(module => module.SettingsDemoComponent) },
         { path: 'projects', loadComponent: () => import('./project-creation-demo.component').then(module => module.ProjectCreationDemoComponent) },

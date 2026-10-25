@@ -120,12 +120,37 @@ timeouts or screenshots of replacement HTML.
 
 ## Motion
 
+The title island has complementary state and motion regressions:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/title-island-states.mjs --url http://127.0.0.1:4310 --timeout 180
+pnpm desktop:capture scripts/desktop-capture/scenarios/title-island.mjs --url http://127.0.0.1:4310 --timeout 180
+```
+
+They check every tone, machine/guest panel, keyboard and disabled focus, hover,
+progress interpolation, long names and narrow containing regions, plus frozen
+spring/blur frames, opening/closing, interruptions, reduced motion and the actual
+workspace title-bar composition, in both themes.
+
 Two reusable component regressions run against `pnpm desktop:preview`:
 
 ```sh
 pnpm desktop:capture scripts/desktop-capture/scenarios/sidebar-motion.mjs --url http://127.0.0.1:4310 --timeout 180
 pnpm desktop:capture scripts/desktop-capture/scenarios/git-motion.mjs --url http://127.0.0.1:4310 --timeout 180
 ```
+
+The current machine onboarding regression uses the same preview:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/machine-onboarding.mjs --url http://127.0.0.1:4310 --timeout 180
+pnpm desktop:capture scripts/desktop-capture/scenarios/machine-motion.mjs --url http://127.0.0.1:4310 --timeout 180
+```
+
+It checks first run, card preparation, SSH host/key keyboard flow, pairing,
+failures, last selection, launch/return, open-machine updates, search/empty state,
+both themes, reduced motion and a narrow dialog with restored focus. The focused
+motion scenario measures card/trigger origins, uniform view scaling, interrupted
+launch/modal reversals and focus after reopening, in both themes.
 
 Run them sequentially so another Electron capture window does not throttle the
 one being measured. They sample in the renderer before mutation and at each real

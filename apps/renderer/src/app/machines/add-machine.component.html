@@ -1,0 +1,17 @@
+<header><span class="icon"><ex-icon [name]="kind() === 'ssh' ? 'server' : 'peer'" [size]="18" /></span><div><h2>{{ title() }}</h2><p>{{ kind() === 'ssh' ? 'Elevenex uses your SSH setup and installs itself in ~/.elevenex, without root.' : 'It runs Elevenex already. Its agents and files stay there; this window drives them.' }}</p></div></header>
+<div exAutoHeight><div>
+  @for (body of [{ key: kind() === 'peer' ? 'paste' : step() }]; track body.key) {
+    <div class="body">
+      @if (body.key === 'host') {
+        <ex-host-field [query]="query()" [hosts]="hosts()" [picked]="picked()" [disabled]="disabled() || loading()" (queryChange)="queryChange.emit($event)" (selected)="hostSelected.emit($event)" (submitted)="hostSubmitted.emit($event)" />
+      } @else if (body.key === 'key') {
+        <ex-host-key-check [host]="picked()?.name ?? ''" [fingerprint]="fingerprint()" [type]="keyType()" [changed]="keyChanged()" [disabled]="disabled() || loading()" />
+      } @else {
+        <ex-pair-paste [text]="text()" [found]="found()" [finding]="loading()" [disabled]="disabled()" (textChange)="textChange.emit($event)" />
+      }
+    </div>
+  }
+  @if (loading() && kind() === 'ssh') { <p role="status">Checking the server…</p> }
+  @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
+</div></div>
+<footer><button exButton variant="ghost" size="sm" [disabled]="disabled()" (click)="back()">{{ kind() === 'ssh' && step() === 'key' ? 'Back' : 'Cancel' }}</button><button #primary exButton variant="primary" size="sm" [disabled]="!canProceed()" (click)="next()"><ex-ease-swap [value]="label()" /><ex-kbd>↵</ex-kbd></button></footer>

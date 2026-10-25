@@ -1,7 +1,6 @@
-<div class="pair"><label>Pairing text<textarea #pairInput rows="3" placeholder="Paste the pairing text" autocomplete="off" spellcheck="false" [value]="text()" [disabled]="disabled()" [attr.aria-invalid]="error() ? 'true' : null" (input)="textChange.emit(pairInput.value)"></textarea></label>
+<div class="pair"><label><span class="visually-hidden">Pairing text</span><textarea #pairInput rows="2" placeholder="Paste the pairing text" autocomplete="off" spellcheck="false" [value]="text()" [disabled]="disabled()" [attr.aria-invalid]="error() ? 'true' : null" (input)="textChange.emit(pairInput.value)"></textarea></label>
   @if (finding()) { <p role="status">Finding the computer…</p> }
   @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
-  <ex-fold [open]="!!found() && !finding()">@if (found(); as computer) { <div class="found"><ex-icon name="peer" [size]="18" /><span><b>{{ computer.name }}</b><small>{{ computer.detail }}</small></span></div> }</ex-fold>
+  <ex-fold [open]="!!found() && !finding()">@if (found(); as computer) { <div class="found"><span class="machine-icon"><ex-icon name="peer" [size]="15" /><i class="presence" aria-hidden="true"></i></span><span><b>{{ computer.name }}</b><small>{{ computer.detail }}</small></span></div> }</ex-fold>
   <p>{{ found() ? 'You pair once. After this it opens from Machines, any time, without asking again.' : 'On the other computer: Settings › Pairing › Copy pairing text.' }}</p>
-  <footer><button exButton variant="primary" [disabled]="!found() || finding() || disabled() || !!error()" (click)="pair()">Pair</button><button exButton variant="ghost" [disabled]="disabled()" (click)="back.emit()">Back</button></footer>
 </div>

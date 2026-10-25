@@ -5,6 +5,7 @@ import {
   ElementRef,
   type AnimationCallbackEvent,
   afterNextRender,
+  computed,
   inject,
   input,
   signal,
@@ -21,6 +22,7 @@ import {
 })
 export class EaseSwapComponent {
   readonly value = input.required<string>();
+  protected readonly labels = computed(() => [{ key: this.value() }]);
   protected readonly ready = signal(false);
   private readonly element =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
@@ -49,18 +51,21 @@ export class EaseSwapComponent {
     afterNextRender(() => {
       this.ready.set(true);
       if (typeof ResizeObserver === "undefined") return;
-      let width = this.element.getBoundingClientRect().width;
+      // Layout sizes stay stable while an ancestor dialog or launch scales.
+      // Painted rectangles would feed that outer scale back into our width.
+      let width = this.element.isConnected ? parseFloat(getComputedStyle(this.element).width) || 0 : undefined;
       this.observer = new ResizeObserver(() => {
-        const next =
-          this.text()?.nativeElement.getBoundingClientRect().width ?? width;
+        if (this.destroyed || !this.element.isConnected) return;
+        const text = this.text()?.nativeElement;
+        const next = text ? parseFloat(getComputedStyle(text).width) || 0 : width ?? 0;
         if (next === width) return;
         const previous = this.widthAnimation
-          ? this.element.getBoundingClientRect().width
-          : width;
+          ? parseFloat(getComputedStyle(this.element).width) || 0
+          : width ?? next;
         width = next;
         this.widthAnimation?.cancel();
         this.widthAnimation = undefined;
-        if (!this.element.animate || this.motion?.matches) return;
+        if (previous === next || !this.element.animate || this.motion?.matches) return;
         const style = getComputedStyle(this.element);
         const animation = this.element.animate(
           [{ width: `${previous}px` }, { width: `${next}px` }],

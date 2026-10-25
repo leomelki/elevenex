@@ -1,8 +1,0 @@
-<fieldset [disabled]="disabled()"><legend>Where should Elevenex run?</legend>
-  @for (choice of choices; track choice.id) {
-    <label [class.selected]="value() === choice.id"><input type="radio" [name]="groupName" [value]="choice.id" [checked]="value() === choice.id" (change)="valueChange.emit(choice.id)" />
-      <span class="icon"><ex-icon [name]="choice.icon" [size]="18" /></span><span class="content"><span class="title">{{ choice.title }}@if (choice.id === 'local') { <span class="tag">Recommended</span> }</span><span class="description">{{ choice.description }}</span></span>
-      @if (value() === choice.id) { <ex-kbd>↵</ex-kbd> }
-    </label>
-  }
-</fieldset>

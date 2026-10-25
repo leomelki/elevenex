@@ -13,7 +13,14 @@ export interface Machine {
   readonly color?: MachineColor;
   readonly windows?: number;
   readonly update?: string;
+  readonly busy?: { readonly step: string; readonly progress?: number; readonly meta?: string };
 }
+
+export type AddMachineKind = Exclude<MachineKind, 'local'>;
+
+export type AddMachineIntent =
+  | { readonly kind: 'ssh'; readonly host: PickedHost; readonly fingerprint: string; readonly keyType: string; readonly replaced: boolean }
+  | { readonly kind: 'peer'; readonly computer: PairedComputer; readonly text: string };
 
 export interface MachineOpenEvent {
   readonly machine: Machine;

@@ -49,7 +49,8 @@
   position: relative;
   display: flex;
   width: max-content;
-  max-width: calc(100vw - var(--space-8));
+  /* cqw follows the title bar, including when it is inside a smaller window. */
+  max-width: calc(100cqw - var(--space-8));
   pointer-events: none;
   transform-origin: top center;
   font-size: var(--text-caption-size);
@@ -60,6 +61,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
   min-height: var(--space-6);
   padding: 0 var(--space-3);
   white-space: nowrap;
