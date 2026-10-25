@@ -6,6 +6,9 @@ import type {
 export interface WorkFact {
   readonly kind: "failure" | "files" | "tests" | "commands" | "reads";
   readonly label: string;
+  readonly icon: "x" | "changes" | "check" | "terminal" | "file";
+  readonly tone?: "ok" | "danger";
+  readonly diff?: { readonly add: number; readonly del: number };
 }
 /** Keep glanceable evidence bounded; details remain in the work timeline. */
 export function summarizeWork(
@@ -16,6 +19,7 @@ export function summarizeWork(
   let commands = 0;
   let reads = 0;
   let testResult = "";
+  let testFailed = false;
   for (const step of steps) {
     if (step.status === "failed" && !step.recovered && !step.expected)
       failures++;
@@ -26,28 +30,46 @@ export function summarizeWork(
       step.result &&
       !step.recovered &&
       !step.expected
-    )
+    ) {
       testResult = step.result;
+      testFailed = step.status === "failed";
+    }
   }
   const facts: WorkFact[] = [];
-  if (failures) facts.push({ kind: "failure", label: `${failures} failed` });
+  if (failures)
+    facts.push({
+      kind: "failure",
+      label: `${failures} failed`,
+      icon: "x",
+      tone: "danger",
+    });
   if (files.length) {
     const added = files.reduce((sum, file) => sum + (file.add ?? 0), 0);
     const removed = files.reduce((sum, file) => sum + (file.del ?? 0), 0);
     facts.push({
       kind: "files",
-      label: `Edited ${files.length} ${files.length === 1 ? "file" : "files"}${added || removed ? ` +${added} −${removed}` : ""}`,
+      label: `Edited ${files.length} ${files.length === 1 ? "file" : "files"}`,
+      icon: "changes",
+      diff: { add: added, del: removed },
     });
   }
-  if (testResult) facts.push({ kind: "tests", label: testResult });
+  if (testResult)
+    facts.push({
+      kind: "tests",
+      label: testResult,
+      icon: testFailed ? "x" : "check",
+      tone: testFailed ? "danger" : "ok",
+    });
   if (commands)
     facts.push({
       kind: "commands",
+      icon: "terminal",
       label: `Ran ${commands} ${commands === 1 ? "command" : "commands"}`,
     });
   if (reads)
     facts.push({
       kind: "reads",
+      icon: "file",
       label: `Read ${reads} ${reads === 1 ? "file" : "files"}`,
     });
   return facts.slice(0, 4);

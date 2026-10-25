@@ -1,11 +1,14 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
+  afterRenderEffect,
   computed,
   effect,
   input,
   output,
   signal,
+  viewChild,
 } from "@angular/core";
 import {
   AutoHeightDirective,
@@ -87,7 +90,22 @@ export class TurnComponent {
     () => this.steps().filter((step) => !isProse(step)).length,
   );
   readonly facts = computed(() => summarizeWork(this.steps(), this.files()));
+  protected readonly factsElement =
+    viewChild<ElementRef<HTMLElement>>("factsRegion");
+  protected readonly factsClipped = signal(false);
   constructor() {
+    afterRenderEffect((cleanup) => {
+      const element = this.factsElement()?.nativeElement;
+      this.facts();
+      if (!element) return;
+      const measure = () =>
+        this.factsClipped.set(element.scrollWidth > element.clientWidth + 1);
+      measure();
+      if (typeof ResizeObserver === "undefined") return;
+      const observer = new ResizeObserver(measure);
+      observer.observe(element);
+      cleanup(() => observer.disconnect());
+    });
     effect((cleanup) => {
       const step = this.activeStep();
       if (step) {

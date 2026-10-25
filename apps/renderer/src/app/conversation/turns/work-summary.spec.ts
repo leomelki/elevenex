@@ -39,11 +39,28 @@ describe("work timeline grouping", () => {
         [{ path: "retry.ts", add: 92, del: 12 }],
       ),
     ).toEqual([
-      { kind: "failure", label: "1 failed" },
-      { kind: "files", label: "Edited 1 file +92 −12" },
-      { kind: "tests", label: "200/200 passed" },
-      { kind: "commands", label: "Ran 2 commands" },
+      { kind: "failure", label: "1 failed", icon: "x", tone: "danger" },
+      {
+        kind: "files",
+        label: "Edited 1 file",
+        icon: "changes",
+        diff: { add: 92, del: 12 },
+      },
+      { kind: "tests", label: "200/200 passed", icon: "check", tone: "ok" },
+      { kind: "commands", label: "Ran 2 commands", icon: "terminal" },
     ]);
+  });
+  it("marks a failed test result as persistent danger evidence", () => {
+    const facts = summarizeWork(
+      [{ id: "tests", kind: "test", status: "failed", result: "1/64 failed" }],
+      [],
+    );
+    expect(facts.find((fact) => fact.kind === "tests")).toEqual({
+      kind: "tests",
+      label: "1/64 failed",
+      icon: "x",
+      tone: "danger",
+    });
   });
   it("describes grouped discovery in verbs and omits empty categories", () => {
     const entries = groupWorkSteps([

@@ -21,25 +21,40 @@
           >{{ stepCount() }} {{ stepCount() === 1 ? "step" : "steps" }}</span
         >
       }
-      <ex-icon
-        [name]="expanded() ? 'chevron-down' : 'chevron-right'"
-        [size]="12"
-      />
+      @if (status() !== "live") {
+        <span #factsRegion class="facts" [class.clipped]="factsClipped()">
+          @for (fact of facts(); track fact.kind; let i = $index) {
+            <span
+              class="work-item fact"
+              [class.failure]="fact.tone === 'danger'"
+              [class.ok]="fact.tone === 'ok'"
+              [style.--fact-index]="i"
+            >
+              <ex-icon [name]="fact.icon" [size]="12" />
+              {{ fact.label }}
+              @if (fact.diff; as diff) {
+                <span class="diff">
+                  @if (diff.add) {
+                    <span class="add">+{{ diff.add }}</span>
+                  }
+                  @if (diff.del) {
+                    <span class="del">−{{ diff.del }}</span>
+                  }
+                </span>
+              }
+            </span>
+          }
+        </span>
+      }
+      <span class="work-item chevron" [style.--fact-index]="facts().length">
+        <ex-icon name="chevron-right" [size]="12" />
+      </span>
     </button>
     @if (status() === "live" && stoppable()) {
       <button exButton variant="secondary" size="sm" (click)="stop.emit()">
         <ex-icon name="stop" [size]="12" />Stop
       </button>
     }
-    <div class="facts" [class.pinned]="expanded()">
-      @for (fact of facts(); track fact.kind; let i = $index) {
-        <span
-          [class.failure]="fact.kind === 'failure'"
-          [style.--fact-index]="i"
-          >{{ fact.label }}</span
-        >
-      }
-    </div>
   </div>
   <ex-fold [open]="expanded()"
     ><ex-work-timeline
