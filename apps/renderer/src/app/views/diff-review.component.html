@@ -47,8 +47,10 @@
         @for (file of visibleFiles(); track file.id) {
           <div #fileCard [attr.data-file-id]="file.id">
             <ex-diff-file [file]="file" [content]="contentMap().get(file.id)" [mode]="mode()" [wide]="wide()"
+              [stuck]="stuckFileId() === file.id"
               [wrap]="wrap()" [commentsEnabled]="commentsEnabled()" [largeAt]="largeAt()"
               (viewedChange)="viewFile($event)" (fileRequested)="fileRequested.emit($event)"
+              (collapsing)="prepareCollapse(file.id)"
               (contextRequested)="requestContext($event)" (commented)="commented.emit($event)"
               (openRequested)="openFileRequested.emit($event)" />
           </div>

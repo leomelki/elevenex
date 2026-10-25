@@ -55,6 +55,14 @@ browsing and restores focus to its trigger when confirmed or dismissed. Explicit
 file jumps retain their selection at the bottom of the scroll until the user
 scrolls, even when a short last file cannot align to the top.
 
+File headers use one `row-height` row, with inline folder context and independent
+counts/actions. Hover highlights the collapse chevron rather than the entire
+filename region. Updates use a labelled glyph instead of an extra banner row.
+The review owns pinned-header presentation, using its existing bounded scroll
+pass and a cleaned-up layout observer. Header height is measured for reading
+anchors and change navigation. Collapse and Viewed align a pinned file before
+its body folds; changing Viewed resets any temporary expansion of that file.
+
 `DiffFile` owns collapse state, line-question drafts and sent local notes; the
 owner controls Viewed flags and clears them when revisions change. A changed
 revision invalidates local content/drafts. Comments include the correct old/new

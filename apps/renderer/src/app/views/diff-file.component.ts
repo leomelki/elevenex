@@ -1,4 +1,4 @@
-import { afterRenderEffect, ChangeDetectionStrategy, Component, computed, ElementRef, input, output, signal, viewChild } from '@angular/core';
+import { afterRenderEffect, ChangeDetectionStrategy, Component, computed, ElementRef, input, linkedSignal, output, signal, viewChild } from '@angular/core';
 import { ButtonComponent, FoldComponent, IconComponent, IconButtonComponent, SkeletonComponent } from '../ui';
 import { ChangeFile, DiffComment, DiffContextRequest, DiffFileContent, DiffFileRequest, DiffHunk, DiffLine, ReviewMode, CHANGE_STATUS_LABEL, fileName, folderName } from './view.models';
 
@@ -18,6 +18,7 @@ export class DiffFileComponent {
   readonly mode = input<ReviewMode>('changes');
   readonly wrap = input(true);
   readonly wide = input(false);
+  readonly stuck = input(false);
   readonly commentsEnabled = input(true);
   readonly largeAt = input(400);
   readonly viewedChange = output<{ fileId: string; rev?: string | number; viewed: boolean }>();
@@ -25,11 +26,12 @@ export class DiffFileComponent {
   readonly contextRequested = output<DiffContextRequest>();
   readonly commented = output<DiffComment>();
   readonly openRequested = output<string>();
+  readonly collapsing = output<void>();
   protected readonly names = fileName;
   protected readonly folders = folderName;
   protected readonly statusLabels = CHANGE_STATUS_LABEL;
   private readonly collapsedIdentity = signal<string | null>(null);
-  private readonly expandedIdentity = signal<string | null>(null);
+  private readonly expandedIdentity = linkedSignal<boolean, string | null>({ source: () => this.viewed(), computation: () => null });
   private readonly allowedIdentity = signal<string | null>(null);
   private readonly pageSelection = signal({ identity: '', index: 0 });
   protected readonly draft = signal<LineDraft | null>(null);
@@ -88,7 +90,7 @@ export class DiffFileComponent {
   }
 
   protected toggle(): void {
-    if (this.open()) this.collapsedIdentity.set(this.identity());
+    if (this.open()) { this.collapsing.emit(); this.collapsedIdentity.set(this.identity()); }
     else {
       this.collapsedIdentity.set(null);
       this.expandedIdentity.set(this.identity());

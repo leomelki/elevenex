@@ -173,6 +173,10 @@ keyboard file selection and focus restoration, full-file reading position,
 loading/error/deleted/empty states, Viewed folding and a virtualized 1,000-file
 list in both themes. Its supplied content stays outside production.
 
+`scenarios/changes-headers.mjs` checks single-row headers, hover stability,
+320px/440px/wide layouts, pinned styling and file-to-file handoff, plus collapse
+and Viewed from a pinned header in both themes. Run it with the same preview URL.
+
 Run them sequentially so another Electron capture window does not throttle the
 one being measured. They sample in the renderer before mutation and at each real
 animation frame, then continue through retained-row and animation cleanup.

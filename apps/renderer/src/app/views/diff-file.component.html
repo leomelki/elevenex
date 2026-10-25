@@ -1,6 +1,24 @@
 <article class="file" [class.open]="open()" [class.wide]="wide()" [class.nowrap]="!wrap()" [style.--line-number-width]="lineNumberWidth()">
-  <header><button class="fold" type="button" [attr.aria-expanded]="open()" [title]="file().path" (click)="toggle()"><span class="chevron" [class.open]="open()"><ex-icon name="chevron-right" [size]="13" /></span><span class="status" [title]="statusLabels[file().status]">{{ file().status }}</span><span class="path"><b>{{ names(file().path) }}</b><small>{{ folders(file().path) }}</small></span><span class="counts"><span>+{{ file().add }}</span><span>−{{ file().del }}</span></span></button><button class="viewed" type="button" [attr.aria-pressed]="viewed()" (click)="markViewed()"><span class="check" [class.on]="viewed()">@if (viewed()) { <ex-icon name="check" [size]="11" /> }</span>Viewed</button><ex-icon-button icon="code" label="Open in Code" size="sm" (pressed)="openRequested.emit(file().id)" /></header>
-  @if (file().changedSinceViewed) { <p class="changed">Changed since viewed</p> }
+  <header [class.stuck]="stuck()">
+    <button class="fold" type="button" [attr.aria-expanded]="open()" [title]="file().path"
+      [attr.aria-label]="(open() ? 'Collapse ' : 'Expand ') + file().path" (click)="toggle()">
+      <span class="chevron" [class.open]="open()"><ex-icon name="chevron-right" [size]="13" /></span>
+      <span class="status" [title]="statusLabels[file().status]">{{ file().status }}</span>
+      <span class="path"><b>{{ names(file().path) }}</b>@if (folders(file().path)) { <small>{{ folders(file().path) }}</small> }</span>
+    </button>
+    @if (file().changedSinceViewed) {
+      <span class="updated" role="img" aria-label="Changed since viewed" title="Changed since viewed">
+        <ex-icon name="refresh" [size]="12" /><span class="visually-hidden">Changed since viewed</span>
+      </span>
+    }
+    <span class="counts"><span>+{{ file().add }}</span><span>−{{ file().del }}</span></span>
+    <button class="viewed" type="button" [attr.aria-pressed]="viewed()"
+      [attr.aria-label]="(viewed() ? 'Mark as not viewed: ' : 'Mark as viewed: ') + file().path"
+      [title]="viewed() ? 'Mark as not viewed (V)' : 'Mark as viewed (V)'" (click)="markViewed()">
+      <span class="check" [class.on]="viewed()">@if (viewed()) { <ex-icon name="check" [size]="11" /> }</span><span class="viewed-label">Viewed</span>
+    </button>
+    <ex-icon-button icon="code" [label]="'Open ' + file().path + ' in Code'" size="sm" (pressed)="openRequested.emit(file().id)" />
+  </header>
   <ex-fold [open]="open()"><div class="body">
     @if (file().oldPath) { <p class="notice">Renamed from <code>{{ file().oldPath }}</code></p> }
     @if (file().binary) { <p class="notice">Binary file · preview unavailable</p> }

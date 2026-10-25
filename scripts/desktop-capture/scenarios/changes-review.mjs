@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 // Uses real review components; all supplied data stays in the isolated preview.
 export default async function* (capture) {
+  await capture.waitFor(() => document.readyState === 'complete');
   await capture.viewport(1240, 1000);
   await capture.waitFor(() => document.querySelector('a[href="/machines"]'));
   await capture.click('a[href="/machines"]');

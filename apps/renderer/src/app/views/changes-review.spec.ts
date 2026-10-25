@@ -35,6 +35,44 @@ describe('Changes review usability', () => {
     expect(code[1]!.textContent).toBe('  next();');
   });
 
+  it('keeps file actions independent from collapse and exposes updates in the compact header', () => {
+    const fixture = TestBed.createComponent(DiffFileComponent);
+    fixture.componentRef.setInput('file', { ...files[0], changedSinceViewed: true });
+    fixture.componentRef.setInput('content', content);
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    const viewed = vi.fn(), opened = vi.fn();
+    fixture.componentInstance.viewedChange.subscribe(viewed);
+    fixture.componentInstance.openRequested.subscribe(opened);
+    expect(root.querySelector('[aria-label="Changed since viewed"]')).not.toBeNull();
+    root.querySelector<HTMLButtonElement>('.viewed')!.click();
+    expect(viewed).toHaveBeenCalledWith({ fileId: 'first', viewed: true, rev: undefined });
+    expect(root.querySelector('.fold')?.getAttribute('aria-expanded')).toBe('true');
+    root.querySelector<HTMLButtonElement>('[aria-label="Open src/first.ts in Code"]')!.click();
+    expect(opened).toHaveBeenCalledWith('first');
+    expect(root.querySelector('.fold')?.getAttribute('aria-expanded')).toBe('true');
+    root.querySelector<HTMLButtonElement>('.fold')!.click(); fixture.detectChanges();
+    expect(root.querySelector('.fold')?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('folds a reopened file when Viewed changes through either the header or review keyboard action', () => {
+    const fixture = TestBed.createComponent(DiffFileComponent);
+    fixture.componentRef.setInput('file', files[0]);
+    fixture.componentRef.setInput('content', content);
+    fixture.detectChanges();
+    const fold = fixture.nativeElement.querySelector('.fold') as HTMLButtonElement;
+    fold.click(); fixture.detectChanges();
+    fold.click(); fixture.detectChanges();
+    expect(fold.getAttribute('aria-expanded')).toBe('true');
+    fixture.componentRef.setInput('file', { ...files[0], viewed: true }); fixture.detectChanges();
+    expect(fold.getAttribute('aria-expanded')).toBe('false');
+    fold.click(); fixture.detectChanges();
+    expect(fold.getAttribute('aria-expanded')).toBe('true');
+    fixture.componentRef.setInput('file', { ...files[0], viewed: false }); fixture.detectChanges();
+    fixture.componentRef.setInput('file', { ...files[0], viewed: true }); fixture.detectChanges();
+    expect(fold.getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('keeps file-list navigation separate from confirmation and handles each arrow once', () => {
     const fixture = TestBed.createComponent(ChangeListComponent);
     fixture.componentRef.setInput('items', files);

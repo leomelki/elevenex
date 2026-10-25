@@ -36,6 +36,7 @@ export class DiffReviewComponent {
   readonly exitRequested = output<void>();
   protected readonly names = fileName;
   protected readonly listOpen = signal(false);
+  protected readonly stuckFileId = signal<string | undefined>(undefined);
   private readonly localSelected = signal<string | undefined>(undefined);
   protected readonly current = computed(() => this.files().find(file => file.id === (this.activeFileId() ?? this.localSelected())) ?? this.files()[0]);
   protected readonly selectedIndex = computed(() => Math.max(0, this.files().findIndex(file => file.id === this.current()?.id)));
@@ -55,6 +56,7 @@ export class DiffReviewComponent {
   protected readonly fileElements = viewChildren<ElementRef<HTMLElement>>('fileCard');
   private readonly requested = new Map<string, string>();
   private observer?: IntersectionObserver;
+  private layoutObserver?: ResizeObserver;
   private observed: readonly HTMLElement[] = [];
   private targetId?: string;
   private scrollFrame?: number;
@@ -65,7 +67,7 @@ export class DiffReviewComponent {
   private previousWrap?: boolean;
 
   constructor() {
-    inject(DestroyRef).onDestroy(() => { this.observer?.disconnect(); if (this.scrollFrame !== undefined) cancelAnimationFrame(this.scrollFrame); });
+    inject(DestroyRef).onDestroy(() => { this.observer?.disconnect(); this.layoutObserver?.disconnect(); if (this.scrollFrame !== undefined) cancelAnimationFrame(this.scrollFrame); });
     afterRenderEffect(() => {
       const root = this.scroller()?.nativeElement;
       const elements = this.fileElements().map(reference => reference.nativeElement);
@@ -76,6 +78,12 @@ export class DiffReviewComponent {
       const ids = new Set(this.files().map(file => file.id));
       for (const id of this.requested.keys()) if (!ids.has(id)) this.requested.delete(id);
       if (!root) return;
+      if (!this.layoutObserver && typeof ResizeObserver !== 'undefined') {
+        this.layoutObserver = new ResizeObserver(() => this.scrolled());
+        this.layoutObserver.observe(root);
+        const stream = root.querySelector('.stream');
+        if (stream) this.layoutObserver.observe(stream);
+      }
       if (elements.length !== this.observed.length || elements.some((element, index) => element !== this.observed[index])) {
         this.observer?.disconnect();
         this.observed = elements;
@@ -108,6 +116,7 @@ export class DiffReviewComponent {
       this.previousContents = contents;
       this.previousMode = mode;
       this.previousWrap = wrap;
+      this.updateStickyHeader(root);
       this.captureAnchor();
     });
   }
@@ -137,14 +146,17 @@ export class DiffReviewComponent {
   protected toggleWrap(): void { this.captureAnchor(); this.wrapChange.emit(!this.wrap()); }
   protected requestContext(request: DiffContextRequest): void { this.captureAnchor(); this.contextRequested.emit(request); }
   protected viewFile(event: { fileId: string; rev?: string | number; viewed: boolean }): void {
-    if (event.viewed) {
-      const element = this.fileElements().find(reference => reference.nativeElement.dataset['fileId'] === event.fileId)?.nativeElement;
-      const root = this.scroller()?.nativeElement;
-      // Put the sticky header at its natural position before its long body folds away.
-      if (element && root && element.getBoundingClientRect().top < root.getBoundingClientRect().top) this.align(element);
-    }
-    this.captureAnchor();
+    if (event.viewed) this.prepareCollapse(event.fileId);
+    else this.captureAnchor();
     this.viewedChange.emit(event);
+  }
+  protected prepareCollapse(fileId: string): void {
+    const element = this.fileElements().find(reference => reference.nativeElement.dataset['fileId'] === fileId)?.nativeElement;
+    const root = this.scroller()?.nativeElement;
+    // Collapse and Viewed share the same alignment while the sticky header is
+    // still in place, so the disappearing body cannot pull earlier files down.
+    if (element && root && element.getBoundingClientRect().top < root.getBoundingClientRect().top) this.align(element, { preserveSelection: true });
+    this.captureAnchor();
   }
   private align(element: HTMLElement, options: { inset?: number; preserveSelection?: boolean } = {}): void {
     const root = this.scroller()?.nativeElement;
@@ -159,10 +171,11 @@ export class DiffReviewComponent {
     const root = this.scroller()?.nativeElement;
     if (!root) return;
     const top = root.getBoundingClientRect().top;
-    const file = this.fileElements().find(reference => reference.nativeElement.getBoundingClientRect().bottom > top + 40)?.nativeElement;
+    const readingTop = this.readingTop(root);
+    const file = this.fileElements().find(reference => reference.nativeElement.getBoundingClientRect().bottom > readingTop)?.nativeElement;
     const fileId = file?.dataset['fileId'];
     if (!file || !fileId) return;
-    const line = Array.from(file.querySelectorAll<HTMLElement>('[data-line-id]')).find(element => element.getBoundingClientRect().bottom > top + 40);
+    const line = Array.from(file.querySelectorAll<HTMLElement>('[data-line-id]')).find(element => element.getBoundingClientRect().bottom > readingTop);
     this.anchor = { fileId, lineId: line?.dataset['lineId'], offset: (line ?? file).getBoundingClientRect().top - top };
   }
   private restoreAnchor(): void {
@@ -183,13 +196,14 @@ export class DiffReviewComponent {
       this.scrollFrame = undefined;
       const root = this.scroller()?.nativeElement;
       if (!root) return;
+      this.updateStickyHeader(root);
       if (this.alignedScrollTop !== undefined && Math.abs(root.scrollTop - this.alignedScrollTop) < 1) {
         this.captureAnchor();
         return;
       }
       this.alignedScrollTop = undefined;
-      const top = root.getBoundingClientRect().top;
-      const element = this.fileElements().find(reference => reference.nativeElement.getBoundingClientRect().bottom > top + 40)?.nativeElement;
+      const top = this.readingTop(root);
+      const element = this.fileElements().find(reference => reference.nativeElement.getBoundingClientRect().bottom > top)?.nativeElement;
       const id = element?.dataset['fileId'];
       if (id && id !== this.current()?.id) { this.localSelected.set(id); this.fileSelected.emit(id); }
       this.captureAnchor();
@@ -198,10 +212,25 @@ export class DiffReviewComponent {
   private nextChange(backwards: boolean): void {
     const root = this.scroller()?.nativeElement;
     if (!root) return;
-    const top = root.getBoundingClientRect().top + 40;
+    const top = this.readingTop(root);
     const lines = Array.from(root.querySelectorAll<HTMLElement>('[data-kind="add"], [data-kind="del"]'));
     const line = backwards ? lines.reverse().find(element => element.getBoundingClientRect().top < top - 2) : lines.find(element => element.getBoundingClientRect().top > top + 2);
-    if (line) this.align(line, { inset: 40 });
+    if (line) this.align(line, { inset: top - root.getBoundingClientRect().top });
+  }
+
+  private readingTop(root: HTMLElement): number {
+    const header = this.fileElements()[0]?.nativeElement.querySelector('header');
+    return root.getBoundingClientRect().top + (header?.getBoundingClientRect().height ?? 0);
+  }
+
+  private updateStickyHeader(root: HTMLElement): void {
+    const top = root.getBoundingClientRect().top;
+    const pinned = this.fileElements().find(reference => {
+      const element = reference.nativeElement;
+      const bounds = element.getBoundingClientRect();
+      return bounds.top < top - .5 && bounds.bottom > top && !!element.querySelector('.file.open');
+    });
+    this.stuckFileId.set(pinned?.nativeElement.dataset['fileId']);
   }
   protected keydown(event: KeyboardEvent): void {
     if ((event.target as HTMLElement).matches('input, textarea, select, [contenteditable="true"]')) return;
