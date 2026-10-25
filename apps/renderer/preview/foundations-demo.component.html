@@ -13,7 +13,7 @@
       ><button exButton variant="danger">Close task</button>
     </div>
     <div class="row">
-      <button exButton size="sm">Commit 7</button
+      <button exButton size="sm">Open file</button
       ><button exButton variant="primary" disabled>Creating…</button
       ><ex-icon-button
         icon="panel"
@@ -22,6 +22,14 @@
         (pressed)="enabled.set(!enabled())"
       /><ex-kbd>⌘N</ex-kbd>
     </div>
+    <ex-git-bar
+      [files]="7"
+      [add]="214"
+      [del]="38"
+      (action)="gitIntent.set($event)"
+      (changesRequested)="gitIntent.set('Open changes')"
+    />
+    <p role="status">{{ gitIntent() || "No git action requested" }}</p>
   </section>
   <section>
     <h2>Status</h2>
@@ -82,8 +90,8 @@
     <div class="row">
       <ex-tooltip label="Toggle side panel" kbd="⌘\" /><button
         exButton
-        exTooltip="Commit changes"
-        tooltipShortcut="⌘↵"
+        exTooltip="New session"
+        tooltipShortcut="⌘N"
       >
         Hover or focus
       </button>
@@ -134,7 +142,8 @@
       <button exButton (click)="open.set(!open())">Toggle fold</button
       ><button
         exButton
-        (click)="label.set(label() === 'Commit 7' ? 'Push 2' : 'Commit 7')"
+        [attr.aria-label]="label()"
+        (click)="label.set(label() === 'Short label' ? 'A longer label' : 'Short label')"
       >
         <ex-ease-swap [value]="label()" /></button
       ><button exButton (click)="visible.set(!visible())">

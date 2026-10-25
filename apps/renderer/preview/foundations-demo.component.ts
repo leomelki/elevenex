@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, signal } from "@angular/core";
+import { GitBarComponent } from "../src/app/tasks";
 import {
   ButtonComponent,
   ContextMeterComponent,
@@ -30,6 +31,7 @@ import {
     ContextMeterComponent,
     EaseSwapComponent,
     FoldComponent,
+    GitBarComponent,
     IconButtonComponent,
     IconComponent,
     KbdComponent,
@@ -66,7 +68,8 @@ export class FoundationsDemoComponent {
   readonly toast = signal(true);
   readonly notices = signal<readonly ToastNotice[]>([]);
   private nextNotice = 1;
-  readonly label = signal("Commit 7");
+  readonly label = signal("Short label");
+  readonly gitIntent = signal("");
   readonly progress = signal(0.48);
   readonly options = [
     { id: "plan", label: "Plan", icon: "plan" },
