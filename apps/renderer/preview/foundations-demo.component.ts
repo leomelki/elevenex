@@ -3,6 +3,7 @@ import { GitBarComponent } from "../src/app/tasks";
 import {
   ButtonComponent,
   ContextMeterComponent,
+  DropdownComponent,
   EaseSwapComponent,
   FoldComponent,
   IconButtonComponent,
@@ -29,6 +30,7 @@ import {
   imports: [
     ButtonComponent,
     ContextMeterComponent,
+    DropdownComponent,
     EaseSwapComponent,
     FoldComponent,
     GitBarComponent,
@@ -63,6 +65,12 @@ export class FoundationsDemoComponent {
   ];
   readonly enabled = signal(true);
   readonly mode = signal("code");
+  readonly preset = signal('deep');
+  readonly presets = [
+    { id: 'deep', label: 'Deep work', detail: 'High thinking', mark: 'Cl' },
+    { id: 'offline', label: 'Local runner', detail: 'Machine offline', disabled: true },
+    { id: 'quick', label: 'Quick edit', detail: 'Low thinking', mark: 'Co' },
+  ];
   readonly open = signal(true);
   readonly visible = signal(true);
   readonly toast = signal(true);

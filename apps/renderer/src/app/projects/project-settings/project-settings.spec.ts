@@ -11,6 +11,33 @@ describe('project settings supplied data and intents', () => {
   beforeEach(() => vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => undefined, removeEventListener: () => undefined, addListener: () => undefined, removeListener: () => undefined })));
   afterEach(() => vi.unstubAllGlobals());
 
+  it('uses the shared dropdown for preferences, emits patches and keeps Escape local to its menu', async () => {
+    const fixture = TestBed.createComponent(ProjectSettingsComponent);
+    fixture.componentRef.setInput('project', { name: 'Checkout' });
+    fixture.componentRef.setInput('open', true);
+    fixture.componentRef.setInput('section', 'git');
+    const changed = vi.fn(); const closed = vi.fn();
+    fixture.componentInstance.preferencesChanged.subscribe(changed);
+    fixture.componentInstance.closed.subscribe(closed);
+    fixture.detectChanges(); await fixture.whenStable();
+    const trigger = document.querySelector<HTMLButtonElement>('ex-set-choice button[aria-label^="Merging sub-tasks:"]')!;
+    trigger.click(); fixture.detectChanges(); await fixture.whenStable();
+    const items = document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]');
+    expect(items).toHaveLength(3);
+    items[1]!.click(); fixture.detectChanges();
+    expect(changed).toHaveBeenCalledExactlyOnceWith({ subtaskMerge: 'merge' });
+    expect(trigger.textContent).toContain('Squash and merge');
+    trigger.click(); fixture.detectChanges(); await fixture.whenStable();
+    document.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+    fixture.detectChanges();
+    expect(closed).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    trigger.click(); fixture.detectChanges(); await fixture.whenStable();
+    fixture.componentRef.setInput('open', false); fixture.detectChanges(); await fixture.whenStable();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
   it('aborts stale folder lookups, rejects late replies and emits the keyboard selection', async () => {
     const requests: {query: string; signal: AbortSignal; resolve: (entries: readonly FolderEntry[]) => void}[] = [];
     const provider: FolderProvider = (query, signal) => new Promise(resolve => requests.push({query, signal, resolve}));

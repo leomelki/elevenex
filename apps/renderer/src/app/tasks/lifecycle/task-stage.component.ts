@@ -4,16 +4,16 @@ import {
   input,
   output,
 } from '@angular/core';
-import { CdkMenuModule } from '@angular/cdk/menu';
-import { IconComponent } from '../../ui';
+import { CdkMenuTrigger } from '@angular/cdk/menu';
+import { DropdownMenuComponent, DropdownRadioComponent, IconComponent } from '../../ui';
 import { TASK_STAGE_LABELS, type TaskStage } from '../task.models';
 import { StageGlyphComponent } from './stage-glyph.component';
 @Component({
   selector: 'ex-task-stage',
-  imports: [CdkMenuModule, IconComponent, StageGlyphComponent],
+  imports: [CdkMenuTrigger, DropdownMenuComponent, DropdownRadioComponent, IconComponent, StageGlyphComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-stage.component.html',
-  styleUrls: ['../tasks-menu.css', './task-stage.component.css'],
+  styleUrl: './task-stage.component.css',
 })
 export class TaskStageComponent {
   readonly stage = input<TaskStage>('planned');

@@ -114,6 +114,11 @@ activate shell takeover; Escape resets it through the shell. Handle
   disabled, keyboard and form semantics. The button primitive is used as
   `<button exButton variant="primary">…</button>`; icon actions require a label.
 
+Use the shared [dropdown components](src/app/ui/dropdown/README.md) for ordinary
+single-choice controls and action menus. Task stages, workspace selection,
+project menus, Git actions and settings choices share these primitives. Keep
+searchable pickers and forms as specialized dialogs.
+
 ## Design sources and deliberate adapter boundaries
 
 The [brand book](../../docs/design-system/project/README.md), tokens and component

@@ -14,10 +14,12 @@ import {
   signal,
   viewChild,
 } from "@angular/core";
-import { CdkMenuModule } from "@angular/cdk/menu";
+import { CdkMenuTrigger } from "@angular/cdk/menu";
 import { OverlayModule } from "@angular/cdk/overlay";
 import { A11yModule } from "@angular/cdk/a11y";
 import {
+  DropdownMenuComponent,
+  DropdownItemComponent,
   ButtonComponent,
   IconComponent,
   KbdComponent,
@@ -46,10 +48,12 @@ interface StatContent {
 @Component({
   selector: "ex-git-bar",
   imports: [
-    CdkMenuModule,
+    CdkMenuTrigger,
     OverlayModule,
     A11yModule,
     GitJobMenuComponent,
+    DropdownMenuComponent,
+    DropdownItemComponent,
     ButtonComponent,
     IconComponent,
     KbdComponent,
@@ -57,7 +61,7 @@ interface StatContent {
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: "./git-bar.component.html",
-  styleUrls: ["../tasks-menu.css", "./git-bar.component.css"],
+  styleUrl: "./git-bar.component.css",
 })
 export class GitBarComponent {
   readonly files = input(0);

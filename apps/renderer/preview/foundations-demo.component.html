@@ -59,6 +59,11 @@
         (changed)="enabled.set($event)"
       /><ex-switch label="Unavailable setting" [disabled]="true" />
     </div>
+    <div class="row">
+      <ex-dropdown label="Preset" [value]="preset()" [options]="presets" (changed)="preset.set($event)" />
+      <ex-dropdown label="Unavailable preset" value="deep" [options]="presets" [disabled]="true" />
+      <ex-dropdown label="Empty presets" value="" [options]="[]" placeholder="No presets" />
+    </div>
   </section>
   <section>
     <h2>Progress and context</h2>

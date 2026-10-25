@@ -1,0 +1,19 @@
+<button class="trigger" [cdkMenuTriggerFor]="menu" type="button" [disabled]="unavailable()" [attr.aria-label]="label() + ': ' + (selected()?.label ?? (value() || placeholder()))">
+  @if (selected()?.mark; as mark) { <span class="mark" aria-hidden="true">{{ mark }}</span> }
+  @if (icon(); as name) { <ex-icon [name]="name" [size]="12" /> }
+  <span class="text" [class.mono]="mono()">{{ selected()?.label ?? (value() || placeholder()) }}</span>
+  @if (selected()?.detail; as detail) { <span class="detail">{{ detail }}</span> }
+  <ex-icon name="chevron-down" [size]="12" />
+</button>
+<ng-template #menu>
+  <ex-dropdown-menu [label]="label()">
+    @for (option of options(); track option.id) {
+      <button exDropdownRadio [checked]="value() === option.id" [disabled]="!!option.disabled" [typeaheadLabel]="option.label" (triggered)="changed.emit(option.id)">
+        @if (option.mark) { <span class="mark" aria-hidden="true">{{ option.mark }}</span> }
+        <span class="option-text"><span [class.mono]="mono()">{{ option.label }}</span>
+          @if (option.detail) { <span class="detail">{{ option.detail }}</span> }
+        </span>
+      </button>
+    }
+  </ex-dropdown-menu>
+</ng-template>

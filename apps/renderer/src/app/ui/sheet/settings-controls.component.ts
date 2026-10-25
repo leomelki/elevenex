@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, ElementRef, afterRenderEffect, computed, input, output, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, afterRenderEffect, input, output, signal, viewChild } from '@angular/core';
 import { IconComponent } from '../icon/icon.component';
 
 @Component({ selector: 'ex-set-group', changeDetection: ChangeDetectionStrategy.OnPush, template: `
@@ -53,51 +53,7 @@ export class SetFieldComponent {
   readonly valueChanged = output<string>();
 }
 
-export interface SettingChoice {
-  readonly id: string;
-  readonly label: string;
-  readonly detail?: string;
-  readonly mark?: string;
-  readonly disabled?: boolean;
-}
-
-/** A native select retains platform keyboard and type-ahead behavior under the reference's choice face. */
-@Component({ selector: 'ex-set-choice', imports: [IconComponent], changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `
-    <span class="choice" [class.disabled]="disabled()">
-      @if (selected()?.mark; as mark) { <span class="mark">{{ mark }}</span> }
-      @if (icon()) { <ex-icon [name]="icon()!" [size]="12" /> }
-      <span [class.mono]="mono()">{{ selected()?.label ?? (value() || placeholder()) }}</span>
-      @if (selected()?.detail; as detail) { <span class="detail">{{ detail }}</span> }
-      <ex-icon name="chevron-down" [size]="11" />
-      <select #select [value]="value()" [attr.aria-label]="label()" [disabled]="disabled()" (change)="changed.emit(select.value)">
-        @if (!selected()) { <option [value]="value()" disabled>{{ value() || placeholder() }}</option> }
-        @for (option of options(); track option.id) { <option [value]="option.id" [disabled]="option.disabled">{{ option.label }}{{ option.detail ? ' · ' + option.detail : '' }}</option> }
-      </select>
-    </span>
-  `, styles: `
-    :host { display: inline-flex; min-width: 0; max-width: 100%; }
-    .choice { position: relative; font: inherit; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); font-size: 13px; cursor: pointer; white-space: nowrap; max-width: 100%; }
-    .choice:focus-within { box-shadow: var(--focus-ring); }
-    .choice:hover { background: var(--surface-sunken); }
-    ex-icon, .detail { color: var(--ink-muted); }
-    .detail { font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
-    .mono { font-family: var(--font-mono); font-size: 11.5px; line-height: 16px; font-weight: 500; }
-    .mark { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-size: 9px; font-weight: 700; flex: none; }
-    select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
-    .disabled { opacity: .45; cursor: default; }
-  ` })
-export class SetChoiceComponent {
-  readonly options = input.required<readonly SettingChoice[]>();
-  readonly value = input.required<string>();
-  readonly label = input.required<string>();
-  readonly placeholder = input('Choose…');
-  readonly mono = input(false);
-  readonly icon = input<string>();
-  readonly disabled = input(false);
-  readonly changed = output<string>();
-  protected readonly selected = computed(() => this.options().find(option => option.id === this.value()));
-}
+export { SetChoiceComponent, type SettingChoice } from './set-choice.component';
 
 @Component({
   selector: 'ex-set-value', imports: [IconComponent], changeDetection: ChangeDetectionStrategy.OnPush,

@@ -5,15 +5,15 @@ import {
   input,
   output,
 } from '@angular/core';
-import { CdkMenuModule } from '@angular/cdk/menu';
-import { IconComponent } from '../../ui';
+import { CdkMenuTrigger } from '@angular/cdk/menu';
+import { DropdownMenuComponent, DropdownItemComponent, DropdownRadioComponent, IconComponent } from '../../ui';
 import type { Workspace } from '../task.models';
 @Component({
   selector: 'ex-workspace-picker',
-  imports: [CdkMenuModule, IconComponent],
+  imports: [CdkMenuTrigger, DropdownMenuComponent, DropdownItemComponent, DropdownRadioComponent, IconComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-picker.component.html',
-  styleUrls: ['../tasks-menu.css', './workspace-picker.component.css'],
+  styleUrl: './workspace-picker.component.css',
 })
 export class WorkspacePickerComponent {
   readonly value = input('auto');

@@ -172,17 +172,17 @@
   </span>
 </div>
 <ng-template #menu>
-  <div class="menu" cdkMenu aria-label="Git actions">
+  <ex-dropdown-menu label="Git actions">
     @for (item of menuItems(); track item.action) {
       <button
         type="button"
-        cdkMenuItem
-        (cdkMenuItemTriggered)="action.emit(item.action)"
+        exDropdownItem
+        (triggered)="action.emit(item.action)"
       >
         {{ item.label }}
       </button>
     }
-  </div>
+  </ex-dropdown-menu>
 </ng-template>
 <ng-template
   cdkConnectedOverlay

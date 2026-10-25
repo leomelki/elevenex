@@ -1,6 +1,5 @@
-import { CdkMenuModule } from '@angular/cdk/menu';
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
-import { IconComponent, KbdComponent } from '../ui';
+import { DropdownMenuComponent, DropdownItemComponent, IconComponent, KbdComponent } from '../ui';
 import { ProjectMarkComponent } from '../tasks/projects/project-mark.component';
 import type { ProjectMark } from '../tasks/task.models';
 
@@ -9,7 +8,7 @@ export type ProjectMenuAction = 'settings' | 'add-repository' | 'closed-tasks' |
  * arrow keys, typeahead, Escape and focus restoration at window level. */
 @Component({
   selector: 'ex-project-menu',
-  imports: [CdkMenuModule, IconComponent, KbdComponent, ProjectMarkComponent],
+  imports: [DropdownMenuComponent, DropdownItemComponent, IconComponent, KbdComponent, ProjectMarkComponent],
   templateUrl: './project-menu.component.html',
   styleUrl: './project-menu.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,

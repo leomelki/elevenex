@@ -1,12 +1,12 @@
-<div class="menu" cdkMenu [attr.aria-label]="project().name">
+<ex-dropdown-menu class="menu" [label]="project().name">
   <div class="head"><ex-project-mark [name]="project().name" [logo]="project().logo" [initials]="project().initials" [emoji]="project().emoji" [icon]="project().icon" [hue]="project().hue || 'steel'" [size]="28" [decorative]="true" /><span class="identity"><b>{{ project().name }}</b><span>{{ repoCount() }} {{ repoCount() === 1 ? 'repository' : 'repositories' }}{{ machine() ? ' · ' + machine() : '' }}</span></span></div>
   <div class="separator" role="separator"></div>
   @for (item of items; track item.action) {
     @if (item.action === 'archive') { <div class="separator" role="separator"></div> }
-    <button type="button" cdkMenuItem [cdkMenuItemDisabled]="disabled()" [class.danger]="item.action === 'delete'" (cdkMenuItemTriggered)="trigger(item.action)">
+    <button type="button" exDropdownItem [disabled]="disabled()" [danger]="item.action === 'delete'" (triggered)="trigger(item.action)">
       <ex-icon [name]="item.icon" [size]="15" /><span class="grow">{{ item.label }}</span>
       @if (item.action === 'settings') { <ex-kbd>⌘,</ex-kbd> }
       @if (item.action === 'closed-tasks' && closed() !== undefined) { <span class="count">{{ closed() }}</span> }
     </button>
   }
-</div>
+</ex-dropdown-menu>

@@ -51,3 +51,9 @@
 .dot.used {
   background: var(--ink-muted);
 }
+
+.grow { flex: 1; min-width: 0; }
+.stack { display: flex; flex-direction: column; }
+.muted { color: var(--ink-muted); font-size: var(--text-caption-size); }
+.separator { flex: none; height: 1px; margin: var(--space-1); background: var(--line); }
+.label { display: flex; justify-content: space-between; padding: var(--space-1) var(--space-2); font-size: var(--text-overline-size); color: var(--ink-muted); }

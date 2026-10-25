@@ -36,14 +36,14 @@
   </ng-template>
   <ng-template exSheetSection="agents" label="Agents" icon="bolt">
     <ex-set-group>
-      <ex-set-row label="Default preset" sub="Preselected in a new session"><ex-set-choice label="Default preset" [value]="preferences().defaultPreset ?? ''" [options]="presets()" [disabled]="!presets().length" (changed)="preferencesChanged.emit({defaultPreset: $event})" /></ex-set-row>
-      <ex-set-row label="Git helper" sub="Runs the sessions git jobs start"><ex-set-choice label="Git helper" [value]="preferences().gitPreset ?? ''" [options]="presets()" [disabled]="!presets().length" (changed)="preferencesChanged.emit({gitPreset: $event})" /></ex-set-row>
+      <ex-set-row label="Default preset" sub="Preselected in a new session"><ex-set-choice [active]="open()" label="Default preset" [value]="preferences().defaultPreset ?? ''" [options]="presets()" [disabled]="!presets().length" (changed)="preferencesChanged.emit({defaultPreset: $event})" /></ex-set-row>
+      <ex-set-row label="Git helper" sub="Runs the sessions git jobs start"><ex-set-choice [active]="open()" label="Git helper" [value]="preferences().gitPreset ?? ''" [options]="presets()" [disabled]="!presets().length" (changed)="preferencesChanged.emit({gitPreset: $event})" /></ex-set-row>
     </ex-set-group>
   </ng-template>
   <ng-template exSheetSection="git" label="Git" icon="branch">
     <ex-set-group [note]="helperNote()">
       <ex-set-row label="Helper sessions"><ex-segmented label="Helper sessions" [value]="preferences().helpers ?? 'auto'" [options]="helperOptions" (changed)="changeHelpers($event)" /></ex-set-row>
-      <ex-set-row label="Merging sub-tasks"><ex-set-choice label="Merging sub-tasks" [value]="preferences().subtaskMerge ?? 'squash'" [options]="mergeOptions" (changed)="changeMerge($event)" /></ex-set-row>
+      <ex-set-row label="Merging sub-tasks"><ex-set-choice [active]="open()" label="Merging sub-tasks" [value]="preferences().subtaskMerge ?? 'squash'" [options]="mergeOptions" (changed)="changeMerge($event)" /></ex-set-row>
     </ex-set-group>
   </ng-template>
 </ex-sheet>

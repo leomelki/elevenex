@@ -25,3 +25,5 @@
   outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }
+
+.grow { flex: 1; min-width: 0; }

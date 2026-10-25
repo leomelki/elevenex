@@ -38,8 +38,8 @@ export default tseslint.config(
   },
   {
     basePath,
-    files: ['apps/renderer/src/app/ui/button/button.component.ts'],
-    // This one primitive enhances a native button so forms and disabled semantics remain native.
+    files: ['apps/renderer/src/app/ui/button/button.component.ts', 'apps/renderer/src/app/ui/dropdown/dropdown-item.component.ts'],
+    // Button primitives enhance native controls so forms and disabled semantics remain native.
     rules: { '@angular-eslint/component-selector': ['error', { type: 'attribute', prefix: 'ex', style: 'camelCase' }] },
   },
   {

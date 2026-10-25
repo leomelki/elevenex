@@ -8,12 +8,12 @@
   <ex-icon name="chevron-down" [size]="13" />
 </button>
 <ng-template #menu
-  ><div class="menu" cdkMenu aria-label="Workspace">
+  ><ex-dropdown-menu label="Workspace">
     <button
       type="button"
-      cdkMenuItemRadio
-      [cdkMenuItemChecked]="value() === 'auto'"
-      (cdkMenuItemTriggered)="valueChange.emit('auto')"
+      exDropdownRadio
+      [checked]="value() === 'auto'"
+      (triggered)="valueChange.emit('auto')"
     >
       <span class="stack grow"
         ><span>Automatic</span
@@ -21,11 +21,8 @@
           >Reuse a free workspace from the pool, or add one</span
         ></span
       >
-      @if (value() === 'auto') {
-        <ex-icon name="check" [size]="14" />
-      }
     </button>
-    <div class="separator"></div>
+    <div class="separator" role="separator"></div>
     <div class="label">
       <span>Pool</span
       ><span>{{ free().length }} free of {{ items().length }}</span>
@@ -33,11 +30,10 @@
     @for (item of items(); track item.name) {
       <button
         type="button"
-        cdkMenuItemRadio
-        [cdkMenuItemChecked]="value() === item.name"
-        [cdkMenuItemDisabled]="item.state === 'used'"
+        exDropdownRadio
+        [checked]="value() === item.name"
         [disabled]="item.state === 'used'"
-        (cdkMenuItemTriggered)="valueChange.emit(item.name)"
+        (triggered)="valueChange.emit(item.name)"
       >
         <span class="dot" [class.used]="item.state === 'used'"></span
         ><span class="stack grow"
@@ -48,25 +44,22 @@
               : 'Free' + (item.note ? ' · ' + item.note : '')
           }}</span></span
         >
-        @if (value() === item.name) {
-          <ex-icon name="check" [size]="14" />
-        }
       </button>
     }
     <button
       type="button"
-      cdkMenuItem
-      (cdkMenuItemTriggered)="newWorkspace.emit()"
+      exDropdownItem
+      (triggered)="newWorkspace.emit()"
     >
       <ex-icon name="plus" [size]="14" />New workspace
     </button>
-    <div class="separator"></div>
+    <div class="separator" role="separator"></div>
     <button
       type="button"
-      cdkMenuItem
-      (cdkMenuItemTriggered)="manageWorkspaces.emit()"
+      exDropdownItem
+      (triggered)="manageWorkspaces.emit()"
     >
       <ex-icon name="workspace" [size]="14" />Manage workspaces…
     </button>
-  </div></ng-template
+  </ex-dropdown-menu></ng-template
 >

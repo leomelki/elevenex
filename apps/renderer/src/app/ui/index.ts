@@ -4,6 +4,7 @@ export * from "./button/icon-button.component";
 export * from "./controls/kbd.component";
 export * from "./controls/switch.component";
 export * from "./controls/segmented.component";
+export * from './dropdown';
 export * from "./status/status.models";
 export * from "./status/status-glyph.component";
 export * from "./status/status-badge.component";
