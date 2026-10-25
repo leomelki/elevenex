@@ -4,6 +4,7 @@ import {
   DestroyRef,
   ElementRef,
   OnChanges,
+  SimpleChanges,
   computed,
   inject,
   input,
@@ -21,7 +22,6 @@ import {
   matchesSessionFilter,
   type SessionStatus,
   type TaskOutline,
-  type TaskStage,
   type TaskSession,
   type SubTask,
 } from "../task.models";
@@ -202,7 +202,6 @@ export class TaskGroupComponent implements OnChanges {
       this.task().links?.find((link) => link.kind === "pr") ??
       this.task().links?.[0],
   );
-  private previousStage: TaskStage | undefined;
   private foldTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
@@ -270,12 +269,19 @@ export class TaskGroupComponent implements OnChanges {
       clearTimeout(this.tipTimer);
     });
   }
-  ngOnChanges(): void {
+  ngOnChanges(changes: SimpleChanges): void {
+    const previousTask: TaskOutline | undefined = changes["task"]?.previousValue;
     const stage = this.task().stage ?? "active";
-    if (this.previousStage && this.previousStage !== stage) {
+    if (previousTask && (previousTask.stage ?? "active") !== stage) {
       clearTimeout(this.foldTimer);
-      this.collapsedValue.set(false);
-      if (stage === "waiting" || stage === "planned") {
+      // Carry the painted fold state through the move, including stage defaults.
+      // Only an expanded task needs the glide-then-collapse sequence.
+      const wasCollapsed =
+        this.collapsedValue() ??
+        previousTask.collapsed ??
+        ["waiting", "planned", "closed"].includes(previousTask.stage ?? "active");
+      this.collapsedValue.set(wasCollapsed);
+      if (!wasCollapsed && (stage === "waiting" || stage === "planned")) {
         const duration = matchMedia("(prefers-reduced-motion: reduce)").matches
           ? 0
           : parseFloat(
@@ -289,7 +295,6 @@ export class TaskGroupComponent implements OnChanges {
         else this.collapsedValue.set(true);
       }
     }
-    this.previousStage = stage;
   }
   protected hoverSubtask(id: string | null): void {
     clearTimeout(this.tipTimer);

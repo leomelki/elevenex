@@ -34,7 +34,10 @@ describe('task outline ownership', () => {
       imports: [TaskListComponent],
     }).compileComponents();
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
   it('keeps order, folds finished sessions and exposes selection intents', () => {
     const fixture = TestBed.createComponent(TaskListComponent);
     fixture.componentRef.setInput('tasks', tasks);
@@ -83,6 +86,61 @@ describe('task outline ownership', () => {
     );
     fixture.destroy();
   });
+  it.each([false, true])('keeps collapsed tasks closed throughout stage moves (reduced motion: %s)', (reduced) => {
+    vi.useFakeTimers();
+    vi.stubGlobal('matchMedia', () => ({ matches: reduced, addEventListener: () => undefined, removeEventListener: () => undefined }));
+    const fixture = TestBed.createComponent(TaskListComponent);
+    fixture.nativeElement.style.setProperty('--dur-glide', '340ms');
+    fixture.componentRef.setInput('tasks', tasks);
+    fixture.detectChanges();
+    const first = fixture.nativeElement.querySelector('[data-task-id="first"]') as HTMLElement;
+    const second = fixture.nativeElement.querySelector('[data-task-id="second"]') as HTMLElement;
+    const toggle = first.querySelector('header button') as HTMLButtonElement;
+    toggle.click();
+    fixture.detectChanges();
+    const assertClosed = () => {
+      for (const article of [first, second]) {
+        expect(article.querySelector('header button')?.getAttribute('aria-expanded')).toBe('false');
+        expect(article.querySelector(':scope > ex-fold')?.hasAttribute('inert')).toBe(true);
+      }
+    };
+    assertClosed();
+    for (const stages of [['waiting', 'active'], ['active', 'waiting']] as const) {
+      fixture.componentRef.setInput('tasks', tasks.map((task, index) => ({ ...task, stage: stages[index]! })));
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('[data-task-id="first"]')).toBe(first);
+      expect(fixture.nativeElement.querySelector('[data-task-id="second"]')).toBe(second);
+      assertClosed();
+      vi.advanceTimersByTime(170);
+      fixture.detectChanges();
+      assertClosed();
+      vi.advanceTimersByTime(500);
+      fixture.detectChanges();
+      assertClosed();
+    }
+    fixture.destroy();
+  });
+
+  it('still lets an expanded task glide before collapsing in Waiting', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: () => undefined, removeEventListener: () => undefined }));
+    const fixture = TestBed.createComponent(TaskListComponent);
+    fixture.nativeElement.style.setProperty('--dur-glide', '340ms');
+    fixture.componentRef.setInput('tasks', tasks);
+    fixture.detectChanges();
+    const toggle = fixture.nativeElement.querySelector('[data-task-id="first"] header button') as HTMLButtonElement;
+    fixture.componentRef.setInput('tasks', [{ ...tasks[0]!, stage: 'waiting' }, tasks[1]!]);
+    fixture.detectChanges();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    vi.advanceTimersByTime(170);
+    fixture.detectChanges();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    vi.advanceTimersByTime(170);
+    fixture.detectChanges();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fixture.destroy();
+  });
+
   it('includes failed sessions under Needs you and reveals the selected finished session', () => {
     const fixture = TestBed.createComponent(TaskListComponent);
     fixture.componentRef.setInput('tasks', tasks);

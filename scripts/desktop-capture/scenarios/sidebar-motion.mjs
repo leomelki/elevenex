@@ -40,6 +40,10 @@ async function probeSidebar(options) {
     return {
       time: Math.round((performance.now() - started) * 100) / 100,
       kind,
+      fold: options.keepCollapsed ? {
+        expanded: host.querySelector('[data-task-id="task-4"] header button').getAttribute('aria-expanded'),
+        height: host.querySelector('[data-task-id="task-4"] > ex-fold').getBoundingClientRect().height,
+      } : null,
       active: animations.length,
       pending: pendingRows(),
       remaining: Math.max(0, ...animations.map(animation => animation.effect.getComputedTiming().endTime - Number(animation.currentTime))),
@@ -203,6 +207,12 @@ async function* measure(capture, theme, name, options, expected = {}) {
   } else {
     assert.ok(result.samples.filter(sample => sample.kind === 'frame').every(sample => sample.active === 0), `${name}: reduced motion must settle before the first painted probe frame`);
   }
+  if (options.keepCollapsed) {
+    for (const sample of result.samples) {
+      assert.equal(sample.fold.expanded, 'false', `${name}: collapsed task reopened at ${sample.time}ms`);
+      assert.ok(sample.fold.height <= 1, `${name}: hidden sessions grew to ${sample.fold.height}px`);
+    }
+  }
   if (options.interrupt) {
     assert.ok(result.interruption?.focused, 'Native keyboard input remains focused during reversal');
     // The key event's intermediate DOM can precede post-render FLIP inversion;
@@ -234,6 +244,12 @@ export default async function* (capture) {
     }, setup);
     await settleSidebar(capture);
     await capture.component(root, component => component.scroll('start'));
+  };
+  const collapseTarget = async () => {
+    if (await capture.evaluate(() => document.querySelector('ex-sidebar-motion-demo [data-task-id="task-4"] header button.toggle').getAttribute('aria-expanded') === 'true')) {
+      await capture.click(`${root} [data-task-id="task-4"] header button.toggle`);
+    }
+    await settleSidebar(capture);
   };
   try {
     for (const theme of ['light', 'dark']) {
@@ -271,6 +287,11 @@ export default async function* (capture) {
       yield* measure(capture, theme, 'move-stage', { action: 'move', args: ['waiting'], moves: true }, { count: 10 });
 
       await reset();
+      await collapseTarget();
+      yield* measure(capture, theme, 'collapsed-to-waiting', { action: 'move', args: ['waiting'], moves: true, keepCollapsed: true });
+      yield* measure(capture, theme, 'collapsed-to-active', { action: 'move', args: ['active'], moves: true, keepCollapsed: true });
+
+      await reset();
       yield* measure(capture, theme, 'add-session', { action: 'addSession', moves: true }, { sessions: 4 });
       yield* measure(capture, theme, 'finish-session', { action: 'finishSession', moves: true }, { sessions: 4 });
       yield* measure(capture, theme, 'remove-session', { action: 'removeSession', moves: true }, { sessions: 3 });
@@ -286,6 +307,9 @@ export default async function* (capture) {
 
       await capture.reducedMotion(true);
       await reset();
+      await collapseTarget();
+      yield* measure(capture, theme, 'reduced-collapsed-to-waiting', { action: 'move', args: ['waiting'], reduced: true, keepCollapsed: true });
+      yield* measure(capture, theme, 'reduced-collapsed-to-active', { action: 'move', args: ['active'], reduced: true, keepCollapsed: true });
       yield* measure(capture, theme, 'reduced-sparse', { action: 'keepOriginal', args: [[4, 7]], reduced: true }, { visible: ['task-4', 'task-7'] });
       yield* measure(capture, theme, 'reduced-clear', { action: 'clear', reduced: true }, { count: 0 });
       yield* measure(capture, theme, 'reduced-restore', { action: 'reset', reduced: true }, { order: originals });
