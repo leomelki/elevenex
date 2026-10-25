@@ -13,6 +13,7 @@ export class ModalMotion {
   private range: readonly [number, number] = [0, 1];
   private generation = 0;
   private restoreOrigin?: () => void;
+  private restoreTrigger?: () => void;
   private returnElement: HTMLElement | null;
 
   get returnTarget(): HTMLElement | null { return this.returnElement; }
@@ -84,6 +85,13 @@ export class ModalMotion {
       if (this.face) {
         Object.assign(this.face.style, { left: `${this.origin.left}px`, top: `${this.origin.top}px`, width: `${this.origin.width}px`, height: `${this.origin.height}px` });
         this.layer.append(this.face);
+        // The dialog owns the card's pixels until it closes. Keep the real
+        // trigger in layout without making it reappear behind the open dialog.
+        if (!this.restoreTrigger && this.returnElement) {
+          const trigger = this.returnElement, visibility = trigger.style.visibility;
+          this.restoreTrigger = () => { trigger.style.visibility = visibility; };
+          trigger.style.visibility = 'hidden';
+        }
         this.animations.push(this.face.animate(frames.face, options));
       }
       this.animations.push(this.layer.animate([{ backgroundColor: timing == null && open ? 'transparent' : dim }, { backgroundColor: open ? 'color-mix(in srgb, #08101c 22%, transparent)' : 'transparent' }], options));
@@ -105,11 +113,15 @@ export class ModalMotion {
 
   dispose(): void {
     this.cancelAnimations(); this.removeCopies(); this.restoreOrigin?.();
+    this.restoreTrigger?.(); this.restoreTrigger = undefined;
     this.media?.removeEventListener('change', this.reducedChanged);
   }
 
   private resolveReturnTarget(): void {
     if (!this.origin) return;
+    // Hidden cards cannot be hit-tested. Restore only within this synchronous
+    // retarget, before the selected return card is hidden again for the exit.
+    this.restoreTrigger?.(); this.restoreTrigger = undefined;
     const outer = this.layer.getBoundingClientRect();
     const scale = (this.layer.offsetWidth ? outer.width / this.layer.offsetWidth : 1) || 1;
     const x = outer.left + (this.origin.left + this.origin.width / 2) * scale;
@@ -126,5 +138,7 @@ export class ModalMotion {
     this.generation++;
     for (const animation of this.animations.splice(0)) animation.cancel();
   }
-  private removeCopies(): void { this.face?.remove(); this.shadow?.remove(); }
+  private removeCopies(): void {
+    this.face?.remove(); this.shadow?.remove();
+  }
 }

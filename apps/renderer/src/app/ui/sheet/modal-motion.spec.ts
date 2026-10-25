@@ -38,9 +38,10 @@ describe('modal motion ownership', () => {
     vi.unstubAllGlobals();
   });
 
-  function setup() {
+  function setup(visibility = '') {
     const layer = document.createElement('div'), surface = document.createElement('section'), trigger = document.createElement('button');
     trigger.id = 'origin'; trigger.innerHTML = '<span id="origin-label">Server</span>';
+    trigger.style.visibility = visibility;
     surface.innerHTML = '<input aria-label="Host" />'; surface.style.transformOrigin = '10px 20px';
     layer.append(surface); root.append(trigger, layer);
     for (const [element, width, height] of [[layer, 1440, 960], [surface, 460, 330], [trigger, 170, 128]] as const) {
@@ -67,36 +68,58 @@ describe('modal motion ownership', () => {
     expect(face.style.position).toBe('absolute'); expect(face.inert).toBe(true);
     expect(face.getAttribute('aria-hidden')).toBe('true'); expect(face.querySelector('[id]')).toBeNull();
     expect(document.querySelectorAll('#origin')).toHaveLength(1); expect(trigger.isConnected).toBe(true);
+    expect(trigger.style.visibility).toBe('hidden'); expect(face.style.visibility).toBe('visible');
     expect(surface.style.transformOrigin).toBe('50% 50%');
     await finish();
     expect(layer.querySelector('.ex-modal-face, .ex-modal-shadow')).toBeNull();
+    expect(trigger.style.visibility).toBe('hidden');
     motion?.dispose(); expect(surface.style.transformOrigin).toBe('10px 20px');
+    expect(trigger.style.visibility).toBe('');
     expect(media.removeEventListener).toHaveBeenCalledWith('change', changed);
   });
 
+  it('paints only the travelling card on exit and restores the trigger after portal disposal', async () => {
+    const { layer, trigger } = setup('inherit');
+    await finish(); expect(trigger.style.visibility).toBe('hidden');
+    Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: () => {
+      expect(trigger.style.visibility).toBe('inherit');
+      return [layer, trigger];
+    } });
+    const closing = motion!.retarget(false);
+    expect(trigger.style.visibility).toBe('hidden');
+    expect(layer.querySelector<HTMLElement>('.ex-modal-face')?.style.visibility).toBe('visible');
+    await finish(); expect(await closing).toBe(true);
+    expect(trigger.style.visibility).toBe('hidden');
+    motion!.dispose(); expect(trigger.style.visibility).toBe('inherit');
+  });
+
   it('rejects stale exits when reopened and releases every animation on destruction', async () => {
-    const { layer, surface } = setup();
+    const { layer, surface, trigger } = setup();
     animations[0]!.progress = .4;
     const closing = motion!.retarget(false);
     const closeAnimations = animations.filter(animation => !animation.cancel.mock.calls.length);
     closeAnimations[0]!.progress = .2;
     const reopening = motion!.retarget(true);
+    expect(trigger.style.visibility).toBe('hidden');
     expect(await closing).toBe(false);
     expect(layer.firstElementChild).toBe(surface);
     motion!.dispose();
     expect(await reopening).toBe(false);
     expect(animations.every(animation => animation.cancel.mock.calls.length > 0)).toBe(true);
     expect(layer.querySelector('.ex-modal-face, .ex-modal-shadow')).toBeNull();
+    expect(trigger.style.visibility).toBe('');
   });
 
   it('finishes immediately when reduced motion changes, including an exit in progress', async () => {
-    const { layer } = setup();
+    const { layer, trigger } = setup();
     const closing = motion!.retarget(false);
     media.matches = true; changed?.();
     expect(await closing).toBe(true);
     expect(animations.filter(animation => !animation.cancel.mock.calls.length).every(animation => animation.finish.mock.calls.length > 0)).toBe(true);
     await motion!.retarget(true);
     expect(layer.querySelector('.ex-modal-face, .ex-modal-shadow')).toBeNull();
+    expect(trigger.style.visibility).toBe('hidden');
+    motion!.dispose(); expect(trigger.style.visibility).toBe('');
   });
 
   it('returns into the replacement card within its window and waits for the complete exit', async () => {
@@ -108,10 +131,13 @@ describe('modal motion ownership', () => {
     const closing = motion!.retarget(false);
     expect(layer.querySelector('.ex-modal-face')?.textContent).toBe('New server');
     expect(motion!.returnTarget).toBe(replacement);
+    expect(replacement.style.visibility).toBe('hidden');
     const exit = animations.filter(animation => !animation.cancel.mock.calls.length);
     expect(exit.every(animation => animation.options.duration === 500)).toBe(true);
     let removed = false; void closing.then(() => { removed = true; });
     await Promise.resolve(); expect(removed).toBe(false);
     exit.forEach(animation => animation.finish()); expect(await closing).toBe(true);
+    motion!.dispose(); expect(replacement.style.visibility).toBe('');
+    expect(trigger.style.visibility).toBe('');
   });
 });

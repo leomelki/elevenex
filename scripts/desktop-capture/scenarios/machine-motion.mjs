@@ -17,6 +17,17 @@ export default async function* (capture) {
     return { clip: getComputedStyle(pane).clipPath.match(/-?[\d.]+/g)?.slice(0, 4).map(Number) ?? [], x: matrix.e, y: matrix.f, scaleX: matrix.a, scaleY: matrix.d };
   });
   const sameClip = (a, b) => { assert.equal(a.clip.length, 4); assert.equal(b.clip.length, 4); a.clip.forEach((value, i) => assert.ok(Math.abs(value - b.clip[i]) < 1, 'Pane resumes from its painted clip')); };
+  const singleModalCard = async () => {
+    const visibility = await capture.evaluate(() => ({
+      trigger: getComputedStyle(document.querySelector('ex-machine-add[kind="ssh"] button')).visibility,
+      face: getComputedStyle(document.querySelector('.ex-modal-face')).visibility,
+      copies: document.querySelectorAll('.ex-modal-face').length,
+      name: document.querySelector('.ex-modal-face .name')?.textContent,
+    }));
+    assert.equal(visibility.trigger, 'hidden', 'The stationary card must not paint behind the travelling face');
+    assert.equal(visibility.face, 'visible'); assert.equal(visibility.copies, 1);
+    assert.equal(visibility.name, 'A server');
+  };
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme); await capture.reducedMotion(false);
     await owner(component => component.reset(false)); await settled();
@@ -52,6 +63,7 @@ export default async function* (capture) {
     await capture.motion.freeze(); await capture.click('ex-machine-add[kind="ssh"] button');
     await capture.waitFor(() => !!document.querySelector('.ex-modal-has-from'));
     await seek('.ex-modal-layer', 0); await capture.settle();
+    await singleModalCard();
     const anchor = await capture.evaluate(() => {
       const surface = document.querySelector('ex-add-machine'), face = document.querySelector('.ex-modal-face');
       const matrix = new window.DOMMatrixReadOnly(getComputedStyle(surface).transform);
@@ -62,6 +74,8 @@ export default async function* (capture) {
     for (const key of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(anchor[key] - trigger[key]) < 1, 'The face starts on the actual trigger');
     yield { name: `${theme}-modal-origin`, inspect: ['ex-add-machine', '.ex-modal-face', '.ex-modal-shadow'], metadata: { anchor, trigger } };
     await seek('.ex-modal-layer', 85); await capture.settle();
+    await singleModalCard();
+    yield { name: `${theme}-modal-opening`, inspect: ['ex-machine-add[kind="ssh"] button', '.ex-modal-face'] };
     const modalPose = () => capture.evaluate(() => {
       const surface = document.querySelector('ex-add-machine');
       const nodes = [surface, ...surface.children, document.querySelector('.ex-modal-face'), document.querySelector('.ex-modal-shadow')];
@@ -74,15 +88,24 @@ export default async function* (capture) {
     const modalBefore = await modalPose();
     await owner(component => component.closeDialog()); await seek('.ex-modal-layer', 0); await capture.settle();
     const modalAfter = await modalPose(); sameModal(modalBefore, modalAfter);
+    await singleModalCard();
     yield { name: `${theme}-modal-reversed`, metadata: { modalBefore, modalAfter } };
     await seek('.ex-modal-layer', 90); const modalClosing = await modalPose();
     await owner(component => component.dialogOpen.set(true)); await seek('.ex-modal-layer', 0); await capture.settle();
     const modalReopened = await modalPose(); sameModal(modalClosing, modalReopened);
+    await singleModalCard();
     yield { name: `${theme}-modal-reopened`, metadata: { modalClosing, modalReopened } };
     await capture.motion.play(); await settled();
+    assert.equal(await capture.evaluate(() => getComputedStyle(document.querySelector('ex-machine-add[kind="ssh"] button')).visibility), 'hidden', 'The card stays hidden after opening finishes');
+    yield { name: `${theme}-modal-open-settled`, inspect: ['ex-machine-add[kind="ssh"] button', 'ex-add-machine'] };
     await capture.evaluate(() => document.querySelector('ex-host-field input').focus());
     assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-host-field input')), true);
-    await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.ex-modal-layer'));
+    await capture.motion.freeze(); await capture.press('Escape');
+    await capture.waitFor(() => !!document.querySelector('.ex-modal-layer.leaving'));
+    await seek('.ex-modal-layer', 200); await capture.settle(); await singleModalCard();
+    yield { name: `${theme}-modal-closing`, inspect: ['ex-machine-add[kind="ssh"] button', '.ex-modal-face'] };
+    await capture.motion.play(); await capture.waitFor(() => !document.querySelector('.ex-modal-layer'));
+    assert.equal(await capture.evaluate(() => getComputedStyle(document.querySelector('ex-machine-add[kind="ssh"] button')).visibility), 'visible');
     assert.equal(await capture.evaluate(() => document.activeElement.closest('ex-machine-add') !== null), true);
     yield { name: `${theme}-modal-restored-focus` };
   }
