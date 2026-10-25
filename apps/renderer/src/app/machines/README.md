@@ -65,7 +65,7 @@ verified fingerprint or the found computer and pairing text. `backRequested`
 and `cancelled` leave navigation with the owner. Host selection/query and pairing
 text changes are controlled outputs. Enter picks a suggested host before it
 advances, the key step focuses the confirmation action, and textareas keep Enter
-for editing. A changed key requires typed hostname confirmation and invalidates
+for editing. A changed key requires clicking Confirm and invalidates
 that confirmation if the host/fingerprint changes. The privileged connection
 boundary must validate trust independently.
 

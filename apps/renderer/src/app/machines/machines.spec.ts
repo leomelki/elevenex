@@ -32,24 +32,39 @@ describe('Machine presentation boundaries', () => {
     expect(newWindow).toHaveBeenCalledOnce();
   });
 
-  it('requires typed confirmation for a changed key and invalidates it when the fingerprint changes', () => {
+  it('requires a confirmation click for a changed key and invalidates it when the fingerprint changes', () => {
     const fixture = TestBed.createComponent(HostKeyCheckComponent);
     fixture.componentRef.setInput('host', 'dev-box');
     fixture.componentRef.setInput('fingerprint', 'SHA256:first');
     fixture.componentRef.setInput('changed', true);
     fixture.detectChanges();
-    const input = fixture.nativeElement.querySelector('input') as HTMLInputElement;
+    const button = fixture.nativeElement.querySelector('button') as HTMLButtonElement;
+    expect(fixture.nativeElement.querySelector('input')).toBeNull();
     expect(fixture.componentInstance.canTrust()).toBe(false);
-    input.value = 'dev-box';
-    input.dispatchEvent(new Event('input'));
+    fixture.componentRef.setInput('disabled', true);
+    fixture.detectChanges();
+    button.click();
+    expect(fixture.componentInstance.canTrust()).toBe(false);
+    fixture.componentRef.setInput('disabled', false);
+    fixture.detectChanges();
+    button.click();
     fixture.detectChanges();
     expect(fixture.componentInstance.canTrust()).toBe(true);
+    fixture.componentRef.setInput('disabled', true);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.confirmed()).toBe(true);
+    expect(fixture.componentInstance.canTrust()).toBe(false);
+    fixture.componentRef.setInput('disabled', false);
+    fixture.detectChanges();
     fixture.componentRef.setInput('fingerprint', 'SHA256:replacement');
     fixture.detectChanges();
     expect(fixture.componentInstance.canTrust()).toBe(false);
-    input.dispatchEvent(new Event('input'));
+    button.click();
     fixture.detectChanges();
     expect(fixture.componentInstance.canTrust()).toBe(true);
+    fixture.componentRef.setInput('host', 'other-server');
+    fixture.detectChanges();
+    expect(fixture.componentInstance.canTrust()).toBe(false);
   });
 
   it('keeps a keyboard destination when the machine panel actions become disabled', async () => {

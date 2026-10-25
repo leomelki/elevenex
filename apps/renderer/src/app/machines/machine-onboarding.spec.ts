@@ -101,8 +101,8 @@ describe('Machine onboarding', () => {
     fixture.detectChanges();
     const primary = fixture.nativeElement.querySelector('footer button:last-child') as HTMLButtonElement;
     expect(primary.disabled).toBe(true);
-    const input = fixture.nativeElement.querySelector('ex-host-key-check input') as HTMLInputElement;
-    input.value = 'dev'; input.dispatchEvent(new Event('input')); fixture.detectChanges(); expect(primary.disabled).toBe(false);
+    const confirm = fixture.nativeElement.querySelector('ex-host-key-check button') as HTMLButtonElement;
+    confirm.click(); fixture.detectChanges(); expect(primary.disabled).toBe(false);
     fixture.componentRef.setInput('fingerprint', 'SHA256:second'); fixture.detectChanges(); expect(primary.disabled).toBe(true);
     const confirmed = vi.fn(); fixture.componentInstance.confirmed.subscribe(confirmed); primary.click(); expect(confirmed).not.toHaveBeenCalled();
   });

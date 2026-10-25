@@ -1,5 +1,5 @@
 :host { display: block; }
-.host-key { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line); }
+.host-key { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line); }
 .host-key.changed { background: var(--danger-soft); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--danger) 40%, transparent); }
 h3 { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0; font-size: var(--text-ui-size); font-weight: 600; }
 h3 ex-icon { color: var(--accent); flex: none; }
@@ -10,6 +10,4 @@ bdi, code { font-family: var(--font-mono); overflow-wrap: anywhere; }
 .fingerprint code { font-size: 12.5px; line-height: var(--text-ui-line); }
 p { margin: 0; color: var(--ink-muted); font-size: 12.5px; line-height: var(--text-ui-line); }
 .changed p { color: var(--ink); }
-label { display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--text-caption-size); }
-input { padding: var(--space-2); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--ink); font: inherit; }
-input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.confirmation { display: flex; justify-content: flex-end; }
