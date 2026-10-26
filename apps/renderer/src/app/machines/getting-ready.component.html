@@ -1,0 +1,17 @@
+<section class="ready" aria-live="polite" [attr.aria-label]="title()">
+  <header><span class="icon"><ex-icon [name]="icon()" [size]="18" /></span><div><h2>{{ title() }}</h2>@if (sub()) { <p>{{ sub() }}</p> }</div></header>
+  <ol>@for (step of steps(); track step.id) {
+    <li [class.active]="step.state === 'active'" [class.todo]="step.state === 'todo'" [class.failed]="step.state === 'failed'">
+      <span class="glyph">@switch (step.state) {
+        @case ('active') { <ex-status-glyph status="running" [size]="14" /> }
+        @case ('done') { <ex-status-glyph status="done" [size]="14" /> }
+        @case ('failed') { <ex-status-glyph status="failed" [size]="14" /> }
+        @default { <span class="dot" aria-label="Not started"></span> }
+      }</span>
+      <div class="body"><span class="label">{{ step.label }}@if (step.detail) { <span class="detail">{{ step.detail }}</span> }</span>
+        @if (step.state === 'active' && step.progress !== undefined) { <ex-progress-line [value]="step.progress" [label]="step.label + ' progress'" /> }
+      </div>@if (step.meta) { <span class="meta">{{ step.meta }}</span> }
+    </li>
+  }</ol>
+  <footer><ng-content select="[readyActions]" />@if (note(); as note) { <span>{{ note }}</span> }</footer>
+</section>

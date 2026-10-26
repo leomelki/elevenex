@@ -1,0 +1,38 @@
+<div class="demo">
+  <aside aria-label="Sidebar motion preview">
+    <header><h1>All projects</h1><span>{{ tasks().length }} tasks</span></header>
+    <ex-status-summary [counts]="counts()" [active]="filter()" (selectStatus)="filter.set($event)" />
+    <div #scroller class="sidebar-scroll" data-testid="sidebar-scroll">
+      <ex-task-list [tasks]="tasks()" [selected]="selected()" [filter]="filter()" [showProjects]="false" (selectSession)="selectSession($event)" (addSession)="addSession($event)" (closedRequested)="lastAction.set('Closed tasks remain in the model; change their stage to reopen them.')" />
+      <footer data-testid="sidebar-end">End of tasks</footer>
+    </div>
+  </aside>
+
+  <main>
+    <div class="intro"><span class="overline">Interactive component check</span><h2>Sidebar motion</h2><p>Add, remove and move the same task identities. Each control changes the real task list beside it.</p></div>
+    <section aria-label="Task changes">
+      <h3>Task changes</h3>
+      <div class="controls"><button exButton variant="secondary" (click)="reset()">Reset ten tasks</button><button exButton variant="ghost" (click)="reverse()" [disabled]="tasks().length < 2">Reverse order</button><button exButton variant="ghost" (click)="clear()" [disabled]="!tasks().length">Remove all</button></div>
+      <div class="controls"><button exButton variant="secondary" (click)="add('start')">Add at start</button><button exButton variant="secondary" (click)="add('middle')">Add in middle</button><button exButton variant="secondary" (click)="add('end')">Add at end</button><button exButton variant="secondary" (click)="add('end', 100)">Add 100</button></div>
+      <div class="controls"><button exButton variant="ghost" (click)="remove('start')" [disabled]="!tasks().length">Remove first</button><button exButton variant="ghost" (click)="remove('middle')" [disabled]="!tasks().length">Remove middle</button><button exButton variant="ghost" (click)="remove('end')" [disabled]="!tasks().length">Remove last</button></div>
+      <div class="controls"><button exButton variant="secondary" (click)="keepOriginal([4])">Keep original fourth</button><button exButton variant="secondary" (click)="keepOriginal([4, 7])">Keep original fourth and seventh</button></div>
+      <p class="hint">Keep controls use the original identities even after insertions or reordering. Reset restores them after removal.</p>
+    </section>
+
+    <section aria-label="Stage and session changes">
+      <h3>Stages and sessions</h3>
+      <label class="field">Target task<select #taskChoice [value]="currentTask()?.id ?? ''" (change)="chooseTask(taskChoice.value)" [disabled]="!tasks().length">@for (task of tasks(); track task.id) { <option [value]="task.id" [selected]="task.id === currentTask()?.id">{{ task.title }}</option> }@empty { <option value="">No tasks</option> }</select></label>
+      <div class="controls">@for (stage of stages; track stage) { <button exButton variant="secondary" (click)="move(stage)" [disabled]="!currentTask()">Move to {{ stageLabels[stage] }}</button> }</div>
+      <div class="controls"><button exButton variant="ghost" (click)="move('waiting', true)" [disabled]="!tasks().length">Move all to Waiting</button><button exButton variant="ghost" (click)="move('active', true)" [disabled]="!tasks().length">Move all to In progress</button></div>
+      <label class="field">Selected session<select #sessionChoice [value]="selected() ?? ''" (change)="selectSessionId(sessionChoice.value)" [disabled]="!currentTask()?.sessions?.length"><option value="" disabled [selected]="!selected()">No selection</option>@for (session of currentTask()?.sessions ?? []; track session.id) { <option [value]="session.id" [selected]="session.id === selected()">{{ session.title }} · {{ session.status }}</option> }</select></label>
+      <div class="controls"><button exButton variant="secondary" (click)="addSession()" [disabled]="!currentTask()">Add session</button><button exButton variant="secondary" (click)="finishSession()" [disabled]="!currentTask()?.sessions?.length">Finish session</button><button exButton variant="ghost" (click)="removeSession()" [disabled]="!currentTask()?.sessions?.length">Remove session</button><button exButton variant="ghost" (click)="selected.set(null)" [disabled]="!selected()">Clear selection</button></div>
+    </section>
+
+    <section aria-label="Filter and scroll">
+      <h3>Filter and scroll</h3>
+      <div class="controls"><button exButton variant="secondary" (click)="filter.set(filter() === 'attention' ? null : 'attention')" [attr.aria-pressed]="filter() === 'attention'">Needs you only</button><button exButton variant="ghost" (click)="filter.set(null)" [disabled]="!filter()">Clear filter</button><button exButton variant="ghost" (click)="scroll('start')">Scroll to top</button><button exButton variant="ghost" (click)="scroll('middle')">Scroll to middle</button><button exButton variant="ghost" (click)="scroll('end')">Scroll to bottom</button></div>
+    </section>
+
+    <section class="state" aria-label="Current demo state"><h3>{{ tasks().length }} tasks · {{ sessionCount() }} sessions</h3><p role="status">{{ lastAction() }}</p><p>Selected: <code>{{ selected() ?? 'none' }}</code> · Filter: <code>{{ filter() ?? 'none' }}</code></p><p class="order"><span>Model order</span><code>{{ taskOrder() || 'Empty' }}</code></p></section>
+  </main>
+</div>

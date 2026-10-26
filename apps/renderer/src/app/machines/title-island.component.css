@@ -1,0 +1,86 @@
+:host {
+  display: block;
+  position: relative;
+  height: var(--space-6);
+  z-index: 10;
+  -webkit-app-region: no-drag;
+}
+.island {
+  position: relative;
+  min-width: var(--space-6);
+  min-height: var(--space-6);
+  /* Island-specific geometry and shadows are supplied by bundle.css rather
+     than the exported tokens. Keep the inverted surface in both themes. */
+  border-radius: 13px;
+  background: var(--ink);
+  color: var(--ink-inverse);
+  --icon-color: color-mix(in oklab, var(--accent) 55%, var(--ink-inverse));
+  box-shadow: 0 4px 14px -6px rgb(0 0 0 / .35);
+  overflow: clip;
+  /* The island is the deliberate exception to transform-only motion: its
+     measured shell grows around unscaled, independently sized content. */
+  transition:
+    width var(--dur-deliberate) var(--ease-spring),
+    height var(--dur-deliberate) var(--ease-spring),
+    border-radius var(--dur-deliberate) var(--ease-out),
+    box-shadow var(--dur-slow) var(--ease-out);
+}
+.island.tall { border-radius: 20px; }
+.island.open { border-radius: 18px; box-shadow: 0 18px 40px -12px rgb(0 0 0 / .45); }
+.island[data-tone="info"] { --icon-color: color-mix(in oklab, var(--review) 60%, var(--ink-inverse)); }
+.island[data-tone="warn"] {
+  --icon-color: var(--attention);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--attention) 45%, transparent), 0 4px 14px -6px rgb(0 0 0 / .35);
+}
+.trigger {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  border-radius: inherit;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.island:has(.trigger:focus-visible) { box-shadow: var(--focus-ring); }
+.trigger:focus-visible { outline: none; }
+.content {
+  position: relative;
+  display: flex;
+  width: max-content;
+  /* cqw follows the title bar, including when it is inside a smaller window. */
+  max-width: calc(100cqw - var(--space-8));
+  pointer-events: none;
+  transform-origin: top center;
+  font-size: var(--text-caption-size);
+  font-weight: 600;
+}
+.measured .content { position: absolute; left: 50%; top: 0; transform: translateX(-50%); }
+.summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: var(--space-6);
+  padding: 0 var(--space-3);
+  white-space: nowrap;
+  font-size: var(--text-caption-size);
+  font-weight: 600;
+}
+.summary[hidden] { display: none; }
+.tall .summary { padding: 0; }
+.details { pointer-events: auto; white-space: normal; }
+.progress {
+  position: absolute;
+  pointer-events: none;
+  left: 14px;
+  right: 14px;
+  bottom: 2px;
+  height: 2px;
+  transform-origin: left;
+  border-radius: 1px;
+  background: color-mix(in oklab, var(--accent) 60%, var(--ink-inverse));
+  transition: transform var(--dur-base) linear;
+}
+@media (prefers-reduced-motion: reduce) { .island, .trigger, .progress { transition: none; } }

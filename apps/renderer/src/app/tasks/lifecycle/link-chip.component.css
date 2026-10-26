@@ -1,0 +1,41 @@
+:host {
+  display: inline-flex;
+  flex: none;
+}
+button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  border: 0;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.key {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-meta-size);
+  font-weight: 500;
+}
+.state {
+  font-size: 11px;
+}
+button.merged {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+button.failing {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+button:hover {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}

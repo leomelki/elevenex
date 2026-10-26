@@ -1,0 +1,20 @@
+:host { display: block; }
+.look { display: flex; align-items: flex-start; gap: 16px; padding-top: 2px; }
+.controls { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+ex-segmented { align-self: flex-start; }
+.face { display: block; flex: none; visibility: var(--project-launch-source-visibility, visible); }
+.face-swap { animation: swap var(--dur-glide) var(--ease-out) both; transition: background-color var(--dur-slow) var(--ease-out); }
+.blank { width: 52px; height: 52px; display: grid; place-items: center; box-sizing: border-box; border-radius: var(--radius-md); background: var(--surface-sunken); color: var(--ink-muted); box-shadow: inset 0 0 0 1px var(--line); }
+.grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.cell { height: 36px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink); cursor: pointer; display: grid; place-items: center; font-size: 16px; transition: background-color var(--dur-fast) var(--ease-out); }
+.cell:hover:not(:disabled) { background: var(--surface-raised); }
+.cell.on { background: var(--accent-soft); color: var(--accent); }
+.emoji { font-size: 18px; line-height: 1; font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
+.hues { display: flex; gap: 10px; padding: 2px 2px 0; }
+.hue { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; transition: box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-glide) var(--ease-glide); }
+.hue:hover:not(:disabled) { transform: scale(1.1); }
+.hue.on { box-shadow: 0 0 0 2px var(--surface-sunken), 0 0 0 4px var(--ink-muted); }
+button:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
+button:disabled { opacity: .45; cursor: default; }
+@keyframes swap { from { transform: scale(.9); opacity: .4; filter: blur(3px); } to { transform: none; opacity: 1; filter: none; } }
+@media (prefers-reduced-motion: reduce) { .face-swap { animation: none; } .hue { transition: none; } }

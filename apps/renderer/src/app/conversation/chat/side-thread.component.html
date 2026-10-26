@@ -1,0 +1,27 @@
+<section
+  role="dialog"
+  [attr.aria-label]="title()"
+  [cdkTrapFocus]="trapFocus()"
+  [cdkTrapFocusAutoCapture]="trapFocus()"
+  (keydown.escape)="closed.emit()"
+>
+  <header>
+    <ex-icon name="side-chat" [size]="16" /><strong>{{ title() }}</strong
+    ><button exButton variant="ghost" size="sm" (click)="promote.emit()">
+      <ex-icon name="fork" [size]="14" />Promote</button
+    ><ex-icon-button
+      icon="x"
+      label="Close side chat"
+      size="sm"
+      (pressed)="closed.emit()"
+    />
+  </header>
+  @if (anchor()) {
+    <blockquote>{{ anchor() }}</blockquote>
+  }
+  <div class="body"><ng-content /></div>
+  <p class="note">
+    <ex-icon name="shield" [size]="13" />Not added to the main session’s context
+  </p>
+  <div class="composer"><ng-content select="[sideComposer]" /></div>
+</section>

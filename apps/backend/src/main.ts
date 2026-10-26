@@ -41,7 +41,8 @@ import {
   getElevenexBindHost,
   getElevenexProxyPort,
 } from './config/ports.js';
-import { readFile } from 'fs/promises';
+import { chmod, readFile } from 'fs/promises';
+import { isAbsolute } from 'path';
 import {
   getBackendRuntimeRoot,
   getBackendVSCodeStaticPath,
@@ -380,11 +381,22 @@ async function bootstrap() {
     upstreamOrigin: getEdgeProxyUpstreamOrigin(),
     localHttpServer: httpServer,
   });
-  await listenServer(
-    edgeProxyServer,
-    getElevenexProxyPort(),
-    getElevenexBindHost(),
-  );
+  // Opt-in desktop remote transport. A private Unix socket keeps the backend
+  // inaccessible to other remote users; legacy/local launchers retain TCP.
+  const desktopSocket = process.env.ELEVENEX_DESKTOP_SOCKET;
+  if (desktopSocket) {
+    if (!isAbsolute(desktopSocket) || desktopSocket.length > 100 || process.platform === 'win32') {
+      throw new Error('Invalid desktop backend socket');
+    }
+    process.umask(0o077);
+    await new Promise<void>((resolve, reject) => {
+      edgeProxyServer.once('error', reject);
+      edgeProxyServer.listen(desktopSocket, resolve);
+    });
+    await chmod(desktopSocket, 0o600);
+  } else {
+    await listenServer(edgeProxyServer, getElevenexProxyPort(), getElevenexBindHost());
+  }
 }
 bootstrap().catch((error) => {
   // A failed bootstrap (e.g. the edge proxy cannot bind its port) must kill the

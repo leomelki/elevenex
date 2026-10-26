@@ -1,0 +1,21 @@
+<div #viewport class="viewport" (scroll)="onScroll()">
+  <div #content class="content"><ng-content /></div>
+</div>
+@if (pin(); as pin) {
+  <aside class="reminder" aria-label="Message reminder">
+    <div class="reminder-top">
+      <strong>You asked</strong
+      ><button type="button" (click)="hideReminder()">Hide</button>
+    </div>
+    <button type="button" class="prompt" (click)="scrollToMessage(pin.id)">
+      {{ pin.text }}</button
+    ><button type="button" class="back" (click)="scrollToMessage(pin.id)">
+      <ex-icon name="arrow-up" [size]="12" />Back to your message
+    </button>
+  </aside>
+}
+@if (unread() && !atEnd()) {
+  <button type="button" class="new" (click)="scrollToEnd()">
+    <ex-icon name="arrow-down" [size]="13" />New messages
+  </button>
+}

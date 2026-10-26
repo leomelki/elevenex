@@ -1,0 +1,34 @@
+{
+  "v": 3,
+  "layout": "files",
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-10-23T11:31:03Z"
+  },
+  "title": "Elevenex",
+  "namespace": "Elevenex",
+  "libraries": [
+    {
+      "name": "react",
+      "version": "18"
+    },
+    {
+      "name": "react-dom",
+      "version": "18"
+    }
+  ],
+  "sections": {},
+  "groups": [],
+  "assetGroups": {},
+  "blobs": {},
+  "docs": {
+    "readme": "project/README.md",
+    "sections": []
+  },
+  "lastChange": {
+    "by": "Léo",
+    "at": "2026-10-26T18:00:00Z",
+    "via": "Cowork",
+    "note": "Editing and removing a machine: ⋯ on its card (in the tag's place) and right-click, MachineMenu, EditMachine, remove at once with Undo."
+  }
+}

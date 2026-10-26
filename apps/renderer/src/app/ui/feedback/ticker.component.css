@@ -1,0 +1,34 @@
+
+    :host {
+      display: inline-flex;
+      overflow: hidden;
+      vertical-align: bottom;
+      font-variant-numeric: tabular-nums;
+    }
+    span {
+      display: inline-block;
+    }
+    .up {
+      animation: count-up var(--dur-glide) var(--ease-glide) both;
+    }
+    .down {
+      animation: count-down var(--dur-glide) var(--ease-glide) both;
+    }
+    @keyframes count-up {
+      from {
+        opacity: 0;
+        transform: translateY(60%);
+      }
+    }
+    @keyframes count-down {
+      from {
+        opacity: 0;
+        transform: translateY(-60%);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .up,
+      .down {
+        animation: none;
+      }
+    }

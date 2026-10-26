@@ -1,0 +1,38 @@
+<div
+  class="tabs"
+  role="tablist"
+  [attr.aria-label]="label()"
+  [class.labelled]="labelled()"
+  [class.animate-labels]="animateLabels()"
+  [exFlip]="active()"
+>
+  @if (thumb(); as box) {
+    <span
+      class="thumb"
+      aria-hidden="true"
+      [style.width.px]="box.width"
+      [style.transform]="'translateX(' + box.left + 'px)'"
+    ></span>
+  }
+  @for (tab of tabs(); track tab.id; let i = $index) {
+    <button
+      type="button"
+      role="tab"
+      [attr.data-flip]="tab.id"
+      [attr.aria-selected]="active() === tab.id"
+      [attr.aria-controls]="tab.panelId ?? null"
+      [attr.tabindex]="active() === tab.id ? 0 : -1"
+      [attr.aria-label]="tab.label + (tab.badge ? ', has updates' : '')"
+      [title]="tab.label"
+      (click)="selectTab.emit(tab.id)"
+      (keydown)="onKey($event, i)"
+    >
+      <ex-icon [name]="tab.icon" [size]="15" /><span class="label-wrap"
+        ><span class="label">{{ tab.label }}</span></span
+      >
+      @if (tab.badge) {
+        <span class="dot" aria-hidden="true"></span>
+      }
+    </button>
+  }
+</div>

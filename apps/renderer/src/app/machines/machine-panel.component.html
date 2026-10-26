@@ -1,0 +1,38 @@
+<section #panel class="panel" aria-label="Machine details" [attr.tabindex]="disabled() ? 0 : null">
+  <header>
+    <span class="machine-icon">
+      <ex-icon [name]="icons[machine().kind]" [size]="16" />
+      <span class="dot" [style.background]="'var(--project-' + (machine().hue ?? machine().color ?? 'ocean') + ')'"></span>
+    </span>
+    <span class="identity">
+      <b class="name">{{ machine().name }}</b>
+      <small>{{ machine().address ?? (machine().kind === 'local' ? 'Running on this computer' : '') }}</small>
+    </span>
+    <button class="island-action" type="button" [class.highlighted]="highlight() === 'change'" [disabled]="disabled()" (click)="changeRequested.emit()">Change</button>
+  </header>
+  @if (machine().kind === 'ssh') {
+    <div class="section">
+      <h3>Connection</h3>
+      <div class="row">
+        <span class="avatar"><ex-icon name="server" [size]="13" /></span>
+        <span class="identity"><b>{{ machine().conn === 'live' || machine().conn === 'kept' ? 'Connected over SSH' : machine().busy?.step ?? 'Not connected' }}</b><small>Shared by its windows; drops when none uses it</small></span>
+        <button class="island-action quiet" type="button" [disabled]="disabled()" (click)="disconnectRequested.emit()">Disconnect</button>
+      </div>
+    </div>
+  }
+  @if (guests().length) {
+    <div class="section">
+      <h3>Also using {{ machine().kind === 'local' ? 'this Mac' : machine().name }}</h3>
+      @for (guest of guests(); track guest.id) {
+        <div class="row">
+          <span class="avatar guest"><ex-icon name="peer" [size]="13" /></span>
+          <span class="identity"><b>{{ guest.name }}</b><small>Connected since {{ guest.since }}</small></span>
+          <button class="island-action quiet" type="button" [disabled]="disabled()" [attr.aria-label]="'Disconnect ' + guest.name" (click)="guestDisconnected.emit(guest)">Disconnect</button>
+        </div>
+      }
+    </div>
+  }
+  <button class="new-window" type="button" [class.highlighted]="highlight() === 'new'" [disabled]="disabled()" (click)="newWindow.emit()">
+    <ex-icon name="window" [size]="14" /><b>New window</b><small>on any machine</small><ex-kbd>⇧⌘N</ex-kbd>
+  </button>
+</section>

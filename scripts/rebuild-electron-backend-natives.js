@@ -4,7 +4,7 @@ const { spawnSync } = require('child_process');
 
 const repoRoot = path.resolve(__dirname, '..');
 const electronAppRoot = path.join(repoRoot, 'apps', 'electron');
-const stageBackendRoot = path.join(electronAppRoot, '.stage', 'backend');
+const stageBackendRoot = path.join(process.env.ELEVENEX_BACKEND_STAGE_ROOT || path.join(electronAppRoot, '.stage'), 'backend');
 const NATIVE_RUNTIME_DEPENDENCIES = ['better-sqlite3', 'node-pty'];
 
 function resolveModule(request) {

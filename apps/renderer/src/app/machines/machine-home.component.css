@@ -1,0 +1,21 @@
+:host { display: flex; flex: 1; min-height: 0; }
+.home { display: flex; flex: 1; justify-content: center; align-items: flex-start; overflow: auto; padding: 32px 28px 24px; background: radial-gradient(120% 90% at 50% 0%, color-mix(in oklab, var(--accent) 6%, var(--canvas)), var(--canvas)); }
+.column { width: min(720px, 100%); display: flex; flex-direction: column; gap: var(--space-3); margin: auto 0; }
+header { display: flex; align-items: center; gap: var(--space-4); padding-bottom: var(--space-1); }
+.heading { flex: 1; min-width: 0; }
+h1 { margin: 0; font-size: 18px; line-height: 24px; font-weight: 600; letter-spacing: -.015em; }
+p { margin: 0; color: var(--ink-muted); font-size: 12.5px; line-height: 18px; }
+.search { flex: none; display: inline-flex; gap: var(--space-2); align-items: center; width: 227px; height: 32px; padding: 0 6px 0 11px; border-radius: 10px; background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-muted); }
+.search:focus-within { box-shadow: var(--focus-ring); }
+.search input { flex: 1; min-width: 0; width: 0; padding: 0; border: 0; outline: none; color: var(--ink); background: transparent; font: inherit; font-size: 12.5px; }
+h2 { grid-column: 1 / -1; display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2); margin: 6px 0 2px; color: var(--ink-muted); font-size: var(--text-overline-size); line-height: var(--text-ui-line); font-weight: 600; letter-spacing: var(--text-overline-tracking); text-transform: uppercase; }
+h2:not(:first-child) { margin-top: 8px; }
+h2 span { font-size: 11.5px; letter-spacing: 0; text-transform: none; font-weight: 400; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(156px, 100%), 1fr)); gap: 10px; }
+footer { display: flex; flex-wrap: wrap; gap: 2px; padding-top: var(--space-1); }
+.empty { padding: var(--space-8) var(--space-4); text-align: center; }
+@media (max-width: 560px) { header { align-items: stretch; flex-direction: column; } .search { width: 100%; } }
+
+.find { border: 0; font: inherit; text-align: left; cursor: pointer; }
+.find span { flex: 1; }
+.find:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }

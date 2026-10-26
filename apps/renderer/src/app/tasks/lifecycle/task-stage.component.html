@@ -1,0 +1,24 @@
+<button
+  class="stage"
+  type="button"
+  [cdkMenuTriggerFor]="menu"
+  aria-label="Change task stage"
+>
+  <ex-stage-glyph [stage]="stage()" [size]="12" />{{ labels[stage()]
+  }}<ex-icon name="chevron-down" [size]="12" />
+</button>
+<ng-template #menu
+  ><ex-dropdown-menu label="Task stage">
+    @for (item of stages; track item) {
+      <button
+        type="button"
+        exDropdownRadio
+        [checked]="stage() === item"
+        (triggered)="stageChange.emit(item)"
+      >
+        <ex-stage-glyph [stage]="item" /><span class="grow">{{
+          labels[item]
+        }}</span>
+      </button>
+    }</ex-dropdown-menu
+></ng-template>

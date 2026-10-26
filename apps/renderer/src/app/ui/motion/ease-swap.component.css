@@ -1,0 +1,33 @@
+
+    :host {
+      position: relative;
+      display: inline-flex;
+      flex: none;
+      vertical-align: middle;
+      white-space: nowrap;
+      clip-path: inset(-8px 0);
+    }
+    span {
+      display: inline-flex;
+    }
+    .enter {
+      animation: ink-in var(--dur-base) var(--ease-out) 90ms both;
+    }
+    .leave {
+      position: absolute;
+      inset-inline-start: 0;
+      top: 0;
+      pointer-events: none;
+    }
+    @keyframes ink-in {
+      from {
+        opacity: 0;
+        filter: blur(3px);
+        transform: translateY(3px);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .enter {
+        animation: none;
+      }
+    }

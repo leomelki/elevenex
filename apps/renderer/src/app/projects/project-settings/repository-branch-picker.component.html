@@ -1,0 +1,23 @@
+<button type="button" class="trigger" cdkOverlayOrigin #origin="cdkOverlayOrigin"
+  aria-haspopup="dialog" [attr.aria-expanded]="open()" [attr.aria-label]="'Start from: ' + value()"
+  [disabled]="!active()" (click)="show()" (keydown.arrowdown)="$event.preventDefault(); show()">
+  <ex-icon name="branch" [size]="13" /><span class="branch">{{ value() }}</span><ex-icon name="chevron-down" [size]="11" />
+</button>
+<ng-template cdkConnectedOverlay [cdkConnectedOverlayOrigin]="origin" [cdkConnectedOverlayOpen]="open()"
+  [cdkConnectedOverlayHasBackdrop]="true" cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
+  [cdkConnectedOverlayViewportMargin]="16" [cdkConnectedOverlayPositions]="[
+    {originX: 'start', originY: 'bottom', overlayX: 'start', overlayY: 'top', offsetY: 8},
+    {originX: 'start', originY: 'top', overlayX: 'start', overlayY: 'bottom', offsetY: -8}
+  ]" (backdropClick)="open.set(false)" (overlayKeydown)="key($event)">
+  <section class="picker" role="dialog" aria-label="Choose a starting branch" cdkTrapFocus [cdkTrapFocusAutoCapture]="true">
+    <label class="search"><ex-icon name="search" [size]="14" />
+      <input #search cdkFocusInitial role="combobox" aria-label="Search branches to start from" aria-autocomplete="list"
+        aria-expanded="true" [attr.aria-controls]="listId"
+        [attr.aria-activedescendant]="rows().length ? listId + '-' + highlighted() : null"
+        [value]="query()" (input)="query.set(search.value)" placeholder="Search branches…" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="results"><ex-branch-picker [listId]="listId" [items]="rows()" [query]="query()"
+      [highlighted]="highlighted()" label="Starting branches" (pick)="choose($event)" /></div>
+    <div class="hint">New task branches start from your selection</div>
+  </section>
+</ng-template>

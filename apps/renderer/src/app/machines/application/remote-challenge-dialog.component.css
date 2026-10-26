@@ -1,0 +1,10 @@
+:host { display: block; width: min(480px, calc(100vw - var(--space-8))); padding: var(--space-6); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-pop); }
+form { display: flex; flex-direction: column; gap: var(--space-4); }
+header { display: flex; align-items: center; gap: var(--space-3); }
+h2 { margin: 0; font-size: var(--text-title-size); line-height: var(--text-title-line); }
+p { margin: 0; color: var(--ink-muted); font-size: var(--text-ui-size); overflow-wrap: anywhere; }
+.prompt { white-space: pre-wrap; max-height: 35vh; overflow: auto; }
+.credential { display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--text-ui-size); }
+input { min-width: 0; width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); background: var(--surface-raised); color: var(--ink); font: inherit; }
+.error { color: var(--danger); }
+footer { display: flex; justify-content: space-between; gap: var(--space-3); }

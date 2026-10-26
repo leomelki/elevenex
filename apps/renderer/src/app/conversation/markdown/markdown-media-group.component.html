@@ -1,0 +1,121 @@
+@if (allImages()) {
+  @if (comparison()) {
+    <figure class="comparison">
+      @if (images()[1]; as after) {
+        <div
+          class="compare-images"
+          [style.aspect-ratio]="after.w + '/' + after.h"
+        >
+          <img
+            [src]="after.src"
+            [alt]="after.caption"
+            [width]="after.w"
+            [height]="after.h"
+          />
+          @if (images()[0]; as before) {
+            <img
+              class="before"
+              [style.clip-path]="'inset(0 ' + (100 - wipe()) + '% 0 0)'"
+              [src]="before.src"
+              [alt]="before.caption"
+              [width]="before.w"
+              [height]="before.h"
+            />
+          }
+          <span class="wipe-line" [style.left.%]="wipe()"></span
+          ><span class="before-label">Before</span
+          ><span class="after-label">After</span>
+        </div>
+        <div class="compare-controls">
+          <label
+            >Compare before and after<input
+              type="range"
+              min="0"
+              max="100"
+              [value]="wipe()"
+              (input)="changeWipe($event)"
+              aria-label="Before and after comparison" /></label
+          ><ex-icon-button
+            icon="expand"
+            label="Enlarge comparison images"
+            size="sm"
+            (pressed)="open(0)"
+          />
+        </div>
+      }
+    </figure>
+  } @else {
+    <div class="images" [class.strip]="images().length > 2">
+      @for (image of images(); track image.path; let i = $index) {
+        <figure>
+          <button
+            type="button"
+            class="image"
+            [attr.aria-label]="'Enlarge ' + image.caption"
+            (click)="open(i)"
+          >
+            <img
+              [src]="image.src"
+              [alt]="image.caption"
+              [width]="image.w"
+              [height]="image.h"
+              loading="lazy"
+            />
+          </button>
+          <figcaption>{{ image.caption }}</figcaption>
+        </figure>
+      }
+    </div>
+  }
+  <dialog
+    tabindex="-1"
+    #viewer
+    [attr.aria-label]="current()?.caption || 'Image viewer'"
+    (keydown)="onKey($event)"
+    (close)="viewerOpen.set(false)"
+  >
+    <div [cdkTrapFocus]="viewerOpen()" [cdkTrapFocusAutoCapture]="viewerOpen()">
+      <header>
+        <span>{{ viewerIndex() + 1 }} of {{ images().length }}</span
+        ><ex-icon-button
+          icon="x"
+          label="Close image viewer (Esc)"
+          (pressed)="close()"
+        />
+      </header>
+      @if (current(); as image) {
+        <img
+          [src]="image.src"
+          [alt]="image.caption"
+          [width]="image.w"
+          [height]="image.h"
+        />
+        <footer>
+          <button
+            type="button"
+            class="previous"
+            aria-label="Previous image (Left arrow)"
+            (click)="step(-1)"
+          >
+            ←</button
+          ><span>{{ image.caption }}</span
+          ><ex-icon-button
+            icon="chevron-right"
+            label="Next image (Right arrow)"
+            (pressed)="step(1)"
+          />
+        </footer>
+      }
+    </div>
+  </dialog>
+} @else {
+  @for (item of items(); track item.path) {
+    <ex-markdown-media
+      [path]="item.path"
+      [caption]="item.caption"
+      [asset]="resolve()?.(item.path)"
+      (openFile)="openFile.emit($event)"
+      (openPage)="openPage.emit($event)"
+    />
+  }
+}

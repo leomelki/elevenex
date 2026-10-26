@@ -1,0 +1,109 @@
+:host {
+  display: block;
+  position: relative;
+  min-width: 0;
+  max-width: var(--chat-max);
+  color: var(--ink);
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+  outline: none;
+}
+:host:focus-visible {
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring);
+}
+:host.user {
+  align-self: flex-end;
+  max-width: 78%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-raised);
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-xs)
+    var(--radius-lg);
+}
+:host.agent {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+}
+.mark {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-overline-size);
+  font-weight: 600;
+}
+.body {
+  min-width: 0;
+}
+.content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 26px;
+  margin-top: var(--space-2);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+:host:hover footer,
+:host:focus-within footer,
+footer.pinned {
+  opacity: 1;
+}
+time {
+  position: absolute;
+  right: var(--space-2);
+  top: 100%;
+  font-size: var(--text-caption-size);
+  color: var(--ink-muted);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+  white-space: nowrap;
+}
+:host:hover time,
+:host:focus-within time {
+  opacity: 1;
+}
+footer button {
+  border: 0;
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  border-radius: var(--radius-full);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-caption-size);
+}
+:host.fresh {
+  animation: rise var(--dur-base) var(--ease-out) both;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-3));
+  }
+}
+@media (hover: none) {
+  footer,
+  time {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :host.fresh {
+    animation: none;
+  }
+  footer,
+  time {
+    transition: none;
+  }
+}

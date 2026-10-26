@@ -1,0 +1,218 @@
+:host {
+  display: inline-flex;
+  flex: none;
+}
+.git {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+.slot {
+  display: flex;
+  flex: none;
+  width: 0;
+  min-width: 0;
+  height: var(--control-height);
+  overflow: clip;
+}
+.slot.settled {
+  overflow: visible;
+}
+.action-slot {
+  justify-content: flex-end;
+  border-radius: var(--radius-sm);
+}
+.stat-content {
+  position: relative;
+  display: grid;
+  flex: none;
+  grid-template-columns: max-content;
+  grid-template-rows: var(--control-height);
+}
+.stat-ink {
+  grid-area: 1 / 1;
+}
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-height);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-ui-size);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.stat:hover {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.stat.quiet {
+  cursor: default;
+  font-size: var(--text-caption-size);
+}
+.stat:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.add,
+.del {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-meta-size);
+  font-variant-numeric: tabular-nums;
+}
+.add {
+  color: var(--diff-add);
+}
+.del {
+  color: var(--diff-del);
+}
+.split {
+  display: inline-flex;
+  flex: none;
+  border-radius: var(--radius-sm);
+}
+.split.waiting > button {
+  color: var(--attention);
+  box-shadow: inset 0 0 0 1.5px var(--attention);
+}
+.split > button:disabled {
+  opacity: 1;
+}
+.split > button[exButton][data-variant="primary"] {
+  --running: var(--on-accent);
+  --kbd-background: transparent;
+  --kbd-color: var(--on-accent);
+}
+.job-enter {
+  animation: job-in var(--dur-glide) var(--ease-glide) both;
+}
+@keyframes job-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.94);
+  }
+}
+.split > button {
+  flex: none;
+  white-space: nowrap;
+}
+.split > button.primary {
+  position: relative;
+  overflow: hidden;
+}
+.action-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  margin-inline: var(--space-3);
+}
+.action-ink {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+  white-space: nowrap;
+  grid-area: 1 / 1;
+}
+/* Each layer keeps its own intrinsic width. A wider incoming label must not
+   resize a shared grid track and displace the outgoing label before it fades. */
+.action-content > .action-ink {
+  position: absolute;
+  inset-inline-start: 0;
+}
+.split > button:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.split > button:last-child {
+  padding-left: 6px;
+  padding-right: 6px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid color-mix(in oklab, var(--on-accent) 35%, transparent);
+}
+.count {
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in oklab, var(--on-accent) 20%, transparent);
+  font-family: var(--font-mono);
+  font-size: var(--text-overline-size);
+  font-variant-numeric: tabular-nums;
+}
+.rolling {
+  display: inline-grid;
+  position: relative;
+  overflow: clip;
+  /* Nested leave animations must not collapse the outgoing badge line box. */
+  height: 1lh;
+}
+.rolling > span {
+  grid-area: 1 / 1;
+  width: max-content;
+}
+.rolling > .leaving {
+  position: absolute;
+  inset-inline-start: 0;
+}
+.leaving {
+  pointer-events: none;
+}
+.ink-enter {
+  animation: ink-in var(--dur-fast) var(--ease-out) var(--dur-fast) both;
+}
+.count-enter {
+  animation: count-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes ink-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-1));
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+@keyframes count-in {
+  from {
+    opacity: 0;
+    transform: translateY(70%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.measurements {
+  position: absolute;
+  inset: 0 auto auto 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.measure {
+  display: flex;
+  width: max-content;
+  font-weight: var(--text-ui-weight);
+}
+.measure-icon {
+  display: inline-block;
+  flex: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ink-enter,
+  .count-enter {
+    animation: none;
+  }
+  .job-enter {
+    animation: none;
+  }
+}

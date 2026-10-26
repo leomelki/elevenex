@@ -1,0 +1,64 @@
+# Task and navigation components
+
+Import public components and readonly view models from `./tasks`. Components use signal inputs, typed intent outputs and OnPush change detection. This family has no platform calls, git operations, clipboard access, repository scans or application store. The feature that supplies the inputs owns those operations and feeds the result back through inputs.
+
+`projects/` owns project identity and scope navigation. `outline/` owns the task/sub-task/session outline (sub-tasks retain one visual indent at any branch depth). `lifecycle/` owns task context, stages, links and closing. `branches/` owns the new-task form and branch/workspace selection. `navigation/` owns task side views and git actions. `task.models.ts` contains renderer view contracts; it does not replace privileged IPC contracts in `packages/shared`.
+
+| Component | Main inputs | Intent outputs |
+| --- | --- | --- |
+| `ProjectMark` | `name`, `logo`, `initials`, `emoji`, `icon`, `hue`, `size`, `decorative` | None; precedence is logo, emoji, icon, letters; broken logos use the supplied face |
+| `ProjectRail` | `projects`, `all`, `activeId` | `selectProject(id)`, `addProject(tile)`, `reorderProjects(ids)` |
+| `StatusSummary` | `counts`, `active` | `selectStatus(status or null)`; a second click clears the filter |
+| `StageGlyph` | `stage`, `size` | None |
+| `TaskStage` | `stage` | `stageChange(stage)` |
+| `LinkChip` | `kind`, `label`, `state`, `href`, `compact` | `activated()` |
+| `TaskHeader` | `title`, `repo`, `parent`, `stage`, `branch`, `links`, `meta`, `project`, `git`, `closeSuggested`, `panelOpen`, `branchCopied` | `stageChange`, `closeRequested`, `panelToggle`, `branchRename`, `branchCopy`, `linkRequested`, `linkActivated(link)`, `gitAction`, `changesRequested`, `parentRequested(TaskParentContext)` |
+| `CloseTask` | `title`, `sessions`, `running`, `unpushed`, `ticket` | `confirmed({push, moveTicket})`, `cancelled()` |
+| `RepoTag` | `repo: Repo or string`, `size` | None; hover exposes name/path |
+| `SubtaskGlyph` | `depth` | None; a fixed-width stair mark capped at three levels |
+| `TaskLine` | `task: TaskContext`, `branchCopied` | `renameRequested()`, `branchRename(name)`, `branchCopy(name)` |
+| `BranchPicker` | `query`, `branches` or precomputed `items`, `allowCreate`, `base`, `highlighted`, `label`, `listId` | `pick(row)` |
+| `BranchChip` | `name`, `base`, `compact`, `copied` | `renameRequested(name)`, `copyRequested(name)` |
+| `WorkspacePicker` | `value`, `items` | `valueChange(name or 'auto')`, `newWorkspace()`, `manageWorkspaces()` |
+| `NewTask` | `project`, `repos`, initial `repo`, pure `branchesFor(repoId)`, `branches`, `bases`, `base`, `branchPrefix`, initial `title`, initial `step`, initial `branchQuery`, `baseQuery`, `hi`, `workspace`, `workspaces`, `links`, `autoFocus` | `create(CreatedTask)`, `plan(PlannedTask)`, `cancelled()`, `linkRequested()`, `projectRequested()`, `addRepository()`, `workspaceRequested('new' or 'manage')` |
+| `SessionRow` | `session`, `selected`, `depth`, optional `context` for a two-line attention shortcut | `activated(sessionId)` |
+| `TaskGroup` | `task`, `selected`, optional `reveal: {sessionId}` request, `filter`, `showProject`, `showLink`, `allowAdd`, `allowAddSubtask` | `selectSession(sessionId)`, `addSession(taskId)`, `addSubtaskSession(subtaskId)` |
+| `TaskList` | `tasks`, `selected`, `filter`, `showProjects` | `selectSession({taskId, sessionId})`, `addSession(taskId)`, `addSubtaskSession({taskId, subtaskId})`, `closedRequested()` |
+| `PanelTabs` | `tabs`, `active`, `labelled`, `label` | `selectTab(id)` |
+| `GitBar` | `files`, `add`, `del`, `ahead`, `busy`, `compact`, `mergeInto`, `job` | `action(GitAction)`, `changesRequested()`, `jobSessionRequested(sessionId)`, `jobCancelled(jobId)` |
+
+The `Component` suffix and `ex-` selector prefix apply to the names above. `branchItems`, `branchFromTitle`, `validBranchName` and `matchesSessionFilter` are pure exported operations, independently testable without rendering.
+
+## Ownership and interaction
+
+- Use stable task, session, project and tab IDs. TaskList renders a single keyed outline in supplied order, independent of stage; stage changes preserve task positions and local folds. Tasks default to expanded. A compact Needs you area offers three contextual shortcuts for attention/failed sessions (including unmerged sub-tasks), with a reveal control for the rest. Closed tasks never contribute. Shortcuts emit the same selection intent as canonical sessions; a new selection opens its containing task and sub-task. TaskList also supplies a fresh `reveal` request on every shortcut activation so reselecting the current session reopens its manually folded task/sub-task. Filtering hides shortcuts and keeps hidden task components mounted and inert. Sessions keep their original order; a question changes its signal rather than moving its row. Done sessions fold into one count, and the selected finished session opens that fold.
+- Feed a bounded task/session window into the outline; request pagination in the owning feature. BranchPicker shows at most seven results. It matches every query word, promotes exact/default matches and retains the caller's recency order among equal matches. Held branches remain visible but cannot emit a pick. From excludes held branches. Input validation improves the form; privileged git handlers must validate again.
+- NewTask keeps its draft locally. Name → Branch → From uses Enter, arrows change the highlighted branch, Shift Tab returns to a prior step, Cmd/Ctrl Enter creates immediately, Alt Enter saves Planned and Escape emits cancellation. Existing branches also advance to From, which explains that history is kept and focuses Create task. With several `repos`, Repository is step 2; the initial `repo` is preselected, and the supplied `branchesFor` lookup and repository `base` drive Branch/From. A single repository retains three steps. The footer action says Next until From, then Create task; it follows the same highlighted answer as Enter. Initial form inputs are read once: destroy/recreate the form to open another draft. The chosen branch and base are rechecked against current supplied data before creation. Workspace selection is included in both create/plan payloads; multi-repository drafts include the repository ID. The Add repository intent lets the owner open project settings. The renderer never scans repositories.
+- Sub-tasks use stable IDs and optional parent IDs. Their supplied hierarchy is ordered once and rendered at one indent; malformed/cyclic ancestry is tolerated. Selection lights the current sub-task and its ancestry, while hover/focus temporarily lights its own path and gives a 500ms path hint. After four open sub-tasks the list keeps three and the selected one, with a reveal count for the rest. Merged branches move into the finished fold with their diff. Root task signals and status filtering include nonmerged sub-task sessions. Each sub-task owns its folds; TaskGroup owns paths and the hint timer.
+- `FittedHighlightDirective` owns one measured picker selection surface. Selection changes glide with `dur-glide`/`ease-glide`; resized lists fit the selected row immediately. The observer, reduced-motion listener and interrupted animation are released on destruction. `Ticker` leaves initial history still and rolls changed live counts using the same motion tokens.
+- The owner handles branch rename/copy requests and supplies `copied` or `branchCopied` after a successful copy. LinkChip emits activation so the owner can validate the URL and use the existing platform boundary. It never navigates an untrusted renderer URL directly.
+- CDK menus supply keyboard navigation and focus restoration for stage/workspace/git menus. CloseTask owns its modal backdrop, CDK focus trap and cancellation. Render it conditionally; remove it when an output resolves the dialog. If no running sessions or unpushed work would be affected, the feature may close immediately and offer Undo. NewTask is a reusable card; a feature that presents it modally owns its dialog boundary.
+- PanelTabs implements automatic activation with arrows/Home/End and roving focus. Provide `panelId` on a tab to connect it to the owning feature's tabpanel. Global project shortcuts and new-task shortcuts belong to that feature. Project reorder supports drag/drop and Option Shift Up/Down while a tile is focused; the owner applies the requested ID order.
+- GitBar keeps a single primary native button across commit/push/busy states. Busy disables its git actions, leaving the rest of the task usable. Combinations emit explicit intents so no component assembles a shell command. The feature-local `navigation/git-bar-motion.ts` owns the measured action/stat slots, outgoing ink, interruption and cleanup; the component retains closing content and owns the current Git intent. Both buttons remain mounted, hidden slots become inert immediately, and reduced motion settles the latest state without waiting.
+- With `mergeInto`, committed sub-tasks offer Merge into the parent's short branch name, with squash/merge-commit/rebase/push intents in the menu. `job` supplies a stable ID and keyed steps, optional helper-session IDs/titles, label, waiting state and note. The primary action opens the steps or requests the waiting helper; Cancel emits the job ID. The steps popover retains its exit while becoming inert, releases its focus trap immediately, and restores its trigger. Progress updates retain an open menu; replacing the job resets its local menu state. TaskHeader forwards `gitJobSessionRequested` and `gitJobCancelled`. `/git-jobs` exercises these states and `JobBrief` without git or agent operations.
+
+The isolated showcase is `apps/renderer/preview/tasks-demo.component.*`. Its sample projects, tasks and handlers stay outside the production renderer source graph. Unit tests cover branch validation/filtering, the keyboard creation flow, held branches, task identity across stage/filter changes, finished folds, tab navigation and emitted intents.
+
+`apps/renderer/preview/task-update-demo.component.*` exercises sub-task depth/overflow/merging, parent context, automatic git-helper sessions and new-task repository/skip/disabled states.
+
+`apps/renderer/preview/git-motion-demo.component.*` provides the full Git sequence, count changes and rapid interruption controls. The reusable `scripts/desktop-capture/scenarios/git-motion.mjs` probes real animation frames in both themes and compact modes, checks width interpolation and endpoint continuity, and verifies that the task context and right edge stay fixed. Long intervals between sampled frames are reported separately from animation discontinuities.
+
+## Updated task preview fixtures
+
+The **Task changes** preview section renders `TaskUpdateDemoComponent`. The lifecycle controls (`work`, `deep`, `deeper`, `ready`, `merged`, `overflow`) replace supplied sub-task data while preserving keyed identities. Deep selection is `s22`; overflow selection is `s24`, beyond the initial three rows. Hover/focus a sub-task for its 500ms path hint, select a session to change the lit ancestry, use its plus to emit the sub-task ID, and expand the finished count to reveal merged diffs. The sample header emits its supplied parent context and git action.
+
+The draft controls recreate the card by a version key. **Several repositories** supplies `repos`, initial `repo` and a pure `branchesFor` lookup; **Existing branch** begins on Branch with an exact existing match; **Empty / disabled** starts without a title. The footer's Next follows the same answer as Enter. Existing branch → From moves focus to Create task. Every completion is displayed as an intent below the card. None of these fixtures enter the production app's import graph.
+
+`ProjectRail.addProject` returns the actual + button. Pass it as `ModalLayer.from`
+when opening NewProject. On successful Create, clear `from` while closing, append
+the supplied project and set its active ID. Existing tiles glide down; later
+additions spring in after a short delay with one ring in the project hue. Initial
+history stays still, and the first project retains its separate jumpHome owner.
+The rail owns and cleans up insertion animations and handles reduced motion.
+Workbench forwards the same element through `projectAdded`. `/projects` demonstrates
+first-project flight, later creation, controlled selection and cancellation.

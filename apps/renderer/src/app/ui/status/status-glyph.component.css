@@ -1,0 +1,43 @@
+:host {
+  display: inline-flex;
+  flex: none;
+  vertical-align: middle;
+}
+svg {
+  display: block;
+  color: var(--ink-muted);
+  overflow: visible;
+}
+.burst {
+  opacity: 0;
+  transform-origin: center;
+}
+[data-status="running"] {
+  color: var(--running);
+}
+[data-status="attention"] {
+  color: var(--attention);
+}
+[data-status="review"] {
+  color: var(--review);
+}
+[data-status="failed"] {
+  color: var(--danger);
+}
+.inverse {
+  stroke: var(--surface-raised);
+}
+.spin {
+  transform-origin: center;
+  animation: spin 1.1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

@@ -1,0 +1,148 @@
+<article [class.fresh]="task().fresh" [attr.data-task-id]="task().id">
+  <header>
+    <button
+      class="toggle"
+      type="button"
+      [attr.aria-expanded]="!collapsed()"
+      (click)="toggle()"
+    >
+      <ex-icon
+        class="chevron"
+        name="chevron-down"
+        [size]="12"
+        [class.closed]="collapsed()"
+      />
+      @if (showProject() && task().project; as project) {
+        <ex-project-mark
+          [name]="project.name"
+          [logo]="project.logo"
+          [initials]="project.initials"
+          [emoji]="project.emoji"
+          [icon]="project.icon"
+          [hue]="project.hue ?? 'steel'"
+          [size]="18"
+          [decorative]="true"
+        />
+      }
+      <span class="title">{{ task().title }}</span>
+      @if (task().repo; as repo) {
+        <ex-repo-tag [repo]="repo" />
+      }
+    </button>
+    @if (showLink() && leadLink(); as link) {
+      <ex-link-chip
+        [kind]="link.kind"
+        [label]="link.label"
+        [state]="link.state"
+        [compact]="true"
+      />
+    }
+    <ex-task-signal
+      [attention]="attention()"
+      [running]="running()"
+      [total]="everyone().length"
+      [collapsed]="collapsed()"
+    />
+    @if (allowAdd()) {
+      <ex-icon-button
+        class="add"
+        icon="plus"
+        label="New session in this task"
+        size="sm"
+        (pressed)="addSession.emit(task().id)"
+      />
+    }
+  </header>
+  <ex-fold [open]="!collapsed()"
+    ><div class="tree" [exFlip]="motionOrder()" [exFlipReorderOnly]="true">
+      @for (entry of presence.rows(); track entry.key) {
+        @let row = entry.value;
+        <ex-fold
+          [attr.data-flip]="entry.key"
+          [class.leaving]="!entry.present"
+          [class.entering]="entry.entering"
+          [open]="entry.present && !entry.entering && row.visible"
+          (transitionend)="presence.settled(entry.key, $event)"
+        >
+          @if (row.kind === "session") {
+            <ex-session-row
+              [session]="row.session"
+              [selected]="selected() === row.session.id"
+              (activated)="selectSession.emit($event)"
+            />
+          } @else if (row.kind === "subtask") {
+            <ex-subtask-row
+              [subtask]="row.subtask"
+              [depth]="row.depth"
+              [path]="row.path"
+              [selected]="selected()"
+              [reveal]="reveal()"
+              [filter]="filter()"
+              [lit]="litSubtasks().has(row.subtask.id)"
+              [tip]="tipSubtask() === row.subtask.id"
+              [allowAdd]="allowAddSubtask()"
+              (selectSession)="selectSession.emit($event)"
+              (addSession)="addSubtaskSession.emit($event)"
+              (pathHover)="hoverSubtask($event)"
+            />
+          } @else if (row.kind === "more") {
+            <button
+              type="button"
+              class="finished-toggle"
+              (click)="moreSubtasks.set(true)"
+            >
+              <ex-subtask-glyph /><ex-ticker [value]="row.count" /> more
+              sub-tasks
+            </button>
+          } @else if (row.kind === "merged") {
+            <div
+              class="merged"
+              [title]="'Merged ' + (row.subtask.branch || row.subtask.title)"
+            >
+              <ex-icon name="merged" [size]="12" /><span class="merged-title">{{
+                row.subtask.title
+              }}</span>
+              @if (row.subtask.diff; as diff) {
+                <span class="diff">
+                  @if (diff.add) {
+                    <span class="diff-add"
+                      >+<ex-ticker [value]="diff.add"
+                    /></span>
+                  }
+                  @if (diff.del) {
+                    <span class="diff-del"
+                      >−<ex-ticker [value]="diff.del"
+                    /></span>
+                  }
+                </span>
+              }
+            </div>
+          } @else {
+            <div class="finished">
+              <button
+                class="finished-toggle"
+                type="button"
+                [attr.aria-expanded]="finishedOpen()"
+                (click)="finishedValue.set(!finishedOpen())"
+              >
+                <ex-icon
+                  class="chevron"
+                  name="chevron-down"
+                  [size]="12"
+                  [class.closed]="!finishedOpen()"
+                />
+                @if (row.count) {
+                  <ex-ticker [value]="row.count" /> finished
+                }
+                @if (row.merged) {
+                  {{ row.count ? " · " : ""
+                  }}<ex-ticker [value]="row.merged" /> merged
+                }
+              </button>
+            </div>
+          }
+        </ex-fold>
+      }
+    </div></ex-fold
+  >
+</article>

@@ -1,0 +1,14 @@
+<main>
+  <h1>Capture verification fixture</h1>
+  <p>This synthetic surface verifies tooling. It is not the Elevenex shell.</p>
+  <p role="status">{{ status() }} · Count: {{ count() }}</p>
+  <label for="message">Message</label>
+  <input id="message" />
+  <button type="button" id="increment" (click)="increment()">Increment</button>
+  <button type="button" id="toggle" [attr.aria-expanded]="open()" aria-controls="panel" (click)="open.set(!open())">Toggle panel</button>
+  <button type="button" disabled>Disabled</button>
+  <section id="panel" [class.open]="open()" [attr.inert]="open() ? null : ''" aria-label="Test panel">
+    <p>Animated test panel</p>
+    <button type="button">Panel action</button>
+  </section>
+</main>

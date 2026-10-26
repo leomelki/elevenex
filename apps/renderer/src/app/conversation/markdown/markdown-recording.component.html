@@ -1,0 +1,98 @@
+@if (safeSource()) {
+  <figure>
+    <div
+      class="player"
+      tabindex="0"
+      role="group"
+      [attr.aria-label]="
+        'Recording: ' +
+        caption() +
+        '. Space to play, arrow keys seek five seconds.'
+      "
+      (keydown)="onKey($event)"
+    >
+      <video
+        #video
+        [src]="safeSource()"
+        [poster]="safePoster()"
+        [width]="width()"
+        [height]="height()"
+        preload="metadata"
+        playsinline
+        [attr.aria-label]="caption()"
+        (timeupdate)="updateTime()"
+        (loadedmetadata)="updateTime()"
+        (play)="playing.set(true)"
+        (pause)="playing.set(false)"
+        (ended)="playing.set(false)"
+        (error)="mediaError.set(true)"
+      ></video>
+      @if (!playing() && currentTime() === 0) {
+        <button
+          type="button"
+          class="play-overlay"
+          aria-label="Play recording"
+          (click)="toggle()"
+        >
+          <span aria-hidden="true">▷</span>
+        </button>
+      }
+      <div class="controls">
+        <button
+          type="button"
+          class="play"
+          [attr.aria-label]="playing() ? 'Pause recording' : 'Play recording'"
+          (click)="toggle()"
+        >
+          {{ playing() ? "Ⅱ" : "▷" }}</button
+        ><span class="time"
+          >{{ time(currentTime()) }} / {{ time(totalDuration()) }}</span
+        ><input
+          type="range"
+          min="0"
+          [max]="totalDuration() || 1"
+          step="0.1"
+          [value]="currentTime()"
+          aria-label="Recording position"
+          (input)="scrub($event)"
+        /><button
+          type="button"
+          (click)="setSpeed()"
+          [attr.aria-label]="'Playback speed ' + speed() + ' times'"
+        >
+          {{ speed() }}×</button
+        ><ex-icon-button
+          icon="expand"
+          label="Full screen recording"
+          size="sm"
+          (pressed)="fullscreen()"
+        />
+      </div>
+    </div>
+    @if (marks().length) {
+      <div class="marks" aria-label="Recording steps">
+        @for (mark of marks(); track mark.t + ":" + mark.label) {
+          <button
+            type="button"
+            (click)="seek(mark.t)"
+            [title]="'Jump to ' + time(mark.t)"
+          >
+            <span>{{ time(mark.t) }}</span
+            >{{ mark.label }}
+          </button>
+        }
+      </div>
+    }
+    <figcaption>{{ caption() }}</figcaption>
+    @if (mediaError()) {
+      <p class="error" role="status">
+        The recording could not be played here.
+        <button type="button" (click)="openFile.emit()">Open recording</button>
+      </p>
+    }
+  </figure>
+} @else {
+  <button type="button" class="fallback" (click)="openFile.emit()">
+    Open recording {{ caption() }}
+  </button>
+}

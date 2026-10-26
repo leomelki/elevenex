@@ -1,0 +1,20 @@
+<section class="home" tabindex="-1" (keydown)="keydown($event)" aria-label="Machines">
+  <div class="column">
+    <header><div class="heading"><h1>{{ heading() }}</h1><p>{{ description() }}</p></div>
+      @if (!showFirstRun()) { @if (findOpen()) { <label class="search"><ex-icon name="search" [size]="13" /><input #findInput type="search" aria-label="Find a machine" placeholder="Find a machine" [value]="query()" (input)="query.set(findInput.value)" /><ex-kbd>⌘O</ex-kbd></label> } @else { <button type="button" class="search find" [attr.aria-expanded]="findOpen()" (click)="find()"><ex-icon name="search" [size]="13" /><span>Find a machine</span><ex-kbd>⌘O</ex-kbd></button> } }
+    </header>
+    <div class="grid" [exMachineGridMotion]="gridKeys()" [still]="held()">
+      @for (entry of entries(); track entry.key) {
+        @if ('machine' in entry) {
+          <ex-machine-card [attr.data-grid-key]="entry.key" [machine]="entry.machine" [highlighted]="highlighted() === entry.machine.id" [pressed]="pressed() === entry.machine.id" [pending]="isPending(entry.machine.id)" [menuEnabled]="menuRequested.observed" [leaving]="leaving(entry.machine.id)" [menuOpen]="menuOpen() === entry.machine.id" (menuRequested)="menuRequested.emit($event)" (opened)="opened.emit($event)" (actionRequested)="action($event)" />
+        } @else { <h2>{{ entry.label }}@if (entry.label === 'Not connected') { <span>opening one connects to it</span> }</h2> }
+      }
+      @if (showFirstRun()) {
+        <ex-machine-add data-grid-key="add:ssh" kind="ssh" (requested)="addServer.emit($event)" />
+        <ex-machine-add data-grid-key="add:peer" kind="peer" (requested)="pairComputer.emit($event)" />
+      }
+    </div>
+    @if (!filtered().length) { <p class="empty">{{ query() ? 'No machines match your search.' : 'Choose where Elevenex runs to get started.' }}</p> }
+    @if (!showFirstRun()) { <footer><button exButton variant="ghost" size="sm" (click)="add($event, 'ssh')"><ex-icon name="plus" [size]="14" />Add a server</button><button exButton variant="ghost" size="sm" (click)="add($event, 'peer')">Pair a computer</button></footer> }
+  </div>
+</section>

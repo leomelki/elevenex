@@ -1,5 +1,9 @@
 # Elevenex
 
+The new Angular + Electron foundation lives alongside this app. See
+[the desktop setup guide](apps/desktop/README.md) for `pnpm desktop:*` commands
+and the required design-system files. Existing commands below still run this app.
+
 If your current setup is part tab cemetery, part terminal zoo, and part "wait, which repo was this note even for?", Elevenex is the cleanup pass. It keeps your terminals, sessions, notes, browser flows, and repo context structured around the actual project they belong to, so you can stay locked in instead of rebuilding your mental state every time you switch tasks.
 
 It is built to replace the usual pile of editor windows, terminal tabs, browser tabs, sticky-note docs, and scattered git tools with one project-centered workspace that does not fry your focus.

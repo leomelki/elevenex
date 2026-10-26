@@ -1,0 +1,14 @@
+<section role="alertdialog" aria-modal="true" [attr.aria-label]="'Delete ' + project().name">
+  <h2>Delete “{{ project().name }}”?</h2>
+  <ul>
+    <li class="warning"><ex-status-glyph status="attention" [size]="14" />Removes its {{ tasks() }} tasks and {{ sessions() }} sessions from Elevenex, for good.</li>
+    @if (running()) { <li><ex-status-glyph status="running" [size]="14" />Stops {{ running() }} running {{ running() === 1 ? 'session.' : 'sessions.' }}</li> }
+    <li><ex-icon name="check" [size]="14" />Leaves its repositories and their branches on {{ machine() }} as they are.</li>
+  </ul>
+  <p>Archive keeps everything instead.</p>
+  <footer>
+    <button exButton variant="ghost" cdkFocusInitial (click)="cancelled.emit()">Cancel</button><span class="grow"></span>
+    <button exButton variant="secondary" (click)="archiveRequested.emit()"><ex-icon name="layers" [size]="14" />Archive instead</button>
+    <button exButton variant="danger" (click)="deleteConfirmed.emit()"><ex-icon name="trash" [size]="14" />Delete project</button>
+  </footer>
+</section>

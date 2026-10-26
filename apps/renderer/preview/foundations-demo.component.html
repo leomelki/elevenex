@@ -1,0 +1,173 @@
+<header>
+  <h1>Foundations</h1>
+  <p>Shared controls, status, feedback and motion.</p>
+</header>
+<div class="grid">
+  <section>
+    <h2>Actions</h2>
+    <div class="row">
+      <button exButton variant="primary">
+        <ex-icon name="plus" />New session</button
+      ><button exButton>Review</button
+      ><button exButton variant="ghost">Cancel</button
+      ><button exButton variant="danger">Close task</button>
+    </div>
+    <div class="row">
+      <button exButton size="sm">Open file</button
+      ><button exButton variant="primary" disabled>Creating…</button
+      ><ex-icon-button
+        icon="panel"
+        label="Toggle side panel"
+        [active]="enabled()"
+        (pressed)="enabled.set(!enabled())"
+      /><ex-kbd>⌘N</ex-kbd>
+    </div>
+    <ex-git-bar
+      [files]="7"
+      [add]="214"
+      [del]="38"
+      (action)="gitIntent.set($event)"
+      (changesRequested)="gitIntent.set('Open changes')"
+    />
+    <p role="status">{{ gitIntent() || "No git action requested" }}</p>
+  </section>
+  <section>
+    <h2>Status</h2>
+    <div class="row">
+      @for (status of statuses; track status) {
+        <ex-status-badge [status]="status" />
+      }
+    </div>
+    <div class="row">
+      @for (status of statuses; track status) {
+        <ex-status-glyph [status]="status" [size]="20" />
+      }
+    </div>
+  </section>
+  <section>
+    <h2>Choices</h2>
+    <div class="row">
+      <ex-segmented
+        label="Agent mode"
+        [options]="options"
+        [value]="mode()"
+        (changed)="mode.set($event)"
+      /><span>Fast mode</span
+      ><ex-switch
+        label="Fast mode"
+        [on]="enabled()"
+        (changed)="enabled.set($event)"
+      /><ex-switch label="Unavailable setting" [disabled]="true" />
+    </div>
+    <div class="row">
+      <ex-dropdown label="Preset" [value]="preset()" [options]="presets" (changed)="preset.set($event)" />
+      <ex-dropdown label="Unavailable preset" value="deep" [options]="presets" [disabled]="true" />
+      <ex-dropdown label="Empty presets" value="" [options]="[]" placeholder="No presets" />
+    </div>
+  </section>
+  <section>
+    <h2>Progress and context</h2>
+    <div class="row">
+      <ex-context-meter [used]="0.42" tokens="84k / 200k" /><ex-context-meter
+        [used]="0.78"
+      /><ex-context-meter [used]="0.94" /><ex-context-meter
+        [used]="0.61"
+        [compact]="true"
+      />
+    </div>
+    <ex-progress-line
+      label="Setting up workspace"
+      [value]="progress()"
+    /><ex-progress-line label="Connecting" /><button
+      exButton
+      size="sm"
+      (click)="progress.set(progress() > 0.8 ? 0.2 : 0.9)"
+    >
+      Update progress
+    </button>
+  </section>
+  <section>
+    <h2>Skeletons</h2>
+    <ex-skeleton [count]="3" /><ex-skeleton variant="message" [count]="4" />
+  </section>
+  <section>
+    <h2>Tooltips and icons</h2>
+    <div class="row">
+      <ex-tooltip label="Toggle side panel" kbd="⌘\" /><button
+        exButton
+        exTooltip="New session"
+        tooltipShortcut="⌘N"
+      >
+        Hover or focus
+      </button>
+    </div>
+    <div class="row">
+      @for (icon of icons; track icon) {
+        <ex-icon [name]="icon" />
+      }
+    </div>
+  </section>
+  <section>
+    <h2>Feedback</h2>
+    <ex-new-messages-pill [count]="3" /><ex-presence [show]="toast()"
+      ><ex-toast
+        title="Task closed"
+        detail="The workspace is ready to reuse."
+        action="Undo"
+        [duration]="0"
+        (actionSelected)="toast.set(false)"
+        (dismissed)="toast.set(false)"
+    /></ex-presence>
+    @if (!toast()) {
+      <button exButton (click)="toast.set(true)">Show notification</button>
+    }
+    <div class="row">
+      <button exButton data-preview="add-stack-notice" (click)="addNotice()">
+        Add stacked notification
+      </button>
+      <button
+        exButton
+        data-preview="clear-stack-notices"
+        [disabled]="!notices().length"
+        (click)="notices.set([])"
+      >
+        Clear stacked notifications
+      </button>
+    </div>
+    <ex-toast-stack
+      data-preview="toast-stack"
+      [notices]="notices()"
+      (dismissed)="removeNotice($event)"
+      (actionSelected)="removeNotice($event)"
+    />
+  </section>
+  <section>
+    <h2>In-place motion</h2>
+    <div class="row">
+      <button exButton (click)="open.set(!open())">Toggle fold</button
+      ><button
+        exButton
+        [attr.aria-label]="label()"
+        (click)="label.set(label() === 'Short label' ? 'A longer label' : 'Short label')"
+      >
+        <ex-ease-swap [value]="label()" /></button
+      ><button exButton (click)="visible.set(!visible())">
+        Toggle presence
+      </button>
+    </div>
+    <ex-fold [open]="open()"
+      ><div class="well">
+        <strong>Read 3 files, searched 1 time</strong>
+        <p>
+          Evidence opens in place, with quicker closing and no focusable hidden
+          controls.
+        </p>
+        <button exButton size="sm">Open file</button>
+      </div></ex-fold
+    ><ex-presence [show]="visible()"
+      ><p class="well">
+        Content stays mounted through its exit animation.
+      </p></ex-presence
+    >
+  </section>
+</div>

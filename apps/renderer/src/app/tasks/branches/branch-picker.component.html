@@ -1,0 +1,58 @@
+<div
+  class="list"
+  exFittedHighlight='[aria-selected="true"]'
+  [highlightKey]="highlightKey()"
+  role="listbox"
+  [attr.aria-label]="label()"
+  [id]="listId()"
+>
+  @for (row of rows(); track row.kind + ":" + row.name; let i = $index) {
+    <button
+      type="button"
+      role="option"
+      tabindex="-1"
+      [id]="listId() + '-' + i"
+      [attr.aria-selected]="highlighted() === i && selectable(row)"
+      [attr.aria-disabled]="!selectable(row)"
+      [disabled]="!selectable(row)"
+      [class.invalid]="row.kind === 'invalid'"
+      [class.used]="!!row.task"
+      (mousedown)="$event.preventDefault()"
+      (click)="choose(row)"
+    >
+      @if (row.kind === "invalid") {
+        <ex-icon name="x" [size]="13" /><span class="grow"
+          >Not a valid branch name. Avoid spaces, .. and special
+          characters.</span
+        >
+      } @else {
+        <ex-icon
+          [name]="row.kind === 'create' ? 'plus' : 'branch'"
+          [size]="13"
+        />
+        @if (row.kind === "create") {
+          <span class="verb">Create</span>
+        }
+        <span class="mono grow">
+          <!-- Inline elements keep template whitespace out of branch identifiers. -->
+          @for (part of highlights(row.name, query()); track $index) {
+            @if (part.match) {
+              <mark>{{ part.text }}</mark>
+            } @else {
+              <span>{{ part.text }}</span>
+            }
+          }
+        </span>
+        @if (row.isDefault) {
+          <span class="tag">default</span>
+        }
+        <span class="meta">{{ metadata(row) }}</span>
+        @if (highlighted() === i && selectable(row)) {
+          <ex-kbd>↵</ex-kbd>
+        }
+      }
+    </button>
+  } @empty {
+    <div class="empty">No branch matches “{{ query() }}”</div>
+  }
+</div>

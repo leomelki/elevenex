@@ -1,0 +1,11 @@
+<div class="backdrop" aria-hidden="true" inert>
+  <ex-project-rail [projects]="[]" />
+  <div class="sidebar"></div><div class="main"></div>
+</div>
+<main class="landing" aria-label="Machine workspace">
+  <div class="project">
+    <ex-new-project [machine]="machine().name" [machineIcon]="machine().kind === 'local' ? 'laptop' : 'server'" [active]="active()" [autoFocus]="false" [disabled]="true" />
+    <p class="note">Your machine is ready. Project setup is not available in this version yet.</p>
+    <button exButton variant="ghost" (click)="changeRequested.emit()">Back to machines</button>
+  </div>
+</main>

@@ -1,0 +1,57 @@
+<button
+  type="button"
+  [class.attention]="session().status === 'attention' && !selected()"
+  [class.failed]="session().status === 'failed' && !selected()"
+  [class.with-context]="!!context()"
+  [class.done]="session().status === 'done'"
+  [class.fresh]="session().fresh"
+  [attr.aria-current]="selected() ? 'true' : null"
+  [style.padding-left.px]="8 + depth() * 16"
+  (click)="activated.emit(session().id)"
+>
+  <ex-status-glyph [status]="session().status" [size]="14" />
+  @if (kindIcon(); as icon) {
+    <span
+      class="kind"
+      [class.auto]="session().kind === 'auto'"
+      [title]="
+        session().kind === 'fork'
+          ? 'Fork'
+          : session().kind === 'auto'
+            ? 'Started by Elevenex for a git job'
+            : 'Side chat'
+      "
+      ><ex-icon [name]="icon" [size]="13"
+    /></span>
+  }
+  <span class="label">
+    <span class="title">{{ session().title }}</span>
+    @if (context(); as context) {
+      <span class="context" [title]="context">{{ context }}</span>
+    }
+  </span>
+  @if (!context()) {
+    @if (session().diff; as diff) {
+      @if (diff.add || diff.del) {
+        <span
+          class="diff"
+          [attr.aria-label]="
+            diff.add + ' lines added, ' + diff.del + ' removed'
+          "
+        >
+          @if (diff.add) {
+            <span class="add">+<ex-ticker [value]="diff.add" /></span>
+          }
+          @if (diff.del) {
+            <span class="del">−<ex-ticker [value]="diff.del" /></span>
+          }
+        </span>
+      }
+    } @else if (session().meta) {
+      <span class="meta">{{ session().meta }}</span>
+    }
+  }
+  @if (session().unread) {
+    <span class="unread" aria-label="Unread"></span>
+  }
+</button>

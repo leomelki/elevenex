@@ -1,0 +1,47 @@
+<section exAutoHeight>
+  <div>
+    <header>
+      <ex-icon name="plan" [size]="16" /><strong>{{ title() }}</strong
+      ><span>{{ done() }} of {{ steps().length }}</span>
+    </header>
+    <ol>
+      @for (step of steps(); track step.id; let i = $index) {
+        <li
+          [class.running]="step.state === 'running'"
+          [class.done]="step.state === 'done'"
+        >
+          <span class="number">
+            @if (step.state === "todo") {
+              {{ i + 1 }}
+            } @else {
+              <ex-status-glyph
+                [status]="step.state === 'running' ? 'running' : 'done'"
+                [size]="16"
+              />
+            }</span
+          ><span>{{ step.text }}</span>
+        </li>
+      }
+    </ol>
+    @if (status() === "proposed") {
+      <footer>
+        <button exButton variant="primary" size="sm" (click)="start.emit()">
+          Start coding <span aria-hidden="true">⇧⇥</span></button
+        ><button exButton variant="ghost" size="sm" (click)="refine.emit()">
+          Refine
+        </button>
+      </footer>
+    } @else {
+      <div
+        class="progress"
+        role="progressbar"
+        aria-label="Plan progress"
+        [attr.aria-valuenow]="progress() * 100"
+        aria-valuemin="0"
+        aria-valuemax="100"
+      >
+        <span [style.transform]="'scaleX(' + progress() + ')'"></span>
+      </div>
+    }
+  </div>
+</section>

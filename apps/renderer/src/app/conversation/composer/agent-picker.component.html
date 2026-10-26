@@ -1,0 +1,125 @@
+<button
+  type="button"
+  class="trigger"
+  cdkOverlayOrigin
+  #origin="cdkOverlayOrigin"
+  [attr.aria-expanded]="open()"
+  aria-haspopup="dialog"
+  (click)="open.set(!open())"
+  title="Adjust agent (⌘J)"
+>
+  <span class="mark">{{ value().mark }}</span
+  ><span class="name">{{ value().preset || value().model }}</span
+  ><span class="sub">{{ value().thinking }}</span>
+  @if (value().fast) {
+    <ex-icon name="bolt" [size]="13" />
+  }
+  @if (value().context !== undefined) {
+    <ex-context-meter [used]="value().context || 0" [compact]="true" />
+  }
+  <ex-icon name="chevron-down" [size]="12" />
+</button>
+<ng-template
+  cdkConnectedOverlay
+  [cdkConnectedOverlayOrigin]="origin"
+  [cdkConnectedOverlayOpen]="open()"
+  [cdkConnectedOverlayHasBackdrop]="true"
+  cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
+  [cdkConnectedOverlayPositions]="[
+    {
+      originX: 'start',
+      originY: 'top',
+      overlayX: 'start',
+      overlayY: 'bottom',
+      offsetY: -8,
+    },
+  ]"
+  (backdropClick)="open.set(false)"
+  (overlayKeydown)="$event.key === 'Escape' && open.set(false)"
+  ><section
+    class="picker"
+    role="dialog"
+    aria-label="Adjust agent"
+    cdkTrapFocus
+    [cdkTrapFocusAutoCapture]="true"
+  >
+    <span class="label">Changes apply from your next message</span>
+    <div class="field">
+      <span>Harness</span>
+      @if (locked() || !harnesses().length) {
+        <strong>{{ currentHarness()?.label || value().harness }}</strong>
+      } @else {
+        <select aria-label="Agent harness" (change)="harnessChange($event)">
+          @for (harness of harnesses(); track harness.id) {
+            <option
+              [value]="harness.id"
+              [selected]="value().harness === harness.id"
+            >
+              {{ harness.label }}
+            </option>
+          }
+        </select>
+      }
+    </div>
+    <div class="field">
+      <span>Model</span>
+      @if (models().length) {
+        <select aria-label="Agent model" (change)="modelChange($event)">
+          @for (model of models(); track model.id) {
+            <option [value]="model.id" [selected]="value().model === model.id">
+              {{ model.label }}
+            </option>
+          }
+        </select>
+      } @else {
+        <strong>{{ value().model }}</strong>
+      }
+    </div>
+    <div class="field">
+      <span>Thinking</span
+      ><select
+        aria-label="Thinking level"
+        [disabled]="!models().length"
+        (change)="thinkingChange($event)"
+      >
+        @for (level of thinkingLevels; track level) {
+          <option
+            [value]="level"
+            [selected]="level === (value().thinking || 'Off')"
+            [disabled]="!supportedThinking().includes(level)"
+          >
+            {{ level }}
+          </option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <span>Fast mode</span
+      ><input
+        type="checkbox"
+        aria-label="Fast mode"
+        [checked]="value().fast"
+        (change)="fastChange()"
+      />
+    </div>
+    <hr class="divider" />
+    @if (!value().preset) {
+      <button
+        type="button"
+        class="choice"
+        (click)="savePreset.emit(value()); open.set(false)"
+      >
+        <ex-icon name="plus" [size]="14" />Save as preset
+      </button>
+    }
+    @if (locked()) {
+      <button
+        type="button"
+        class="choice"
+        (click)="fork.emit(); open.set(false)"
+      >
+        <ex-icon name="fork" [size]="14" />Fork to another harness…
+      </button>
+    }
+  </section></ng-template
+>

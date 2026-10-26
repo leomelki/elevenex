@@ -1,0 +1,9 @@
+<ex-dropdown-menu [label]="machine().name">
+  <button exDropdownItem [disabled]="disabled()" (triggered)="action.emit('edit')"><ex-icon name="pencil" [size]="15" /><span>Edit…</span></button>
+  <button exDropdownItem [disabled]="disabled()" (triggered)="action.emit('new-window')"><ex-icon name="window" [size]="15" /><span>Open in a new window</span><ex-kbd>⌘↵</ex-kbd></button>
+  @if (machine().kind !== 'local') {
+    @if (connected(machine())) { <button exDropdownItem [disabled]="disabled()" (triggered)="action.emit('disconnect')"><ex-icon name="plug" [size]="15" /><span>Disconnect</span></button> }
+    <div class="separator" role="separator"></div>
+    <button exDropdownItem [disabled]="disabled()" [danger]="true" (triggered)="action.emit('remove')"><ex-icon name="trash" [size]="15" /><span>{{ machine().kind === 'peer' ? 'Unpair' : 'Remove' }}{{ machine().windows ? '…' : '' }}</span></button>
+  }
+</ex-dropdown-menu>

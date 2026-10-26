@@ -1,0 +1,30 @@
+<div class="look">
+  @if (showFace()) {
+    <span class="face" [attr.data-np]="faceHook()" >
+      @if (blank()) { <span class="blank" aria-hidden="true"><ex-icon name="folder" [size]="21" /></span> }
+      @else {
+        @for (key of [(appearance().look || 'letters') + (appearance().emoji || '') + (appearance().icon || '')]; track key) {
+          <ex-project-mark class="face-swap" [name]="face().name" [initials]="face().initials" [emoji]="face().emoji" [icon]="face().icon" [hue]="face().hue || 'steel'" [size]="52" [decorative]="true" />
+        }
+      }
+    </span>
+  }
+  <div class="controls">
+    <ex-segmented label="Look" [value]="appearance().look || 'letters'" [options]="options()" (changed)="setLook($event)" />
+    <ex-fold [open]="appearance().look === 'emoji' || appearance().look === 'icon'">
+      <div class="grid">
+        @for (value of choices(); track value) {
+          <button class="cell" type="button" [disabled]="disabled()" [class.on]="selected(value)" [attr.aria-pressed]="selected(value)" [attr.aria-label]="value" (click)="choose(value)">
+            @if (appearance().look === 'icon') { <ex-icon [name]="value" [size]="16" /> }
+            @else { <span class="emoji">{{ value }}</span> }
+          </button>
+        }
+      </div>
+    </ex-fold>
+    <div class="hues" role="radiogroup" aria-label="Color">
+      @for (hue of hues; track hue; let i = $index) {
+        <button #hueButton class="hue" type="button" role="radio" [disabled]="disabled()" [style.background]="'var(--project-' + hue + ')'" [class.on]="selectedHue() === hue" [attr.aria-checked]="selectedHue() === hue" [attr.aria-label]="hue" [attr.tabindex]="selectedHue() === hue ? 0 : -1" (click)="patch({ hue })" (keydown)="hueKey($event, i)"></button>
+      }
+    </div>
+  </div>
+</div>

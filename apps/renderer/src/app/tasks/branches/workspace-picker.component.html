@@ -1,0 +1,65 @@
+<button class="trigger" type="button" [cdkMenuTriggerFor]="menu">
+  <ex-icon name="workspace" [size]="14" />{{
+    value() === 'auto' ? 'Automatic' : value()
+  }}
+  @if (value() === 'auto') {
+    <span class="note">{{ note() }}</span>
+  }
+  <ex-icon name="chevron-down" [size]="13" />
+</button>
+<ng-template #menu
+  ><ex-dropdown-menu label="Workspace">
+    <button
+      type="button"
+      exDropdownRadio
+      [checked]="value() === 'auto'"
+      (triggered)="valueChange.emit('auto')"
+    >
+      <span class="stack grow"
+        ><span>Automatic</span
+        ><span class="muted"
+          >Reuse a free workspace from the pool, or add one</span
+        ></span
+      >
+    </button>
+    <div class="separator" role="separator"></div>
+    <div class="label">
+      <span>Pool</span
+      ><span>{{ free().length }} free of {{ items().length }}</span>
+    </div>
+    @for (item of items(); track item.name) {
+      <button
+        type="button"
+        exDropdownRadio
+        [checked]="value() === item.name"
+        [disabled]="item.state === 'used'"
+        (triggered)="valueChange.emit(item.name)"
+      >
+        <span class="dot" [class.used]="item.state === 'used'"></span
+        ><span class="stack grow"
+          ><span class="mono">{{ item.name }}</span
+          ><span class="muted">{{
+            item.state === 'used'
+              ? 'In use · ' + item.task
+              : 'Free' + (item.note ? ' · ' + item.note : '')
+          }}</span></span
+        >
+      </button>
+    }
+    <button
+      type="button"
+      exDropdownItem
+      (triggered)="newWorkspace.emit()"
+    >
+      <ex-icon name="plus" [size]="14" />New workspace
+    </button>
+    <div class="separator" role="separator"></div>
+    <button
+      type="button"
+      exDropdownItem
+      (triggered)="manageWorkspaces.emit()"
+    >
+      <ex-icon name="workspace" [size]="14" />Manage workspaces…
+    </button>
+  </ex-dropdown-menu></ng-template
+>

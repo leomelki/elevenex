@@ -1,0 +1,75 @@
+<nav aria-label="Projects" [exFlip]="projectIds()">
+  @if (indicatorY() !== null) {
+    <span
+      class="indicator"
+      aria-hidden="true"
+      [style.transform]="'translateY(' + indicatorY() + 'px)'"
+    ><i #indicator></i></span>
+  }
+  @if (all() !== false) {
+    <button
+      class="tile all" data-flip="all"
+      type="button"
+      [attr.aria-label]="label('All projects', allActivity())"
+      title="All projects ⌘0"
+      [attr.aria-current]="activeId() === 'all' ? 'true' : null"
+      (click)="selectProject.emit('all')"
+    >
+      <ex-icon name="layers" />
+      @if (!allActivity().muted && allActivity().attention) {
+        @for (count of [allActivity().attention]; track count) { <span class="pip" aria-hidden="true">{{ count }}</span> }
+      } @else if (!allActivity().muted && allActivity().running) {
+        <span class="running" aria-hidden="true"
+          ><ex-status-glyph status="running" [size]="14"
+        /></span>
+      }
+    </button>
+    <span class="separator" aria-hidden="true"></span>
+  }
+  @for (project of projects(); track project.id; let i = $index) {
+    <button
+      class="tile"
+      type="button"
+      [class.muted]="project.muted"
+      [attr.aria-current]="activeId() === project.id ? 'true' : null"
+      [attr.aria-label]="label(project.name, project)"
+      [title]="project.name + (i < 9 ? ' ⌘' + (i + 1) : '')"
+      [attr.data-project-id]="project.id" [attr.data-flip]="project.id"
+      (click)="selectProject.emit(project.id)"
+      (contextmenu)="contextMenu($event, project.id)"
+      (keydown)="onKey($event, i)"
+      [draggable]="true"
+      (dragstart)="dragStart($event, project.id)"
+      (dragend)="dragEnd()"
+      (dragover)="dragOver($event)"
+      (drop)="drop($event, i)"
+    >
+      <ex-project-mark
+        [name]="project.name"
+        [logo]="project.logo"
+        [initials]="project.initials"
+        [emoji]="project.emoji"
+        [icon]="project.icon"
+        [hue]="project.hue ?? 'steel'"
+        [decorative]="true"
+      />
+      @if (!project.muted && project.attention) {
+        @for (count of [project.attention]; track count) { <span class="pip" aria-hidden="true">{{ count }}</span> }
+      } @else if (!project.muted && project.running) {
+        <span class="running" aria-hidden="true"
+          ><ex-status-glyph status="running" [size]="14"
+        /></span>
+      }
+    </button>
+  }
+  <span class="separator" aria-hidden="true"></span>
+  <button
+    class="tile add" #addTile data-flip="add"
+    type="button"
+    aria-label="Add project"
+    title="Add project"
+    (click)="add(addTile)"
+  >
+    <ex-icon name="plus" />
+  </button>
+</nav>

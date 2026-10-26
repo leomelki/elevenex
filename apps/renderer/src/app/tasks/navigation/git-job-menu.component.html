@@ -1,0 +1,38 @@
+<div class="menu job">
+  <div class="label">{{ job().title || "Merge" }}</div>
+  @for (step of job().steps; track step.id) {
+    <div class="step" [class.queued]="step.status === 'queued'">
+      <ex-status-glyph [status]="step.status" [size]="13" />
+      <span class="description"
+        ><span>{{ step.label }}</span>
+        @if (step.detail) {
+          <span class="detail">{{ step.detail }}</span>
+        }
+      </span>
+      @if (step.session; as session) {
+        <button
+          type="button"
+          class="session"
+          [title]="
+            'Open the session Elevenex started for this: ' + session.title
+          "
+          (click)="sessionRequested.emit(session.id)"
+        >
+          <ex-icon name="bolt" [size]="12" /><span>{{ session.title }}</span>
+        </button>
+      }
+    </div>
+  }
+  <footer>
+    <span>{{ job().note || "Elevenex runs these itself" }}</span
+    ><button
+      type="button"
+      exButton
+      size="sm"
+      variant="ghost"
+      (click)="cancelled.emit()"
+    >
+      Cancel
+    </button>
+  </footer>
+</div>

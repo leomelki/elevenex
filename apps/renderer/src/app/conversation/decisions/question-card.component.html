@@ -1,0 +1,107 @@
+<section exAutoHeight>
+  <div>
+    @if (answers()) {
+      <div class="summary">
+        <ex-icon name="check" [size]="14" />You chose {{ summary() }}
+      </div>
+    } @else if (current(); as question) {
+      @if (items().length > 1) {
+        <nav aria-label="Questions">
+          @for (item of items(); track item.id; let i = $index) {
+            <button
+              type="button"
+              [attr.aria-current]="index() === i ? 'step' : null"
+              (click)="index.set(i)"
+            >
+              @if (draft()[item.id]?.length) {
+                <ex-icon name="check" [size]="12" />
+              }
+              {{ item.header || "Question " + (i + 1) }}
+            </button>
+          }
+        </nav>
+      }
+      <fieldset>
+        <legend>{{ question.question }}</legend>
+        @for (option of question.options; track option.label; let i = $index) {
+          <label [class.selected]="selected().includes(option.label)"
+            ><input
+              [type]="question.kind === 'multi' ? 'checkbox' : 'radio'"
+              [name]="question.id"
+              [checked]="selected().includes(option.label)"
+              (change)="choose(option.label)"
+            /><span class="label"
+              ><span
+                >{{ option.label }}
+                @if (option.recommended) {
+                  <small>suggested</small>
+                }
+              </span>
+              @if (option.detail) {
+                <span class="detail">{{ option.detail }}</span>
+              }</span
+            ><kbd>{{ i + 1 }}</kbd></label
+          >
+        }
+        <div class="custom">
+          @if (customOpen().has(question.id)) {
+            <input
+              type="text"
+              aria-label="Your own answer"
+              placeholder="Your answer…"
+              [value]="custom()[question.id] || ''"
+              (input)="writeCustom($event)"
+            />
+          } @else {
+            <button type="button" (click)="openCustom()">
+              {{
+                custom()[question.id]
+                  ? custom()[question.id] + " · Edit"
+                  : "Something else…"
+              }}
+            </button>
+          }
+        </div>
+      </fieldset>
+      @if (
+        question.kind === "multi" || items().length > 1 || custom()[question.id]
+      ) {
+        <footer>
+          @if (index() > 0) {
+            <button
+              exButton
+              variant="ghost"
+              size="sm"
+              (click)="index.set(index() - 1)"
+            >
+              Back
+            </button>
+          }
+          <span>{{
+            items().length > 1
+              ? index() + 1 + " of " + items().length
+              : selected().length + " picked"
+          }}</span
+          ><button
+            exButton
+            variant="primary"
+            size="sm"
+            [disabled]="
+              !selected().length ||
+              (index() === items().length - 1 && !complete())
+            "
+            (click)="next()"
+          >
+            {{
+              index() < items().length - 1
+                ? "Next"
+                : items().length > 1
+                  ? "Send answers"
+                  : "Send"
+            }}
+          </button>
+        </footer>
+      }
+    }
+  </div>
+</section>

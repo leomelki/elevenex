@@ -1,0 +1,16 @@
+<div class="row"><div #list class="tabs" role="tablist" [attr.aria-label]="label()">
+  @for (item of items(); track item.id) {
+    <div class="tab-shell" [class.on]="selectedId() === item.id" [animate.enter]="animationsReady() ? 'enter' : ''" (animate.leave)="leave($event)">
+      <button type="button" role="tab" [attr.data-tab-id]="item.id" [attr.aria-selected]="selectedId() === item.id" [tabIndex]="selectedId() === item.id ? 0 : -1" [title]="item.tip ?? item.title" [disabled]="disabled()" (click)="selected.emit(item.id)" (keydown)="keydown($event, item.id)" (auxclick)="middleClick($event, item.id)">
+        @if (item.status === 'running') { <ex-status-glyph status="running" [size]="12" /> }
+        @else if (item.status === 'failed') { <ex-status-glyph status="failed" [size]="12" /> }
+        @else if (item.agent) { <span class="agent" [class.driving]="item.agentDriving" [attr.aria-label]="item.agentDriving ? 'The agent is using this tab' : 'Opened by the agent'">Ag</span> }
+        @else { <ex-icon [name]="item.icon ?? 'terminal'" [size]="13" /> }
+        <span class="title">{{ item.title }}</span>
+        @if (item.status === 'serving') { <span class="serving" aria-label="Server running"></span> }
+        @if (item.unread && selectedId() !== item.id) { <span class="unread" aria-label="New output"></span> }
+      </button>
+      @if (closable()) { <button class="close" type="button" [attr.aria-label]="'Close ' + item.title" [disabled]="disabled()" (click)="close(item.id)"><ex-icon name="x" [size]="11" /></button> }
+    </div>
+  }
+</div><button #newButton class="new" type="button" [attr.aria-label]="newLabel()" [title]="newLabel()" [disabled]="disabled()" (click)="added.emit()"><ex-icon name="plus" [size]="14" /></button><ng-content /></div>

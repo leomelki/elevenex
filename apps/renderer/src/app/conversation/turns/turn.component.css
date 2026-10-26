@@ -1,0 +1,215 @@
+:host {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  max-width: var(--chat-max);
+  outline: none;
+}
+:host:focus-visible {
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring);
+}
+.mark {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-overline-size);
+  font-weight: 600;
+  user-select: none;
+}
+:host.live .mark {
+  animation: breathe calc(var(--dur-deliberate) * 4) var(--ease-in-out) infinite;
+}
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.work-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+}
+.work {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  cursor: pointer;
+}
+.work-label {
+  flex: none;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--ink);
+}
+.work:hover .work-label {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.work:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.facts {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  gap: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.facts.clipped {
+  mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+}
+.work-item {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  opacity: 0;
+  transform: translateX(calc(-1 * var(--space-1)));
+}
+:host:hover .work-item,
+:host:focus-within .work-item,
+:host.expanded .work-item {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .work-item {
+    /* Leave together on a shorter curve; the entry spring must not bounce out. */
+    transition:
+      opacity var(--dur-fast) var(--ease-in),
+      transform var(--dur-fast) var(--ease-in);
+  }
+  :host:hover .work-item,
+  :host:focus-within .work-item,
+  :host.expanded .work-item {
+    transition:
+      opacity var(--dur-fast) var(--ease-out),
+      transform var(--dur-base) var(--ease-spring);
+    transition-delay: calc(var(--fact-index) * 35ms);
+  }
+}
+.work-item.failure {
+  opacity: 1;
+  transform: none;
+}
+.fact {
+  gap: 5px;
+}
+.fact.ok ex-icon {
+  color: var(--accent);
+}
+.diff {
+  display: inline-flex;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-meta-size);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.add {
+  color: var(--diff-add);
+}
+.del {
+  color: var(--diff-del);
+}
+.chevron {
+  margin-left: calc(-1 * var(--space-1));
+}
+.chevron ex-icon {
+  transition: transform var(--dur-glide) var(--ease-glide);
+}
+:host.expanded .chevron ex-icon {
+  transform: rotate(90deg);
+}
+.failure,
+.failed {
+  color: var(--danger);
+}
+.failure {
+  font-size: var(--text-caption-size);
+}
+.answer {
+  min-width: 0;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+footer {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-height: 26px;
+}
+footer ex-outcome-bar {
+  flex: 1;
+  min-width: 0;
+}
+footer ex-turn-acts {
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+:host:hover footer ex-turn-acts,
+:host:focus-within footer ex-turn-acts {
+  opacity: 1;
+}
+.error {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-size: var(--text-ui-size);
+}
+.error span {
+  flex: 1;
+}
+.error.failed {
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+@keyframes breathe {
+  50% {
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 40%, transparent);
+  }
+}
+@media (hover: none) {
+  footer ex-turn-acts,
+  .work-item {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :host.live .mark {
+    animation: none;
+  }
+  .work-item,
+  .chevron ex-icon,
+  footer ex-turn-acts {
+    transition: none;
+  }
+  .work-item {
+    transform: none;
+  }
+}

@@ -1,0 +1,217 @@
+<div class="git">
+  <span
+    class="slot stat-slot"
+    [attr.inert]="!statContent() ? '' : null"
+    [attr.aria-hidden]="!statContent()"
+  >
+    <span class="stat-content">
+      @if (renderedStat(); as stat) {
+        @for (view of [stat]; track view.key) {
+          <span
+            class="stat-ink"
+            [animate.enter]="ready() ? 'ink-enter' : ''"
+            (animate.leave)="leaveInk($event)"
+          >
+            @if (view.key === "changes") {
+              <button
+                class="stat"
+                type="button"
+                [attr.aria-label]="view.files + ' changed files, open changes'"
+                (click)="changesRequested.emit()"
+              >
+                <ex-icon name="changes" [size]="15" />
+                <span class="add rolling">
+                  @for (count of [{ value: view.add }]; track count.value) {
+                    <span
+                      [animate.enter]="ready() ? 'count-enter' : ''"
+                      (animate.leave)="leaveInk($event)"
+                      >+{{ count.value }}</span
+                    >
+                  }
+                </span>
+                <span class="del rolling">
+                  @for (count of [{ value: view.del }]; track count.value) {
+                    <span
+                      [animate.enter]="ready() ? 'count-enter' : ''"
+                      (animate.leave)="leaveInk($event)"
+                      >−{{ count.value }}</span
+                    >
+                  }
+                </span>
+              </button>
+            } @else {
+              <span class="stat quiet">Up to date</span>
+            }
+          </span>
+        }
+      }
+    </span>
+  </span>
+  <span
+    class="slot action-slot"
+    [attr.inert]="!step() ? '' : null"
+    [attr.aria-hidden]="!step()"
+  >
+    <span
+      class="split"
+      [class.waiting]="job()?.waiting"
+      cdkOverlayOrigin
+      #jobOrigin="cdkOverlayOrigin"
+    >
+      <button
+        exButton
+        class="primary"
+        [variant]="job() || compact() ? 'secondary' : 'primary'"
+        [disabled]="!!busy() || !step()"
+        [attr.aria-busy]="!!busy() || (!!job() && !job()?.waiting)"
+        [attr.aria-expanded]="job() && !job()?.waiting ? jobOpen() : null"
+        [attr.aria-haspopup]="job() ? 'dialog' : null"
+        [title]="
+          job()
+            ? job()?.waiting
+              ? 'Open the session that needs you'
+              : 'Show the steps'
+            : step() === 'merge'
+              ? 'Merge ' +
+                ahead() +
+                (ahead() === 1 ? ' commit into ' : ' commits into ') +
+                mergeInto()
+              : ''
+        "
+        [attr.aria-label]="actionLabel()"
+        (click)="primary()"
+      >
+        <span class="action-content" aria-hidden="true">
+          @if (renderedAction(); as content) {
+            @for (view of [content]; track view.key) {
+              <span
+                class="action-ink"
+                [animate.enter]="ready() ? 'ink-enter' : ''"
+                (animate.leave)="leaveInk($event)"
+              >
+                @if (view.busy) {
+                  <ex-status-glyph
+                    [status]="view.waiting ? 'attention' : 'running'"
+                    [size]="13"
+                  />
+                } @else {
+                  <ex-icon
+                    [name]="view.step === 'merge' ? 'merged' : view.step"
+                    [size]="14"
+                  />
+                }
+                <span>{{ view.label }}</span>
+                @if (view.count) {
+                  <span class="count rolling">
+                    @for (count of [{ value: view.count }]; track count.value) {
+                      <span
+                        [animate.enter]="ready() ? 'count-enter' : ''"
+                        (animate.leave)="leaveInk($event)"
+                        >{{ count.value }}</span
+                      >
+                    }
+                  </span>
+                }
+                @if (view.shortcut) {
+                  <ex-kbd>⌘↵</ex-kbd>
+                }
+              </span>
+            }
+          }
+        </span>
+      </button>
+      <button
+        exButton
+        class="more"
+        [variant]="job() || compact() ? 'secondary' : 'primary'"
+        [disabled]="!!busy() || !step()"
+        [cdkMenuTriggerFor]="job() ? null : menu"
+        [attr.aria-expanded]="job() ? jobOpen() : null"
+        [attr.aria-haspopup]="job() ? 'dialog' : 'menu'"
+        (click)="job() && toggleJob()"
+        aria-label="More git actions"
+      >
+        <span class="chevron-ink"
+          ><ex-icon name="chevron-down" [size]="14"
+        /></span>
+      </button>
+    </span>
+  </span>
+  <!-- Intrinsic copies never take space, focus or animation; the live buttons remain mounted. -->
+  <span class="measurements" aria-hidden="true" inert>
+    <span class="measure action-measure">
+      @if (renderedAction(); as view) {
+        <span class="action-ink">
+          <span
+            class="measure-icon"
+            [style.width.px]="view.busy ? 13 : 14"
+          ></span>
+          <span>{{ view.label }}</span>
+          @if (view.count) {
+            <span class="count">{{ view.count }}</span>
+          }
+          @if (view.shortcut) {
+            <ex-kbd>⌘↵</ex-kbd>
+          }
+        </span>
+      }
+    </span>
+    <span class="measure stat-measure">
+      @if (renderedStat(); as view) {
+        @if (view.key === "changes") {
+          <span class="stat"
+            ><ex-icon name="changes" [size]="15" /><span class="add"
+              >+{{ view.add }}</span
+            ><span class="del">−{{ view.del }}</span></span
+          >
+        } @else {
+          <span class="stat quiet">Up to date</span>
+        }
+      }
+    </span>
+  </span>
+</div>
+<ng-template #menu>
+  <ex-dropdown-menu label="Git actions">
+    @for (item of menuItems(); track item.action) {
+      <button
+        type="button"
+        exDropdownItem
+        (triggered)="action.emit(item.action)"
+      >
+        {{ item.label }}
+      </button>
+    }
+  </ex-dropdown-menu>
+</ng-template>
+<ng-template
+  cdkConnectedOverlay
+  [cdkConnectedOverlayOrigin]="jobOrigin"
+  [cdkConnectedOverlayOpen]="menuRetained()"
+  [cdkConnectedOverlayPositions]="[
+    {
+      originX: 'end',
+      originY: 'bottom',
+      overlayX: 'end',
+      overlayY: 'top',
+      offsetY: 6,
+    },
+  ]"
+  (overlayOutsideClick)="outsideJob($event)"
+  (overlayKeydown)="$event.key === 'Escape' && closeJob()"
+>
+  @if (jobOpen() && job(); as activeJob) {
+    <ex-git-job-menu
+      #jobMenu
+      [job]="activeJob"
+      [cdkTrapFocus]="jobOpen()"
+      [cdkTrapFocusAutoCapture]="false"
+      [attr.inert]="jobOpen() ? null : ''"
+      [attr.aria-hidden]="!jobOpen()"
+      animate.enter="job-enter"
+      (animate.leave)="leaveJob($event)"
+      (sessionRequested)="jobSessionRequested.emit($event)"
+      (cancelled)="jobCancelled.emit(activeJob.id); closeJob()"
+    />
+  }
+</ng-template>

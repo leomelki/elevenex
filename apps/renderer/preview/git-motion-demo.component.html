@@ -1,0 +1,65 @@
+<header>
+  <h1>Git motion</h1>
+  <p>One persistent action, measured slots, and interruptible changes.</p>
+</header>
+<section aria-label="Git motion controls" class="controls">
+  <div class="row">
+    @for (state of moments; track state.id; let i = $index) {
+      <button
+        exButton
+        size="sm"
+        [attr.data-git-state]="state.id"
+        [attr.aria-pressed]="selected() === i"
+        (click)="select(i)"
+      >
+        {{ state.label }}
+      </button>
+    }
+  </div>
+  <div class="row">
+    <button exButton data-git-motion="sequence" (click)="run(false)">
+      Run sequence
+    </button>
+    <button exButton data-git-motion="interrupt" (click)="run(true)">
+      Interrupt rapidly
+    </button>
+    <button exButton [disabled]="!running()" (click)="stop()">
+      Stop sequence
+    </button>
+    <span>Compact action</span
+    ><ex-switch
+      label="Compact git action"
+      [on]="compact()"
+      (changed)="compact.set($event)"
+    />
+  </div>
+</section>
+<section
+  class="task"
+  aria-label="Task header motion sample"
+  data-git-motion="sample"
+>
+  <div class="header-row">
+    <strong data-git-motion="title">Improve retry backoff</strong>
+    <span class="stage">In progress</span>
+  </div>
+  <div class="task-row">
+    <span class="branch" data-git-motion="branch">feature/retry-backoff</span>
+    <span class="link" data-git-motion="link">#482</span>
+    <ex-git-bar
+      data-git-motion="bar"
+      [files]="moment().files"
+      [add]="moment().add"
+      [del]="moment().del"
+      [ahead]="moment().ahead"
+      [busy]="moment().busy"
+      [compact]="compact()"
+      (action)="lastAction.set($event)"
+      (changesRequested)="lastAction.set('changes')"
+    />
+  </div>
+</section>
+<p class="caption" aria-live="polite">
+  State: {{ moment().label
+  }}{{ lastAction() ? " · Requested: " + lastAction() : "" }}
+</p>

@@ -1,0 +1,103 @@
+:host {
+  display: block;
+}
+figure {
+  margin: 0;
+}
+.player {
+  position: relative;
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.player:focus-visible,
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 380px;
+  object-fit: contain;
+}
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-raised);
+}
+button {
+  font: inherit;
+  font-size: var(--text-caption-size);
+  color: var(--ink-muted);
+  padding: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  cursor: pointer;
+}
+button:hover {
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
+.time {
+  color: var(--ink-muted);
+  font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono);
+  white-space: nowrap;
+}
+input {
+  min-width: 0;
+  flex: 1;
+  accent-color: var(--accent);
+}
+.play-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--glass);
+  backdrop-filter: blur(var(--blur-glass));
+  color: var(--ink);
+  box-shadow: var(--shadow-raised);
+  font-size: var(--text-display-size);
+}
+.marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+.marks button {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-full);
+}
+.marks span {
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+figcaption {
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  margin-top: var(--space-1);
+}
+.error {
+  font-size: var(--text-caption-size);
+  color: var(--danger);
+  margin: var(--space-1) 0;
+}
+.fallback {
+  background: var(--surface-sunken);
+}

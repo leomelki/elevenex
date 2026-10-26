@@ -1,0 +1,52 @@
+<button
+  type="button"
+  class="trigger"
+  cdkOverlayOrigin
+  #origin="cdkOverlayOrigin"
+  [attr.aria-expanded]="open()"
+  aria-haspopup="dialog"
+  (click)="open.set(!open())"
+>
+  <ex-icon name="shield" [size]="14" /><span>{{ label() }}</span>
+</button>
+<ng-template
+  cdkConnectedOverlay
+  [cdkConnectedOverlayOrigin]="origin"
+  [cdkConnectedOverlayOpen]="open()"
+  [cdkConnectedOverlayHasBackdrop]="true"
+  cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
+  [cdkConnectedOverlayPositions]="[
+    {
+      originX: 'start',
+      originY: 'top',
+      overlayX: 'start',
+      overlayY: 'bottom',
+      offsetY: -8,
+    },
+  ]"
+  (backdropClick)="open.set(false)"
+  (overlayKeydown)="$event.key === 'Escape' && open.set(false)"
+  ><section
+    class="picker"
+    role="dialog"
+    aria-label="Agent permissions"
+    cdkTrapFocus
+    [cdkTrapFocusAutoCapture]="true"
+  >
+    @for (choice of choices; track choice.id) {
+      <button
+        type="button"
+        class="choice"
+        [attr.aria-pressed]="value() === choice.id"
+        (click)="select(choice.id)"
+      >
+        <span
+          ><strong>{{ choice.label }}</strong
+          ><small>{{ choice.detail }}</small></span
+        >
+        @if (value() === choice.id) {
+          <ex-icon name="check" [size]="14" />
+        }
+      </button>
+    }</section
+></ng-template>

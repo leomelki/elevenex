@@ -1,0 +1,50 @@
+<section #card tabindex="-1" aria-label="New project" (keydown)="keydown($event)" [attr.aria-busy]="busy()">
+  <header><span class="crumb"><ex-icon [name]="machineIcon()" [size]="13" />{{ machine() }}</span><span class="slash">/</span><span class="heading">New project</span><span class="grow"></span>@if (cancelable()) { <ex-kbd>Esc</ex-kbd> }</header>
+  <div class="height" exAutoHeight><div class="stack">
+    <div class="rows">
+      @for (row of order; track row; let i = $index) {
+        <div class="row" [class.active]="step() === row">
+          <button type="button" class="row-head" [disabled]="step() === row || blocked()" (click)="go(row)">
+            <span class="number" [attr.data-state]="state(row)">@if (state(row) === 'done') { <ex-icon name="check" [size]="11" /> } @else { {{ i + 1 }} }</span>
+            <span class="row-label">{{ row === 'repos' ? 'Repositories' : row === 'name' ? 'Name' : 'Look' }}</span>
+            @if (step() !== row) {
+              <span class="value">
+                @switch (row) {
+                  @case ('repos') { <span class="summary" [class.muted]="!repos().length">{{ repoSummary() || 'One or more, on ' + machine() }}</span> }
+                  @case ('name') { <span [class.title-value]="appearance().name" [class.muted]="!appearance().name" data-np="name">{{ appearance().name || 'From the first repository' }}</span> }
+                  @case ('look') {
+                    <span class="summary-face" data-np="face">
+                      @if (blankFace()) { <span class="blank"><ex-icon name="folder" [size]="7" /></span> }
+                      @else { <ex-project-mark [name]="face().name" [initials]="face().initials" [emoji]="face().emoji" [icon]="face().icon" [hue]="face().hue || 'steel'" [size]="18" [decorative]="true" /> }
+                      {{ appearance().look === 'emoji' ? 'Emoji' : appearance().look === 'icon' ? 'Icon' : 'Letters' }}
+                    </span>
+                  }
+                }
+              </span>
+            }
+          </button>
+          <ex-fold [open]="step() === row"><div class="body">
+            @switch (row) {
+              @case ('repos') {
+                <div class="repos">
+                  <div class="repo-list">
+                    @for (entry of presence.rows(); track entry.key) {
+                      @let repo = entry.value;
+                      <ex-fold [open]="entry.present && !entry.entering" (transitionend)="presence.settled(entry.key, $event)">
+                        <div class="repo"><span class="repo-icon"><ex-icon [name]="repo.clone ? 'link' : 'repo'" [size]="14" /></span><span class="repo-title"><b>{{ repo.name }}</b><span class="mono">{{ repo.clone ? 'clones into ' + repo.path : repo.path }}</span></span><span class="repo-meta mono">{{ repo.branch || (repo.clone ? '' : 'git init') }}</span><ex-icon-button class="remove" icon="x" [label]="'Remove ' + repo.name" size="sm" [disabled]="blocked()" (pressed)="remove(repo.id)" /></div>
+                      </ex-fold>
+                    }
+                  </div>
+                  <ex-folder-suggestions [machine]="machine()" [query]="query()" (queryChange)="setQuery($event)" [listFolders]="listFolders()" [addedPaths]="addedPaths()" [listOpen]="draft().listOpen || false" [active]="active() && step() === 'repos'" [disabled]="blocked()" (selected)="add($event)" (continued)="next()" />
+                </div>
+              }
+              @case ('name') { <input #nameField class="name-input" data-np="name" aria-label="Project name" placeholder="Project name" spellcheck="false" [disabled]="blocked()" [value]="appearance().name" (input)="setName($event)" (keydown)="nameKey($event)" /> }
+              @case ('look') { <ex-project-appearance [appearance]="appearance()" [disabled]="blocked()" faceHook="face" (appearanceChange)="setAppearance($event)" /> }
+            }
+          </div></ex-fold>
+        </div>
+      }
+    </div>
+    <footer #footer><button exButton variant="primary" [disabled]="!canNext()" (click)="next()"><span class="next"><ex-ease-swap [value]="busy() ? 'Creating…' : step() === 'look' ? 'Create project' : 'Next'" /><ex-kbd>↵</ex-kbd></span></button></footer>
+  </div></div>
+</section>

@@ -1,0 +1,14 @@
+<form (submit)="submit($event)" [attr.inert]="active() ? null : ''">
+  <header><ex-icon name="key" [size]="20" /><div><h2 id="remote-challenge-title">{{ challenge().kind === 'trust' ? 'Check the server’s identity' : 'Sign in to ' + machineName() }}</h2><p>{{ machineName() }}</p></div></header>
+  @if (challenge().kind === 'trust' && fingerprint()) {
+    <ex-host-key-check [host]="machineName()" [fingerprint]="fingerprint()" [type]="keyType()" [disabled]="busy() || expired()" />
+  } @else {
+    <p class="prompt" id="remote-challenge-prompt">{{ challenge().prompt }}</p>
+  }
+  @if (challenge().kind === 'credential') {
+    <label class="credential">SSH response<input #response type="password" autocomplete="off" maxlength="8192" [value]="secret()" [disabled]="busy() || expired()" aria-describedby="remote-challenge-prompt" (input)="secret.set(response.value)" /></label>
+  }
+  @if (expired()) { <p class="error" role="alert">This sign-in request expired. Cancel and open the machine to try again.</p> }
+  @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
+  <footer><button exButton type="button" variant="ghost" [disabled]="busy()" (click)="cancel()">Cancel</button><button exButton type="submit" variant="primary" [disabled]="!canAnswer()">{{ busy() ? 'Continuing…' : challenge().kind === 'trust' ? 'Trust and connect' : 'Continue' }}</button></footer>
+</form>

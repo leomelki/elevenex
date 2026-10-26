@@ -1,0 +1,176 @@
+import { TestBed } from '@angular/core/testing';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { OverlayContainer } from '@angular/cdk/overlay';
+import { NewProjectComponent } from './new-project.component';
+import type { CreateProjectIntent, FolderEntry } from './project.models';
+import { projectFace, projectHue } from './project-face';
+import { ProjectAppearanceComponent } from './project-appearance.component';
+
+describe('New project supplied-data flow', () => {
+  beforeEach(() => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => undefined, removeEventListener: () => undefined }));
+  });
+  function key(element: HTMLElement, value: string, options: KeyboardEventInit = {}): void {
+    element.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true, ...options }));
+  }
+  function input(root: HTMLElement, label: string): HTMLInputElement {
+    const field = root.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
+    if (!field) throw new Error(`Missing ${label}`);
+    return field;
+  }
+  it('disables an unavailable integration without reading folders or claiming creation is running', async () => {
+    const fixture = TestBed.createComponent(NewProjectComponent);
+    const folders = vi.fn(() => []);
+    fixture.componentRef.setInput('disabled', true);
+    fixture.componentRef.setInput('listFolders', folders);
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(folders).not.toHaveBeenCalled();
+    expect(input(fixture.nativeElement, 'Repository: a folder on this machine or a git URL').disabled).toBe(true);
+    expect(fixture.nativeElement.querySelector('section').getAttribute('aria-busy')).toBe('false');
+    expect(fixture.nativeElement.textContent).not.toContain('Creating');
+  });
+  it('adds supplied repositories, infers the name and creates only after Look', async () => {
+    const fixture = TestBed.createComponent(NewProjectComponent);
+    fixture.componentRef.setInput('autoFocus', false);
+    fixture.componentRef.setInput('machine', 'dev-box');
+    fixture.componentRef.setInput('listFolders', () => [{ path: '~/code/payments-api', git: 'main · 214 commits', branch: 'main' }]);
+    const created: CreateProjectIntent[] = [];
+    fixture.componentInstance.create.subscribe(intent => created.push(intent));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const field = input(fixture.nativeElement, 'Repository: a folder on dev-box or a git URL');
+    field.focus();
+    key(field, 'Enter');
+    fixture.detectChanges();
+    key(field, 'Enter');
+    fixture.detectChanges();
+    const name = input(fixture.nativeElement, 'Project name');
+    expect(name.value).toBe('payments-api');
+    key(name, 'Enter');
+    fixture.detectChanges();
+    expect(created).toHaveLength(0);
+    const create = [...fixture.nativeElement.querySelectorAll('button')].find((button): button is HTMLButtonElement => button instanceof HTMLButtonElement && button.textContent?.includes('Create project') === true);
+    expect(create).toBeDefined();
+    create?.click();
+    expect(created[0]?.project).toMatchObject({ name: 'payments-api', look: 'letters', repos: [{ id: '~/code/payments-api', path: '~/code/payments-api', branch: 'main' }] });
+    expect(created[0]?.card.getAttribute('aria-label')).toBe('New project');
+  });
+  it('cancels stale folder requests and ignores a late result', async () => {
+    const fixture = TestBed.createComponent(NewProjectComponent);
+    fixture.componentRef.setInput('autoFocus', false);
+    const requests: { query: string; signal: AbortSignal; resolve: (entries: readonly FolderEntry[]) => void }[] = [];
+    fixture.componentRef.setInput('listFolders', (query: string, signal: AbortSignal) => new Promise<readonly FolderEntry[]>(resolve => requests.push({ query, signal, resolve })));
+    fixture.detectChanges();
+    await Promise.resolve();
+    await Promise.resolve();
+    const field = input(fixture.nativeElement, 'Repository: a folder on this machine or a git URL');
+    field.focus();
+    field.value = '~/src/';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    fixture.detectChanges();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(requests[0]?.signal.aborted).toBe(true);
+    requests[1]?.resolve([{ path: '~/src/current', git: 'main' }]);
+    await fixture.whenStable();
+    requests[0]?.resolve([{ path: '~/code/stale', git: 'main' }]);
+    await fixture.whenStable();
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    expect(overlay.textContent).toContain('current');
+    expect(overlay.textContent).not.toContain('stale');
+    fixture.destroy();
+    expect(requests[1]?.signal.aborted).toBe(true);
+  });
+  it('drills into plain folders and preserves explicit names when repositories change', async () => {
+    const fixture = TestBed.createComponent(NewProjectComponent);
+    fixture.componentRef.setInput('autoFocus', false);
+    fixture.componentRef.setInput('draft', { name: 'Checkout', repos: [{ id: 'one', name: 'API', path: '~/code/api' }] });
+    fixture.componentRef.setInput('listFolders', () => [{ path: '~/src', dir: true }]);
+    fixture.detectChanges();
+    const field = input(fixture.nativeElement, 'Repository: a folder on this machine or a git URL');
+    field.value = '~/' ; field.dispatchEvent(new Event('input', { bubbles: true }));
+    fixture.detectChanges();
+    await fixture.whenStable();
+    key(field, 'Enter');
+    fixture.detectChanges();
+    expect(field.value).toBe('~/src/');
+    fixture.nativeElement.querySelector('ex-icon-button button')?.click();
+    fixture.detectChanges();
+    expect(input(fixture.nativeElement, 'Project name').value).toBe('Checkout');
+  });
+  it('keeps first-run Escape inert and supports cancel, command create and busy state', () => {
+    const fixture = TestBed.createComponent(NewProjectComponent);
+    fixture.componentRef.setInput('autoFocus', false);
+    fixture.componentRef.setInput('draft', { name: 'Checkout', repos: [{ id: 'api', name: 'API', path: '~/code/api' }] });
+    const cancel = vi.fn(); const create = vi.fn();
+    fixture.componentInstance.cancelled.subscribe(cancel);
+    fixture.componentInstance.create.subscribe(create);
+    fixture.detectChanges();
+    const section = fixture.nativeElement.querySelector('section');
+    key(section, 'Escape');
+    expect(cancel).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('cancelable', true); fixture.detectChanges();
+    key(section, 'Escape'); expect(cancel).toHaveBeenCalledOnce();
+    key(section, 'Enter', { metaKey: true }); expect(create).toHaveBeenCalledOnce();
+    fixture.componentRef.setInput('busy', true); fixture.detectChanges();
+    key(section, 'Enter', { metaKey: true }); expect(create).toHaveBeenCalledOnce();
+  });
+  it('derives the face from the selected look and keeps a supplied hue', () => {
+    expect(projectFace({ name: 'Payments API', look: 'letters', hue: 'pine', emoji: '🛒', icon: 'repo' })).toEqual({ name: 'Payments API', hue: 'pine', initials: 'PA' });
+    expect(projectFace({ name: 'Payments', look: 'emoji', emoji: '🛒' })).toMatchObject({ name: 'Payments', emoji: '🛒' });
+  });
+  it('uses the reference hue hash for names containing astral Unicode characters', () => {
+    expect(projectHue('🚀')).toBe('rust');
+    expect(projectHue('Checkout 🚀')).toBe('rose');
+    expect(projectFace({ name: '🛒 Store', look: 'letters' }).hue).toBe('steel');
+  });
+  it('retains an inactive exit card while aborting folder work and rejecting interaction intents', async () => {
+    const fixture = TestBed.createComponent(NewProjectComponent);
+    fixture.componentRef.setInput('autoFocus', false);
+    fixture.componentRef.setInput('cancelable', true);
+    fixture.componentRef.setInput('draft', { name: 'Checkout', repos: [{ id: 'api', name: 'API', path: '~/code/api' }], query: '~/code/', listOpen: true });
+    const requests: { signal: AbortSignal; resolve: (entries: readonly FolderEntry[]) => void }[] = [];
+    fixture.componentRef.setInput('listFolders', (_query: string, signal: AbortSignal) => new Promise<readonly FolderEntry[]>(resolve => requests.push({ signal, resolve })));
+    const created: CreateProjectIntent[] = [];
+    const cancelled = vi.fn();
+    fixture.componentInstance.create.subscribe(intent => created.push(intent));
+    fixture.componentInstance.cancelled.subscribe(cancelled);
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    fixture.detectChanges();
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    expect(overlay.querySelector('[role="listbox"]')).not.toBeNull();
+    fixture.componentRef.setInput('active', false); fixture.detectChanges();
+    expect(requests[0]?.signal.aborted).toBe(true);
+    expect(fixture.nativeElement.hasAttribute('inert')).toBe(true);
+    expect(fixture.nativeElement.querySelector('section')).not.toBeNull();
+    expect(overlay.querySelector('[role="listbox"]')).toBeNull();
+    const card = fixture.nativeElement.querySelector('section');
+    key(card, 'Enter', { metaKey: true }); key(card, 'Escape');
+    expect(created).toHaveLength(0); expect(cancelled).not.toHaveBeenCalled();
+    requests[0]?.resolve([{ path: '~/code/stale', git: 'main' }]);
+    await fixture.whenStable();
+    expect(overlay.querySelector('[role="listbox"]')).toBeNull();
+    fixture.componentRef.setInput('active', true); fixture.detectChanges();
+    key(card, 'Enter', { metaKey: true });
+    expect(created[0]?.project.name).toBe('Checkout');
+    fixture.destroy();
+  });
+  it('freezes every appearance control while creating and accepts changes once ready', () => {
+    const fixture = TestBed.createComponent(ProjectAppearanceComponent);
+    fixture.componentRef.setInput('appearance', { name: 'Payments', look: 'icon', icon: 'repo', hue: 'ocean' });
+    fixture.componentRef.setInput('disabled', true);
+    const changed = vi.fn();
+    fixture.componentInstance.appearanceChange.subscribe(changed);
+    fixture.detectChanges();
+    const controls = Array.from(fixture.nativeElement.querySelectorAll('button'));
+    expect(controls.length).toBeGreaterThan(6);
+    expect(controls.every(control => control instanceof HTMLButtonElement && control.disabled)).toBe(true);
+    const hue: HTMLButtonElement | null = fixture.nativeElement.querySelector('button[aria-label="pine"]');
+    hue?.click();
+    expect(changed).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('disabled', false); fixture.detectChanges();
+    hue?.click();
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ hue: 'pine' }));
+  });
+});

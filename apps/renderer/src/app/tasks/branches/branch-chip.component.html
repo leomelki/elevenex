@@ -1,0 +1,22 @@
+<span class="branch" [class.copied]="copied()"
+  ><button
+    class="name"
+    type="button"
+    title="Branch · rename"
+    (click)="renameRequested.emit(name())"
+  >
+    <ex-icon name="branch" [size]="12" /><span>{{ name() }}</span>
+  </button>
+  @if (base() && !compact()) {
+    <span class="base"
+      >from <span class="mono">{{ base() }}</span></span
+    >
+  }
+  <button
+    class="copy"
+    type="button"
+    [attr.aria-label]="copied() ? 'Copied' : 'Copy branch name'"
+    (click)="copyRequested.emit(name())"
+  >
+    <ex-icon [name]="copied() ? 'check' : 'copy'" [size]="12" /></button
+></span>

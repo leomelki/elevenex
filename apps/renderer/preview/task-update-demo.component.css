@@ -1,0 +1,48 @@
+:host {
+  display: block;
+}
+.examples {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.outline-demo {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.outline {
+  width: 296px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--glass);
+  box-shadow: var(--shadow-glass);
+}
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 220px;
+  color: var(--ink-muted);
+  font-size: 12.5px;
+}
+.controls b {
+  color: var(--ink);
+}
+.draft-controls {
+  flex-direction: row;
+  flex-wrap: wrap;
+  max-width: none;
+}
+.header-example {
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--glass);
+  box-shadow: var(--shadow-glass);
+}
+.intent {
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  margin: 0;
+}

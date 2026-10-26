@@ -1,0 +1,49 @@
+<ng-container *ngTemplateOutlet="inline; context: { $implicit: nodes() }" />
+<ng-template #inline let-items>
+  @for (node of items; track $index) {
+    @switch (node.kind) {
+      @case ("text") {
+        {{ node.text }}
+      }
+      @case ("code") {
+        <code>{{ node.text }}</code>
+      }
+      @case ("strong") {
+        <strong
+          ><ng-container
+            *ngTemplateOutlet="inline; context: { $implicit: node.children }"
+        /></strong>
+      }
+      @case ("em") {
+        <em
+          ><ng-container
+            *ngTemplateOutlet="inline; context: { $implicit: node.children }"
+        /></em>
+      }
+      @case ("strike") {
+        <s
+          ><ng-container
+            *ngTemplateOutlet="inline; context: { $implicit: node.children }"
+        /></s>
+      }
+      @case ("link") {
+        <button
+          type="button"
+          [class.file]="!node.external"
+          (click)="
+            node.external
+              ? openLink.emit(node.target)
+              : openFile.emit(node.target)
+          "
+        >
+          <ng-container
+            *ngTemplateOutlet="inline; context: { $implicit: node.children }"
+          />
+          @if (node.external) {
+            <span aria-hidden="true">↗</span>
+          }
+        </button>
+      }
+    }
+  }
+</ng-template>

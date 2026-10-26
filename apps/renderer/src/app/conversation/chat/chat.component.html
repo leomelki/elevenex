@@ -1,0 +1,40 @@
+<div class="conversation">
+  <ex-chat-scroll (activeExchange)="active.set($event)">
+    @for (exchange of exchanges(); track exchange.id) {
+      <ex-message
+        role="user"
+        [messageId]="exchange.id"
+        [time]="exchange.time || ''"
+        >{{ exchange.prompt }}</ex-message
+      ><ex-turn
+        [status]="exchange.status"
+        [steps]="exchange.steps"
+        [duration]="exchange.duration || 0"
+        [elapsed]="exchange.elapsed || 0"
+        [files]="exchange.files || []"
+        [error]="exchange.error || ''"
+        [author]="exchange.author || 'Agent'"
+        [mark]="exchange.mark || 'EX'"
+        (action)="turnAction.emit({ id: exchange.id, action: $event })"
+        (openFile)="openFile.emit($event)"
+        (review)="review.emit(exchange.id)"
+        (stop)="stop.emit(exchange.id)"
+        (retry)="retry.emit(exchange.id)"
+        ><ex-markdown
+          [source]="exchange.answer"
+          [streaming]="exchange.status === 'live'"
+          [resolve]="resolve()"
+          (openFile)="openFile.emit($event)"
+          (openLink)="openLink.emit($event)"
+          (openPage)="openPage.emit($event)"
+          (copyCode)="copyCode.emit($event)"
+      /></ex-turn>
+    }
+    <ng-content select="[chatContent]" /></ex-chat-scroll
+  ><ex-turn-nav
+    [turns]="navigation()"
+    [active]="active()"
+    (selected)="scroll()?.scrollToMessage($event)"
+  />
+</div>
+<div class="composer"><ng-content select="[chatComposer]" /></div>

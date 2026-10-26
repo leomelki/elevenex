@@ -1,0 +1,26 @@
+<section
+  [class.running]="status() === 'running'"
+  [class.failed]="status() === 'failed'"
+>
+  <button
+    type="button"
+    class="head"
+    [disabled]="!output()"
+    [attr.aria-expanded]="output() ? expanded() : null"
+    (click)="toggled.set(!expanded())"
+  >
+    <ex-icon [name]="icon()" [size]="14" /><span class="verb">{{ verb() }}</span
+    ><code>{{ detail() }}</code
+    ><span class="grow"></span><span class="meta">{{ meta() }}</span
+    ><ex-status-glyph [status]="status()" [size]="14" />
+    @if (output()) {
+      <ex-icon
+        [name]="expanded() ? 'chevron-down' : 'chevron-right'"
+        [size]="12"
+      />
+    }
+  </button>
+  <ex-fold [open]="expanded() && !!output()">
+    <pre>{{ output() }}</pre>
+  </ex-fold>
+</section>

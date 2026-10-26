@@ -1,0 +1,69 @@
+:host {
+  --kbd-margin: 2px;
+  font: inherit;
+  font-weight: var(--text-ui-weight);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-fast),
+    border-color var(--dur-fast),
+    color var(--dur-fast),
+    transform var(--dur-glide) var(--ease-spring);
+}
+:host([data-size="sm"]) {
+  gap: var(--space-1);
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  font-size: var(--text-caption-size);
+}
+:host([data-variant="primary"]) {
+  --kbd-background: transparent;
+  --kbd-color: var(--on-accent);
+  --kbd-border: currentColor;
+  --kbd-opacity: .8;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+:host([data-variant="primary"]:hover:not(:disabled)) {
+  background: color-mix(in oklab, var(--accent) 88%, var(--ink));
+}
+:host([data-variant="secondary"]) {
+  background: var(--surface-raised);
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+:host([data-variant="secondary"]:hover:not(:disabled)),
+:host([data-variant="ghost"]:hover:not(:disabled)) {
+  background: var(--surface-sunken);
+}
+:host([data-variant="ghost"]) {
+  background: transparent;
+  color: var(--ink);
+}
+:host([data-variant="danger"]) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+:host([data-variant="danger"]:hover:not(:disabled)) {
+  border-color: var(--danger);
+}
+:host(:active:not(:disabled)) {
+  transform: scale(0.97);
+  transition-duration: var(--dur-instant);
+}
+:host(:focus-visible) {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+:host(:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}

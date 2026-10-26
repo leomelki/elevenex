@@ -1,0 +1,8 @@
+<span class="icon"><ex-icon [name]="icon()" [size]="15" /></span>
+<span class="text">
+  <b>{{ title() }}</b>
+  @if (sub()) { <small>{{ sub() }}</small> }
+</span>
+@if (action()) {
+  <button class="island-action" type="button" (click)="actionRequested.emit()">{{ action() }}</button>
+}

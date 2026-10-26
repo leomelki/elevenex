@@ -1,0 +1,58 @@
+:host { display: block; min-width: 0; }
+.wrap { position: relative; display: grid; min-width: 0; }
+.more { position: absolute; top: 10px; right: 10px; width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 8px; background: var(--surface-raised); color: var(--ink); box-shadow: var(--shadow-raised), inset 0 0 0 1px var(--line); cursor: pointer; opacity: 0; transform: scale(.9); pointer-events: none; transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out); }
+.has-menu:hover .more, .has-menu:focus-within .more, .menu-open .more { opacity: 1; transform: none; pointer-events: auto; }
+.more:hover, .menu-open .more { background: var(--surface-sunken); }
+.more:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
+.has-menu .tag, .has-menu .action-tag, .has-menu ex-kbd { transition: opacity var(--dur-fast) var(--ease-out); }
+.has-menu:hover .tag, .has-menu:focus-within .tag, .menu-open .tag,
+.has-menu:hover .action-tag, .has-menu:focus-within .action-tag, .menu-open .action-tag,
+.has-menu:hover ex-kbd, .has-menu:focus-within ex-kbd, .menu-open ex-kbd { opacity: 0; }
+.leaving { animation: card-out 260ms var(--ease-in) both; pointer-events: none; }
+@keyframes card-out { to { opacity: 0; transform: scale(.9); } }
+@media (prefers-reduced-motion: reduce) { .leaving { animation: none; opacity: 0; } .more { transition: none; } }
+.card { position: relative; display: flex; flex-direction: column; gap: var(--space-1); width: 100%; min-width: 0; padding: 14px; border: 0; border-radius: 14px; font: inherit; text-align: left; cursor: pointer; color: var(--ink); background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-spring), background-color var(--dur-base) var(--ease-out); }
+.card:hover { box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-raised); }
+.card.highlighted { box-shadow: inset 0 0 0 1.5px var(--accent), var(--shadow-raised); }
+.card:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
+.card:active, .card.pressed { transform: scale(.96); transition-duration: var(--dur-instant); }
+.card:disabled { cursor: default; opacity: .45; pointer-events: none; }
+.card.idle { background: color-mix(in oklab, var(--surface-raised) 60%, transparent); }
+.top { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 10px; }
+.machine-icon { position: relative; display: grid; place-items: center; flex: none; width: var(--space-8); height: var(--space-8); border-radius: 9px; color: var(--ink); background: color-mix(in oklab, var(--machine-color, var(--ink)) 14%, var(--surface-sunken)); }
+.idle .machine-icon { color: var(--ink-muted); }
+.presence { position: absolute; right: -2px; bottom: -2px; width: 9px; height: 9px; box-sizing: border-box; border-radius: 50%; background: var(--surface-raised); border: 1.5px solid var(--ink-muted); box-shadow: 0 0 0 2px var(--surface-raised); transition: background-color var(--dur-base) var(--ease-out); }
+.presence.live, .presence.busy { background: var(--running); border: 0; }
+.presence.failed { background: var(--attention); border: 0; }
+.presence.update { background: var(--review); border: 0; }
+.presence.busy { animation: breathe 1.4s ease-in-out infinite; }
+.presence.settled { animation: settle var(--dur-slow) var(--ease-spring) both; }
+.spacer { flex: 1; }
+.tag { flex: none; padding: 0 7px; border-radius: 9px; background: var(--surface-sunken); color: var(--ink-muted); font-size: var(--text-overline-size); line-height: var(--text-ui-line); font-weight: 600; white-space: nowrap; }
+.update-tag { color: var(--review); background: var(--review-soft); }
+.pending-tag { color: var(--accent); background: var(--accent-soft); animation: fade var(--dur-base) var(--ease-out) both; }
+.name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
+.description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 32px; color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-caption-line); }
+.meta { font-variant-numeric: tabular-nums; }
+.swap { display: block; animation: blur-in var(--dur-slow) var(--ease-out) both; }
+.progress { position: absolute; left: 14px; right: 14px; bottom: 7px; animation: fade var(--dur-base) var(--ease-out) both; }
+.progress-leaving { animation: fade-out var(--dur-base) var(--ease-in) both; }
+.card.add { background: transparent; box-shadow: none; outline: 1.5px dashed var(--line-strong); outline-offset: -1.5px; }
+.card.add:hover { background: color-mix(in oklab, var(--surface-raised) 55%, transparent); outline-color: var(--ink-muted); box-shadow: none; }
+.card.add:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
+.card.add .machine-icon { background: var(--surface-sunken); color: var(--accent); }
+@keyframes breathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .5; transform: scale(.78); } }
+@keyframes settle { from { transform: scale(.4); } to { transform: none; } }
+@keyframes blur-in { from { opacity: 0; filter: blur(4px); } }
+@keyframes fade { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .card, .presence { transition: none; } .card:active, .card.pressed { transform: none; } .presence, .progress, .progress-leaving, .swap, .pending-tag { animation: none !important; } }
+
+.card.error { --tone: var(--attention); --tone-soft: var(--attention-soft); background: color-mix(in oklab, var(--tone-soft) 55%, var(--surface-raised)); box-shadow: inset 0 0 0 1px var(--tone); }
+.card.error.danger { --tone: var(--danger); --tone-soft: var(--danger-soft); }
+.card.error:hover { box-shadow: inset 0 0 0 1.5px var(--tone), var(--shadow-raised); }
+.card.error:focus-visible { box-shadow: inset 0 0 0 1px var(--tone), var(--focus-ring); }
+.error .description { color: var(--ink); }
+.presence.danger { background: var(--danger); }
+.action-tag { flex: none; display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; background: var(--tone); color: var(--surface-raised); font-size: var(--text-overline-size); font-weight: 600; white-space: nowrap; }
+.stopped { animation: none; --progress-color: var(--tone); --progress-transition: none; }

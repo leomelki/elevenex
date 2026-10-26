@@ -1,0 +1,43 @@
+:host {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-base) var(--ease-in-out);
+}
+:host(.open) {
+  grid-template-rows: 1fr;
+  transition-duration: var(--dur-slow);
+}
+.clip {
+  margin: 0 -6px;
+  padding: 0 6px;
+  min-height: 0;
+  overflow: clip;
+}
+:host(.open.settled) > .clip {
+  overflow: visible;
+}
+.content {
+  opacity: 0;
+  transform: translateY(calc(-1 * var(--space-1)));
+  transition:
+    opacity var(--dur-fast) var(--ease-in),
+    transform var(--dur-base) var(--ease-in-out);
+}
+:host(.open) > .clip > .content {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--dur-base) var(--ease-out) 40ms,
+    transform var(--dur-slow) var(--ease-in-out) 40ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  :host,
+  :host(.open) > .clip > .content,
+  .content {
+    transition: none;
+  }
+  .content {
+    transform: none;
+  }
+}

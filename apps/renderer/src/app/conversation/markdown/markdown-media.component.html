@@ -1,0 +1,75 @@
+@if (asset(); as file) {
+  @switch (file.kind) {
+    @case ("image") {
+      @if (safeSource()) {
+        <figure>
+          <button
+            type="button"
+            class="image"
+            (click)="showViewer()"
+            [attr.aria-label]="'Enlarge ' + (caption() || path())"
+          >
+            <img
+              [src]="safeSource()"
+              [alt]="caption()"
+              [width]="file.w"
+              [height]="file.h"
+              loading="lazy"
+            />
+          </button>
+          <figcaption>{{ caption() }}</figcaption>
+        </figure>
+        <dialog
+          #viewer
+          [attr.aria-label]="caption() || path()"
+          (close)="viewerOpen.set(false)"
+        >
+          <div
+            [cdkTrapFocus]="viewerOpen()"
+            [cdkTrapFocusAutoCapture]="viewerOpen()"
+          >
+            <button
+              type="button"
+              class="close"
+              (click)="closeViewer()"
+              aria-label="Close image"
+            >
+              ×</button
+            ><img [src]="safeSource()" [alt]="caption()" />
+          </div>
+        </dialog>
+      } @else {
+        <button type="button" (click)="openFile.emit(path())">
+          Open {{ caption() || path() }}
+        </button>
+      }
+    }
+    @case ("video") {
+      <ex-markdown-recording
+        [source]="file.src || ''"
+        [knownDuration]="file.dur || 0"
+        [poster]="file.poster || ''"
+        [width]="file.w"
+        [height]="file.h"
+        [caption]="caption()"
+        [marks]="file.marks || []"
+        (openFile)="openFile.emit(path())"
+      />
+    }
+    @case ("page") {
+      <section class="page">
+        <header>
+          <span>{{ file.title || caption() || path() }}</span
+          ><button type="button" (click)="openPage.emit(path())">
+            Open in Browser
+          </button>
+        </header>
+        <p class="page-note">{{ path() }}</p>
+      </section>
+    }
+  }
+} @else {
+  <button type="button" class="missing" (click)="openFile.emit(path())">
+    {{ path() }} isn't in the workspace
+  </button>
+}

@@ -1,0 +1,92 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+.tabs {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+button {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  white-space: nowrap;
+  cursor: pointer;
+}
+button:hover {
+  color: var(--ink);
+}
+button[aria-selected='true'] {
+  color: var(--ink);
+}
+button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  z-index: 0;
+  border-radius: var(--radius-xs);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  pointer-events: none;
+  transition:
+    transform var(--dur-glide) var(--ease-glide),
+    width var(--dur-glide) var(--ease-glide);
+}
+.label-wrap {
+  display: none;
+}
+.label {
+  display: inline-block;
+  min-width: 0;
+  overflow: hidden;
+}
+button[aria-selected='true'] .label-wrap,
+.labelled .label-wrap {
+  display: block;
+}
+.animate-labels button[aria-selected='true'] .label {
+  animation: label-in var(--dur-base) var(--ease-out) 40ms both;
+}
+@keyframes label-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+    filter: blur(var(--space-1));
+  }
+}
+.dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .thumb,
+  .label-wrap,
+  .label {
+    transition: none;
+    animation: none !important;
+  }
+}

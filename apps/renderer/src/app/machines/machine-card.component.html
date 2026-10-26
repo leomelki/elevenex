@@ -1,0 +1,23 @@
+<div class="wrap" [class.has-menu]="menuEnabled() && menuRequested.observed" [class.menu-open]="menuOpen()" [class.leaving]="leaving()" [attr.inert]="leaving() ? '' : null" (contextmenu)="menu($event)">
+<button type="button" class="card" [class.idle]="!connected() && !machine().busy && !error()" [class.error]="!!error()" [class.danger]="error()?.tone === 'danger'" [class.busy]="!!machine().busy" [class.highlighted]="highlighted()" [class.pressed]="pressed()"
+  [attr.aria-label]="error() ? machine().name + '. ' + error()!.step + '. ' + (error()!.action || 'Try again') : null" [disabled]="disabled()" [attr.aria-busy]="machine().busy ? 'true' : null" [attr.data-machine]="machine().id" [style.--machine-color]="color()" (click)="open($event)" (keydown)="keydown($event)">
+  <span class="top">
+    <span class="machine-icon"><ex-icon [name]="icons[machine().kind]" [size]="15" />
+      <span class="presence" [class.live]="connected()" [class.failed]="!!error() || (!machine().busy && machine().conn === 'fail')" [class.danger]="error()?.tone === 'danger'" [class.update]="!machine().busy && machine().update" [class.busy]="!!machine().busy" [class.settled]="settled()" aria-hidden="true"></span>
+    </span>
+    <span class="spacer"></span>
+    @if (error(); as failure) { <span class="action-tag">{{ failure.action || 'Try again' }}</span> }
+    @else if (machine().busy) { @if (pending()) { <span class="tag pending-tag">Will open</span> } }
+    @else if (machine().update) { <span class="tag update-tag">Update</span> }
+    @else if (machine().windows; as count) { <span class="tag">{{ count }} {{ count === 1 ? 'window' : 'windows' }}</span> }
+    @else if (machine().conn === 'kept') { <span class="tag">until you pick</span> }
+    @if (highlighted()) { <ex-kbd>↵</ex-kbd> }
+  </span>
+  <span class="name">{{ machine().name }}</span>
+  <span class="description">@for (line of [line()]; track line.key) { <span [class.swap]="line.key !== 'initial'">{{ line.text }}@if (line.meta) { <span class="meta"> · {{ line.meta }}</span> }</span> }</span>
+  @if (error(); as failure) { @if (failure.progress !== undefined) { <span class="progress stopped"><ex-progress-line [value]="failure.progress" label="Preparation stopped" /></span> } }
+  @else if (machine().busy) { <span class="progress" animate.leave="progress-leaving"><ex-progress-line [value]="machine().busy?.progress" label="Machine preparation" /></span> }
+</button>
+
+@if (menuEnabled() && menuRequested.observed) { <button class="more" type="button" [disabled]="disabled()" [attr.aria-label]="'Actions for ' + machine().name" aria-haspopup="menu" [attr.aria-expanded]="menuOpen()" (click)="menu($event, true)"><ex-icon name="more" [size]="16" /></button> }
+</div>

@@ -1,0 +1,7 @@
+<span class="dot" [style.background]="color()"></span>
+<ex-icon [name]="icons[machine().kind]" [size]="13" />
+<span class="name">{{ back() ? 'Back to ' : '' }}{{ machine().name }}</span>
+@if (back()) { <ex-icon name="back" [size]="13" /> }
+@if (guests()) {
+  <span class="guests"><ex-icon name="peer" [size]="11" />{{ guests() }}</span>
+}

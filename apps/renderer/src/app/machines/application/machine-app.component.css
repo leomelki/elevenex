@@ -1,0 +1,18 @@
+:host { display: block; height: 100dvh; min-width: 0; }
+.window, .window-content { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--canvas); }
+.stage { position: relative; flex: 1; min-height: 0; }
+.home { width: 100%; height: 100%; min-width: 0; display: flex; flex-direction: column; }
+.island-news { display: inline-flex; align-items: center; gap: 7px; max-width: 65cqw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--text-caption-size); }
+.machine-view { height: 100%; display: flex; flex-direction: column; }
+.workspace, .update { flex: 1; min-height: 0; }
+.workspace[hidden] { display: none; }
+.update { display: flex; align-items: center; justify-content: center; overflow: auto; }
+.loading { height: 100%; display: flex; flex-direction: column; gap: var(--space-3); align-items: center; justify-content: center; color: var(--ink-muted); }
+.connection-notice { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-2) var(--space-4); font-size: var(--text-caption-size); }
+.connection-notice { margin: var(--space-2); border-radius: var(--radius-sm); background: var(--attention-soft); color: var(--attention); }
+.connection-notice span { flex: 1; min-width: 120px; overflow-wrap: anywhere; }
+.settings-error { margin: var(--space-4); color: var(--danger); font-size: var(--text-caption-size); }
+.error-toast { position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 20; max-width: calc(100vw - var(--space-8)); }
+.pairing { width: min(440px, calc(100vw - var(--space-8))); padding: var(--space-6); display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-4); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-pop); }
+.pairing h2 { margin: 0; font-size: var(--text-title-size); }
+.pairing p { margin: 0; font-size: var(--text-body-size); color: var(--ink-muted); line-height: var(--text-body-line); }

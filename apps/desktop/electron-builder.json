@@ -1,0 +1,39 @@
+{
+  "appId": "app.elevenex.desktop",
+  "productName": "Elevenex Desktop",
+  "asar": true,
+  "asarUnpack": [
+    "dist/backend/host.js",
+    "dist/backend/process-tree.js",
+    "dist/remote/askpass-helper.js"
+  ],
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/backend-release.json",
+    "renderer/**/*",
+    "package.json"
+  ],
+  "npmRebuild": false,
+  "mac": {
+    "category": "public.app-category.developer-tools",
+    "target": [
+      "dmg",
+      "zip"
+    ]
+  },
+  "win": {
+    "target": [
+      "nsis"
+    ]
+  },
+  "linux": {
+    "category": "Development",
+    "target": [
+      "AppImage",
+      "deb"
+    ]
+  }
+}

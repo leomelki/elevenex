@@ -20,6 +20,12 @@ dev
 .DS_Store
 .worktrees/
 artifacts/
+apps/desktop/renderer/
+apps/desktop/.stage/
+dist-runtime/
+apps/desktop/release/
+apps/renderer/out-tsc/
+apps/renderer/src/design-system/tokens.css
 
 # Windows / PowerShell machine-local generated cache (appears in the repo when
 # PowerShell resolves %LOCALAPPDATA% relative to the working directory)

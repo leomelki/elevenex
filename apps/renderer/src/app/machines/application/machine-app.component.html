@@ -1,0 +1,49 @@
+<div class="window" data-modal-window>
+ <div class="window-content" data-modal-background>
+  <ex-title-bar>
+    <ex-title-island [contentKey]="island()?.key ?? (launcher.open() ? (islandMachine()?.id ?? 'home') : backMachine()?.id ? 'back-' + backMachine()!.id : 'home')" [tone]="island()?.tone ?? 'rest'" [progress]="island()?.progress" [open]="panelOpen()" [panel]="machinePanel" controls="machine-panel" [label]="island()?.text ?? (launcher.open() ? 'Machine details' : backMachine() ? 'Back to ' + backMachine()!.name : 'Machines')" (pressed)="pressIsland()" (dismissed)="panelOpen.set(false)">
+      @if (island(); as news) { <span class="island-news" role="status"><ex-icon [name]="news.icon" [size]="13" />{{ news.text }}</span> }
+      @else if (launcher.open() && launcher.current(); as machine) { <ex-island-name [machine]="machine" /> }
+      @else if (backMachine(); as machine) { <ex-island-name [machine]="machine" [back]="true" /> }
+      @else { <span class="island-news"><ex-icon name="grid" [size]="13" />Machines</span> }
+    </ex-title-island>
+    <ng-template #machinePanel>
+      @if (islandMachine(); as machine) { <ex-machine-panel id="machine-panel" [machine]="machine" (changeRequested)="home()" (disconnectRequested)="panelOpen.set(false); launcher.disconnect()" (newWindow)="panelOpen.set(false); launcher.newWindow()" /> }
+    </ng-template>
+  </ex-title-bar>
+  <div class="stage">
+    @if (connection.state(); as state) {
+      <ex-machine-launch [open]="launcher.open()" [machineId]="launcher.currentId()">
+        <div machineHome class="home">
+          @if (state.settingsError) { <p class="settings-error" role="alert">{{ state.settingsError }}</p> }
+          <ex-machine-home [machines]="actions.machines()" [menuOpen]="actions.menu()?.machine?.id ?? null" (menuRequested)="actions.menu.set($event)" [firstRun]="launcher.firstRun()" [pending]="launcher.pendingId()" [ping]="ping()" [(findOpen)]="findOpen" (opened)="launcher.openMachine($event)" (addServer)="ssh.begin($event)" (pairComputer)="pair($event)" />
+        </div>
+        <div machineView class="machine-view">
+          @for (machine of [launcher.current()]; track machine?.id) { @if (machine) {
+            @if (connectionNotice(); as notice) { <div class="connection-notice" role="status"><ex-icon name="server" [size]="14" /><span>{{ notice.text }}</span>@if (notice.retry) { <button exButton size="sm" variant="ghost" (click)="retry()">Retry</button> }<button exButton size="sm" variant="ghost" (click)="home()">Change machine</button></div> }
+            <div class="workspace" [hidden]="!!update()"><ex-machine-workspace [machine]="machine" [active]="launcher.open() && !update()" (changeRequested)="home()" /></div>
+            @if (update()) { <div class="update"><ex-getting-ready [icon]="machine.kind === 'local' ? 'laptop' : 'server'" [title]="'Getting ' + machine.name + ' ready'" sub="Your projects and files stay on this machine." [steps]="steps()" /></div> }
+          } }
+        </div>
+      </ex-machine-launch>
+    } @else {
+      <main class="loading" aria-label="Machines"><p role="status">{{ connection.error() || 'Loading machines…' }}</p>@if (connection.error()) { <button exButton (click)="connection.refresh()">Try again</button> }</main>
+    }
+  </div>
+  @if (launcher.error()) { <ex-toast class="error-toast" title="Machine needs attention" [detail]="launcher.error()" tone="danger" glyph="failed" [duration]="0" (dismissed)="launcher.error.set('')" /> }
+ </div>
+<ex-machine-menu-popup [request]="actions.menu()" (closed)="actions.menu.set(null)" (action)="actions.act($event)" />
+<ex-toast-stack [notices]="actions.notices()" (actionSelected)="actions.undo($event)" (dismissed)="actions.dismiss($event)" />
+<ex-modal-layer [open]="actions.editOpen()" [from]="actions.draft()?.from ?? null" (closeRequested)="actions.cancel()">
+  @for (draft of actions.draft() ? [actions.draft()!] : []; track draft.id) { <ex-edit-machine [machine]="draft.machine" [step]="draft.step" [disabled]="!actions.editOpen()" [saving]="actions.saving()" [error]="actions.error()" [identityLabel]="actions.identityLabel()" (identityRequested)="actions.chooseIdentity()" (saved)="actions.save($event)" (removeRequested)="actions.removeDraft()" (cancelled)="actions.cancel()" /> }
+</ex-modal-layer>
+<ex-modal-layer [open]="ssh.open()" [from]="ssh.from()" (closeRequested)="ssh.cancel()">
+  <ex-add-machine kind="ssh" [query]="ssh.query()" [picked]="ssh.picked()" [hosts]="ssh.hosts()" [loading]="ssh.saving()" [disabled]="!ssh.open()" [error]="ssh.error()" [notice]="ssh.suggestionError()" (queryChange)="ssh.setQuery($event)" (hostSelected)="ssh.pick($event.name, true)" (hostSubmitted)="ssh.pick($event)" (keyRequested)="ssh.connect()" (cancelled)="ssh.cancel()" />
+</ex-modal-layer>
+<ex-modal-layer [open]="!!challenge()" (closeRequested)="cancelChallenge()">
+  @for (prompt of retainedChallenge() ? [retainedChallenge()!] : []; track prompt.id) { <ex-remote-challenge-dialog [challenge]="prompt" [machineName]="islandMachine()?.name ?? 'server'" [active]="!!challenge()" [busy]="challengeBusy()" [error]="challengeError()" (answered)="answer($event)" /> }
+</ex-modal-layer>
+<ex-modal-layer [open]="pairingOpen()" [from]="pairingFrom()" (closeRequested)="pairingOpen.set(false)">
+  <section class="pairing" role="dialog" aria-labelledby="pairing-title" [attr.inert]="pairingOpen() ? null : ''"><ex-icon name="peer" [size]="24" /><h2 id="pairing-title">Pair another computer</h2><p>Computer pairing is not available in this desktop version. You can run agents on this computer or connect to a server over SSH.</p><button exButton variant="primary" (click)="pairingOpen.set(false)">Back to machines</button></section>
+</ex-modal-layer>
+</div>

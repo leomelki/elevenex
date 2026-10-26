@@ -1,0 +1,89 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.row,
+.heading,
+.metadata {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.heading {
+  overflow: hidden;
+}
+h1 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-title-size);
+  font-weight: var(--text-title-weight);
+  line-height: var(--text-title-line);
+  letter-spacing: var(--text-title-tracking);
+}
+.grow {
+  flex: 1;
+  min-width: var(--space-2);
+}
+.metadata {
+  gap: 6px;
+  overflow: hidden;
+}
+.meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 20px;
+  flex: none;
+  padding: 0 5px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.link:hover {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.link:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+ex-icon-button,
+ex-task-stage,
+ex-git-bar {
+  flex: none;
+}
+@media (max-width: 720px) {
+  .meta {
+    display: none;
+  }
+}
+
+.parent { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; margin: 0 0 2px; padding: 2px 6px 2px 4px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--ink-muted); font: inherit; font-size: var(--text-caption-size); cursor: pointer; }
+.parent:hover { background: var(--surface-sunken); color: var(--ink); }
+.parent b { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parent .mono { font-family: var(--font-mono); font-size: 11px; margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parent:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }

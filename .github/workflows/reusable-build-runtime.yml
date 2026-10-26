@@ -77,6 +77,9 @@ jobs:
       - name: Stage remote runtime for ${{ matrix.target }}
         run: node scripts/stage-remote-runtime.js --target=${{ matrix.target }}
 
+      - name: Build isolated Node backend for the new desktop
+        run: node scripts/desktop-backend-runtime.mjs
+
       - name: Verify native binaries are present
         if: runner.os != 'Windows'
         run: |

@@ -1,0 +1,20 @@
+:host { display: block; height: 100%; min-height: 100px; }
+.files { height: 100%; min-height: 100px; outline: none; }
+.files:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); border-radius: var(--radius-sm); }
+.file, .folder { display: flex; align-items: center; gap: var(--space-2); width: 100%; height: var(--row-height); box-sizing: border-box; padding: 0 var(--space-2); }
+.file { border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink); cursor: pointer; font: inherit; text-align: left; transition: background var(--dur-fast) var(--ease-out); }
+.file:hover { background: var(--surface-sunken); }
+.file.current { background: var(--surface-raised); box-shadow: var(--shadow-raised); }
+.folder { color: var(--ink-muted); font-size: var(--text-caption-size); }
+.folder span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status { flex: none; color: var(--ink-muted); font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono); }
+.status[data-status="A"], .add { color: var(--diff-add); }
+.status[data-status="D"], .del { color: var(--diff-del); }
+.path { display: flex; flex: 1; min-width: 0; align-items: baseline; gap: var(--space-2); }
+.path b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-caption-size); font-weight: 600; }
+.path small { color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-overline-size); }
+.viewed .path b { color: var(--ink-muted); font-weight: 400; }
+.counts { display: flex; flex: none; gap: var(--space-1); font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono); }
+.changed { flex: none; width: 5px; height: 5px; border-radius: var(--radius-full); background: var(--attention); }
+p { margin: 0; padding: var(--space-4); color: var(--ink-muted); font-size: var(--text-caption-size); text-align: center; }
+@media (prefers-reduced-motion: reduce) { .file { transition: none; } }

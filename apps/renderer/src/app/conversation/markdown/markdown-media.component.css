@@ -1,0 +1,96 @@
+:host {
+  display: block;
+  margin: var(--space-3) 0;
+}
+figure {
+  margin: 0;
+}
+.image {
+  padding: 0;
+  display: block;
+  background: transparent;
+  border: 0;
+  cursor: zoom-in;
+  width: 100%;
+}
+img,
+video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  max-height: 380px;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+figcaption {
+  margin-top: var(--space-1);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+dialog {
+  max-width: 92vw;
+  max-height: 92vh;
+  padding: var(--space-3);
+  background: var(--surface-raised);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+dialog::backdrop {
+  background: color-mix(in oklab, var(--canvas) 80%, transparent);
+  backdrop-filter: blur(var(--blur-glass));
+}
+dialog img {
+  max-width: 86vw;
+  max-height: 82vh;
+}
+.close {
+  position: absolute;
+  right: var(--space-3);
+  top: var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+}
+button {
+  font: inherit;
+  font-size: var(--text-caption-size);
+  border: 0;
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.page {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface-raised);
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+header span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--text-caption-size);
+}
+.page > button {
+  display: block;
+  width: 100%;
+  border-radius: 0;
+}
+.missing {
+  font-family: var(--font-mono);
+}

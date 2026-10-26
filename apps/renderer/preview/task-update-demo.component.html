@@ -1,0 +1,73 @@
+<div class="examples">
+  <div class="outline-demo">
+    <div class="outline">
+      <ex-task-group
+        [task]="task()"
+        [selected]="selected()"
+        (selectSession)="selected.set($event)"
+        (addSubtaskSession)="intent.set('New session in ' + $event)"
+      />
+    </div>
+    <div class="controls">
+      <b>Sub-task lifecycle</b>
+      @for (moment of moments; track moment) {
+        <button
+          exButton
+          size="sm"
+          [variant]="this.moment() === moment ? 'primary' : 'secondary'"
+          (click)="chooseMoment(moment)"
+        >
+          {{ moment }}
+        </button>
+      }
+      <span
+        >Hover or focus a sub-task to light its path. The hint appears after
+        500ms.</span
+      >
+    </div>
+  </div>
+  <div class="header-example">
+    <ex-task-header
+      title="Rounding in totals"
+      branch="fix/rounding"
+      [repo]="repos[0]"
+      [parent]="{
+        title: 'Null total on empty cart',
+        branch: 'fix/null-cart-total',
+      }"
+      [git]="{ ahead: 1, mergeInto: 'fix/null-cart-total' }"
+      meta="Use integer cents · 2 sessions"
+      (parentRequested)="intent.set('Open parent: ' + $event.title)"
+      (gitAction)="intent.set('Git intent: ' + $event)"
+    />
+  </div>
+  <div class="controls draft-controls">
+    <button exButton size="sm" (click)="chooseDraft('multiple')">
+      Several repositories</button
+    ><button exButton size="sm" (click)="chooseDraft('existing')">
+      Existing branch</button
+    ><button exButton size="sm" (click)="chooseDraft('empty')">
+      Empty / disabled
+    </button>
+  </div>
+  @for (version of [draftVersion()]; track version) {
+    <ex-new-task
+      [project]="project"
+      [repos]="draftMode() === 'multiple' ? repos : []"
+      repo="api"
+      [branches]="branches"
+      [branchesFor]="draftMode() === 'multiple' ? branchesFor : undefined"
+      [title]="draftMode() === 'empty' ? '' : 'Rate-limit refunds'"
+      [step]="draftMode() === 'existing' ? 'branch' : 'name'"
+      [branchQuery]="draftMode() === 'existing' ? 'fix/existing' : undefined"
+      [autoFocus]="false"
+      (create)="created($event)"
+      (plan)="planned($event)"
+      (addRepository)="intent.set('Open project settings on Repositories')"
+      (cancelled)="intent.set('Cancel draft')"
+    />
+  }
+  <p class="intent" aria-live="polite">
+    {{ intent() || "Actions emit supplied-data intents only." }}
+  </p>
+</div>
