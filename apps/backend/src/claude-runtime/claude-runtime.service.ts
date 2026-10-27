@@ -2362,11 +2362,18 @@ export class ClaudeRuntimeService
         : Math.max(0, MAX_IDLE_CLAUDE_RUNTIMES - 1);
     while (idleRuntimes.length > allowedIdleRuntimes) {
       const [sessionId, runtime] = idleRuntimes.shift()!;
-      void runtime.close().finally(() => {
-        if (this.sessionRuntimes.get(sessionId) === runtime) {
-          this.sessionRuntimes.delete(sessionId);
-        }
-      });
+      void runtime
+        .close()
+        .catch((error) => {
+          this.logger.debug(
+            `Claude idle runtime eviction failed session=${sessionId}: ${String(error)}`,
+          );
+        })
+        .finally(() => {
+          if (this.sessionRuntimes.get(sessionId) === runtime) {
+            this.sessionRuntimes.delete(sessionId);
+          }
+        });
     }
   }
 
@@ -4678,16 +4685,16 @@ export class ClaudeRuntimeService
     const state = this.ensureRuntimeState(sessionId);
     const run = this.activeRuns.get(sessionId);
 
-    // Only a registered run may put the session into 'running'. The SDK tracks
-    // its own session state independently of elevenex's run bookkeeping and can
-    // emit a stray/late 'running' after our turn already finished (lagging
-    // subagent bookkeeping, hook fallout). Honouring that here would set a
-    // phase with no owner: there is no run, so no result and no watchdog will
-    // ever arrive to clear it, and the session sticks on "running" until the
-    // user hits Stop. Genuine background wake-ups come through
-    // reconcileBackgroundResume, which registers a real run precisely so the
-    // phase has something that can end it.
+    // 'running' with no registered run is the CLI starting a turn on its own,
+    // typically to report a finished background task. Register a background
+    // run for it right away, before the model produces any output: until then
+    // the session would look idle and could be shut down mid-turn. The run
+    // always has an owner that ends it, because the CLI follows every
+    // 'running' with 'idle' (handled below), and process closure retires it
+    // too. Turns we submit are registered before their input is sent, so they
+    // never reach this branch.
     if (!run && message.state === 'running') {
+      this.ensureActiveRunForCallback(sessionId, state);
       return;
     }
 
@@ -6374,6 +6381,11 @@ export class ClaudeRuntimeService
           await buildAugmentedEnvAsync(process.env, worktreePath),
         ),
         ELEVENEX_AGENT_TOKEN: mcpAgentToken,
+        // Ask the CLI to report its own turn state (`session_state_changed`:
+        // running / requires_action / idle). It is the only signal that covers
+        // turns the CLI starts by itself, such as reporting a finished
+        // background task, so idle shutdown and run tracking depend on it.
+        CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1',
       },
     };
     return options;

@@ -4601,13 +4601,40 @@ describe('ClaudeRuntimeService', () => {
       expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(true);
     });
 
-    // Regression: after a background resume finished, a stray late 'running'
-    // from the SDK set runPhase with no run to own it — no result and no
-    // watchdog could ever clear it, so the session stuck on "running" and the
-    // user had to hit Stop before they could talk to it again.
-    it('ignores a session state of running when no run owns it', () => {
+    // Regression: a background task's completion notification starts a turn
+    // inside the CLI. Waiting for the model's first output to register it left
+    // the session idle long enough to be shut down mid-turn. The CLI's own
+    // 'running' arrives before any output, and its 'idle' always follows, so a
+    // run registered here never sticks.
+    it('registers a background run when the CLI starts a turn itself, until it reports idle', () => {
+      (service as any).sessionRuntimes.set(SESSION_ID, {});
       const state = (service as any).ensureRuntimeState(SESSION_ID);
-      startSubagent('agent-1');
+      state.runPhase = 'idle';
+      const sessionState = (value: string) => ({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: value,
+      });
+
+      (service as any).handleSessionStateChangedMessage(
+        SESSION_ID,
+        sessionState('running'),
+      );
+      expect((service as any).activeRuns.get(SESSION_ID)?.isBackground).toBe(
+        true,
+      );
+      expect(state.runPhase).toBe('running');
+
+      (service as any).handleSessionStateChangedMessage(
+        SESSION_ID,
+        sessionState('idle'),
+      );
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
+      expect(state.runPhase).toBe('idle');
+    });
+
+    it('ignores a session state of running once the runtime is gone', () => {
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
       state.runPhase = 'idle';
 
       (service as any).handleSessionStateChangedMessage(SESSION_ID, {
@@ -4616,7 +4643,38 @@ describe('ClaudeRuntimeService', () => {
         state: 'running',
       });
 
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
       expect(state.runPhase).toBe('idle');
+    });
+
+    it('never evicts a runtime that is mid-turn, and survives a failing close', async () => {
+      const busy = { isIdle: false, warmState: 'warm', close: jest.fn() };
+      const failing = Array.from({ length: 3 }, (_, index) => ({
+        isIdle: true,
+        warmState: 'warm',
+        lastUsedAtMs: index,
+        close: jest
+          .fn()
+          .mockRejectedValue(new Error('Query closed before response received')),
+      }));
+      const unhandled = jest.fn();
+      process.on('unhandledRejection', unhandled);
+      try {
+        (service as any).sessionRuntimes.set(100, busy);
+        failing.forEach((runtime, index) =>
+          (service as any).sessionRuntimes.set(101 + index, runtime),
+        );
+
+        (service as any).enforceIdleRuntimeLimit();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(busy.close).not.toHaveBeenCalled();
+        expect(failing[0].close).toHaveBeenCalledTimes(1);
+        expect(unhandled).not.toHaveBeenCalled();
+        expect((service as any).sessionRuntimes.has(101)).toBe(false);
+      } finally {
+        process.off('unhandledRejection', unhandled);
+      }
     });
 
     // Regression: task bookkeeping routinely trails the result of the turn that

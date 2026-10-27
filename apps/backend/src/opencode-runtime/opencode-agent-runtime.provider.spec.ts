@@ -400,6 +400,37 @@ describe('OpenCode runtime lifecycle', () => {
       f.provider.onModuleDestroy();
     }
   });
+  // Regression: the idle timer only checked idleness when it was armed. A turn
+  // the server started on its own afterwards (busy with no run of ours) was
+  // killed when the timer fired.
+  it('keeps a server busy with its own turn alive until it reports idle', async () => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+    const f = fixture('s');
+    const status = (type: 'busy' | 'idle') =>
+      f.send({
+        id: type,
+        type: 'session.status',
+        properties: { sessionID: 's', status: { type } },
+      });
+    try {
+      await f.provider.getHistory(1);
+      status('busy');
+      await tick();
+
+      jest.advanceTimersByTime(5 * 60_000);
+      expect(f.server.close).not.toHaveBeenCalled();
+
+      status('idle');
+      await tick();
+      jest.advanceTimersByTime(5 * 60_000 - 1);
+      expect(f.server.close).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(1);
+      expect(f.server.close).toHaveBeenCalledTimes(1);
+    } finally {
+      f.provider.onModuleDestroy();
+      jest.useRealTimers();
+    }
+  });
   it('drains prompts queued behind a native turn recovered after restart', async () => {
     const f = fixture('s');
     Object.assign(f.client.session, {

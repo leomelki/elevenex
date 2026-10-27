@@ -7,6 +7,7 @@ import {
   type Query,
   type SDKControlGetContextUsageResponse,
   type SDKMessage,
+  type SDKSessionStateChangedMessage,
   type SDKUserMessage,
   type Settings,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -54,6 +55,12 @@ export class ClaudeSessionRuntime {
   private lastUsedAtMsValue: number | null = null;
   private lastWarmedAtMsValue: number | null = null;
   private hasSubmittedTurnValue = false;
+  // Turn state as reported by the CLI itself through `session_state_changed`
+  // (requested with CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS). Unlike activeTurn,
+  // it also covers turns the CLI starts on its own, such as the one that
+  // reports a finished background task. Null until the CLI first reports one;
+  // older CLIs never do, and then activeTurn alone decides idleness.
+  private cliSessionState: SDKSessionStateChangedMessage['state'] | null = null;
   private cliVersion: string | undefined;
   private readonly independentInputs = new Set<string>();
 
@@ -141,8 +148,17 @@ export class ClaudeSessionRuntime {
     return this.hasSubmittedTurnValue;
   }
 
+  /**
+   * True when no turn is in progress: none submitted by us, and none the CLI
+   * is running on its own. Idle shutdown and idle-runtime eviction rely on
+   * this, so a CLI-started turn must never read as idle.
+   */
   get isIdle(): boolean {
-    return this.activeTurn === null;
+    return (
+      this.activeTurn === null &&
+      this.cliSessionState !== 'running' &&
+      this.cliSessionState !== 'requires_action'
+    );
   }
 
   get reasoningEffort(): Options['effort'] {
@@ -161,6 +177,7 @@ export class ClaudeSessionRuntime {
     }
 
     this.setWarmState(reason === 'prewarm' ? 'prewarming' : 'cold');
+    this.cliSessionState = null;
     const runtimeQuery = query({
       prompt: this.createPromptIterable(),
       options: this.deps.options,
@@ -368,6 +385,12 @@ export class ClaudeSessionRuntime {
             for (const id of ids) this.activeTurn.messageIds.delete(id);
           else this.activeTurn.messageIds.clear();
         }
+        if (
+          message.type === 'system' &&
+          message.subtype === 'session_state_changed'
+        ) {
+          this.trackCliSessionState(message.state);
+        }
         await this.deps.onMessage(message);
         if (message.type === 'result' && !this.activeTurn?.messageIds.size) {
           this.resolveActiveTurn();
@@ -389,6 +412,7 @@ export class ClaudeSessionRuntime {
         this.queryInstance = null;
         this.startPromise = null;
         this.outputPump = null;
+        this.cliSessionState = null;
       }
       if (!this.closed) {
         this.setWarmState('cold');
@@ -433,19 +457,36 @@ export class ClaudeSessionRuntime {
     turn.reject(error);
   }
 
+  /**
+   * Starts the countdown for an idle runtime. Idleness is re-checked when the
+   * timer fires, not only when it is armed: the CLI can start a turn on its
+   * own in between, and closing then would kill that turn mid-flight.
+   */
   private scheduleIdleShutdown(): void {
     this.clearIdleTimer();
     const timeoutMs = this.hasSubmittedTurnValue
       ? this.deps.postTurnIdleShutdownMs
       : this.deps.prewarmIdleShutdownMs;
     this.idleTimer = setTimeout(() => {
-      if (this.deps.isBackgroundWorkActive?.()) {
+      if (!this.isIdle || this.deps.isBackgroundWorkActive?.()) {
         this.scheduleIdleShutdown();
         return;
       }
       void this.close();
     }, timeoutMs);
     this.idleTimer.unref?.();
+  }
+
+  private trackCliSessionState(
+    state: SDKSessionStateChangedMessage['state'],
+  ): void {
+    this.cliSessionState = state;
+    this.lastUsedAtMsValue = Date.now();
+    // A turn the CLI ran by itself counts as use: restart the countdown from
+    // its end, as a submitted turn does when it settles.
+    if (state === 'idle' && !this.activeTurn && !this.closed) {
+      this.scheduleIdleShutdown();
+    }
   }
 
   private clearIdleTimer(): void {

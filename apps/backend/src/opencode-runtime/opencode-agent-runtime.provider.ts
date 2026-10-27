@@ -750,10 +750,15 @@ export class OpenCodeAgentRuntimeProvider
             state.runPhase = state.canInterrupt ? 'running' : 'idle';
         }
         this.emitState(entry);
-        if (status.type === 'idle' && !entry.run && !state.queuePaused)
-          void this.drain(state.sessionId).catch((error) =>
-            this.fail(entry, error),
-          );
+        if (status.type === 'idle' && !entry.run) {
+          // A turn the server ran by itself counts as use: restart the countdown.
+          entry.lastUsedAt = Date.now();
+          this.scheduleIdle(state.sessionId);
+          if (!state.queuePaused)
+            void this.drain(state.sessionId).catch((error) =>
+              this.fail(entry, error),
+            );
+        }
         break;
       }
       case 'session.error':
@@ -1619,26 +1624,36 @@ export class OpenCodeAgentRuntimeProvider
     else this.clients.delete(sessionId);
     this.scheduleIdle(sessionId);
   }
+  /**
+   * True when stopping the session's server would interrupt nothing: no run of
+   * ours, no turn the server is running on its own (`session.status` busy sets
+   * canInterrupt), and no attached client.
+   */
+  private isIdle(sessionId: number, entry: RuntimeEntry): boolean {
+    return (
+      !entry.run && !entry.state.canInterrupt && !this.clients.has(sessionId)
+    );
+  }
   private scheduleIdle(sessionId: number): void {
     const entry = this.entries.get(sessionId);
-    if (
-      !entry ||
-      entry.run ||
-      entry.state.canInterrupt ||
-      this.clients.has(sessionId)
-    )
-      return;
+    if (!entry || !this.isIdle(sessionId, entry)) return;
     if (entry.idleTimer) clearTimeout(entry.idleTimer);
-    entry.idleTimer = setTimeout(() => this.stop(sessionId), 5 * 60_000);
+    entry.idleTimer = setTimeout(() => this.stopIfIdle(sessionId), 5 * 60_000);
     entry.idleTimer.unref();
     const idle = [...this.entries.entries()]
-      .filter(
-        ([id, item]) =>
-          !item.run && !item.state.canInterrupt && !this.clients.has(id),
-      )
+      .filter(([id, item]) => this.isIdle(id, item))
       .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
     for (const [id] of idle.slice(0, Math.max(0, idle.length - 6)))
       this.stop(id);
+  }
+  // Idleness is re-checked when the timer fires: the server can start a turn
+  // on its own after the timer was armed, and stopping then would kill it.
+  // Its next idle status re-arms the timer.
+  private stopIfIdle(sessionId: number): void {
+    const entry = this.entries.get(sessionId);
+    if (!entry) return;
+    entry.idleTimer = null;
+    if (this.isIdle(sessionId, entry)) this.stop(sessionId);
   }
   private stop(sessionId: number): void {
     const entry = this.entries.get(sessionId);
