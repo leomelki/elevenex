@@ -1379,13 +1379,15 @@ describe('ChangeReviewService', () => {
     expect(age).toHaveBeenCalledTimes(1);
     expect(summaries).toHaveBeenCalledTimes(1);
     expect(rows).toHaveBeenCalledTimes(1);
+    // The candidate-path upper bound is under the limit, so the guard needs
+    // no counting diff at all.
     expect(
       diffArgs.mock.calls.filter(
         ([, , flags]) =>
           flags.includes('--name-only') ||
           (flags.includes('--raw') && !flags.includes('--numstat')),
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     expect(
       diffArgs.mock.calls.some(([, , flags]) => flags.includes('--shortstat')),
     ).toBe(false);
@@ -1680,5 +1682,119 @@ describe('ChangeReviewService', () => {
     releaseNew.resolve();
     expect(await replacement).toBe('new');
     expect(builds.size).toBe(0);
+  });
+
+  describe('branch scope with path-limited diffs', () => {
+    const filePaths = (summary: { files: { path: string }[] }) =>
+      summary.files.map((file) => file.path).sort();
+
+    function startFeatureBranch(): string {
+      const remotePath = path.join(tmpDir, 'remote.git');
+      fs.mkdirSync(remotePath);
+      git('init --bare', remotePath);
+      git(`remote add origin ${remotePath}`);
+      git('push -u origin main');
+      git('symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main');
+      git('checkout -b feature');
+      return remotePath;
+    }
+
+    it('includes commits made after the review base was cached', async () => {
+      startFeatureBranch();
+      write('first.txt', 'first\n');
+      git('add first.txt');
+      git('commit -m "first"');
+      expect(filePaths(await service.getSummary(repoPath, 'branch'))).toEqual([
+        'first.txt',
+      ]);
+
+      write('second.txt', 'second\n');
+      git('add second.txt');
+      git('commit -m "second"');
+      write('README.md', 'one\nedited\n');
+
+      expect(filePaths(await service.getSummary(repoPath, 'branch'))).toEqual([
+        'README.md',
+        'first.txt',
+        'second.txt',
+      ]);
+    });
+
+    it('reports what an unrestricted diff against the merge-base reports', async () => {
+      write('keep.txt', 'keep\n');
+      write('rename-me.txt', 'rename me\n'.repeat(20));
+      write('drop.txt', 'drop\n');
+      git('add .');
+      git('commit -m "more files"');
+      startFeatureBranch();
+      git('mv rename-me.txt renamed.txt');
+      git('rm -q drop.txt');
+      write('reverted.txt', 'temporary\n');
+      git('add reverted.txt');
+      git('commit -m "feature work"');
+      // Reverted in the worktree: changed between merge-base and HEAD only.
+      fs.rmSync(path.join(repoPath, 'reverted.txt'));
+      write('keep.txt', 'keep\nstaged\n');
+      git('add keep.txt');
+      write('keep.txt', 'keep\nstaged\nunstaged\n');
+      write('untracked/new.txt', 'new\n');
+
+      const summary = await service.getSummary(repoPath, 'branch');
+
+      const mergeBase = git('merge-base HEAD origin/main').trim();
+      const expected = git(`diff --name-only -z --find-renames ${mergeBase}`)
+        .split('\0')
+        .filter(Boolean);
+      expect(filePaths(summary)).toEqual(
+        [...expected, 'untracked/new.txt'].sort(),
+      );
+      const [additions, deletions] = git(
+        `diff --numstat --find-renames ${mergeBase}`,
+      )
+        .trim()
+        .split('\n')
+        .map((line) => line.split('\t'))
+        .reduce(
+          ([add, del], [a, d]) => [add + Number(a), del + Number(d)],
+          [0, 0],
+        );
+      // Plus the one line of the untracked file.
+      expect([summary.totals.additions, summary.totals.deletions]).toEqual([
+        additions + 1,
+        deletions,
+      ]);
+    });
+
+    it('refreshes the remote default branch when there is no pull request', async () => {
+      const remotePath = startFeatureBranch();
+      const other = path.join(tmpDir, 'other');
+      git(`clone -q -b main ${remotePath} ${other}`, tmpDir);
+      git('config user.email "test@test.com"', other);
+      git('config user.name "Test User"', other);
+      git('commit -q --allow-empty -m "upstream moved"', other);
+      git('push -q origin main', other);
+      const pushed = git('rev-parse HEAD', other).trim();
+
+      await service.getSummary(repoPath, 'branch', true);
+
+      expect(git('rev-parse refs/remotes/origin/main').trim()).toBe(pushed);
+    });
+
+    it('still pauses branch scopes with too many committed files', async () => {
+      startFeatureBranch();
+      for (let index = 0; index <= 2_000; index++) {
+        write(`bulk/${index}.txt`, `${index}\n`);
+      }
+      git('add bulk');
+      git('commit -q -m "bulk"');
+
+      const summary = await service.getSummary(repoPath, 'branch');
+
+      expect(summary.loadGuard).toMatchObject({
+        blocked: true,
+        reason: 'scope',
+        totalFiles: 2_001,
+      });
+    });
   });
 });

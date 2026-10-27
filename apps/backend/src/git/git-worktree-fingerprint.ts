@@ -11,6 +11,7 @@ import {
 } from './git-read-scheduler.js';
 import { readGitDirectoryHead } from './git-local-state.js';
 import { GitCacheBudget, retainedBytes } from './git-cache.js';
+import { readWorktreeStatus } from './worktree-status-reader.js';
 
 const STAT_CONCURRENCY = 32;
 const WORKTREE_STATUS_CACHE_TTL_MS = 1_500;
@@ -145,7 +146,7 @@ export async function readWorktreeStatusSnapshot(
   const promise = (async () => {
     const status = await gitReadScheduler.run(
       gitRepositoryKey(worktreePath),
-      () => git.status(['--no-ahead-behind']),
+      () => readWorktreeStatus(worktreePath, git, ['--no-ahead-behind']),
     );
     statusScanTimes.set(status, scannedAt);
     const { fingerprint, statSignature, pathSizes, pathVersions } =

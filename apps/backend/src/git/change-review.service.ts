@@ -31,6 +31,9 @@ import {
   WorktreeStatusFingerprintSnapshot,
   readWorktreeStatusSnapshot,
 } from './git-worktree-fingerprint.js';
+import { refreshCommitGraphAfterFetch } from './commit-graph-refresh.js';
+import { verbatimPathspecArgs } from './git-pathspec.js';
+import { trackedStatusPaths } from './worktree-status-reader.js';
 
 import {
   clearLocalRefState,
@@ -66,6 +69,7 @@ import {
 
 const DEFAULT_CHANGE_REVIEW_FILE_LIMIT = 2_000;
 const MAX_FORCED_CHANGE_REVIEW_FILE_LIMIT = 20_000;
+const MAX_COMMITTED_PATH_CACHE_ENTRIES = 64;
 const LARGE_FILE_BYTES = 1_000_000;
 const MAX_FORCED_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_PATCH_ROWS = 50_000;
@@ -287,6 +291,8 @@ export class ChangeReviewService {
     string,
     Promise<ChangeReviewContextWindow>
   >();
+  /** Paths changed between two commits, keyed `from..to`; commits never change. */
+  private readonly committedPathCache = new Map<string, string[]>();
 
   async getSummary(
     worktreePath: string,
@@ -797,7 +803,8 @@ export class ChangeReviewService {
         const metadata = this.getFresh(this.pullRequestCache, metadataKey);
         if (metadata) {
           pullRequest = metadata.pullRequest;
-        } else {
+        } else if (branch !== 'HEAD') {
+          // Only branches have pull requests; skip the network lookup otherwise.
           pullRequest = await this.readPullRequestInfo(repoRoot, branch);
           this.cacheValue(this.pullRequestCache, metadataKey, {
             createdAt: Date.now(),
@@ -944,10 +951,25 @@ export class ChangeReviewService {
       '--find-renames',
       '-l200',
     ];
+    // Without a path limit, the diff re-scans every tracked file in the
+    // worktree (about 0.5 s on a 450k-file repository). With no candidates at
+    // all, the scope is empty and no diff runs.
+    const candidates = await this.readScopePaths(
+      git,
+      scope,
+      base,
+      worktreeState.status,
+    );
+    const pathspec = candidates ? verbatimPathspecArgs(candidates) : null;
     const readRecords = async (reader: SimpleGit) =>
-      parseGitDiffRecords(
-        await reader.raw(this.buildDiffArgs(scope, base, flags)),
-      );
+      candidates?.length === 0
+        ? []
+        : parseGitDiffRecords(
+            await reader.raw([
+              ...this.buildDiffArgs(scope, base, flags),
+              ...(pathspec ?? []),
+            ]),
+          );
     let records = await readRecords(git);
     const originalOldPaths = new Map(
       records
@@ -1127,6 +1149,12 @@ export class ChangeReviewService {
     };
   }
 
+  /**
+   * Counts the files in a scope, for the large-change-set guard. When the
+   * candidate paths (see readScopePaths) already fit under the limit, that
+   * upper bound proves the scope is not blocked and is returned as-is,
+   * skipping an exact count that diffs the whole worktree.
+   */
   private async countScopedFiles(
     git: SimpleGit,
     worktreePath: string,
@@ -1147,6 +1175,14 @@ export class ChangeReviewService {
     const cached = this.getFresh(this.fileCountCache, cacheKey);
     if (cached) return cached;
     return this.getOrBuild(this.fileCountBuilds, cacheKey, async () => {
+      const candidates = await this.readScopePaths(git, scope, base, status);
+      if (candidates) {
+        const upperBound =
+          new Set(candidates).size + (status?.not_added.length ?? 0);
+        if (upperBound <= DEFAULT_CHANGE_REVIEW_FILE_LIMIT) {
+          return { count: upperBound, renameDetectionLimited: false };
+        }
+      }
       const flags = ['--name-only', '-z', '--no-ext-diff', '--no-textconv'];
       const output = await git.raw(
         this.buildDiffArgs(scope, base, [...flags, '--no-renames']),
@@ -2014,6 +2050,65 @@ export class ChangeReviewService {
     };
   }
 
+  /**
+   * Every path a worktree scope's diff can report, or `null` when unknown
+   * (the last-commit scope, or no status). The branch scope diffs the
+   * merge-base tree against the worktree, so a changed path differs either
+   * between the merge-base and HEAD (committed) or between HEAD and the
+   * worktree (in the status). The uncommitted scope only has the latter.
+   * Untracked files never appear in these diffs and are handled separately.
+   */
+  private async readScopePaths(
+    git: SimpleGit,
+    scope: ChangeReviewScope,
+    base: ReviewBase,
+    status: StatusResult | null,
+  ): Promise<string[] | null> {
+    if (scope === 'last-commit' || !status) return null;
+    const worktreePaths = trackedStatusPaths(status);
+    const from =
+      scope === 'branch' ? (base.mergeBaseSha ?? base.baseSha) : null;
+    if (!from) return worktreePaths;
+    const committed = await this.readCommittedPaths(git, from);
+    return committed ? [...committed, ...worktreePaths] : null;
+  }
+
+  /**
+   * Paths changed between `from` and the current HEAD. HEAD is resolved on
+   * every call rather than taken from the cached review base, which can be
+   * older than the latest commit. Returns `null` when it cannot be computed.
+   */
+  private async readCommittedPaths(
+    git: SimpleGit,
+    from: string,
+  ): Promise<string[] | null> {
+    const head = await git
+      .raw(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])
+      .then((value) => value.trim())
+      .catch(() => '');
+    if (!head) return null;
+    if (head === from) return [];
+
+    const key = `${from}..${head}`;
+    const cached = this.committedPathCache.get(key);
+    if (cached) return cached;
+    const output = await git
+      .raw(['diff-tree', '-r', '-z', '--name-only', '--no-renames', from, head])
+      .catch(() => null);
+    if (output === null) return null;
+
+    const paths = output.split('\0').filter(Boolean);
+    this.committedPathCache.set(key, paths);
+    // Maps iterate in insertion order, so the first keys are the oldest.
+    for (const oldest of this.committedPathCache.keys()) {
+      if (this.committedPathCache.size <= MAX_COMMITTED_PATH_CACHE_ENTRIES) {
+        break;
+      }
+      this.committedPathCache.delete(oldest);
+    }
+    return paths;
+  }
+
   private buildDiffArgs(
     scope: ChangeReviewScope,
     base: ReviewBase,
@@ -2692,12 +2787,18 @@ export class ChangeReviewService {
     return null;
   }
 
+  /**
+   * Fetches the branch the review compares against: the pull request's base
+   * when known, otherwise the remote's default branch. The refspec names the
+   * remote-tracking ref explicitly, so the ref is updated even when the
+   * repository's fetch refspec does not cover it. (Fetching the bare name
+   * `HEAD` would only write FETCH_HEAD.)
+   */
   private async refreshLikelyBase(
     git: SimpleGit,
     repoRoot: string,
     prBaseRef: string | null,
   ): Promise<void> {
-    const ref = prBaseRef ?? 'HEAD';
     const remote = await git
       .getRemotes(true)
       .then(
@@ -2707,11 +2808,48 @@ export class ChangeReviewService {
       )
       .catch(() => null);
     if (!remote) return;
-    await this.execGit(
-      ['fetch', '--prune', remote.name, ref],
+    const branch =
+      prBaseRef ?? (await this.readRemoteDefaultBranch(git, remote.name));
+    if (!branch) return;
+
+    const trackingRef = `refs/remotes/${remote.name}/${branch}`;
+    const fetched = await this.execFileSafe(
+      'git',
+      [
+        'fetch',
+        '--no-tags',
+        remote.name,
+        `+refs/heads/${branch}:${trackingRef}`,
+      ],
       repoRoot,
       8_000,
-    ).catch(() => undefined);
+    );
+    if (fetched !== null) refreshCommitGraphAfterFetch(repoRoot, [trackingRef]);
+  }
+
+  /**
+   * The remote's default branch, from its `HEAD` symref when the clone
+   * recorded one, otherwise the first of `main`/`master` that exists locally.
+   */
+  private async readRemoteDefaultBranch(
+    git: SimpleGit,
+    remoteName: string,
+  ): Promise<string | null> {
+    const prefix = `refs/remotes/${remoteName}/`;
+    const symref = await git
+      .raw(['symbolic-ref', '--quiet', `${prefix}HEAD`])
+      .then((value) => value.trim())
+      .catch(() => '');
+    if (symref.startsWith(prefix)) return symref.slice(prefix.length);
+
+    for (const candidate of ['main', 'master']) {
+      const exists = await git
+        .raw(['rev-parse', '--verify', '--quiet', `${prefix}${candidate}`])
+        .then((value) => value.trim().length > 0)
+        .catch(() => false);
+      if (exists) return candidate;
+    }
+    return null;
   }
 
   private async readPullRequestInfo(
@@ -2760,16 +2898,6 @@ export class ChangeReviewService {
       .catch(() => 0);
     if (!timestamp) return null;
     return Math.max(0, Math.floor(Date.now() / 1000) - timestamp);
-  }
-
-  private execGit(
-    args: string[],
-    cwd: string,
-    timeout: number,
-  ): Promise<string> {
-    return this.execFileSafe('git', args, cwd, timeout).then(
-      (output) => output ?? '',
-    );
   }
 
   private execFileSafe(

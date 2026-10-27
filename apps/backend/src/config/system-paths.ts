@@ -669,9 +669,12 @@ function ensureUtf8Locale(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 // has been globally augmented with the user's *default* nvm/fnm version,
 // not the one the worktree pins via `.nvmrc`. Without the override, hooks
 // resolve to the wrong node and bail or behave inconsistently.
+//
+// `options.config` adds per-invocation `-c key=value` overrides on top of the
+// defaults below, without touching the repository's config.
 export function worktreeSimpleGit(
   worktreePath: string,
-  options: { readOnly?: boolean } = {},
+  options: { readOnly?: boolean; config?: readonly string[] } = {},
 ): SimpleGit {
   const env = buildAugmentedEnv(process.env, worktreePath);
   delete env.GIT_PAGER;
@@ -686,7 +689,7 @@ export function worktreeSimpleGit(
     env.GIT_NO_LAZY_FETCH = '1';
   }
   const client = simpleGit(worktreePath, {
-    config: ['diff.ignoreSubmodules=dirty'],
+    config: ['diff.ignoreSubmodules=dirty', ...(options.config ?? [])],
     ...(controller
       ? { abort: controller.signal, timeout: { block: 15_000 } }
       : {}),

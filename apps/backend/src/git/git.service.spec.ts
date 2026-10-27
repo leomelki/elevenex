@@ -836,6 +836,51 @@ describe('GitService', () => {
       15_000,
     );
 
+    it('reports the same line totals as unrestricted diffs', async () => {
+      fs.writeFileSync(
+        path.join(repoPath, 'rename-me.txt'),
+        'line\n'.repeat(30),
+      );
+      fs.writeFileSync(path.join(repoPath, 'delete-me.txt'), 'gone\n');
+      execSync('git add . && git commit -m "more files"', { cwd: repoPath });
+      execSync('git mv rename-me.txt renamed.txt', { cwd: repoPath });
+      fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'staged\nlines\n');
+      execSync('git add initial.txt', { cwd: repoPath });
+      fs.writeFileSync(
+        path.join(repoPath, 'initial.txt'),
+        'staged\nlines\nand unstaged\n',
+      );
+      fs.rmSync(path.join(repoPath, 'delete-me.txt'));
+      fs.writeFileSync(path.join(repoPath, 'untracked.txt'), 'a\nb\n');
+
+      const sum = (args: string) =>
+        execSync(`git diff --numstat --find-renames ${args}`, {
+          cwd: repoPath,
+          encoding: 'utf8',
+        })
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => line.split('\t'))
+          .reduce(
+            (total, [added, deleted]) => ({
+              additions: total.additions + Number(added),
+              deletions: total.deletions + Number(deleted),
+            }),
+            { additions: 0, deletions: 0 },
+          );
+
+      const summary = await service.getStatusSummary(repoPath);
+
+      expect(summary.staged).toMatchObject(sum('--cached'));
+      // The untracked file adds its two lines to the unstaged side.
+      const unstaged = sum('');
+      expect(summary.unstaged).toMatchObject({
+        additions: unstaged.additions + 2,
+        deletions: unstaged.deletions,
+      });
+    });
+
     it('ignores internal changes in tracked worktrees across status, stats, diffs, and fingerprints', async () => {
       const firstWorktree = createTrackedWorktree('first');
       const secondWorktree = createTrackedWorktree('second');
