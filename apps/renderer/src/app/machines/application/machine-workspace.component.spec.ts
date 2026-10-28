@@ -32,9 +32,10 @@ describe('Connected workspace composition', () => {
     component.store.selectSession({ taskId: '11', sessionId: '101' });
     await settle(fixture);
     expect(root.querySelector('ex-workspace-task-header')).not.toBeNull();
-    expect(root.querySelector('ex-chat')).toBeNull();
-    expect(root.querySelector('ex-composer')).toBeNull();
-    expect(root.querySelector('textarea')).toBeNull();
+    expect(root.querySelector('ex-chat')).not.toBeNull();
+    expect(root.querySelector('ex-composer')).not.toBeNull();
+    expect(root.querySelector('textarea')).not.toBeNull();
+    expect(root.querySelector('ex-session-chat .provider')?.textContent).toContain('codex');
     fixture.componentRef.setInput('active', false);
     await settle(fixture);
     expect(component.store.selected()).toBeNull();

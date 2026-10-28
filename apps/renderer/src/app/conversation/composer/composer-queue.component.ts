@@ -17,6 +17,9 @@ import type { QueuedMessage } from "../conversation.models";
 })
 export class ComposerQueueComponent {
   readonly items = input<readonly QueuedMessage[]>([]);
+  readonly editable = input(true);
+  readonly reorderable = input(true);
+  readonly disabled = input(false);
   readonly steer = output<string>();
   readonly remove = output<string>();
   readonly edited = output<QueuedMessage>();

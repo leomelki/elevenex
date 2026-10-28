@@ -18,9 +18,11 @@ import { TurnComponent } from "../turns/turn.component";
 import { TurnNavComponent } from "../turns/turn-nav.component";
 import { ChatScrollComponent } from "./chat-scroll.component";
 import { MessageComponent } from "./message.component";
+import { ButtonComponent } from '../../ui';
 @Component({
   selector: "ex-chat",
   imports: [
+    ButtonComponent,
     MarkdownComponent,
     TurnComponent,
     TurnNavComponent,
@@ -33,6 +35,11 @@ import { MessageComponent } from "./message.component";
 })
 export class ChatComponent {
   readonly exchanges = input<readonly ChatExchange[]>([]);
+  readonly actions = input<readonly TurnAction[]>(['side-chat', 'fork', 'copy']);
+  readonly stoppable = input(true);
+  readonly retryable = input(true);
+  readonly copiedCode = input<string | null>(null);
+  readonly contentRequested = output<string>();
   readonly resolve = input<MarkdownAssetResolver>();
   readonly turnAction = output<{ id: string; action: TurnAction }>();
   readonly openFile = output<string>();

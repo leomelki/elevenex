@@ -77,10 +77,12 @@
           (status() === "failed"
             ? "The agent could not finish."
             : "The agent stopped.")
-      }}</span
-      ><button exButton variant="secondary" size="sm" (click)="retry.emit()">
-        {{ status() === "failed" ? "Retry" : "Continue" }}
-      </button>
+      }}</span>
+      @if (retryable()) {
+        <button exButton variant="secondary" size="sm" (click)="retry.emit()">
+          {{ status() === "failed" ? "Retry" : "Continue" }}
+        </button>
+      }
     </div>
   }
   <ex-fold [open]="status() !== 'live'"
@@ -90,7 +92,7 @@
         action=""
         (openFile)="openFile.emit($event)"
         (review)="review.emit()"
-      /><ex-turn-acts (action)="action.emit($event)" />
+      /><ex-turn-acts [actions]="actions()" (action)="action.emit($event)" />
       @if (files().length) {
         <button exButton variant="secondary" size="sm" (click)="review.emit()">
           Review

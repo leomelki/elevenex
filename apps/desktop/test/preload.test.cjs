@@ -5,6 +5,7 @@ const vm = require('node:vm');
 const remote = require('./remote-contract.cjs');
 const machines = require('./machine-contract.cjs');
 const workspace = require('./workspace-contract.cjs');
+const chatMethods = ['sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent'];
 
 test('preload exposes only the typed bridge and strips event objects', async () => {
   let bridge;
@@ -28,7 +29,7 @@ test('preload exposes only the typed bridge and strips event objects', async () 
       };
     },
   });
-  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods].sort());
+  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...chatMethods].sort());
   assert.equal(Object.isFrozen(bridge), true);
   await bridge.appVersion();
   await bridge.gitStatus('/workspace');
@@ -49,6 +50,13 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   calls.length = 0;
   for (const [method, , args] of workspace.calls) await bridge[method](...args);
   assert.deepEqual(calls, workspace.calls.map(([, channel, args]) => [channel, ...args]));
+  calls.length = 0;
+  const target = { taskId: 1, sessionId: 2, requestId: 'read' };
+  await bridge.sessionChatRead('scope', target);
+  await bridge.sessionChatContent('scope', { ...target, itemId: 'item', part: 'text', offset: 0 });
+  await bridge.sessionChatCommand('scope', { taskId: 1, sessionId: 2, action: { type: 'stop' } });
+  await bridge.sessionChatCancel('scope', 'read');
+  assert.deepEqual(calls, [['session-chat:read', 'scope', target], ['session-chat:content', 'scope', { ...target, itemId: 'item', part: 'text', offset: 0 }], ['session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'stop' } }], ['session-chat:cancel', 'scope', 'read']]);
   calls.length = 0;
   await bridge.workspaceRetryTask('scope', 1, 'use-existing');
   await bridge.workspaceRetryTask('scope', 1, 'snapshot');

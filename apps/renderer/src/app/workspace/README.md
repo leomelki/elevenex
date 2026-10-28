@@ -52,7 +52,7 @@ snapshot before releasing the workspace owner.
 
 Compose the exported `WorkspaceProjectRailComponent` in `shellRail`,
 `WorkspaceNavigationComponent` in `shellSidebar`, `WorkspaceTaskHeaderComponent`
-above the selected session’s empty main region, and `WorkspaceDialogsComponent` beside the
+above the selected session’s streaming chat, and `WorkspaceDialogsComponent` beside the
 shell. `WorkspaceOnboardingComponent` is the first-project card. It emits
 `projectSubmitted(CreateProjectIntent)` before dispatching creation and accepts
 `launching`; the machine container owns source retention and the existing

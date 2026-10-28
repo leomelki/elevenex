@@ -59,6 +59,12 @@ export class ComposerComponent {
   readonly agent = input<AgentConfig>();
   readonly harnesses = input<readonly AgentHarness[]>([]);
   readonly hideAgent = input(false);
+  readonly showSettings = input(true);
+  readonly showTools = input(true);
+  readonly showDictation = input(true);
+  readonly mentionsEnabled = input(true);
+  readonly queueEditable = input(true);
+  readonly queueReorderable = input(true);
   readonly permission = input<PermissionLevel>("ask");
   readonly servers = input<readonly McpServer[]>([]);
   readonly context = input<readonly ConversationMention[]>([]);
@@ -66,6 +72,9 @@ export class ComposerComponent {
   readonly mentionItems = input<readonly ConversationMention[]>([]);
   readonly running = input(false);
   readonly disabled = input(false);
+  readonly sending = input(false);
+  readonly clearOnSubmit = input(true);
+  readonly stoppable = input(true);
   readonly recording = input<RecordingState | false>(false);
   readonly placeholder = input("Ask anything, or @ to mention");
   readonly dropping = signal(false);
@@ -99,17 +108,17 @@ export class ComposerComponent {
     this.draft.set(event.target.value);
     const before = event.target.value.slice(0, event.target.selectionStart);
     const match = /(?:^|\s)@([^\s@]*)$/.exec(before);
-    this.mentionQuery.set(match?.[1] ?? null);
+    this.mentionQuery.set(this.mentionsEnabled() ? match?.[1] ?? null : null);
   }
   send(steer = false): void {
     const text = this.draft().trim();
-    if (!text || this.disabled() || this.recording()) return;
+    if (!text || this.disabled() || this.sending() || this.recording()) return;
     this.submitted.emit({
       text,
       intent: this.running() ? (steer ? "steer" : "queue") : "send",
       context: this.context(),
     });
-    this.draft.set("");
+    if (this.clearOnSubmit()) this.draft.set("");
     this.mentionQuery.set(null);
   }
   insertMention(mention: ConversationMention): void {
@@ -145,7 +154,7 @@ export class ComposerComponent {
       this.mentions()?.onKey(event);
       return;
     }
-    if (event.shiftKey && event.key === "Tab") {
+    if (this.showSettings() && event.shiftKey && event.key === "Tab") {
       event.preventDefault();
       this.modeChanged.emit(this.mode() === "plan" ? "code" : "plan");
       return;
@@ -155,12 +164,12 @@ export class ComposerComponent {
       this.agentPicker()?.open.set(true);
       return;
     }
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "u") {
+    if (this.showTools() && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "u") {
       event.preventDefault();
       this.attach.emit();
       return;
     }
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d") {
+    if (this.showDictation() && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d") {
       event.preventDefault();
       this.dictate.emit();
       return;
@@ -168,7 +177,7 @@ export class ComposerComponent {
     if (
       (event.metaKey || event.ctrlKey) &&
       event.key === "." &&
-      this.running()
+      this.running() && this.stoppable()
     ) {
       event.preventDefault();
       this.stop.emit();

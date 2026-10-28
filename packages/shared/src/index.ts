@@ -1,3 +1,5 @@
+import type { SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
+export type * from './session-chat';
 import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-commit';
 import type { WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
 export type * from './workspace';
@@ -28,6 +30,10 @@ export interface GitStatus {
 }
 
 export interface InvokeContracts {
+  'session-chat:read': { args: [scopeId: string, input: SessionChatRead]; result: BackendResult<SessionChatPage> };
+  'session-chat:command': { args: [scopeId: string, input: SessionChatCommand]; result: BackendResult<{ readonly accepted: true }> };
+  'session-chat:cancel': { args: [scopeId: string, requestId: string]; result: void };
+  'session-chat:content': { args: [scopeId: string, input: SessionChatContentRead]; result: BackendResult<SessionChatContent> };
   'machines:state': { args: []; result: MachineState };
   'machines:opened': { args: [selection: EnvironmentSelection]; result: MachineState };
   'machines:new-window': { args: [selection: EnvironmentSelection | null]; result: void };
@@ -110,6 +116,10 @@ export type Subscribe = <C extends keyof EventContracts>(
 
 /** The entire public preload API; raw IPC and Electron events stay private. */
 export interface ElevenexBridge {
+  sessionChatRead(scopeId: string, input: SessionChatRead): Promise<BackendResult<SessionChatPage>>;
+  sessionChatCommand(scopeId: string, input: SessionChatCommand): Promise<BackendResult<{ readonly accepted: true }>>;
+  sessionChatCancel(scopeId: string, requestId: string): Promise<void>;
+  sessionChatContent(scopeId: string, input: SessionChatContentRead): Promise<BackendResult<SessionChatContent>>;
   readonly platform: DesktopPlatform;
   machineState(): Promise<MachineState>;
   editMachine(selection: EnvironmentSelection, input: MachineEditInput): Promise<MachineState>;

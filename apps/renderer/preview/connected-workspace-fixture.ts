@@ -1,6 +1,7 @@
 import { DestroyRef, Injectable, inject } from '@angular/core';
 import type { BackendResult, WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceAddRepository, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceCommitQuery, WorkspaceGitAction, WorkspaceGitSummary, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskQuery, WorkspaceTaskRecovery, WorkspaceUpdateProject } from '@elevenex/shared';
 import { MachineStartupFixture } from './machine-startup-fixture';
+import { SessionChatFixture } from './session-chat-fixture';
 
 const stamp = '2026-10-26T12:30:00.000Z';
 const success = <T>(value: T): BackendResult<T> => ({ ok: true, value });
@@ -9,6 +10,11 @@ const page = <T>(items: readonly T[]): WorkspacePage<T> => ({ items, nextCursor:
 /** Isolated platform data for exercising the production workspace; never shipped. */
 @Injectable()
 export class ConnectedWorkspaceFixture extends MachineStartupFixture {
+  readonly chat = new SessionChatFixture(inject(DestroyRef));
+  sessionChatRead = (_scope: string, input: import('@elevenex/shared').SessionChatRead) => this.chat.read(input);
+  sessionChatCommand = (_scope: string, input: import('@elevenex/shared').SessionChatCommand) => this.chat.command(input);
+  sessionChatContent = (_scope: string, input: import('@elevenex/shared').SessionChatContentRead) => this.chat.content(input);
+  sessionChatCancel = async (_scope: string, requestId: string) => this.chat.cancel(requestId);
   private projectRows: WorkspaceProject[] = [
     { id: 1, name: 'Payments', agentInstructions: '', appearance: { hue: 'pine', look: 'icon', icon: 'repo' } },
     { id: 2, name: 'Storefront', agentInstructions: '', appearance: { hue: 'ocean', look: 'letters' } },

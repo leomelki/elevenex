@@ -138,8 +138,10 @@ the sidebar. Session pages supply authoritative activity for the visible window.
 
 The side views currently contain shells only. The implementation does not
 introduce direct renderer networking, generic IPC, a second backend or a
-replacement persistence framework. Selected sessions retain their task header
-with an empty main region. See the [workspace guide](../apps/renderer/src/app/workspace/README.md)
+replacement persistence framework. Selected sessions compose the
+[connected chat adapter](../apps/renderer/src/app/session-chat/README.md) with
+bounded history, streamed work, decisions and draft recovery. See the
+[workspace guide](../apps/renderer/src/app/workspace/README.md)
 for the supported actions, limits and ownership.
 
 Failed-task DTOs may include optional bounded `setupIssue` display data.

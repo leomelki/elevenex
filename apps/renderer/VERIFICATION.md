@@ -1223,3 +1223,48 @@ macOS production smoke also passes. These are unpackaged Electron measurements
 with controlled backend replies, not packaged-app, live remote-agent or other OS
 benchmarks. The shared bottleneck is fixed; the audit is not a universal FPS
 guarantee. Dependencies, production security settings and backend APIs are unchanged.
+
+## Connected session chat — October 28
+
+Selected sessions now mount the production chat adapter. Its contracts, scoped
+transport, transcript projection, command dispatch, draft ownership and original
+content reader are documented in
+[src/app/session-chat/README.md](src/app/session-chat/README.md).
+
+Validation passed:
+
+- Desktop lint, production build and TypeScript IPC contracts, including negative
+  assertions for unscoped reads, arbitrary commands and unsupported decisions.
+- Full desktop suite: 104 main-process tests, seven capture-tool tests and 397
+  renderer tests. Existing composer cases remain intact alongside the controlled
+  draft-recovery regression.
+- Twelve focused backend chat tests and the backend production TypeScript check.
+  They cover ownership, bounded windows, hydration races, incremental replacements,
+  cancellation, failed attachment cleanup, archived history, decisions, native
+  multi-select answers and original-content paging with surrogate boundaries.
+- Native macOS Electron smoke after building, using the actual sandboxed preload,
+  app protocol, scope validation and lifecycle. Its backend is a disposable fixture.
+
+`artifacts/desktop-capture/run-U9rrpK/report.json` is **verified: true**, with 16
+chat checkpoints and no errors or warnings. It covers light/dark chat, expanded
+input/output, one-shot approval, questions, native keyboard submission, typing
+while streaming, retained navigation drafts, delivery uncertainty, original-output
+pages and modal focus restoration, bounded history, narrow errors and reduced
+motion. Light chat, dark narrow failure, decisions, original content and uncertain
+send PNGs were inspected. History navigation was also inspected in the focused
+verified report `artifacts/desktop-capture/run-bTniv9/report.json`.
+
+The existing connected-workspace scenario also passes: the report at
+`artifacts/desktop-capture/run-k25drM/report.json` is **verified: true**, with 20
+checkpoints and no errors. It includes panels/takeover/focus, settings, task and
+project creation, first-project onboarding and both themes. It records eight
+identity-tracking warnings of the kind documented in prior workspace checks.
+The chat-only report records none. Reproduce with the saved `session-chat.mjs`
+and `connected-workspace.mjs` scenarios against `pnpm desktop:preview`.
+
+These are controlled-provider visual/integration checks and an unpackaged native
+smoke, not authenticated Claude/Codex/Pi/OpenCode execution, packaged-app launch,
+remote-network performance measurements or other-OS verification. Attachment/media
+resolution, forks, side chats, subagent transcript navigation and richer MCP
+schemas remain outside this integration; unavailable controls are hidden. Existing
+app commands, dependencies, lockfile and production security policy are unchanged.

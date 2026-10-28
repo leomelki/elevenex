@@ -62,6 +62,8 @@ export class TurnComponent {
   readonly mark = input("EX");
   readonly time = input("");
   readonly stoppable = input(true);
+  readonly retryable = input(true);
+  readonly actions = input<readonly TurnAction[]>(['side-chat', 'fork', 'copy']);
   readonly stop = output<void>();
   readonly retry = output<void>();
   readonly action = output<TurnAction>();
@@ -82,10 +84,11 @@ export class TurnComponent {
   readonly completedSteps = computed(() =>
     this.steps().filter((step) => step.status !== "running"),
   );
-  readonly workLabel = computed(
-    () =>
-      `${this.status() === "live" ? "Working" : this.status() === "stopped" ? "Stopped after" : this.status() === "failed" ? "Failed after" : "Worked"} ${formatDuration(this.status() === "live" ? this.elapsed() : this.duration())}`,
-  );
+  readonly workLabel = computed(() => {
+    const seconds = this.status() === 'live' ? this.elapsed() : this.duration();
+    const label = this.status() === 'live' ? 'Working' : this.status() === 'stopped' ? 'Stopped' : this.status() === 'failed' ? 'Failed' : 'Worked';
+    return seconds > 0 ? `${label}${this.status() === 'stopped' || this.status() === 'failed' ? ' after' : ''} ${formatDuration(seconds)}` : label;
+  });
   readonly stepCount = computed(
     () => this.steps().filter((step) => !isProse(step)).length,
   );
@@ -135,7 +138,7 @@ export class TurnComponent {
           : event.key.toLowerCase() === "c"
             ? "copy"
             : undefined;
-    if (action) {
+    if (action && this.actions().includes(action)) {
       event.preventDefault();
       this.action.emit(action);
     }

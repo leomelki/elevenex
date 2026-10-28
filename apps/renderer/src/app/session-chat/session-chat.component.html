@@ -1,0 +1,282 @@
+<header class="session-bar">
+  @if (store.state(); as state) {
+    <span class="provider">{{ state.provider }}</span>
+    <span class="status" role="status"
+      ><ex-status-glyph [status]="status()" [size]="12" />{{
+        statusLabel()
+      }}</span
+    >
+    @if (status() === "attention") {
+      <button exButton variant="ghost" size="sm" (click)="focusDecision()">
+        View request
+      </button>
+    }
+    @if (state.reasoning) {
+      <span class="metadata">{{ state.reasoning }} thinking</span>
+    }
+    <span class="grow"></span>
+    @if (state.context; as context) {
+      <ex-context-meter
+        [used]="context.percentage / 100"
+        [tokens]="context.tokens + ' of ' + context.limit"
+      />
+    }
+    @if (state.activity.length) {
+      <details class="activity">
+        <summary>
+          Activity <span>{{ state.activity.length }}</span>
+        </summary>
+        <div class="activity-content">
+          @for (item of state.activity; track $index) {
+            <p>
+              <strong>{{ item.label }}</strong
+              ><span>{{ item.detail }}</span>
+            </p>
+          }
+        </div>
+      </details>
+    }
+  } @else {
+    <span class="metadata">Connecting to conversation…</span>
+  }
+  @if (archived()) {
+    <span class="metadata">Archived · Read only</span>
+  }
+</header>
+<ex-chat
+  [exchanges]="store.exchanges()"
+  [actions]="['copy']"
+  [stoppable]="!archived() && !!store.state()?.canInterrupt"
+  [retryable]="!blocked()"
+  [copiedCode]="copiedCode()"
+  (stop)="store.perform({ type: 'stop' })"
+  (retry)="continue()"
+  (turnAction)="turnAction($event)"
+  (copyCode)="copy($event, true)"
+  (openLink)="openLink($event)"
+  (openPage)="openFile($event)"
+  (openFile)="openFile($event)"
+  (contentRequested)="contentId.set($event)"
+>
+  <div chatHistory class="history-controls">
+    @if (store.before()) {
+      <button
+        exButton
+        variant="ghost"
+        size="sm"
+        [disabled]="store.loading()"
+        (click)="store.older()"
+      >
+        {{ store.loading() ? "Loading…" : "Earlier messages" }}
+      </button>
+    }
+    @if (store.historical()) {
+      <span>Viewing earlier messages</span
+      ><button exButton variant="secondary" size="sm" (click)="store.refresh()">
+        Back to latest
+      </button>
+    }
+  </div>
+  <div chatContent>
+    @if (store.loading() && !store.items().length) {
+      <ex-skeleton variant="message" [count]="3" />
+    }
+    @if (!store.loading() && !store.items().length && !message()) {
+      <section class="start">
+        <ex-icon name="chat" [size]="24" />
+        <h2>What would you like to work on?</h2>
+        <p>Send a message to start this conversation.</p>
+      </section>
+    }
+    @if (store.state()?.permission; as request) {
+      <ex-approval-card
+        #request
+        kind="tool"
+        [tool]="request.title"
+        [reason]="request.description"
+        [allowAlways]="request.allowAlways"
+        [disabled]="blocked()"
+        (resolve)="
+          store.perform({
+            type: 'permission',
+            id: request.id,
+            decision: $event,
+          })
+        "
+      >
+        <pre class="permission-input">{{ request.input }}</pre>
+      </ex-approval-card>
+    }
+    @for (
+      request of store.state()?.question ? [store.state()!.question!] : [];
+      track request.id
+    ) {
+      <section class="question" #request tabindex="-1">
+        @if (request.message) {
+          <p>{{ request.message }}</p>
+        }
+        @if (request.url) {
+          <button exButton variant="secondary" (click)="openLink(request.url!)">
+            Open request
+          </button>
+        }
+        @if (questions().length) {
+          <ex-question-card
+            [questions]="questions()"
+            [disabled]="blocked()"
+            (submitted)="answer($event)"
+          />
+        }
+        <button
+          exButton
+          variant="ghost"
+          size="sm"
+          [disabled]="blocked()"
+          (click)="
+            store.perform({
+              type: 'answer',
+              id: request.id,
+              answers: {},
+              decline: true,
+            })
+          "
+        >
+          Decline
+        </button>
+      </section>
+    }
+  </div>
+  <div chatComposer>
+    @if (message()) {
+      <div class="feedback error" role="alert">
+        <span>{{ message() }}</span
+        ><button
+          exButton
+          variant="ghost"
+          size="sm"
+          [disabled]="store.loading()"
+          (click)="store.refresh()"
+        >
+          {{ store.uncertain() ? "Check delivery" : "Reconnect" }}
+        </button>
+      </div>
+    }
+    @if (store.uncertain()) {
+      <div class="feedback">
+        <span
+          >Check the conversation before sending again. Your draft is
+          retained.</span
+        >
+        @if (store.checked()) {
+          <button
+            exButton
+            variant="ghost"
+            size="sm"
+            (click)="store.acknowledgeUncertain()"
+          >
+            I checked · Keep draft
+          </button>
+        }
+      </div>
+    }
+    @if (store.state()?.queuePaused && store.queue().length) {
+      <div class="feedback">
+        <span>Queue paused</span
+        ><button
+          exButton
+          variant="secondary"
+          size="sm"
+          [disabled]="blocked()"
+          (click)="store.perform({ type: 'resume-queue' })"
+        >
+          Resume queue
+        </button>
+      </div>
+    }
+    <ex-composer
+      [clearOnSubmit]="false"
+      [draft]="store.draft()"
+      (draftChange)="store.setDraft($event)"
+      [running]="store.running()"
+      [disabled]="archived() || store.historical()"
+      [sending]="!!store.busy() || !!store.uncertain() || !store.state()"
+      [stoppable]="!!store.state()?.canInterrupt"
+      [showSettings]="false"
+      [showTools]="false"
+      [showDictation]="false"
+      [mentionsEnabled]="false"
+      [queueEditable]="false"
+      [queueReorderable]="false"
+      [queue]="store.queue()"
+      [placeholder]="
+        archived()
+          ? 'Restore this session to send messages'
+          : store.historical()
+            ? 'Return to latest messages to reply'
+            : store.running()
+              ? 'Add a follow-up · Alt Enter to steer'
+              : 'Message the agent…'
+      "
+      (submitted)="store.submit($event)"
+      (stop)="store.perform({ type: 'stop' })"
+      (focusLastMessage)="chat()?.focusLastMessage()"
+      (queueSteer)="store.perform({ type: 'steer-queued', id: $event })"
+      (queueRemove)="store.perform({ type: 'cancel-queued', id: $event })"
+      (filesAttached)="
+        store.error.set(
+          'Attachments are not available in this chat yet. You can include a file path in your message.'
+        )
+      "
+    >
+      <div composerSettings class="settings">
+        <button
+          exButton
+          variant="ghost"
+          size="sm"
+          [disabled]="blocked()"
+          [attr.aria-pressed]="store.state()?.plan || false"
+          (click)="
+            store.perform({ type: 'plan', enabled: !store.state()?.plan })
+          "
+        >
+          {{ store.state()?.plan ? "Plan" : "Code" }}
+        </button>
+        @if (store.state()?.models?.length) {
+          <ex-dropdown
+            label="Model"
+            [value]="store.state()?.model || ''"
+            [options]="models()"
+            [disabled]="blocked()"
+            (changed)="store.perform({ type: 'model', model: $event || null })"
+          />
+        }
+        @if (permissions().length) {
+          <ex-dropdown
+            label="Permissions"
+            [value]="store.state()?.permissionMode || ''"
+            [options]="permissions()"
+            [disabled]="blocked()"
+            (changed)="store.perform({ type: 'permission-mode', mode: $event })"
+          />
+        }
+      </div>
+    </ex-composer>
+    <div class="composer-note">
+      <span role="status">{{
+        store.notice() ||
+          (store.running()
+            ? "Enter to queue · Alt Enter to steer"
+            : "Enter to send · Shift Enter for a new line")
+      }}</span>
+    </div>
+  </div>
+</ex-chat>
+@if (contentId(); as id) {
+  <ex-session-chat-content
+    [selection]="selection()"
+    [itemId]="id"
+    (closed)="contentId.set(null)"
+    [part]="contentPart()"
+    (copyRequested)="copy($event)"
+  />
+}

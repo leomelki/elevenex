@@ -411,3 +411,9 @@ stable action/Ticker identities, cleanup and narrow reduced motion. Use
 `--url http://127.0.0.1:4310/connected-workspace`. It freezes the containing
 scroll and seeks only live label animation objects to avoid stale debugger IDs
 from timer-driven ticker cleanup elsewhere.
+
+`scenarios/session-chat.mjs` exercises the production session chat through its
+preview-only provider adapter: both themes, tool input/output, approvals and
+questions, keyboard sending, editable drafts while streaming, navigation retention,
+uncertain delivery, paged original content, bounded history and narrow reduced
+motion states. It uses the connected workspace at the same preview URL.

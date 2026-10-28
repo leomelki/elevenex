@@ -140,6 +140,16 @@ export class BackendClient {
     return result;
   }
 
+  cancel(windowId: number, scopeId: string, key: string): void {
+    this.refresh(windowId);
+    const window = this.windows.get(windowId);
+    if (window?.state.scope?.id === scopeId) {
+      for (const [identity, operation] of window.operations) {
+        if (identity === key || identity.startsWith(key + ':')) operation.controller.abort();
+      }
+    }
+  }
+
   execute<T>(
     windowId: number,
     scopeId: string,

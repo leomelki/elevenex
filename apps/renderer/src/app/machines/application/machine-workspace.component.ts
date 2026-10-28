@@ -5,12 +5,15 @@ import { ButtonComponent, IconComponent, SkeletonComponent } from '../../ui';
 import { WorkspacePanelsComponent } from '../../workbench/workspace-panels.component';
 import { WorkspaceDialogsComponent, WorkspaceNavigationComponent, WorkspaceOnboardingComponent, WorkspaceProjectRailComponent, WorkspaceStore, WorkspaceTaskSetupComponent, WorkspaceTaskHeaderComponent } from '../../workspace';
 import type { Machine } from '../index';
+import { SessionChatComponent } from '../../session-chat/session-chat.component';
+import { SessionChatDrafts } from '../../session-chat/session-chat-drafts';
+import { SessionChatClient } from '../../backend/session-chat-client.service';
 
 /** Connected workspace lifetime. The machine owner retains chrome and transport recovery. */
 @Component({
   selector: 'ex-machine-workspace',
-  providers: [WorkspaceStore],
-  imports: [AppShellComponent, ButtonComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient],
+  imports: [SessionChatComponent, AppShellComponent, ButtonComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
   templateUrl: './machine-workspace.component.html',
   styleUrl: './machine-workspace.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,

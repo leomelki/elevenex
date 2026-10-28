@@ -26,6 +26,7 @@ export class QuestionCardComponent {
   readonly kind = input<"single" | "multi">("single");
   readonly questions = input<readonly AgentQuestion[]>([]);
   readonly answers = input<QuestionAnswers>();
+  readonly disabled = input(false);
   readonly submitted = output<QuestionAnswers>();
   readonly index = signal(0);
   readonly draft = signal<QuestionAnswers>({});
@@ -61,7 +62,7 @@ export class QuestionCardComponent {
   );
   choose(label: string): void {
     const question = this.current();
-    if (!question) return;
+    if (!question || this.disabled()) return;
     this.draft.update((answers) => {
       const existing = answers[question.id] ?? [];
       const next =
@@ -120,7 +121,7 @@ export class QuestionCardComponent {
     else this.submit();
   }
   submit(): void {
-    if (this.complete()) this.submitted.emit(this.draft());
+    if (this.complete() && !this.disabled()) this.submitted.emit(this.draft());
   }
   onKey(event: KeyboardEvent): void {
     if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey)

@@ -17,9 +17,10 @@ and the isolated interactive component preview (`pnpm desktop:preview`).
 Once a configured machine is ready, the connected workspace loads projects,
 tasks and sessions through scope-bound named bridge operations. It includes
 project creation/settings, task creation/preparation/recovery, task stages, safe
-git operations and close/reopen flows. Selected sessions retain their task header
-with an empty main region; side views provide their frames only. See the
-[workspace guide](../renderer/src/app/workspace/README.md).
+git operations and close/reopen flows. Selected sessions render streaming chat
+with tool activity, decisions, queue controls and retained drafts; side views
+provide their frames only. See [chat ownership](../renderer/src/app/session-chat/README.md)
+and the [workspace guide](../renderer/src/app/workspace/README.md).
 The backend gains additive `desktop-workspace` routes;
 the existing app's routes and defaults remain available. A versioned capability
 probe reports an older engine clearly instead of assuming that readiness means

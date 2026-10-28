@@ -7,6 +7,9 @@
 >
   <ex-composer-queue
     [items]="queue()"
+    [editable]="queueEditable()"
+    [reorderable]="queueReorderable()"
+    [disabled]="disabled() || sending()"
     (steer)="queueSteer.emit($event)"
     (remove)="queueRemove.emit($event)"
     (edited)="queueEdited.emit($event)"
@@ -57,7 +60,10 @@
     </div>
   }
   <div class="bar">
-    <ex-mode-toggle [value]="mode()" (changed)="modeChanged.emit($event)" />
+    @if (showSettings()) {
+      <ex-mode-toggle [value]="mode()" (changed)="modeChanged.emit($event)" />
+    }
+    <ng-content select="[composerSettings]" />
     @if (agent(); as value) {
       @if (!hideAgent()) {
         <ex-agent-picker
@@ -69,26 +75,31 @@
         />
       }
     }
-    @if (mode() === "code") {
+    @if (showSettings() && mode() === "code") {
       <ex-permission-picker
         [value]="permission()"
         (changed)="permissionChanged.emit($event)"
       />
     }
-    <span class="grow"></span
-    ><ex-tools-menu
-      [servers]="servers()"
-      (attach)="attach.emit()"
-      (mention)="openMentions()"
-      (manage)="manageServers.emit()"
-      (serverChanged)="serverChanged.emit($event)"
-    /><ex-icon-button
-      icon="mic"
-      label="Dictate (⌘D)"
-      [disabled]="disabled() || !!recording()"
-      (pressed)="dictate.emit()"
-    />
-    @if (running()) {
+    <span class="grow"></span>
+    @if (showTools()) {
+      <ex-tools-menu
+        [servers]="servers()"
+        (attach)="attach.emit()"
+        (mention)="openMentions()"
+        (manage)="manageServers.emit()"
+        (serverChanged)="serverChanged.emit($event)"
+      />
+    }
+    @if (showDictation()) {
+      <ex-icon-button
+        icon="mic"
+        label="Dictate (⌘D)"
+        [disabled]="disabled() || !!recording()"
+        (pressed)="dictate.emit()"
+      />
+    }
+    @if (running() && stoppable()) {
       <ex-icon-button
         icon="stop"
         label="Stop agent (⌘.)"
@@ -100,7 +111,7 @@
       variant="primary"
       size="sm"
       class="send"
-      [disabled]="disabled() || !draft().trim() || !!recording()"
+      [disabled]="disabled() || sending() || !draft().trim() || !!recording()"
       [attr.aria-label]="
         running()
           ? 'Queue message (Enter), or Alt Enter to steer'

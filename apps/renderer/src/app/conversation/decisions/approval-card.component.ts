@@ -29,6 +29,8 @@ export class ApprovalCardComponent {
   readonly where = input("");
   readonly status = input<ApprovalStatus>("pending");
   readonly undoable = input(false);
+  readonly disabled = input(false);
+  readonly allowAlways = input(true);
   readonly resolve = output<Exclude<ApprovalStatus, "pending">>();
   readonly undo = output<void>();
   readonly target = computed(() =>
@@ -40,7 +42,7 @@ export class ApprovalCardComponent {
   );
   onKey(event: KeyboardEvent): void {
     if (
-      this.status() !== "pending" ||
+      this.status() !== "pending" || this.disabled() ||
       event.defaultPrevented ||
       event.metaKey ||
       event.ctrlKey ||
@@ -51,7 +53,7 @@ export class ApprovalCardComponent {
       // A focused button must keep its native action (especially Deny).
       if (event.target !== event.currentTarget) return;
       event.preventDefault();
-      this.resolve.emit(event.altKey ? "always" : "approved");
+      this.resolve.emit(event.altKey && this.allowAlways() ? "always" : "approved");
     } else if (event.key === "Escape") {
       event.preventDefault();
       this.resolve.emit("denied");

@@ -1,13 +1,21 @@
 <div class="conversation">
   <ex-chat-scroll (activeExchange)="active.set($event)">
+    <ng-content select="[chatHistory]" />
     @for (exchange of exchanges(); track exchange.id) {
-      <ex-message
-        role="user"
-        [messageId]="exchange.id"
-        [time]="exchange.time || ''"
-        >{{ exchange.prompt }}</ex-message
-      ><ex-turn
+      @if (exchange.prompt) {
+        <ex-message
+          role="user"
+          [messageId]="exchange.id"
+          [isNew]="exchange.isNew || false"
+          [time]="exchange.time || ''"
+          >{{ exchange.prompt }}</ex-message
+        >
+      }
+      <ex-turn
         [status]="exchange.status"
+        [actions]="actions()"
+        [stoppable]="stoppable()"
+        [retryable]="retryable()"
         [steps]="exchange.steps"
         [duration]="exchange.duration || 0"
         [elapsed]="exchange.elapsed || 0"
@@ -22,6 +30,7 @@
         (retry)="retry.emit(exchange.id)"
         ><ex-markdown
           [source]="exchange.answer"
+          [copiedCode]="copiedCode()"
           [streaming]="exchange.status === 'live'"
           [resolve]="resolve()"
           (openFile)="openFile.emit($event)"
@@ -29,6 +38,16 @@
           (openPage)="openPage.emit($event)"
           (copyCode)="copyCode.emit($event)"
       /></ex-turn>
+      @for (content of exchange.overflow || []; track content.id) {
+        <button
+          exButton
+          variant="ghost"
+          size="sm"
+          (click)="contentRequested.emit(content.id)"
+        >
+          Read full {{ content.label }}
+        </button>
+      }
     }
     <ng-content select="[chatContent]" /></ex-chat-scroll
   ><ex-turn-nav

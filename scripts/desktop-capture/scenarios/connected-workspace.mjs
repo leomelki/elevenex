@@ -17,7 +17,8 @@ export default async function* (capture) {
     await capture.waitFor(() => document.querySelector('ex-workspace-task-header'));
     await finish();
     assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-title-bar').length), 1);
-    assert.equal(await capture.evaluate(() => !!document.querySelector('ex-chat, ex-composer')), false);
+    await capture.waitFor(() => document.querySelector('ex-chat ex-composer textarea'));
+    assert.equal(await capture.evaluate(() => !!document.querySelector('ex-chat, ex-composer')), true);
     yield { name: `${theme}-workspace`, inspect: ['ex-app-shell .rail', 'ex-app-shell .sidebar', 'ex-app-shell .main', 'ex-workspace-task-header'] };
 
     await capture.click('ex-workspace-task-header [aria-label="Toggle side panel"]'); await finish();

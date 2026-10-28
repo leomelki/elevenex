@@ -29,3 +29,26 @@ The production desktop forbids frame embedding and remote media. HTML documents 
 ## Motion and accessibility
 
 Components use the supplied design tokens, native controls, CDK overlays/focus traps and shared folds/height motion. Existing history renders without entry motion; `Message.isNew` explicitly opts a newly sent message into arrival motion. `StreamText` preserves existing chunks and animates only appended live content. Respect reduced motion throughout. Keyboard shortcuts are scoped to the composer, focused message, decision card or preset picker; there are no document-level listeners.
+
+## Connected adapter and capability controls
+
+The production [session chat adapter](../session-chat/README.md) owns transport,
+selection, drafts, decisions and feedback. `Chat` accepts a `chatHistory` slot,
+controlled `actions`, `stoppable`, `retryable`, and `copiedCode`. A
+`ChatExchange.isNew` opts only fresh prompts into motion; `overflow` entries emit
+`contentRequested` to the bounded original-content reader. Empty prompts support
+partial history windows without inventing user text. `Turn` forwards the action
+allowlist and retry capability, including keyboard shortcuts. Unknown duration
+shows Worked/Working without an invented zero-second measurement.
+
+`Composer.clearOnSubmit=false` lets a controlled owner clear the draft only after
+accepting an intent, avoiding a child reset overtaking failure recovery.
+`Composer.sending` disables submission/queue operations while keeping the draft
+editable; `stoppable` controls stop availability. `showSettings`, `showTools`,
+`showDictation` and `mentionsEnabled` default to true for existing consumers.
+The `composerSettings` slot accepts integration-owned capability controls.
+`queueEditable`/`queueReorderable` hide unsupported queue mutations.
+`ComposerQueue` exposes the corresponding `editable`, `reorderable` and
+`disabled` inputs. `ApprovalCard.disabled` guards decisions and shortcuts;
+`allowAlways=false` omits unsupported permanent approval. `QuestionCard.disabled`
+blocks submissions and disables its native answer fieldset while a reply is pending.

@@ -32,6 +32,14 @@ describe('IPC bridge contract', () => {
 // These negative assertions are checked by tsc in pnpm test. Vitest alone only
 // transpiles tests, which would silently miss an accidentally weakened contract.
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  // @ts-expect-error Chat reads must identify the expected backend scope.
+  void invoke('session-chat:read', { taskId: 1, sessionId: 2, requestId: 'read' });
+  // @ts-expect-error The conversation bridge never accepts generic shell actions.
+  void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'shell', command: 'anything' } });
+  // @ts-expect-error Permission decisions are an explicit union.
+  void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'permission', id: 'request', decision: 'yes' } });
+  // @ts-expect-error Original content is a bounded named read, never an arbitrary path.
+  void invoke('session-chat:content', 'scope', { path: '/private/file' });
   // @ts-expect-error Name checks must identify the expected backend scope.
   void invoke('workspace:project-name-availability', 'Project');
   // @ts-expect-error First-run completion requires an expected selected machine.

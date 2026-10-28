@@ -505,3 +505,28 @@ test('session archive and Undo validate task ownership, consent, trusted input a
   assert.equal(requests.length,7);
   stop(); assert.equal(handlers.size,0);
 });
+
+test('conversation cancellation is scoped to its owning window and request, and aborts transport', async context => {
+  let arrived;
+  const ready = new Promise(resolve => { arrived = resolve; });
+  const url = await server(context, () => arrived());
+  const client = new BackendClient(() => local(url), () => {});
+  context.after(() => client.dispose()); client.attach(1); client.attach(2);
+  const scope = client.state(1).scope.id;
+  const pending = client.execute(1, scope, 'session-chat:request:1:2', false, async (endpoint, signal) => {
+    await fetch(endpoint.url, { signal }); return true;
+  });
+  await ready;
+  client.cancel(2, scope, 'session-chat:request');
+  client.cancel(1, client.state(2).scope.id, 'session-chat:request');
+  client.cancel(1, scope, 'session-chat:request');
+  assert.equal((await pending).ok, false);
+});
+
+test('conversation replies validate resource identity, bounded fields and supported action unions', () => {
+  const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  assert.deepEqual(parseChatAction({ type: 'send', text: 'hello', queue: true, private: 'drop' }), { type: 'send', text: 'hello', queue: true });
+  for (const invalid of [{ type: 'shell', command: 'anything' }, { type: 'send', text: '', queue: false }, { type: 'send', text: 'x'.repeat(64001), queue: false }, { type: 'permission', id: 'id', decision: 'yes' }, { type: 'answer', id: 'id', answers: { q: ['x'.repeat(4001)] } }]) assert.throws(() => parseChatAction(invalid));
+  assert.throws(() => parseChatPage({ taskId: 3, sessionId: 2 }, 1, 2));
+  assert.throws(() => parseChatPage({ taskId: 1, sessionId: 2, cursor: 'x'.repeat(201) }, 1, 2));
+});

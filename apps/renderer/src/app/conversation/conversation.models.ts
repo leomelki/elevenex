@@ -140,6 +140,8 @@ export interface SessionTask {
   };
 }
 export interface ChatExchange {
+  readonly isNew?: boolean;
+  readonly overflow?: readonly { readonly id: string; readonly label: string }[];
   readonly id: string;
   readonly prompt: string;
   readonly time?: string;

@@ -5,6 +5,7 @@
     <div shellMain class="main-content">
       @if (store.selected()) {
         <ex-workspace-task-header [panelOpen]="panelOpen()" (panelToggle)="togglePanel()" />
+        <ex-session-chat [selection]="store.selected()!" [archived]="store.selectedSession()?.status === 'archived' || store.selectedTask()?.state === 'finished'" (reviewRequested)="store.selectPanel('changes'); panelOpen.set(true)" />
       } @else if (store.pendingTask(); as task) {
         <ex-workspace-task-setup [task]="task" [busy]="store.busy()" [paused]="store.preparationPaused()" [uncertain]="store.mutationUncertain()" [error]="store.error()" (retryRequested)="store.retryPreparation($event)" (refreshRequested)="store.reconcilePreparation()" />
       } @else {
