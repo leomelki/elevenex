@@ -723,7 +723,8 @@ export class SessionsService extends EventEmitter {
     return started;
   }
 
-  private hasStartedAgentRuntime(session: SessionProviderColumns): boolean {
+  /** A native conversation identity locks harness selection across all clients. */
+  hasStartedAgentRuntime(session: SessionProviderColumns): boolean {
     return this.startedProviders(session).size > 0;
   }
 

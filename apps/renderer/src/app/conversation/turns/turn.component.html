@@ -64,7 +64,7 @@
   /></ex-fold>
   <ex-fold [open]="status() === 'live' && heldStep() !== null">
     @if (heldStep(); as step) {
-      <ex-now-line [step]="step" />
+      <ex-now-line [step]="step" [streaming]="activeStep()?.id === step.id" />
     }
   </ex-fold>
   <div class="answer" exAutoHeight>

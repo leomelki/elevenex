@@ -63,3 +63,46 @@ The preview-only `SessionChatFixture` powers the connected workspace and
 production import graph. It verifies themes, tools, decisions, responsive typing,
 draft retention, delivery uncertainty, original-output pages, history and reduced
 motion through the real Angular components.
+
+## Harness choice
+
+The composer exposes a Harness dropdown using the connected backend registry's
+bounded provider labels (currently Claude Code, Codex, Pi and OpenCode). Optional
+`providers` and `providerLocked` state fields keep older engines compatible;
+without them, the desktop retains its previous read-only harness display.
+
+A pre-start selection persists through the existing session provider operation.
+Its command carries the expected current provider, validates registration and
+pending work, and reuses the same native-conversation lock as legacy/MCP callers.
+The draft stays editable and retained while the owner rejects old provider reads,
+reconciles the new selection and loads that harness's model/permission options.
+Interrupted changes are never replayed. Started conversations keep their harness;
+create a new session to choose another.
+
+Cold sessions are observed without invoking provider attachment/prewarming hooks.
+A non-initializing runtime-state read prevents OpenCode from creating a native
+conversation just by displaying the picker. Once a native conversation starts,
+the existing attachment lifecycle resumes. Existing one-argument runtime reads
+retain their previous initialization behavior.
+
+`session-harness.mjs` verifies real dropdown keyboard navigation, all advertised
+choices, changing back and forth, draft retention, model refresh, narrow layouts,
+both themes and locking after the first prompt with preview-only provider data.
+
+## Reply boundaries
+
+The latest nonempty assistant reply stays outside collapsed work even when a
+harness appends tool receipts or system records afterward. Earlier commentary and
+trailing work evidence remain inspectable in the timeline.
+
+A locally sent prompt owns early runtime output until its durable user receipt
+arrives. Projection inserts that pending boundary before newly arriving items;
+reconciliation orders a late receipt before output already received for it.
+Queue feedback has separate ownership and cannot replace the active pending
+prompt. Only the current reply streams; waiting, tool work, completed turns and
+retained thinking lines do not retain an answer cursor. Empty/loading states
+follow the projected conversation, so the first send immediately replaces the
+welcome card even before history contains a user item.
+
+`session-reply-boundaries.mjs` reproduces trailing records and deliberately late
+user receipts through the preview adapter in light/dark and narrow layouts.

@@ -417,3 +417,12 @@ preview-only provider adapter: both themes, tool input/output, approvals and
 questions, keyboard sending, editable drafts while streaming, navigation retention,
 uncertain delivery, paged original content, bounded history and narrow reduced
 motion states. It uses the connected workspace at the same preview URL.
+
+`scenarios/session-harness.mjs` verifies the connected composer's pre-start harness
+choice, registry labels, keyboard operation, draft retention, model refresh,
+started-session locking and narrow layouts in both themes. Use the same preview
+URL as the connected workspace scenarios.
+
+`scenarios/session-reply-boundaries.mjs` verifies final replies outside collapsed
+work, output arriving before its user receipt, one current reply cursor, immediate
+first-send welcome removal, and narrow/reduced-motion rendering in both themes.

@@ -31,6 +31,7 @@ interface ChatFeed {
   revision: number;
   historyRevision: number;
   touched: number;
+  attached: boolean;
   runtime?: Promise<Record<string, unknown>>;
   history?: Promise<AgentTranscriptItem[]>;
 }
@@ -69,9 +70,43 @@ export class DesktopChatService implements OnModuleDestroy {
     return session;
   }
 
-  private feed(sessionId: number, providerId: string): ChatFeed {
+  private state(
+    session: Awaited<ReturnType<SessionsService['findOne']>>,
+    raw: Record<string, unknown>,
+  ) {
+    return {
+      ...chatState(
+        raw,
+        session.activeAgentProvider,
+        this.registry.getProvider(session.activeAgentProvider).info
+          .permissionModes ?? [],
+      ),
+      providers: this.registry
+        .listProviders()
+        .slice(0, 32)
+        .map((provider) => ({ id: provider.id, label: provider.displayName })),
+      providerLocked:
+        this.sessions.hasStartedAgentRuntime(session) ||
+        session.status === 'archived' ||
+        !!session.workspaceArchivedAt ||
+        raw.canInterrupt === true ||
+        raw.runPhase === 'running' ||
+        raw.runPhase === 'waiting' ||
+        (Array.isArray(raw.pendingPrompts) && raw.pendingPrompts.length > 0),
+    };
+  }
+
+  private feed(
+    sessionId: number,
+    providerId: string,
+    attach: boolean,
+  ): ChatFeed {
     const existing = this.feeds.get(sessionId);
     if (existing?.provider.info.id === providerId) {
+      if (attach && !existing.attached) {
+        existing.provider.onClientAttached?.(sessionId);
+        existing.attached = true;
+      }
       existing.touched = Date.now();
       return existing;
     }
@@ -103,18 +138,22 @@ export class DesktopChatService implements OnModuleDestroy {
       revision: 0,
       historyRevision: 0,
       touched: Date.now(),
+      attached: false,
       waiters: new Set(),
       projections: new Map(),
       stop: () => {
         provider.off('event', changed);
-        provider.onClientDetached?.(sessionId);
+        if (feed.attached) provider.onClientDetached?.(sessionId);
       },
     };
     // Subscribe before any asynchronous snapshot read. The pre-read cursor makes
     // events arriving during hydration trigger another idempotent reconciliation.
     provider.on('event', changed);
     try {
-      provider.onClientAttached?.(sessionId);
+      if (attach) {
+        provider.onClientAttached?.(sessionId);
+        feed.attached = true;
+      }
     } catch (error) {
       provider.off('event', changed);
       throw error;
@@ -154,10 +193,14 @@ export class DesktopChatService implements OnModuleDestroy {
         reset: true,
         ...window,
         events: [],
-        state: chatState({}, session.activeAgentProvider, []),
+        state: this.state(session, {}),
       };
     }
-    const feed = this.feed(sessionId, session.activeAgentProvider);
+    const feed = this.feed(
+      sessionId,
+      session.activeAgentProvider,
+      this.sessions.hasStartedAgentRuntime(session),
+    );
     const cursor = () => `${feed.id}:${feed.revision}:${feed.historyRevision}`;
     if (feed.waiters.size >= 32)
       throw new BadRequestException('Too many conversation observers.');
@@ -191,7 +234,12 @@ export class DesktopChatService implements OnModuleDestroy {
           }))
         : Promise.resolve([]);
     const runtime = (feed.runtime ??= feed.provider
-      .getRuntimeState(sessionId)
+      .getRuntimeState(
+        sessionId,
+        this.sessions.hasStartedAgentRuntime(session)
+          ? undefined
+          : { initialize: false },
+      )
       .then(record)
       .finally(() => {
         feed.runtime = undefined;
@@ -229,23 +277,22 @@ export class DesktopChatService implements OnModuleDestroy {
       items: reset || before ? items : [],
       events: reset || before ? [] : events,
       before: window.before,
-      state: chatState(
-        raw,
-        session.activeAgentProvider,
-        feed.provider.info.permissionModes ?? [],
-      ),
+      state: this.state(session, raw),
     };
   }
 
   async command(taskId: number, sessionId: number, value: unknown) {
     const session = await this.target(taskId, sessionId);
-    return executeChatAction(
+    const action = record(value);
+    const result = await executeChatAction(
       this.sessions,
       this.registry,
       sessionId,
       session,
-      record(value),
+      action,
     );
+    if (action.type === 'provider') this.release(sessionId);
+    return result;
   }
 
   async content(

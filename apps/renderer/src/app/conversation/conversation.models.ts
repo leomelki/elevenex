@@ -140,6 +140,8 @@ export interface SessionTask {
   };
 }
 export interface ChatExchange {
+  /** Whether this reply is currently receiving text, independently of tool work. */
+  readonly streaming?: boolean;
   readonly isNew?: boolean;
   readonly overflow?: readonly { readonly id: string; readonly label: string }[];
   readonly id: string;

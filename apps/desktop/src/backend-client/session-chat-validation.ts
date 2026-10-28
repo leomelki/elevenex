@@ -98,6 +98,20 @@ function state(value: unknown): SessionChatState {
   const context = raw["context"] === null ? null : chatObject(raw["context"]);
   return {
     provider: chatText(raw["provider"]),
+    ...(raw["providers"] === undefined
+      ? {}
+      : {
+          providers: array(raw["providers"], 32, (value) => {
+            const provider = chatObject(value);
+            return {
+              id: chatText(provider["id"]),
+              label: chatText(provider["label"]),
+            };
+          }),
+        }),
+    ...(raw["providerLocked"] === undefined
+      ? {}
+      : { providerLocked: bool(raw["providerLocked"]) }),
     phase,
     canInterrupt: bool(raw["canInterrupt"]),
     error: nullable(raw["error"]),
@@ -192,6 +206,12 @@ export function parseChatAction(value: unknown): SessionChatAction {
   const raw = chatObject(value),
     type = raw["type"];
   switch (type) {
+    case "provider": {
+      const provider = chatText(raw["provider"]),
+        expectedProvider = chatText(raw["expectedProvider"]);
+      if (!provider.trim() || !expectedProvider.trim()) throw invalid();
+      return { type, provider, expectedProvider };
+    }
     case "send": {
       const text = chatText(raw["text"], 64000);
       if (!text.trim()) throw invalid();

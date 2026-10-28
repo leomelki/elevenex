@@ -1268,3 +1268,57 @@ remote-network performance measurements or other-OS verification. Attachment/med
 resolution, forks, side chats, subagent transcript navigation and richer MCP
 schemas remain outside this integration; unavailable controls are hidden. Existing
 app commands, dependencies, lockfile and production security policy are unchanged.
+
+## Pre-start harness selection — October 28
+
+The connected composer now exposes registered harness choices with their runtime
+labels. Selection persists through the existing session provider operation,
+retains the draft, refreshes model/permission choices and rejects late reads from
+the previous provider. Started conversations retain the existing harness lock.
+Cold chat reads skip attachment/prewarming, and OpenCode supports an optional
+non-initializing state read; existing callers keep their initialization defaults.
+
+Desktop lint, production build, IPC TypeScript checks and backend production
+TypeScript checks pass. The full desktop suite passes 105 main-process, seven
+capture-tool and 399 renderer tests. Ninety targeted backend tests pass across
+chat, OpenCode runtime and session behavior, including persisted routing of the
+first prompt, cold-read behavior, stale choices and started/queued guards.
+The native macOS Electron smoke also passes after building.
+
+`artifacts/desktop-capture/run-b4xYux/report.json` is **verified: true**, with seven
+checkpoints and no errors/warnings. It verifies Claude Code/Codex/Pi/OpenCode
+choices, keyboard navigation, changes back and forth, retained text, model
+refresh, started-session locking, both themes and narrow layouts. The light open
+menu and dark narrow composer PNGs were inspected.
+The existing chat regression at
+`artifacts/desktop-capture/run-mBzGOb/report.json` is also **verified: true**:
+16 checkpoints and no errors/warnings. These captures use the real production
+components with preview-only provider fixtures; live authenticated harnesses and
+packaged-app execution were not exercised. The owned preview process was stopped.
+
+## Reply visibility and cursor ownership — October 28
+
+Final replies now stay outside collapsed work when trailing tool/system records
+follow them. Early runtime output belongs to its pending prompt until the durable
+user receipt arrives; late receipts are ordered ahead of output already received.
+Queue submissions retain independent feedback and cannot replace that active
+boundary. Reply streaming is separate from live tool work, and retained thinking
+lines stop their cursor when the active step changes. Markdown renders one cursor
+in the current code block or prose. The welcome/loading states use the projected
+conversation, including the optimistic first send.
+
+Desktop lint, production build, TypeScript contracts and the full desktop suite
+pass: 105 main-process, seven capture-tool and 409 renderer tests. New regression
+coverage exercises trailing records, early output/late receipt ordering, queued
+follow-ups before receipt, immediate welcome removal, code/prose cursors and the
+thinking-line handoff. Existing tests and previous uncommitted work were retained.
+
+`artifacts/desktop-capture/run-HWEpdg/report.json` is **verified: true**, with six
+checkpoints and no errors/warnings. It reproduces the reported completed replies
+and delayed user receipts in light/dark, proves only the current answer streams,
+and checks the first response and a narrow reduced-motion layout. The light
+completed replies, dark current reply and first-response PNGs were inspected.
+The existing chat regression at
+`artifacts/desktop-capture/run-FZhPU9/report.json` also passes **verified: true**,
+with 16 checkpoints and no errors/warnings. These are real renderer interactions
+with controlled provider data; authenticated live harnesses were not launched.

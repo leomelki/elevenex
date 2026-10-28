@@ -31,7 +31,7 @@
         ><ex-markdown
           [source]="exchange.answer"
           [copiedCode]="copiedCode()"
-          [streaming]="exchange.status === 'live'"
+          [streaming]="exchange.streaming ?? (exchange.status === 'live')"
           [resolve]="resolve()"
           (openFile)="openFile.emit($event)"
           (openLink)="openLink.emit($event)"

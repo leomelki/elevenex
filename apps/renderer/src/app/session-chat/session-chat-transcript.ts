@@ -35,11 +35,42 @@ function toolDetail(item: SessionChatItem): string {
   }
   return item.toolName ?? "Tool";
 }
+export interface PendingChatPrompt {
+  readonly id: string;
+  readonly text: string;
+  readonly timestamp: string;
+  readonly knownIds: ReadonlySet<string>;
+}
+
+/** Runtime output may precede the harness's durable user-message receipt. */
+function withPendingPrompt(
+  items: readonly SessionChatItem[],
+  pending: PendingChatPrompt,
+): readonly SessionChatItem[] {
+  const prompt: SessionChatItem = {
+    id: pending.id,
+    kind: "user",
+    text: pending.text,
+    timestamp: pending.timestamp,
+    toolId: null,
+    toolName: null,
+    toolKind: null,
+    input: "",
+    error: false,
+    truncated: false,
+  };
+  return [
+    ...items.filter((item) => pending.knownIds.has(item.id)),
+    prompt,
+    ...items.filter((item) => !pending.knownIds.has(item.id)),
+  ];
+}
 /** Preserve chronology, tool/result identities and commentary; a later success never erases a failure. */
 export function chatExchanges(
   items: readonly SessionChatItem[],
   state: SessionChatState | null,
   fresh: ReadonlySet<string>,
+  pending?: PendingChatPrompt,
 ): readonly ChatExchange[] {
   const groups: {
     id: string;
@@ -47,7 +78,7 @@ export function chatExchanges(
     time: string;
     items: SessionChatItem[];
   }[] = [];
-  for (const item of items) {
+  for (const item of pending ? withPendingPrompt(items, pending) : items) {
     if (item.kind === "user")
       groups.push({
         id: item.id,
@@ -83,13 +114,24 @@ export function chatExchanges(
         .filter((item) => item.kind === "tool_result")
         .map((item) => [item.toolId ?? item.id, item]),
     );
-    // Only the final contiguous assistant response belongs below the work summary.
-    // Earlier commentary stays in its chronological position among tool calls.
-    let finalStart = group.items.length;
+    // Final text stays visible even when providers append tool receipts, usage,
+    // or system records afterward. Earlier commentary remains in the timeline.
+    let finalEnd = 0;
+    let lastActivity: SessionChatItem | undefined;
+    for (let index = group.items.length - 1; index >= 0; index--) {
+      const item = group.items[index];
+      if (!item) continue;
+      if (!lastActivity && item.kind !== "system") lastActivity = item;
+      if (item.kind === "assistant" && item.text.trim()) {
+        finalEnd = index + 1;
+        break;
+      }
+    }
+    let finalStart = finalEnd;
     while (finalStart > 0 && group.items[finalStart - 1]?.kind === "assistant")
       finalStart--;
     const steps: WorkStep[] = group.items
-      .slice(0, finalStart)
+      .filter((_item, index) => index < finalStart || index >= finalEnd)
       .flatMap((item): WorkStep[] => {
         if (
           item.kind === "tool_result" &&
@@ -171,6 +213,12 @@ export function chatExchanges(
       prompt: group.prompt,
       time: group.time,
       isNew: fresh.has(group.id),
+      streaming:
+        live &&
+        state?.phase === "running" &&
+        !state.permission &&
+        !state.question &&
+        lastActivity?.kind === "assistant",
       status: live
         ? "live"
         : index === groups.length - 1 && state?.phase === "error"
@@ -178,7 +226,7 @@ export function chatExchanges(
           : "done",
       steps,
       answer: group.items
-        .slice(finalStart)
+        .slice(finalStart, finalEnd)
         .map((item) => item.text)
         .join("\n\n"),
       author: state?.provider ?? "Agent",

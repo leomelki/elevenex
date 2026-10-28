@@ -38,6 +38,12 @@ export interface SessionChatQuestion {
 }
 export interface SessionChatState {
   readonly provider: string;
+  readonly providers?: readonly {
+    readonly id: string;
+    readonly label: string;
+  }[];
+  /** Omitted by older engines, which do not support harness selection. */
+  readonly providerLocked?: boolean;
   readonly phase: "idle" | "running" | "waiting" | "error";
   readonly canInterrupt: boolean;
   readonly error: string | null;
@@ -87,6 +93,11 @@ export interface SessionChatPage extends SessionChatTarget {
   readonly state: SessionChatState;
 }
 export type SessionChatAction =
+  | {
+      readonly type: "provider";
+      readonly provider: string;
+      readonly expectedProvider: string;
+    }
   | { readonly type: "send"; readonly text: string; readonly queue: boolean }
   | { readonly type: "stop" }
   | { readonly type: "cancel-queued" | "steer-queued"; readonly id: string }

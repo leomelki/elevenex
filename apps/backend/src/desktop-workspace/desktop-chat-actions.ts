@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { AgentRuntimeProviderFeatures } from '../agent-runtime/agent-runtime.types.js';
 import type { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import type { SessionsService } from '../sessions/sessions.service.js';
@@ -28,6 +28,35 @@ export async function executeChatAction(
   const feature = <K extends keyof AgentRuntimeProviderFeatures>(key: K) =>
     registry.getProviderFeature(session.activeAgentProvider, key);
   switch (action.type) {
+    case 'provider': {
+      const next = text(action.provider);
+      registry.getProvider(next);
+      if (session.activeAgentProvider !== text(action.expectedProvider))
+        throw new ConflictException(
+          'The selected harness changed. Refresh this conversation.',
+        );
+      if (next === session.activeAgentProvider) break;
+      if (sessions.hasStartedAgentRuntime(session))
+        throw new BadRequestException(
+          'Choose a harness in a new session. This conversation has already started.',
+        );
+      const runtime = record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      );
+      if (
+        runtime.canInterrupt ||
+        runtime.runPhase === 'running' ||
+        runtime.runPhase === 'waiting' ||
+        runtime.pendingPermissionRequest ||
+        runtime.pendingUserInputRequest ||
+        (Array.isArray(runtime.pendingPrompts) && runtime.pendingPrompts.length)
+      )
+        throw new ConflictException(
+          'Wait for the current operation to finish before choosing a harness.',
+        );
+      await sessions.updateActiveAgentProvider(sessionId, next);
+      break;
+    }
     case 'send':
       if (typeof action.queue !== 'boolean')
         throw new BadRequestException('Invalid queue option.');

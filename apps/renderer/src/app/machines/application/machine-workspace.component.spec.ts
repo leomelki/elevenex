@@ -35,7 +35,7 @@ describe('Connected workspace composition', () => {
     expect(root.querySelector('ex-chat')).not.toBeNull();
     expect(root.querySelector('ex-composer')).not.toBeNull();
     expect(root.querySelector('textarea')).not.toBeNull();
-    expect(root.querySelector('ex-session-chat .provider')?.textContent).toContain('codex');
+    expect(root.querySelector('ex-session-chat .provider')?.textContent).toContain('Codex');
     fixture.componentRef.setInput('active', false);
     await settle(fixture);
     expect(component.store.selected()).toBeNull();

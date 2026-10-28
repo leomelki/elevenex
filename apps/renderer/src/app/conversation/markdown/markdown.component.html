@@ -24,7 +24,7 @@
         <ex-markdown-code
           [text]="block.text"
           [language]="block.language"
-          [streaming]="!block.complete && streaming()"
+          [streaming]="block === streamingCode()"
           [copied]="copiedCode() === block.text"
           (copyRequested)="copyCode.emit($event)"
         />
@@ -135,6 +135,6 @@
     }
   }
 </ng-template>
-@if (streaming()) {
+@if (textCursor()) {
   <span class="caret" aria-hidden="true"></span>
 }

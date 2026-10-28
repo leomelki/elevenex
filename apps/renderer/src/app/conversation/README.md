@@ -52,3 +52,10 @@ The `composerSettings` slot accepts integration-owned capability controls.
 `disabled` inputs. `ApprovalCard.disabled` guards decisions and shortcuts;
 `allowAlways=false` omits unsupported permanent approval. `QuestionCard.disabled`
 blocks submissions and disables its native answer fieldset while a reply is pending.
+
+`ChatExchange.streaming` can control the reply cursor independently of a turn's
+live tool activity; omitted values retain the status-based default for existing
+consumers. Markdown gives the cursor to the current unfinished code block or to
+prose, including nested lists/quotes. `NowLine.streaming=false` keeps a held
+thinking line visible without keeping its cursor alive during the handoff to
+assistant text.

@@ -12,7 +12,7 @@
 </div>
 @if (step().kind === "think" && step().text) {
   <div class="reasoning">
-    <ex-stream-text [text]="step().text || ''" [streaming]="true" />
+    <ex-stream-text [text]="step().text || ''" [streaming]="streaming()" />
   </div>
 }
 @if (step().progress !== undefined) {

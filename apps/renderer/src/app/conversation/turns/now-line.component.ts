@@ -17,6 +17,7 @@ import { StreamTextComponent } from "./stream-text.component";
 })
 export class NowLineComponent {
   readonly step = input.required<WorkStep>();
+  readonly streaming = input(true);
   readonly verb = computed(() => stepVerb(this.step(), true));
   readonly time = computed(() => formatDuration(this.step().elapsed ?? 0));
   readonly progress = computed(() =>

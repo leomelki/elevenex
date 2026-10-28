@@ -530,3 +530,16 @@ test('conversation replies validate resource identity, bounded fields and suppor
   assert.throws(() => parseChatPage({ taskId: 3, sessionId: 2 }, 1, 2));
   assert.throws(() => parseChatPage({ taskId: 1, sessionId: 2, cursor: 'x'.repeat(201) }, 1, 2));
 });
+
+test('harness selection requires a known action shape and an expected current provider', () => {
+  const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  assert.deepEqual(parseChatAction({ type: 'provider', provider: 'claude', expectedProvider: 'codex', private: 'discard' }), { type: 'provider', provider: 'claude', expectedProvider: 'codex' });
+  for (const input of [{ type: 'provider', provider: 'claude' }, { type: 'provider', provider: '', expectedProvider: 'codex' }, { type: 'provider', provider: 'claude', expectedProvider: 1 }]) assert.throws(() => parseChatAction(input));
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  assert.equal(parseChatPage(page, 1, 2).state.providerLocked, undefined);
+  const parsed = parseChatPage({ ...page, state: { ...state, providers: [{ id: 'claude', label: 'Claude Code', private: 'discard' }], providerLocked: false } }, 1, 2);
+  assert.deepEqual(parsed.state.providers, [{ id: 'claude', label: 'Claude Code' }]); assert.equal(parsed.state.providerLocked, false);
+  assert.throws(() => parseChatPage({ ...page, state: { ...state, providers: Array(33).fill({ id: 'x', label: 'x' }) } }, 1, 2));
+  assert.throws(() => parseChatPage({ ...page, state: { ...state, providerLocked: 'false' } }, 1, 2));
+});

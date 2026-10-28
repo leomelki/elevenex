@@ -127,6 +127,7 @@ function fixture(nativeSessionId = '-1') {
   provider.onModuleInit();
   return {
     provider,
+    catalog,
     client,
     server,
     sessions,
@@ -141,6 +142,17 @@ function fixture(nativeSessionId = '-1') {
 
 describe('OpenCode runtime lifecycle', () => {
   afterEach(() => jest.clearAllMocks());
+  it('can read pre-start state without launching or pinning the harness', async () => {
+    const f = fixture();
+    f.catalog.getAuthStatus.mockImplementation(async () => ({ authenticated: true, installed: true }));
+    try {
+      await f.provider.getRuntimeState(1, { initialize: false });
+      expect(f.server.start).not.toHaveBeenCalled();
+      expect(f.sessions.updateOpenCodeSessionId).not.toHaveBeenCalled();
+      await f.provider.getRuntimeState(1);
+      expect(f.server.start).toHaveBeenCalledTimes(1);
+    } finally { f.provider.onModuleDestroy(); }
+  });
   it('stops a V2 prompt during preparation without dispatching or closing the runtime', async () => {
     const f = fixture('s');
     const configuring = deferred<void>();

@@ -109,6 +109,24 @@ export class SessionChatComponent {
     { id: "", label: "Provider default" },
     ...(this.store.state()?.models ?? []),
   ]);
+  readonly providers = computed(() => this.store.state()?.providers ?? []);
+  readonly providerLabel = computed(
+    () =>
+      this.providers().find(
+        (provider) => provider.id === this.store.state()?.provider,
+      )?.label ??
+      this.store.state()?.provider ??
+      "Agent",
+  );
+  chooseProvider(provider: string): void {
+    const current = this.store.state()?.provider;
+    if (current && provider !== current)
+      void this.store.perform({
+        type: "provider",
+        provider,
+        expectedProvider: current,
+      });
+  }
   readonly permissions = computed(() =>
     (this.store.state()?.permissionModes ?? []).map((id) => ({
       id,

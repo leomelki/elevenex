@@ -10,7 +10,20 @@ import { MarkdownInlineComponent } from "./markdown-inline.component";
 import { MarkdownCodeComponent } from "./markdown-code.component";
 import { MarkdownMediaGroupComponent } from "./markdown-media-group.component";
 import { MarkdownMediaComponent } from "./markdown-media.component";
-import { parseMarkdown, type MarkdownAssetResolver } from "./markdown-parser";
+import {
+  parseMarkdown,
+  type MarkdownAssetResolver,
+  type MarkdownBlock,
+} from "./markdown-parser";
+
+function finalBlock(
+  blocks: readonly MarkdownBlock[],
+): MarkdownBlock | undefined {
+  const last = blocks.at(-1);
+  if (last?.kind === "quote") return finalBlock(last.blocks);
+  if (last?.kind === "list") return finalBlock(last.items.at(-1)?.blocks ?? []);
+  return last;
+}
 @Component({
   selector: "ex-markdown",
   imports: [
@@ -31,6 +44,15 @@ export class MarkdownComponent {
   readonly resolve = input<MarkdownAssetResolver>();
   readonly blocks = computed(() =>
     parseMarkdown(this.source(), this.streaming()),
+  );
+  readonly streamingCode = computed(() => {
+    const last = finalBlock(this.blocks());
+    return this.streaming() && last?.kind === "code" && !last.complete
+      ? last
+      : null;
+  });
+  readonly textCursor = computed(
+    () => this.streaming() && !this.streamingCode(),
   );
   readonly openFile = output<string>();
   readonly openLink = output<string>();

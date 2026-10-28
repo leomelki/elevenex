@@ -1,6 +1,6 @@
 <header class="session-bar">
   @if (store.state(); as state) {
-    <span class="provider">{{ state.provider }}</span>
+    <span class="provider">{{ providerLabel() }}</span>
     <span class="status" role="status"
       ><ex-status-glyph [status]="status()" [size]="12" />{{
         statusLabel()
@@ -78,14 +78,16 @@
     }
   </div>
   <div chatContent>
-    @if (store.loading() && !store.items().length) {
+    @if (store.loading() && !store.exchanges().length) {
       <ex-skeleton variant="message" [count]="3" />
     }
-    @if (!store.loading() && !store.items().length && !message()) {
+    @if (!store.loading() && store.empty() && !message()) {
       <section class="start">
         <ex-icon name="chat" [size]="24" />
         <h2>What would you like to work on?</h2>
-        <p>Send a message to start this conversation.</p>
+        <p>
+          Choose an agent below, then send a message to start this conversation.
+        </p>
       </section>
     }
     @if (store.state()?.permission; as request) {
@@ -229,6 +231,24 @@
       "
     >
       <div composerSettings class="settings">
+        @if (providers().length) {
+          <ex-dropdown
+            label="Harness"
+            [value]="store.state()?.provider || ''"
+            [options]="providers()"
+            [disabled]="
+              blocked() ||
+              store.historical() ||
+              store.state()?.providerLocked !== false
+            "
+            [attr.title]="
+              store.state()?.providerLocked
+                ? 'This conversation has started. Create a new session to choose another harness.'
+                : 'Choose the agent harness before starting this conversation.'
+            "
+            (changed)="chooseProvider($event)"
+          />
+        }
         <button
           exButton
           variant="ghost"

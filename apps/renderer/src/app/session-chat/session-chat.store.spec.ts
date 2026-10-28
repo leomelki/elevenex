@@ -234,6 +234,196 @@ describe("session chat ownership", () => {
     await store.refresh();
     expect(store.historical()).toBe(false);
   });
+  it("changes an unstarted harness without losing the draft or accepting an old provider reply", async () => {
+    const { store, bridge } = setup();
+    await settle();
+    const available = {
+      ...state,
+      providerLocked: false,
+      providers: [
+        { id: "codex", label: "Codex" },
+        { id: "claude", label: "Claude Code" },
+      ],
+    };
+    bridge.sessionChatRead.mockResolvedValueOnce(
+      ok(page(2, { state: available })),
+    );
+    await store.refresh();
+    store.setDraft("Keep this draft");
+    const oldRead = deferred<BackendResult<SessionChatPage>>();
+    bridge.sessionChatRead.mockReturnValueOnce(oldRead.promise);
+    await vi.advanceTimersByTimeAsync(80);
+    bridge.sessionChatRead.mockResolvedValueOnce(
+      ok(
+        page(2, {
+          state: {
+            ...available,
+            provider: "claude",
+            models: [{ id: "sonnet", label: "Sonnet" }],
+          },
+        }),
+      ),
+    );
+    await store.perform({
+      type: "provider",
+      provider: "claude",
+      expectedProvider: "codex",
+    });
+    await settle();
+    oldRead.resolve(ok(page()));
+    await settle();
+    expect(store.state()?.provider).toBe("claude");
+    expect(store.state()?.models[0]?.id).toBe("sonnet");
+    expect(store.draft()).toBe("Keep this draft");
+    expect(bridge.sessionChatCancel).toHaveBeenCalled();
+    expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", {
+      taskId: 1,
+      sessionId: 2,
+      action: {
+        type: "provider",
+        provider: "claude",
+        expectedProvider: "codex",
+      },
+    });
+  });
+  it("does not dispatch a harness change on started sessions or engines without selection support", async () => {
+    const { store, bridge } = setup();
+    await settle();
+    await store.perform({
+      type: "provider",
+      provider: "claude",
+      expectedProvider: "codex",
+    });
+    bridge.sessionChatRead.mockResolvedValueOnce(
+      ok(
+        page(2, {
+          state: {
+            ...state,
+            providerLocked: true,
+            providers: [{ id: "claude", label: "Claude Code" }],
+          },
+        }),
+      ),
+    );
+    await store.refresh();
+    await store.perform({
+      type: "provider",
+      provider: "claude",
+      expectedProvider: "codex",
+    });
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+  it("keeps early output under the pending prompt and settles previous cursors until its receipt arrives", async () => {
+    const { store, bridge } = setup();
+    await settle();
+    const old = [
+      item("u1", "user", "Hi"),
+      item("a1", "assistant", "Hello"),
+      item("s1", "system", "Turn completed"),
+    ];
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: old })));
+    await store.refresh();
+    const sending = deferred<BackendResult<{ readonly accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(sending.promise);
+    const operation = store.submit({
+      text: "Write a file",
+      intent: "send",
+      context: [],
+    });
+    expect(store.empty()).toBe(false);
+    expect(
+      store.exchanges().filter((exchange) => exchange.status === "live"),
+    ).toHaveLength(1);
+    expect(store.exchanges().every((exchange) => !exchange.streaming)).toBe(
+      true,
+    );
+    bridge.sessionChatRead.mockResolvedValueOnce(
+      ok(
+        page(2, {
+          reset: false,
+          state: { ...state, phase: "running" },
+          events: [
+            { type: "item", item: item("a2", "assistant", "Writing the file") },
+          ],
+        }),
+      ),
+    );
+    await store.refresh();
+    expect(
+      store
+        .exchanges()
+        .map((exchange) => [
+          exchange.prompt,
+          exchange.answer,
+          exchange.streaming,
+        ]),
+    ).toEqual([
+      ["Hi", "Hello", false],
+      ["Write a file", "Writing the file", true],
+    ]);
+    bridge.sessionChatRead.mockResolvedValueOnce(
+      ok(
+        page(2, {
+          reset: false,
+          state: { ...state, phase: "running" },
+          events: [{ type: "item", item: item("u2", "user", "Write a file") }],
+        }),
+      ),
+    );
+    await store.refresh();
+    expect(
+      store.exchanges().map((exchange) => [exchange.prompt, exchange.answer]),
+    ).toEqual([
+      ["Hi", "Hello"],
+      ["Write a file", "Writing the file"],
+    ]);
+    expect(
+      store.exchanges().filter((exchange) => exchange.streaming),
+    ).toHaveLength(1);
+    sending.resolve(ok({ accepted: true }));
+    await operation;
+  });
+  it("retains the current optimistic turn when a follow-up is queued before its user receipt", async () => {
+    const { store, bridge } = setup();
+    await settle();
+    const old = [item("u1", "user", "Hi"), item("a1", "assistant", "Hello")];
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: old })));
+    await store.refresh();
+    bridge.sessionChatRead.mockResolvedValueOnce(
+      ok(
+        page(2, {
+          items: [...old, item("a2", "assistant", "Working on it")],
+          state: { ...state, phase: "running" },
+        }),
+      ),
+    );
+    await store.submit({ text: "Write a file", intent: "send", context: [] });
+    await settle();
+    const queued = deferred<BackendResult<{ readonly accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(queued.promise);
+    const operation = store.submit({
+      text: "Also add a test",
+      intent: "queue",
+      context: [],
+    });
+    expect(store.queue().at(-1)?.text).toBe("Also add a test");
+    expect(
+      store.exchanges().map((exchange) => [exchange.prompt, exchange.answer]),
+    ).toEqual([
+      ["Hi", "Hello"],
+      ["Write a file", "Working on it"],
+    ]);
+    expect(
+      store.exchanges().filter((exchange) => exchange.streaming),
+    ).toHaveLength(1);
+    queued.resolve({
+      ok: false,
+      error: { code: "http", status: 400, message: "Queue rejected" },
+    });
+    await operation;
+    expect(store.draft()).toBe("Also add a test");
+    expect(store.exchanges().at(-1)?.prompt).toBe("Write a file");
+  });
   it("keeps archived conversations read only and does not poll their runtime", async () => {
     const { store, bridge } = setup();
     await settle();
@@ -283,5 +473,45 @@ describe("provider-neutral transcript presentation", () => {
     );
     expect(exchanges[0]?.prompt).toBe("");
     expect(exchanges[0]?.steps[0]?.output).toBe("Tool output");
+  });
+  it("keeps the last reply visible when system records or tool receipts follow it", () => {
+    for (const kind of [
+      "system",
+      "tool_result",
+      "thinking",
+      "error",
+    ] as const) {
+      const exchanges = chatExchanges(
+        [
+          item("u", "user", "Hi"),
+          item("a", "assistant", "The final reply"),
+          item("tail", kind, "Trailing record"),
+        ],
+        state,
+        new Set(),
+      );
+      expect(exchanges[0]?.answer).toBe("The final reply");
+      expect(exchanges[0]?.steps.some((step) => step.id === "a")).toBe(false);
+      expect(exchanges[0]?.steps.some((step) => step.id === "tail")).toBe(true);
+      expect(exchanges[0]?.streaming).toBe(false);
+    }
+  });
+  it("does not put a reply cursor on completed commentary while a tool or question is active", () => {
+    const items = [
+      item("u", "user", "Work"),
+      item("a", "assistant", "Checking"),
+      item("t", "tool_use", "", { toolId: "call" }),
+    ];
+    expect(
+      chatExchanges(items, { ...state, phase: "running" }, new Set())[0]
+        ?.streaming,
+    ).toBe(false);
+    expect(
+      chatExchanges(
+        items.slice(0, 2),
+        { ...state, phase: "waiting" },
+        new Set(),
+      )[0]?.streaming,
+    ).toBe(false);
   });
 });

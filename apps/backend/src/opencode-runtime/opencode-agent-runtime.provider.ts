@@ -232,14 +232,14 @@ export class OpenCodeAgentRuntimeProvider
     }
     return state;
   }
-  async getRuntimeState(sessionId: number) {
+  async getRuntimeState(sessionId: number, options?: { initialize?: boolean }) {
     const state = await this.state(sessionId);
     const [auth, catalog] = await Promise.all([
       this.catalog.getAuthStatus(),
       this.catalog.getModelCatalog(),
     ]);
     state.authStatus = auth;
-    if (auth.installed) await this.ensure(sessionId).catch(() => undefined);
+    if (auth.installed && options?.initialize !== false) await this.ensure(sessionId).catch(() => undefined);
     const entry = this.entries.get(sessionId);
     if (!entry) state.availableModels = catalog.models;
     else if (entry.models.size) {

@@ -8,10 +8,10 @@ export default async function* (capture) {
   const finish = async () => { await capture.settle(); await capture.waitFor(() => document.getAnimations().every(a => !Number.isFinite(a.effect?.getComputedTiming().endTime) || a.playState !== 'running')); };
   const mode = value => capture.component('ex-connected-workspace-demo', (component, value) => component.fixture.chat.scenario(value), value);
   await owner(component => component.store.selectSession({ taskId: '11', sessionId: '101' }));
-  await capture.waitFor(() => document.querySelector('ex-session-chat .provider')?.textContent.includes('codex'));
+  await capture.waitFor(() => document.querySelector('ex-session-chat .provider')?.textContent.toLowerCase().includes('codex'));
   for (const theme of ['light', 'dark']) {
     await capture.viewport(1440, 960); await capture.theme(theme); await mode('ready');
-    await capture.waitFor(() => document.querySelector('ex-session-chat .provider')?.textContent.includes('codex'));
+    await capture.waitFor(() => document.querySelector('ex-session-chat .provider')?.textContent.toLowerCase().includes('codex'));
     await finish();
     yield { name: `${theme}-chat`, inspect: ['ex-session-chat', 'ex-composer', 'ex-chat-scroll', 'ex-turn'] };
     await capture.click('ex-turn .work');

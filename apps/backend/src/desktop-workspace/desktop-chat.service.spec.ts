@@ -21,7 +21,7 @@ describe('selected session chat', () => {
     live: AgentTranscriptItem[],
     status: string;
   const runtime = Object.assign(new EventEmitter(), {
-    info: { id: 'codex', permissionModes: ['default'] },
+    info: { id: 'codex', displayName: 'Codex', permissionModes: ['default'] },
     getRuntimeState: jest.fn(),
     getHistory: jest.fn(),
     onClientAttached: jest.fn(),
@@ -32,11 +32,21 @@ describe('selected session chat', () => {
     answerUserInput: jest.fn(),
   });
   const session = jest.fn();
+  const started = jest.fn();
+  const updateProvider = jest.fn();
+  const advertised = jest.fn();
   beforeEach(async () => {
     history = [];
     live = [];
     status = 'active';
     jest.clearAllMocks();
+    started.mockReturnValue(true);
+    advertised.mockReturnValue([
+      runtime.info,
+      { id: 'claude', displayName: 'Claude Code' },
+      { id: 'pi', displayName: 'Pi' },
+      { id: 'opencode', displayName: 'OpenCode' },
+    ]);
     runtime.removeAllListeners();
     runtime.getHistory.mockImplementation(async () => history);
     runtime.getRuntimeState.mockImplementation(async () => ({
@@ -59,6 +69,8 @@ describe('selected session chat', () => {
           provide: SessionsService,
           useValue: {
             findOne: session,
+            hasStartedAgentRuntime: started,
+            updateActiveAgentProvider: updateProvider,
             assertSessionWorkspaceLinked: jest.fn(),
             reactivateRuntime: jest.fn(),
           },
@@ -66,7 +78,16 @@ describe('selected session chat', () => {
         {
           provide: AgentRuntimeRegistryService,
           useValue: {
-            getProvider: () => runtime,
+            listProviders: advertised,
+            getProvider: (id: string) => {
+              if (
+                !advertised().some(
+                  (provider: { id: string }) => provider.id === id,
+                )
+              )
+                throw new Error('Unknown harness');
+              return runtime;
+            },
             getProviderFeature: () => runtime,
           },
         },
@@ -94,7 +115,7 @@ describe('selected session chat', () => {
     const older = (await read(undefined, latest.before!))!;
     expect(older.items[0].id).toBe('80');
     expect(older.items.at(-1)?.id).toBe('159');
-    expect(runtime.getRuntimeState).toHaveBeenCalledWith(2);
+    expect(runtime.getRuntimeState).toHaveBeenCalledWith(2, undefined);
     await expect(
       chat.read(9, 2, undefined, undefined, new AbortController().signal),
     ).rejects.toThrow('does not belong');
@@ -143,7 +164,9 @@ describe('selected session chat', () => {
     expect(runtime.onClientDetached).toHaveBeenCalledTimes(1);
   });
   it('removes its event observer when a harness attachment fails', async () => {
-    runtime.onClientAttached.mockImplementationOnce(() => { throw new Error('Attachment failed'); });
+    runtime.onClientAttached.mockImplementationOnce(() => {
+      throw new Error('Attachment failed');
+    });
     await expect(read()).rejects.toThrow('Attachment failed');
     expect(runtime.listenerCount('event')).toBe(0);
   });
@@ -186,6 +209,92 @@ describe('selected session chat', () => {
       decision: 'approved',
     });
     expect(runtime.approvePermission).toHaveBeenCalledWith(2, 'current', false);
+  });
+  it('advertises registered harnesses and reads an unstarted session without initializing a conversation', async () => {
+    started.mockReturnValue(false);
+    runtime.getRuntimeState.mockResolvedValueOnce({
+      runPhase: 'idle',
+      canInterrupt: false,
+      liveItems: [],
+    });
+    const page = (await read())!;
+    expect(page.state.providers.map((provider) => provider.label)).toEqual([
+      'Codex',
+      'Claude Code',
+      'Pi',
+      'OpenCode',
+    ]);
+    expect(page.state.providerLocked).toBe(false);
+    expect(runtime.onClientAttached).not.toHaveBeenCalled();
+    expect(runtime.getRuntimeState).toHaveBeenCalledWith(2, {
+      initialize: false,
+    });
+  });
+  it('persists a pre-start choice, releases the old observation and rejects stale or started choices', async () => {
+    started.mockReturnValue(false);
+    runtime.getRuntimeState.mockResolvedValue({
+      runPhase: 'idle',
+      liveItems: [],
+    });
+    await read();
+    await chat.command(1, 2, {
+      type: 'provider',
+      provider: 'claude',
+      expectedProvider: 'codex',
+    });
+    expect(updateProvider).toHaveBeenCalledWith(2, 'claude');
+    expect(runtime.listenerCount('event')).toBe(0);
+    expect(runtime.onClientAttached).not.toHaveBeenCalled();
+    await expect(
+      chat.command(1, 2, {
+        type: 'provider',
+        provider: 'pi',
+        expectedProvider: 'claude',
+      }),
+    ).rejects.toThrow('changed');
+    started.mockReturnValue(true);
+    await expect(
+      chat.command(1, 2, {
+        type: 'provider',
+        provider: 'pi',
+        expectedProvider: 'codex',
+      }),
+    ).rejects.toThrow('already started');
+    expect(updateProvider).toHaveBeenCalledTimes(1);
+    await expect(
+      chat.command(1, 2, {
+        type: 'provider',
+        provider: 'invented',
+        expectedProvider: 'codex',
+      }),
+    ).rejects.toThrow('Unknown harness');
+  });
+  it('routes the next prompt through the persisted harness selection', async () => {
+    started.mockReturnValue(false); runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle', liveItems: [] });
+    const claude = Object.assign(new EventEmitter(), { ...runtime, info: { id: 'claude', displayName: 'Claude Code' }, submitPrompt: jest.fn() });
+    const registry = module.get(AgentRuntimeRegistryService);
+    const resolve = jest.spyOn(registry, 'getProvider').mockImplementation(id => id === 'claude' ? claude : runtime);
+    updateProvider.mockImplementationOnce(async () => { session.mockResolvedValue({ workspaceId: 1, surface: 'session', status: 'active', activeAgentProvider: 'claude', workspaceArchivedAt: null }); });
+    await chat.command(1, 2, { type: 'provider', provider: 'claude', expectedProvider: 'codex' });
+    await chat.command(1, 2, { type: 'send', text: 'Use the selected harness', queue: false });
+    expect(resolve).toHaveBeenLastCalledWith('claude');
+    expect(claude.submitPrompt).toHaveBeenCalledWith(2, 'Use the selected harness', undefined, undefined, { human: true, queue: false });
+    expect(runtime.submitPrompt).not.toHaveBeenCalled();
+  });
+  it('does not move queued prompts or a starting turn to another harness', async () => {
+    started.mockReturnValue(false);
+    runtime.getRuntimeState.mockResolvedValueOnce({
+      runPhase: 'idle',
+      pendingPrompts: [{ id: 'queued' }],
+    });
+    await expect(
+      chat.command(1, 2, {
+        type: 'provider',
+        provider: 'pi',
+        expectedProvider: 'codex',
+      }),
+    ).rejects.toThrow('current operation');
+    expect(updateProvider).not.toHaveBeenCalled();
   });
   it('shortens huge outputs explicitly and rejects expired history cursors', async () => {
     history = [item('large', 'x'.repeat(100000))];

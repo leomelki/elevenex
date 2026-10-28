@@ -13,6 +13,13 @@ import type {
 const stamp = "2026-10-28T10:20:00.000Z";
 export const previewChatState = (): SessionChatState => ({
   provider: "codex",
+  providers: [
+    { id: "claude", label: "Claude Code" },
+    { id: "codex", label: "Codex" },
+    { id: "pi", label: "Pi" },
+    { id: "opencode", label: "OpenCode" },
+  ],
+  providerLocked: false,
   phase: "idle",
   canInterrupt: false,
   error: null,
@@ -107,6 +114,10 @@ export class SessionChatFixture {
   private readonly waiting = new Map<string, () => void>();
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private commandFailure = false;
+  private delayedReceipts = false;
+  deferUserReceipts(value: boolean): void {
+    this.delayedReceipts = value;
+  }
   constructor(destroy: DestroyRef) {
     destroy.onDestroy(() => {
       for (const done of this.waiting.values()) done();
@@ -119,6 +130,10 @@ export class SessionChatFixture {
       session = {
         items: id === 101 ? opening() : [],
         state: previewChatState(),
+      };
+      session.state = {
+        ...session.state,
+        providerLocked: session.items.length > 0,
       };
       this.sessions.set(id, session);
     }
@@ -133,12 +148,28 @@ export class SessionChatFixture {
       | "history"
       | "ready"
       | "unknown"
-      | "long",
+      | "long"
+      | "reply-boundaries",
     id = 101,
   ): void {
     const session = this.session(id);
     session.items = opening();
     session.state = previewChatState();
+    if (mode === "reply-boundaries")
+      session.items = [
+        item("u1", "user", "hi"),
+        item("a1", "assistant", "Hi. How can I help?"),
+        item("s1", "system", "Turn completed"),
+        item("u2", "user", "write a file to test the agent"),
+        item(
+          "a2",
+          "assistant",
+          "Created the test file and verified its contents.",
+        ),
+        item("r2", "tool_result", "File write completed", {
+          toolId: "late-result",
+        }),
+      ];
     if (mode === "permission")
       session.state = {
         ...session.state,
@@ -220,6 +251,10 @@ export class SessionChatFixture {
         truncated: true,
       };
     if (mode === "unknown") this.commandFailure = true;
+    session.state = {
+      ...session.state,
+      providerLocked: session.items.length > 0,
+    };
     this.changed();
     this.resetVersion = this.version;
   }
@@ -245,16 +280,14 @@ export class SessionChatFixture {
       end = input.before
         ? session.items.findIndex((item) => item.id === input.before)
         : session.items.length;
-    const items = session.items
-      .slice(Math.max(0, end - 80), end)
-      .map((item) =>
-        item.truncated
-          ? {
-              ...item,
-              text: item.text.slice(0, 16000) + "\n… [display shortened]",
-            }
-          : item,
-      );
+    const items = session.items.slice(Math.max(0, end - 80), end).map((item) =>
+      item.truncated
+        ? {
+            ...item,
+            text: item.text.slice(0, 16000) + "\n… [display shortened]",
+          }
+        : item,
+    );
     const reset =
       !input.after || !!input.before || Number(input.after) < this.resetVersion;
     return {
@@ -307,7 +340,37 @@ export class SessionChatFixture {
     }
     const session = this.session(input.sessionId),
       action = input.action;
-    if (action.type === "send") {
+    if (action.type === "provider") {
+      if (
+        session.state.providerLocked ||
+        session.state.provider !== action.expectedProvider
+      )
+        return {
+          ok: false,
+          error: {
+            code: "http",
+            status: 409,
+            message: "This conversation has already started.",
+          },
+        };
+      session.state = {
+        ...previewChatState(),
+        provider: action.provider,
+        model:
+          action.provider === "claude"
+            ? "sonnet"
+            : action.provider === "codex"
+              ? "gpt-6"
+              : null,
+        models:
+          action.provider === "claude"
+            ? [{ id: "sonnet", label: "Claude Sonnet" }]
+            : action.provider === "codex"
+              ? [{ id: "gpt-6", label: "GPT-6" }]
+              : [],
+      };
+    } else if (action.type === "send") {
+      session.state = { ...session.state, providerLocked: true };
       if (action.queue)
         session.state = {
           ...session.state,
@@ -317,10 +380,10 @@ export class SessionChatFixture {
           ],
         };
       else {
-        session.items.push(
-          item(`sent-${this.version}`, "user", action.text),
-          item(`reply-${this.version}`, "assistant", ""),
-        );
+        const receipt = item(`sent-${this.version}`, "user", action.text);
+        const delayed = this.delayedReceipts;
+        if (!delayed) session.items.push(receipt);
+        session.items.push(item(`reply-${this.version}`, "assistant", ""));
         session.state = {
           ...session.state,
           phase: "running",
@@ -340,6 +403,12 @@ export class SessionChatFixture {
               : item,
           );
           index++;
+          if (delayed && index === 10) {
+            const replyIndex = session.items.findIndex(
+              (item) => item.id === reply.id,
+            );
+            session.items.splice(replyIndex, 0, receipt);
+          }
           if (index >= words.length)
             session.state = {
               ...session.state,

@@ -15,7 +15,15 @@ import type {
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import type { ChatExchange, ComposerSubmission } from "../conversation";
 import { SessionChatDrafts } from "./session-chat-drafts";
-import { chatExchanges } from "./session-chat-transcript";
+import {
+  chatExchanges,
+  type PendingChatPrompt,
+} from "./session-chat-transcript";
+
+interface PendingSubmission extends PendingChatPrompt {
+  readonly queue: boolean;
+  readonly knownQueueIds: ReadonlySet<string>;
+}
 
 export interface ChatSelection extends SessionChatTarget {
   readonly scopeId: string;
@@ -47,12 +55,8 @@ export class SessionChatStore {
   readonly draft = signal("");
   readonly uncertain = signal("");
   readonly checked = signal(false);
-  private readonly pending = signal<{
-    readonly id: string;
-    readonly text: string;
-    readonly queue: boolean;
-    readonly knownIds: ReadonlySet<string>;
-  } | null>(null);
+  private readonly pending = signal<PendingSubmission | null>(null);
+  private readonly pendingQueue = signal<PendingSubmission | null>(null);
   readonly running = computed(
     () =>
       this.state()?.phase === "running" ||
@@ -60,29 +64,28 @@ export class SessionChatStore {
       (!!this.pending() && !this.pending()?.queue),
   );
   readonly queue = computed(() => {
-    const pending = this.pending(),
+    const pending = this.pendingQueue(),
       queue = this.state()?.queue ?? [];
-    return pending?.queue
-      ? [...queue, { id: pending.id, text: pending.text }]
-      : queue;
+    return pending ? [...queue, { id: pending.id, text: pending.text }] : queue;
   });
   readonly exchanges = computed<readonly ChatExchange[]>(() => {
-    const exchanges = chatExchanges(this.items(), this.state(), this.fresh()),
-      pending = this.pending();
-    return pending && !pending.queue
-      ? [
-          ...exchanges,
-          {
-            id: pending.id,
-            prompt: pending.text,
-            steps: [],
-            answer: "",
-            status: "live",
+    const pending = this.pending();
+    return chatExchanges(
+      this.items(),
+      this.state(),
+      this.fresh(),
+      pending && !pending.queue ? pending : undefined,
+    ).map((exchange) =>
+      exchange.id === pending?.id
+        ? {
+            ...exchange,
             isNew: true,
-          },
-        ]
-      : exchanges;
+            status: this.running() ? "live" : exchange.status,
+          }
+        : exchange,
+    );
   });
+  readonly empty = computed(() => !this.exchanges().length && !this.running());
 
   constructor() {
     const visible = () => {
@@ -120,6 +123,7 @@ export class SessionChatStore {
     this.draft.set(this.entry.text());
     this.uncertain.set(this.entry.uncertain());
     this.pending.set(null);
+    this.pendingQueue.set(null);
     this.items.set([]);
     this.state.set(null);
     this.fresh.set(new Set());
@@ -217,8 +221,31 @@ export class SessionChatStore {
         if (old) next.set(event.id, { ...old, text: old.text + event.text });
       }
     }
-    const all = [...next.values()],
-      items = all.slice(-320);
+    const pending = this.pending();
+    const delivered =
+      pending && !pending.queue
+        ? [...next.values()].find(
+            (item) =>
+              item.kind === "user" &&
+              !pending.knownIds.has(item.id) &&
+              item.text === pending.text,
+          )
+        : undefined;
+    // A late receipt must precede output already shown under its optimistic turn.
+    const all =
+      delivered && pending
+        ? [
+            ...[...next.values()].filter((item) =>
+              pending.knownIds.has(item.id),
+            ),
+            delivered,
+            ...[...next.values()].filter(
+              (item) =>
+                !pending.knownIds.has(item.id) && item.id !== delivered.id,
+            ),
+          ]
+        : [...next.values()];
+    const items = all.slice(-320);
     if (!older && wasLoaded) {
       const known = new Set(previous.map((item) => item.id));
       this.fresh.set(
@@ -238,7 +265,6 @@ export class SessionChatStore {
     if (!older) this.cursor = page.cursor;
     if (page.reset || older) this.before.set(page.before);
     if (all.length > 320) this.before.set(items[0]?.id ?? null);
-    const pending = this.pending();
     if (
       pending &&
       (items.some(
@@ -247,9 +273,27 @@ export class SessionChatStore {
           !pending.knownIds.has(item.id) &&
           item.text === pending.text,
       ) ||
-        page.state.queue.some((item) => item.text === pending.text))
+        page.state.queue.some(
+          (item) =>
+            !pending.knownQueueIds.has(item.id) && item.text === pending.text,
+        ))
     )
       this.pending.set(null);
+    const queued = this.pendingQueue();
+    if (
+      queued &&
+      (page.state.queue.some(
+        (item) =>
+          !queued.knownQueueIds.has(item.id) && item.text === queued.text,
+      ) ||
+        items.some(
+          (item) =>
+            item.kind === "user" &&
+            !queued.knownIds.has(item.id) &&
+            item.text === queued.text,
+        ))
+    )
+      this.pendingQueue.set(null);
   }
 
   async submit(submission: ComposerSubmission): Promise<void> {
@@ -270,11 +314,14 @@ export class SessionChatStore {
       id: "local-" + crypto.randomUUID(),
       text: submission.text,
       queue: submission.intent === "queue",
+      timestamp: new Date().toISOString(),
       knownIds: new Set(this.items().map((item) => item.id)),
+      knownQueueIds: new Set(this.state()?.queue.map((item) => item.id) ?? []),
     };
     const entry = this.entry,
       epoch = this.epoch;
-    this.pending.set(pending);
+    const pendingChannel = pending.queue ? this.pendingQueue : this.pending;
+    pendingChannel.set(pending);
     this.setDraft("");
     const success = await this.perform({
       type: "send",
@@ -290,8 +337,8 @@ export class SessionChatStore {
         );
       return;
     }
-    if (!success && this.pending()?.id === pending.id) {
-      this.pending.set(null);
+    if (!success && pendingChannel()?.id === pending.id) {
+      pendingChannel.set(null);
       this.setDraft(
         this.draft()
           ? submission.text + "\n\n" + this.draft()
@@ -308,6 +355,15 @@ export class SessionChatStore {
       (this.uncertain() && action.type !== "stop")
     )
       return false;
+    if (
+      action.type === "provider" &&
+      (this.state()?.providerLocked !== false ||
+        this.historical() ||
+        !this.state()?.providers?.some(
+          (provider) => provider.id === action.provider,
+        ))
+    )
+      return false;
     const epoch = this.epoch,
       entry = this.entry,
       commandId = crypto.randomUUID();
@@ -317,7 +373,14 @@ export class SessionChatStore {
     );
     this.busy.set(action.type);
     this.error.set("");
-    this.notice.set(action.type === "send" ? "Sending…" : "Updating…");
+    this.notice.set(
+      action.type === "send"
+        ? "Sending…"
+        : action.type === "provider"
+          ? "Changing harness…"
+          : "Updating…",
+    );
+    if (action.type === "provider") this.stopRead();
     const result = await this.client.command(selection.scopeId, {
       taskId: selection.taskId,
       sessionId: selection.sessionId,
@@ -343,6 +406,10 @@ export class SessionChatStore {
         this.entry.uncertain.set(result.error.message);
         this.checked.set(false);
       }
+      if (action.type === "provider") {
+        this.stopRead();
+        void this.load(true);
+      }
       return false;
     }
     this.notice.set(
@@ -350,8 +417,17 @@ export class SessionChatStore {
         ? "Message accepted"
         : action.type === "stop"
           ? "Stop requested"
-          : "Updated",
+          : action.type === "provider"
+            ? "Harness changed"
+            : "Updated",
     );
+    if (action.type === "provider") {
+      this.cursor = undefined;
+      this.items.set([]);
+      this.state.set(null);
+      this.before.set(null);
+      this.fresh.set(new Set());
+    }
     // Explicitly reconcile writes; reconnect and read retries never replay them.
     this.stopRead();
     void this.load(true);

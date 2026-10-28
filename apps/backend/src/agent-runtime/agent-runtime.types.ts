@@ -144,7 +144,8 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
   readonly info: AgentRuntimeProviderInfo;
 
   getHistory(sessionId: number): Promise<AgentTranscriptItem[]>;
-  getRuntimeState(sessionId: number): Promise<AgentRuntimeStatePayload>;
+  /** initialize=false permits pre-start selection without creating a native conversation. */
+  getRuntimeState(sessionId: number, options?: { initialize?: boolean }): Promise<AgentRuntimeStatePayload>;
   getSnapshot(sessionId: number): Promise<AgentSessionSnapshotPayload>;
   getAutocompleteItems(sessionId: number): Promise<AgentAutocompleteItem[]>;
   setSelectedModel(
