@@ -1,10 +1,10 @@
 <section #card tabindex="-1" aria-label="New project" (keydown)="keydown($event)" [attr.aria-busy]="busy()">
-  <header><span class="crumb"><ex-icon [name]="machineIcon()" [size]="13" />{{ machine() }}</span><span class="slash">/</span><span class="heading">New project</span><span class="grow"></span>@if (cancelable()) { <ex-kbd>Esc</ex-kbd> }</header>
+  <header><span class="crumb"><ex-icon [name]="machineIcon()" [size]="13" />{{ machine() }}</span><span class="slash">/</span><span class="heading">New project</span><span class="grow"></span>@if (cancelable()) { <ex-icon-button icon="x" label="Cancel new project" size="sm" [disabled]="busy()" (pressed)="cancelled.emit()" /> }</header>
   <div class="height" exAutoHeight><div class="stack">
     <div class="rows">
       @for (row of order; track row; let i = $index) {
         <div class="row" [class.active]="step() === row">
-          <button type="button" class="row-head" [disabled]="step() === row || blocked()" (click)="go(row)">
+          <button type="button" class="row-head" [disabled]="step() === row || blocked() || !canVisit(row)" [attr.aria-expanded]="step() === row" (click)="go(row)">
             <span class="number" [attr.data-state]="state(row)">@if (state(row) === 'done') { <ex-icon name="check" [size]="11" /> } @else { {{ i + 1 }} }</span>
             <span class="row-label">{{ row === 'repos' ? 'Repositories' : row === 'name' ? 'Name' : 'Look' }}</span>
             @if (step() !== row) {
@@ -31,20 +31,29 @@
                     @for (entry of presence.rows(); track entry.key) {
                       @let repo = entry.value;
                       <ex-fold [open]="entry.present && !entry.entering" (transitionend)="presence.settled(entry.key, $event)">
-                        <div class="repo"><span class="repo-icon"><ex-icon [name]="repo.clone ? 'link' : 'repo'" [size]="14" /></span><span class="repo-title"><b>{{ repo.name }}</b><span class="mono">{{ repo.clone ? 'clones into ' + repo.path : repo.path }}</span></span><span class="repo-meta mono">{{ repo.branch || (repo.clone ? '' : 'git init') }}</span><ex-icon-button class="remove" icon="x" [label]="'Remove ' + repo.name" size="sm" [disabled]="blocked()" (pressed)="remove(repo.id)" /></div>
+                        <div class="repo"><span class="repo-icon"><ex-icon [name]="repo.clone ? 'link' : 'repo'" [size]="14" /></span><span class="repo-title"><b>{{ repo.name }}</b><span class="mono">{{ repo.clone ? 'clones into ' + repo.path : repo.path }}</span></span><span class="repo-meta mono">{{ repo.branch || (repo.clone ? '' : repo.initialize ? 'git init' : 'Git repository') }}</span><ex-icon-button class="remove" icon="x" [label]="'Remove ' + repo.name" size="sm" [disabled]="blocked()" (pressed)="remove(repo.id)" /></div>
                       </ex-fold>
                     }
                   </div>
-                  <ex-folder-suggestions [machine]="machine()" [query]="query()" (queryChange)="setQuery($event)" [listFolders]="listFolders()" [addedPaths]="addedPaths()" [listOpen]="draft().listOpen || false" [active]="active() && step() === 'repos'" [disabled]="blocked()" (selected)="add($event)" (continued)="next()" />
+                  <ex-folder-suggestions [machine]="machine()" [query]="query()" (queryChange)="setQuery($event)" [listFolders]="listFolders()" [addedPaths]="addedPaths()" [listOpen]="draft().listOpen || false" [initialFocus]="step() === 'repos'" [active]="active() && step() === 'repos'" [disabled]="blocked() || repos().length >= 20" (selected)="add($event)" (continued)="next()" />
+                </div>
+                @if (repos().length >= 20) { <p class="field-note" role="status">20 repositories added. Remove one to add another.</p> }
+              }
+              @case ('name') {
+                <input #nameField class="name-input" data-np="name" aria-label="Project name" [attr.aria-invalid]="nameTaken() ? 'true' : null" [attr.aria-describedby]="namePending() || nameTaken() || nameFailed() ? nameStatusId : null" placeholder="Project name" maxlength="100" autocomplete="off" spellcheck="false" [disabled]="blocked()" [value]="appearance().name" (input)="setName($event)" (keydown)="nameKey($event)" />
+                <div class="name-feedback" [id]="nameStatusId" role="status" aria-live="polite">
+                  @if (nameTaken()) { <ex-status-glyph status="failed" [size]="12" aria-hidden="true" /><span>Name already taken</span> }
+                  @else if (nameFailed()) { <ex-icon name="question" [size]="12" /><span>Couldn't check availability</span> }
+                  @else if (namePending()) { <ex-status-glyph status="running" [size]="12" aria-hidden="true" /><span>Checking availability…</span> }
                 </div>
               }
-              @case ('name') { <input #nameField class="name-input" data-np="name" aria-label="Project name" placeholder="Project name" spellcheck="false" [disabled]="blocked()" [value]="appearance().name" (input)="setName($event)" (keydown)="nameKey($event)" /> }
               @case ('look') { <ex-project-appearance [appearance]="appearance()" [disabled]="blocked()" faceHook="face" (appearanceChange)="setAppearance($event)" /> }
             }
           </div></ex-fold>
         </div>
       }
     </div>
+    <ex-fold [open]="!!error()"><div class="failure" role="alert"><ex-status-glyph status="failed" [size]="14" /><div><p>{{ error() }}</p>@if (recoveryRequired()) { <button exButton size="sm" [disabled]="busy() || recovering()" (click)="recoveryRequested.emit()">{{ recovering() ? 'Checking…' : 'Check projects' }}</button> }</div></div></ex-fold>
     <footer #footer><button exButton variant="primary" [disabled]="!canNext()" (click)="next()"><span class="next"><ex-ease-swap [value]="busy() ? 'Creating…' : step() === 'look' ? 'Create project' : 'Next'" /><ex-kbd>↵</ex-kbd></span></button></footer>
   </div></div>
 </section>

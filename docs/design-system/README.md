@@ -55,3 +55,23 @@ are imported verbatim. Tokens are unchanged. Archive comparison preserves local
 documentation customizations for unrelated components. The Angular production
 machine owner implements local/SSH editing, native identity selection,
 reconnection, removal and Undo; reference React stays outside the application.
+
+The 2026-10-27 ZIP adds CommitPanel (86 gallery cards), the quiet persistent
+Close task action, and the selected task's persistent New session affordances.
+The changed brand book, metadata, types and task component specifications are
+imported verbatim. Tokens are unchanged; reference React/CSS and gallery builds
+remain outside the Angular runtime. The archive comparison is recorded in the
+ignored `elevenex-design-system-update.local/oct27-files.json`. The Angular port
+uses the shared modal morph, typed intents and the backend-backed commit slice.
+
+The next 2026-10-27 ZIP changes 13 files for session row archiving and working
+session caps. CHANGES.md, the brand book, TaskGroup/TaskList specifications,
+design index and reference types are imported verbatim. Tokens are unchanged.
+Reference JS/CSS/gallery files remain outside the Angular runtime. The Angular
+port extends the existing keyed outline, scoped backend bridge and settings sheet.
+
+The latest 2026-10-27 ZIP replaces the cap's ghost pill and row unroll with the
+quiet Older/Show fewer row and bottom-aligned scroll batches. CHANGES.md, the
+brand book, TaskGroup/TaskList specifications, index and reference types are
+imported verbatim. Tokens remain unchanged. The Angular port separates session
+placement from batch motion and preserves the archive backend/API behavior.

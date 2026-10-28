@@ -1,8 +1,9 @@
 <section role="alertdialog" aria-modal="true" [attr.aria-label]="'Delete ' + project().name">
   <h2>Delete “{{ project().name }}”?</h2>
   <ul>
-    <li class="warning"><ex-status-glyph status="attention" [size]="14" />Removes its {{ tasks() }} tasks and {{ sessions() }} sessions from Elevenex, for good.</li>
+    <li class="warning"><ex-status-glyph status="attention" [size]="14" />Removes {{ tasks() === undefined ? 'all its' : 'its ' + tasks() }} tasks and {{ sessions() === undefined ? 'all its' : sessions() }} sessions from Elevenex, for good.</li>
     @if (running()) { <li><ex-status-glyph status="running" [size]="14" />Stops {{ running() }} running {{ running() === 1 ? 'session.' : 'sessions.' }}</li> }
+    @else { <li><ex-icon name="stop" [size]="14" />Stops any running sessions.</li> }
     <li><ex-icon name="check" [size]="14" />Leaves its repositories and their branches on {{ machine() }} as they are.</li>
   </ul>
   <p>Archive keeps everything instead.</p>

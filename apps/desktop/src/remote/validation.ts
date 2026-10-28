@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { isIP } from 'node:net';
-import type { EnvironmentContext, EnvironmentSelection, RemoteForwardInput, RemoteHostInput } from '@elevenex/shared';
+import type { EnvironmentContext, EnvironmentSelection, RemoteForwardInput, RemoteHostInput, WorkspaceViewState } from '@elevenex/shared';
 
 export function object(value: unknown, keys: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -53,7 +53,7 @@ export function selection(value: unknown): EnvironmentSelection {
   throw new Error('Invalid environment');
 }
 export function context(value: unknown): EnvironmentContext {
-  const input = object(value, ['projectId', 'taskId', 'sessionId', 'draft', 'cursor']);
+  const input = object(value, ['projectId', 'taskId', 'sessionId', 'draft', 'cursor', 'workspace']);
   const domainId = (value: unknown): number | null => {
     if (value === null) return null;
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new Error('Invalid context id');
@@ -62,7 +62,22 @@ export function context(value: unknown): EnvironmentContext {
   const draft = input['draft'];
   if (typeof draft !== 'string' || draft.length > 100_000 || draft.includes('\0')) throw new Error('Draft exceeds its limit');
   return { projectId: domainId(input['projectId']), taskId: domainId(input['taskId']), sessionId: domainId(input['sessionId']), draft,
-    cursor: input['cursor'] === null ? null : text(input['cursor'], 1024, true) };
+    cursor: input['cursor'] === null ? null : text(input['cursor'], 1024, true),
+    ...(input['workspace'] === undefined ? {} : { workspace: workspaceView(input['workspace']) }) };
+}
+function workspaceView(value: unknown): WorkspaceViewState {
+  const input = object(value, ['panel', 'panelOpen', 'wideReview', 'closed', 'focused', 'filter', 'projectCursor', 'taskCursor']);
+  const panel = input['panel'], filter = input['filter'];
+  if (panel !== 'terminal' && panel !== 'actions' && panel !== 'changes' && panel !== 'code' && panel !== 'browser') throw new Error('Invalid workspace panel');
+  if (filter !== null && filter !== 'attention' && filter !== 'running' && filter !== 'review' && filter !== 'done') throw new Error('Invalid workspace filter');
+  const flag = (key: string): boolean => {
+    const value = input[key];
+    if (typeof value !== 'boolean') throw new Error('Invalid workspace flag');
+    return value;
+  };
+  return { panel, filter, panelOpen: flag('panelOpen'), wideReview: flag('wideReview'), closed: flag('closed'), focused: flag('focused'),
+    projectCursor: input['projectCursor'] === null ? null : text(input['projectCursor'], 1024),
+    taskCursor: input['taskCursor'] === null ? null : text(input['taskCursor'], 1024) };
 }
 export function forward(value: unknown): RemoteForwardInput {
   const input = object(value, ['remotePort', 'localPort', 'label']);

@@ -1,0 +1,107 @@
+import assert from 'node:assert/strict';
+
+/** New project through the production owner, with preview-only backend responses. */
+export default async function* (capture) {
+  await capture.evaluate(() => { location.href = '/connected-workspace'; });
+  await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
+  const fixture = (fn, value) => capture.component('ex-connected-workspace-demo', fn, value);
+  const finish = async () => {
+    await capture.settle();
+    await capture.waitFor(() => document.getAnimations().every(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running'));
+  };
+  const field = '.dialog ex-folder-suggestions input';
+  for (const theme of ['light', 'dark']) {
+    await capture.viewport(1280, 900); await capture.theme(theme);
+    await capture.click('ex-project-rail [aria-label="Add project"]');
+    await capture.waitFor(() => document.querySelector('[role="option"]')); await finish();
+    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('role')), 'combobox');
+    await capture.press('Escape'); await finish();
+    assert.equal(await capture.evaluate(() => !!document.querySelector('.dialog ex-new-project')), true);
+    assert.equal(await capture.evaluate(() => !!document.querySelector('[role="listbox"]')), false);
+    yield { name: `${theme}-repositories`, inspect: ['.dialog', 'ex-new-project'] };
+    await capture.press('Escape'); await finish();
+    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Add project');
+    await capture.click('ex-project-rail [aria-label="Add project"]');
+    await capture.waitFor(() => document.querySelector('[role="option"]'));
+
+    await fixture(component => component.fixture.setFolderState('empty'));
+    await capture.fill(field, '/missing/');
+    await capture.waitFor(() => document.querySelector('[role="listbox"]')?.textContent.includes('No matching folders')); await finish();
+    yield { name: `${theme}-empty-folders`, inspect: ['.dialog', '[role="listbox"]'] };
+    await fixture(component => component.fixture.setFolderState('error'));
+    await capture.fill(field, '/preview/');
+    await capture.waitFor(() => document.querySelector('[role="listbox"]')?.textContent.includes('could not be loaded')); await finish();
+    yield { name: `${theme}-folder-error`, inspect: ['.dialog', '[role="listbox"]'] };
+    await fixture(component => component.fixture.setFolderState('ready'));
+    await capture.press('Enter');
+    await capture.waitFor(() => document.querySelector('[role="option"]'));
+    await capture.fill(field, '/preview/de');
+    await capture.press('Tab');
+    await capture.waitFor(() => document.querySelector('.dialog ex-folder-suggestions input')?.value === '/preview/design/');
+    await capture.waitFor(() => document.querySelector('[role="option"]')?.textContent.includes('assets'));
+    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('role')), 'combobox');
+    await finish();
+    yield { name: `${theme}-tab-completed-directory`, inspect: ['.dialog', '[role="listbox"]'] };
+    await capture.fill(field, '/preview/design');
+    await capture.waitFor(() => document.querySelectorAll('[role="option"]').length === 1 && document.querySelector('[role="option"]')?.textContent.includes('design'));
+    assert.equal(await capture.evaluate(() => document.querySelector('[role="listbox"]')?.textContent.includes('assets')), false);
+    await finish();
+    yield { name: `${theme}-exact-directory`, inspect: ['.dialog', '[role="listbox"]'] };
+    await capture.press('Tab');
+    await capture.waitFor(() => document.querySelector('.dialog ex-folder-suggestions input')?.value === '/preview/design/');
+    await capture.waitFor(() => document.querySelector('[role="option"]')?.textContent.includes('assets'));
+    await capture.fill(field, '/preview/design');
+    await capture.waitFor(() => document.querySelector('[role="option"]')?.textContent.includes('design'));
+    await capture.press('Enter');
+    await capture.waitFor(() => !!document.querySelector('[aria-label="Remove design"]'));
+    await finish();
+    await capture.click('.dialog [aria-label="Remove design"]');
+    await capture.fill(field, 'https://example.com/team/analytics.git');
+    await capture.waitFor(() => document.querySelector('[role="option"]')?.textContent.includes('clones into')); await finish();
+    yield { name: `${theme}-git-url`, inspect: ['.dialog', '[role="listbox"]'] };
+    await capture.press('Enter');
+    await capture.fill(field, '/preview/');
+    await capture.waitFor(() => document.querySelector('[role="option"]'));
+    await capture.press('Enter'); await capture.press('Enter');
+    await capture.waitFor(() => document.activeElement?.getAttribute('aria-label') === 'Project name');
+    await finish();
+    await capture.fill('input[aria-label="Project name"]', `Analytics platform ${theme}`);
+    await finish();
+    yield { name: `${theme}-name`, inspect: ['.dialog', 'ex-new-project'] };
+    await capture.press('Enter'); await finish();
+    await capture.click('.dialog ex-segmented button:nth-of-type(3)'); await finish();
+    await capture.click('.dialog ex-project-appearance button[aria-label="globe"]');
+    await capture.click('.dialog ex-project-appearance button[aria-label="plum"]');
+    await capture.press('Enter');
+    assert.equal(await capture.evaluate(() => !!document.querySelector('.dialog ex-new-project')), true, 'Enter on a hue must keep the draft open');
+    await finish();
+    yield { name: `${theme}-look`, inspect: ['.dialog', 'ex-project-appearance'] };
+
+    await fixture(component => component.fixture.setProjectFailure('rejected'));
+    await capture.click('.dialog ex-new-project footer button');
+    await capture.waitFor(() => document.querySelector('.dialog .failure')?.textContent.includes('could not be created')); await finish();
+    yield { name: `${theme}-creation-error`, inspect: ['.dialog', '.failure', 'ex-project-appearance'] };
+    assert.equal(await capture.evaluate(() => document.querySelector('input[aria-label="Project name"]')?.value), `Analytics platform ${theme}`);
+    await fixture(component => component.fixture.setProjectFailure('uncertain'));
+    await capture.click('.dialog ex-new-project footer button');
+    await capture.waitFor(() => document.querySelector('.failure button')?.textContent.includes('Check projects')); await finish();
+    assert.equal(await capture.evaluate(() => document.querySelector('.dialog ex-new-project footer button')?.disabled), true);
+    yield { name: `${theme}-uncertain-outcome`, inspect: ['.dialog', '.failure'] };
+    await capture.click('.failure button');
+    await capture.waitFor(() => !document.querySelector('.dialog ex-new-project footer button')?.disabled);
+    await fixture(component => component.fixture.setProjectFailure(null));
+    await capture.viewport(390, 740); await capture.reducedMotion(true); await finish();
+    assert.equal(await capture.evaluate(() => document.querySelector('.dialog').scrollWidth <= document.querySelector('.dialog').clientWidth), true);
+    yield { name: `${theme}-narrow-reduced`, inspect: ['.dialog', 'ex-new-project', 'ex-project-appearance'] };
+    await capture.click('.dialog ex-new-project footer button');
+    await capture.waitFor(() => document.activeElement?.matches('[data-new-task]')); await finish();
+    assert.equal(await capture.evaluate(() => !!document.querySelector('[role="dialog"]')), false);
+    assert.equal(await capture.evaluate(() => !!document.querySelector('ex-new-task')), false);
+    assert.equal(await capture.evaluate(() => document.querySelector('.workspace-frame').hasAttribute('inert')), false);
+    yield { name: `${theme}-created`, inspect: ['[data-new-task]', 'ex-app-shell', 'ex-project-rail'] };
+    await capture.click('[data-new-task]');
+    await capture.waitFor(() => document.activeElement?.getAttribute('aria-label') === 'Task name');
+    await capture.press('Escape'); await finish();
+    await capture.reducedMotion(false);
+  }
+}

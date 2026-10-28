@@ -89,14 +89,14 @@ describe("sub-task public behavior", () => {
     expect(root.textContent).toContain("1 more sub-tasks");
     expect(root.querySelector("header .ask")?.textContent).toContain("1");
   });
-  it("opens the overflow, emits the sub-task ID and moves merged work to Finished", () => {
+  it("opens the overflow, emits the sub-task ID and folds only merged branches", () => {
     const fixture = TestBed.createComponent(TaskGroupComponent);
     fixture.componentRef.setInput("task", task);
     fixture.detectChanges();
     const add = vi.fn();
     fixture.componentInstance.addSubtaskSession.subscribe(add);
     const root = fixture.nativeElement as HTMLElement;
-    Array.from(root.querySelectorAll<HTMLButtonElement>(".finished-toggle"))
+    Array.from(root.querySelectorAll<HTMLButtonElement>(".outline-action"))
       .find((button) => button.textContent?.includes("more sub-tasks"))
       ?.click();
     fixture.detectChanges();
@@ -113,15 +113,38 @@ describe("sub-task public behavior", () => {
     });
     fixture.detectChanges();
     expect(root.querySelectorAll("ex-subtask-row")).toHaveLength(0);
-    expect(root.textContent).toContain("1 finished");
+    expect(root.textContent).not.toContain("1 finished");
     expect(root.textContent).toContain("1 merged");
     root
-      .querySelector<HTMLButtonElement>(".finished .finished-toggle")
+      .querySelector<HTMLButtonElement>(".merged-summary .outline-action")
       ?.click();
     fixture.detectChanges();
     expect(root.querySelector(".merged")?.closest("[inert]")).toBeNull();
     expect(root.querySelector(".merged")?.textContent).toContain("+12");
   });
+  it("keeps completed sub-task sessions visible in their original order", () => {
+    const fixture = TestBed.createComponent(TaskGroupComponent);
+    const sessions = [
+      { id: 'first', title: 'First conversation', status: 'running' as const },
+      { id: 'second', title: 'Second conversation', status: 'running' as const },
+    ];
+    const parent: TaskOutline = { id: 'task', title: 'Work', sessions: [], subtasks: [{ id: 'child', title: 'Child', sessions }] };
+    fixture.componentRef.setInput('task', parent);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const rows = [...root.querySelectorAll('ex-session-row')];
+    fixture.componentRef.setInput('task', { ...parent, subtasks: [{ id: 'child', title: 'Child', sessions: [{ ...sessions[0], status: 'done' }, sessions[1]] }] });
+    fixture.detectChanges();
+    expect([...root.querySelectorAll('ex-session-row')]).toEqual(rows);
+    expect(rows[0]?.textContent).toContain('First conversation');
+    expect(rows[0]?.closest('[inert]')).toBeNull();
+    expect(rows[1]?.closest('[inert]')).toBeNull();
+    expect(root.textContent).not.toContain('1 finished');
+    fixture.componentRef.setInput('filter', 'done');
+    fixture.detectChanges();
+    expect(root.querySelector('ex-session-row')?.textContent).toContain('First conversation');
+  });
+
   it("filters using sub-task sessions and preserves the selected session intent", () => {
     const fixture = TestBed.createComponent(TaskListComponent);
     fixture.componentRef.setInput("tasks", [task]);

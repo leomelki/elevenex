@@ -15,8 +15,6 @@ import {
   FlipDirective,
   FoldComponent,
   IconButtonComponent,
-  IconComponent,
-  TickerComponent,
 } from "../../ui";
 import { ListPresence } from "../../ui/motion/list-presence";
 import {
@@ -29,30 +27,19 @@ import { SessionRowComponent } from "./session-row.component";
 import { TaskSignalComponent } from "./task-signal.component";
 import { SubtaskGlyphComponent } from "./subtask-glyph.component";
 
-type SubtaskSessionRow =
-  | {
-      readonly kind: "session";
-      readonly key: string;
-      readonly session: TaskSession;
-      readonly visible: boolean;
-    }
-  | {
-      readonly kind: "finished";
-      readonly key: string;
-      readonly count: number;
-      readonly visible: boolean;
-    };
+interface SubtaskSessionRow {
+  readonly key: string;
+  readonly session: TaskSession;
+}
 
 /** One sub-task owns its folds; the task owns ancestry, hover and selection paths. */
 @Component({
   selector: "ex-subtask-row",
   imports: [
     TaskSignalComponent,
-    TickerComponent,
     FlipDirective,
     FoldComponent,
     IconButtonComponent,
-    IconComponent,
     SessionRowComponent,
     SubtaskGlyphComponent,
   ],
@@ -67,6 +54,8 @@ export class SubtaskRowComponent implements OnChanges {
   readonly path = input<readonly string[]>([]);
   readonly lit = input(false);
   readonly tip = input(false);
+  readonly allowArchive = input(false);
+  readonly archiveRequested = output<TaskSession>();
   readonly selected = input<string | null>(null);
   readonly reveal = input<{ readonly sessionId: string } | null>(null);
   readonly filter = input<SessionStatus | null>(null);
@@ -75,24 +64,11 @@ export class SubtaskRowComponent implements OnChanges {
   readonly addSession = output<string>();
   readonly pathHover = output<string | null>();
   protected readonly open = signal(true);
-  private readonly finishedValue = signal(false);
   protected readonly sessions = computed(() => this.subtask().sessions ?? []);
   protected readonly working = computed(() =>
-    this.sessions().filter(
-      (session) =>
-        (session.status !== "done" || this.filter() === "done") &&
-        matchesSessionFilter(session.status, this.filter()),
+    this.sessions().filter((session) =>
+      matchesSessionFilter(session.status, this.filter()),
     ),
-  );
-  protected readonly finished = computed(() =>
-    this.filter()
-      ? []
-      : this.sessions().filter((session) => session.status === "done"),
-  );
-  protected readonly finishedOpen = computed(
-    () =>
-      this.finishedValue() ||
-      this.finished().some((session) => session.id === this.selected()),
   );
   protected readonly attention = computed(
     () =>
@@ -126,26 +102,10 @@ export class SubtaskRowComponent implements OnChanges {
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   protected readonly sessionRows = computed<readonly SubtaskSessionRow[]>(
-    () => [
-      ...this.working().map((session) => ({
-        kind: "session" as const,
-        key: `session:${session.id}`,
-        session,
-        visible: true,
-      })),
-      {
-        kind: "finished",
-        key: "summary:finished",
-        count: this.finished().length,
-        visible: this.finished().length > 0,
-      },
-      ...this.finished().map((session) => ({
-        kind: "session" as const,
-        key: `session:${session.id}`,
-        session,
-        visible: this.finishedOpen(),
-      })),
-    ],
+    () => this.working().map((session) => ({
+      key: `session:${session.id}`,
+      session,
+    })),
   );
   protected readonly presence = new ListPresence(
     this.sessionRows,
@@ -171,9 +131,6 @@ export class SubtaskRowComponent implements OnChanges {
       this.sessions().some((session) => session.id === sessionId)
     )
       this.open.set(true);
-  }
-  protected toggleFinished(): void {
-    this.finishedValue.set(!this.finishedOpen());
   }
   protected blur(event: FocusEvent): void {
     if (

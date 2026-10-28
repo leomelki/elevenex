@@ -19,6 +19,8 @@
             <ex-session-row
               [session]="row.session"
               [context]="row.context"
+              [allowArchive]="allowArchive() && !disabled()"
+              (archiveRequested)="archiveRequested.emit({ taskId: row.taskId, session: $event })"
               [selected]="selected() === row.session.id"
               (activated)="openAttention(row.taskId, $event)"
             />
@@ -40,10 +42,22 @@
           @case ("task") {
             <ex-task-group
               [task]="row.task"
+              [archiveDisabled]="disabled()"
+              (archivedSessionsRequested)="archivedSessionsRequested.emit({ taskId: row.task.id, page: $event })"
+              (restoreRequested)="restoreRequested.emit({ taskId: row.task.id, session: $event })"
+              [cap]="sessionCap()"
+              [sessionDisclosure]="sessionDisclosures().get(row.task.id) ?? null"
+              (sessionDisclosureChange)="setSessionDisclosure(row.task.id, $event)"
+              [allowArchive]="allowArchive() && !disabled()"
+              (archiveRequested)="archiveRequested.emit({ taskId: row.task.id, session: $event })"
               [selected]="selected()"
               [reveal]="revealRequest()"
               [filter]="filter()"
               [showProject]="showProjects()"
+              [allowAdd]="!disabled()"
+              [allowAddSubtask]="!disabled()"
+              (moreSessionsRequested)="moreSessionsRequested.emit($event)"
+              (emptyTaskRequested)="emptyTaskRequested.emit($event)"
               (selectSession)="
                 selectSession.emit({ taskId: row.task.id, sessionId: $event })
               "

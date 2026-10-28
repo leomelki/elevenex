@@ -1,0 +1,31 @@
+@if (store.sessionArchiveUndo(); as undo) { @for (id of [undo.session.id]; track id) { <div class="toast"><ex-toast [title]="'Archived “' + undo.session.name + '”'" action="Undo" [duration]="0" [busy]="store.busy()" [dismissOnAction]="false" (actionSelected)="store.undoSessionArchive()" (dismissed)="store.sessionArchiveUndo.set(null)" /></div> } }
+@if (store.closeUndo(); as undo) { @for (id of [undo.task.id]; track id) { <div class="toast"><ex-toast [title]="'Closed ' + undo.task.name" action="Undo" (actionSelected)="store.undoClose()" (dismissed)="store.closeUndo.set(null)" /></div> } }
+<ex-workspace-project-settings />
+@if (store.archiveUndo(); as undo) { @for (id of [undo.project.id]; track id) { <div class="toast"><ex-toast [title]="'Archived ' + undo.project.name" action="Undo" (actionSelected)="store.restoreArchivedProject()" (dismissed)="store.archiveUndo.set(null)" /></div> } }
+<ex-modal-layer [open]="store.dialogOpen() && store.dialog() !== 'settings'" [from]="store.dialogFrom()" (closed)="store.dialogClosed()" (closeRequested)="store.closeDialog()">
+  <section class="dialog" [attr.data-kind]="store.dialog()" [attr.role]="store.dialog() === 'delete' ? null : 'dialog'" [attr.aria-modal]="store.dialog() === 'delete' ? null : true" [attr.aria-label]="store.dialog() === 'project' ? 'New project' : 'New task'" [attr.inert]="!store.dialogOpen() ? '' : null">
+    @for (draft of [store.dialogKey()]; track draft) {
+    @if (store.dialog() === 'project') {
+      <ex-new-project [machine]="store.machine()?.name ?? 'this machine'" [listFolders]="store.folderProvider()" [checkName]="store.projectNameProvider()" [active]="store.dialogOpen()" [busy]="store.busy()" [error]="store.error()" [recoveryRequired]="store.mutationUncertain()" [recovering]="store.loading()" (recoveryRequested)="store.refresh()" [autoFocus]="false" [cancelable]="true" (create)="store.createProject($event)" (cancelled)="store.closeDialog()" />
+    } @else if (store.dialog() === 'delete') {
+      @if (store.draftProject(); as project) { <div [attr.inert]="store.busy() ? '' : null" [attr.aria-busy]="store.busy()"><ex-delete-project [project]="project" [tasks]="undefined" [sessions]="undefined" [machine]="store.machine()?.name ?? 'this machine'" (cancelled)="store.closeDialog()" (archiveRequested)="store.archiveProject()" (deleteConfirmed)="store.deleteProject()" /></div> }
+      @if (store.busy()) { <p #deleteProgress role="status" tabindex="-1">Closing tasks and deleting project…</p> }
+    } @else if (store.dialog() === 'task') {
+      @if (store.draftProject(); as project) {
+        <ng-template #projectMenu>
+          <ex-dropdown-menu label="Task project">
+            @for (option of projectOptions(); track option.id) {
+              <button exDropdownRadio [checked]="option.id === project.id.toString()" [typeaheadLabel]="option.label" (triggered)="option.id !== project.id.toString() && store.openNewTask(option.id)">{{ option.label }}</button>
+            }
+          </ex-dropdown-menu>
+        </ng-template>
+        <div [attr.inert]="store.busy() || store.mutationUncertain() || !store.dialogOpen() ? '' : null" [attr.aria-busy]="store.busy()">
+          <ex-new-task [project]="store.draftProjectMark()" [projectMenu]="projectMenu" [active]="store.dialogOpen() && !store.busy() && !store.mutationUncertain()" [repos]="store.taskRepositories()" [branchesFor]="store.branchesFor" [basesFor]="store.basesFor" [branchesLoading]="store.branchLoading()" [autoFocus]="false" [canLink]="false" [canManageWorkspaces]="false" (addRepository)="addRepository()" (branchQueryRequested)="store.searchBranches($event)" (create)="store.createTask($event)" (plan)="store.planTask($event)" (cancelled)="store.closeDialog()" />
+        </div>
+        @if (store.busy()) { <p role="status">Creating task…</p> }
+      }
+    }
+    }
+    @if (store.dialog() !== 'project' && store.error(); as error) { <p #dialogError class="error" role="alert" tabindex="-1">{{ error }}</p>@if (store.mutationUncertain()) { <p><button exButton [disabled]="store.loading()" (click)="store.refresh()">Refresh state</button></p> } }
+  </section>
+</ex-modal-layer>

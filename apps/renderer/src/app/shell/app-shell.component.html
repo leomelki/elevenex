@@ -1,4 +1,6 @@
-<header class="title"><ex-title-bar><ng-content select="[shellTitle]" /></ex-title-bar></header>
+@if (titleBar()) {
+  <header class="title"><ex-title-bar><ng-content select="[shellTitle]" /></ex-title-bar></header>
+}
 <div class="regions">
   <nav class="rail glass" aria-label="Projects">
     <ng-content select="[shellRail]" />

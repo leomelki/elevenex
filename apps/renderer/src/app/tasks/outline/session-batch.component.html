@@ -1,0 +1,8 @@
+<div class="rows">
+  @for (entry of presence.rows(); track entry.key) {
+    <ex-fold [open]="entry.present && !entry.entering" (transitionend)="presence.settled(entry.key, $event)">
+      <ex-session-row [session]="entry.value" [selected]="selected() === entry.key" [muted]="muted() === entry.key"
+        [allowArchive]="allowArchive()" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" />
+    </ex-fold>
+  }
+</div>

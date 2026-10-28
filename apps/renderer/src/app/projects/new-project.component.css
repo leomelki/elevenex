@@ -31,6 +31,7 @@ button:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-r
 .body { display: flex; flex-direction: column; gap: 4px; padding-left: 28px; padding-bottom: 10px; }
 .name-input { box-sizing: border-box; width: 100%; padding: 0; border: 0; outline: none; background: transparent; color: var(--ink); font: inherit; font-size: 18px; line-height: 26px; font-weight: 600; letter-spacing: -.015em; }
 .name-input::placeholder { color: var(--ink-muted); font-weight: 500; }
+.name-feedback { display: flex; align-items: center; gap: var(--space-1); min-height: var(--text-caption-line); color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-caption-line); }
 .repos { position: relative; border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow var(--dur-fast) var(--ease-out); }
 .repos:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
 /* Fold gutters must not create a horizontal scrollbar in the repository list. */
@@ -38,9 +39,9 @@ button:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-r
 .repo { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 8px 0 12px; box-shadow: inset 0 -1px 0 var(--line); }
 .repo-icon { flex: none; width: 28px; height: 28px; border-radius: var(--radius-sm); display: grid; place-items: center; background: var(--surface-sunken); color: var(--ink-muted); }
 .repo-title { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 17px; }
-.repo-title b { font-size: 13px; font-weight: 600; }
+.repo-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .mono { font-family: var(--font-mono); font-size: 11.5px; line-height: 16px; font-weight: 500; color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.repo-meta { font-size: 11.5px; color: var(--ink-muted); }
+.repo-meta { max-width: 30%; flex-shrink: 0; font-size: 11.5px; color: var(--ink-muted); }
 .remove { opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
 .repo:hover .remove, .repo:focus-within .remove { opacity: 1; }
 footer { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--line); }
@@ -48,3 +49,11 @@ footer { display: flex; align-items: center; justify-content: flex-end; gap: var
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes mark { from { opacity: 0; transform: scale(.5); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .value, .number { animation: none; } .row, .number, .repos, .remove { transition: none; } }
+
+.field-note { margin: var(--space-1) 0 0; color: var(--ink-muted); font-size: var(--text-caption-size); }
+.failure { display: flex; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--danger-soft); color: var(--danger); font-size: var(--text-caption-size); }
+.failure > ex-status-glyph { flex: none; margin-top: var(--space-1); }
+.failure p { margin: 0; overflow-wrap: anywhere; }
+.failure button { margin-top: var(--space-2); }
+@media (hover: none) { .remove { opacity: 1; } }
+@media (max-width: 420px) { .row-label { width: 72px; } .body { padding-left: 0; } .repo-meta { display: none; } }

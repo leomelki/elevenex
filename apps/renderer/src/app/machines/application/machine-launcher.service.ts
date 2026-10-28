@@ -13,6 +13,10 @@ export class MachineLauncherService {
   readonly open = signal(false);
   readonly currentId = signal<string | null>(null);
   readonly pendingId = signal<string | null>(null);
+  /** Only the selected candidate mounts; Home never prepares every saved server. */
+  readonly workspace = computed(() => this.machines().find(machine => machine.id === (this.pendingId() ?? this.currentId())) ?? null);
+  readonly workspaceGeneration = signal(0);
+  private readonly preparedWorkspaceId = signal<string | null>(null);
   readonly error = signal('');
   private readonly openedHere = signal(false);
   private readonly selecting = signal(false);
@@ -48,7 +52,7 @@ export class MachineLauncherService {
     const pending = this.pendingId();
     const machine = this.machines().find(machine => machine.id === pending);
     const scope = this.client.state().scope;
-    return !this.selecting() && machine?.conn === 'live' && !machine.busy && scope && machineId(scope.environment) === pending && this.selectedId() === pending ? pending : null;
+    return !this.selecting() && this.preparedWorkspaceId() === pending && machine?.conn === 'live' && !machine.busy && scope && machineId(scope.environment) === pending && this.selectedId() === pending ? pending : null;
   });
 
   constructor() {
@@ -106,6 +110,12 @@ export class MachineLauncherService {
     if (this.destroy.destroyed || this.pendingId() === id || !this.machines().some(machine => machine.id === id)) return;
     this.request.update(value => value + 1);
     const request = this.request();
+    if (this.workspace()?.id !== id) {
+      this.preparedWorkspaceId.set(null);
+      // Cancel/reselect can happen before Angular removes the old candidate.
+      // Require a fresh paint acknowledgement even if that view is retained.
+      this.workspaceGeneration.update(value => value + 1);
+    }
     this.error.set(''); this.pendingId.set(id); this.selecting.set(true);
     this.settle = this.machines().find(machine => machine.id === id)?.conn !== 'live';
     try {
@@ -115,6 +125,10 @@ export class MachineLauncherService {
     } catch {
       if (!this.destroy.destroyed && request === this.request()) { this.pendingId.set(null); this.error.set('This machine could not be opened. Check its connection and try again.'); }
     } finally { if (!this.destroy.destroyed && request === this.request()) this.selecting.set(false); }
+  }
+
+  workspacePrepared(id: string, generation: number): void {
+    if (!this.destroy.destroyed && this.workspace()?.id === id && generation === this.workspaceGeneration()) this.preparedWorkspaceId.set(id);
   }
 
   home(): void { this.request.update(value => value + 1); this.pendingId.set(null); this.selecting.set(false); this.open.set(false); }

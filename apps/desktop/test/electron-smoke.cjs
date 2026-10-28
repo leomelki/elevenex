@@ -7,10 +7,12 @@ const { rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createServer } = require('node:http');
+const { URL } = require('node:url');
 const { BackendManager } = require('../dist/backend/manager');
 const { backendRelease } = require('../dist/backend/release');
 const remoteContract = require('./remote-contract.cjs');
 const machineContract = require('./machine-contract.cjs');
+const workspaceContract = require('./workspace-contract.cjs');
 
 // Replace only the composition boundary in this test process. Native IPC and
 // preload are real; download/process behavior has separate integration tests.
@@ -25,9 +27,18 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
   install: async () => ({ directory: backendRoot, entry: '', executable: '' }),
   start: async () => {
     const http = createServer((request, response) => {
-      assert.equal(request.url, '/api/info');
+      const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+      const responses = {
+        '/api/info': { backendSha: revision },
+        '/api/desktop-workspace/revision': { revision: 0, version: 1 },
+        '/api/desktop-workspace/projects': { items: [], nextCursor: null },
+        '/api/desktop-workspace/tasks': { items: [], nextCursor: null },
+        '/api/desktop-workspace/folders': [],
+      };
+      assert.equal(request.method, 'GET');
+      assert.ok(Object.hasOwn(responses, pathname), `Unexpected smoke endpoint: ${pathname}`);
       response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ backendSha: revision }));
+      response.end(JSON.stringify(responses[pathname]));
     });
     await new Promise(resolve => http.listen(0, '127.0.0.1', resolve));
     backendUrl = `http://127.0.0.1:${http.address().port}`;
@@ -67,7 +78,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -97,16 +108,48 @@ void (async () => {
     ok: true, value: { backendSha: revision },
   });
   assert.equal(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('').then(() => false, () => true)`), true);
+  // Exercise the production deferred workspace through app://, real IPC and HTTP.
+  // This also catches missing style nonces when its lazy components are mounted.
+  await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+    const until = Date.now() + 10000;
+    const open = () => {
+      const card = document.querySelector('[data-machine="local"]');
+      if (card && !card.disabled) { card.click(); resolve(); }
+      else if (Date.now() > until) reject(new Error('Machine Home did not render'));
+      else setTimeout(open, 25);
+    };
+    open();
+  })`);
+  const workspace = await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+    const until = Date.now() + 10000;
+    const inspect = () => {
+      const project = document.querySelector('ex-workspace-onboarding ex-new-project');
+      const shell = document.querySelector('ex-machine-workspace ex-app-shell');
+      const opened = document.querySelector('ex-machine-launch .launch.open ex-machine-workspace:not([inert])');
+      if (project && shell && opened) resolve({ titles: document.querySelectorAll('ex-title-bar').length,
+        display: getComputedStyle(shell).display, cardDisplay: getComputedStyle(project).display,
+        inert: document.querySelector('.workspace-frame').hasAttribute('inert') });
+      else if (Date.now() > until) reject(new Error('Connected workspace did not render'));
+      else setTimeout(inspect, 25);
+    };
+    inspect();
+  })`);
+  assert.deepEqual(workspace, { titles: 1, display: 'flex', cardDisplay: 'block', inert: true });
   await window.webContents.executeJavaScript(`window.smokeClientEvents = [];
     window.smokeStopClient = window.elevenex.onBackendClientChanged(state => window.smokeClientEvents.push(state)); void 0;`);
   const remote = await window.webContents.executeJavaScript(`(async () => {
     const hosts = await window.elevenex.remoteHosts();
     const state = await window.elevenex.environmentStatus();
     const invalid = await window.elevenex.saveRemoteHost({name:'bad',host:'-oProxyCommand=evil'},null).then(()=>false,()=>true);
-    await window.elevenex.saveEnvironmentContext({projectId:null,taskId:2,sessionId:3,draft:'unsent',cursor:'cursor'}, {kind:'local'});
-    return {hosts,state,invalid};
+    const workspace = {panel:'browser',panelOpen:true,wideReview:false,closed:false,focused:false,filter:null,projectCursor:null,taskCursor:null};
+    await window.elevenex.saveEnvironmentContext({projectId:null,taskId:null,sessionId:null,draft:'unsent',cursor:'cursor',workspace}, {kind:'local'});
+    const saved = await window.elevenex.environmentStatus();
+    const invalidLayout = await window.elevenex.saveEnvironmentContext({...saved.context,workspace:{...workspace,panel:'invalid'}}, {kind:'local'}).then(()=>false,()=>true);
+    return {hosts,state,invalid,saved,invalidLayout};
   })()`);
   assert.deepEqual(remote.hosts, []); assert.equal(remote.state.selection.kind, 'local'); assert.equal(remote.invalid, true);
+  assert.equal(remote.saved.context.workspace.panel, 'browser'); assert.equal(remote.saved.context.workspace.panelOpen, true);
+  assert.equal(remote.invalidLayout, true);
   await window.webContents.executeJavaScript(`window.smokeBackendReady = new Promise(resolve => {
     window.smokeBackendUnsubscribe = window.elevenex.onBackendChanged(status => { if (status.phase === 'ready') resolve(status); });
   }); void 0;`);
@@ -153,7 +196,7 @@ void (async () => {
   assert.ok(assets.csp.includes("script-src 'self'"));
   assert.ok(!assets.csp.includes('unsafe-inline'));
   assert.equal(assets.missing, 404);
-  console.log('Electron smoke passed: sandbox, scoped backend HTTP client/lifecycle IPC/events, runtime validation, native theme, multiple windows and app:// history/CSP. Backend runtime is a test fixture.');
+  console.log('Electron smoke passed: sandbox, connected deferred workspace, scoped backend HTTP client/lifecycle IPC/events, runtime validation, native theme, multiple windows and app:// history/CSP. Backend runtime is a test fixture.');
   await rm(backendRoot, { recursive: true, force: true });
   clearTimeout(timeout);
   app.quit();

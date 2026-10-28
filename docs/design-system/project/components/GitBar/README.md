@@ -2,14 +2,14 @@
 
 Git in the task header, as **one button for the next step**:
 
-- **Uncommitted changes:** the lines changed (+214 −38, it opens the Changes view) and **Commit 7**, the number of changed files on the button (⌘↵ opens an inline, agent-drafted message).
+- **Uncommitted changes:** the lines changed (+214 −38, it opens the Changes view) and **Commit 7**, the number of changed files on the button. Pressing it opens a `CommitPanel` out of the button (an optional message, the files, Commit), passed as `panel`.
 - **Everything committed, commits waiting:** just **Push 2**; the count on the button says what's waiting.
 - **Up to date:** just “Up to date”; no button.
-- **While it runs:** the button reads “Committing…” or “Pushing…” with a running ring, and the agent keeps working beside it.
+- **While it runs:** the button reads “Committing…” or “Pushing…” with a running ring, and the agent keeps working beside it. Before Committing…, `busyLabel` can say “Writing the message…” when the message was left empty.
 
 The chevron holds the combinations for the current step. On Commit: Commit and push, Push the commits already waiting (when there are some), Commit and open PR, Sync with main. On Push: Push and open PR, Push to a new name, Sync with main.
 
-**Provide:** `files` (uncommitted changed files), `add`, `del`, `ahead` (commits not pushed), `busy` (`'commit'` · `'push'`), `onCommit`, `onPush`, optional `compact`.
+**Provide:** `files` (uncommitted changed files), `add`, `del`, `ahead` (commits not pushed), `busy` (`'commit'` · `'push'`), `busyLabel`, `onCommit`, `onPush`, `panel` (the `CommitPanel`), optional `compact`.
 
 - Do keep it in the task header, right-aligned; it's the only place git verbs live.
 - Don't show a disabled button for a step that doesn't apply: the bar shows only what you can do now.

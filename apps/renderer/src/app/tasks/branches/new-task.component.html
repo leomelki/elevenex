@@ -1,6 +1,6 @@
 <section aria-label="New task" tabindex="-1" (keydown)="onKey($event)">
   <header>
-    <button class="project" type="button" (click)="projectRequested.emit()">
+    <button class="project" type="button" [cdkMenuTriggerFor]="projectMenu()" [disabled]="!active()" [attr.aria-label]="'Task project: ' + project().name" (click)="!projectMenu() && projectRequested.emit()">
       <ex-project-mark
         [name]="project().name"
         [logo]="project().logo"
@@ -48,6 +48,7 @@
             ><div class="body">
               <input
                 #nameField
+                cdkFocusInitial
                 class="title-input"
                 [value]="titleValue()"
                 (input)="nameChanged(nameField.value)"
@@ -269,6 +270,7 @@
         ><ex-workspace-picker
           [value]="workspaceValue()"
           [items]="workspaces()"
+          [canManage]="canManageWorkspaces()"
           (valueChange)="pickedWorkspace.set($event)"
           (newWorkspace)="workspaceRequested.emit('new')"
           (manageWorkspaces)="workspaceRequested.emit('manage')"
@@ -281,7 +283,7 @@
               [state]="link.state"
             />
           }
-          <button class="link" type="button" (click)="linkRequested.emit()">
+          <button class="link" type="button" [disabled]="!canLink()" (click)="linkRequested.emit()">
             <ex-icon name="link" [size]="12" />{{
               links().length
                 ? "Link another"
@@ -290,6 +292,7 @@
           </button>
         </div>
       </div>
+      @if (branchesLoading()) { <span class="muted" role="status">Finding branches…</span> }
       <footer>
         <button
           exButton

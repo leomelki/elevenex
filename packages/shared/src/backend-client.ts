@@ -17,7 +17,7 @@ export interface BackendInfo {
 }
 
 export interface BackendClientError {
-  readonly code: 'unavailable' | 'stale-scope' | 'timeout' | 'transport' | 'http' | 'invalid-response';
+  readonly code: 'unavailable' | 'stale-scope' | 'timeout' | 'transport' | 'http' | 'invalid-response' | 'outcome-unknown';
   /** Safe, bounded text owned by the adapter; never a raw backend body or URL. */
   readonly message: string;
   readonly status?: number;

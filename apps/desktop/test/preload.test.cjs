@@ -4,6 +4,7 @@ const { readFile } = require('node:fs/promises');
 const vm = require('node:vm');
 const remote = require('./remote-contract.cjs');
 const machines = require('./machine-contract.cjs');
+const workspace = require('./workspace-contract.cjs');
 
 test('preload exposes only the typed bridge and strips event objects', async () => {
   let bridge;
@@ -27,7 +28,7 @@ test('preload exposes only the typed bridge and strips event objects', async () 
       };
     },
   });
-  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods].sort());
+  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods].sort());
   assert.equal(Object.isFrozen(bridge), true);
   await bridge.appVersion();
   await bridge.gitStatus('/workspace');
@@ -45,6 +46,13 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   calls.length = 0;
   for (const [method, , args] of machines.calls) await bridge[method](...args);
   assert.deepEqual(calls, machines.calls.map(([, channel, args]) => [channel, ...args]));
+  calls.length = 0;
+  for (const [method, , args] of workspace.calls) await bridge[method](...args);
+  assert.deepEqual(calls, workspace.calls.map(([, channel, args]) => [channel, ...args]));
+  calls.length = 0;
+  await bridge.workspaceRetryTask('scope', 1, 'use-existing');
+  await bridge.workspaceRetryTask('scope', 1, 'snapshot');
+  assert.deepEqual(calls, [['workspace:retry-task', 'scope', 1, 'use-existing'], ['workspace:retry-task', 'scope', 1, 'snapshot']]);
   const received = [];
   const stop = bridge.onThemeChanged((...args) => received.push(args));
   listeners.get('theme:changed')({ sender: 'private Electron object' }, 'dark');

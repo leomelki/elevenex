@@ -1,6 +1,7 @@
 <button
   class="stage"
   type="button"
+  [disabled]="disabled()"
   [cdkMenuTriggerFor]="menu"
   aria-label="Change task stage"
 >

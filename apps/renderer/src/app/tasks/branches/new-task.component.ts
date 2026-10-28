@@ -1,15 +1,20 @@
+import { CdkMenuTrigger } from '@angular/cdk/menu';
 import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
   Injector,
   OnInit,
+  TemplateRef,
   afterNextRender,
+  afterRenderEffect,
   computed,
+  effect,
   inject,
   input,
   output,
   signal,
+  untracked,
   viewChild,
 } from "@angular/core";
 import {
@@ -47,6 +52,7 @@ export type NewTaskStep = "name" | "repo" | "branch" | "base";
 @Component({
   selector: "ex-new-task",
   imports: [
+    CdkMenuTrigger,
     AutoHeightDirective,
     ButtonComponent,
     EaseSwapComponent,
@@ -65,12 +71,19 @@ export type NewTaskStep = "name" | "repo" | "branch" | "base";
 })
 export class NewTaskComponent implements OnInit {
   readonly project = input.required<ProjectMark>();
+  /** Owner-supplied choices anchored to the existing project button. */
+  readonly projectMenu = input<TemplateRef<unknown> | null>(null);
+  readonly active = input(true);
   readonly repos = input<readonly TaskRepository[]>([]);
   /** Initial repository, usually the current task's or the last used one. */
   readonly repo = input<string>();
   readonly branches = input<readonly BranchInfo[]>([]);
   /** Pure supplied data lookup. Platform access belongs to the owning feature. */
   readonly branchesFor = input<(repoId: string) => readonly BranchInfo[]>();
+  readonly basesFor = input<(repoId: string) => readonly BranchInfo[]>();
+  readonly branchesLoading = input(false);
+  readonly canLink = input(true);
+  readonly canManageWorkspaces = input(true);
   readonly bases = input<readonly BranchInfo[]>();
   readonly base = input("main");
   readonly branchPrefix = input("");
@@ -91,6 +104,7 @@ export class NewTaskComponent implements OnInit {
   readonly projectRequested = output<void>();
   readonly addRepository = output<void>();
   readonly workspaceRequested = output<"new" | "manage">();
+  readonly branchQueryRequested = output<{ readonly repoId: string; readonly query: string; readonly kind: 'branch' | 'base' }>();
   protected readonly titleValue = signal("");
   protected readonly currentStep = signal<NewTaskStep>("name");
   protected readonly branchQueryValue = signal<string | null>(null);
@@ -124,8 +138,9 @@ export class NewTaskComponent implements OnInit {
     branchItems(this.branchValue(), this.currentBranches(), true),
   );
   protected readonly baseBranches = computed(() =>
-    (this.branchesFor()
-      ? this.currentBranches()
+    (this.basesFor() && this.currentRepo()
+      ? this.basesFor()?.(this.currentRepo()?.id ?? '') ?? []
+      : this.branchesFor() ? this.currentBranches()
       : (this.bases() ?? this.currentBranches())
     )
       .filter((branch) => !branch.task)
@@ -159,6 +174,7 @@ export class NewTaskComponent implements OnInit {
   );
   protected readonly canCreate = computed(
     () =>
+      !this.branchesLoading() &&
       !!this.titleValue().trim() &&
       !!this.branch() &&
       this.branchAvailable() &&
@@ -166,6 +182,7 @@ export class NewTaskComponent implements OnInit {
         this.baseBranches().some((branch) => branch.name === this.baseValue())),
   );
   protected readonly canNext = computed(() => {
+    if (this.branchesLoading() && (this.currentStep() === 'branch' || this.currentStep() === 'base')) return false;
     switch (this.currentStep()) {
       case "name":
         return !!this.titleValue().trim();
@@ -210,7 +227,22 @@ export class NewTaskComponent implements OnInit {
   protected readonly baseListId = `new-task-bases-${crypto.randomUUID()}`;
   protected readonly repoListId = `new-task-repos-${crypto.randomUUID()}`;
   private readonly injector = inject(Injector);
+  private readonly projectTrigger = viewChild(CdkMenuTrigger);
+  private readonly branchRequest = computed(() => {
+    const repo = this.currentRepo(), step = this.currentStep();
+    // Existing branches keep their history; loading unused bases would disable
+    // Create just as the From step hands keyboard focus to that button.
+    if (!repo || (step !== 'branch' && step !== 'base') || (step === 'base' && this.existing())) return null;
+    return { repoId: repo.id, query: step === 'base' ? this.baseQueryValue() : this.branchValue(), kind: step === 'base' ? 'base' as const : 'branch' as const };
+  }, { equal: (previous, next) => previous?.repoId === next?.repoId && previous?.query === next?.query && previous?.kind === next?.kind });
   constructor() {
+    afterRenderEffect(() => {
+      if (!this.active() || !this.projectMenu()) this.projectTrigger()?.close();
+    });
+    effect(() => {
+      const request = this.branchRequest();
+      if (request) untracked(() => this.branchQueryRequested.emit(request));
+    });
     afterNextRender(() => {
       if (this.autoFocus()) this.focusCurrent();
     });
@@ -277,12 +309,12 @@ export class NewTaskComponent implements OnInit {
     this.go("branch");
   }
   protected pickBranch(row: BranchRow): void {
-    if (!selectableBranch(row)) return;
+    if (this.branchesLoading() || !selectableBranch(row)) return;
     this.pickedBranch.set(row);
     this.go("base");
   }
   protected pickBase(row: BranchRow): void {
-    if (!selectableBranch(row) || row.kind !== "branch") return;
+    if (this.branchesLoading() || !selectableBranch(row) || row.kind !== "branch") return;
     this.pickedBase.set(row.name);
     this.submit();
   }
@@ -325,7 +357,7 @@ export class NewTaskComponent implements OnInit {
     });
   }
   protected savePlanned(): void {
-    if (!this.titleValue().trim()) return;
+    if (this.branchesLoading() || !this.titleValue().trim()) return;
     this.plan.emit({
       ...(this.multipleRepos() ? { repo: this.currentRepo()?.id } : {}),
       title: this.titleValue().trim(),

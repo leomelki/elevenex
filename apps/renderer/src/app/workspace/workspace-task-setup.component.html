@@ -1,0 +1,44 @@
+<section aria-label="Task workspace preparation">
+  <ex-icon name="workspace" [size]="28" />
+  <h1>{{ task().name }}</h1>
+  @if (task().state === 'finished') {
+    <p role="status">This task has been closed. Select another task to continue.</p>
+  } @else if (task().state === 'failed') {
+    @let issue = task().setupIssue;
+    <p role="alert">{{ issue?.message ?? 'The workspace could not be prepared. Your task has been saved.' }}</p>
+    @if (issue?.workspacePath; as path) { <div class="workspace-path"><span>Existing workspace</span><code>{{ path }}</code></div> }
+    @if (issue?.code === 'external-checkout') {
+      <p class="explanation">{{ issue?.canUseSnapshot ? 'Use the existing workspace, including its local edits, or start separately from the committed revision.' : 'Using this workspace includes its existing local edits.' }}</p>
+    }
+    @if (uncertain()) {
+      <p role="status">The setup change could not be confirmed. Refresh this saved task before trying again.</p>
+      <button exButton [disabled]="busy()" (click)="refreshRequested.emit()">{{ busy() ? 'Checking…' : 'Refresh setup' }}</button>
+    } @else {
+      @if (error() && error() !== issue?.message) {
+        <p class="error" role="alert">{{ error() }}</p>
+        <button exButton variant="ghost" class="refresh" [disabled]="busy()" (click)="refreshRequested.emit()">{{ busy() ? 'Checking…' : 'Refresh setup' }}</button>
+      }
+      <div class="actions" [attr.aria-busy]="busy()">
+        @if (issue?.canExceedWorktreeLimit) {
+          <button exButton variant="primary" [disabled]="busy()" (click)="retryRequested.emit('exceed-worktree-limit')">Create workspace anyway</button>
+        }
+        @if (issue?.code === 'external-checkout') {
+          <button exButton variant="primary" [disabled]="busy()" (click)="retryRequested.emit('use-existing')">Use existing workspace</button>
+        }
+        @if (issue?.canUseSnapshot) {
+          <button exButton [disabled]="busy()" (click)="retryRequested.emit('snapshot')">Use committed revision</button>
+        }
+        @if (issue?.code !== 'external-checkout') {
+          <button exButton [disabled]="busy()" (click)="retryRequested.emit(undefined)">Retry setup</button>
+        }
+      </div>
+      @if (busy()) { <span class="working" role="status">Preparing workspace…</span> }
+    }
+  } @else if (paused()) {
+    <p role="status">Setup is taking longer than expected. Refresh to check your saved task.</p>
+    <button exButton [disabled]="busy()" (click)="refreshRequested.emit()">{{ busy() ? 'Checking…' : 'Refresh setup' }}</button>
+  } @else {
+    <p role="status">Preparing your workspace. The first session will open when it is ready.</p>
+    <ex-progress-line label="Preparing task workspace" />
+  }
+</section>

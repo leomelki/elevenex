@@ -1,15 +1,19 @@
+<div [attr.data-session-id]="session().id" class="row" [class.has-archive]="allowArchive() || allowRestore()" [class.confirming]="confirming()">
 <button
+  class="select"
   type="button"
+  [exTooltip]="session().title"
   [class.attention]="session().status === 'attention' && !selected()"
   [class.failed]="session().status === 'failed' && !selected()"
   [class.with-context]="!!context()"
   [class.done]="session().status === 'done'"
   [class.fresh]="session().fresh"
+  [class.muted]="muted() && !selected() && session().status !== 'attention' && session().status !== 'failed'"
   [attr.aria-current]="selected() ? 'true' : null"
   [style.padding-left.px]="8 + depth() * 16"
   (click)="activated.emit(session().id)"
 >
-  <ex-status-glyph [status]="session().status" [size]="14" />
+  @if (archived()) { <ex-icon name="archive" [size]="14" /> } @else { <ex-status-glyph [status]="session().status" [size]="14" /> }
   @if (kindIcon(); as icon) {
     <span
       class="kind"
@@ -55,3 +59,19 @@
     <span class="unread" aria-label="Unread"></span>
   }
 </button>
+
+@if (allowArchive() && !archived()) {
+  <button class="archive" type="button"
+    [attr.aria-label]="confirming() ? 'Stop and archive ' + session().title + ': press again to confirm' : 'Archive ' + session().title"
+    [exTooltip]="confirming() ? '' : 'Archive session'"
+    (click)="archive($event)" (blur)="cancelArchive()" (keydown.escape)="cancelArchive($event)">
+    <span class="archive-icon"><ex-icon name="archive" [size]="14" /></span>
+    <span class="archive-label" aria-hidden="true"><span>Stop and archive</span></span>
+  </button>
+}
+@if (archived() && allowRestore()) {
+  <button class="archive restore" type="button" [attr.aria-label]="'Restore ' + session().title" exTooltip="Restore session" (click)="restoreRequested.emit(session())">
+    <span class="archive-icon"><ex-icon name="back" [size]="14" /></span>
+  </button>
+}
+</div>

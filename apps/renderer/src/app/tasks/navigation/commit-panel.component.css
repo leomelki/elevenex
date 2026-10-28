@@ -1,0 +1,262 @@
+:host {
+  display: contents;
+}
+.commit-layer {
+  position: absolute;
+  z-index: 100;
+  right: 0;
+  top: calc(100% + var(--space-2));
+  width: min(460px, calc(100vw - 24px));
+  -webkit-app-region: no-drag;
+}
+.box {
+  box-sizing: border-box;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--text-caption-size);
+}
+.message,
+.summary,
+.filter,
+.file,
+.option,
+.note,
+footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.message,
+.summary,
+.filter,
+.file,
+.option,
+.note {
+  padding-inline: 10px;
+}
+.message {
+  height: 40px;
+  color: var(--ink-muted);
+}
+input:not([type="checkbox"]) {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+}
+.message input {
+  font-size: var(--text-ui-size);
+}
+input::placeholder {
+  color: var(--ink-muted);
+  opacity: 1;
+}
+.message:focus-within {
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 -1px var(--accent);
+}
+button {
+  font: inherit;
+  cursor: pointer;
+}
+.summary {
+  width: 100%;
+  height: 32px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.summary b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.summary:hover,
+.file:hover,
+.show:hover {
+  background: var(--surface-sunken);
+}
+.counts {
+  margin-left: auto;
+  font-size: var(--text-overline-size);
+}
+.summary ex-icon {
+  transition: transform var(--dur-base) var(--ease-in-out);
+}
+.summary .rotated {
+  transform: rotate(180deg);
+}
+.filter {
+  height: 28px;
+  color: var(--ink-muted);
+}
+.filter > span {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.scroll {
+  max-height: 168px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.scroll.more {
+  mask-image: linear-gradient(
+    to bottom,
+    var(--ink) calc(100% - 14px),
+    transparent
+  );
+}
+.file {
+  box-sizing: border-box;
+  height: 28px;
+  border-radius: var(--radius-xs);
+  white-space: nowrap;
+}
+input[type="checkbox"] {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.status {
+  color: var(--ink-muted);
+  font: 10px var(--font-mono);
+}
+.path {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: var(--text-overline-size) var(--font-mono);
+}
+.directory {
+  color: var(--ink-muted);
+}
+.secret {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--attention);
+  font-size: 10px;
+}
+.diff {
+  display: inline-flex;
+  gap: var(--space-1);
+  font: 10px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.add {
+  color: var(--diff-add);
+}
+.del {
+  color: var(--diff-del);
+}
+.off .path {
+  color: var(--ink-muted);
+}
+.disabled {
+  opacity: 0.45;
+}
+.show {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  padding: 0 10px;
+  background: transparent;
+  color: var(--ink-muted);
+  text-align: left;
+}
+.option {
+  height: 32px;
+}
+.note {
+  align-items: flex-start;
+  min-height: 28px;
+  box-sizing: border-box;
+  padding-block: 5px;
+  color: var(--ink-muted);
+  line-height: var(--text-caption-line);
+}
+.note > ex-icon,
+.note > ex-status-glyph {
+  flex: none;
+  margin-top: 2px;
+}
+.inline {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: inherit;
+}
+.inline:hover {
+  text-decoration: underline;
+}
+.empty,
+.error {
+  margin: 0;
+  padding: var(--space-2) 10px;
+  color: var(--ink-muted);
+}
+.error {
+  color: var(--danger);
+}
+.loading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+footer {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  padding: var(--space-2) 0 0 10px;
+}
+.grow {
+  flex: 1;
+}
+button:focus-visible,
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+@media (max-width: 520px) {
+  .counts {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .secret {
+    font-size: 0;
+    gap: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .summary ex-icon {
+    transition: none;
+  }
+}
+
+.commit-layer.pending {
+  visibility: hidden;
+  pointer-events: none;
+}

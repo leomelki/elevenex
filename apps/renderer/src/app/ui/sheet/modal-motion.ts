@@ -18,7 +18,7 @@ export class ModalMotion {
 
   get returnTarget(): HTMLElement | null { return this.returnElement; }
 
-  constructor(private readonly layer: HTMLElement, private from: HTMLElement | null = null) {
+  constructor(private readonly layer: HTMLElement, private from: HTMLElement | null = null, private readonly options: { readonly noFace?: boolean; readonly fadeIn?: number } = {}) {
     this.returnElement = from;
     this.media?.addEventListener('change', this.reducedChanged);
     this.surface = layer.firstElementChild instanceof HTMLElement ? layer.firstElementChild : null;
@@ -27,7 +27,7 @@ export class ModalMotion {
       const origin = measureModalOrigin(layer, from);
       if (origin.width > 0 && origin.height > 0) {
         this.origin = origin;
-        this.face = copyModalFace(from);
+        if (!this.options.noFace) this.face = copyModalFace(from);
         layer.classList.add('ex-modal-has-from');
         const original = this.surface.style.transformOrigin;
         this.restoreOrigin = () => { if (this.surface) this.surface.style.transformOrigin = original; };
@@ -35,6 +35,7 @@ export class ModalMotion {
         void this.retarget(true);
       }
     }
+    if (this.options.noFace && !this.origin) void this.retarget(true);
   }
 
   async retarget(open: boolean, from: HTMLElement | null = this.from): Promise<boolean> {
@@ -59,6 +60,13 @@ export class ModalMotion {
     if (this.media?.matches || !this.layer.animate || !surface.animate) {
       this.layer.classList.remove('ex-modal-has-from');
       this.removeCopies();
+      if (this.options.noFace && surface.animate) {
+        const animation = surface.animate([{ opacity: open ? '0' : painted.opacity }, { opacity: open ? '1' : '0' }], { duration: 140, fill: 'both' });
+        this.animations = [animation];
+        try { await animation.finished; } catch { return false; }
+        if (generation !== this.generation) return false;
+        if (open) this.cancelAnimations();
+      }
       return true;
     }
     this.layer.classList.add('ex-modal-layer-retargeting');
@@ -68,7 +76,7 @@ export class ModalMotion {
       this.returnElement = from;
       this.window = from.closest('[data-modal-window], .ex-window, ex-app-shell');
       this.origin = measureModalOrigin(this.layer, from);
-      this.face = copyModalFace(from);
+      if (!this.options.noFace) this.face = copyModalFace(from);
       this.layer.classList.add('ex-modal-has-from');
     }
     if (!open && !from) {
@@ -83,7 +91,7 @@ export class ModalMotion {
       if (!open && timing == null) this.resolveReturnTarget();
       const dialog: ModalBox = { left: surface.offsetLeft, top: surface.offsetTop, width: surface.offsetWidth, height: surface.offsetHeight, radius: parseFloat(surfaceStyle.borderTopLeftRadius) || 0 };
       if (!dialog.width || !dialog.height) return true;
-      const frames = modalMorphFrames(this.origin, dialog, value, open ? 1 : 0);
+      const frames = modalMorphFrames(this.origin, dialog, value, open ? 1 : 0, this.options.fadeIn);
       if (timing != null) {
         frames.surface[0] = { offset: 0, ...painted };
         if (facePose) frames.face[0] = { offset: 0, ...facePose };
@@ -94,7 +102,7 @@ export class ModalMotion {
       this.shadow ??= this.layer.ownerDocument.createElement('div');
       this.shadow.className = 'ex-modal-shadow';
       this.shadow.setAttribute('aria-hidden', 'true');
-      Object.assign(this.shadow.style, { left: `${dialog.left}px`, top: `${dialog.top}px`, width: `${dialog.width}px`, height: `${dialog.height}px`, borderRadius: `${dialog.radius}px`, boxShadow: surfaceStyle.boxShadow });
+      Object.assign(this.shadow.style, { position: 'absolute', margin: '0', transformOrigin: '0 0', pointerEvents: 'none', left: `${dialog.left}px`, top: `${dialog.top}px`, width: `${dialog.width}px`, height: `${dialog.height}px`, borderRadius: `${dialog.radius}px`, boxShadow: surfaceStyle.boxShadow });
       this.layer.append(this.shadow);
       this.animations = [surface.animate(frames.surface, options), this.shadow.animate(frames.shadow, options)];
       content.forEach((child, index) => this.animations.push(child.animate(timing == null ? frames.content : [{ offset: 0, opacity: contentOpacity[index] }, ...frames.content.slice(1)], options)));
@@ -110,7 +118,7 @@ export class ModalMotion {
         }
         this.animations.push(this.face.animate(frames.face, options));
       }
-      this.animations.push(this.layer.animate([{ backgroundColor: timing == null && open ? 'transparent' : dim }, { backgroundColor: open ? 'color-mix(in srgb, #08101c 22%, transparent)' : 'transparent' }], options));
+      if (!this.options.noFace) this.animations.push(this.layer.animate([{ backgroundColor: timing == null && open ? 'transparent' : dim }, { backgroundColor: open ? 'color-mix(in srgb, #08101c 22%, transparent)' : 'transparent' }], options));
     } else {
       const duration = parseFloat(layerStyle.getPropertyValue(open ? '--dur-glide' : '--dur-base')) || (open ? 340 : 200);
       const easing = layerStyle.getPropertyValue(open ? '--ease-out' : '--ease-in').trim();
@@ -135,6 +143,11 @@ export class ModalMotion {
 
   private resolveReturnTarget(): void {
     if (!this.origin) return;
+    if (this.options.noFace && this.from?.isConnected) {
+      this.returnElement = this.from;
+      this.origin = measureModalOrigin(this.layer, this.from, 'resting');
+      return;
+    }
     // Hidden cards cannot be hit-tested. Restore only within this synchronous
     // retarget, before the selected return card is hidden again for the exit.
     this.restoreTrigger?.(); this.restoreTrigger = undefined;
@@ -147,7 +160,7 @@ export class ModalMotion {
     if (!target || target.offsetWidth <= 0 || target.offsetHeight <= 0) return;
     this.returnElement = target;
     this.origin = measureModalOrigin(this.layer, target, 'resting');
-    this.face = copyModalFace(target);
+    if (!this.options.noFace) this.face = copyModalFace(target);
   }
 
   private cancelAnimations(): void {

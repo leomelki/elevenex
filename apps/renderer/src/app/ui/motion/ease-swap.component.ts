@@ -3,6 +3,7 @@ import {
   Component,
   DestroyRef,
   ElementRef,
+  type TemplateRef,
   type AnimationCallbackEvent,
   afterNextRender,
   computed,
@@ -11,18 +12,24 @@ import {
   signal,
   viewChild,
 } from "@angular/core";
+import { NgTemplateOutlet } from "@angular/common";
 
 /** Keep the control mounted while outgoing ink clears before its replacement.
  * Width retargets from the painted frame, so rapid changes never restart a jump. */
 @Component({
   selector: "ex-ease-swap",
+  imports: [NgTemplateOutlet],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: "./ease-swap.component.html",
   styleUrl: "./ease-swap.component.css",
 })
-export class EaseSwapComponent {
+export class EaseSwapComponent<T = unknown> {
   readonly value = input.required<string>();
-  protected readonly labels = computed(() => [{ key: this.value() }]);
+  /** Optional rich label. Value identifies a phase; content updates within it. */
+  readonly contentTemplate = input<TemplateRef<{ readonly $implicit: T | null }> | null>(null);
+  readonly content = input<T | null>(null);
+  // Capture each phase's content so its outgoing view cannot read incoming data.
+  protected readonly labels = computed(() => [{ key: this.value(), content: this.content() }]);
   protected readonly ready = signal(false);
   private readonly element =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;

@@ -3,6 +3,9 @@
       #text
       [animate.enter]="ready() ? 'enter' : ''"
       (animate.leave)="leave($event)"
-      >{{ label.key }}</span
     >
+      @if (contentTemplate(); as template) {
+        <ng-container [ngTemplateOutlet]="template" [ngTemplateOutletContext]="{ $implicit: label.content }" />
+      } @else {<ng-container>{{ label.key }}</ng-container>}
+    </span>
   }

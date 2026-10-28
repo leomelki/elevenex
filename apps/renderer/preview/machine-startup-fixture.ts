@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import type { BackendClientState, BackendStatus, EnvironmentSelection, EnvironmentSnapshot, MachineEditInput, MachineState, RemoteChallenge, RemoteHost, RemoteHostInput } from '@elevenex/shared';
+import type { BackendClientState, BackendResult, BackendStatus, EnvironmentContext, EnvironmentSelection, EnvironmentSnapshot, MachineEditInput, MachineState, RemoteChallenge, RemoteHost, RemoteHostInput, WorkspaceFolder, WorkspacePage, WorkspaceProject, WorkspaceSession, WorkspaceSessionQuery, WorkspaceTask, WorkspaceTaskQuery } from '@elevenex/shared';
 
 const emptyEnvironment = (): EnvironmentSnapshot => ({ selection: { kind: 'local' }, context: { projectId: null, taskId: null, sessionId: null, draft: '', cursor: null }, connection: null, challenge: null, forwards: [] });
 
@@ -12,14 +12,29 @@ export class MachineStartupFixture {
   private scope: BackendClientState = { revision: 0, scope: null };
   private readonly listeners = new Set<(state: MachineState) => void>();
   private readonly clients = new Set<(state: BackendClientState) => void>();
+  private readonly contexts = new Map<string, EnvironmentContext>();
   readonly windows: (EnvironmentSelection | null)[] = [];
   private nextHost = 0;
   private nextChallenge = 0;
   private readonly removed = new Map<string, { host: RemoteHost; index: number }>();
 
   machineState = async () => this.state;
+  environmentStatus = async () => this.state.environment;
+  saveEnvironmentContext = async (context: EnvironmentContext, expected: EnvironmentSelection) => {
+    const key = (selection: EnvironmentSelection) => selection.kind === 'local' ? 'local' : selection.hostId;
+    if (key(expected) !== key(this.state.environment.selection)) throw new Error('Stale environment');
+    this.contexts.set(key(expected), structuredClone(context));
+    this.state = { ...this.state, environment: { ...this.state.environment, context: structuredClone(context) } };
+    return this.state.environment;
+  };
   backendClientState = async () => this.scope;
   backendInfo = async () => ({ ok: true as const, value: { backendSha: 'a'.repeat(40) } });
+  workspaceRevision = async (): Promise<BackendResult<{ readonly revision: number; readonly version: 1 }>> => ({ ok: true, value: { revision: 0, version: 1 } });
+  workspaceProjects = async (): Promise<BackendResult<WorkspacePage<WorkspaceProject>>> => ({ ok: true, value: { items: [], nextCursor: null } });
+  workspaceTasks = async (scope: string, query: WorkspaceTaskQuery): Promise<BackendResult<WorkspacePage<WorkspaceTask>>> => { void scope; void query; return { ok: true, value: { items: [], nextCursor: null } }; };
+  workspaceSessions = async (scope: string, query: WorkspaceSessionQuery): Promise<BackendResult<WorkspacePage<WorkspaceSession>>> => { void scope; void query; return { ok: true, value: { items: [], nextCursor: null } }; };
+  workspaceFolders = async (): Promise<BackendResult<readonly WorkspaceFolder[]>> => ({ ok: true, value: [] });
+  workspaceProjectNameAvailability = async (scope: string, name: string): Promise<BackendResult<{ readonly available: boolean }>> => { void scope; void name; return { ok: true, value: { available: true } }; };
   onMachineStateChanged = (listener: (state: MachineState) => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   onBackendClientChanged = (listener: (state: BackendClientState) => void) => { this.clients.add(listener); return () => { this.clients.delete(listener); }; };
   sshHostSuggestions = async (query: string) => ['dev-box', 'gpu-runner'].filter(host => host.includes(query)).map(host => ({ host }));
@@ -62,7 +77,7 @@ export class MachineStartupFixture {
   };
   dismissMachineRemoval = async (token: string) => { this.removed.delete(token); };
   selectEnvironment = async (selection: EnvironmentSelection) => {
-    this.publish({ environment: { ...emptyEnvironment(), selection, connection: selection.kind === 'remote' ? {
+    this.publish({ environment: { ...emptyEnvironment(), selection, context: this.contexts.get(selection.kind === 'local' ? 'local' : selection.hostId) ?? emptyEnvironment().context, connection: selection.kind === 'remote' ? {
       hostId: selection.hostId, phase: 'connecting', stage: 'authentication', authenticated: false, transport: 'opening', application: 'unknown', attempt: 1, retryAt: null, failure: null, progress: null, generation: 0, instanceId: null,
     } : null } }); return this.state.environment;
   };

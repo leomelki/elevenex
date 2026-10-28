@@ -17,6 +17,10 @@ header {
   background: color-mix(in oklab, var(--surface) 88%, transparent);
   backdrop-filter: blur(var(--space-2));
 }
+header:hover,
+header:focus-within {
+  background: color-mix(in oklab, var(--surface-sunken) 65%, var(--surface));
+}
 .toggle {
   display: flex;
   align-items: center;
@@ -32,9 +36,6 @@ header {
   font: inherit;
   text-align: left;
   cursor: pointer;
-}
-.toggle:hover {
-  background: var(--surface-sunken);
 }
 button:focus-visible {
   outline: 2px solid transparent;
@@ -59,23 +60,15 @@ button:focus-visible {
   line-height: 18px;
   letter-spacing: -0.005em;
 }
-.add {
-  opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease-out);
-}
-header:hover .add,
-header:focus-within .add {
-  opacity: 1;
-}
 .tree {
   margin-left: 13px;
   padding: 0 0 var(--space-1) var(--space-2);
   box-shadow: inset 1px 0 0 var(--line);
 }
-.finished {
+.merged-summary {
   padding-bottom: 2px;
 }
-.finished-toggle {
+.outline-action {
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -91,7 +84,7 @@ header:focus-within .add {
   text-align: left;
   cursor: pointer;
 }
-.finished-toggle:hover {
+.outline-action:hover {
   background: var(--surface-sunken);
   color: var(--ink);
 }
@@ -104,14 +97,8 @@ header:focus-within .add {
     background: var(--accent-soft);
   }
 }
-@media (hover: none) {
-  .add {
-    opacity: 1;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
-  .chevron,
-  .add {
+  .chevron {
     transition: none;
   }
   .fresh > header {

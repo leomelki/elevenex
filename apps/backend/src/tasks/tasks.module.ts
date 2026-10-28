@@ -27,6 +27,6 @@ import { WorktreeContextModule } from '../worktree-context/worktree-context.modu
   ],
   controllers: [TasksController],
   providers: [TaskGitService, TaskWorktreeAllocator, TasksService],
-  exports: [TasksService],
+  exports: [TasksService, TaskGitService],
 })
 export class TasksModule {}

@@ -33,9 +33,13 @@ export class CaptureInput {
 
   async press(key, modifiers = 0) {
     // For complex keyboard/touch/drag input use cdp directly with explicit fields.
+    const keyCode = { Tab: 9, Enter: 13, Escape: 27, Home: 36, End: 35, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 }[key];
     for (const type of ['keyDown', 'keyUp']) await this.page.cdp('Input.dispatchKeyEvent', { type, key, modifiers,
       ...(key.length === 1 ? { text: type === 'keyDown' ? key : '' } : {}),
-      ...({ Tab: { windowsVirtualKeyCode: 9 }, Enter: { windowsVirtualKeyCode: 13 }, Escape: { windowsVirtualKeyCode: 27 } }[key] ?? {}),
+      ...(keyCode === undefined ? {} : { code: key, windowsVirtualKeyCode: keyCode }),
+      // Native buttons synthesize their Enter click from the character event.
+      // A keyCode alone reaches JS handlers but skips that browser default action.
+      ...(key === 'Enter' && type === 'keyDown' ? { text: '\r', unmodifiedText: '\r' } : {}),
     });
     await this.page.settle();
   }

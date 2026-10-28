@@ -1,0 +1,16 @@
+@if (store.selectedTask(); as task) {
+  <ex-task-header [title]="task.name" [repo]="repo()" [project]="project()" [branch]="git.summary()?.branch ?? task.branchName" [stage]="store.selectedTaskStage()" [meta]="git.loading() ? 'Checking changes…' : task.state === 'ready' ? undefined : task.state" [panelOpen]="panelOpen()" [branchCopied]="copied()" [closed]="store.selectedTaskStage() === 'closed'" [disabled]="store.busy() || !!git.busy() || closeLoading()" [canRenameBranch]="!!git.summary()" [canLink]="false" [git]="git.state()" [gitAllowedActions]="['commit','commit-push','push','sync']" [gitQuietLabel]="git.summary()?.behind ? git.summary()?.behind + ' behind upstream' : 'Up to date'" (panelToggle)="panelToggle.emit()" (stageChange)="stage($event)" (closeRequested)="close()" (branchCopy)="copy($event)" (branchRename)="openGitDialog()" (gitAction)="gitAction($event)" (changesRequested)="panelToggle.emit()"><ex-commit-panel gitPanel [open]="commitOpen()" [fileProvider]="commitProvider()" [push]="pushAfter()" (pushChange)="pushAfter.set($event)" (closeRequested)="commitOpen.set(false)" (commitRequested)="commit($event)" /></ex-task-header>
+  @if (git.error(); as error) { <div class="git-notice" role="alert"><span>{{ error }}</span><button exButton size="sm" [disabled]="git.loading() || !!git.busy()" (click)="git.refresh()">Refresh status</button></div> }
+  @if (git.summary()?.behind) { <div class="git-notice"><span>{{ git.summary()?.behind }} commits behind the upstream branch</span><button exButton size="sm" [disabled]="!!git.busy()" (click)="gitAction('sync')">Sync</button></div> }
+}
+<ex-modal-layer [open]="gitDialogOpen()" (closeRequested)="!git.busy() && gitDialogOpen.set(false)">
+  <form class="git-dialog" role="dialog" aria-modal="true" aria-label="Rename branch" [attr.inert]="!gitDialogOpen() ? '' : null" (submit)="$event.preventDefault(); submitGit()">
+    <h2>Rename branch</h2>
+    <ex-set-field label="Branch name" [value]="gitDraft()" [wide]="true" [disabled]="!!git.busy()" (valueChanged)="gitDraft.set($event)" />
+    @if (git.error(); as error) { <p class="error" role="alert">{{ error }}</p> }
+    <footer><button exButton type="button" variant="ghost" [disabled]="!!git.busy()" (click)="gitDialogOpen.set(false)">Cancel</button><button exButton type="submit" variant="primary" [disabled]="!gitDraft().trim() || !!git.busy()">{{ git.busy() ? 'Saving…' : 'Rename branch' }}</button></footer>
+  </form>
+</ex-modal-layer>
+@if (confirmingTask(); as task) {
+  <ex-close-task [open]="closing()" [title]="task.title" [sessions]="task.sessions" [running]="task.running" [unpushed]="task.unpushed" [uncommitted]="task.uncommitted ?? 0" [terminals]="task.terminals" [actions]="task.actions" [busy]="closeBusy()" [error]="closeError()" (confirmed)="confirmClose($event)" (cancelled)="closing.set(false)" />
+}

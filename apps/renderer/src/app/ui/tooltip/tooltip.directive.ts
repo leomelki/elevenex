@@ -15,6 +15,16 @@ import { TooltipComponent } from "./tooltip.component";
 @Injectable({ providedIn: "root" })
 export class TooltipTiming {
   lastClosed = 0;
+  private active?: () => void;
+
+  activate(close: () => void): void {
+    this.active?.();
+    this.active = close;
+  }
+
+  release(close: () => void): void {
+    if (this.active === close) this.active = undefined;
+  }
 }
 
 @Directive({
@@ -39,6 +49,7 @@ export class TooltipDirective {
   private popup?: OverlayRef;
   private timer?: ReturnType<typeof setTimeout>;
   private described = "";
+  private readonly closeActive = () => this.hide();
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.hide());
@@ -53,6 +64,8 @@ export class TooltipDirective {
   }
 
   private show(): void {
+    // Hovering another control replaces a tooltip retained by keyboard focus.
+    this.timing.activate(this.closeActive);
     const top = this.tooltipSide() === "top";
     const position = this.overlay
       .position()
@@ -86,6 +99,7 @@ export class TooltipDirective {
 
   protected hide(): void {
     clearTimeout(this.timer);
+    this.timing.release(this.closeActive);
     if (this.popup) {
       this.popup.dispose();
       this.popup = undefined;

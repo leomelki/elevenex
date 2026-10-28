@@ -192,6 +192,10 @@
     }
   </section>
   <section>
+    <h3>A busy task</h3>
+    <div class="busy-task"><ex-task-group [task]="busyTask()" [selected]="busySelected()" [allowArchive]="true" [allowAdd]="false" (selectSession)="busySelected.set($event)" (archiveRequested)="archiveBusy($event)" /></div>
+  </section>
+  <section>
     <h3>Git next steps</h3>
     <div class="git-states">
       <ex-git-bar

@@ -77,4 +77,21 @@ describe("Status glyph changes", () => {
     ).toBe("Done");
     expect(animate).not.toHaveBeenCalled();
   });
+
+  it('settles an active status change when reduced motion is enabled and releases its listener', async () => {
+    let changed = () => {};
+    const removed = vi.fn();
+    const media = { matches: false, addEventListener: (_event: string, listener: () => void) => { changed = listener; }, removeEventListener: removed };
+    vi.stubGlobal('matchMedia', () => media);
+    const fixture = TestBed.createComponent(StatusGlyphComponent);
+    fixture.detectChanges(); await fixture.whenStable();
+    fixture.componentRef.setInput('status', 'attention');
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(animate).toHaveBeenCalledOnce();
+    media.matches = true; changed();
+    expect(animations[0]?.cancel).toHaveBeenCalledOnce();
+    expect(fixture.nativeElement.querySelector('svg').getAttribute('aria-label')).toBe('Needs you');
+    fixture.destroy();
+    expect(removed).toHaveBeenCalledWith('change', changed);
+  });
 });

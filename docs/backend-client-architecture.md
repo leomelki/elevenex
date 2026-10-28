@@ -36,8 +36,10 @@ Existing Nest backend                    git, files, agents, durable task state
 | `apps/desktop/src/backend-client/transport.ts` | First HTTP adapter, limits and response validation |
 | `apps/desktop/src/backend-client/ipc.ts` | Trusted sender, runtime argument validation and handler cleanup |
 | `apps/renderer/src/app/backend/backend-client.service.ts` | Per-window Angular client state and bridge injection |
-| Future renderer feature directories | Domain stores/controllers, selected IDs, pagination and view state |
-| Future main domain directories | Named operations grouped by domain, with explicit transport dependencies |
+| `apps/renderer/src/app/workspace` | Project/task selection, bounded navigation windows, setup and settings |
+| `apps/renderer/src/app/workspace/workspace-resume.ts` | Saved window/backend context and bounded save coordination |
+| `apps/renderer/src/app/workspace/workspace-restoration.ts` | Read-only saved-resource reconciliation, keyset ordering and immutable restoration windows |
+| `apps/desktop/src/backend-client/workspace.ts` | Named workspace adapters, runtime validation and DTO mapping |
 
 Keep the preload and IPC handlers thin. As support grows, separate projects,
 tasks, sessions, repository browsing and agent streams by responsibility. Share
@@ -84,6 +86,10 @@ Expected failures cross IPC as `BackendResult<T>` rather than relying on
 Electron to serialize custom errors. Codes distinguish unavailable/stale scope,
 timeout, transport, HTTP status and incompatible response. Messages are fixed
 adapter text; raw response bodies, credentials and diagnostic URLs stay private.
+Domain adapters may map allowlisted conflict codes from a bounded 4 KiB JSON
+error body to fixed text. Project deletion maps cleanup failures and concurrent
+task creation to explicit retry instructions. Unknown codes and malformed
+or oversized error bodies retain the generic HTTP error.
 Malformed IPC inputs and untrusted senders are rejected before the domain client.
 
 The Angular service subscribes before requesting the initial snapshot and uses
@@ -105,6 +111,48 @@ The service is lazy: future shell/feature composition must inject it to start
 its subscription. It owns client connection state only. Download/setup progress,
 SSH challenges and recovery controls remain on the existing lifecycle bridge;
 the client does not introduce a second connection/retry coordinator.
+
+## Connected workspace
+
+The workspace probes `workspaceRevision(scope)` before its first resource load.
+The reply advertises protocol version 1 and a monotonic navigation revision.
+An unsupported/older engine produces an explicit update message. Projects,
+tasks and sessions use bounded keyset pages; repositories, branch search and
+one-directory folder suggestions have separate bounds. Project appearance and
+task stages live in an additive desktop metadata table, independent of the
+legacy task preparation lifecycle. Existing endpoints remain compatible.
+
+The workspace owns navigation state and preparation polling. Conversation and
+git state have separate owners for the selected resource. Background updates
+use bounded reads and revision reconciliation, with visibility, stale-selection
+and cleanup guards. Git commits support explicit messages or generating one from a frozen selection; push never forces, and sync
+only fast-forwards. Close reads authoritative session/process counts and calls
+the existing task lifecycle. Interrupted mutations return `outcome-unknown` and
+are reconciled before another attempt; prompts are never automatically replayed.
+
+Sidebar session activity uses the backend's existing in-memory hook snapshots
+and a bounded scalar provider-event cache. It does not hydrate runtimes, request
+model catalogs or read history for unselected sessions. Only semantic activity
+changes invalidate navigation; streamed text and tool progress do not reload
+the sidebar. Session pages supply authoritative activity for the visible window.
+
+The side views currently contain shells only. The implementation does not
+introduce direct renderer networking, generic IPC, a second backend or a
+replacement persistence framework. Selected sessions retain their task header
+with an empty main region. See the [workspace guide](../apps/renderer/src/app/workspace/README.md)
+for the supported actions, limits and ownership.
+
+Failed-task DTOs may include optional bounded `setupIssue` display data.
+`workspaceRetryTask(scope, taskId, recovery?)` retains existing two-argument
+calls and supports named `use-existing`, `snapshot` and `exceed-worktree-limit` choices. Main
+validates arity, scope and reply/task identity. Backend recovery reads the saved
+failed task and delegates to the existing consent/checkout rules; raw errors,
+configuration, caller-chosen paths and arbitrary setup patches stay outside this
+operation. Uncertain setup writes require durable reconciliation.
+Quota failures expose a safe count/limit explanation and optional
+`canExceedWorktreeLimit` flag while retaining the existing `other` issue code for
+older desktop clients. Explicit quota recovery delegates to `confirmOverLimit`
+on the saved task; it does not change the configured repository limit.
 
 ## Adding a frontend feature
 
@@ -182,6 +230,16 @@ There is no event streaming or replay implementation in this initial slice.
 
 ## Mutations and backend evolution
 
+Confirmed desktop project deletion finishes open tasks through the existing task
+lifecycle, with stop approval, in bounded pages and sequential cleanup. It also
+strictly stops legacy/default-workspace and already archived sessions before
+deleting project metadata. Dirty and external checkouts remain on disk. Cleanup
+failures keep project history for retry; concurrent task creation is checked
+again in the final delete transaction. Duplicate in-flight deletion requests for
+one project share the same backend operation. The desktop gives cleanup a
+three-minute deadline and retains unknown-outcome reconciliation on interruption.
+Existing legacy and MCP project-delete contracts keep their defaults and guards.
+
 Reads may gain bounded retry only for classified transient errors while their
 scope is still current. Mutations need an explicit domain policy. If transport
 fails after dispatch, the outcome can be **unknown**: query durable state before
@@ -225,9 +283,40 @@ Angular subscription cleanup/races. Negative contract assertions also run throug
 real sandboxed preload/protocol verification; it uses disposable fixture assets
 and a backend, and does not certify a packaged app or a published remote runtime.
 
-The product renderer entry point and design files are still pending. No feature
-UI, full backend API catalog, domain cache, event client, offline support or
-packaged-app verification is claimed by this foundation. See the
+The product renderer uses the supplied design system and the connected workspace
+slice above. There is no full backend API catalog, event replay client, offline
+mutation queue or packaged-app verification in this slice. See the
 [desktop README](../apps/desktop/README.md),
 [remote ownership/recovery guide](../apps/desktop/REMOTE_DEVELOPMENT.md) and
 [capture guide](../scripts/desktop-capture/README.md) when extending it.
+
+The commit-panel slice adds an optional `commitPanel: true` capability to the
+workspace revision probe, a named `workspaceCommitPreview` bridge operation and
+optional selection/revision/push fields on the existing commit action. Existing
+explicit-message calls retain their defaults. Preview uses a read-only POST for
+bounded exception lists, coalesces identical requests, and returns at most 100
+file rows, 20 running-session names and scalar totals. Filtering searches every
+changed file on the backend. A task-owned 4 MiB metadata cache reuses unchanged
+snapshots across filters/pages; its lifetime ends with the backend service.
+
+Commit exceptions are bounded to 1,000 paths / 64 KiB per list, and match only
+server-observed changed paths. Likely secret paths require explicit inclusion.
+The commit revision includes HEAD, changed paths and index bytes. Existing files may continue changing before submission; their contents are frozen when Commit is pressed. Preview caches also key on the worktree fingerprint. The backend
+captures a private index before generating a message, checks concurrent branch
+and index changes before publication, and holds the real index lock only through
+commit/publication. Excluded staged entries remain staged; later working edits
+remain uncommitted. Temporary files and owned locks are released on success and
+failure. Failures after a saved commit retain an unknown outcome for reconciliation.
+The existing git status operation may carry an optional commit phase; the feature
+polls it only during its pending commit, with selection/epoch/cleanup guards.
+
+
+The optional `sessionArchiveHistory: true` revision capability adds independent
+archived-history browsing through `workspaceSessions` with `state: 'archived'`.
+`state: 'normal'` explicitly requests nonarchived sessions; omitting state retains
+existing active-task and closed-task semantics. Ordering, bounds and keyset
+cursors apply separately to each lifecycle window. Main validates the state and
+reply lifecycle/task identity. The renderer loads archived windows lazily, keeps
+them separate from normal-session activity and pagination, and reuses the named
+restore operation without requiring an Undo notification. No additional channel,
+generic transport, migration or unbounded history response is introduced.

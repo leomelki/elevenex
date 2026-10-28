@@ -1,5 +1,88 @@
 # Component design review
 
+## Browsable archived sessions, 2026-10-27
+
+Ready tasks now have a quiet collapsible Archived section. Completed and stopped
+sessions remain normal; explicit archiving moves a conversation into persisted
+history. Archived rows use the archive glyph and offer selection and a restore
+action on hover/focus. Restoring selects the normal row and transfers keyboard
+focus after its Fold entry becomes interactive. Empty, loading and retry states
+live inside the disclosure. History has an independent bounded page with Earlier
+and Newest controls, so it does not displace normal sessions or affect activity
+counts. This replaces the reference design's completion-driven finished fold
+with an explicit lifecycle boundary.
+
+
+## Normal and archived sessions, 2026-10-27
+
+Per the requested lifecycle model, completed and stopped sessions remain normal
+rows in their supplied chronological position. TaskGroup and sub-task rows no
+longer move them into a finished fold. The earlier-session cap applies equally
+to all normal sessions; activity glyphs and explicit status filters still work.
+Only merged branches retain a separate merged disclosure. This supersedes the
+supplied TaskGroup/TaskList specification's finished-session grouping.
+
+Explicit archiving removes a session after confirmation, with the existing Undo.
+Archiving the selected session chooses the next remaining conversation regardless
+of activity, wrapping to the first. Undo restores a stopped conversation as a
+normal row. The device preference now reads “Sessions per task”.
+
+
+## Retained working-session disclosure, 2026-10-27
+
+Earlier-session reveal now snapshots the identities still hidden, rather than a
+count relative to the current tail. Replacing task DTOs, adding/removing sessions,
+and status/selection updates preserve revealed survivors. Fully revealed tasks
+keep subsequent arrivals visible until Show fewer is chosen.
+
+TaskGroup exposes the optional `sessionDisclosure` model; TaskList exposes a
+bounded task-ID `sessionDisclosures` map. The connected workspace owns this map
+for its backend scope, so project navigation and remounted task lists restore the
+same disclosure. The map retains at most 200 entries and clears on scope reset.
+Filters, attention/selection/fresh exceptions, cap settings and Fold motion remain
+part of the existing rendering path.
+
+
+## Session row archive and working cap, 2026-10-27
+
+The updated ZIP specifications/types are imported verbatim; tokens and fonts are
+unchanged. TaskGroup/TaskList retain their keyed outline and expose opt-in typed
+archive intents. Canonical, sub-task and attention-shortcut rows share the same
+native archive control. Running confirmation stays in place, truncates the title
+with the button's launch-curve expansion, and cancels on Escape, outside input or
+blur. The scoped backend operation validates ownership/readiness and live activity,
+performs strict process cleanup and preserves conversation/worktree contents.
+Undo restores the conversation without restarting a stopped turn; task reopen
+restores desktop row archives through the existing task-lifecycle marker.
+
+The latest ZIP replaces the cap's ghost pill and row unroll with a quiet Older
+row and measured scroll batches. The first eligible boundary title uses muted
+ink; selection and attention stay in their revealed batch. Show fewer preserves
+the open session, and archive backfill keeps chronological order across batches.
+Internal session placement and batch animation now have separate owners, with
+retained closing batches, reversible pixel heights and instant reduced motion.
+The connected owner retains bounded 20-session windows and adds optional newest-
+first keyset ordering without changing legacy callers' defaults. Exceptions and
+counts apply within that supplied window; repository-wide session enumeration is
+not introduced. The device-local user cap lives in Project settings → Tasks and
+synchronizes project views/windows independently of backend project metadata.
+
+
+## Connected sidebar, 2026-10-26
+
+Single-repository projects omit RepoTag in the sidebar and task header; multiple
+repositories retain it, including in All projects. Task replies carry optional
+project repository cardinality, avoiding per-project repository reads. The
+connected outline scrolls independently, with project controls/status above and
+pagination/Refresh below. Moving Refresh out of the header gives project names
+more room. Closed history hides filters that only describe active sessions.
+
+Project menus and attention/failure/selected sessions now provide hover feedback.
+Task, session and project names have bounded hover/focus hints, with one active
+tooltip per renderer and cleanup on dismissal/destruction. Disabled outlines
+also suppress sub-task creation. Project/history navigation clears obsolete rows
+before loading, so a failure cannot mislabel the previous view's tasks.
+
 ## Machine editing and removal, 2026-10-26
 
 The updated MachineMenu/EditMachine specifications are implemented in Angular
@@ -238,3 +321,29 @@ See `VERIFICATION.md` for commands and the final capture reports. PNG inspection
 checks visual states; it is not a claim of exhaustive WCAG conformance, pixel
 identity, or production-scale profiling.
 Packaged application and other operating systems were not tested in this review.
+
+## October 27 task-screen update
+
+The Angular task family now includes the new CommitPanel, GitBar busyLabel and
+`gitPanel` projection, the quiet persistent Close task action and `close-task`
+icon, and persistent task header + actions. The connected
+workspace owns ⌥⌘N, authoritative close checks and Undo, and the complete commit
+slice. Component APIs and owner boundaries are documented in the task/workspace
+guides. Reference React remains outside the runtime; design tokens are unchanged.
+
+The production file list uses 100-row windows with backend filtering. After the
+first page, Next files replaces the window inside the same six-row scroll region.
+This is an explicit bounded extension to the reference's supplied-array example.
+Likely secrets are excluded by filename heuristics, not by scanning file contents.
+Initial preview data is loaded before the panel's morph is measured, preventing
+late summary/notice rows from changing its target rectangle during entry.
+See the October 27 verification entry for exact test and native capture scope.
+
+### Persistent task add buttons
+
+The product now keeps the header + visible on every task and sub-task that
+allows new sessions, including unselected and collapsed tasks. This explicitly
+overrides the supplied TaskGroup spec's hover-only rule for other tasks.
+Populated tasks omit the trailing **+ New session** row so selection does not
+change outline height. The header + retains its hover/focus tooltip; a labeled
+creation action appears only for an empty task, independent of selection.

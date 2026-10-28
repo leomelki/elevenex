@@ -1,3 +1,4 @@
+import { registerWorkspaceIpc } from './workspace';
 import { handleForWindow, type TrustedSender } from '../ipc';
 import type { BackendClient } from './client';
 
@@ -12,5 +13,6 @@ export function registerBackendClientIpc(client: BackendClient, trusted: Trusted
     }
     return client.info(windowId, args[0]);
   });
-  return () => { stopState(); stopInfo(); };
+  const stopWorkspace = registerWorkspaceIpc(client, trusted);
+  return () => { stopState(); stopInfo(); stopWorkspace(); };
 }

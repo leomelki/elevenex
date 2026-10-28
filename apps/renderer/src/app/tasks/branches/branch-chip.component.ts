@@ -17,6 +17,7 @@ export class BranchChipComponent {
   readonly base = input<string>();
   readonly compact = input(false);
   readonly copied = input(false);
+  readonly canRename = input(true);
   readonly renameRequested = output<string>();
   readonly copyRequested = output<string>();
 }

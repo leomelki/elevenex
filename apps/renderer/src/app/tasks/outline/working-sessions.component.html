@@ -1,0 +1,24 @@
+<ex-fold [open]="hidden() > 0 || window().batches.length > 0">
+  <div class="earlier">
+    <button type="button" class="outline-action" [class.earlier-more]="hidden() > 0" [class.earlier-fewer]="!hidden()"
+      [attr.aria-expanded]="!hidden()" [attr.aria-label]="hidden() ? 'Show ' + next() + ' older sessions (' + hidden() + ' hidden)' : 'Show fewer sessions'"
+      (click)="hidden() ? more() : fewer($event)">
+      <ex-icon class="chevron" name="chevron-down" [size]="12" [class.closed]="hidden() > 0" />
+      <ex-ease-swap [value]="hidden() ? 'older' : 'fewer'" [content]="hidden()" [contentTemplate]="capLabel" />
+      <ng-template #capLabel let-count>
+        @if (count) { <span class="older-label"><ex-ticker [value]="count" /> older</span> } @else { Show fewer }
+      </ng-template>
+    </button>
+    @if (hidden() && window().expanded) { <button class="earlier-fewer side" type="button" (click)="fewer($event)">Show fewer</button> }
+  </div>
+</ex-fold>
+@for (batch of orderedBatches(); track batch.key) {
+  <ex-session-batch [sessions]="batch.sessions" [selected]="selected()" [muted]="window().muted" [open]="batch.open" [initial]="batch.initial" [closingDistance]="closingDistance()"
+    [allowArchive]="allowArchive()" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (closed)="settled(batch.key)" />
+}
+@for (entry of presence.rows(); track entry.key) {
+  <ex-fold [open]="entry.present && !entry.entering" (transitionend)="presence.settled(entry.key, $event)">
+    <ex-session-row [session]="entry.value" [selected]="selected() === entry.key" [muted]="window().muted === entry.key"
+      [allowArchive]="allowArchive()" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" />
+  </ex-fold>
+}

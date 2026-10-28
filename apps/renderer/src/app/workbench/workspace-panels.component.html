@@ -1,0 +1,16 @@
+<header class="panel-head">
+  <ex-panel-tabs [tabs]="tabs" [active]="panel()" (selectTab)="panel.set($event)" />
+  <div class="panel-actions">
+    <ex-icon-button [icon]="wide() ? 'shrink' : 'expand'" [label]="wide() ? 'Return to chat' : 'Expand side panel'" (pressed)="wideChange.emit(!wide())" />
+    <ex-icon-button icon="x" label="Close side panel" (pressed)="closed.emit()" />
+  </div>
+</header>
+@for (tab of tabs; track tab.id) {
+  <section class="panel-body" role="tabpanel" [id]="tab.panelId" [attr.aria-label]="tab.label" [hidden]="panel() !== tab.id" [attr.inert]="panel() !== tab.id ? '' : null" tabindex="0">
+    @if (panel() === tab.id) {
+      <ex-icon [name]="current().icon" [size]="24" />
+      <h2>{{ current().label }}</h2>
+      <p>This view is coming next.</p>
+    }
+  </section>
+}

@@ -23,7 +23,7 @@ describe('Production machine application', () => {
   for (const fromMenu of [false, true]) it(`cancels a settling launch when disconnected ${fromMenu ? 'through its menu' : 'by another window'}`, async () => {
     const { platform, launcher, connection } = setup(), actions = TestBed.inject(MachineActionsService); await flush();
     const host = await connection.addHost({ name: 'Dev', host: 'dev' });
-    await launcher.choose(host.id); platform.ready(); await flush(); expect(launcher.pendingId()).toBe(host.id);
+    await launcher.choose(host.id); launcher.workspacePrepared(host.id, launcher.workspaceGeneration()); platform.ready(); await flush(); expect(launcher.pendingId()).toBe(host.id);
     if (fromMenu) await actions.act({ action: 'disconnect', event: { machine: actions.machines().find(machine => machine.id === host.id)!, card: document.createElement('button'), x: 0, y: 0, fromButton: true } });
     else await platform.disconnectRemote();
     await flush(); await vi.advanceTimersByTimeAsync(1000); await flush();
@@ -85,6 +85,7 @@ describe('Production machine application', () => {
   it('waits for preparation to settle, persists only after opening and returns to the same Home', async () => {
     const { platform, launcher } = setup(); await flush();
     await launcher.choose('local'); await flush();
+    launcher.workspacePrepared('local', launcher.workspaceGeneration());
     expect(launcher.firstRun()).toBe(true); expect(launcher.open()).toBe(false);
     platform.ready(); await flush();
     await launcher.choose('local'); // Repeated clicks coalesce during the settling beat.
@@ -102,7 +103,7 @@ describe('Production machine application', () => {
     await vi.advanceTimersByTimeAsync(1000); expect(launcher.open()).toBe(false);
     platform.setLocal({ phase: 'starting', version: null }); await launcher.choose('local'); await flush();
     platform.fail(); await flush(); expect(launcher.pendingId()).toBeNull();
-    platform.setLocal({ phase: 'starting', version: null }); await launcher.choose('local'); platform.ready(); await flush();
+    platform.setLocal({ phase: 'starting', version: null }); await launcher.choose('local'); launcher.workspacePrepared('local', launcher.workspaceGeneration()); platform.ready(); await flush();
     TestBed.resetTestingModule(); await vi.advanceTimersByTimeAsync(1000);
     expect(launcher.open()).toBe(false); expect((await platform.machineState()).hasOpenedMachine).toBe(false);
   });
@@ -110,11 +111,11 @@ describe('Production machine application', () => {
   it('lets the last selection win and opens a separate window without changing this one', async () => {
     const { platform, launcher, connection } = setup(); await flush();
     const host = await connection.addHost({ name: 'Dev', host: 'dev' });
-    await launcher.choose('local'); platform.ready(); await flush();
+    await launcher.choose('local'); launcher.workspacePrepared('local', launcher.workspaceGeneration()); platform.ready(); await flush();
     await launcher.choose(host.id); await flush();
     await vi.advanceTimersByTimeAsync(500); expect(launcher.open()).toBe(false);
     platform.ready(); await flush();
-    await launcher.choose('local'); await flush(); await vi.advanceTimersByTimeAsync(500); await flush();
+    await launcher.choose('local'); launcher.workspacePrepared('local', launcher.workspaceGeneration()); await flush(); await vi.advanceTimersByTimeAsync(500); await flush();
     expect(launcher.currentId()).toBe('local'); expect(launcher.open()).toBe(true);
     const remote = launcher.machines().find(machine => machine.id === host.id);
     expect(remote).toBeDefined();
@@ -177,8 +178,30 @@ describe('Production machine application', () => {
     const { platform, launcher } = setup(); await flush();
     await launcher.choose('local'); platform.ready(); await flush();
     launcher.home(); await launcher.choose('local'); await flush();
+    launcher.workspacePrepared('local', launcher.workspaceGeneration()); await flush();
     await vi.advanceTimersByTimeAsync(500); await flush();
     expect(launcher.open()).toBe(true); expect(launcher.currentId()).toBe('local');
+  });
+
+  it('waits for a painted workspace even on a ready machine and rejects a superseded preparation', async () => {
+    const { platform, launcher, connection } = setup(); await flush();
+    platform.ready(); await flush();
+    await launcher.choose('local'); await flush();
+    expect(launcher.workspace()?.id).toBe('local');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(launcher.open()).toBe(false);
+    const oldGeneration = launcher.workspaceGeneration();
+    const host = await connection.addHost({ name: 'Dev', host: 'dev' });
+    await launcher.choose(host.id); platform.ready(); await flush();
+    launcher.workspacePrepared('local', launcher.workspaceGeneration()); await flush();
+    launcher.workspacePrepared(host.id, oldGeneration); await flush();
+    await vi.advanceTimersByTimeAsync(1000); expect(launcher.open()).toBe(false);
+    launcher.workspacePrepared(host.id, launcher.workspaceGeneration()); await flush();
+    launcher.home();
+    await vi.advanceTimersByTimeAsync(1000); expect(launcher.open()).toBe(false);
+    await launcher.choose(host.id); launcher.workspacePrepared(host.id, launcher.workspaceGeneration()); await flush();
+    await vi.advanceTimersByTimeAsync(500); await flush();
+    expect(launcher.open()).toBe(true); expect(launcher.currentId()).toBe(host.id);
   });
 
   it('clears a credential after submitting, rejects expired prompts and renders no raw HTML', async () => {

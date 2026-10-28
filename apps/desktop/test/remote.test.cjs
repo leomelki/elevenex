@@ -121,6 +121,30 @@ test('windows coalesce startup and disconnect/pause only their own leases; conte
   assert.equal(starts(), before); assert.equal(manager.snapshot(1).connection.phase, 'disconnected');
 });
 
+test('workspace selection and panels survive relaunch per window and backend; old contexts remain valid', async t => {
+  const { manager, remote, options } = await setup(t);
+  const local = { kind: 'local' };
+  const context = { projectId: 1, taskId: 2, sessionId: 3, draft: '', cursor: null };
+  const workspace = { panel: 'browser', panelOpen: true, wideReview: false, closed: false, focused: true, filter: null, projectCursor: '50', taskCursor: '90' };
+  await manager.saveContext(1, { ...context, workspace }, local);
+  await manager.saveContext(2, context, local);
+  await manager.select(1, remote);
+  await manager.saveContext(1, { ...context, sessionId: 9, workspace: { ...workspace, panel: 'changes', wideReview: true } }, remote);
+  await manager.select(1, local);
+  assert.equal(manager.snapshot(1).context.workspace.panel, 'browser');
+  assert.equal(manager.snapshot(2).context.workspace, undefined);
+  const reopened = new RemoteManager(options); await reopened.load(); reopened.attach(100); reopened.attach(200);
+  t.after(() => reopened.dispose());
+  assert.deepEqual(reopened.snapshot(100).context, { ...context, workspace });
+  assert.deepEqual(reopened.snapshot(200).context, context);
+  await reopened.select(100, remote);
+  assert.equal(reopened.snapshot(100).context.sessionId, 9);
+  assert.equal(reopened.snapshot(100).context.workspace.wideReview, true);
+  for (const invalid of [{ ...workspace, panel: 'unknown' }, { ...workspace, panelOpen: 1 }, { ...workspace, taskCursor: 'x'.repeat(1025) }, { ...workspace, filter: 'unknown' }, { ...workspace, secret: 'unexpected' }]) {
+    assert.throws(() => validate.context({ ...context, workspace: invalid }));
+  }
+});
+
 test('only native-picker grants or previously saved grants authorize custom SSH config and identity files', async t => {
   const { manager } = await setup(t);
   await assert.rejects(manager.saveHost({ ...host, configFile: '/untrusted/repository/ssh-config' }, null), /file picker/);

@@ -21,8 +21,8 @@ async function probeSidebar(options) {
     seventh: '[data-task-id="task-7"] > header',
     neighbor: '[data-task-id="task-5"] > header',
     last: '[data-task-id="task-10"] > header',
-    fourthSession: '[data-flip="session:task-4-session-1"] button',
-    seventhSession: '[data-flip="session:task-7-session-1"] button',
+    fourthSession: '[data-session-id="task-4-session-1"] .select',
+    seventhSession: '[data-session-id="task-7-session-1"] .select',
     footer: '[data-testid="sidebar-end"]',
   };
   const seenAnimations = new Set();

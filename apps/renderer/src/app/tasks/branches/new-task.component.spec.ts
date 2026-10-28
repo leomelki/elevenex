@@ -76,6 +76,25 @@ describe("NewTask keyboard flow", () => {
       },
     ]);
   });
+
+  it('does not repeat a branch request when repository/default metadata is rebound with the same identity', () => {
+    const requested: { readonly repoId: string; readonly query: string; readonly kind: 'branch' | 'base' }[] = [];
+    fixture.componentRef.setInput('repos', [{ id: 'repo', name: 'Repository', base: 'main' }]);
+    fixture.componentInstance.branchQueryRequested.subscribe(request => requested.push(request));
+    fixture.detectChanges(); name('New feature');
+    key(field('Task name'), 'Enter');
+    expect(requested).toEqual([{ repoId: 'repo', query: 'new-feature', kind: 'branch' }]);
+    fixture.componentRef.setInput('repos', [{ id: 'repo', name: 'Repository', base: 'main' }]);
+    fixture.componentRef.setInput('branches', [{ name: 'main', isDefault: true }, { name: 'feature/existing' }]);
+    fixture.componentRef.setInput('branchesLoading', false);
+    fixture.detectChanges();
+    expect(requested).toHaveLength(1);
+    key(field('Branch: type to search or create'), 'Enter');
+    expect(requested.at(-1)).toEqual({ repoId: 'repo', query: '', kind: 'base' });
+    fixture.componentRef.setInput('repos', [{ id: 'repo', name: 'Repository', base: 'main' }]);
+    fixture.detectChanges();
+    expect(requested).toHaveLength(2);
+  });
   it("advances an existing branch to From, focuses Create, then keeps its own history", async () => {
     const created: CreatedTask[] = [];
     fixture.componentInstance.create.subscribe((value) => created.push(value));
@@ -99,6 +118,27 @@ describe("NewTask keyboard flow", () => {
       base: null,
     });
   });
+  it("keeps Create enabled and focused for an existing branch without requesting unused bases", async () => {
+    const requested: { readonly kind: "branch" | "base" }[] = [];
+    fixture.componentRef.setInput("repos", [{ id: "repo", name: "Repository", base: "main" }]);
+    fixture.componentRef.setInput("title", "Existing task");
+    fixture.componentRef.setInput("branchQuery", "feature/existing");
+    // Mirror the connected owner's loading state when a picker requests data.
+    fixture.componentInstance.branchQueryRequested.subscribe(request => {
+      requested.push(request);
+      if (request.kind === "base") fixture.componentRef.setInput("branchesLoading", true);
+    });
+    fixture.detectChanges();
+    key(field("Task name"), "Enter");
+    await fixture.whenStable();
+    key(field("Branch: type to search or create"), "Enter");
+    await fixture.whenStable();
+    const create = fixture.nativeElement.querySelector("footer .next");
+    expect(requested.map(request => request.kind)).toEqual(["branch"]);
+    expect(create.disabled).toBe(false);
+    expect(document.activeElement).toBe(create);
+  });
+
   it("uses the selected repository branches and default through four Enter presses", () => {
     const created: CreatedTask[] = [];
     fixture.componentInstance.create.subscribe((value) => created.push(value));

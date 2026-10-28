@@ -10,6 +10,9 @@
 .title {
   flex: none;
 }
+:host(.embedded) {
+  height: 100%;
+}
 .regions {
   min-height: 0;
   flex: 1;

@@ -40,7 +40,7 @@
                 </span>
               </button>
             } @else {
-              <span class="stat quiet">Up to date</span>
+              <span class="stat quiet">{{ quietLabel() }}</span>
             }
           </span>
         }
@@ -165,15 +165,17 @@
             ><span class="del">−{{ view.del }}</span></span
           >
         } @else {
-          <span class="stat quiet">Up to date</span>
+          <span class="stat quiet">{{ quietLabel() }}</span>
         }
       }
     </span>
   </span>
+  <ng-content select="[gitPanel]" />
 </div>
 <ng-template #menu>
   <ex-dropdown-menu label="Git actions">
     @for (item of menuItems(); track item.action) {
+      @if (!allowedActions() || allowedActions()?.includes(item.action)) {
       <button
         type="button"
         exDropdownItem
@@ -181,6 +183,7 @@
       >
         {{ item.label }}
       </button>
+      }
     }
   </ex-dropdown-menu>
 </ng-template>

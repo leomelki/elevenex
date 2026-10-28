@@ -1,7 +1,7 @@
 import type * as React from 'react';
 
 export type Status = 'running' | 'attention' | 'review' | 'done' | 'failed' | 'queued';
-export type IconName = 'plus' | 'arrow-up' | 'terminal' | 'code' | 'changes' | 'actions' | 'globe' | 'fork' | 'side-chat' | 'chat' | 'check' | 'x' | 'chevron-down' | 'chevron-right' | 'at' | 'search' | 'commit' | 'push' | 'more' | 'stop' | 'sidebar' | 'panel' | 'attach' | 'repo' | 'task' | 'copy' | 'expand' | 'file' | 'pr' | 'merged' | 'ticket' | 'link' | 'archive' | 'layers' | 'focus' | 'clock' | 'mic' | 'bolt' | 'shield' | 'plug' | 'steer' | 'pencil' | 'trash' | 'plan' | 'branch' | 'workspace' | 'reset' | 'arrow-down' | 'bulb' | 'question';
+export type IconName = 'plus' | 'arrow-up' | 'terminal' | 'code' | 'changes' | 'actions' | 'globe' | 'fork' | 'side-chat' | 'chat' | 'check' | 'x' | 'chevron-down' | 'chevron-right' | 'at' | 'search' | 'commit' | 'push' | 'more' | 'stop' | 'sidebar' | 'panel' | 'attach' | 'repo' | 'task' | 'copy' | 'expand' | 'file' | 'pr' | 'merged' | 'ticket' | 'link' | 'archive' | 'close-task' | 'layers' | 'focus' | 'clock' | 'mic' | 'bolt' | 'shield' | 'plug' | 'steer' | 'pencil' | 'trash' | 'plan' | 'branch' | 'workspace' | 'reset' | 'arrow-down' | 'bulb' | 'question';
 export type ProjectHue = 'ocean' | 'pine' | 'plum' | 'rust' | 'steel' | 'rose';
 
 export interface IconProps { name: IconName; size?: number; className?: string }
@@ -182,8 +182,10 @@ export interface TaskHeaderProps {
   meta?: string;
   project?: ProjectMarkProps;
   git?: GitBarProps;
-  /** The linked PR merged or the work looks finished: Close task becomes a labelled button. */
+  /** The linked PR merged or the work looks finished: Close task turns accent. It's always there either way. */
   closeSuggested?: boolean;
+  /** Close task: open CloseTask when something would be lost, otherwise close at once with Undo. */
+  onClose?: () => void;
   panelOpen?: boolean;
   /** On a sub-task: its parent (the task or another sub-task), named above the title. */
   parent?: { title: string; branch?: string; onOpen?: () => void };
@@ -298,6 +300,12 @@ export interface TaskGroupProps {
   subtasks?: SubTask[];
   /** “+” on a sub-task: a new session in it. */
   onAddSub?: (sub: SubTask) => void;
+  /** Archive a session from its row (hover: the archive button; on a running one it stretches into “Stop and archive” and a second click confirms). Remove it from `sessions` and show a Toast with Undo. */
+  onArchive?: (session: TaskSession) => void;
+  /** At most this many working sessions show (default 5; 0 shows all). The earlier ones wait above one quiet row, “› N older”, and scroll in 5 at a time. A session that needs you, the selected one and a fresh one always show. */
+  cap?: number;
+  /** How many earlier sessions each click brings back (default 5). */
+  capStep?: number;
 }
 export interface SubTask {
   id: string; title: string; branch?: string;
@@ -316,6 +324,10 @@ export interface TaskListProps {
   /** False inside one project's view: no project marks. */
   showProjects?: boolean;
   onAdd?: (task: TaskGroupProps) => void;
+  /** A session archived from its row (see TaskGroupProps.onArchive). */
+  onArchive?: (task: TaskGroupProps, session: TaskSession) => void;
+  /** Working sessions shown per task before “› N older” (default 5; a setting). */
+  sessionCap?: number;
   className?: string;
 }
 /** The sidebar's body: tasks by stage (In progress, Waiting, Planned), each group counted; moves between stages travel. */
@@ -437,6 +449,16 @@ export interface GitJobStep { status: Status; label: string; detail?: string; /*
 export interface GitJob { verb?: string; noun?: string; title?: string; steps: GitJobStep[]; /** the session it started needs you */ waiting?: boolean; /** menu open (previews) */ open?: boolean; note?: string; onOpen?: () => void; onCancel?: () => void }
 export interface GitBarProps { /** a job Elevenex runs (merge, sync, push): the button shows its step, its menu the steps */ job?: GitJob }
 export declare function GitBar(props: GitBarProps): React.ReactElement;
+export interface GitBarProps { /** what the button says while busy, in place of Committing… (e.g. 'Writing the message…') */ busyLabel?: string; /** anchored to the bar: the CommitPanel */ panel?: React.ReactNode }
+export interface CommitFile { path: string; status?: 'M' | 'A' | 'D' | 'R'; add?: number; del?: number; /** in the index already */ staged?: boolean; /** left out unless the user includes it */ flag?: 'secrets' }
+export interface CommitPanelProps {
+  open: boolean; files: CommitFile[];
+  /** names of the task's sessions still running */ running?: string[];
+  push?: boolean; onPush?: (on: boolean) => void; onClose?: () => void;
+  /** message is '' when it was left empty: write it, then commit */ onCommit?: (c: { message: string; files: string[]; push: boolean }) => void;
+}
+/** The panel that grows out of the Commit button: the message, the files, Commit. Pass it to GitBar as `panel`. */
+export declare function CommitPanel(props: CommitPanelProps): React.ReactElement;
 
 export interface ChangeItem { path: string; status: 'M' | 'A' | 'D' | 'R'; add?: number; del?: number; /** the file you're on (`selected` also works) */ current?: boolean; selected?: boolean; viewed?: boolean; /** changed since you viewed it */ changed?: boolean }
 export interface ChangeListProps { items: ChangeItem[]; /** files under their folder */ grouped?: boolean; onSelect?: (path: string) => void }
@@ -740,7 +762,7 @@ declare global {
       LinkChip: typeof LinkChip; TaskHeader: typeof TaskHeader; CloseTask: typeof CloseTask; NewTask: typeof NewTask; BranchPicker: typeof BranchPicker; BranchChip: typeof BranchChip; WorkspacePicker: typeof WorkspacePicker; TaskLine: typeof TaskLine; SessionRow: typeof SessionRow; TaskGroup: typeof TaskGroup; TaskList: typeof TaskList; FlipScope: typeof FlipScope; PanelTabs: typeof PanelTabs;
       AgentPicker: typeof AgentPicker; PresetCard: typeof PresetCard; PresetPicker: typeof PresetPicker; SessionStart: typeof SessionStart; ModeToggle: typeof ModeToggle; PermissionPicker: typeof PermissionPicker; ToolsMenu: typeof ToolsMenu;
       ComposerQueue: typeof ComposerQueue; Switch: typeof Switch; Segmented: typeof Segmented; Mention: typeof Mention; Composer: typeof Composer; Message: typeof Message;
-      SideThread: typeof SideThread; GitBar: typeof GitBar; ChangeList: typeof ChangeList; DiffReview: typeof DiffReview; Markdown: typeof Markdown; BrowserView: typeof BrowserView; TerminalView: typeof TerminalView; ViewTabs: typeof ViewTabs; diffLines: typeof diffLines; usePanelTakeover: typeof usePanelTakeover;
+      SideThread: typeof SideThread; GitBar: typeof GitBar; CommitPanel: typeof CommitPanel; ChangeList: typeof ChangeList; DiffReview: typeof DiffReview; Markdown: typeof Markdown; BrowserView: typeof BrowserView; TerminalView: typeof TerminalView; ViewTabs: typeof ViewTabs; diffLines: typeof diffLines; usePanelTakeover: typeof usePanelTakeover;
       ApprovalCard: typeof ApprovalCard; QuestionCard: typeof QuestionCard; PlanCard: typeof PlanCard; ThinkingBlock: typeof ThinkingBlock; ToolStep: typeof ToolStep; StreamText: typeof StreamText; MentionMenu: typeof MentionMenu;
       Toast: typeof Toast; Tooltip: typeof Tooltip; SubtaskGlyph: typeof SubtaskGlyph; ModalLayer: typeof ModalLayer; Sheet: typeof Sheet; useRecede: typeof useRecede; SetGroup: typeof SetGroup; SetRow: typeof SetRow; SetField: typeof SetField; SetValue: typeof SetValue; ProjectMenu: typeof ProjectMenu; ProjectSettings: typeof ProjectSettings; DeleteProject: typeof DeleteProject; NewProject: typeof NewProject; projectFace: typeof projectFace; jumpHome: typeof jumpHome; settleMark: typeof settleMark; RepoTag: typeof RepoTag; JobBrief: typeof JobBrief; Skeleton: typeof Skeleton; ContextMeter: typeof ContextMeter; NewMessagesPill: typeof NewMessagesPill; ProgressLine: typeof ProgressLine; Ticker: typeof Ticker; Presence: typeof Presence; play: typeof play;
       Turn: typeof Turn; WorkTimeline: typeof WorkTimeline; NowLine: typeof NowLine; FileChip: typeof FileChip; OutcomeBar: typeof OutcomeBar; TurnNav: typeof TurnNav; Fold: typeof Fold;

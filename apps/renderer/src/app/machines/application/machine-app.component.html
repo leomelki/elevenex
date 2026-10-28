@@ -19,11 +19,15 @@
           <ex-machine-home [machines]="actions.machines()" [menuOpen]="actions.menu()?.machine?.id ?? null" (menuRequested)="actions.menu.set($event)" [firstRun]="launcher.firstRun()" [pending]="launcher.pendingId()" [ping]="ping()" [(findOpen)]="findOpen" (opened)="launcher.openMachine($event)" (addServer)="ssh.begin($event)" (pairComputer)="pair($event)" />
         </div>
         <div machineView class="machine-view">
-          @for (machine of [launcher.current()]; track machine?.id) { @if (machine) {
+         @defer (when launcher.workspace(); prefetch on idle) {
+          @for (machine of [launcher.workspace()]; track machine?.id) { @if (machine) {
             @if (connectionNotice(); as notice) { <div class="connection-notice" role="status"><ex-icon name="server" [size]="14" /><span>{{ notice.text }}</span>@if (notice.retry) { <button exButton size="sm" variant="ghost" (click)="retry()">Retry</button> }<button exButton size="sm" variant="ghost" (click)="home()">Change machine</button></div> }
-            <div class="workspace" [hidden]="!!update()"><ex-machine-workspace [machine]="machine" [active]="launcher.open() && !update()" (changeRequested)="home()" /></div>
+            <div class="workspace" [hidden]="!!update()">
+              <ex-machine-workspace [machine]="machine" [generation]="launcher.workspaceGeneration()" [active]="launcher.open() && !update()" [preparing]="launcher.pendingId() === machine.id" (prepared)="launcher.workspacePrepared($event.machineId, $event.generation)" (changeRequested)="home()" />
+            </div>
             @if (update()) { <div class="update"><ex-getting-ready [icon]="machine.kind === 'local' ? 'laptop' : 'server'" [title]="'Getting ' + machine.name + ' ready'" sub="Your projects and files stay on this machine." [steps]="steps()" /></div> }
           } }
+         }
         </div>
       </ex-machine-launch>
     } @else {

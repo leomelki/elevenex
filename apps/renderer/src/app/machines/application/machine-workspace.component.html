@@ -1,11 +1,40 @@
-<div class="backdrop" aria-hidden="true" inert>
-  <ex-project-rail [projects]="[]" />
-  <div class="sidebar"></div><div class="main"></div>
+<div class="workspace-frame" [class.onboarding]="onboarding() && launch() !== 'flying'" [attr.inert]="onboarding() && launch() !== 'flying' ? '' : null" [attr.aria-hidden]="onboarding() && launch() !== 'flying' ? 'true' : null">
+  <ex-app-shell [titleBar]="false" [panelOpen]="panelOpen()" [wideReview]="wideReview()" [panelLabel]="panel() + ' panel'" (reviewExited)="wideReview.set(false)">
+    <ex-workspace-project-rail shellRail />
+    <ex-workspace-navigation shellSidebar />
+    <div shellMain class="main-content">
+      @if (store.selected()) {
+        <ex-workspace-task-header [panelOpen]="panelOpen()" (panelToggle)="togglePanel()" />
+      } @else if (store.pendingTask(); as task) {
+        <ex-workspace-task-setup [task]="task" [busy]="store.busy()" [paused]="store.preparationPaused()" [uncertain]="store.mutationUncertain()" [error]="store.error()" (retryRequested)="store.retryPreparation($event)" (refreshRequested)="store.reconcilePreparation()" />
+      } @else {
+        <section class="empty-state">
+          @if (store.loading()) {
+            <ex-skeleton variant="message" [count]="3" />
+            <p role="status">Loading workspace…</p>
+          } @else if (!store.scopeId()) {
+            <ex-icon name="server" [size]="28" />
+            <h1>Connecting to {{ machine().name }}</h1>
+            <p>Your workspace will appear when the machine is ready.</p>
+            <button exButton variant="ghost" (click)="changeRequested.emit()">Change machine</button>
+          } @else if (store.error() && !store.projects().length) {
+            <ex-icon name="repo" [size]="28" />
+            <h1>Workspace unavailable</h1>
+            <p>Refresh to load your projects.</p>
+            <button exButton (click)="store.refresh()">Refresh workspace</button>
+          } @else {
+            <ex-icon name="chat" [size]="28" />
+            <h1>Your next task starts here</h1>
+            <p>Choose a session, or start a task in {{ store.selectedProject()?.name ?? 'one of your projects' }}.</p>
+            <button exButton data-new-task variant="primary" [disabled]="store.busy() || !store.projects().length" (click)="store.openNewTask()"><ex-icon name="plus" />New task</button>
+          }
+        </section>
+      }
+    </div>
+    <ex-workspace-panels shellPanel [panel]="panel()" (panelChange)="store.selectPanel($event)" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (closed)="closePanel()" />
+  </ex-app-shell>
 </div>
-<main class="landing" aria-label="Machine workspace">
-  <div class="project">
-    <ex-new-project [machine]="machine().name" [machineIcon]="machine().kind === 'local' ? 'laptop' : 'server'" [active]="active()" [autoFocus]="false" [disabled]="true" />
-    <p class="note">Your machine is ready. Project setup is not available in this version yet.</p>
-    <button exButton variant="ghost" (click)="changeRequested.emit()">Back to machines</button>
-  </div>
-</main>
+@if (onboarding()) {
+  <div class="onboarding-layer" [class.flying]="launch() === 'flying'"><ex-workspace-onboarding [launching]="launch() === 'flying'" (projectSubmitted)="projectSubmitted($event)" /></div>
+}
+<ex-workspace-dialogs />

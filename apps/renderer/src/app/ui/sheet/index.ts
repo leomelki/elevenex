@@ -3,3 +3,5 @@ export { ModalRecessionService, type ModalRecessionLease } from './modal-recessi
 export { SheetComponent } from './sheet.component';
 export { SheetSectionDirective, type SheetSection } from './sheet-section.directive';
 export { SetGroupComponent, SetRowComponent, SetFieldComponent, SetChoiceComponent, SetValueComponent, type SettingChoice } from './settings-controls.component';
+
+export { ModalMotion as MorphFromMotion } from './modal-motion';

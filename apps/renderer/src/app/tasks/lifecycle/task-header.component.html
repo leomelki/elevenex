@@ -17,27 +17,18 @@
         />
       }
       <h1>{{ title() }}</h1>
-      <ex-task-stage
+      @if (!closed()) { <ex-task-stage
         [stage]="stage()"
+        [disabled]="disabled()"
         (stageChange)="stageChange.emit($event)"
-      />
+      /> }
     </div>
     <span class="grow"></span>
-    @if (closeSuggested()) {
-      <button
-        exButton
-        [variant]="git()?.files || git()?.ahead ? 'secondary' : 'primary'"
-        size="sm"
-        (click)="closeRequested.emit()"
-      >
-        <ex-icon name="archive" [size]="14" />Close task
+    @if (!closed()) {
+      <button type="button" class="close-task" [class.suggested]="closeSuggested()" [disabled]="disabled()" (click)="closeRequested.emit()">
+        <ex-icon name="close-task" [size]="14" />Close task
       </button>
-    } @else {
-      <ex-icon-button
-        icon="archive"
-        label="Close task"
-        (pressed)="closeRequested.emit()"
-      />
+      <span class="separator" aria-hidden="true"></span>
     }
     <ex-icon-button
       icon="panel"
@@ -54,6 +45,7 @@
           [name]="name"
           [compact]="true"
           [copied]="branchCopied()"
+          [canRename]="canRenameBranch() && !disabled()"
           (renameRequested)="branchRename.emit($event)"
           (copyRequested)="branchCopy.emit($event)"
         />
@@ -67,7 +59,7 @@
           (activated)="linkActivated.emit(link)"
         />
       } @empty {
-        <button class="link" type="button" (click)="linkRequested.emit()">
+        <button class="link" type="button" [disabled]="!canLink() || disabled()" (click)="linkRequested.emit()">
           <ex-icon name="link" [size]="12" />Link PR or ticket
         </button>
       }
@@ -83,14 +75,17 @@
         [del]="state.del ?? 0"
         [ahead]="state.ahead ?? 0"
         [busy]="state.busy"
+        [busyLabel]="state.busyLabel"
         [mergeInto]="state.mergeInto"
         [job]="state.job"
         [compact]="true"
+        [allowedActions]="gitAllowedActions()"
+        [quietLabel]="gitQuietLabel()"
         (action)="gitAction.emit($event)"
         (jobSessionRequested)="gitJobSessionRequested.emit($event)"
         (jobCancelled)="gitJobCancelled.emit($event)"
         (changesRequested)="changesRequested.emit()"
-      />
+      ><div gitPanel><ng-content select="[gitPanel]" /></div></ex-git-bar>
     }
   </div>
 </header>

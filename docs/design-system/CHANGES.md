@@ -1,44 +1,55 @@
 # What changed since the last zip
 
-One change: **editing and removing a machine**, from its card on Home. It's in the components (`bundle.js`, `bundle.css`), the types (`index.d.ts`), the READMEs and the brand book (`project/README.md`, Machines section). The gallery now has 85 cards: `MachineMenu` and `EditMachine` are new.
+One change: the cap on working sessions in a task (`TaskGroup`) has a new look and new motion. Archiving from the row is unchanged.
 
-## On the card: ⋯ and right-click
+**Remove from the last zip:**
 
-- `MachineCard` and `MachineHome` take a new `onMenu(machine, { x, y, card, fromButton })`.
-  - With it, pointing at a card (or focusing it) fades in a ⋯ where the tag was. The tag, a failed card's action label and the ↵ step aside, so nothing overlaps.
-  - A right-click on the card calls the same `onMenu` at the pointer.
-- The ⋯ is a sibling of the card, never a button inside it. When `onMenu` is set, the card is wrapped in `.ex-mcard-wrap`, which carries `data-key`. The card button keeps `data-machine`, so `MachineLaunch` still finds it.
-- While the menu is open, pass `menuOpen`: the machine's id to `MachineHome`, `true` to a single `MachineCard`. The ⋯ then stays shown.
+- the ghost row with a pill on it ("⌃ 9 earlier");
+- the pill's "⌃ 4 earlier │ ⌄" halves;
+- the rows unrolling one by one.
 
-## The menu: `MachineMenu` (new)
+It's all in the components (`bundle.js`, `bundle.css`), the types (`index.d.ts`), the `TaskGroup` and `TaskList` READMEs and the brand book. Try it in the `TaskGroup` card's "A busy task" demo.
 
-- The items are:
-  - Edit…;
-  - Open in a new window (⌘↵);
-  - Disconnect, only when connected, never for This Mac;
-  - then Remove in `danger`. A paired computer gets Unpair instead, and This Mac has no Remove.
-- Place it under the ⋯, right-aligned to it, or at the pointer for a right-click.
+## What it looks like now
 
-## Edit: `EditMachine` (new)
+- **What shows:** a task shows its latest 5 working sessions (`cap`, default 5, a setting). A session that needs you, the open one, and one just started also always show.
+- **The earlier ones wait behind one quiet row: "› 9 older".** It's shaped exactly like the "N finished" row: same chevron, 12px, `ink-muted`, 26px high.
+- **The first session under that row turns muted** (its title in `ink-muted`), so the list reads as going on above.
+  - Mute it with color, never with opacity, so the text stays AA.
+  - A session that needs you, or the open one, is never muted.
+- **Each click on "› 9 older" brings back the next 5** (`capStep`), not all of them. The count rolls down, and the muted title moves up to the new first row (the old one eases back to `ink`).
+- **Show fewer:**
+  - while some are back and more are hidden, a quiet "Show fewer" sits at the right of the "older" row (muted 12px text button);
+  - once all are back, the row itself reads "⌄ Show fewer" (the chevron turns down).
 
-- Open it in a `ModalLayer` with `from: card`, so it grows out of the card, and it closes back into the card on Save.
-- It edits:
-  - the name and the color;
-  - for a server: host, user · port, and sign-in. Changing where it is says "Saving reconnects to check it, on its card". On Save, the card goes back to getting ready (`busy`), or shows what failed (`error`).
-  - for a paired computer: it also shows when it was paired;
-  - for This Mac: only the name and color.
-- `onSave(patch)` receives `{ name, hue, host, user, port, key }`.
-- `Machine` gained optional fields for this: `hue`, `host`, `user`, `port`, `key`, `paired`.
+## The motion: a scroll, not a pop
 
-## Removing: at once, with Undo
+- **Opening:** the 5 sessions scroll into view from under the "older" row, nearest first, pushing the rest down, as if the list scrolled.
+- **How to build it:**
+  - each batch is a container whose rows are pinned to its bottom edge (`flex-direction: column; justify-content: flex-end`);
+  - animate its `height` in pixels, from 0 to its content height;
+  - while it moves: `overflow: hidden`, plus a soft 18px fade on its top edge (a mask);
+  - once settled: clear both, so focus rings and hovers aren't clipped.
+- **Curve:** `cubic-bezier(0.33, 0, 0.15, 1)` (soft start, long settle).
+- **Duration** follows the distance: `clamp(440ms, 320ms + 1.3ms per px, 760ms)`.
+- **Measured:** at most about 15px per frame opening 5 rows, and 22px closing 10. No jumps.
+- **Set the start height inline before you start the animation.** A Web Animation that hasn't started yet doesn't apply, so the batch flashes open for one frame.
+- **Closing:** the same, backwards: the rows scroll up under the "older" row, and the count comes back.
+- **Reduced motion:** instant.
 
-- Removing only forgets the machine: its card, its connection and the host key we saved. Nothing on the machine is touched, so Undo is enough.
-- On Remove:
-  - drop the machine from `machines` right away;
-  - `MachineHome` fades its card out (260 ms), then slides the others over;
-  - show a `Toast`: "Removed staging-1 · Nothing on it was touched · Undo".
-  - Undo puts the machine back at its index, and the card grows in where it was.
-- Exception: a machine with a window open asks first. The menu item reads "Remove…" and opens `EditMachine` with `step: 'remove'`. That screen says what goes, what stays, and that its windows go back to Home.
-- `Toast` now has `onAction` and `onClose`, so its action and × buttons call something. Before, they did nothing.
+## Rules that keep it from jumping
 
-Try it in the top window of the `MachineHome` card: hover dev-box for the ⋯, open Edit…, then right-click staging-1 and Remove it, and Undo.
+- **A brought-back session stays where it is.** A session that needs you, the open one, or a fresh one is pulled out of the hidden part only while it's still hidden. One you already brought back stays in its place when you open it, or when it starts needing you.
+- **After Show fewer, the open session stays in view**, right under the "older" row.
+- **Archiving a row inside a brought-back batch** folds it away (the batch's rows are a `MotionList`), and the next older session slides in at the batch's top.
+- **Hidden is never finished.** Hidden sessions keep running and keep their status. A filter shows every match, with no cap.
+
+## Accessibility
+
+- The "older" row is a button with `aria-expanded`, and its label reads "Show 5 older sessions (9 hidden)" or "Show fewer sessions".
+- It has a focus ring, and so does the "N finished" row now.
+
+## API (unchanged)
+
+- `TaskGroup`: `cap` (default 5; 0 shows all), `capStep` (default 5).
+- `TaskList`: `sessionCap`, passed to every task.

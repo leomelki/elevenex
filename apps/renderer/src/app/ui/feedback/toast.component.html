@@ -10,6 +10,7 @@
     exButton
     variant="ghost"
     size="sm"
+    [disabled]="busy()"
     (click)="activateAction()"
   >
     {{ action() }}

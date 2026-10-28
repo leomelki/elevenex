@@ -18,6 +18,7 @@ import type { Workspace } from '../task.models';
 export class WorkspacePickerComponent {
   readonly value = input('auto');
   readonly items = input<readonly Workspace[]>([]);
+  readonly canManage = input(true);
   readonly valueChange = output<string>();
   readonly newWorkspace = output<void>();
   readonly manageWorkspaces = output<void>();

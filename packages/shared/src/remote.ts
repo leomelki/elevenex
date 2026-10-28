@@ -11,6 +11,17 @@ export interface RemoteHostInput {
 }
 export interface RemoteHost extends RemoteHostInput { readonly id: string }
 export type EnvironmentSelection = { readonly kind: 'local' } | { readonly kind: 'remote'; readonly hostId: string };
+/** Device-local workspace layout, saved independently for each window/backend. */
+export interface WorkspaceViewState {
+  readonly panel: 'terminal' | 'actions' | 'changes' | 'code' | 'browser';
+  readonly panelOpen: boolean;
+  readonly wideReview: boolean;
+  readonly closed: boolean;
+  readonly focused: boolean;
+  readonly filter: 'attention' | 'running' | 'review' | 'done' | null;
+  readonly projectCursor: string | null;
+  readonly taskCursor: string | null;
+}
 export interface EnvironmentContext {
   readonly projectId: number | null;
   readonly taskId: number | null;
@@ -18,6 +29,8 @@ export interface EnvironmentContext {
   readonly draft: string;
   /** Last consumed domain-event cursor, for reconciliation by the consumer. */
   readonly cursor: string | null;
+  /** Optional so contexts saved by earlier desktop releases remain valid. */
+  readonly workspace?: WorkspaceViewState;
 }
 export type RemoteStage = 'authentication' | 'discovery' | 'download' | 'installation' | 'runtime' | 'transport' | 'application';
 export interface RemoteFailure {

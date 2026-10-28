@@ -20,6 +20,10 @@ header {
 .heading {
   overflow: hidden;
 }
+.row {
+  /* Git status arrives after the branch: reserve its control height while loading. */
+  min-height: var(--control-height);
+}
 h1 {
   min-width: 0;
   margin: 0;
@@ -87,3 +91,11 @@ ex-git-bar {
 .parent b { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .parent .mono { font-family: var(--font-mono); font-size: 11px; margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .parent:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
+
+.close-task { display: inline-flex; align-items: center; gap: 5px; flex: none; height: var(--control-height); padding: 0 var(--space-2); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink-muted); font: inherit; font-size: var(--text-caption-size); cursor: pointer; white-space: nowrap; }
+.close-task.suggested { color: var(--accent); }
+.close-task:hover { background: var(--surface-sunken); color: var(--ink); }
+.close-task.suggested:hover { background: var(--accent-soft); color: var(--accent); }
+.close-task:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
+.close-task:disabled { opacity: .45; cursor: default; }
+.separator { height: 14px; width: 1px; background: var(--line); flex: none; }

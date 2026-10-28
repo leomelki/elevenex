@@ -78,6 +78,14 @@ export interface PlannedTask {
   readonly base?: string;
   readonly workspace: string;
 }
+/** Explicit earlier-session disclosure. New arrivals never displace revealed rows. */
+export interface TaskSessionDisclosure {
+  readonly taskId: string;
+  readonly cap: number;
+  readonly hiddenIds: readonly string[];
+  /** Reveals, newest batch first. IDs keep selection/status updates in place. */
+  readonly batches?: readonly (readonly string[])[];
+}
 export interface TaskSession {
   readonly id: string;
   readonly title: string;
@@ -102,6 +110,12 @@ export interface TaskOutline {
   readonly id: string;
   readonly title: string;
   readonly sessions: readonly TaskSession[];
+  /** Optional, independently paginated archived history supplied by the owner. */
+  readonly archive?: TaskSessionArchive;
+  /** The owner can advance a bounded session page without growing this outline. */
+  readonly moreSessions?: boolean;
+  readonly sessionsDirection?: 'earlier' | 'next';
+  readonly canAddSession?: boolean;
   readonly stage?: TaskStage;
   readonly project?: ProjectMark;
   readonly links?: readonly TaskLink[];
@@ -109,6 +123,14 @@ export interface TaskOutline {
   readonly subtasks?: readonly SubTask[];
   readonly fresh?: boolean;
   readonly collapsed?: boolean;
+}
+export interface TaskSessionArchive {
+  readonly sessions: readonly TaskSession[];
+  readonly loaded: boolean;
+  readonly loading: boolean;
+  readonly error: string | null;
+  readonly more: boolean;
+  readonly earlier: boolean;
 }
 export interface TaskContext {
   readonly project?: ProjectMark;
@@ -133,6 +155,7 @@ export interface GitState {
   readonly del?: number;
   readonly ahead?: number;
   readonly busy?: 'commit' | 'push' | 'merge';
+  readonly busyLabel?: string;
   readonly mergeInto?: string;
   readonly job?: GitJob;
 }

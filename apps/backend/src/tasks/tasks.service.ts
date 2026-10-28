@@ -854,8 +854,17 @@ export class TasksService
     if (this.operations.has(id)) return;
     const pending = this.prepare(id)
       .catch(async (error: unknown) => {
-        const current = await this.record(id);
-        if (current.archivedAt || current.taskState !== 'preparing') return;
+        const [current] = await this.db
+          .select()
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.id, id));
+        // Confirmed project deletion can remove a finished task while its
+        // coalesced remote-ref refresh is still returning. Never revive it.
+        if (
+          !current ||
+          current.archivedAt ||
+          current.taskState !== 'preparing'
+        ) return;
         const detail =
           error instanceof HttpException
             ? error.getResponse()
@@ -1251,7 +1260,12 @@ export class TasksService
     return { taskId: id, cancelled: true, finishScheduled: false };
   }
 
-  async finish(id: number, confirmStop = false, afterTurn?: FinishRequest) {
+  async finish(
+    id: number,
+    confirmStop = false,
+    afterTurn?: FinishRequest,
+    options: { readonly allowArchivedProject?: boolean } = {},
+  ) {
     const afterSessionId = afterTurn?.sessionId;
     const task = await this.record(id);
     if (task.archivedAt) {
@@ -1260,7 +1274,10 @@ export class TasksService
       return this.get(id);
     }
     const repo = await this.repo(task.repoId);
-    await this.projects.assertProjectIsActive(repo.projectId);
+    // Project deletion also cleans up projects that were archived with open
+    // tasks. Ordinary task actions retain their archived-project restriction.
+    if (!options.allowArchivedProject)
+      await this.projects.assertProjectIsActive(repo.projectId);
     const key = await this.git.repositoryKey(repo.path);
     return this.git.exclusive(key, async () => {
       const current = await this.record(id);

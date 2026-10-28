@@ -2,7 +2,8 @@
 
 Standalone Angular components, Signals, OnPush change detection and plain token CSS.
 The production renderer contains no example projects, agent output, repository
-services or synthetic activity. It starts on the machine Home. Existing
+services or synthetic activity. It starts on machine Home, then opens the
+connected workspace through the typed backend bridge. Existing
 frontend/backend/Electron commands retain their original behavior.
 
 ## Try the components
@@ -41,7 +42,8 @@ differences from the supplied component and motion specifications.
 | `src/app/machines/application` | Production startup, machine selection and platform integration | [Production flow](src/app/machines/application/README.md) |
 | `src/app/views` | Changes review, change list, Browser and Terminal frames | `views/index.ts` |
 | `src/app/shell` | Four-region layout and native/system theme subscription ownership | `AppShellComponent` |
-| `src/app/workbench` | Empty application route and supplied-data composition | `WorkbenchComponent` |
+| `src/app/workbench` | Supplied-data composition and connected side-view shells | `WorkbenchComponent` |
+| `src/app/workspace` | Connected project/task navigation, creation, settings and task git state | [Workspace ownership](src/app/workspace/README.md) |
 | `preview` | Interactive examples and composition fixtures | Separate development entry |
 
 Feature barrels export components and readonly view models. Import from the
@@ -89,8 +91,25 @@ Bind `Workbench.wideReview` with the projected review's `wide` input/output to
 activate shell takeover; Escape resets it through the shell. Handle
 `closedTasksRequested` to open the closed-task list in the application owner.
 
+The production `MachineWorkspaceComponent` composes `AppShell` with
+`titleBar=false`, since `MachineApp` already owns the native title island.
+The connected workspace code prefetches during idle time. Only the selected
+candidate mounts, behind inert Home, before launch; its first render crosses a
+paint boundary before opening starts. Its scoped feature
+stores supply the existing presentational components; they never import the
+legacy renderer or contact the backend directly. The five side views currently
+provide tabs, close and expansion behavior with placeholder contents. Expansion
+is available on every view and stays active when switching tabs.
+`/connected-workspace` exercises this production composition with a typed,
+preview-only backend adapter. Its fixture never enters the production build.
+
 ## Motion and accessibility
 
+- Task session caps use internal pixel-height scroll batches, with bottom-aligned
+  rows and an 18px masked edge while moving. Reveal/close durations follow travel
+  distance (440–760ms); closing batches share the total travel duration. Settled
+  batches release clipping, and reduced motion settles instantly. Fold's older
+  opt-in `unroll` API remains available for compatibility; caps no longer use it.
 - `FoldComponent` animates unknown height in place, preserves local state,
   releases clipping after settling, and makes closed descendants inert.
 - `AutoHeightDirective` observes one inner wrapper and eases meaningful height
@@ -105,12 +124,23 @@ activate shell takeover; Escape resets it through the shell. Handle
   The owner releases its scheduled frame, cleanup timer and media listener.
 - `PresenceComponent` uses Angular `animate.enter`/`animate.leave`; `EaseSwap`
   retains a control while its text fades and its width eases.
+  Plain labels use `[value]`. Rich labels can supply `[contentTemplate]` and
+  readonly `[content]`: `value` then identifies the phase, and the template's
+  `$implicit` receives that phase's content snapshot. Content updates within a
+  phase preserve child identity (for example a rolling Ticker); changing phase
+  retains the outgoing snapshot during its blur/slide exit. Session caps use
+  this for “N older” ↔ “Show fewer”, with the native action and focus retained.
 - Keyed Angular `@for` blocks with entry/exit classes implement the design's
   MotionList vocabulary. `Message.isNew` explicitly opts a new message into
   entry motion; opening existing history never does.
 - Observers, subscriptions, timers, scheduled frames and WAAPI animations are
   disposed by their owning component/directive. Reduced motion disables movement
   and loops. Motion never gates user input.
+- Running status indicators rotate their HTML host so Chromium can composite
+  them without repeated SVG layout. A separate inner surface owns one-shot
+  status changes; changing reduced motion cancels those effects immediately.
+  Keep continuous motion off inner SVG paths, and avoid blanket layer hints
+  across repository-sized lists.
 - Menus/popovers use CDK overlay/focus facilities. Native buttons retain native
   disabled, keyboard and form semantics. The button primitive is used as
   `<button exButton variant="primary">…</button>`; icon actions require a label.
@@ -143,3 +173,8 @@ Large change lists use CDK virtual scrolling. Reviews page files and lines and
 request content lazily rather than computing unbounded diffs in the UI thread.
 The owner is responsible for incremental repository data, bounded history
 windows and cancelling asynchronous work after navigation.
+
+Toast defaults still dismiss after an action. For asynchronous Undo, use
+`dismissOnAction=false`, bind `busy` to disable duplicate actions, and remove the
+toast after confirmed success. The session archive owner retains a dismissible
+notification (`duration=0`) so a failed/uncertain restore remains reviewable.

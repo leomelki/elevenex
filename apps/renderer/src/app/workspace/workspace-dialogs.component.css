@@ -1,0 +1,7 @@
+:host { display: contents; }
+.dialog { --workspace-dialog-width: 560px; width: min(var(--workspace-dialog-width), calc(100vw - var(--space-8))); max-height: calc(100dvh - var(--space-8)); overflow: auto; color: var(--ink); }
+.dialog[data-kind='project'] { --workspace-dialog-width: 540px; }
+.dialog[data-kind='delete'] { --workspace-dialog-width: 460px; }
+p { padding: var(--space-3) var(--space-6); margin: 0; color: var(--ink-muted); font-size: var(--text-caption-size); }
+.error { color: var(--danger); }
+.toast { position: fixed; bottom: var(--space-6); left: 50%; transform: translateX(-50%); z-index: 80; width: min(440px, calc(100vw - var(--space-8))); }

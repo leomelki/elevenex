@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import remoteContract from '../../../apps/desktop/test/remote-contract.cjs';
+import machineContract from '../../../apps/desktop/test/machine-contract.cjs';
+import workspaceContract from '../../../apps/desktop/test/workspace-contract.cjs';
 
 /** Run with --fixture. Exercises real Angular signals, input, IPC and motion. */
 export default async function* (capture) {
@@ -14,7 +17,7 @@ export default async function* (capture) {
     status: await window.elevenex.gitStatus('/capture/fixture'),
   }));
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'gitStatus', 'onThemeChanged', 'platform']);
+  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods].sort());
   assert.equal(bridge.status.mock, true);
   yield { name: 'ready-light', inspect: ['#panel', '#increment'] };
 
@@ -28,6 +31,10 @@ export default async function* (capture) {
   assert.equal(await capture.evaluate(() => document.querySelector('#message').value), 'Trusted input 🐘');
   await capture.press('Tab');
   assert.equal(await capture.evaluate(() => document.activeElement.id), 'increment');
+  // Native button activation must work, including controls whose CDK handlers
+  // deliberately leave Enter's click synthesis to the browser.
+  await capture.press('Enter');
+  await capture.waitFor(() => document.querySelector('[role=status]').textContent.includes('44'));
   await assert.rejects(() => capture.click('button:disabled'), /disabled/);
   await assert.rejects(() => capture.click('button'), /Expected one/);
   yield { name: 'seeded-and-focused', inspect: ['[role=status]', '#message', '#increment'] };

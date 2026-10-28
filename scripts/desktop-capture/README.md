@@ -120,6 +120,69 @@ timeouts or screenshots of replacement HTML.
 
 ## Motion
 
+The connected workspace regression uses the production composition and its
+isolated typed backend adapter:
+
+```sh
+pnpm desktop:capture scripts/desktop-capture/scenarios/connected-workspace.mjs --url http://127.0.0.1:4310 --timeout 240
+```
+
+It checks both themes, panel width/tabs/takeover and focus restoration, native
+Enter submission, project settings, new tasks, project creation
+and handoff, error recovery, narrow layouts and reduced motion. It uses actual
+components rather than `--fixture`; its backend is controlled preview data.
+`scenarios/new-project.mjs` focuses on project creation in both themes: nested
+Escape and focus restoration, empty/failed folder results, keyboard retry, Git
+URLs, multiple repositories, name and appearance, retained rejection/uncertain
+outcome drafts, explicit reconciliation, narrow reduced-motion layouts and the
+explicit trailing-slash browsing, pending Tab completion and the visible New task
+action after creation, with no automatic dialog. Run it against the same preview URL.
+`scenarios/folder-typing.mjs` exercises the same production picker with bounded
+preview-only latency. It checks retained popup identity, immediate compatible
+filtering/backtracking, preserved caret and highlight, delayed loading, tilde
+completion, direct Enter, reopening after Escape and narrow reduced-motion states
+in both themes.
+`scenarios/new-task-existing.mjs` verifies existing-branch selection, the
+history-preserving From message, enabled Create focus and native Enter task
+creation in both themes.
+`scenarios/new-task-project-menu.mjs` checks direct header-menu opening with
+unchanged dialog/form geometry, keyboard project selection, Escape/focus and
+draft retention, same-project selection and cleanup on close in both themes,
+including narrow reduced-motion layouts. Run it against the same preview URL.
+`scenarios/task-setup-recovery.mjs` verifies saved-task external-checkout
+recovery, explicit existing-workspace/committed-revision choices, unchanged task
+identity and narrow reduced-motion layouts in both themes. Real Git preservation
+is checked separately by the backend task lifecycle tests.
+`scenarios/task-workspace-limit.mjs` checks the quota explanation, explicit
+keyboard consent to create above the limit, unchanged saved-task identity and
+narrow reduced-motion layouts in both themes, using the same preview URL.
+The production smoke separately mounts the deferred workspace through `app://`
+and the real sandboxed bridge. The tool's `check.mjs --fixture` regression also
+verifies native Enter click synthesis, using complete CDP key/character events.
+
+`scenarios/workspace-resume.mjs` recreates the production workspace owner while
+retaining the preview platform's saved per-backend context. It checks selected
+project/session, Browser and Changes tabs, open/closed panels, wider-review
+keyboard focus and Escape, plus narrow reduced-motion layouts in both themes.
+Disk persistence, window/backend isolation and invalid layout payloads are
+covered separately by the desktop tests and native IPC smoke.
+
+`scenarios/machine-first-open.mjs` exercises the production machine owner with
+preview-only backend replies. It checks inert workspace preparation before the
+launch, cold and warm openings (including an already-ready backend), focus,
+interruptions and narrow reduced motion in both themes. Frame intervals and long
+animation frames are recorded as diagnostics; timings depend on the host and
+are not a general FPS guarantee. Run it against the same preview URL, sequentially
+with other native captures.
+
+`scenarios/status-motion.mjs` checks the connected workspace with a bounded
+20-task sidebar and at least 30 running indicators. It measures idle rendering
+work without an rAF sampling loop, rejects per-frame SVG layout, and records
+first/warm task-dialog frame intervals separately. It also checks focus return,
+both themes, narrow reduced motion and animation cleanup after resource removal.
+Run against the preview URL, sequentially with other native captures. Frame
+timings are diagnostics, not hardware-independent performance thresholds.
+
 The title island has complementary state and motion regressions:
 
 ```sh
@@ -133,6 +196,17 @@ spring/blur frames, opening/closing, interruptions, reduced motion and the actua
 workspace title-bar composition, in both themes.
 
 Two reusable component regressions run against `pnpm desktop:preview`:
+
+`scenarios/sidebar-states.mjs` checks the connected sidebar's single/multiple
+repository hints, attention/failure hover, full-title hints, keyboard focus and
+menu restoration, empty/filtered/closed states, a scrollable 20-task window,
+narrow reduced-motion layout and disabled actions in both themes. Its bounded
+backend data stays in the preview fixture.
+
+`scenarios/sidebar-session-creation.mjs` checks stable task geometry when
+switching sessions, the persistent header + tooltip on hover and keyboard focus,
+native Enter creation, empty-task discovery, unavailable actions and narrow
+reduced-motion layouts in both themes, using the same preview URL.
 
 ```sh
 pnpm desktop:capture scripts/desktop-capture/scenarios/sidebar-motion.mjs --url http://127.0.0.1:4310 --timeout 180
@@ -304,3 +378,36 @@ pnpm desktop:capture scripts/desktop-capture/scenarios/design-system-projects-ma
 It covers Home pings, failure nudges, stopped progress/retry, host-key safety and
 measured contrast, Back, Find/focus, narrow reduced motion, anchored project
 opening, plain Create exit, rail insertion and cancellation in both themes.
+
+`scenarios/sidebar-sessions.mjs` covers the production session archive/Undo owner
+with a bounded busy-task fixture: default cap and pinned attention, repeated
+five-row reveals, Older/count and Show fewer, filters, hover, running confirmation,
+Escape/blur/Enter, selected-session handoff/focus, attention shortcut archiving,
+device-local cap choice, reduced motion and interrupted reveals in both themes.
+It records live geometry probes; timer-driven Ticker cleanup is intentionally not
+frozen by the animation scrubber. Run it with the preview URL above.
+
+`scenarios/sidebar-session-disclosure.mjs` regresses session reveal persistence
+through creation, archive, refresh and project navigation in both directions,
+with and without a retained selected task. It also covers fully revealed tasks,
+filter round trips and explicit Show fewer, in light and dark/reduced motion.
+
+`scenarios/sidebar-project-retention.mjs` samples both project-switch directions
+through delayed backend reads beyond the row cleanup deadline. It checks retained
+task/session DOM identities, uninterrupted outer folds, manual collapsed state,
+stable header/title/filter/task-list geometry, and removal of other projects,
+with no selection and with another project selected,
+in both themes and a narrow reduced-motion layout.
+
+`scenarios/sidebar-session-cap.mjs` measures the replacement cap scroll in both
+themes: five-row opening and ten-row closing from before trusted input through
+cleanup, revealed selection DOM identity, muted title movement, selected-session
+retention after Show fewer and narrow reduced motion. It uses the connected
+preview's bounded busy-task fixture; run with `--url http://127.0.0.1:4310`.
+
+`scenarios/sidebar-session-cap-label.mjs` verifies both Older/Show fewer text-swap
+directions in light/dark: outgoing count snapshots, blur/slide and width motion,
+stable action/Ticker identities, cleanup and narrow reduced motion. Use
+`--url http://127.0.0.1:4310/connected-workspace`. It freezes the containing
+scroll and seeks only live label animation objects to avoid stale debugger IDs
+from timer-driven ticker cleanup elsewhere.

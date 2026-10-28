@@ -2,7 +2,8 @@
   ><button
     class="name"
     type="button"
-    title="Branch · rename"
+    [title]="canRename() ? 'Branch · rename' : 'Branch'"
+    [disabled]="!canRename()"
     (click)="renameRequested.emit(name())"
   >
     <ex-icon name="branch" [size]="12" /><span>{{ name() }}</span>

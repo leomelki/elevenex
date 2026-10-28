@@ -19,6 +19,7 @@ export class ProjectMenuComponent {
   readonly machine = input('');
   readonly closed = input<number>();
   readonly disabled = input(false);
+  readonly actions = input<readonly ProjectMenuAction[]>(['settings', 'add-repository', 'closed-tasks', 'archive', 'delete']);
   readonly action = output<ProjectMenuAction>();
   readonly settingsRequested = output<void>();
   readonly addRepositoryRequested = output<void>();

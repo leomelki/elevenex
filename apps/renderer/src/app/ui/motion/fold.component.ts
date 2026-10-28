@@ -9,6 +9,9 @@ import {
   selector: "ex-fold",
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
+    "[class.unroll]": "motion() === 'unroll'",
+    "[style.--fold-enter-delay]": "enterDelay() + 'ms'",
+    "[style.--fold-exit-delay]": "exitDelay() + 'ms'",
     "[class.open]": "open()",
     "[class.settled]": "settled()",
     "[attr.inert]": 'open() ? null : ""',
@@ -24,6 +27,10 @@ import {
 })
 export class FoldComponent {
   readonly open = input(false);
+  /** Earlier-session reveal: geometry shares one curve, ink staggers from the boundary. */
+  readonly motion = input<'default' | 'unroll'>('default');
+  readonly enterDelay = input(0);
+  readonly exitDelay = input(0);
   protected readonly settled = signal(true);
   protected transition(event: TransitionEvent, settled: boolean): void {
     if (

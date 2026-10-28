@@ -8,6 +8,7 @@ import {
   computed,
   inject,
   input,
+  model,
   output,
   signal,
 } from "@angular/core";
@@ -17,31 +18,29 @@ import {
   IconButtonComponent,
   IconComponent,
   TickerComponent,
+  TooltipDirective,
 } from "../../ui";
 import {
   matchesSessionFilter,
   type SessionStatus,
   type TaskOutline,
   type TaskSession,
+  type TaskSessionDisclosure,
   type SubTask,
 } from "../task.models";
 import { ListPresence } from "../../ui/motion/list-presence";
 import { ProjectMarkComponent } from "../projects/project-mark.component";
 import { LinkChipComponent } from "../lifecycle/link-chip.component";
 import { RepoTagComponent } from "../lifecycle/repo-tag.component";
-import { SessionRowComponent } from "./session-row.component";
+import { WorkingSessionsComponent } from "./working-sessions.component";
 import { SubtaskRowComponent } from "./subtask-row.component";
 import { SubtaskGlyphComponent } from "./subtask-glyph.component";
 import { TaskSignalComponent } from "./task-signal.component";
 import { subtaskLocations } from "./subtask-order";
 
+import { ArchivedSessionsComponent } from "./archived-sessions.component";
+
 type SessionOutlineRow =
-  | {
-      readonly kind: "session";
-      readonly key: string;
-      readonly session: TaskSession;
-      readonly visible: boolean;
-    }
   | {
       readonly kind: "subtask";
       readonly key: string;
@@ -62,19 +61,21 @@ type SessionOutlineRow =
       readonly subtask: SubTask;
       readonly visible: boolean;
     }
+  | { readonly kind: "empty"; readonly key: string; readonly visible: boolean }
   | {
-      readonly kind: "finished";
+      readonly kind: "merged-summary";
       readonly key: string;
       readonly visible: boolean;
       readonly count: number;
-      readonly merged: number;
     };
 
 @Component({
   selector: "ex-task-group",
   imports: [
+    ArchivedSessionsComponent,
     TaskSignalComponent,
     TickerComponent,
+    TooltipDirective,
     FlipDirective,
     FoldComponent,
     IconButtonComponent,
@@ -82,7 +83,7 @@ type SessionOutlineRow =
     ProjectMarkComponent,
     LinkChipComponent,
     RepoTagComponent,
-    SessionRowComponent,
+    WorkingSessionsComponent,
     SubtaskRowComponent,
     SubtaskGlyphComponent,
   ],
@@ -97,13 +98,23 @@ export class TaskGroupComponent implements OnChanges {
   readonly filter = input<SessionStatus | null>(null);
   readonly showProject = input(true);
   readonly showLink = input(false);
+  readonly cap = input(5);
+  readonly capStep = input(5);
+  readonly allowArchive = input(false);
+  readonly archiveRequested = output<TaskSession>();
+  readonly restoreRequested = output<TaskSession>();
+  readonly archivedSessionsRequested = output<'latest' | 'earlier'>();
+  readonly archiveDisabled = input(false);
   readonly allowAdd = input(true);
+  readonly sessionDisclosure = model<TaskSessionDisclosure | null>(null);
   readonly allowAddSubtask = input(true);
   readonly selectSession = output<string>();
   readonly addSession = output<string>();
+  readonly moreSessionsRequested = output<string>();
+  readonly emptyTaskRequested = output<string>();
   readonly addSubtaskSession = output<string>();
   protected readonly collapsedValue = signal<boolean | null>(null);
-  protected readonly finishedValue = signal(false);
+  protected readonly mergedOpen = signal(false);
   protected readonly moreSubtasks = signal(false);
   private readonly hoveredSubtask = signal<string | null>(null);
   protected readonly tipSubtask = signal<string | null>(null);
@@ -161,28 +172,13 @@ export class TaskGroupComponent implements OnChanges {
         .flatMap((subtask) => subtask.sessions ?? []),
     ),
   );
+  protected readonly current = computed(() => this.everyone().some(session => session.id === this.selected()) || !!this.task().archive?.sessions.some(session => session.id === this.selected()));
   protected readonly collapsed = computed(() =>
     this.filter()
       ? false
       : (this.collapsedValue() ?? this.task().collapsed ?? false),
   );
-  protected readonly working = computed(() =>
-    this.task().sessions.filter(
-      (session) =>
-        (session.status !== "done" || this.filter() === "done") &&
-        matchesSessionFilter(session.status, this.filter()),
-    ),
-  );
-  protected readonly finished = computed(() =>
-    this.filter()
-      ? []
-      : this.task().sessions.filter((session) => session.status === "done"),
-  );
-  protected readonly finishedOpen = computed(
-    () =>
-      this.finishedValue() ||
-      this.finished().some((session) => session.id === this.selected()),
-  );
+  protected readonly working = computed(() => this.task().sessions.filter(session => matchesSessionFilter(session.status, this.filter())));
   protected readonly attention = computed(
     () =>
       this.everyone().filter(
@@ -199,16 +195,15 @@ export class TaskGroupComponent implements OnChanges {
       this.task().links?.find((link) => link.kind === "pr") ??
       this.task().links?.[0],
   );
+  private readonly showEmptySessionAction = computed(() =>
+    this.task().sessions.length === 0 && this.locations().length === 0 &&
+    !this.task().moreSessions && !this.filter() && this.allowAdd() &&
+    this.task().canAddSession !== false,
+  );
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   protected readonly sessionRows = computed<readonly SessionOutlineRow[]>(
     () => [
-      ...this.working().map((session) => ({
-        kind: "session" as const,
-        key: `session:${session.id}`,
-        session,
-        visible: true,
-      })),
       ...this.shownLocations().map((location) => ({
         kind: "subtask" as const,
         key: `subtask:${location.subtask.id}`,
@@ -227,24 +222,24 @@ export class TaskGroupComponent implements OnChanges {
         visible: this.hiddenSubtasks() > 0,
       },
       {
-        kind: "finished",
-        key: "summary:finished",
-        count: this.finished().length,
-        merged: this.merged().length,
-        visible: this.finished().length + this.merged().length > 0,
+        kind: "merged-summary",
+        key: "summary:merged",
+        count: this.merged().length,
+        visible: this.merged().length > 0,
       },
-      ...this.finished().map((session) => ({
-        kind: "session" as const,
-        key: `session:${session.id}`,
-        session,
-        visible: this.finishedOpen(),
-      })),
       ...this.merged().map((subtask) => ({
         kind: "merged" as const,
         key: `merged:${subtask.id}`,
         subtask,
-        visible: this.finishedOpen(),
+        visible: this.mergedOpen(),
       })),
+      // A label introduces the action before the first session. Selection must
+      // never insert or remove controls in a populated task's outline.
+      ...(this.showEmptySessionAction() ? [{
+        kind: "empty" as const,
+        key: "empty-session",
+        visible: true,
+      }] : []),
     ],
   );
   protected readonly presence = new ListPresence(
@@ -274,7 +269,7 @@ export class TaskGroupComponent implements OnChanges {
           : null;
     if (
       sessionId &&
-      this.everyone().some((session) => session.id === sessionId)
+      (this.everyone().some((session) => session.id === sessionId) || this.task().archive?.sessions.some(session => session.id === sessionId))
     )
       this.collapsedValue.set(false);
   }

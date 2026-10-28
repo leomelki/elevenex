@@ -49,6 +49,7 @@
     <button
       type="button"
       exDropdownItem
+      [disabled]="!canManage()"
       (triggered)="newWorkspace.emit()"
     >
       <ex-icon name="plus" [size]="14" />New workspace
@@ -57,6 +58,7 @@
     <button
       type="button"
       exDropdownItem
+      [disabled]="!canManage()"
       (triggered)="manageWorkspaces.emit()"
     >
       <ex-icon name="workspace" [size]="14" />Manage workspaces…

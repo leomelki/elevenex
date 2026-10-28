@@ -1,0 +1,213 @@
+@if (retained()) {
+  <div
+    #layer
+    class="commit-layer"
+    [class.pending]="pending()"
+    [attr.inert]="open() && presenting() ? null : ''"
+    [attr.aria-hidden]="!open() || !presenting()"
+    [cdkTrapFocus]="open() && presenting()"
+  >
+    <section
+      class="box"
+      role="dialog"
+      aria-label="Commit changes"
+      (keydown)="key($event)"
+    >
+      <label class="message"
+        ><ex-icon name="commit" [size]="14" /><input
+          #msg
+          cdkFocusInitial
+          aria-label="Commit message (optional: Elevenex writes one if empty)"
+          placeholder="Describe the change, or leave it to Elevenex"
+          maxlength="4000"
+          [value]="message()"
+          (input)="message.set(msg.value)"
+          (keydown)="messageKey($event)"
+      /></label>
+      <button
+        type="button"
+        class="summary"
+        [attr.aria-expanded]="list()"
+        (click)="list.set(!list())"
+      >
+        <b
+          ><ex-ticker [value]="stats().files" />
+          {{ stats().files === 1 ? "file" : "files" }}</b
+        ><span class="add">+{{ stats().add }}</span
+        ><span class="del">−{{ stats().del }}</span
+        ><span class="counts"
+          >{{ stats().staged }} staged · {{ stats().unstaged }} unstaged</span
+        ><ex-icon name="chevron-down" [size]="13" [class.rotated]="list()" />
+      </button>
+      <ex-fold [open]="list()"
+        ><div class="file-list">
+          <label class="filter"
+            ><ex-icon name="search" [size]="13" /><input
+              #search
+              aria-label="Filter files"
+              [placeholder]="'Filter ' + total() + ' files'"
+              [value]="query()"
+              (input)="filter(search.value)"
+            />
+            @if (query()) {
+              <span
+                >{{ matchCount() }}
+                {{ matchCount() === 1 ? "file" : "files" }}</span
+              >
+            }
+          </label>
+          <div exAutoHeight>
+            <div #scroll class="scroll" [class.more]="more()" (scroll)="edge()">
+              @for (file of shown(); track file.path) {
+                <label
+                  class="file"
+                  [class.off]="!picked(file)"
+                  [class.disabled]="!canPick(file)"
+                  [title]="
+                    file.path + (file.staged ? ' · staged' : ' · unstaged')
+                  "
+                >
+                  <input
+                    type="checkbox"
+                    [checked]="picked(file)"
+                    [disabled]="!canPick(file) || loading()"
+                    (change)="flip(file)"
+                    [attr.aria-label]="'Include ' + file.path"
+                  />
+                  <span class="status">{{ file.status }}</span
+                  ><span class="path"
+                    ><span class="directory">{{
+                      file.path.slice(0, file.path.lastIndexOf("/") + 1)
+                    }}</span
+                    >{{ file.path.slice(file.path.lastIndexOf("/") + 1) }}</span
+                  >
+                  @if (file.flag) {
+                    <span class="secret"
+                      ><ex-icon name="shield" [size]="11" />may hold
+                      secrets</span
+                    >
+                  }
+                  <span class="diff"
+                    ><span class="add">+{{ file.add }}</span
+                    ><span class="del">−{{ file.del }}</span></span
+                  >
+                </label>
+              } @empty {
+                <p class="empty">
+                  {{ loading() ? "Loading files…" : "No files match" }}
+                </p>
+              }
+              @if (!all() && !query() && hidden()) {
+                <button type="button" class="show" (click)="all.set(true)">
+                  Show the other {{ hidden() }}
+                </button>
+              }
+              @if (all() || query()) {
+                @if (remote()?.nextCursor; as next) {
+                  <button
+                    type="button"
+                    class="show"
+                    [disabled]="loading()"
+                    (click)="cursor.set(next)"
+                  >
+                    Next files
+                  </button>
+                }
+                @if (cursor()) {
+                  <button
+                    type="button"
+                    class="show"
+                    [disabled]="loading()"
+                    (click)="cursor.set(undefined)"
+                  >
+                    Back to first files
+                  </button>
+                }
+              }
+            </div>
+          </div>
+        </div></ex-fold
+      >
+      @if (unstaged()) {
+        <label class="option"
+          ><input
+            #unstagedCheck
+            type="checkbox"
+            [checked]="includeUnstaged()"
+            (change)="setUnstaged(unstagedCheck.checked)"
+          />Include {{ unstaged() }} unstaged
+          {{ unstaged() === 1 ? "file" : "files" }}</label
+        >
+      }
+      <ex-fold [open]="includeUnstaged()">
+        @for (file of flagged(); track file.path) {
+          <div class="note">
+            <ex-icon name="shield" [size]="13" /><span
+              >{{ file.path }} may hold secrets{{
+                picked(file) ? "." : ", so it’s left out."
+              }}
+              <button
+                class="inline"
+                type="button"
+                [disabled]="loading()"
+                (click)="flip(file)"
+              >
+                {{ picked(file) ? "Leave it out" : "Include it" }}
+              </button></span
+            >
+          </div>
+        }
+      </ex-fold>
+      @if (runningCount()) {
+        <div class="note">
+          <ex-status-glyph status="running" [size]="13" /><span>
+            @if (runningCount() === 1) {
+              <b>{{ runningNames()[0] ?? "A session" }}</b> is still running.
+              What it changes from now on won’t be in this commit.
+            } @else {
+              <b>{{ runningCount() }} sessions</b> are still running. What they
+              change from now on won’t be in this commit.
+            }
+          </span>
+        </div>
+      }
+      @if (error(); as error) {
+        <p class="error" role="alert">
+          {{ error }}
+          <button
+            type="button"
+            class="inline"
+            (click)="retry.update(increment)"
+          >
+            Try again
+          </button>
+        </p>
+      }
+      @if (loading()) {
+        <span class="loading" role="status">Checking files…</span>
+      }
+      <footer>
+        <ex-switch
+          label="Push after"
+          [on]="keptPush()"
+          (changed)="pushChange.emit($event)"
+        /><span>Push after</span><span class="grow"></span
+        ><button
+          exButton
+          variant="primary"
+          [disabled]="!stats().files || loading() || !!error()"
+          (click)="commit()"
+        >
+          {{
+            loading()
+              ? "Checking files…"
+              : keptPush()
+                ? "Commit and push"
+                : "Commit"
+          }}
+          <ex-ticker [value]="stats().files" /> <ex-kbd>↵</ex-kbd>
+        </button>
+      </footer>
+    </section>
+  </div>
+}

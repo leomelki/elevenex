@@ -2,6 +2,7 @@ import { Component, signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EaseSwapComponent } from "./ease-swap.component";
+import { TickerComponent } from '../feedback/ticker.component';
 
 @Component({
   imports: [EaseSwapComponent],
@@ -9,6 +10,15 @@ import { EaseSwapComponent } from "./ease-swap.component";
 })
 class ActionHost {
   readonly label = signal("Next");
+}
+
+@Component({
+  imports: [EaseSwapComponent, TickerComponent],
+  template: `<button><ex-ease-swap [value]="count() ? 'older' : 'fewer'" [content]="count()" [contentTemplate]="label" /></button>
+    <ng-template #label let-count>@if (count) { <ex-ticker [value]="count" /> older } @else { Show fewer }</ng-template>`,
+})
+class CountActionHost {
+  readonly count = signal(9);
 }
 
 describe("inline action swaps", () => {
@@ -36,6 +46,25 @@ describe("inline action swaps", () => {
     fixture.detectChanges();
     await fixture.whenStable();
     expect(fixture.nativeElement.textContent).toBe("Create task");
+    fixture.destroy();
+  });
+  it('updates rich content in place within a phase and swaps both ways without replacing the action', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }));
+    const fixture = TestBed.createComponent(CountActionHost);
+    fixture.detectChanges(); await fixture.whenStable();
+    const button = fixture.nativeElement.querySelector('button');
+    const counter = button.querySelector('ex-ticker');
+    fixture.componentInstance.count.set(4);
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(button.querySelector('ex-ticker')).toBe(counter);
+    expect(button.textContent.trim()).toBe('4 older');
+    fixture.componentInstance.count.set(0);
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(button.textContent.trim()).toBe('Show fewer');
+    fixture.componentInstance.count.set(9);
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(button.textContent.trim()).toBe('9 older');
+    expect(fixture.nativeElement.querySelector('button')).toBe(button);
     fixture.destroy();
   });
   it('keeps the first attached portal label at natural width', async () => {

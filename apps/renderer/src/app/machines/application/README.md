@@ -10,11 +10,11 @@ remain usable independently. The legacy frontend is unchanged.
 | Desktop `machines/MachinePreferences` | Atomic, monotonic first-run flag; flush before application shutdown |
 | Desktop `RemoteManager` / `BackendManager` | Existing SSH leases, recovery, authentication, engine installation and processes |
 | `MachineConnectionService` | Typed preload calls, subscription lifetime, ordered snapshots and stale-bootstrap rejection |
-| `MachineLauncherService` | Selected/pending/open view, coalesced selections, last-intent guards, ready-card settling and cancellable launch timers |
+| `MachineLauncherService` | Selected/pending/open view, coalesced selections, last-intent guards, workspace preparation acknowledgement, ready-card settling and cancellable launch timers |
 | `SshSetupService` | One unfinished host draft, debounced/bounded suggestions, validation and save/connect intent |
 | `RemoteChallengeDialog` | Transient credential/trust UI, expiration and secret clearing |
 | `MachineApp` | Window composition, retained modals, title island, update/recovery presentation |
-| `MachineWorkspace` | Landing boundary for the next project/task integration |
+| `MachineWorkspace` | Connected AppShell composition, scoped feature providers, first-project flight and side-view shells |
 
 Home starts passively: saved servers are not contacted until selected. Returning
 Home keeps this window's connection until a different machine is selected or it
@@ -45,17 +45,31 @@ save may leave a saved card, but cannot subsequently start its connection.
 The machine view stays mounted through Home and updates, and is keyed by machine
 identity when switching. Initial preparation stays on Home cards; only an update
 inside an already open view uses full-window GettingReady. Reconnects leave
-content readable with retry/change actions. Future project stores should use the
-existing BackendClientService scope and own their bounded pages, drafts and stale
-selection guards. Do not add domain caches or project mutations to the connection
-service or the presentational components.
+content readable with retry/change actions. The connected workspace uses the
+existing BackendClientService scope and owns its bounded pages, drafts and stale
+selection guards. Domain caches and project mutations stay outside the connection
+service and presentational components. The workspace code prefetches when Home
+is idle without instantiating task features or contacting saved servers. Selecting
+a machine mounts only that candidate behind inert Home. `MachineWorkspace.preparing`
+allows scope-bound navigation reads before launch; `active` separately owns
+interaction. After the first render and two animation frames,
+`prepared({machineId, generation})` acknowledges the paint boundary. The launcher
+requires that acknowledgement and the matching ready backend before opening. Network replies
+do not gate the acknowledgement. This moves first-use templates, styles and
+layout out of the opening animation. Cancellation/switching rejects old
+acknowledgements by candidate generation and disposes pending frames. A retained
+candidate acknowledges the new generation even if reselection preceded Angular's
+next render. The existing workspace remains mounted for a warm return from Home.
 
 This slice supports local and SSH machines. Peer transport is not implemented;
 the pairing card explains availability without collecting unusable pairing text.
-The NewProject landing uses its disabled state because the desktop project
-adapter is not implemented. It neither reads folders nor pretends creation is in
-progress. Connect that existing form through a scoped project feature when that
-slice is added, including durable mutation reconciliation and folder cancellation.
+The ready machine opens the [connected workspace](../../workspace/README.md).
+An empty backend shows the existing NewProject card over inert shell regions.
+Its named project/folder adapters operate on the selected machine; the shell owns
+the face flight and return to the visible workspace. Its prominent New task
+action receives focus; task creation starts only when requested. Selected sessions
+show the task header with an empty main region. Side views currently provide
+their tabs and frames only.
 
 `preview/machine-startup-*` supplies a deterministic platform for the **production
 composition**, outside its production import graph. `/machine-startup` exposes
@@ -68,6 +82,12 @@ pnpm desktop:capture scripts/desktop-capture/scenarios/machine-startup.mjs --url
 Use the existing machine motion/onboarding scenarios for detailed primitive
 geometry and interruption checks. Unit tests cover snapshot races, launch
 cancellation, repeat/last selections, credential cleanup, persistence and IPC.
+
+`scenarios/machine-first-open.mjs` additionally checks first/warm launches,
+workspace creation before animation, inert preparation without focus theft,
+ready-backend opening, reversals and narrow reduced motion in both themes.
+It records native frame intervals and long animation frames as diagnostics,
+without imposing a hardware-independent FPS threshold.
 
 Preparation failures stay on their machine card with a stopped progress value and
 retry action. Only host-trust errors use the safety tone; the Home island stays

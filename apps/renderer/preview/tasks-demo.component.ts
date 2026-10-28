@@ -19,6 +19,7 @@ import {
   StageGlyphComponent,
   StatusSummaryComponent,
   TaskHeaderComponent,
+  TaskGroupComponent,
   TaskLineComponent,
   TaskListComponent,
   TaskStageComponent,
@@ -35,6 +36,7 @@ import {
   type SessionStatus,
   type SummaryStatus,
   type TaskOutline,
+  type TaskSession,
   type TaskStage,
   type Workspace,
 } from '../src/app/tasks';
@@ -58,6 +60,7 @@ import {
     StageGlyphComponent,
     StatusSummaryComponent,
     TaskHeaderComponent,
+    TaskGroupComponent,
     TaskLineComponent,
     TaskListComponent,
     TaskStageComponent,
@@ -68,6 +71,13 @@ import {
   styleUrl: './tasks-demo.component.css',
 })
 export class TasksDemoComponent {
+  protected readonly busySelected = signal<string | null>(null);
+  protected readonly busyTask = signal<TaskOutline>({ id: 'busy', title: 'A busy task', sessions: Array.from({length:19},(_,index)=>({ id:`busy-${index}`,title:`Investigate retry behavior ${index + 1}`,status:index === 0 ? 'attention' : index === 3 ? 'failed' : index === 18 ? 'review' : 'running' })) });
+  protected archiveBusy(session: TaskSession): void {
+    this.busyTask.update(task=>({...task,sessions:task.sessions.filter(row=>row.id!==session.id)}));
+    if (this.busySelected() === session.id) this.busySelected.set(this.busyTask().sessions.find(row=>row.status!=='done')?.id ?? null);
+    this.note.set(`Archived “${session.title}”. The connected workspace preview also exercises Undo.`);
+  }
   protected readonly projects: readonly Project[] = [
     {
       id: 'elevenex',
@@ -223,9 +233,9 @@ export class TasksDemoComponent {
   );
   protected readonly tabs: readonly PanelTab[] = [
     { id: 'terminal', label: 'Terminal', icon: 'terminal' },
-    { id: 'code', label: 'Code', icon: 'code' },
-    { id: 'changes', label: 'Changes', icon: 'changes', badge: true },
     { id: 'actions', label: 'Actions', icon: 'actions' },
+    { id: 'changes', label: 'Changes', icon: 'changes', badge: true },
+    { id: 'code', label: 'Code', icon: 'code' },
     { id: 'browser', label: 'Browser', icon: 'globe' },
   ];
   protected readonly hues: readonly ProjectHue[] = [

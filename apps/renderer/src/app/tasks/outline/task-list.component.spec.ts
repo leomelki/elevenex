@@ -38,19 +38,84 @@ describe('task outline ownership', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
-  it('keeps order, folds finished sessions and exposes selection intents', () => {
+  it('suppresses task and sub-task creation controls while disabled', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    fixture.componentRef.setInput('tasks', [{ ...tasks[0]!, subtasks: [{ id: 'child', title: 'Child', sessions: [] }] }]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[aria-label="New session in this sub-task"]')).not.toBeNull();
+    fixture.componentRef.setInput('disabled', true);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[aria-label="New session in this task"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[aria-label="New session in this sub-task"]')).toBeNull();
+  });
+
+  it('keeps populated outlines and header creation actions unchanged across task selection', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    fixture.componentRef.setInput('tasks', tasks);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const outlines = [...root.querySelectorAll('[data-task-id] .tree')];
+    const buttons = [...root.querySelectorAll<HTMLButtonElement>('[data-task-id] header .add button')];
+    const rows = outlines.map(outline => [...outline.querySelectorAll('ex-fold')]);
+    const add = vi.fn();
+    fixture.componentInstance.addSession.subscribe(add);
+    for (const selected of ['one', 'four', null, 'three']) {
+      fixture.componentRef.setInput('selected', selected);
+      fixture.detectChanges();
+      expect([...root.querySelectorAll('[data-task-id] header .add button')]).toEqual(buttons);
+      expect(outlines.map(outline => [...outline.querySelectorAll('ex-fold')])).toEqual(rows);
+      expect(outlines.every(outline => !outline.textContent?.includes('New session'))).toBe(true);
+    }
+    buttons[1]!.click();
+    expect(add).toHaveBeenCalledWith('second');
+  });
+
+  it('introduces creation with a labeled empty-task action, independent of selection', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    const empty: TaskOutline = { id: 'empty', title: 'Empty task', sessions: [] };
+    fixture.componentRef.setInput('tasks', [tasks[0]!, empty]);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const action = root.querySelector<HTMLButtonElement>('[data-task-id="empty"] .empty-session')!;
+    const visibleAction = () => {
+      const button = root.querySelector('[data-task-id="empty"] .empty-session');
+      return !!button && !button.closest('[inert]');
+    };
+    const add = vi.fn();
+    fixture.componentInstance.addSession.subscribe(add);
+    expect(action.textContent).toContain('New session');
+    expect(action.closest('[inert]')).toBeNull();
+    fixture.componentRef.setInput('selected', 'one');
+    fixture.detectChanges();
+    expect(root.querySelector('[data-task-id="empty"] .empty-session')).toBe(action);
+    expect(action.closest('[inert]')).toBeNull();
+    action.click();
+    expect(add).toHaveBeenCalledWith('empty');
+    fixture.componentRef.setInput('disabled', true);
+    fixture.detectChanges();
+    expect(visibleAction()).toBe(false);
+    fixture.componentRef.setInput('disabled', false);
+    fixture.componentRef.setInput('tasks', [tasks[0]!, { ...empty, canAddSession: false }]);
+    fixture.detectChanges();
+    expect(visibleAction()).toBe(false);
+    fixture.componentRef.setInput('tasks', [tasks[0]!, { ...empty, moreSessions: true }]);
+    fixture.detectChanges();
+    expect(visibleAction()).toBe(false);
+  });
+
+  it('keeps completed sessions visible in normal order and exposes selection intents', () => {
     const fixture = TestBed.createComponent(TaskListComponent);
     fixture.componentRef.setInput('tasks', tasks);
     const selected = vi.fn();
     fixture.componentInstance.selectSession.subscribe(selected);
     fixture.detectChanges();
     const first = fixture.nativeElement.querySelector('[data-task-id="first"]');
-    expect(first.textContent).toContain('1 finished');
+    expect(first.textContent).not.toContain('1 finished');
     const rows = first.querySelectorAll('ex-session-row');
     expect(rows[0]?.textContent).toContain('Earlier running');
     expect(rows[1]?.textContent).toContain('Later question');
     expect(rows[2]?.closest('ex-fold')?.getAttribute('aria-hidden')).toBe(
-      'true',
+      'false',
     );
     rows[1]?.querySelector('button')?.click();
     expect(selected).toHaveBeenCalledWith({
@@ -307,6 +372,25 @@ describe('task outline ownership', () => {
     fixture.destroy();
   });
 
+  it('keeps an unselected completed session in place and keyboard accessible', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    const task: TaskOutline = { id: 'task', title: 'Work', sessions: [
+      { id: 'first', title: 'First session', status: 'running' },
+      { id: 'second', title: 'Second session', status: 'running' },
+      { id: 'third', title: 'Third session', status: 'queued' },
+    ] };
+    fixture.componentRef.setInput('tasks', [task]);
+    fixture.componentRef.setInput('selected', 'third');
+    fixture.detectChanges();
+    const rows = [...fixture.nativeElement.querySelectorAll('ex-session-row')];
+    fixture.componentRef.setInput('tasks', [{ ...task, sessions: task.sessions.map(session => session.id === 'second' ? { ...session, status: 'done' } : session) }]);
+    fixture.detectChanges();
+    expect([...fixture.nativeElement.querySelectorAll('ex-session-row')]).toEqual(rows);
+    expect(rows.map(row => row.textContent?.trim())).toEqual(['First session', 'Second session', 'Third session']);
+    expect(rows[1]?.closest('[inert]')).toBeNull();
+    expect(rows[1]?.querySelector('button')?.tabIndex).toBe(0);
+  });
+
   it('preserves a selected session when it finishes, including IDs that resemble summary rows', () => {
     const fixture = TestBed.createComponent(TaskListComponent);
     const task: TaskOutline = {
@@ -326,7 +410,7 @@ describe('task outline ownership', () => {
     expect(selected.closest('ex-session-row')).toBe(row);
     expect(selected.closest('[inert]')).toBeNull();
     expect(fixture.nativeElement.querySelectorAll('ex-session-row')).toHaveLength(2);
-    expect(fixture.nativeElement.textContent).toContain('2 finished');
+    expect(fixture.nativeElement.textContent).not.toContain('2 finished');
     const activated = vi.fn();
     fixture.componentInstance.selectSession.subscribe(activated);
     selected.click();

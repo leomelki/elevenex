@@ -1,0 +1,35 @@
+<ex-sheet [open]="store.dialog() === 'settings' && store.dialogOpen()" [section]="store.settingsAdding() ? 'repos' : 'general'" label="Project settings" (closeRequested)="store.closeDialog()">
+  <span sheetNavHead>Project settings</span>
+  <div sheetHero><h2>{{ store.draftProject()?.name }}</h2><p>{{ store.repositories().length }} repositories · {{ store.machine()?.name }}</p></div>
+  <ng-template exSheetSection="general" label="General" icon="pencil">
+    <div class="section" [attr.inert]="!store.dialogOpen() ? '' : null">
+      <ex-set-group title="Project">
+        <ex-set-row label="Name"><ex-set-value label="Project name" [value]="store.draftProject()?.name ?? ''" [disabled]="store.busy()" (changed)="store.updateProject({name:$event})" /></ex-set-row>
+      </ex-set-group>
+      <ex-project-appearance [appearance]="appearance()" [disabled]="store.busy()" (appearanceChange)="store.updateProject({appearance:$event})" />
+      <ex-set-group title="Agent instructions" note="Shared with sessions in this project.">
+        <ex-set-row label="Instructions"><ex-set-value label="Project agent instructions" [value]="store.draftProject()?.agentInstructions ?? ''" [disabled]="store.busy()" [field]="true" [well]="true" (changed)="store.updateProject({agentInstructions:$event})" /></ex-set-row>
+      </ex-set-group>
+    </div>
+  </ng-template>
+  <ng-template exSheetSection="repos" label="Repositories" icon="repo">
+    <div class="section"><ex-set-group title="Repositories">
+      @for (repo of store.repositories(); track repo.id) { <ex-set-row [label]="repo.name" [sub]="repo.path" /> }
+    </ex-set-group>
+    @if (store.settingsAdding()) {
+      <ex-folder-suggestions [machine]="store.machine()?.name ?? 'this machine'" [query]="'~/'" [listFolders]="store.folderProvider()" [active]="store.dialog() === 'settings' && store.dialogOpen()" [disabled]="store.busy()" [addedPaths]="[]" (selected)="store.addRepository($event.path); store.settingsAdding.set(false)" />
+    } @else { <button exButton [disabled]="store.busy()" (click)="store.settingsAdding.set(true)">Add a repository</button> }
+    </div>
+  </ng-template>
+  <ng-template exSheetSection="tasks" label="Tasks" icon="task">
+    <div class="section" [attr.inert]="!store.dialogOpen() ? '' : null">
+      <ex-set-group title="Sidebar" note="Saved on this device for all projects. Sessions that need you and the open session always stay visible.">
+        <ex-set-row label="Sessions per task">
+          <ex-set-choice label="Sessions per task" [options]="preferences.options" [value]="preferences.sessionCap().toString()" [active]="store.dialogOpen()" (changed)="preferences.setSessionCap($event)" />
+        </ex-set-row>
+      </ex-set-group>
+      @if (preferences.error(); as error) { <p role="alert">{{ error }}</p> }
+    </div>
+  </ng-template>
+  @if (store.error(); as error) { <p class="error" role="alert">{{ error }}</p> }
+</ex-sheet>

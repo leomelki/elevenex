@@ -1,0 +1,27 @@
+<button class="toggle" type="button" [disabled]="disabled()" [attr.aria-expanded]="open()" (click)="toggle()">
+  <ex-icon class="chevron" name="chevron-down" [size]="12" [class.closed]="!open()" />
+  <ex-icon name="archive" [size]="12" />Archived
+</button>
+<ex-fold [open]="open()">
+  <div class="sessions" [attr.aria-busy]="archive().loading">
+    @for (entry of presence.rows(); track entry.key) {
+      <ex-fold [open]="entry.present && !entry.entering" (transitionend)="presence.settled(entry.key, $event)">
+        <ex-session-row [session]="entry.value" [archived]="true" [allowRestore]="!disabled() && !archive().loading"
+          [selected]="selected() === entry.key" (activated)="selectSession.emit($event)" (restoreRequested)="restoreRequested.emit($event)" />
+      </ex-fold>
+    }
+    @if (archive().loading) { <p role="status">Loading archived sessions…</p> }
+    @if (archive().error; as error) {
+      <p role="alert">{{ error }}</p>
+      <button exButton variant="ghost" size="sm" [disabled]="archive().loading || disabled()" (click)="requested.emit('latest')">Retry archived sessions</button>
+    } @else if (archive().loaded && !archive().loading && !archive().sessions.length) {
+      <p>No archived sessions.</p>
+    }
+    @if (archive().more) {
+      <button exButton variant="ghost" size="sm" [disabled]="archive().loading || disabled()" (click)="requested.emit('earlier')">Earlier archived sessions</button>
+    }
+    @if (archive().earlier) {
+      <button exButton variant="ghost" size="sm" [disabled]="archive().loading || disabled()" (click)="requested.emit('latest')">Newest archived sessions</button>
+    }
+  </div>
+</ex-fold>

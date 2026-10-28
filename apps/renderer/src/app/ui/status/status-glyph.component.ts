@@ -14,6 +14,7 @@ import { Status, STATUS_LABELS } from "./status.models";
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: "./status-glyph.component.html",
   styleUrl: "./status-glyph.component.css",
+  host: { '[class.spin]': 'status() === "running"' },
 })
 export class StatusGlyphComponent {
   readonly status = input<Status>("queued");
@@ -21,21 +22,23 @@ export class StatusGlyphComponent {
   protected readonly labels = STATUS_LABELS;
   private previous?: Status;
   private readonly animations = new Set<Animation>();
+  private readonly motion = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : undefined;
   private readonly element =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
 
   constructor() {
+    const settle = () => { if (this.motion?.matches) this.cancelAnimations(); };
+    this.motion?.addEventListener?.('change', settle);
     afterRenderEffect(() => {
       const status = this.status();
       const previous = this.previous;
       this.previous = status;
-      for (const animation of this.animations) animation.cancel();
-      this.animations.clear();
+      this.cancelAnimations();
       if (
         !previous ||
         previous === status ||
         !this.element.animate ||
-        matchMedia("(prefers-reduced-motion: reduce)").matches
+        this.motion?.matches
       )
         return;
       const style = getComputedStyle(this.element);
@@ -84,14 +87,20 @@ export class StatusGlyphComponent {
                 { opacity: 0.35, transform: "rotate(-45deg) scale(.9)" },
                 { opacity: 1, transform: "none" },
               ];
-      this.play(this.element, frames, {
+      this.play(this.element.querySelector('.glyph'), frames, {
         duration: parseFloat(style.getPropertyValue("--dur-deliberate")),
         easing: style.getPropertyValue("--ease-spring").trim(),
       });
     });
     inject(DestroyRef).onDestroy(() => {
-      for (const animation of this.animations) animation.cancel();
+      this.cancelAnimations();
+      this.motion?.removeEventListener?.('change', settle);
     });
+  }
+
+  private cancelAnimations(): void {
+    for (const animation of this.animations) animation.cancel();
+    this.animations.clear();
   }
 
   private play(

@@ -1,10 +1,11 @@
-<article [class.fresh]="task().fresh" [attr.data-task-id]="task().id">
+<article [class.fresh]="task().fresh" [class.current]="current()" [attr.data-task-id]="task().id">
   <header>
     <button
       class="toggle"
       type="button"
+      [exTooltip]="task().title"
       [attr.aria-expanded]="!collapsed()"
-      (click)="toggle()"
+      (click)="toggle(); !task().archive && task().sessions.length === 0 && emptyTaskRequested.emit(task().id)"
     >
       <ex-icon
         class="chevron"
@@ -43,7 +44,7 @@
       [total]="everyone().length"
       [collapsed]="collapsed()"
     />
-    @if (allowAdd()) {
+    @if (allowAdd() && task().canAddSession !== false) {
       <ex-icon-button
         class="add"
         icon="plus"
@@ -55,6 +56,9 @@
   </header>
   <ex-fold [open]="!collapsed()"
     ><div class="tree" [exFlip]="motionOrder()" [exFlipReorderOnly]="true">
+      <ex-working-sessions [taskId]="task().id" [sessions]="working()" [selected]="selected()" [filtered]="!!filter()"
+        [cap]="cap()" [capStep]="capStep()" [allowArchive]="allowArchive()" [(disclosure)]="sessionDisclosure"
+        (activated)="selectSession.emit($event)" (archiveRequested)="archiveRequested.emit($event)" />
       @for (entry of presence.rows(); track entry.key) {
         @let row = entry.value;
         <ex-fold
@@ -64,15 +68,11 @@
           [open]="entry.present && !entry.entering && row.visible"
           (transitionend)="presence.settled(entry.key, $event)"
         >
-          @if (row.kind === "session") {
-            <ex-session-row
-              [session]="row.session"
-              [selected]="selected() === row.session.id"
-              (activated)="selectSession.emit($event)"
-            />
-          } @else if (row.kind === "subtask") {
+          @if (row.kind === "subtask") {
             <ex-subtask-row
               [subtask]="row.subtask"
+              [allowArchive]="allowArchive()"
+              (archiveRequested)="archiveRequested.emit($event)"
               [depth]="row.depth"
               [path]="row.path"
               [selected]="selected()"
@@ -88,7 +88,7 @@
           } @else if (row.kind === "more") {
             <button
               type="button"
-              class="finished-toggle"
+              class="outline-action"
               (click)="moreSubtasks.set(true)"
             >
               <ex-subtask-glyph /><ex-ticker [value]="row.count" /> more
@@ -117,31 +117,34 @@
                 </span>
               }
             </div>
+          } @else if (row.kind === "empty") {
+            <button class="outline-action empty-session" type="button" (click)="addSession.emit(task().id)"><ex-icon name="plus" [size]="13" />New session</button>
           } @else {
-            <div class="finished">
+            <div class="merged-summary">
               <button
-                class="finished-toggle"
+                class="outline-action"
                 type="button"
-                [attr.aria-expanded]="finishedOpen()"
-                (click)="finishedValue.set(!finishedOpen())"
+                [attr.aria-expanded]="mergedOpen()"
+                (click)="mergedOpen.set(!mergedOpen())"
               >
                 <ex-icon
                   class="chevron"
                   name="chevron-down"
                   [size]="12"
-                  [class.closed]="!finishedOpen()"
+                  [class.closed]="!mergedOpen()"
                 />
-                @if (row.count) {
-                  <ex-ticker [value]="row.count" /> finished
-                }
-                @if (row.merged) {
-                  {{ row.count ? " · " : ""
-                  }}<ex-ticker [value]="row.merged" /> merged
-                }
+                <ex-ticker [value]="row.count" /> merged
               </button>
             </div>
           }
         </ex-fold>
+      }
+      @if (!filter() && task().archive; as archive) {
+        <ex-archived-sessions [archive]="archive" [selected]="selected()" [disabled]="archiveDisabled()"
+          (requested)="archivedSessionsRequested.emit($event)" (selectSession)="selectSession.emit($event)" (restoreRequested)="restoreRequested.emit($event)" />
+      }
+      @if (task().moreSessions) {
+        <button class="outline-action" type="button" (click)="moreSessionsRequested.emit(task().id)">{{ task().sessionsDirection === 'earlier' ? 'Earlier sessions' : 'Next sessions' }}</button>
       }
     </div></ex-fold
   >

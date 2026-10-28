@@ -10,13 +10,14 @@ import { SheetSectionDirective } from './sheet-section.directive';
 
 @Component({ imports: [ModalLayerComponent, A11yModule], template: `
   <div data-modal-window><div class="ex-shell"><button id="return">Settings</button></div>
-    <ex-modal-layer [open]="sheet()" (closeRequested)="sheet.set(false)"><section role="dialog" aria-label="Settings"><button cdkFocusInitial id="confirm">Delete</button></section></ex-modal-layer>
+    <ex-modal-layer [open]="sheet()" (closed)="closedEvents.push('sheet')" (closeRequested)="sheet.set(false)"><section role="dialog" aria-label="Settings"><button cdkFocusInitial id="confirm">Delete</button></section></ex-modal-layer>
     <ex-modal-layer [open]="confirm()" (closeRequested)="confirm.set(false)"><section role="alertdialog" aria-label="Delete"><button cdkFocusInitial id="cancel">Cancel</button></section></ex-modal-layer>
   </div>
 ` })
 class LayersHost {
   readonly sheet = signal(false);
   readonly confirm = signal(false);
+  readonly closedEvents: string[] = [];
 }
 
 @Component({ imports: [SheetComponent, SheetSectionDirective], template: `
@@ -51,6 +52,21 @@ class RemovalHost { readonly open = signal(false); readonly removed = signal(fal
 describe('settings surfaces', () => {
   beforeEach(() => vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => undefined, removeEventListener: () => undefined, addListener: () => undefined, removeListener: () => undefined })));
   afterEach(() => vi.unstubAllGlobals());
+
+  it('emits completed closure after detaching and restoring focus, without emitting for an interrupted exit or destruction', async () => {
+    const fixture = TestBed.createComponent(LayersHost); fixture.detectChanges();
+    const opener: HTMLButtonElement = fixture.nativeElement.querySelector('#return'); opener.focus();
+    fixture.componentInstance.sheet.set(true); fixture.detectChanges(); await fixture.whenStable();
+    fixture.componentInstance.sheet.set(false); fixture.detectChanges();
+    fixture.componentInstance.sheet.set(true); fixture.detectChanges(); await fixture.whenStable();
+    expect(fixture.componentInstance.closedEvents).toEqual([]);
+    fixture.componentInstance.sheet.set(false); fixture.detectChanges(); await fixture.whenStable();
+    expect(fixture.componentInstance.closedEvents).toEqual(['sheet']);
+    expect(document.querySelector('[role="dialog"][aria-label="Settings"]')).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    fixture.componentInstance.sheet.set(true); fixture.detectChanges(); await fixture.whenStable();
+    fixture.destroy(); expect(fixture.componentInstance.closedEvents).toEqual(['sheet']);
+  });
 
   for (const retained of [false, true]) it(`restores the keyboard region when a dialog's opener is ${retained ? 'retained inert' : 'removed'}`, async () => {
     const fixture = TestBed.createComponent(RemovalHost); fixture.detectChanges();

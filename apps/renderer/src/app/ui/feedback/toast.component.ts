@@ -31,6 +31,8 @@ export class ToastComponent {
   readonly title = input.required<string>();
   readonly detail = input("");
   readonly action = input("");
+  readonly dismissOnAction = input(true);
+  readonly busy = input(false);
   readonly tone = input<"normal" | "danger">("normal");
   readonly glyph = input<Status>("done");
   readonly duration = input(5000);
@@ -95,8 +97,8 @@ export class ToastComponent {
     this.dismissed.emit();
   }
   protected activateAction(): void {
-    if (this.finished) return;
+    if (this.finished || this.busy()) return;
     this.actionSelected.emit();
-    this.dismiss();
+    if (this.dismissOnAction()) this.dismiss();
   }
 }

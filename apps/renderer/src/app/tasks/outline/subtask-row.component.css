@@ -91,14 +91,6 @@ button:focus-visible {
 .count {
   color: var(--ink-muted);
 }
-.add {
-  opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease-out);
-}
-.head:hover .add,
-.head:focus-within .add {
-  opacity: 1;
-}
 .tip {
   position: absolute;
   z-index: 5;
@@ -124,34 +116,6 @@ button:focus-visible {
 .tip span {
   opacity: 0.72;
 }
-.finished-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  height: 26px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink-muted);
-  font: inherit;
-  font-size: var(--text-caption-size);
-  text-align: left;
-  cursor: pointer;
-}
-.finished-toggle:hover {
-  background: var(--surface-sunken);
-  color: var(--ink);
-}
-.chevron {
-  flex: none;
-  color: var(--ink-muted);
-  transition: transform var(--dur-glide) var(--ease-glide);
-}
-.chevron.closed {
-  transform: rotate(-90deg);
-}
 @keyframes ready-in {
   from {
     opacity: 0;
@@ -164,16 +128,9 @@ button:focus-visible {
     transform: translateY(2px) scale(0.96);
   }
 }
-@media (hover: none) {
-  .add {
-    opacity: 1;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .toggle,
-  .tree,
-  .add,
-  .chevron {
+  .tree {
     transition: none;
   }
   .ready,

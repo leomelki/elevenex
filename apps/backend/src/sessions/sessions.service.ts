@@ -1,6 +1,8 @@
+import { NavigationEventsService } from '../navigation/navigation-events.service.js';
 import {
   Inject,
   Injectable,
+  Optional,
   Logger,
   NotFoundException,
   BadRequestException,
@@ -85,6 +87,7 @@ export class SessionsService extends EventEmitter {
     @Inject(AGENT_RUNTIME_CLEANUP_SERVICE)
     private readonly agentRuntimeCleanup: AgentRuntimeCleanup,
     private readonly settingsService: SettingsService,
+    @Optional() private readonly navigationEvents?: NavigationEventsService,
   ) {
     super();
   }
@@ -146,6 +149,7 @@ export class SessionsService extends EventEmitter {
 
     // Return the same navigation metadata as GET /sessions/:id so the client
     // can open this newly created session without another round trip.
+    this.navigationEvents?.invalidate();
     return this.findOne(rows[0].id);
   }
 
@@ -554,6 +558,7 @@ export class SessionsService extends EventEmitter {
     this.logger.log(
       `Generated session title rename saved session=${id} previousName=${JSON.stringify(current.name)} newName=${JSON.stringify(session.name)}`,
     );
+    this.navigationEvents?.invalidate();
     this.emit('session-title-changed', {
       sessionId: id,
       name: session.name,
@@ -759,6 +764,7 @@ export class SessionsService extends EventEmitter {
     }
 
     const session = rows[0];
+    this.navigationEvents?.invalidate();
     this.emit('session-worktree-context-changed', {
       sessionId: id,
       hasInjectedWorktreeContext: session.hasInjectedWorktreeContext,
@@ -786,6 +792,7 @@ export class SessionsService extends EventEmitter {
       throw new NotFoundException(`Session with id ${id} not found`);
     }
 
+    this.navigationEvents?.invalidate();
     this.emit('session-status-changed', { sessionId: id, status });
     return this.withInferredActiveAgentProvider(rows[0]);
   }
@@ -816,6 +823,7 @@ export class SessionsService extends EventEmitter {
     }
 
     const session = rows[0];
+    this.navigationEvents?.invalidate();
     this.emit('session-completion-changed', {
       sessionId: id,
       hasUnreviewedCompletion: session.hasUnreviewedCompletion,
@@ -840,6 +848,7 @@ export class SessionsService extends EventEmitter {
     }
 
     const session = rows[0];
+    this.navigationEvents?.invalidate();
     this.emit('session-completion-changed', {
       sessionId: id,
       hasUnreviewedCompletion: session.hasUnreviewedCompletion,
@@ -864,6 +873,7 @@ export class SessionsService extends EventEmitter {
     }
 
     const session = rows[0];
+    this.navigationEvents?.invalidate();
     this.emit('session-last-state-change-changed', {
       sessionId: id,
       lastStateChangeAt: session.lastStateChangeAt,
@@ -900,7 +910,7 @@ export class SessionsService extends EventEmitter {
       ...new Set([...uniqueIds, ...embeddedChildIds]),
     ]);
 
-    return this.db.transaction((tx) => {
+    const deleted = this.db.transaction((tx) => {
       if (embeddedChildIds.length > 0) {
         tx.delete(schema.sessions)
           .where(inArray(schema.sessions.id, embeddedChildIds))
@@ -912,6 +922,8 @@ export class SessionsService extends EventEmitter {
         .returning()
         .all();
     });
+    this.navigationEvents?.invalidate();
+    return deleted;
   }
 
   async deleteByWorktreePath(worktreePath: string) {

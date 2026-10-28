@@ -6,6 +6,9 @@
 focus restoration. Keep the component mounted and change `open` to retain its
 exit. Presence follows the actual animation's completion, with no independent
 cleanup timer; reopening cancels the stale completion without replacing the view.
+The `closed` output runs only after a completed exit has detached the portal and
+restored focus. Owners can use it to hand off to another dialog while retaining
+the outgoing data until that boundary; cancelled/interrupted exits do not emit it.
 Keep the projected dialog/data present while the layer closes.
 
 With `from`, the dialog morphs out of the painted trigger over 560ms and returns
@@ -106,3 +109,12 @@ If a confirmation removes its own opener, ModalLayer returns focus to the neares
 keyboard region recorded around that opener before opening. It still prefers the
 original opener or morph target when either survives, and never focuses an inert
 region. This keeps machine removal keyboard-accessible after its card disappears.
+
+`MorphFromMotion` is the shared imperative motion owner used by ModalLayer and
+CommitPanel. Construct it with a layer whose first child is its surface and the
+origin element. Call `retarget(open, origin)` for interrupted transitions and
+`dispose()` on destruction. The optional `{ noFace: true, fadeIn: .3 }` mode keeps
+the real opener visible and fades the surface during the first 30% of the morph;
+it is used by the anchored commit popover. Focus, presence, sizing and dismissal
+remain the consuming component's responsibility. Default ModalLayer behavior is
+unchanged.

@@ -10,8 +10,8 @@ import type { ProjectMark } from '../../tasks/task.models';
   templateUrl: './delete-project.component.html', styleUrl: './delete-project.component.css' })
 export class DeleteProjectComponent {
   readonly project = input.required<ProjectMark>();
-  readonly tasks = input(0);
-  readonly sessions = input(0);
+  readonly tasks = input<number | undefined>(0);
+  readonly sessions = input<number | undefined>(0);
   readonly running = input(0);
   readonly machine = input('the machine');
   readonly cancelled = output<void>();

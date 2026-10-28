@@ -8,6 +8,11 @@ svg {
   color: var(--ink-muted);
   overflow: visible;
 }
+.glyph {
+  /* One-shot status changes stay independent of the host's continuous spin. */
+  display: inline-flex;
+  flex: none;
+}
 .burst {
   opacity: 0;
   transform-origin: center;
@@ -27,7 +32,9 @@ svg {
 .inverse {
   stroke: var(--surface-raised);
 }
-.spin {
+:host(.spin) {
+  /* Spin the HTML surface: Chromium otherwise lays out an animated SVG path
+     every frame, even in an otherwise idle sidebar with many running sessions. */
   transform-origin: center;
   animation: spin 1.1s linear infinite;
 }
@@ -37,7 +44,7 @@ svg {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .spin {
+  :host(.spin) {
     animation: none;
   }
 }

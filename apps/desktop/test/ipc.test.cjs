@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFile } = require('node:fs/promises');
 const vm = require('node:vm');
+const { URLSearchParams } = require('node:url');
 
 test('backend IPC validates the sender and all zero-argument operations, and cleans up events', async () => {
   const handlers = new Map();
@@ -85,7 +86,7 @@ test('backend client IPC validates scope/arity, isolates window ownership and un
   });
   const clientExports = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/ipc'), 'utf8'), {
-    exports: clientExports, require: () => ipcExports,
+    exports: clientExports, require: name => name === '../ipc' ? ipcExports : { registerWorkspaceIpc: () => () => {} },
   });
   const frame = {}; const sender = { id: 42 };
   const client = { state: id => calls.push(['state', id]), info: (...args) => calls.push(['info', ...args]) };
@@ -136,5 +137,38 @@ test('machine IPC verifies main-frame ownership, bounds suggestions and validate
   assert.ok(calls.some(call => call[0] === 'opened' && call[1] === 42));
   assert.throws(() => handlers.get('machines:new-window')(event, { kind: 'local', command: 'evil' }), /Invalid/);
   for (const query of ['x'.repeat(254), '\0', 42]) assert.throws(() => handlers.get('machines:ssh-hosts')(event, query), /Invalid/);
+  stop(); assert.equal(handlers.size, 0);
+});
+
+test('workspace IPC validates resources, page bounds, scopes and request bodies before executing named operations', async () => {
+  const handlers = new Map(); const calls = [];
+  const ipcExports = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipcExports, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  const workspace = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipcExports : require('../dist/backend-client/transport') });
+  const client = { execute: (...args) => { calls.push(args); return Promise.resolve({ ok: true, value: {} }); } };
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);
+  const scope = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  for (const [, channel, args] of require('./workspace-contract.cjs').calls) {
+    const handler = handlers.get(channel); assert.ok(handler, channel);
+    assert.throws(() => handler({ senderFrame: {}, sender }, ...args), /Untrusted/);
+    assert.throws(() => handler(event, ...args, 'extra'), /scope/);
+    assert.throws(() => handler(event, ...['', ...args.slice(1)]), /scope/);
+    await handler(event, ...args);
+  }
+  await handlers.get('workspace:retry-task')(event, scope, 1, 'use-existing');
+  await handlers.get('workspace:retry-task')(event, scope, 1, 'snapshot');
+  for (const recovery of ['arbitrary', { confirmExternal: true }, null]) assert.throws(() => handlers.get('workspace:retry-task')(event, scope, 1, recovery));
+  assert.throws(() => handlers.get('workspace:retry-task')(event, scope, 1, 'snapshot', 'extra'));
+  const count = calls.length;
+  for (const [channel, input] of [['workspace:projects', { limit: 101 }], ['workspace:tasks', { projectId: -1 }], ['workspace:sessions', null], ['workspace:create-project', { name: 'x', path: '/x', additionalPaths: Array(20).fill('/x') }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/other', initialize: true }] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/x', initialize: 'yes' }] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/x', initialize: true, clone: 'https://example.com/x.git' }] }], ['workspace:commit-preview', { taskId: 1, includeUnstaged: true, excluded: ['../outside'], includedSecrets: [] }], ['workspace:commit-preview', { taskId: 1, includeUnstaged: true, excluded: Array(1001).fill('file'), includedSecrets: [] }], ['workspace:git-action', { taskId: 1, type: 'commit', message: '', selection: { includeUnstaged: true, excluded: [], includedSecrets: [] }, revision: 'invalid' }], ['workspace:git-action', { taskId: 1, type: 'arbitrary-command' }], ['workspace:finish-task', { taskId: 1, confirmStop: 'yes' }]]) assert.throws(() => handlers.get(channel)(event, scope, input));
+  assert.equal(calls.length, count, 'invalid input never reaches the selected backend');
+  client.execute = async () => ({ ok: false, error: { code: 'http', status: 400, message: 'private backend detail' } });
+  const rejectedProject = await handlers.get('workspace:create-project')(event, scope, { name: 'Project', path: '/repo' });
+  assert.equal(rejectedProject.ok, false);
+  assert.match(rejectedProject.error.message, /repository folders/);
+  assert.doesNotMatch(rejectedProject.error.message, /private/);
+  assert.ok(calls.every(([windowId, selectedScope]) => windowId === 42 && selectedScope === scope));
   stop(); assert.equal(handlers.size, 0);
 });

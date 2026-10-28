@@ -15,6 +15,7 @@ import { TitleBarComponent } from "../machines/title-bar.component";
   imports: [TitleBarComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
+    "[class.embedded]": "!titleBar()",
     "[class.panel-open]": "panelOpen()",
     "[class.wide-review]": "panelOpen() && wideReview()",
     "(keydown.escape)": "leaveReview()",
@@ -24,6 +25,8 @@ import { TitleBarComponent } from "../machines/title-bar.component";
   styleUrl: "./app-shell.component.css",
 })
 export class AppShellComponent {
+  /** MachineApp owns native chrome; standalone compositions include it here. */
+  readonly titleBar = input(true);
   readonly panelOpen = input(false);
   readonly wideReview = input(false);
   readonly panelLabel = input("Side panel");
@@ -40,7 +43,8 @@ export class AppShellComponent {
       const wide = open && this.wideReview();
       const panel = this.root.querySelector<HTMLElement>(".panel");
       const active = document.activeElement;
-      if (wide && this.wasWide === false)
+      // A restored wide panel can already be open on its first render.
+      if (wide && this.wasWide !== true)
         panel
           ?.querySelector<HTMLElement>(
             'button:not(:disabled), [tabindex="0"], input:not(:disabled)',

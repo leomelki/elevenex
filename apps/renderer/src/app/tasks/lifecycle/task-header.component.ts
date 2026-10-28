@@ -4,7 +4,7 @@ import {
   input,
   output,
 } from '@angular/core';
-import { ButtonComponent, IconButtonComponent, IconComponent } from '../../ui';
+import { IconButtonComponent, IconComponent } from '../../ui';
 import type {
   GitAction,
   GitState,
@@ -23,7 +23,6 @@ import { LinkChipComponent } from './link-chip.component';
 @Component({
   selector: 'ex-task-header',
   imports: [
-    ButtonComponent,
     IconButtonComponent,
     IconComponent,
     ProjectMarkComponent,
@@ -51,6 +50,12 @@ export class TaskHeaderComponent {
   readonly closeSuggested = input(false);
   readonly panelOpen = input(false);
   readonly branchCopied = input(false);
+  readonly disabled = input(false);
+  readonly closed = input(false);
+  readonly canRenameBranch = input(true);
+  readonly canLink = input(true);
+  readonly gitAllowedActions = input<readonly GitAction[]>();
+  readonly gitQuietLabel = input('Up to date');
   readonly stageChange = output<TaskStage>();
   readonly closeRequested = output<void>();
   readonly panelToggle = output<void>();

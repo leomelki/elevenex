@@ -10,6 +10,8 @@ describe('IPC bridge contract', () => {
     expectTypeOf<Parameters<Parameters<ElevenexBridge['onThemeChanged']>[0]>>().toEqualTypeOf<[theme: Theme]>();
     expectTypeOf<ReturnType<ElevenexBridge['onThemeChanged']>>().toEqualTypeOf<() => void>();
     expectTypeOf<Window['elevenex']>().toEqualTypeOf<ElevenexBridge>();
+    expectTypeOf<Parameters<ElevenexBridge['workspaceProjectNameAvailability']>>().toEqualTypeOf<[scopeId: string, name: string]>();
+    expectTypeOf<ReturnType<ElevenexBridge['workspaceProjectNameAvailability']>>().toEqualTypeOf<Promise<BackendResult<{ readonly available: boolean }>>>();
     expectTypeOf<ReturnType<ElevenexBridge['backendStatus']>>().toEqualTypeOf<Promise<BackendStatus>>();
     expectTypeOf<ReturnType<ElevenexBridge['retryBackend']>>().toEqualTypeOf<Promise<BackendStatus>>();
     expectTypeOf<ReturnType<ElevenexBridge['restartBackend']>>().toEqualTypeOf<Promise<BackendStatus>>();
@@ -30,6 +32,8 @@ describe('IPC bridge contract', () => {
 // These negative assertions are checked by tsc in pnpm test. Vitest alone only
 // transpiles tests, which would silently miss an accidentally weakened contract.
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  // @ts-expect-error Name checks must identify the expected backend scope.
+  void invoke('workspace:project-name-availability', 'Project');
   // @ts-expect-error First-run completion requires an expected selected machine.
   void invoke('machines:opened');
   // @ts-expect-error New windows never accept endpoints, commands or credentials.
@@ -46,8 +50,28 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   expectTypeOf(invoke('app:version')).toEqualTypeOf<Promise<string>>();
   expectTypeOf(invoke('backend:status')).toEqualTypeOf<Promise<BackendStatus>>();
   expectTypeOf(invoke('backend-client:info', 'scope-id')).toEqualTypeOf<Promise<BackendResult<BackendInfo>>>();
+  // @ts-expect-error Workspace reads require the scope that supplied the selected resource.
+  void invoke('workspace:tasks', { projectId: 1 });
+  // @ts-expect-error Resource mutations cannot choose endpoints or HTTP methods.
+  void invoke('workspace:create-task', 'scope', { repoId: 1, name: 'Task', requestId: 'create', url: 'http://evil' });
+  void invoke('workspace:retry-task', 'scope', 1);
+  void invoke('workspace:retry-task', 'scope', 1, 'use-existing');
+  void invoke('workspace:retry-task', 'scope', 1, 'snapshot');
+  void invoke('workspace:retry-task', 'scope', 1, 'exceed-worktree-limit');
+  // @ts-expect-error Recovery is a named domain choice, never an arbitrary setup patch.
+  void invoke('workspace:retry-task', 'scope', 1, { confirmExternal: true });
+  // @ts-expect-error Recovery cannot choose a path or executable.
+  void invoke('workspace:retry-task', 'scope', 1, 'arbitrary');
+  // @ts-expect-error Stages use the supported domain vocabulary.
+  void invoke('workspace:set-stage', 'scope', { taskId: 1, stage: 'unknown' });
   // @ts-expect-error Backend reads require an explicit current window scope.
   void invoke('backend-client:info');
+  void invoke('workspace:archive-session', 'scope', {taskId:1,sessionId:2,confirmStop:false});
+  void invoke('workspace:restore-session', 'scope', {taskId:1,sessionId:2});
+  // @ts-expect-error Session archive must carry an explicit stop confirmation.
+  void invoke('workspace:archive-session', 'scope', {taskId:1,sessionId:2});
+  // @ts-expect-error Session restoration is scoped to its owning task.
+  void invoke('workspace:restore-session', 'scope', {sessionId:2});
   // @ts-expect-error Endpoints, headers and methods cannot be chosen by the renderer.
   void invoke('backend-client:info', { url: 'http://evil', headers: {} });
   // @ts-expect-error The public bridge has no generic HTTP operation.

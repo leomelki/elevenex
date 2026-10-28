@@ -2,7 +2,7 @@
   display: block;
   min-width: 0;
 }
-button {
+.select {
   position: relative;
   display: flex;
   align-items: center;
@@ -22,24 +22,33 @@ button {
     background var(--dur-base) var(--ease-out),
     box-shadow var(--dur-base) var(--ease-out);
 }
-button:hover {
+.row:hover .select {
   background: var(--surface-sunken);
 }
-button[aria-current="true"] {
+.select[aria-current="true"] {
   background: var(--surface-raised);
   box-shadow: var(--shadow-raised);
 }
-button:focus-visible {
+.select:focus-visible {
   outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }
-button.attention {
+.select.attention {
   background: var(--attention-soft);
 }
-button.failed {
+.select.failed {
   background: var(--danger-soft);
 }
-button.with-context {
+.row:hover .select.attention {
+  background: color-mix(in oklab, var(--attention-soft) 80%, var(--attention));
+}
+.row:hover .select.failed {
+  background: color-mix(in oklab, var(--danger-soft) 80%, var(--danger));
+}
+.row:hover .select[aria-current="true"] {
+  background: color-mix(in oklab, var(--surface-raised) 70%, var(--surface-sunken));
+}
+.select.with-context {
   height: auto;
   min-height: calc(var(--row-height) + var(--space-3));
   padding-block: var(--space-1);
@@ -57,6 +66,7 @@ button.with-context {
   white-space: nowrap;
 }
 .title {
+  transition: color var(--dur-base) var(--ease-out);
   font-size: 12.5px;
   font-weight: 400;
 }
@@ -65,7 +75,7 @@ button.with-context {
   font-size: var(--text-overline-size);
   line-height: var(--text-caption-line);
 }
-button[aria-current="true"] .title {
+.select[aria-current="true"] .title {
   font-weight: 500;
 }
 .done .title {
@@ -111,7 +121,7 @@ button[aria-current="true"] .title {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  button {
+  .select {
     transition: none;
   }
   .fresh {
@@ -122,3 +132,37 @@ button[aria-current="true"] .title {
 .kind.auto {
   color: var(--accent);
 }
+
+.row { position: relative; min-width: 0; }
+.has-archive .select { transition: padding-right var(--dur-slow) cubic-bezier(0.32, 0.72, 0, 1), background var(--dur-base) var(--ease-out); }
+.has-archive:hover .select, .has-archive:focus-within .select { padding-right: 32px; }
+.has-archive:hover .diff, .has-archive:hover .meta,
+.has-archive:focus-within .diff, .has-archive:focus-within .meta,
+.confirming .diff, .confirming .meta { display: none; }
+.has-archive.confirming .select { padding-right: 134px; }
+.archive {
+  position: absolute; top: 3px; right: var(--space-1); height: 22px;
+  display: inline-flex; align-items: center; padding: 0; border: 0;
+  border-radius: var(--radius-xs); background: transparent; color: var(--ink-muted);
+  font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.archive-icon { flex: none; width: 22px; height: 22px; display: grid; place-items: center; }
+.archive-label { display: grid; grid-template-columns: 0fr; transition: grid-template-columns var(--dur-slow) cubic-bezier(0.32, 0.72, 0, 1); }
+.archive-label > span { overflow: hidden; white-space: nowrap; opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.row:hover .archive, .row:focus-within .archive, .confirming .archive { opacity: 1; }
+.archive:hover { background: var(--surface-sunken); color: var(--ink); }
+.archive:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
+.confirming .archive { background: var(--danger-soft); color: var(--danger); }
+.confirming .archive:hover { background: color-mix(in oklab, var(--danger-soft) 80%, var(--danger)); }
+.confirming .archive-label { grid-template-columns: 1fr; }
+.confirming .archive-label > span { opacity: 1; padding-right: 9px; transition-delay: 90ms; }
+.confirming .archive-icon { animation: archive-pop var(--dur-slow) var(--ease-spring); }
+@keyframes archive-pop { 50% { transform: scale(1.18); } }
+@media (prefers-reduced-motion: reduce) {
+  .has-archive .select, .archive, .archive-label, .archive-label > span { transition: none; }
+  .confirming .archive-icon { animation: none; }
+}
+
+.muted .title { color: var(--ink-muted); }
+@media (prefers-reduced-motion: reduce) { .title { transition: none; } }

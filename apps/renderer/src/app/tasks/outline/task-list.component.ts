@@ -7,6 +7,7 @@ import {
   inject,
   input,
   linkedSignal,
+  model,
   output,
   signal,
 } from "@angular/core";
@@ -16,6 +17,7 @@ import {
   type SessionStatus,
   type TaskOutline,
   type TaskSession,
+  type TaskSessionDisclosure,
 } from "../task.models";
 import { TaskGroupComponent } from "./task-group.component";
 import { SessionRowComponent } from "./session-row.component";
@@ -70,15 +72,34 @@ type AttentionRow = Extract<OutlineRow, { kind: "attention" }>;
   styleUrl: "./task-list.component.css",
 })
 export class TaskListComponent {
+  readonly sessionCap = input(5);
+  /** Bind in an owner that outlives project views; at most 200 task disclosures. */
+  readonly sessionDisclosures = model<ReadonlyMap<string, TaskSessionDisclosure>>(new Map());
+  protected setSessionDisclosure(taskId: string, disclosure: TaskSessionDisclosure | null): void {
+    this.sessionDisclosures.update(previous => {
+      const next = new Map(previous);
+      next.delete(taskId);
+      if (disclosure) next.set(taskId, disclosure);
+      while (next.size > 200) next.delete(next.keys().next().value!);
+      return next;
+    });
+  }
   readonly tasks = input<readonly TaskOutline[]>([]);
+  readonly allowArchive = input(false);
+  readonly restoreRequested = output<{ readonly taskId: string; readonly session: TaskSession }>();
+  readonly archivedSessionsRequested = output<{ readonly taskId: string; readonly page: 'latest' | 'earlier' }>();
+  readonly archiveRequested = output<{ readonly taskId: string; readonly session: TaskSession }>();
   readonly selected = input<string | null>(null);
   readonly filter = input<SessionStatus | null>(null);
   readonly showProjects = input(true);
+  readonly disabled = input(false);
   readonly selectSession = output<{
     readonly taskId: string;
     readonly sessionId: string;
   }>();
   readonly addSession = output<string>();
+  readonly moreSessionsRequested = output<string>();
+  readonly emptyTaskRequested = output<string>();
   readonly addSubtaskSession = output<{
     readonly taskId: string;
     readonly subtaskId: string;

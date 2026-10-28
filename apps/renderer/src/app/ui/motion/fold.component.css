@@ -31,8 +31,15 @@
     opacity var(--dur-base) var(--ease-out) 40ms,
     transform var(--dur-slow) var(--ease-in-out) 40ms;
 }
+:host(.unroll) { transition: grid-template-rows 460ms cubic-bezier(0.32, 0.72, 0, 1); }
+:host(.unroll.open) { transition-duration: 520ms; }
+:host(.unroll) > .clip > .content { transform: translateY(10px); transition: opacity var(--dur-base) var(--ease-in) var(--fold-exit-delay), transform var(--dur-base) var(--ease-in) var(--fold-exit-delay); }
+:host(.unroll.open) > .clip > .content { transform: none; transition: opacity 460ms cubic-bezier(0.32, 0.72, 0, 1) var(--fold-enter-delay), transform 460ms cubic-bezier(0.32, 0.72, 0, 1) var(--fold-enter-delay); }
 @media (prefers-reduced-motion: reduce) {
   :host,
+  :host(.unroll),
+  :host(.unroll) > .clip > .content,
+  :host(.unroll.open) > .clip > .content,
   :host(.open) > .clip > .content,
   .content {
     transition: none;

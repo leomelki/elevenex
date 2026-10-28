@@ -30,11 +30,17 @@ export class CloseTaskComponent {
   readonly sessions = input(0);
   readonly running = input(0);
   readonly unpushed = input(0);
+  readonly uncommitted = input(0);
   readonly ticket = input<string>();
+  readonly terminals = input(0);
+  readonly actions = input(0);
+  readonly busy = input(false);
+  readonly error = input<string | null>(null);
   readonly confirmed = output<CloseTaskIntent>();
   readonly cancelled = output<void>();
   protected readonly moveTicket = signal(true);
   protected confirm(push: boolean): void {
+    if (this.busy()) return;
     this.confirmed.emit({
       push,
       moveTicket: !!this.ticket() && this.moveTicket(),

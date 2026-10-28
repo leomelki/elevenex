@@ -503,11 +503,16 @@ export class GitService {
       includeUnstaged?: boolean;
       provider?: AgentProviderId;
       requestId?: string;
+      /** Private snapshot index, owned and removed by the caller. */
+      indexFile?: string;
+      beforeCommit?: () => Promise<void>;
+      onPhase?: (phase: 'writing' | 'committing') => void;
     } = {},
   ): Promise<CommitResult> {
     const requestId = options.requestId ?? this.createRequestId();
     this.invalidateStatusSummaries(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
+    if (options.indexFile) git.env({ ...process.env, GIT_INDEX_FILE: options.indexFile });
 
     this.logger.log(
       `[commit:${requestId}] service started worktreePath="${worktreePath}" includeUnstaged=${Boolean(options.includeUnstaged)}`,
@@ -546,9 +551,11 @@ export class GitService {
         this.logger.log(
           `[commit:${requestId}] no message provided; generating commit message`,
         );
+        options.onPhase?.('writing');
         const suggestion = await this.suggestCommitMessage(
           worktreePath,
           options.provider,
+          options.indexFile,
         );
         message = suggestion.body?.trim()
           ? `${suggestion.subject.trim()}\n\n${suggestion.body.trim()}`
@@ -564,6 +571,8 @@ export class GitService {
       }
 
       this.logger.log(`[commit:${requestId}] running git commit`);
+      await options.beforeCommit?.();
+      options.onPhase?.('committing');
       const result = await git.commit(message);
       this.invalidateStatusSummaries(worktreePath);
       this.logger.log(
@@ -590,6 +599,7 @@ export class GitService {
   async suggestCommitMessage(
     worktreePath: string,
     provider: AgentProviderId | undefined,
+    indexFile?: string,
   ): Promise<CommitMessageSuggestion> {
     const requestId = this.createRequestId();
     const messageProvider = this.normalizeCommitMessageProvider(provider);
@@ -598,6 +608,7 @@ export class GitService {
     );
 
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
+    if (indexFile) git.env({ ...process.env, GIT_INDEX_FILE: indexFile });
     try {
       const status = await git.status();
       const stagedFiles = this.getUniqueStagedFiles(status);
@@ -615,7 +626,7 @@ export class GitService {
       }
 
       const [diff, log, conventionDocs] = await Promise.all([
-        this.getDiff(worktreePath, { staged: true }),
+        indexFile ? git.diff(['--cached']) : this.getDiff(worktreePath, { staged: true }),
         this.getLog(worktreePath, MAX_COMMIT_MESSAGE_LOG_ENTRIES),
         this.readCommitConventionDocs(worktreePath),
       ]);

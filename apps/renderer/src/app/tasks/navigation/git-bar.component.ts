@@ -69,9 +69,12 @@ export class GitBarComponent {
   readonly del = input(0);
   readonly ahead = input(0);
   readonly busy = input<"commit" | "push" | "merge">();
+  readonly busyLabel = input<string>();
   readonly mergeInto = input<string>();
   readonly job = input<GitJob>();
   readonly compact = input(false);
+  readonly allowedActions = input<readonly GitAction[]>();
+  readonly quietLabel = input('Up to date');
   readonly action = output<GitAction>();
   readonly changesRequested = output<void>();
   readonly jobSessionRequested = output<string>();
@@ -126,7 +129,7 @@ export class GitBarComponent {
         : `${job.verb ?? "Merging"} · ${current?.short ?? `${Math.min(done + 1, job.steps.length)} of ${job.steps.length}`}`
       : busy
         ? step === "commit"
-          ? "Committing…"
+          ? (this.busyLabel() ?? "Committing…")
           : step === "merge"
             ? "Merging…"
             : "Pushing…"

@@ -9,7 +9,7 @@ export interface ModalBox {
 export const MODAL_LAUNCH_EASING = 'cubic-bezier(.32,.72,0,1)';
 
 /** Cover-fit the dialog inside a travelling box; only the disposable face stretches. */
-export function modalMorphFrames(origin: ModalBox, dialog: ModalBox, start: number, end: number): {
+export function modalMorphFrames(origin: ModalBox, dialog: ModalBox, start: number, end: number, fadeIn = 0): {
   surface: Keyframe[]; content: Keyframe[]; face: Keyframe[]; shadow: Keyframe[];
 } {
   const surface: Keyframe[] = [], content: Keyframe[] = [], face: Keyframe[] = [], shadow: Keyframe[] = [];
@@ -24,7 +24,7 @@ export function modalMorphFrames(origin: ModalBox, dialog: ModalBox, start: numb
     const insetX = (dialog.width - width / scale) / 2, insetY = (dialog.height - height / scale) / 2;
     const radius = origin.radius + (dialog.radius - origin.radius) * p;
     const visible = end === 0 && index === 14 ? 0 : 1;
-    surface.push({ offset, transform: `translate(${x + width / 2 - dialog.left - dialog.width / 2}px, ${y + height / 2 - dialog.top - dialog.height / 2}px) scale(${scale})`, clipPath: `inset(${insetY}px ${insetX}px round ${radius / scale}px)`, opacity: visible });
+    surface.push({ offset, transform: `translate(${x + width / 2 - dialog.left - dialog.width / 2}px, ${y + height / 2 - dialog.top - dialog.height / 2}px) scale(${scale})`, clipPath: `inset(${insetY}px ${insetX}px round ${radius / scale}px)`, opacity: visible * (fadeIn ? clamp(p / fadeIn) : 1) });
     content.push({ offset, opacity: clamp((p - .18) / .4) });
     face.push({ offset, transform: `translate(${x - origin.left}px, ${y - origin.top}px) scale(${width / origin.width}, ${height / origin.height})`, opacity: clamp(1 - (p - .12) / .38) });
     shadow.push({ offset, transform: `translate(${x - dialog.left}px, ${y - dialog.top}px) scale(${width / dialog.width}, ${height / dialog.height})`, opacity: clamp((p - .1) / .5) * visible });

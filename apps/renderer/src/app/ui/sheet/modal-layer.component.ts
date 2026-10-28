@@ -20,6 +20,8 @@ export class ModalLayerComponent {
   readonly align = input<'center' | 'top'>('center');
   readonly from = input<HTMLElement | null>(null);
   readonly closeRequested = output<void>();
+  /** Emitted after the retained exit completes, focus is restored and the portal detaches. */
+  readonly closed = output<void>();
   protected readonly leaving = signal(false);
   private readonly portal = viewChild(CdkPortal);
   private readonly trap = viewChild(CdkTrapFocus);
@@ -72,7 +74,10 @@ export class ModalLayerComponent {
         const exit = this.motion?.retarget(false, this.from()) ?? Promise.resolve(true);
         this.leaving.set(true);
         void exit.then(completed => {
-          if (completed && this.mode === 'closing' && !this.open()) this.disposeOverlay();
+          if (completed && this.mode === 'closing' && !this.open()) {
+            this.disposeOverlay();
+            this.closed.emit();
+          }
         });
       }
     });

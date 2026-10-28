@@ -224,3 +224,284 @@ test('application resolves the selected remote capability and rotates scopes on 
   dispose(); assert.equal(localListener, null); assert.equal(remoteListener, null);
   assert.equal((await client.info(1, localScope)).error.code, 'unavailable');
 });
+
+test('domain reads coalesce by resource while writes execute individually and report uncertain outcomes', async context => {
+  const client = new BackendClient(() => local('http://127.0.0.1:3000'), () => {});
+  context.after(() => client.dispose()); client.attach(1);
+  const scope = client.state(1).scope.id;
+  let finish; let calls = 0;
+  const operation = (_endpoint, signal) => { calls++; assert.equal(signal.aborted, false); return new Promise(resolve => { finish = resolve; }); };
+  const first = client.execute(1, scope, 'task:1', false, operation);
+  assert.equal(client.execute(1, scope, 'task:1', false, operation), first);
+  finish({ id: 1 });
+  assert.deepEqual(await first, { ok: true, value: { id: 1 } });
+  assert.equal(calls, 1);
+  const fail = async () => { calls++; throw new Error('private backend credential'); };
+  for (const result of await Promise.all([client.execute(1, scope, null, true, fail), client.execute(1, scope, null, true, fail)])) {
+    assert.equal(result.error.code, 'outcome-unknown');
+    assert.ok(!result.error.message.includes('credential'));
+  }
+  assert.equal(calls, 3, 'writes are never coalesced or automatically replayed');
+});
+
+test('domain request lifetime rejects stale dispatch and aborts pending reads on window closure', async context => {
+  const client = new BackendClient(() => local('http://127.0.0.1:3000'), () => {});
+  context.after(() => client.dispose()); client.attach(1);
+  const scope = client.state(1).scope.id;
+  let calls = 0; let signal; let complete;
+  const pending = client.execute(1, scope, 'sessions:1', false, (_endpoint, abort) => { calls++; signal = abort; return new Promise(resolve => { complete = resolve; }); });
+  client.reset(1);
+  assert.equal(signal.aborted, true);
+  complete([]);
+  assert.equal((await pending).error.code, 'stale-scope');
+  assert.equal((await client.execute(1, scope, null, true, async () => { calls++; })).error.code, 'stale-scope');
+  assert.equal(calls, 1);
+});
+
+test('workspace response mapping strips unknown fields and rejects malformed or oversized resource windows', () => {
+  const { parseWorkspaceTask, parseWorkspacePage } = require('../dist/backend-client/workspace');
+  const task = { id: 1, repoId: 2, projectId: 3, name: 'Task', branchName: 'task', state: 'ready', stage: 'active', archivedAt: null, updatedAt: '2026-10-26', token: 'secret' };
+  assert.ok(!JSON.stringify(parseWorkspaceTask(task)).includes('secret'));
+  assert.equal(parseWorkspaceTask(task).projectRepositoryCount, undefined);
+  assert.equal(parseWorkspaceTask({ ...task, projectRepositoryCount: 1 }).projectRepositoryCount, 1);
+  assert.equal(parseWorkspaceTask({ ...task, projectRepositoryCount: 2 }).projectRepositoryCount, 2);
+  for (const projectRepositoryCount of [0, -1, 1.5, '2', null]) assert.throws(() => parseWorkspaceTask({ ...task, projectRepositoryCount }));
+  for (const value of [{ ...task, state: 'unknown' }, { ...task, stage: 'done' }, { ...task, id: -1 }, { ...task, name: 'x'.repeat(161) }]) assert.throws(() => parseWorkspaceTask(value));
+  const setupIssue = { code: 'external-checkout', message: 'Already checked out.', workspacePath: '/work/existing', canUseSnapshot: true, secret: 'private' };
+  assert.deepEqual(parseWorkspaceTask({ ...task, state: 'failed', setupIssue }).setupIssue, { code: setupIssue.code, message: setupIssue.message, workspacePath: setupIssue.workspacePath, canUseSnapshot: true });
+  const quotaIssue = { code: 'other', message: 'Workspace limit reached.', canUseSnapshot: false, canExceedWorktreeLimit: true };
+  assert.deepEqual(parseWorkspaceTask({ ...task, state: 'failed', setupIssue: quotaIssue }).setupIssue, quotaIssue);
+  for (const canExceedWorktreeLimit of [null, 'yes', 1]) assert.throws(() => parseWorkspaceTask({ ...task, setupIssue: { ...quotaIssue, canExceedWorktreeLimit } }));
+  for (const value of [{ ...setupIssue, code: 'arbitrary' }, { ...setupIssue, canUseSnapshot: 'yes' }, { ...setupIssue, message: 'x'.repeat(501) }, { ...setupIssue, workspacePath: 'bad\npath' }]) assert.throws(() => parseWorkspaceTask({ ...task, setupIssue: value }));
+  assert.throws(() => parseWorkspacePage({ items: Array(101).fill(task), nextCursor: null }, parseWorkspaceTask));
+  assert.throws(() => parseWorkspacePage({ items: [], nextCursor: '-1' }, parseWorkspaceTask));
+  assert.deepEqual(parseWorkspacePage({ items: [task], nextCursor: '1' }, parseWorkspaceTask).items[0].id, 1);
+});
+
+test('server failures after a mutation retain an unknown outcome while read and rejected-input errors remain ordinary failures', async context => {
+  const { BackendRequestError } = require('../dist/backend-client/transport');
+  const client = new BackendClient(() => local('http://127.0.0.1:3000'), () => {});
+  context.after(() => client.dispose()); client.attach(1);
+  const scope = client.state(1).scope.id;
+  for (const status of [500, 502, 503]) {
+    const operation = async () => { throw new BackendRequestError({ code: 'http', status, message: 'Backend request failed.' }); };
+    assert.equal((await client.execute(1, scope, null, true, operation)).error.code, 'outcome-unknown');
+    assert.equal((await client.execute(1, scope, 'read', false, operation)).error.code, 'http');
+  }
+  const rejected = async () => { throw new BackendRequestError({ code: 'http', status: 409, message: 'Conflict.' }); };
+  assert.equal((await client.execute(1, scope, null, true, rejected)).error.code, 'http');
+});
+
+test('project deletion explains cleanup failures using bounded known codes without forwarding backend diagnostics', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  let scenario;
+  let calls = 0;
+  const url = await server(context, (request, response) => {
+    calls++;
+    assert.equal(request.method, 'POST');
+    assert.equal(request.url, '/api/desktop-workspace/projects/1/delete');
+    response.writeHead(scenario.status ?? 409, {
+      'content-type': scenario.type ?? 'application/json',
+      ...(scenario.declared ? { 'content-length': Buffer.byteLength(scenario.body) } : {}),
+    });
+    response.write(scenario.body); response.end();
+  });
+  const client = new BackendClient(() => local(url), () => undefined);
+  context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id;
+  const handlers = new Map(), ipc = {}, workspace = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);
+  context.after(stop);
+  const blocked = JSON.stringify({ code: 'active_tasks', message: 'private backend text', taskId: 123, diagnostic: 'secret' });
+  const generic = 'The operation conflicts with the current workspace state.';
+  const cases = [
+    { body: blocked, expected: 'A task opened while this project was being deleted. Try deleting the project again.' },
+    { body: JSON.stringify({ code: 'project_cleanup_failed', message: 'private backend text' }), expected: 'Could not stop all project processes. The project was kept. Try deleting it again.' },
+    { body: JSON.stringify({ code: 'unknown', message: 'private backend text' }), expected: generic },
+    { body: JSON.stringify({ code: 'toString' }), expected: generic },
+    { body: '{', expected: generic },
+    { body: 'null', expected: generic },
+    { body: blocked, type: 'text/html', expected: generic },
+    { body: ' '.repeat(4096) + blocked, expected: generic },
+    { body: ' '.repeat(4096) + blocked, declared: true, expected: generic },
+    { body: blocked, status: 404, expected: 'The selected resource no longer exists.' },
+  ];
+  for (scenario of cases) {
+    const result = await handlers.get('workspace:delete-project')(event, scope, 1);
+    assert.deepEqual(result, { ok: false, error: { code: 'http', status: scenario.status ?? 409, message: scenario.expected } });
+  }
+  scenario = { status: 201, body: JSON.stringify({ accepted: true }) };
+  const deleted = await handlers.get('workspace:delete-project')(event, scope, 1);
+  assert.equal(deleted.ok, true);
+  assert.equal(deleted.value.accepted, true);
+  assert.equal(calls, cases.length + 1, 'rejected deletions are never automatically replayed');
+});
+
+test('project name availability IPC validates names, replies, scope and sender', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  const requests = [];
+  let reply = { available: false };
+  const url = await server(context, (request, response) => {
+    requests.push(request.url);
+    assert.equal(request.method, 'GET');
+    response.writeHead(200, json); response.end(JSON.stringify(reply));
+  });
+  const client = new BackendClient(() => local(url), () => undefined);
+  context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id;
+  const handlers = new Map(), ipc = {}, workspace = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  context.after(workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender));
+  const check = handlers.get('workspace:project-name-availability');
+  assert.equal((await check(event, scope, '  Taken & archived  ')).value.available, false);
+  assert.deepEqual(requests, ['/api/desktop-workspace/projects/name-availability?name=Taken+%26+archived']);
+  for (const name of ['', ' ', 'x'.repeat(101), {}, 12]) assert.throws(() => check(event, scope, name));
+  assert.throws(() => check({ senderFrame: {}, sender }, scope, 'Other'));
+  assert.throws(() => check(event, scope, 'Other', 'extra'));
+  reply = { available: 'yes' };
+  assert.equal((await check(event, scope, 'Invalid reply')).error.code, 'invalid-response');
+  client.reset(42);
+  assert.equal((await check(event, scope, 'Stale')).error.code, 'stale-scope');
+  assert.equal(requests.length, 2);
+});
+
+test('task recovery IPC preserves default retries and sends only named consent through scoped HTTP', async context => {
+  let responseId = 1;
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  const requests = [];
+  const task = { id: 1, repoId: 2, projectId: 3, name: 'Saved task', branchName: 'existing', state: 'preparing', stage: 'active', archivedAt: null, updatedAt: '' };
+  const url = await server(context, (request, response) => {
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', chunk => { body += chunk; });
+    request.on('end', () => {
+      requests.push({ method: request.method, path: request.url, body: body ? JSON.parse(body) : null });
+      response.writeHead(200, json); response.end(JSON.stringify({ ...task, id: responseId }));
+    });
+  });
+  const client = new BackendClient(() => local(url), () => undefined);
+  context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id;
+  const handlers = new Map(), ipc = {}, workspace = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);
+  context.after(stop);
+  for (const recovery of [undefined, 'use-existing', 'snapshot', 'exceed-worktree-limit']) {
+    const args = recovery === undefined ? [scope, 1] : [scope, 1, recovery];
+    assert.equal((await handlers.get('workspace:retry-task')(event, ...args)).ok, true);
+  }
+  assert.deepEqual(requests, [
+    { method: 'POST', path: '/api/desktop-workspace/tasks/1/retry', body: null },
+    { method: 'POST', path: '/api/desktop-workspace/tasks/1/retry', body: { recovery: 'use-existing' } },
+    { method: 'POST', path: '/api/desktop-workspace/tasks/1/retry', body: { recovery: 'snapshot' } },
+    { method: 'POST', path: '/api/desktop-workspace/tasks/1/retry', body: { recovery: 'exceed-worktree-limit' } },
+  ]);
+  for (const recovery of ['arbitrary', { confirmOverLimit: true }, true]) {
+    assert.throws(() => handlers.get('workspace:retry-task')(event, scope, 1, recovery));
+  }
+  responseId = 2;
+  assert.equal((await handlers.get('workspace:retry-task')(event, scope, 1, 'snapshot')).error.code, 'outcome-unknown');
+  client.reset(42);
+  assert.equal((await handlers.get('workspace:retry-task')(event, scope, 1, 'use-existing')).error.code, 'stale-scope');
+  assert.equal(requests.length, 5);
+});
+
+test('commit preview is scoped, bounded and validated; optional-message commits retain explicit selection', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  const requests = [];
+  const file = { path: ' spaced file.txt ', status: 'M', add: 3, del: 1, staged: true };
+  const preview = { taskId: 1, revision: 'a'.repeat(64), items: [file], nextCursor: null, matches: 1, total: 1, unstaged: 0, selected: { files: 1, add: 3, del: 1, staged: 1, unstaged: 0 }, running: [], private: 'discard' };
+  const summary = { taskId: 1, branch: 'work', upstream: null, ahead: 1, behind: 0, files: 0, additions: 0, deletions: 0, conflicted: false };
+  let reply = preview;
+  const url = await server(context, (request, response) => {
+    let body = ''; request.setEncoding('utf8'); request.on('data', chunk => { body += chunk; });
+    request.on('end', () => {
+      requests.push({ method: request.method, path: request.url, body: JSON.parse(body) });
+      response.writeHead(200, json); response.end(JSON.stringify(reply));
+    });
+  });
+  const client = new BackendClient(() => local(url), () => {}); context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id;
+  const handlers = new Map(), ipc = {}, workspace = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  context.after(workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender));
+  const selection = { includeUnstaged: true, excluded: [file.path], includedSecrets: [] };
+  const read = () => handlers.get('workspace:commit-preview')(event, scope, { taskId: 1, ...selection });
+  const result = await read(); assert.equal(result.ok, true); assert.equal(result.value.items[0].path, file.path); assert.equal(result.value.private, undefined);
+  assert.deepEqual(requests[0], { method: 'POST', path: '/api/desktop-workspace/tasks/1/commit-preview', body: { ...selection, query: '' } });
+  for (const malformed of [{ ...preview, taskId: 2 }, { ...preview, items: Array(101).fill(file) }, { ...preview, revision: 'bad' }, { ...preview, selected: { ...preview.selected, files: -1 } }, { ...preview, items: [{ ...file, flag: 'unknown' }] }]) {
+    reply = malformed; assert.equal((await read()).error.code, 'invalid-response');
+  }
+  reply = summary;
+  const committed = await handlers.get('workspace:git-action')(event, scope, { taskId: 1, type: 'commit', message: '', selection, revision: preview.revision, push: true });
+  assert.equal(committed.ok, true);
+  assert.deepEqual(requests.at(-1).body, { type: 'commit', message: '', selection, revision: preview.revision, push: true });
+  const count = requests.length; client.reset(42); assert.equal((await read()).error.code, 'stale-scope'); assert.equal(requests.length, count);
+});
+
+test('session archive and Undo validate task ownership, consent, trusted input and stale scopes', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  const requests = [];
+  let reply = { accepted: true };
+  const url = await server(context, (request, response) => {
+    let body = ''; request.setEncoding('utf8'); request.on('data', chunk => { body += chunk; });
+    request.on('end', () => {
+      requests.push({path:request.url, body:body ? JSON.parse(body) : null});
+      response.writeHead(200,json); response.end(JSON.stringify(reply));
+    });
+  });
+  const client = new BackendClient(() => local(url), () => undefined);
+  context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, workspace = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  const frame = {}, sender = {id:42}, event = {senderFrame:frame,sender};
+  const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);
+  context.after(stop);
+  const archive = (...args) => handlers.get('workspace:archive-session')(event,...args);
+  const restore = (...args) => handlers.get('workspace:restore-session')(event,...args);
+  for (const input of [{taskId:1,sessionId:2}, {taskId:1,sessionId:-1,confirmStop:true}, {taskId:1,sessionId:2,confirmStop:'yes'}]) assert.throws(() => archive(scope,input));
+  assert.throws(() => handlers.get('workspace:archive-session')({senderFrame:{},sender},scope,{taskId:1,sessionId:2,confirmStop:true}));
+  assert.equal((await archive(scope,{taskId:1,sessionId:2,confirmStop:true})).ok,true);
+  assert.deepEqual(requests[0],{path:'/api/desktop-workspace/tasks/1/sessions/2/archive',body:{confirmStop:true}});
+  reply = {id:2,taskId:1,repoId:3,name:'Kept',status:'done',provider:'codex',updatedAt:'',private:'discard'};
+  const restored = await restore(scope,{taskId:1,sessionId:2});
+  assert.equal(restored.ok,true); assert.equal(restored.value.private,undefined);
+  reply = {...reply,taskId:9};
+  assert.equal((await restore(scope,{taskId:1,sessionId:2})).error.code,'outcome-unknown');
+  reply = {items:[{id:2,taskId:1,repoId:3,name:'Recent',status:'queued',provider:'codex',updatedAt:''}],nextCursor:null};
+  assert.equal((await handlers.get('workspace:sessions')(event,scope,{taskId:1,limit:5,order:'latest'})).ok,true);
+  assert.match(requests[3].path,/order=latest/);
+  assert.throws(()=>handlers.get('workspace:sessions')(event,scope,{taskId:1,order:'arbitrary'}));
+  assert.throws(()=>handlers.get('workspace:sessions')(event,scope,{taskId:1,state:'all'}));
+  reply = {items:[{id:2,taskId:1,repoId:3,name:'Saved',status:'archived',provider:'codex',updatedAt:''}],nextCursor:'2'};
+  const history = await handlers.get('workspace:sessions')(event,scope,{taskId:1,state:'archived',limit:20,order:'latest'});
+  assert.equal(history.ok,true); assert.equal(history.value.items[0].status,'archived');
+  assert.match(requests[4].path,/state=archived/);
+  assert.equal((await handlers.get('workspace:sessions')(event,scope,{taskId:1,state:'normal'})).ok,false);
+  reply = {revision:1,version:1,sessionArchive:true,sessionArchiveHistory:true};
+  assert.equal((await handlers.get('workspace:revision')(event,scope)).value.sessionArchiveHistory,true);
+  client.reset(42);
+  assert.equal((await archive(scope,{taskId:1,sessionId:2,confirmStop:false})).error.code,'stale-scope');
+  assert.equal(requests.length,7);
+  stop(); assert.equal(handlers.size,0);
+});

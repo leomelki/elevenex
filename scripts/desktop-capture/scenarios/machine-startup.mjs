@@ -47,7 +47,10 @@ export default async function* (capture) {
   yield { name: 'startup-open-machine-update', inspect: ['ex-getting-ready', 'ex-title-island'] };
   await capture.component('ex-machine-startup-demo', component => component.platform.ready());
   await capture.waitFor(() => !document.querySelector('.update'));
-  await capture.click('ex-machine-workspace .project > button');
+  await capture.click('ex-machine-app ex-title-island .trigger');
+  await capture.waitFor(() => document.querySelector('ex-machine-panel header button'));
+  await settleMotion(capture);
+  await capture.click('ex-machine-panel header button');
   await capture.waitFor(() => document.querySelector('ex-machine-home h1')?.textContent === 'Machines');
   await settleMotion(capture);
   await capture.click('ex-machine-home footer button:first-child');

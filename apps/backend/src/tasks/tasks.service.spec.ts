@@ -95,6 +95,7 @@ describe('Task lifecycle with real Git and migrations', () => {
   let releaseSession: jest.Mock;
   let reactivateRuntime: jest.Mock;
   let assertWithinWorktreeLimit: jest.Mock;
+  let assertProjectIsActive: jest.Mock;
 
   beforeEach(async () => {
     root = await realpath(await mkdtemp(join(tmpdir(), 'elevenex-tasks-')));
@@ -202,11 +203,12 @@ describe('Task lifecycle with real Git and migrations', () => {
       sessions as unknown as SessionsService,
       { generate: jest.fn() } as unknown as TextAgentGenerationService,
     );
+    assertProjectIsActive = jest.fn();
     service = new TasksService(
       db,
       gitService,
       allocator,
-      { assertProjectIsActive: jest.fn() } as unknown as ProjectsService,
+      { assertProjectIsActive } as unknown as ProjectsService,
       sessions as unknown as SessionsService,
       {
         invalidateCache: jest.fn(),
@@ -1532,6 +1534,99 @@ describe('Task lifecycle with real Git and migrations', () => {
     expect((await gitService.status(repoPath)).branch).toBe('main');
   });
 
+  it('recovers an external existing branch in the same task only after confirmation and preserves local work', async () => {
+    const git = worktreeSimpleGit(repoPath),
+      externalPath = join(root, 'external');
+    await git.raw([
+      'worktree',
+      'add',
+      '-b',
+      'existing-external',
+      externalPath,
+      'main',
+    ]);
+    await writeFile(
+      join(externalPath, 'local-work.txt'),
+      'Keep this local work',
+    );
+    const head = await gitService.resolve(externalPath, 'HEAD');
+    const task = await create('existing-external', { mode: 'existing' });
+    expect(task).toMatchObject({
+      taskState: 'failed',
+      path: '',
+      error: {
+        code: 'external_checkout',
+        path: externalPath,
+        canSnapshot: true,
+      },
+    });
+    expect(await db.select().from(schema.taskReservations)).toHaveLength(0);
+    await service.retry(task.id, { confirmExternal: true });
+    const ready = await settled(task.id);
+    expect(ready).toMatchObject({
+      id: task.id,
+      taskState: 'ready',
+      path: externalPath,
+      taskBranch: 'existing-external',
+    });
+    expect(await readFile(join(externalPath, 'local-work.txt'), 'utf8')).toBe(
+      'Keep this local work',
+    );
+    expect(await gitService.resolve(externalPath, 'HEAD')).toBe(head);
+    expect(ready.sessions).toHaveLength(1);
+    expect(
+      (await db.select().from(schema.workspaces)).filter(
+        (row) => !row.isDefault,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('can recover at the committed revision without adopting or changing an external workspace', async () => {
+    const git = worktreeSimpleGit(repoPath),
+      externalPath = join(root, 'external');
+    await git.raw([
+      'worktree',
+      'add',
+      '-b',
+      'existing-snapshot',
+      externalPath,
+      'main',
+    ]);
+    await writeFile(
+      join(externalPath, 'local-only.txt'),
+      'Uncommitted external work',
+    );
+    const head = await gitService.resolve(externalPath, 'HEAD');
+    const task = await create('existing-snapshot', { mode: 'existing' });
+    expect(task.error?.code).toBe('external_checkout');
+    await service.retry(task.id, {
+      checkoutMode: 'snapshot',
+      environment: 'automatic',
+    });
+    const ready = await settled(task.id);
+    expect(ready).toMatchObject({
+      id: task.id,
+      taskState: 'ready',
+      checkoutMode: 'snapshot',
+    });
+    expect(ready.path).not.toBe(externalPath);
+    expect(await gitService.status(ready.path)).toMatchObject({
+      branch: null,
+      head,
+    });
+    await expect(
+      readFile(join(ready.path, 'local-only.txt')),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(join(externalPath, 'local-only.txt'), 'utf8')).toBe(
+      'Uncommitted external work',
+    );
+    expect(await gitService.status(externalPath)).toMatchObject({
+      branch: 'existing-snapshot',
+      dirty: true,
+      head,
+    });
+  });
+
   it('coalesces opening an empty task into one conversation', async () => {
     const task = await create('review');
     await db
@@ -2273,6 +2368,62 @@ describe('Task lifecycle with real Git and migrations', () => {
     await expect(assertWorkspaceCanExecute(db, task.id)).resolves.toMatchObject(
       { taskState: 'ready' },
     );
+  });
+
+  it('only permits archived-project cleanup through confirmed project deletion', async () => {
+    const task = await create('archived-project');
+    await db
+      .update(schema.projects)
+      .set({ archivedAt: new Date().toISOString() })
+      .where(eq(schema.projects.id, repo.projectId));
+    assertProjectIsActive.mockRejectedValue(
+      new ConflictException('Archived projects are read-only.'),
+    );
+    await expect(service.finish(task.id, true)).rejects.toThrow(
+      'Archived projects are read-only.',
+    );
+    expect((await service.get(task.id)).archivedAt).toBeNull();
+    const finished = await service.finish(task.id, true, undefined, {
+      allowArchivedProject: true,
+    });
+    expect(finished.archivedAt).toBeTruthy();
+    expect(stopSession).toHaveBeenCalled();
+  });
+
+  it('does not revive a deleted project when a cancelled task refresh returns', async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const entering = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    jest.spyOn(gitService, 'refresh').mockImplementation(
+      () => new Promise<void>((resolve) => {
+        release = resolve;
+        entered();
+      }),
+    );
+    const task = await service.create(repo.id, {
+      requestId: randomUUID(),
+      mode: 'new',
+      branchName: 'deleted-while-refreshing',
+      baseRef: 'main',
+    });
+    await entering;
+    try {
+      await service.finish(task.id, true);
+      await db
+        .delete(schema.projects)
+        .where(eq(schema.projects.id, repo.projectId));
+    } finally {
+      release();
+    }
+    // Drain the resumed refresh's microtasks, including its rejected record read.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await expect(service.get(task.id)).rejects.toThrow('Task not found.');
+    expect(
+      await gitService.hasLocalBranch(repoPath, 'deleted-while-refreshing'),
+    ).toBe(false);
+    expect(await db.select().from(schema.workspaces)).toHaveLength(0);
   });
 
   it('allows finishing other tasks and cancelling setup during a stalled remote refresh', async () => {

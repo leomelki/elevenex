@@ -1,0 +1,22 @@
+:host { display: block; height: 100%; min-height: 0; }
+.sidebar { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2); }
+header { display: flex; flex: none; align-items: center; gap: var(--space-1); min-height: calc(var(--row-height) + 2 * var(--space-1)); padding: var(--space-1); }
+h1 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; font-size: var(--text-ui-size); font-weight: var(--text-title-weight); }
+header > h1 { padding-inline: var(--space-1); }
+.project-title { display: flex; flex: 1; align-items: center; min-width: 0; gap: var(--space-1); min-height: var(--row-height); background: none; border: 0; border-radius: var(--radius-sm); padding: var(--space-1); color: var(--ink); cursor: pointer; text-align: left; transition: background var(--dur-fast) var(--ease-out); }
+.project-title:hover:not(:disabled) { background: var(--surface-sunken); }
+.project-title:disabled { opacity: 0.45; cursor: default; }
+.project-title ex-icon { color: var(--ink-muted); flex: none; }
+h2 { margin: 0; font-size: var(--text-caption-size); color: var(--ink-muted); font-weight: var(--text-title-weight); }
+ex-task-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding: var(--space-1); }
+ex-status-summary { flex: none; }
+.notice { display: grid; gap: var(--space-2); padding: var(--space-3); color: var(--danger); font-size: var(--text-caption-size); }
+.notice button { justify-self: start; }
+.loading { color: var(--ink-muted); padding: var(--space-3); font-size: var(--text-caption-size); }
+.closed-tasks { flex: 1; min-height: 0; overflow: auto; padding: var(--space-2); }
+.closed-task { padding-block: var(--space-2); border-bottom: 1px solid var(--line); }
+.closed-task-actions { display: flex; justify-content: flex-end; padding: var(--space-1); }
+.closed-tasks p { color: var(--ink-muted); font-size: var(--text-caption-size); }
+footer { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: var(--space-1); border-top: 1px solid var(--line); padding-top: var(--space-2); margin-top: auto; }
+.refresh { margin-left: auto; }
+@media (prefers-reduced-motion: reduce) { .project-title { transition: none; } }

@@ -14,6 +14,17 @@ The renderer implements the designed shell and reusable component families.
 See [renderer architecture and usage](../renderer/README.md) for APIs, ownership,
 and the isolated interactive component preview (`pnpm desktop:preview`).
 
+Once a configured machine is ready, the connected workspace loads projects,
+tasks and sessions through scope-bound named bridge operations. It includes
+project creation/settings, task creation/preparation/recovery, task stages, safe
+git operations and close/reopen flows. Selected sessions retain their task header
+with an empty main region; side views provide their frames only. See the
+[workspace guide](../renderer/src/app/workspace/README.md).
+The backend gains additive `desktop-workspace` routes;
+the existing app's routes and defaults remain available. A versioned capability
+probe reports an older engine clearly instead of assuming that readiness means
+it implements these features. The new metadata migration applies automatically.
+
 ## Run
 
 Use Node **22.22.3+**, **24.15.0+**, or **26+**. Node 24.12 is too old for this

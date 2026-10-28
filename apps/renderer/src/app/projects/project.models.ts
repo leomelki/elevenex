@@ -20,12 +20,15 @@ export interface FolderEntry {
 }
 /** The owner lists one supplied folder level. Requests are aborted when stale. */
 export type FolderProvider = (query: string, signal: AbortSignal) => readonly FolderEntry[] | Promise<readonly FolderEntry[]>;
+/** The owner checks all project names, including archived projects, in its current scope. */
+export type ProjectNameProvider = (name: string, signal: AbortSignal) => boolean | Promise<boolean>;
 export interface NewProjectRepo {
   readonly id: string;
   readonly name: string;
   readonly path: string;
   readonly branch?: string | null;
   readonly clone?: string | null;
+  readonly initialize?: boolean;
 }
 export interface NewProjectResult extends ProjectAppearance {
   readonly repos: readonly NewProjectRepo[];

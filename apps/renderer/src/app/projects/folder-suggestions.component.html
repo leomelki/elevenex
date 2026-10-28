@@ -1,32 +1,49 @@
 <div class="field" cdkOverlayOrigin #origin="cdkOverlayOrigin">
   <span class="field-in">
     <ex-icon [name]="url() ? 'link' : addedPaths().length ? 'plus' : 'folder'" [size]="14" />
-    <input #field role="combobox" autocomplete="off" spellcheck="false"
+    <input #field role="combobox" maxlength="4096" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+      [attr.cdkFocusInitial]="initialFocus() && active() ? '' : null"
       [attr.aria-label]="'Repository: a folder on ' + machine() + ' or a git URL'"
+      [attr.aria-describedby]="id + '-help'"
       aria-autocomplete="list" [attr.aria-expanded]="open()" [attr.aria-controls]="open() ? id : null"
-      [attr.aria-activedescendant]="open() && items().length ? id + '-' + highlighted() : null"
-      [attr.aria-busy]="loading()" [value]="query()" [disabled]="disabled()"
+      [attr.aria-activedescendant]="open() && highlighted() >= 0 ? id + '-' + highlighted() : null"
+      [attr.aria-busy]="source.pending()" [value]="query()" [disabled]="disabled()"
       [placeholder]="addedPaths().length ? 'Add another, or ↵ to go on' : 'A folder on ' + machine() + ', or a git URL'"
-      (focus)="focused.set(true)" (blur)="focused.set(false)" (input)="setQuery($event)" (keydown)="keydown($event)" />
+      (focus)="reopen()" (click)="reopen()" (blur)="blur()" (input)="setQuery($event)" (keydown)="keydown($event)"
+      (compositionstart)="compositionStarted()" (compositionend)="compositionEnded($event)" />
+    <span class="field-status" aria-hidden="true">@if (source.showPending() && source.pending()) { <ex-status-glyph status="running" [size]="12" /> }</span>
   </span>
+  <span class="visually-hidden" [id]="id + '-help'">Tab opens a folder. Enter adds the highlighted repository. Escape dismisses suggestions.</span>
 </div>
 <ng-template cdkConnectedOverlay [cdkConnectedOverlayOrigin]="origin" [cdkConnectedOverlayOpen]="open()"
   [cdkConnectedOverlayPositions]="positions" [cdkConnectedOverlayWidth]="origin.elementRef.nativeElement.offsetWidth + 2" (attach)="overlayAttached()" (detach)="stopFollowing()">
-  <div class="drop" role="listbox" [id]="id" [attr.aria-label]="'Folders on ' + machine()">
-    @for (item of items(); track item.path; let i = $index) {
-      <button type="button" role="option" tabindex="-1" [id]="id + '-' + i"
-        [attr.aria-selected]="i === highlighted()" [attr.aria-disabled]="addedPaths().includes(item.path)"
-        [class.highlighted]="i === highlighted()" [class.added]="addedPaths().includes(item.path)"
-        (mousedown)="$event.preventDefault()" (mouseenter)="highlighted.set(i)" (click)="pick(item)">
-        <ex-icon [name]="item.clone ? 'link' : item.git ? 'repo' : 'folder'" [size]="14" />
-        <span class="option-name">{{ item.name || name(item.path) }}</span>
-        <span class="option-meta">{{ addedPaths().includes(item.path) ? 'Added' : item.clone ? 'clones into ~/code' : item.git || (item.dir ? '' : 'no git yet: Elevenex sets it up') }}</span>
-        @if (addedPaths().includes(item.path)) { <ex-icon name="check" [size]="13" /> }
-        @else if (item.dir && !item.git) { <ex-icon name="chevron-right" [size]="12" /> }
-        @else if (i === highlighted()) { <ex-kbd>↵</ex-kbd> }
-      </button>
-    }
-    @if (loading()) { <div class="feedback" role="status">Loading folders…</div> }
-    @if (error()) { <div class="feedback" role="status">Folders could not be loaded.</div> }
+  <div class="drop" exAutoHeight>
+    <div class="drop-content">
+      <div class="options-viewport">
+        <div class="options" [id]="id" role="listbox" [attr.aria-label]="'Folders on ' + machine()" [attr.aria-busy]="source.pending()"
+          exFittedHighlight="button.highlighted" [highlightKey]="selectionKey()">
+          @for (item of items(); track item.path; let i = $index) {
+            <button type="button" role="option" tabindex="-1" [id]="id + '-' + i"
+              [attr.aria-selected]="i === highlighted()" [attr.aria-disabled]="addedPaths().includes(item.path)"
+              [class.highlighted]="i === highlighted()" [class.added]="addedPaths().includes(item.path)"
+              (mousedown)="$event.preventDefault()" (mousemove)="highlight(item)" (click)="pick(item)">
+              <ex-icon [name]="item.clone ? 'link' : item.git ? 'repo' : 'folder'" [size]="14" />
+              <span class="option-name" [title]="item.path">{{ item.name || name(item.path) }}</span>
+              <span class="option-meta">{{ addedPaths().includes(item.path) ? 'Added' : item.clone ? 'clones into ' + item.path : item.git || 'no git yet: Elevenex sets it up' }}</span>
+              @if (addedPaths().includes(item.path)) { <ex-icon name="check" [size]="13" /> }
+              @else if (i === highlighted()) { <ex-kbd>↵</ex-kbd> }
+            </button>
+          }
+          @if (!items().length && source.pending()) { <ex-skeleton class="pending-rows" [count]="source.placeholderCount()" /> }
+          @if (source.error()) {
+            <div class="feedback" role="status"><span>{{ url() ? 'Check the Git URL and try again.' : 'Folders could not be loaded.' }}</span><button type="button" exButton variant="ghost" size="sm" class="retry" tabindex="-1" (mousedown)="$event.preventDefault()" (click)="retry()">Retry</button></div>
+          }
+          @if (source.ready() && !source.error() && !items().length) { <div class="feedback" role="status">No matching folders. Try another path.</div> }
+        </div>
+      </div>
+      @if (items().length && highlighted() >= 0) {
+        <div class="keyboard-hint" aria-hidden="true">@if (!url()) { <span><ex-kbd>Tab</ex-kbd> Open folder</span> }<span><ex-kbd>↵</ex-kbd> Add repository</span></div>
+      }
+    </div>
   </div>
 </ng-template>

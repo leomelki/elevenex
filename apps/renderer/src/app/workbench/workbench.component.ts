@@ -62,9 +62,9 @@ export class WorkbenchComponent {
   readonly machineRequested = output<void>();
   protected readonly tabs: readonly PanelTab[] = [
     { id: "terminal", label: "Terminal", icon: "terminal" },
-    { id: "code", label: "Code", icon: "code" },
-    { id: "changes", label: "Changes", icon: "changes" },
     { id: "actions", label: "Actions", icon: "actions" },
+    { id: "changes", label: "Changes", icon: "changes" },
+    { id: "code", label: "Code", icon: "code" },
     { id: "browser", label: "Browser", icon: "globe" },
   ];
   protected readonly projectLabel = computed(

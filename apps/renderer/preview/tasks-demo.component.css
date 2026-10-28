@@ -169,3 +169,5 @@ h3 {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.busy-task { max-width: var(--sidebar-width); }

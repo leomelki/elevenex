@@ -1,9 +1,11 @@
+import { NavigationEventsService } from '../navigation/navigation-events.service.js';
 import { isSqliteUniqueConstraintError } from '../database/sqlite-errors.js';
 import {
   BadRequestException,
   ConflictException,
   Inject,
   Injectable,
+  Optional,
   NotFoundException,
 } from '@nestjs/common';
 import { and, desc, eq, count, or, sql } from 'drizzle-orm';
@@ -35,6 +37,7 @@ export class ReposService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly projectsService: ProjectsService,
+    @Optional() private readonly navigationEvents?: NavigationEventsService,
   ) {}
 
   async findByProject(projectId: number) {
@@ -121,6 +124,7 @@ export class ReposService {
         .insert(schema.repos)
         .values({ projectId, name, path: repoPath, color })
         .returning();
+      this.navigationEvents?.invalidate();
       return rows[0];
     } catch (error: unknown) {
       if (isSqliteUniqueConstraintError(error)) {
@@ -175,6 +179,7 @@ export class ReposService {
     if (rows.length === 0) {
       throw new NotFoundException(`Repo with id ${id} not found`);
     }
+    this.navigationEvents?.invalidate();
     return rows[0];
   }
 
@@ -205,6 +210,7 @@ export class ReposService {
       throw new NotFoundException(`Repo with id ${id} not found`);
     }
 
+    this.navigationEvents?.invalidate();
     return rows[0];
   }
 

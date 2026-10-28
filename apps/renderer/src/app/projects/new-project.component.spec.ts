@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OverlayContainer } from '@angular/cdk/overlay';
 import { NewProjectComponent } from './new-project.component';
 import type { CreateProjectIntent, FolderEntry } from './project.models';
@@ -7,8 +7,9 @@ import { projectFace, projectHue } from './project-face';
 import { ProjectAppearanceComponent } from './project-appearance.component';
 
 describe('New project supplied-data flow', () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
-    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => undefined, removeEventListener: () => undefined }));
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => undefined, removeEventListener: () => undefined, addListener: () => undefined, removeListener: () => undefined }));
   });
   function key(element: HTMLElement, value: string, options: KeyboardEventInit = {}): void {
     element.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true, ...options }));
@@ -18,6 +19,66 @@ describe('New project supplied-data flow', () => {
     if (!field) throw new Error(`Missing ${label}`);
     return field;
   }
+  it('blocks duplicate names and every bypass until the current trimmed name is available', async () => {
+    const fixture = TestBed.createComponent(NewProjectComponent);
+    fixture.componentRef.setInput('autoFocus', false);
+    fixture.componentRef.setInput('draft', { name: 'Taken', repos: [{ id: 'repo', name: 'repo', path: '/repo' }], step: 'name' });
+    const requests: { name: string; signal: AbortSignal; resolve: (available: boolean) => void }[] = [];
+    fixture.componentRef.setInput('checkName', (name: string, signal: AbortSignal) => new Promise<boolean>(resolve => requests.push({ name, signal, resolve })));
+    const create = vi.fn(); fixture.componentInstance.create.subscribe(create);
+    fixture.detectChanges();
+    const next: HTMLButtonElement = fixture.nativeElement.querySelector('footer button');
+    const look: HTMLButtonElement = fixture.nativeElement.querySelectorAll('.row-head')[2];
+    const field = input(fixture.nativeElement, 'Project name');
+    const card = fixture.nativeElement.querySelector('section');
+    expect(next.disabled).toBe(true); expect(look.disabled).toBe(true);
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    requests[0]!.resolve(false);
+    await vi.waitFor(() => { fixture.detectChanges(); expect(field.getAttribute('aria-invalid')).toBe('true'); });
+    expect(fixture.nativeElement.textContent).toContain('Name already taken');
+    next.click(); look.click(); key(field, 'Enter'); key(card, 'Enter', { metaKey: true });
+    expect(create).not.toHaveBeenCalled();
+    field.value = '  Available  '; field.dispatchEvent(new Event('input')); fixture.detectChanges();
+    expect(next.disabled).toBe(true); expect(look.disabled).toBe(true);
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]!.name).toBe('Available');
+    requests[1]!.resolve(true);
+    await vi.waitFor(() => { fixture.detectChanges(); expect(next.disabled).toBe(false); });
+    expect(field.hasAttribute('aria-invalid')).toBe(false);
+    key(field, 'Enter'); fixture.detectChanges();
+    key(card, 'Enter', { ctrlKey: true });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ project: expect.objectContaining({ name: 'Available' }) }));
+    fixture.destroy(); expect(requests[1]!.signal.aborted).toBe(true);
+  });
+  it('ignores stale checks, rechecks on edits after failure and aborts when the draft leaves', async () => {
+    const fixture = TestBed.createComponent(NewProjectComponent);
+    fixture.componentRef.setInput('autoFocus', false);
+    fixture.componentRef.setInput('draft', { name: 'Old', repos: [{ id: 'repo', name: 'repo', path: '/repo' }], step: 'name' });
+    const requests: { signal: AbortSignal; resolve: (available: boolean) => void; reject: () => void }[] = [];
+    fixture.componentRef.setInput('checkName', (_name: string, signal: AbortSignal) => new Promise<boolean>((resolve, reject) => requests.push({ signal, resolve, reject: () => reject(new Error('Offline')) })));
+    fixture.detectChanges(); await vi.waitFor(() => expect(requests).toHaveLength(1));
+    const field = input(fixture.nativeElement, 'Project name');
+    field.value = 'New'; field.dispatchEvent(new Event('input')); fixture.detectChanges();
+    expect(requests[0]!.signal.aborted).toBe(true);
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    requests[0]!.resolve(true); requests[1]!.reject();
+    await vi.waitFor(() => { fixture.detectChanges(); expect(fixture.nativeElement.textContent).toContain("Couldn't check availability"); });
+    expect(fixture.nativeElement.querySelector('footer button').disabled).toBe(true);
+    expect(field.hasAttribute('aria-invalid')).toBe(false);
+    expect(fixture.nativeElement.querySelector('.name-feedback button')).toBeNull();
+    field.value = 'Updated'; field.dispatchEvent(new Event('input')); fixture.detectChanges();
+    await vi.waitFor(() => expect(requests).toHaveLength(3));
+    requests[2]!.resolve(true);
+    await vi.waitFor(() => { fixture.detectChanges(); expect(fixture.nativeElement.querySelector('footer button').disabled).toBe(false); });
+    field.value = 'Leaving'; field.dispatchEvent(new Event('input')); fixture.detectChanges();
+    await vi.waitFor(() => expect(requests).toHaveLength(4));
+    fixture.componentRef.setInput('active', false); fixture.detectChanges();
+    expect(requests[3]!.signal.aborted).toBe(true);
+    requests[3]!.resolve(true); await Promise.resolve(); fixture.detectChanges();
+    fixture.componentRef.setInput('active', true); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('footer button').disabled).toBe(true);
+    fixture.destroy();
+  });
   it('disables an unavailable integration without reading folders or claiming creation is running', async () => {
     const fixture = TestBed.createComponent(NewProjectComponent);
     const folders = vi.fn(() => []);
@@ -81,7 +142,7 @@ describe('New project supplied-data flow', () => {
     fixture.destroy();
     expect(requests[1]?.signal.aborted).toBe(true);
   });
-  it('drills into plain folders and preserves explicit names when repositories change', async () => {
+  it('selects plain folders with Enter and preserves explicit names when repositories change', async () => {
     const fixture = TestBed.createComponent(NewProjectComponent);
     fixture.componentRef.setInput('autoFocus', false);
     fixture.componentRef.setInput('draft', { name: 'Checkout', repos: [{ id: 'one', name: 'API', path: '~/code/api' }] });
@@ -93,7 +154,8 @@ describe('New project supplied-data flow', () => {
     await fixture.whenStable();
     key(field, 'Enter');
     fixture.detectChanges();
-    expect(field.value).toBe('~/src/');
+    expect(field.value).toBe('');
+    expect(fixture.nativeElement.textContent).toContain('src');
     fixture.nativeElement.querySelector('ex-icon-button button')?.click();
     fixture.detectChanges();
     expect(input(fixture.nativeElement, 'Project name').value).toBe('Checkout');
@@ -173,4 +235,32 @@ describe('New project supplied-data flow', () => {
     hue?.click();
     expect(changed).toHaveBeenCalledWith(expect.objectContaining({ hue: 'pine' }));
   });
+  it('keeps native Enter on appearance controls from submitting the project', () => {
+    const fixture = TestBed.createComponent(NewProjectComponent);
+    fixture.componentRef.setInput('autoFocus', false);
+    fixture.componentRef.setInput('draft', { name: 'Checkout', repos: [{ id: 'api', name: 'API', path: '/code/api' }], step: 'look' });
+    const create = vi.fn(); fixture.componentInstance.create.subscribe(create); fixture.detectChanges();
+    const hue = fixture.nativeElement.querySelector('button[role="radio"]');
+    key(hue, 'Enter');
+    expect(create).not.toHaveBeenCalled();
+  });
+  it('retains a failed draft, blocks uncertain writes and emits explicit reconciliation', () => {
+    const fixture = TestBed.createComponent(NewProjectComponent);
+    fixture.componentRef.setInput('autoFocus', false);
+    fixture.componentRef.setInput('draft', { name: 'Checkout', repos: [{ id: 'api', name: 'API', path: '/code/api' }], step: 'look' });
+    fixture.componentRef.setInput('error', 'Check the project outcome.');
+    fixture.componentRef.setInput('recoveryRequired', true);
+    const create = vi.fn(), recover = vi.fn();
+    fixture.componentInstance.create.subscribe(create); fixture.componentInstance.recoveryRequested.subscribe(recover);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[role="alert"]').textContent).toContain('Check the project outcome.');
+    key(fixture.nativeElement.querySelector('section'), 'Enter', { metaKey: true });
+    expect(create).not.toHaveBeenCalled();
+    const button = [...fixture.nativeElement.querySelectorAll('button')].find((candidate): candidate is HTMLButtonElement => candidate instanceof HTMLButtonElement && candidate.textContent?.includes('Check projects') === true);
+    button?.click(); expect(recover).toHaveBeenCalledOnce();
+    fixture.componentRef.setInput('recoveryRequired', false); fixture.detectChanges();
+    key(fixture.nativeElement.querySelector('section'), 'Enter', { metaKey: true });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ project: expect.objectContaining({ name: 'Checkout' }) }));
+  });
+
 });

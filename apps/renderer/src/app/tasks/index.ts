@@ -20,3 +20,8 @@ export * from './navigation/panel-tabs.component';
 export * from './navigation/git-bar.component';
 export * from './lifecycle/repo-tag.component';
 export * from './outline/subtask-glyph.component';
+
+export * from './navigation/commit-panel.component';
+export * from './navigation/commit-panel.models';
+
+export * from './outline/archived-sessions.component';

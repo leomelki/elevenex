@@ -17,6 +17,7 @@ import { StageGlyphComponent } from './stage-glyph.component';
 })
 export class TaskStageComponent {
   readonly stage = input<TaskStage>('planned');
+  readonly disabled = input(false);
   readonly stageChange = output<TaskStage>();
   protected readonly labels = TASK_STAGE_LABELS;
   protected readonly stages: readonly TaskStage[] = [

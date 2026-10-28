@@ -52,30 +52,16 @@
       @let row = entry.value;
       <ex-fold
         [attr.data-flip]="entry.key"
-        [open]="entry.present && !entry.entering && row.visible"
+        [open]="entry.present && !entry.entering"
         (transitionend)="presence.settled(entry.key, $event)"
       >
-        @if (row.kind === "session") {
-          <ex-session-row
-            [session]="row.session"
-            [selected]="selected() === row.session.id"
-            (activated)="selectSession.emit($event)"
-          />
-        } @else {
-          <button
-            class="finished-toggle"
-            type="button"
-            [attr.aria-expanded]="finishedOpen()"
-            (click)="toggleFinished()"
-          >
-            <ex-icon
-              class="chevron"
-              name="chevron-down"
-              [size]="12"
-              [class.closed]="!finishedOpen()"
-            /><ex-ticker [value]="row.count" /> finished
-          </button>
-        }
+        <ex-session-row
+          [session]="row.session"
+          [allowArchive]="allowArchive()"
+          (archiveRequested)="archiveRequested.emit($event)"
+          [selected]="selected() === row.session.id"
+          (activated)="selectSession.emit($event)"
+        />
       </ex-fold>
     }
   </div></ex-fold
