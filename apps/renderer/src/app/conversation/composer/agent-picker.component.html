@@ -3,14 +3,21 @@
   class="trigger"
   cdkOverlayOrigin
   #origin="cdkOverlayOrigin"
+  [disabled]="disabled()"
   [attr.aria-expanded]="open()"
   aria-haspopup="dialog"
+  [attr.aria-label]="
+    'Adjust agent: ' +
+    (currentHarness()?.label || value().harness) +
+    ', ' +
+    modelLabel()
+  "
   (click)="open.set(!open())"
   title="Adjust agent (⌘J)"
 >
-  <span class="mark">{{ value().mark }}</span
-  ><span class="name">{{ value().preset || value().model }}</span
-  ><span class="sub">{{ value().thinking }}</span>
+  <span class="mark" aria-hidden="true">{{ value().mark }}</span>
+  <span class="name">{{ value().preset || modelLabel() }}</span>
+  <span class="sub">{{ thinkingLabel(value().thinking || "") }}</span>
   @if (value().fast) {
     <ex-icon name="bolt" [size]="13" />
   }
@@ -22,8 +29,9 @@
 <ng-template
   cdkConnectedOverlay
   [cdkConnectedOverlayOrigin]="origin"
-  [cdkConnectedOverlayOpen]="open()"
+  [cdkConnectedOverlayOpen]="open() && !disabled()"
   [cdkConnectedOverlayHasBackdrop]="true"
+  [cdkConnectedOverlayDisableClose]="true"
   cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
   [cdkConnectedOverlayPositions]="[
     {
@@ -33,93 +41,107 @@
       overlayY: 'bottom',
       offsetY: -8,
     },
+    {
+      originX: 'start',
+      originY: 'bottom',
+      overlayX: 'start',
+      overlayY: 'top',
+      offsetY: 8,
+    },
   ]"
+  [cdkConnectedOverlayViewportMargin]="16"
+  [cdkConnectedOverlayPush]="true"
   (backdropClick)="open.set(false)"
-  (overlayKeydown)="$event.key === 'Escape' && open.set(false)"
-  ><section
-    class="picker"
+  (overlayKeydown)="overlayKey($event)"
+>
+  <section
+    #dialog
+    class="picker agent-settings"
     role="dialog"
     aria-label="Adjust agent"
+    [attr.aria-busy]="busy()"
+    exAutoHeight
     cdkTrapFocus
     [cdkTrapFocusAutoCapture]="true"
   >
-    <span class="label">Changes apply from your next message</span>
-    <div class="field">
-      <span>Harness</span>
-      @if (locked() || !harnesses().length) {
-        <strong>{{ currentHarness()?.label || value().harness }}</strong>
-      } @else {
-        <select aria-label="Agent harness" (change)="harnessChange($event)">
-          @for (harness of harnesses(); track harness.id) {
-            <option
-              [value]="harness.id"
-              [selected]="value().harness === harness.id"
-            >
-              {{ harness.label }}
-            </option>
-          }
-        </select>
-      }
-    </div>
-    <div class="field">
-      <span>Model</span>
-      @if (models().length) {
-        <select aria-label="Agent model" (change)="modelChange($event)">
-          @for (model of models(); track model.id) {
-            <option [value]="model.id" [selected]="value().model === model.id">
-              {{ model.label }}
-            </option>
-          }
-        </select>
-      } @else {
-        <strong>{{ value().model }}</strong>
-      }
-    </div>
-    <div class="field">
-      <span>Thinking</span
-      ><select
-        aria-label="Thinking level"
-        [disabled]="!models().length"
-        (change)="thinkingChange($event)"
-      >
-        @for (level of thinkingLevels; track level) {
-          <option
-            [value]="level"
-            [selected]="level === (value().thinking || 'Off')"
-            [disabled]="!supportedThinking().includes(level)"
+    <div>
+      <span class="label" role="status">{{
+        busy() ? "Updating agent…" : "Changes apply from your next message"
+      }}</span>
+      <div class="field">
+        <span>Harness</span>
+        @if (locked() || !harnesses().length) {
+          <strong
+            class="harness"
+            title="This conversation has started. Create a new session to choose another harness."
           >
-            {{ level }}
-          </option>
+            {{ currentHarness()?.label || value().harness }}
+          </strong>
+        } @else {
+          <ex-dropdown
+            label="Harness"
+            [disabled]="busy()"
+            [options]="harnesses()"
+            [value]="value().harness"
+            (changed)="harnessChange($event)"
+          />
         }
-      </select>
+      </div>
+      <div class="field">
+        <span>Model</span>
+        <ex-dropdown
+          label="Model"
+          [disabled]="busy()"
+          [options]="models()"
+          [value]="value().model"
+          placeholder="Provider default"
+          (changed)="modelChange($event)"
+        />
+      </div>
+      @if (reasoningAvailable()) {
+        <div class="field">
+          <span>Thinking</span>
+          <ex-dropdown
+            label="Thinking level"
+            [options]="thinkingOptions()"
+            [value]="value().thinking || ''"
+            [disabled]="busy() || !supportedThinking().length"
+            (changed)="thinkingChange($event)"
+          />
+        </div>
+      }
+      @if (fastAvailable()) {
+        <div class="field">
+          <span>Fast mode</span>
+          <ex-switch
+            label="Fast mode"
+            [disabled]="busy()"
+            [on]="!!value().fast"
+            (changed)="fastChange()"
+          />
+        </div>
+      }
+      @if ((showSavePreset() && !value().preset) || (showFork() && locked())) {
+        <hr class="divider" />
+        @if (showSavePreset() && !value().preset) {
+          <button
+            type="button"
+            class="choice"
+            (click)="savePreset.emit(value()); open.set(false)"
+          >
+            <ex-icon name="plus" [size]="14" />Save as preset
+          </button>
+        }
+        @if (showFork() && locked()) {
+          <button
+            type="button"
+            class="choice"
+            (click)="fork.emit(); open.set(false)"
+          >
+            <ex-icon name="fork" [size]="14" />Fork to another harness…
+          </button>
+        }
+      }
     </div>
-    <div class="field">
-      <span>Fast mode</span
-      ><input
-        type="checkbox"
-        aria-label="Fast mode"
-        [checked]="value().fast"
-        (change)="fastChange()"
-      />
-    </div>
-    <hr class="divider" />
-    @if (!value().preset) {
-      <button
-        type="button"
-        class="choice"
-        (click)="savePreset.emit(value()); open.set(false)"
-      >
-        <ex-icon name="plus" [size]="14" />Save as preset
-      </button>
-    }
-    @if (locked()) {
-      <button
-        type="button"
-        class="choice"
-        (click)="fork.emit(); open.set(false)"
-      >
-        <ex-icon name="fork" [size]="14" />Fork to another harness…
-      </button>
-    }
-  </section></ng-template
->
+  </section>
+</ng-template>

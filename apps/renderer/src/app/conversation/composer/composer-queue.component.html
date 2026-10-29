@@ -6,77 +6,90 @@
     [cdkDropListDisabled]="disabled() || !reorderable()"
     (cdkDropListDropped)="drop($event)"
   >
-    <header>{{ items().length }} queued</header>
-    @for (item of items(); track item.id) {
-      <div
-        class="item"
-        cdkDrag
-        [cdkDragData]="item.id"
-        [cdkDragDisabled]="disabled() || !reorderable()"
-      >
-        @if (editing() === item.id) {
-          <div class="edit">
-            <textarea
-              aria-label="Edit queued message"
-              [value]="editText()"
-              (input)="update($event)"
-              (keydown.escape)="editing.set(null)"
-            ></textarea
-            ><button
-              exButton
-              variant="primary"
-              size="sm"
-              [disabled]="!editText().trim()"
-              (click)="save(item.id)"
-            >
-              Save</button
-            ><button
-              exButton
-              variant="ghost"
-              size="sm"
-              (click)="editing.set(null)"
-            >
-              Cancel
-            </button>
-          </div>
-        } @else {
-          @if (reorderable()) {
-            <button
-              type="button"
-              class="handle"
-              cdkDragHandle
-              [attr.aria-label]="'Reorder ' + item.text"
-              (keydown.arrowup)="$event.preventDefault(); move(item.id, -1)"
-              (keydown.arrowdown)="$event.preventDefault(); move(item.id, 1)"
-            >
-              ⠿
-            </button>
+    <header>
+      <ex-icon name="layers" [size]="13" /><ex-ticker
+        [value]="items().length"
+      />
+      queued <span>· after this turn</span>
+    </header>
+    <div class="items">
+      @for (item of items(); track item.id; let index = $index) {
+        <div
+          class="item"
+          cdkDrag
+          [cdkDragData]="item.id"
+          [cdkDragDisabled]="disabled() || !reorderable()"
+          animate.enter="queue-enter"
+          animate.leave="queue-leave"
+        >
+          @if (editing() === item.id) {
+            <div class="edit">
+              <textarea
+                aria-label="Edit queued message"
+                [value]="editText()"
+                [disabled]="disabled()"
+                (input)="update($event)"
+                (keydown.escape)="editing.set(null)"
+              ></textarea
+              ><button
+                exButton
+                variant="primary"
+                size="sm"
+                [disabled]="disabled() || !editText().trim()"
+                (click)="save(item.id)"
+              >
+                Save</button
+              ><button
+                exButton
+                variant="ghost"
+                size="sm"
+                (click)="editing.set(null)"
+              >
+                Cancel
+              </button>
+            </div>
+          } @else {
+            @if (reorderable()) {
+              <button
+                type="button"
+                class="handle"
+                cdkDragHandle
+                [disabled]="disabled()"
+                [attr.aria-label]="'Reorder ' + item.text"
+                (keydown.arrowup)="$event.preventDefault(); move(item.id, -1)"
+                (keydown.arrowdown)="$event.preventDefault(); move(item.id, 1)"
+              >
+                ⠿
+              </button>
+            }
+            <span class="number">{{ index + 1 }}</span>
+            <span class="text" [title]="item.text">{{ item.text }}</span>
+            <span class="actions"
+              ><ex-icon-button
+                icon="steer"
+                label="Steer now"
+                size="sm"
+                [disabled]="disabled()"
+                (pressed)="steer.emit(item.id)" />
+              @if (editable()) {
+                <ex-icon-button
+                  icon="pencil"
+                  label="Edit queued message"
+                  size="sm"
+                  [disabled]="disabled()"
+                  (pressed)="beginEdit(item)"
+                />
+              }
+              <ex-icon-button
+                icon="x"
+                label="Remove queued message"
+                size="sm"
+                [disabled]="disabled()"
+                (pressed)="remove.emit(item.id)"
+            /></span>
           }
-          <span class="text">{{ item.text }}</span
-          ><ex-icon-button
-            icon="steer"
-            label="Steer now"
-            size="sm"
-            [disabled]="disabled()"
-            (pressed)="steer.emit(item.id)"
-          />
-          @if (editable()) {
-            <ex-icon-button
-              icon="pencil"
-              label="Edit queued message"
-              size="sm"
-              (pressed)="beginEdit(item)"
-            />
-          }
-          <ex-icon-button
-            icon="x"
-            label="Remove queued message"
-            size="sm"
-            [disabled]="disabled()"
-            (pressed)="remove.emit(item.id)"
-          />
-        }
-      </div>
-    }
+        </div>
+      }
+    </div>
   </section>
 }

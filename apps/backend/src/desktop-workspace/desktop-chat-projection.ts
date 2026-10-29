@@ -165,9 +165,20 @@ export function chatState(
         return {
           id: display(m.id, 1000),
           label: display(m.displayName ?? m.id, 1000),
+          ...(Array.isArray(m.reasoningEfforts)
+            ? {
+                reasoningEfforts: m.reasoningEfforts
+                  .slice(0, 20)
+                  .map((effort) => display(effort, 1000)),
+              }
+            : {}),
+          ...(typeof m.supportsFastMode === 'boolean'
+            ? { supportsFastMode: m.supportsFastMode }
+            : {}),
         };
       }),
     reasoning: nullable(raw.reasoningEffort),
+    fast: raw.fastMode === true,
     plan: raw.planMode === true,
     permissionMode: nullable(raw.permissionMode),
     permissionModes: permissionModes.slice(0, 20),

@@ -21,8 +21,7 @@ ex-chat {
   color: var(--ink);
   text-transform: capitalize;
 }
-.status,
-.settings {
+.status {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -132,9 +131,6 @@ ex-chat {
   color: var(--ink-muted);
   font-size: var(--text-caption-size);
   text-align: center;
-}
-.settings {
-  flex-wrap: wrap;
 }
 @media (max-width: 760px) {
   .metadata {

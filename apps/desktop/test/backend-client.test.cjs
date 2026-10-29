@@ -543,3 +543,22 @@ test('harness selection requires a known action shape and an expected current pr
   assert.throws(() => parseChatPage({ ...page, state: { ...state, providers: Array(33).fill({ id: 'x', label: 'x' }) } }, 1, 2));
   assert.throws(() => parseChatPage({ ...page, state: { ...state, providerLocked: 'false' } }, 1, 2));
 });
+
+
+test('composer capability metadata is optional, bounded and validated before crossing the bridge', () => {
+  const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: 'gpt', models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  assert.equal(parseChatPage(page, 1, 2).state.controls, undefined);
+  const controls = { plan: true, reasoning: true, fast: true };
+  const model = { id: 'gpt', label: 'GPT', reasoningEfforts: ['low', 'high'], supportsFastMode: true };
+  const result = parseChatPage({ ...page, state: { ...state, controls: { ...controls, private: 'discard' }, fast: true, models: [{ ...model, private: 'discard' }] } }, 1, 2);
+  assert.deepEqual(result.state.controls, controls);
+  assert.deepEqual(result.state.models, [model]);
+  assert.deepEqual(parseChatAction({ type: 'reasoning', effort: null }), { type: 'reasoning', effort: null });
+  assert.deepEqual(parseChatAction({ type: 'fast', enabled: true }), { type: 'fast', enabled: true });
+  for (const input of [{ type: 'reasoning', effort: 1 }, { type: 'fast', enabled: 'true' }]) assert.throws(() => parseChatAction(input));
+  for (const extra of [{ controls: { ...controls, fast: 'yes' } }, { fast: 1 }, { models: [{ ...model, reasoningEfforts: Array(21).fill('high') }] }, { models: [{ ...model, supportsFastMode: 'yes' }] }]) {
+    assert.throws(() => parseChatPage({ ...page, state: { ...state, ...extra } }, 1, 2));
+  }
+});

@@ -66,7 +66,7 @@ motion through the real Angular components.
 
 ## Harness choice
 
-The composer exposes a Harness dropdown using the connected backend registry's
+The composer’s agent chip opens settings with a Harness dropdown using the connected backend registry's
 bounded provider labels (currently Claude Code, Codex, Pi and OpenCode). Optional
 `providers` and `providerLocked` state fields keep older engines compatible;
 without them, the desktop retains its previous read-only harness display.
@@ -106,3 +106,27 @@ welcome card even before history contains a user item.
 
 `session-reply-boundaries.mjs` reproduces trailing records and deliberately late
 user receipts through the preview adapter in light/dark and narrow layouts.
+
+
+## Designed composer
+
+The connected chat now uses `Composer`’s Plan/Code switch, agent chip and
+permission picker directly. Harness, model, thinking and fast mode live inside
+the agent popover; the toolbar stays on one row. All choices use authoritative
+state with busy/error handling, retain the draft, and reject archived/historical
+edits. Queue removal/steering restores composer focus before a row disappears.
+Enter sends or queues, Alt Enter steers, Shift Enter inserts a newline, Shift Tab
+toggles mode, Cmd/Ctrl J opens agent settings and Cmd/Ctrl . stops a running agent.
+
+Optional `controls`, `fast` and model capability fields are additive for older
+engines. Thinking and fast changes use validated actions on the existing named,
+scoped command bridge. The backend checks the selected model before delegating,
+and advertises only installed provider operations. No extra catalogs, provider
+hydration or repository reads are added. Missing capability metadata hides the
+new controls. File attachments, mentions, dictation and preset/fork integrations
+remain hidden until their corresponding platform operations are available.
+
+`session-composer.mjs` verifies settings, nested Escape/focus, keyboard modes,
+permissions, multiline input, queue/remove/steer/stop, retained uncertain drafts,
+container-responsive layout and reduced motion in both themes. `session-harness`
+verifies changing harness inside the popover and locking after the first prompt.

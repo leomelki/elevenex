@@ -59,3 +59,26 @@ consumers. Markdown gives the cursor to the current unfinished code block or to
 prose, including nested lists/quotes. `NowLine.streaming=false` keeps a held
 thinking line visible without keeping its cursor alive during the handoff to
 assistant text.
+
+
+## Connected composer controls
+
+`Composer` keeps the designed single toolbar row at narrow widths using its
+named `composer` container: thinking metadata, mode labels, then permission labels
+yield space while accessible names remain. `settingsDisabled` prevents editing;
+`settingsBusy` disables choices while keeping the agent popover open during
+reconciliation. Neither locks the unfinished message. `modeAvailable` hides an
+unsupported mode switch. `agentLocked`, `showFork`, `showSavePreset`,
+`reasoningAvailable` and `fastAvailable` constrain capabilities without rendering
+unavailable actions. `permissionChoices` accepts bounded, harness-native IDs,
+labels and descriptions; omitting it preserves the three design defaults.
+
+`AgentConfig.thinking` and `AgentModel.thinking` accept provider-reported strings,
+including custom reasoning variants. Model labels come from `AgentModel.label`.
+Unsupported standard thinking levels remain disabled; only reported variants
+emit changes. The picker uses the shared dropdowns and switch. Nested Escape
+closes the inner menu before the dialog, and CDK restores focus to its opener.
+Harness changes close the dialog; model/thinking/fast changes keep it mounted.
+Its content height and the composer input height use `AutoHeight` with one inner
+wrapper. Queue rows have bounded scrolling, quiet hover/focus actions and
+reduced-motion-aware entry/exit. Send returns focus to the textarea.

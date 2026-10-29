@@ -74,12 +74,17 @@ export class DesktopChatService implements OnModuleDestroy {
     session: Awaited<ReturnType<SessionsService['findOne']>>,
     raw: Record<string, unknown>,
   ) {
+    const provider = this.registry.getProvider(session.activeAgentProvider);
     return {
+      controls: {
+        plan: typeof provider.setPlanMode === 'function',
+        reasoning: typeof provider.setReasoningEffort === 'function',
+        fast: typeof provider.setFastMode === 'function',
+      },
       ...chatState(
         raw,
         session.activeAgentProvider,
-        this.registry.getProvider(session.activeAgentProvider).info
-          .permissionModes ?? [],
+        provider.info.permissionModes ?? [],
       ),
       providers: this.registry
         .listProviders()

@@ -14,14 +14,20 @@ export interface AgentConfig {
   readonly mark: string;
   readonly harness: string;
   readonly model: string;
-  readonly thinking?: ThinkingLevel;
+  readonly thinking?: string;
   readonly fast?: boolean;
   readonly context?: number;
 }
 export interface AgentModel {
   readonly id: string;
   readonly label: string;
-  readonly thinking: readonly ThinkingLevel[];
+  readonly thinking: readonly string[];
+  readonly supportsFastMode?: boolean;
+}
+export interface PermissionChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly detail: string;
 }
 export interface AgentHarness {
   readonly id: string;
@@ -143,7 +149,10 @@ export interface ChatExchange {
   /** Whether this reply is currently receiving text, independently of tool work. */
   readonly streaming?: boolean;
   readonly isNew?: boolean;
-  readonly overflow?: readonly { readonly id: string; readonly label: string }[];
+  readonly overflow?: readonly {
+    readonly id: string;
+    readonly label: string;
+  }[];
   readonly id: string;
   readonly prompt: string;
   readonly time?: string;

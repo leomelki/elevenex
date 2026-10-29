@@ -169,6 +169,45 @@ export async function executeChatAction(
         throw new BadRequestException('Invalid plan option.');
       await feature('setPlanMode').setPlanMode(sessionId, action.enabled);
       break;
+    case 'reasoning': {
+      const effort = action.effort === null ? null : text(action.effort);
+      const raw = record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      );
+      const model = Array.isArray(raw.availableModels)
+        ? raw.availableModels
+            .map(record)
+            .find((item) => item.id === raw.selectedModel)
+        : undefined;
+      if (
+        effort !== null &&
+        (!Array.isArray(model?.reasoningEfforts) ||
+          !model.reasoningEfforts.includes(effort))
+      )
+        throw new BadRequestException(
+          'Unsupported thinking level for this model.',
+        );
+      await feature('setReasoningEffort').setReasoningEffort(sessionId, effort);
+      break;
+    }
+    case 'fast': {
+      if (typeof action.enabled !== 'boolean')
+        throw new BadRequestException('Invalid fast option.');
+      const raw = record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      );
+      const model = Array.isArray(raw.availableModels)
+        ? raw.availableModels
+            .map(record)
+            .find((item) => item.id === raw.selectedModel)
+        : undefined;
+      if (action.enabled && model?.supportsFastMode !== true)
+        throw new BadRequestException(
+          'Fast mode is unavailable for this model.',
+        );
+      await feature('setFastMode').setFastMode(sessionId, action.enabled);
+      break;
+    }
     case 'permission-mode': {
       const mode = text(action.mode);
       if (!provider.info.permissionModes?.includes(mode))

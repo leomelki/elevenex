@@ -35,7 +35,6 @@ import {
   type ConversationMention,
   type ConversationMode,
   type McpServer,
-  type PermissionLevel,
   type QuestionAnswers,
   type WorkStep,
 } from "../src/app/conversation";
@@ -76,7 +75,7 @@ import {
 })
 export class ConversationDemoComponent {
   readonly mode = signal<ConversationMode>("code");
-  readonly permission = signal<PermissionLevel>("edits");
+  readonly permission = signal<string>("edits");
   readonly agent = signal<AgentConfig>({
     preset: "Thorough",
     mark: "CX",

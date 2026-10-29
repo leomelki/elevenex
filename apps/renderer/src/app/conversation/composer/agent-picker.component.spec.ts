@@ -1,5 +1,7 @@
 import { TestBed } from "@angular/core/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { By } from "@angular/platform-browser";
+import { DropdownComponent } from "../../ui";
 import { AgentPickerComponent } from "./agent-picker.component";
 
 describe("Agent capabilities", () => {
@@ -39,25 +41,63 @@ describe("Agent capabilities", () => {
       fixture.nativeElement.querySelector("button") as HTMLButtonElement
     ).click();
     await fixture.whenStable();
-    const model = document.querySelector<HTMLSelectElement>(
-      'select[aria-label="Agent model"]',
+    const dropdowns = fixture.debugElement.queryAll(
+      By.directive(DropdownComponent),
     );
-    const thinking = document.querySelector<HTMLSelectElement>(
-      'select[aria-label="Thinking level"]',
-    );
-    expect(model?.value).toBe("focused");
-    expect(thinking?.value).toBe("High");
+    const model = dropdowns.find((d) => d.componentInstance.label() === "Model")
+      ?.componentInstance as DropdownComponent;
+    const thinking = dropdowns.find(
+      (d) => d.componentInstance.label() === "Thinking level",
+    )?.componentInstance as DropdownComponent;
+    expect(model.value()).toBe("focused");
+    expect(thinking.value()).toBe("High");
     expect(
-      thinking?.querySelector<HTMLOptionElement>('option[value="Low"]')
-        ?.disabled,
+      thinking.options().find((option) => option.id === "Low")?.disabled,
     ).toBe(true);
     const changed = vi.fn();
     fixture.componentInstance.changed.subscribe(changed);
-    if (!thinking) throw new Error("Missing thinking control");
-    thinking.value = "Max";
-    thinking.dispatchEvent(new Event("change", { bubbles: true }));
+    thinking.changed.emit("Max");
     expect(changed).toHaveBeenCalledWith(
       expect.objectContaining({ thinking: "Max" }),
     );
+    changed.mockClear();
+    thinking.changed.emit("Low");
+    expect(changed).not.toHaveBeenCalled();
+    const modelTrigger = document.querySelector<HTMLButtonElement>(
+      '.agent-settings button[aria-label^="Model:"]',
+    );
+    modelTrigger?.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const option = document.querySelector<HTMLButtonElement>(
+      'ex-dropdown-menu[aria-label="Model"] button',
+    );
+    expect(option).not.toBeNull();
+    option?.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        keyCode: 27,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.querySelector(".agent-settings")).not.toBeNull();
+    expect(
+      document.querySelector('ex-dropdown-menu[aria-label="Model"]'),
+    ).toBeNull();
+    fixture.componentRef.setInput("busy", true);
+    fixture.detectChanges();
+    model.changed.emit("quick");
+    expect(changed).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.open()).toBe(true);
+    fixture.componentRef.setInput("disabled", true);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(
+      document.querySelector('[role="dialog"][aria-label="Adjust agent"]'),
+    ).toBeNull();
+    fixture.destroy();
   });
 });

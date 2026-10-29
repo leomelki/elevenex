@@ -6,11 +6,22 @@ import {
   output,
   signal,
 } from "@angular/core";
-import { IconButtonComponent, ButtonComponent } from "../../ui";
+import {
+  IconButtonComponent,
+  ButtonComponent,
+  IconComponent,
+  TickerComponent,
+} from "../../ui";
 import type { QueuedMessage } from "../conversation.models";
 @Component({
   selector: "ex-composer-queue",
-  imports: [DragDropModule, IconButtonComponent, ButtonComponent],
+  imports: [
+    DragDropModule,
+    IconButtonComponent,
+    ButtonComponent,
+    IconComponent,
+    TickerComponent,
+  ],
   templateUrl: "./composer-queue.component.html",
   styleUrl: "./composer-queue.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -27,6 +38,7 @@ export class ComposerQueueComponent {
   readonly editing = signal<string | null>(null);
   readonly editText = signal("");
   beginEdit(item: QueuedMessage): void {
+    if (this.disabled() || !this.editable()) return;
     this.editing.set(item.id);
     this.editText.set(item.text);
   }
@@ -35,11 +47,12 @@ export class ComposerQueueComponent {
       this.editText.set(event.target.value);
   }
   save(id: string): void {
-    if (!this.editText().trim()) return;
+    if (this.disabled() || !this.editable() || !this.editText().trim()) return;
     this.edited.emit({ id, text: this.editText().trim() });
     this.editing.set(null);
   }
   drop(event: CdkDragDrop<readonly QueuedMessage[]>): void {
+    if (this.disabled() || !this.reorderable()) return;
     const ids = this.items().map((item) => item.id);
     const [id] = ids.splice(event.previousIndex, 1);
     if (id) {
@@ -48,6 +61,7 @@ export class ComposerQueueComponent {
     }
   }
   move(id: string, delta: number): void {
+    if (this.disabled() || !this.reorderable()) return;
     const ids = this.items().map((item) => item.id);
     const from = ids.indexOf(id);
     const to = Math.max(0, Math.min(ids.length - 1, from + delta));

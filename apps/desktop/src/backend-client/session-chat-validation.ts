@@ -112,6 +112,16 @@ function state(value: unknown): SessionChatState {
     ...(raw["providerLocked"] === undefined
       ? {}
       : { providerLocked: bool(raw["providerLocked"]) }),
+    ...(raw["controls"] === undefined
+      ? {}
+      : {
+          controls: {
+            plan: bool(chatObject(raw["controls"])["plan"]),
+            reasoning: bool(chatObject(raw["controls"])["reasoning"]),
+            fast: bool(chatObject(raw["controls"])["fast"]),
+          },
+        }),
+    ...(raw["fast"] === undefined ? {} : { fast: bool(raw["fast"]) }),
     phase,
     canInterrupt: bool(raw["canInterrupt"]),
     error: nullable(raw["error"]),
@@ -122,7 +132,20 @@ function state(value: unknown): SessionChatState {
     permissionModes: array(raw["permissionModes"], 20, (v) => chatText(v)),
     models: array(raw["models"], 100, (value) => {
       const m = chatObject(value);
-      return { id: chatText(m["id"]), label: chatText(m["label"]) };
+      return {
+        id: chatText(m["id"]),
+        label: chatText(m["label"]),
+        ...(m["reasoningEfforts"] === undefined
+          ? {}
+          : {
+              reasoningEfforts: array(m["reasoningEfforts"], 20, (v) =>
+                chatText(v),
+              ),
+            }),
+        ...(m["supportsFastMode"] === undefined
+          ? {}
+          : { supportsFastMode: bool(m["supportsFastMode"]) }),
+      };
     }),
     context: context && {
       tokens: number(context["tokens"]),
@@ -253,7 +276,10 @@ export function parseChatAction(value: unknown): SessionChatAction {
     case "model":
       return { type, model: nullable(raw["model"]) };
     case "plan":
+    case "fast":
       return { type, enabled: bool(raw["enabled"]) };
+    case "reasoning":
+      return { type, effort: nullable(raw["effort"]) };
     case "permission-mode":
       return { type, mode: chatText(raw["mode"]) };
     default:

@@ -17,6 +17,7 @@
       type="button"
       role="radio"
       [attr.aria-checked]="value() === item.id"
+      [attr.aria-label]="item.label"
       [attr.tabindex]="focusable() === item.id ? 0 : -1"
       [attr.title]="item.title || item.label"
       [disabled]="item.disabled"
@@ -26,7 +27,7 @@
       @if (item.icon) {
         <ex-icon [name]="item.icon" [size]="14" />
       }
-      {{ item.label }}
+      <span>{{ item.label }}</span>
     </button>
   }
 </div>

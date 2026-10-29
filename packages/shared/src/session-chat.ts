@@ -44,11 +44,23 @@ export interface SessionChatState {
   }[];
   /** Omitted by older engines, which do not support harness selection. */
   readonly providerLocked?: boolean;
+  /** Optional capabilities keep older engines usable without speculative controls. */
+  readonly controls?: {
+    readonly plan: boolean;
+    readonly reasoning: boolean;
+    readonly fast: boolean;
+  };
+  readonly fast?: boolean;
   readonly phase: "idle" | "running" | "waiting" | "error";
   readonly canInterrupt: boolean;
   readonly error: string | null;
   readonly model: string | null;
-  readonly models: readonly { readonly id: string; readonly label: string }[];
+  readonly models: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly reasoningEfforts?: readonly string[];
+    readonly supportsFastMode?: boolean;
+  }[];
   readonly reasoning: string | null;
   readonly plan: boolean;
   readonly permissionMode: string | null;
@@ -115,6 +127,8 @@ export type SessionChatAction =
     }
   | { readonly type: "model"; readonly model: string | null }
   | { readonly type: "plan"; readonly enabled: boolean }
+  | { readonly type: "reasoning"; readonly effort: string | null }
+  | { readonly type: "fast"; readonly enabled: boolean }
   | { readonly type: "permission-mode"; readonly mode: string };
 export interface SessionChatCommand extends SessionChatTarget {
   readonly action: SessionChatAction;

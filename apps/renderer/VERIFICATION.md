@@ -1,5 +1,53 @@
 # Component system verification
 
+## Connected composer, 2026-10-28
+
+Passed `desktop:lint`, `desktop:test` (106 main/preload/security checks,
+7 capture-tool checks, 413 Angular tests and the contract TypeScript checks),
+`desktop:build`, 17 focused backend chat tests, backend production TypeScript
+(`tsconfig.build.json --noEmit`) and `git diff --check`. Native Electron smoke
+verifies the built app's real sandboxed preload and `app://` protocol.
+No dependencies, lockfiles, migrations or legacy app behavior changed.
+Validation used cached repository-pinned pnpm 8.15.4 and Node 24.22.1; native
+launches, loopback listeners and Angular workers required sandbox escalation.
+
+Native reports
+[`session-composer-verified`](../../artifacts/desktop-capture/session-composer-verified/index.html)
+(16 checkpoints),
+[`composer-harness-verified`](../../artifacts/desktop-capture/composer-harness-verified/index.html)
+(7 checkpoints) and
+[`composer-chat-regression`](../../artifacts/desktop-capture/composer-chat-regression/index.html)
+(16 checkpoints) all report `verified: true`, with zero captured console/network
+errors or warnings. New light/dark, narrow, agent settings and queued-message
+PNGs were inspected. The regressions cover nested-menu Escape/focus restoration,
+harness switching and locking, supported/disabled thinking levels, fast mode,
+Plan/Code shortcuts, permission changes, newline/send/queue/steer/stop,
+continuous typing during queue growth, interrupted textarea resizing,
+retained uncertain drafts, reduced motion, history and existing chat decisions.
+Real-time rectangle samples record input resizing; they are host diagnostics,
+not a portable FPS guarantee. Capability and action tests cover older-engine
+omissions, bounded metadata, unsupported values and archived settings.
+
+An additional disposable probe listening directly to window error events found
+8 `ResizeObserver loop completed with undelivered notifications` events during
+transcript resets and viewport changes. The standard runner does not collect
+these handled window events. Disabling only the new composer's height observer
+leaves all 8; disabling the existing, unchanged `Turn.answer` height observer
+removes all 8. The source trace and isolation reports live under
+`artifacts/desktop-capture/composer-resize-owner` and `composer-answer-isolation`.
+The isolated run is diagnostic only, not product visual evidence. No notification
+suppression or workaround was added to product code. The existing transcript
+answer-height feedback remains a separate motion limitation.
+
+A broader backend `tsc --noEmit` also includes legacy spec fixtures and still
+reports existing fixture/type errors; the production backend typecheck and
+focused Jest suite above pass. The owned preview server was stopped. Captures
+use real production components with isolated preview provider data; no packaged
+app, live-provider or cross-platform launch is claimed. Attachments, dictation,
+mentions, preset persistence and fork integration remain hidden until their
+platform operations are implemented.
+
+
 ## Hide empty archives, 2026-10-27
 
 Passed `desktop:lint`, `desktop:test` (347 Angular tests plus the existing main,

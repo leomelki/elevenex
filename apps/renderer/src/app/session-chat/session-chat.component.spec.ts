@@ -80,7 +80,7 @@ async function settle<T>(fixture: ComponentFixture<T>): Promise<void> {
   await fixture.whenStable();
 }
 
-function setup(items: readonly SessionChatItem[] = []) {
+function setup(items: readonly SessionChatItem[] = [], chatState = state) {
   let page: SessionChatPage = {
     taskId: 1,
     sessionId: 2,
@@ -89,7 +89,7 @@ function setup(items: readonly SessionChatItem[] = []) {
     before: null,
     items,
     events: [],
-    state,
+    state: chatState,
   };
   let resolve!: (value: BackendResult<{ readonly accepted: true }>) => void;
   const bridge = {
@@ -127,6 +127,7 @@ function setup(items: readonly SessionChatItem[] = []) {
   return {
     fixture,
     root: fixture.nativeElement as HTMLElement,
+    bridge,
     publish: (next: SessionChatPage) => {
       page = next;
     },
@@ -227,4 +228,84 @@ describe("streaming cursor ownership", () => {
       ).toHaveLength(0);
     });
   }
+});
+
+describe("connected composer controls", () => {
+  const capabilities: SessionChatState = {
+    ...state,
+    providerLocked: false,
+    providers: [
+      { id: "codex", label: "Codex" },
+      { id: "claude", label: "Claude Code" },
+    ],
+    controls: { plan: true, reasoning: true, fast: true },
+    fast: false,
+    model: "gpt",
+    models: [
+      {
+        id: "gpt",
+        label: "GPT",
+        reasoningEfforts: ["low", "high"],
+        supportsFastMode: true,
+      },
+    ],
+    reasoning: "high",
+    permissionMode: "auto",
+    permissionModes: ["auto", "default"],
+  };
+  it("composes a single agent picker with advertised settings and harness-native permission IDs", async () => {
+    const { fixture, root } = setup([], capabilities);
+    await settle(fixture);
+    expect(root.querySelector("ex-agent-picker")?.textContent).toContain("GPT");
+    expect(root.querySelector("ex-permission-picker")?.textContent).toContain(
+      "Auto",
+    );
+    expect(root.querySelectorAll(".bar ex-dropdown")).toHaveLength(0);
+    expect(
+      fixture.componentInstance.harnesses()[0]?.models[1]?.thinking,
+    ).toEqual(["low", "high"]);
+  });
+  it("submits only the changed agent setting and retains a draft during reconciliation", async () => {
+    const { fixture, bridge, complete } = setup([], capabilities);
+    await settle(fixture);
+    fixture.componentInstance.store.setDraft("Keep this draft");
+    fixture.componentInstance.agentChanged({
+      ...fixture.componentInstance.agent()!,
+      thinking: "low",
+    });
+    expect(bridge.sessionChatCommand).toHaveBeenCalledWith(
+      "scope",
+      expect.objectContaining({ action: { type: "reasoning", effort: "low" } }),
+    );
+    fixture.componentInstance.agentChanged({
+      ...fixture.componentInstance.agent()!,
+      fast: true,
+    });
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.componentInstance.store.draft()).toBe("Keep this draft");
+    complete();
+    await settle(fixture);
+  });
+  it("keeps older engine settings usable without inventing thinking or fast capabilities", async () => {
+    const { fixture } = setup();
+    await settle(fixture);
+    const composer = fixture.componentInstance.composer()!;
+    expect(composer.reasoningAvailable()).toBe(false);
+    expect(composer.fastAvailable()).toBe(false);
+    expect(composer.agentLocked()).toBe(true);
+  });
+  it("makes archived agent settings read only", async () => {
+    const { fixture, root, bridge } = setup([], capabilities);
+    fixture.componentRef.setInput("archived", true);
+    await settle(fixture);
+    expect(
+      root.querySelector<HTMLButtonElement>("ex-agent-picker > button")
+        ?.disabled,
+    ).toBe(true);
+    fixture.componentInstance.agentChanged({
+      ...fixture.componentInstance.agent()!,
+      fast: true,
+    });
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
 });

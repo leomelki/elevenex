@@ -4,12 +4,13 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  afterRenderEffect,
   input,
   output,
   signal,
 } from "@angular/core";
 import { IconComponent } from "../../ui";
-import type { PermissionLevel } from "../conversation.models";
+import type { PermissionChoice } from "../conversation.models";
 @Component({
   selector: "ex-permission-picker",
   imports: [OverlayModule, A11yModule, IconComponent],
@@ -18,14 +19,11 @@ import type { PermissionLevel } from "../conversation.models";
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class PermissionPickerComponent {
-  readonly value = input<PermissionLevel>("ask");
-  readonly changed = output<PermissionLevel>();
+  readonly value = input<string>("ask");
+  readonly disabled = input(false);
+  readonly changed = output<string>();
   readonly open = signal(false);
-  readonly choices: readonly {
-    id: PermissionLevel;
-    label: string;
-    detail: string;
-  }[] = [
+  readonly choices = input<readonly PermissionChoice[]>([
     { id: "ask", label: "Ask first", detail: "Approve edits and commands" },
     {
       id: "edits",
@@ -33,13 +31,23 @@ export class PermissionPickerComponent {
       detail: "Apply edits; ask before commands",
     },
     { id: "auto", label: "Full auto", detail: "Work within the task sandbox" },
-  ];
+  ]);
   readonly label = computed(
     () =>
-      this.choices.find((choice) => choice.id === this.value())?.label ??
-      "Ask first",
+      this.choices().find((choice) => choice.id === this.value())?.label ??
+      this.value(),
   );
-  select(value: PermissionLevel): void {
+  constructor() {
+    afterRenderEffect(() => {
+      if (this.disabled()) this.open.set(false);
+    });
+  }
+  select(value: string): void {
+    if (
+      this.disabled() ||
+      !this.choices().some((choice) => choice.id === value)
+    )
+      return;
     this.changed.emit(value);
     this.open.set(false);
   }

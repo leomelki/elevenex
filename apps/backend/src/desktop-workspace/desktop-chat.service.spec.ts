@@ -30,6 +30,8 @@ describe('selected session chat', () => {
     interrupt: jest.fn(),
     approvePermission: jest.fn(),
     answerUserInput: jest.fn(),
+    setReasoningEffort: jest.fn(),
+    setFastMode: jest.fn(),
   });
   const session = jest.fn();
   const started = jest.fn();
@@ -106,6 +108,54 @@ describe('selected session chat', () => {
       type,
       payload: { sessionId: 2, runPhase: 'idle' },
     });
+  it('exposes bounded model capabilities and validates thinking/fast against the selected model', async () => {
+    runtime.getRuntimeState.mockResolvedValue({
+      selectedModel: 'gpt',
+      fastMode: true,
+      availableModels: [
+        {
+          id: 'gpt',
+          displayName: 'GPT',
+          reasoningEfforts: ['low', 'high'],
+          supportsFastMode: true,
+        },
+      ],
+    });
+    const page = (await read())!;
+    expect(page.state.controls).toEqual({
+      plan: false,
+      reasoning: true,
+      fast: true,
+    });
+    expect(page.state.fast).toBe(true);
+    expect(page.state.models[0]).toMatchObject({
+      reasoningEfforts: ['low', 'high'],
+      supportsFastMode: true,
+    });
+    await chat.command(1, 2, { type: 'reasoning', effort: 'low' });
+    expect(runtime.setReasoningEffort).toHaveBeenCalledWith(2, 'low');
+    await chat.command(1, 2, { type: 'reasoning', effort: null });
+    expect(runtime.setReasoningEffort).toHaveBeenLastCalledWith(2, null);
+    await chat.command(1, 2, { type: 'fast', enabled: true });
+    expect(runtime.setFastMode).toHaveBeenCalledWith(2, true);
+    await expect(
+      chat.command(1, 2, { type: 'reasoning', effort: 'invented' }),
+    ).rejects.toThrow('Unsupported thinking');
+    runtime.getRuntimeState.mockResolvedValue({
+      selectedModel: 'basic',
+      availableModels: [{ id: 'basic' }],
+    });
+    await expect(
+      chat.command(1, 2, { type: 'fast', enabled: true }),
+    ).rejects.toThrow('unavailable');
+    await expect(
+      chat.command(1, 2, { type: 'fast', enabled: 'true' }),
+    ).rejects.toThrow('Invalid fast');
+    expect(runtime.setFastMode).toHaveBeenCalledTimes(1);
+    await expect(
+      chat.command(1, 2, { type: 'reasoning', effort: 'low' }),
+    ).rejects.toThrow('Unsupported thinking');
+  });
   it('pages history by stable identity and bounds payloads without hydrating other sessions', async () => {
     history = Array.from({ length: 240 }, (_, index) => item(String(index)));
     const latest = (await read())!;
@@ -270,15 +320,47 @@ describe('selected session chat', () => {
     ).rejects.toThrow('Unknown harness');
   });
   it('routes the next prompt through the persisted harness selection', async () => {
-    started.mockReturnValue(false); runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle', liveItems: [] });
-    const claude = Object.assign(new EventEmitter(), { ...runtime, info: { id: 'claude', displayName: 'Claude Code' }, submitPrompt: jest.fn() });
+    started.mockReturnValue(false);
+    runtime.getRuntimeState.mockResolvedValue({
+      runPhase: 'idle',
+      liveItems: [],
+    });
+    const claude = Object.assign(new EventEmitter(), {
+      ...runtime,
+      info: { id: 'claude', displayName: 'Claude Code' },
+      submitPrompt: jest.fn(),
+    });
     const registry = module.get(AgentRuntimeRegistryService);
-    const resolve = jest.spyOn(registry, 'getProvider').mockImplementation(id => id === 'claude' ? claude : runtime);
-    updateProvider.mockImplementationOnce(async () => { session.mockResolvedValue({ workspaceId: 1, surface: 'session', status: 'active', activeAgentProvider: 'claude', workspaceArchivedAt: null }); });
-    await chat.command(1, 2, { type: 'provider', provider: 'claude', expectedProvider: 'codex' });
-    await chat.command(1, 2, { type: 'send', text: 'Use the selected harness', queue: false });
+    const resolve = jest
+      .spyOn(registry, 'getProvider')
+      .mockImplementation((id) => (id === 'claude' ? claude : runtime));
+    updateProvider.mockImplementationOnce(async () => {
+      session.mockResolvedValue({
+        workspaceId: 1,
+        surface: 'session',
+        status: 'active',
+        activeAgentProvider: 'claude',
+        workspaceArchivedAt: null,
+      });
+    });
+    await chat.command(1, 2, {
+      type: 'provider',
+      provider: 'claude',
+      expectedProvider: 'codex',
+    });
+    await chat.command(1, 2, {
+      type: 'send',
+      text: 'Use the selected harness',
+      queue: false,
+    });
     expect(resolve).toHaveBeenLastCalledWith('claude');
-    expect(claude.submitPrompt).toHaveBeenCalledWith(2, 'Use the selected harness', undefined, undefined, { human: true, queue: false });
+    expect(claude.submitPrompt).toHaveBeenCalledWith(
+      2,
+      'Use the selected harness',
+      undefined,
+      undefined,
+      { human: true, queue: false },
+    );
     expect(runtime.submitPrompt).not.toHaveBeenCalled();
   });
   it('does not move queued prompts or a starting turn to another harness', async () => {

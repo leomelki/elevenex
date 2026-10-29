@@ -8,6 +8,7 @@
   gap: var(--space-1);
   height: var(--control-height);
   max-width: 100%;
+  min-width: 0;
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
@@ -21,6 +22,15 @@
 .trigger:hover {
   background: var(--surface-sunken);
   color: var(--ink);
+}
+.trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.trigger > .mark,
+.trigger > ex-icon,
+.trigger > ex-context-meter {
+  flex: none;
 }
 .trigger:focus-visible,
 .choice:focus-visible,
@@ -41,6 +51,25 @@ input:focus-visible {
   font-family: var(--font-sans);
   transform-origin: bottom;
   animation: arrive var(--dur-base) var(--ease-glide) both;
+}
+.agent-settings {
+  width: min(360px, calc(100vw - var(--space-8)));
+}
+.field {
+  min-width: 0;
+}
+.field > span {
+  color: var(--ink-muted);
+}
+.field ex-dropdown {
+  max-width: 220px;
+  min-width: 0;
+}
+.harness {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-weight: var(--text-ui-weight);
 }
 .choice {
   display: flex;
@@ -123,6 +152,19 @@ input[type="checkbox"] {
 }
 .name {
   color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@container composer (max-width: 600px) {
+  .trigger .sub {
+    display: none;
+  }
+}
+@container composer (max-width: 440px) {
+  .permission-label {
+    display: none;
+  }
 }
 .trigger ex-icon[name="bolt"] {
   color: var(--accent);

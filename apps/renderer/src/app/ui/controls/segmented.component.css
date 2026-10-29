@@ -22,7 +22,9 @@ div {
     width var(--dur-glide) var(--ease-glide);
   pointer-events: none;
 }
-:host(.resizing) .thumb { transition: none; }
+:host(.resizing) .thumb {
+  transition: none;
+}
 button {
   position: relative;
   display: inline-flex;
@@ -61,4 +63,13 @@ button:disabled {
   opacity: 0.45;
   cursor: default;
 }
-@media (prefers-reduced-motion: reduce) { .thumb { transition: none; } }
+@container composer (max-width: 520px) {
+  .small button:has(ex-icon) > span {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thumb {
+    transition: none;
+  }
+}

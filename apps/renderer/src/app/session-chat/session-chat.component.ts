@@ -19,11 +19,14 @@ import {
   type AgentQuestion,
   type QuestionAnswers,
   type TurnAction,
+  type AgentConfig,
+  type AgentHarness,
+  type AgentModel,
+  type PermissionChoice,
 } from "../conversation";
 import {
   ButtonComponent,
   ContextMeterComponent,
-  DropdownComponent,
   IconComponent,
   SkeletonComponent,
   StatusGlyphComponent,
@@ -41,7 +44,6 @@ import { SessionChatContentComponent } from "./session-chat-content.component";
     ApprovalCardComponent,
     QuestionCardComponent,
     ButtonComponent,
-    DropdownComponent,
     ContextMeterComponent,
     StatusGlyphComponent,
     SkeletonComponent,
@@ -105,11 +107,76 @@ export class SessionChatComponent {
       this.archived() ||
       !this.store.state(),
   );
-  readonly models = computed(() => [
-    { id: "", label: "Provider default" },
-    ...(this.store.state()?.models ?? []),
+  readonly models = computed<readonly AgentModel[]>(() => [
+    { id: "", label: "Provider default", thinking: [] },
+    ...(this.store.state()?.models ?? []).map((model) => ({
+      id: model.id,
+      label: model.label,
+      thinking: model.reasoningEfforts ?? [],
+      supportsFastMode: model.supportsFastMode,
+    })),
   ]);
   readonly providers = computed(() => this.store.state()?.providers ?? []);
+  readonly harnesses = computed<readonly AgentHarness[]>(() => {
+    const state = this.store.state();
+    if (!state) return [];
+    const providers = this.providers().length
+      ? this.providers()
+      : [{ id: state.provider, label: this.providerLabel() }];
+    return providers.map((provider) => ({
+      ...provider,
+      mark:
+        (
+          { claude: "Cl", codex: "Cx", pi: "Pi", opencode: "Oc" } as Readonly<
+            Record<string, string>
+          >
+        )[provider.id] ?? provider.label.slice(0, 2),
+      models: provider.id === state.provider ? this.models() : [],
+    }));
+  });
+  readonly agent = computed<AgentConfig | undefined>(() => {
+    const state = this.store.state();
+    if (!state) return undefined;
+    return {
+      harness: state.provider,
+      mark:
+        this.harnesses().find((harness) => harness.id === state.provider)
+          ?.mark ?? "Ag",
+      model: state.model ?? "",
+      thinking: state.reasoning ?? undefined,
+      fast: state.fast,
+      context: state.context ? state.context.percentage / 100 : undefined,
+    };
+  });
+  readonly fastAvailable = computed(() => {
+    const state = this.store.state();
+    return (
+      !!state?.controls?.fast &&
+      (state.fast === true ||
+        state.models.find((model) => model.id === state.model)
+          ?.supportsFastMode === true)
+    );
+  });
+  agentChanged(value: AgentConfig): void {
+    const current = this.agent();
+    if (
+      !current ||
+      this.blocked() ||
+      this.store.historical() ||
+      this.store.loading()
+    )
+      return;
+    if (value.harness !== current.harness) this.chooseProvider(value.harness);
+    else if (value.model !== current.model)
+      void this.store.perform({ type: "model", model: value.model || null });
+    else if (value.thinking !== current.thinking)
+      void this.store.perform({
+        type: "reasoning",
+        effort: value.thinking || null,
+      });
+    else if (value.fast !== current.fast)
+      void this.store.perform({ type: "fast", enabled: !!value.fast });
+  }
   readonly providerLabel = computed(
     () =>
       this.providers().find(
@@ -127,9 +194,20 @@ export class SessionChatComponent {
         expectedProvider: current,
       });
   }
-  readonly permissions = computed(() =>
+  readonly permissions = computed<readonly PermissionChoice[]>(() =>
     (this.store.state()?.permissionModes ?? []).map((id) => ({
       id,
+      detail:
+        (
+          {
+            default: "Ask before the agent takes protected actions",
+            acceptEdits: "Apply edits; ask before commands",
+            bypassPermissions: "Allow actions without permission prompts",
+            auto: "Use the harness’s automatic permission policy",
+            plan: "Read and propose before making changes",
+            dontAsk: "Deny actions that need permission",
+          } as Readonly<Record<string, string>>
+        )[id] ?? "Use this harness permission policy",
       label:
         (
           {
@@ -166,6 +244,10 @@ export class SessionChatComponent {
   }
   focusComposer(): void {
     this.composer()?.textarea()?.nativeElement.focus();
+  }
+  queueAction(type: "steer-queued" | "cancel-queued", id: string): void {
+    this.focusComposer();
+    void this.store.perform({ type, id });
   }
   continue(): void {
     this.store.setDraft("Please continue.");

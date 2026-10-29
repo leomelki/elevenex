@@ -5,63 +5,72 @@
   cdkOverlayOrigin
   #origin="cdkOverlayOrigin"
 >
-  <ex-composer-queue
-    [items]="queue()"
-    [editable]="queueEditable()"
-    [reorderable]="queueReorderable()"
-    [disabled]="disabled() || sending()"
-    (steer)="queueSteer.emit($event)"
-    (remove)="queueRemove.emit($event)"
-    (edited)="queueEdited.emit($event)"
-    (reordered)="queueReordered.emit($event)"
-  />
-  @if (context().length) {
-    <div class="context">
-      @for (mention of context(); track mention.kind + ":" + mention.id) {
-        <ex-mention
-          [mention]="mention"
-          [removable]="true"
-          (removed)="contextRemoved.emit($event)"
-        />
+  <div class="input-height" exAutoHeight>
+    <div class="contents">
+      <ex-composer-queue
+        [items]="queue()"
+        [editable]="queueEditable()"
+        [reorderable]="queueReorderable()"
+        [disabled]="disabled() || sending()"
+        (steer)="queueSteer.emit($event)"
+        (remove)="queueRemove.emit($event)"
+        (edited)="queueEdited.emit($event)"
+        (reordered)="queueReordered.emit($event)"
+      />
+      @if (context().length) {
+        <div class="context">
+          @for (mention of context(); track mention.kind + ":" + mention.id) {
+            <ex-mention
+              [mention]="mention"
+              [removable]="true"
+              (removed)="contextRemoved.emit($event)"
+            />
+          }
+        </div>
+      }
+      @if (dropping()) {
+        <div class="drop-label">Drop to attach</div>
+      }
+      <textarea
+        #textarea
+        aria-label="Message the agent"
+        aria-autocomplete="list"
+        [attr.aria-controls]="mentions()?.listId() || null"
+        [attr.aria-activedescendant]="mentions()?.activeOptionId() || null"
+        rows="2"
+        [disabled]="disabled()"
+        [placeholder]="placeholder()"
+        [value]="draft()"
+        (input)="update($event)"
+        (keydown)="onKey($event)"
+      ></textarea>
+      @if (recording(); as recording) {
+        <div class="recording" role="status">
+          <ex-icon name="mic" [size]="14" /><span>{{ recording.time }}</span
+          ><span class="interim">{{ recording.interim }}</span>
+          <ex-icon-button
+            icon="check"
+            label="Keep dictation"
+            size="sm"
+            (pressed)="recordingKept.emit()"
+          />
+          <ex-icon-button
+            icon="x"
+            label="Discard dictation"
+            size="sm"
+            (pressed)="recordingDiscarded.emit()"
+          />
+        </div>
       }
     </div>
-  }
-  @if (dropping()) {
-    <div class="drop-label">Drop to attach</div>
-  }
-  <textarea
-    #textarea
-    aria-label="Message the agent"
-    aria-autocomplete="list"
-    [attr.aria-controls]="mentions()?.listId() || null"
-    [attr.aria-activedescendant]="mentions()?.activeOptionId() || null"
-    rows="2"
-    [disabled]="disabled()"
-    [placeholder]="placeholder()"
-    [value]="draft()"
-    (input)="update($event)"
-    (keydown)="onKey($event)"
-  ></textarea>
-  @if (recording(); as recording) {
-    <div class="recording" role="status">
-      <ex-icon name="mic" [size]="14" /><span>{{ recording.time }}</span
-      ><span class="interim">{{ recording.interim }}</span
-      ><ex-icon-button
-        icon="check"
-        label="Keep dictation"
-        size="sm"
-        (pressed)="recordingKept.emit()"
-      /><ex-icon-button
-        icon="x"
-        label="Discard dictation"
-        size="sm"
-        (pressed)="recordingDiscarded.emit()"
-      />
-    </div>
-  }
+  </div>
   <div class="bar">
-    @if (showSettings()) {
-      <ex-mode-toggle [value]="mode()" (changed)="modeChanged.emit($event)" />
+    @if (showSettings() && modeAvailable()) {
+      <ex-mode-toggle
+        [value]="mode()"
+        [disabled]="disabled() || settingsDisabled() || settingsBusy()"
+        (changed)="modeChanged.emit($event)"
+      />
     }
     <ng-content select="[composerSettings]" />
     @if (agent(); as value) {
@@ -69,17 +78,48 @@
         <ex-agent-picker
           [value]="value"
           [harnesses]="harnesses()"
+          [locked]="agentLocked()"
+          [disabled]="disabled() || settingsDisabled()"
+          [busy]="settingsBusy()"
+          [showFork]="showFork()"
+          [showSavePreset]="showSavePreset()"
+          [reasoningAvailable]="reasoningAvailable()"
+          [fastAvailable]="fastAvailable()"
           (changed)="agentChanged.emit($event)"
           (fork)="forkAgent.emit()"
           (savePreset)="savePreset.emit($event)"
         />
       }
     }
-    @if (showSettings() && mode() === "code") {
-      <ex-permission-picker
-        [value]="permission()"
-        (changed)="permissionChanged.emit($event)"
-      />
+    @if (
+      showSettings() && (!permissionChoices() || permissionChoices()!.length)
+    ) {
+      <ex-presence [show]="mode() === 'code'">
+        @if (permissionChoices(); as choices) {
+          <ex-permission-picker
+            [value]="permission()"
+            [choices]="choices"
+            [disabled]="
+              disabled() ||
+              settingsDisabled() ||
+              settingsBusy() ||
+              mode() !== 'code'
+            "
+            (changed)="permissionChanged.emit($event)"
+          />
+        } @else {
+          <ex-permission-picker
+            [value]="permission()"
+            [disabled]="
+              disabled() ||
+              settingsDisabled() ||
+              settingsBusy() ||
+              mode() !== 'code'
+            "
+            (changed)="permissionChanged.emit($event)"
+          />
+        }
+      </ex-presence>
     }
     <span class="grow"></span>
     @if (showTools()) {
@@ -103,6 +143,7 @@
       <ex-icon-button
         icon="stop"
         label="Stop agent (⌘.)"
+        [disabled]="disabled()"
         (pressed)="stop.emit()"
       />
     }
@@ -111,7 +152,9 @@
       variant="primary"
       size="sm"
       class="send"
+      type="button"
       [disabled]="disabled() || sending() || !draft().trim() || !!recording()"
+      [attr.aria-busy]="sending()"
       [attr.aria-label]="
         running()
           ? 'Queue message (Enter), or Alt Enter to steer'
@@ -121,6 +164,9 @@
       (click)="send()"
     >
       <ex-icon [name]="running() ? 'layers' : 'arrow-up'" [size]="16" />
+      @if (running()) {
+        <span>Queue</span>
+      }
     </button>
   </div>
 </div>
@@ -138,9 +184,11 @@
     },
   ]"
   (overlayOutsideClick)="mentionQuery.set(null)"
-  ><ex-mention-menu
+>
+  <ex-mention-menu
     [query]="mentionQuery() || ''"
     [items]="mentionItems()"
     (selected)="insertMention($event)"
     (closed)="mentionQuery.set(null)"
-/></ng-template>
+  />
+</ng-template>

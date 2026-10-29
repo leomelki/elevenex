@@ -20,13 +20,25 @@ export const previewChatState = (): SessionChatState => ({
     { id: "opencode", label: "OpenCode" },
   ],
   providerLocked: false,
+  controls: { plan: true, reasoning: true, fast: true },
+  fast: false,
   phase: "idle",
   canInterrupt: false,
   error: null,
   model: "gpt-6",
   models: [
-    { id: "gpt-6", label: "GPT-6" },
-    { id: "claude", label: "Claude" },
+    {
+      id: "gpt-6",
+      label: "GPT-6",
+      reasoningEfforts: ["low", "medium", "high", "xhigh"],
+      supportsFastMode: true,
+    },
+    {
+      id: "claude",
+      label: "Claude",
+      reasoningEfforts: ["low", "medium", "high"],
+      supportsFastMode: false,
+    },
   ],
   reasoning: "high",
   plan: false,
@@ -364,9 +376,23 @@ export class SessionChatFixture {
               : null,
         models:
           action.provider === "claude"
-            ? [{ id: "sonnet", label: "Claude Sonnet" }]
+            ? [
+                {
+                  id: "sonnet",
+                  label: "Claude Sonnet",
+                  reasoningEfforts: ["low", "medium", "high"],
+                  supportsFastMode: false,
+                },
+              ]
             : action.provider === "codex"
-              ? [{ id: "gpt-6", label: "GPT-6" }]
+              ? [
+                  {
+                    id: "gpt-6",
+                    label: "GPT-6",
+                    reasoningEfforts: ["low", "medium", "high", "xhigh"],
+                    supportsFastMode: true,
+                  },
+                ]
               : [],
       };
     } else if (action.type === "send") {
@@ -453,6 +479,10 @@ export class SessionChatFixture {
       session.state = { ...session.state, plan: action.enabled };
     else if (action.type === "model")
       session.state = { ...session.state, model: action.model };
+    else if (action.type === "reasoning")
+      session.state = { ...session.state, reasoning: action.effort };
+    else if (action.type === "fast")
+      session.state = { ...session.state, fast: action.enabled };
     else if (action.type === "permission-mode")
       session.state = { ...session.state, permissionMode: action.mode };
     this.changed();

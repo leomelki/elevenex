@@ -203,7 +203,28 @@
       [disabled]="archived() || store.historical()"
       [sending]="!!store.busy() || !!store.uncertain() || !store.state()"
       [stoppable]="!!store.state()?.canInterrupt"
-      [showSettings]="false"
+      [mode]="store.state()?.plan ? 'plan' : 'code'"
+      [modeAvailable]="store.state()?.controls?.plan !== false"
+      [agent]="agent()"
+      [harnesses]="harnesses()"
+      [agentLocked]="store.state()?.providerLocked !== false"
+      [settingsDisabled]="
+        !!store.uncertain() || !store.state() || store.historical()
+      "
+      [settingsBusy]="!!store.busy() || store.loading()"
+      [showFork]="false"
+      [showSavePreset]="false"
+      [reasoningAvailable]="!!store.state()?.controls?.reasoning"
+      [fastAvailable]="fastAvailable()"
+      [permission]="store.state()?.permissionMode || ''"
+      [permissionChoices]="permissions()"
+      (modeChanged)="
+        store.perform({ type: 'plan', enabled: $event === 'plan' })
+      "
+      (agentChanged)="agentChanged($event)"
+      (permissionChanged)="
+        store.perform({ type: 'permission-mode', mode: $event })
+      "
       [showTools]="false"
       [showDictation]="false"
       [mentionsEnabled]="false"
@@ -222,64 +243,9 @@
       (submitted)="store.submit($event)"
       (stop)="store.perform({ type: 'stop' })"
       (focusLastMessage)="chat()?.focusLastMessage()"
-      (queueSteer)="store.perform({ type: 'steer-queued', id: $event })"
-      (queueRemove)="store.perform({ type: 'cancel-queued', id: $event })"
-      (filesAttached)="
-        store.error.set(
-          'Attachments are not available in this chat yet. You can include a file path in your message.'
-        )
-      "
+      (queueSteer)="queueAction('steer-queued', $event)"
+      (queueRemove)="queueAction('cancel-queued', $event)"
     >
-      <div composerSettings class="settings">
-        @if (providers().length) {
-          <ex-dropdown
-            label="Harness"
-            [value]="store.state()?.provider || ''"
-            [options]="providers()"
-            [disabled]="
-              blocked() ||
-              store.historical() ||
-              store.state()?.providerLocked !== false
-            "
-            [attr.title]="
-              store.state()?.providerLocked
-                ? 'This conversation has started. Create a new session to choose another harness.'
-                : 'Choose the agent harness before starting this conversation.'
-            "
-            (changed)="chooseProvider($event)"
-          />
-        }
-        <button
-          exButton
-          variant="ghost"
-          size="sm"
-          [disabled]="blocked()"
-          [attr.aria-pressed]="store.state()?.plan || false"
-          (click)="
-            store.perform({ type: 'plan', enabled: !store.state()?.plan })
-          "
-        >
-          {{ store.state()?.plan ? "Plan" : "Code" }}
-        </button>
-        @if (store.state()?.models?.length) {
-          <ex-dropdown
-            label="Model"
-            [value]="store.state()?.model || ''"
-            [options]="models()"
-            [disabled]="blocked()"
-            (changed)="store.perform({ type: 'model', model: $event || null })"
-          />
-        }
-        @if (permissions().length) {
-          <ex-dropdown
-            label="Permissions"
-            [value]="store.state()?.permissionMode || ''"
-            [options]="permissions()"
-            [disabled]="blocked()"
-            (changed)="store.perform({ type: 'permission-mode', mode: $event })"
-          />
-        }
-      </div>
     </ex-composer>
     <div class="composer-note">
       <span role="status">{{
