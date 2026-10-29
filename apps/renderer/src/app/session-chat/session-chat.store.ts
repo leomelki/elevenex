@@ -414,7 +414,7 @@ export class SessionChatStore {
     }
     this.notice.set(
       action.type === "send"
-        ? "Message accepted"
+        ? ""
         : action.type === "stop"
           ? "Stop requested"
           : action.type === "provider"
