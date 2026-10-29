@@ -107,6 +107,13 @@ welcome card even before history contains a user item.
 `session-reply-boundaries.mjs` reproduces trailing records and deliberately late
 user receipts through the preview adapter in light/dark and narrow layouts.
 
+The projection supplies `answerBeforeStepId` for work following the latest
+assistant text. Tool results remain paired with their original calls; late
+receipts do not move those calls past the reply. Earlier commentary and tools
+retain source order as subsequent replies arrive. `session-work-order.mjs`
+checks this ordering, tool/work disclosures, top hover/focus summaries, keyboard
+operation and narrow reduced-motion layouts in both themes.
+
 
 ## Designed composer
 

@@ -5,6 +5,7 @@ const toolKinds: Readonly<Record<string, StepKind>> = {
   read: "read",
   write: "create",
   edit: "edit",
+  file_changes: "edit",
   notebook_edit: "edit",
   bash: "run",
   grep: "search",
@@ -114,8 +115,8 @@ export function chatExchanges(
         .filter((item) => item.kind === "tool_result")
         .map((item) => [item.toolId ?? item.id, item]),
     );
-    // Final text stays visible even when providers append tool receipts, usage,
-    // or system records afterward. Earlier commentary remains in the timeline.
+    // Keep the latest text visible, with work on either side in source order.
+    // Tool receipts stay paired with their calls, even when they arrive late.
     let finalEnd = 0;
     let lastActivity: SessionChatItem | undefined;
     for (let index = group.items.length - 1; index >= 0; index--) {
@@ -130,6 +131,9 @@ export function chatExchanges(
     let finalStart = finalEnd;
     while (finalStart > 0 && group.items[finalStart - 1]?.kind === "assistant")
       finalStart--;
+    const followingIds = new Set(
+      group.items.slice(finalEnd).map((item) => item.id),
+    );
     const steps: WorkStep[] = group.items
       .filter((_item, index) => index < finalStart || index >= finalEnd)
       .flatMap((item): WorkStep[] => {
@@ -225,6 +229,10 @@ export function chatExchanges(
           ? "failed"
           : "done",
       steps,
+      answerBeforeStepId:
+        finalEnd > 0
+          ? steps.find((step) => followingIds.has(step.id))?.id
+          : undefined,
       answer: group.items
         .slice(finalStart, finalEnd)
         .map((item) => item.text)

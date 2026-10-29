@@ -56,8 +56,13 @@ describe("turn evidence", () => {
     fixture.componentRef.setInput("status", "live");
     fixture.detectChanges();
     await fixture.whenStable();
+    expect(host.querySelector(".facts")).toBe(evidence);
+    fixture.componentRef.setInput("files", []);
+    fixture.detectChanges();
+    await fixture.whenStable();
     expect(host.querySelector(".facts")).toBeNull();
     expect(observation.disconnect).toHaveBeenCalledOnce();
+    fixture.componentRef.setInput("files", [{ path: "turn.css" }]);
     fixture.componentRef.setInput("status", "done");
     fixture.detectChanges();
     await fixture.whenStable();
@@ -66,5 +71,21 @@ describe("turn evidence", () => {
     );
     fixture.destroy();
     expect(restored?.disconnect).toHaveBeenCalledOnce();
+  });
+  it("keeps overlapping running tools before later commentary in the timeline", () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    fixture.componentRef.setInput("status", "live");
+    fixture.componentRef.setInput("steps", [
+      { id: "tool", kind: "run", status: "running", detail: "Long command" },
+      { id: "say", kind: "say", text: "Still checking" },
+    ]);
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    const tool = host.querySelector("ex-tool-step")!;
+    const commentary = host.querySelector(".prose")!;
+    expect(tool.compareDocumentPosition(commentary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(host.querySelector("ex-now-line")).toBeNull();
+    expect(host.querySelector(".facts")).toBeNull();
+    fixture.destroy();
   });
 });

@@ -60,6 +60,16 @@ prose, including nested lists/quotes. `NowLine.streaming=false` keeps a held
 thinking line visible without keeping its cursor alive during the handoff to
 assistant text.
 
+`ChatExchange.answerBeforeStepId` (also accepted by `Turn`) places the latest
+reply before that work step. Omit it when all work precedes the answer. Both
+timeline sections follow the same work disclosure; individual tools retain
+their output disclosures. This keeps commentary before tools that follow it,
+including during streaming, while keeping the latest answer visible on collapse.
+Only the last preceding running step uses `NowLine`; overlapping running tools
+stay in their original timeline positions. Hover/focus facts include completed
+edits, searches, listings, web requests and generic tools as well as reads and
+commands, and remain available during live work.
+
 
 ## Connected composer controls
 

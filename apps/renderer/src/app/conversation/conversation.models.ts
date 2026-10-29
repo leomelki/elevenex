@@ -172,6 +172,8 @@ export interface ChatExchange {
   readonly mark?: string;
   readonly status: TurnStatus;
   readonly steps: readonly WorkStep[];
+  /** Keep work after the latest reply in source order; omitted means all work precedes it. */
+  readonly answerBeforeStepId?: string;
   readonly answer: string;
   readonly duration?: number;
   readonly elapsed?: number;

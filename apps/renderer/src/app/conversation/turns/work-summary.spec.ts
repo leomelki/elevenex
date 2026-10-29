@@ -72,4 +72,12 @@ describe("work timeline grouping", () => {
       "Read 2 files · Searched 1 time",
     );
   });
+  it("provides hover facts for edits, searches, listings, web and unknown tools", () => {
+    for (const [kind, label] of [
+      ["edit", "1 edit"], ["create", "1 edit"], ["search", "1 search"],
+      ["list", "1 listing"], ["web", "1 web request"], ["tool", "1 tool call"],
+    ] as const) {
+      expect(summarizeWork([{ id: kind, kind }], [])[0]?.label).toBe(label);
+    }
+  });
 });

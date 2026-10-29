@@ -21,7 +21,7 @@
           >{{ stepCount() }} {{ stepCount() === 1 ? "step" : "steps" }}</span
         >
       }
-      @if (status() !== "live") {
+      @if (facts().length) {
         <span #factsRegion class="facts" [class.clipped]="factsClipped()">
           @for (fact of facts(); track fact.kind; let i = $index) {
             <span
@@ -58,7 +58,7 @@
   </div>
   <ex-fold [open]="expanded()"
     ><ex-work-timeline
-      [steps]="completedSteps()"
+      [steps]="timelineSteps()"
       [live]="status() === 'live'"
       [maxVisible]="maxVisible()"
   /></ex-fold>
@@ -70,6 +70,15 @@
   <div class="answer" exAutoHeight>
     <div><ng-content /></div>
   </div>
+  @if (followingSteps().length) {
+    <ex-fold [open]="expanded()">
+      <ex-work-timeline
+        [steps]="followingSteps()"
+        [live]="status() === 'live'"
+        [maxVisible]="maxVisible()"
+      />
+    </ex-fold>
+  }
   @if (status() === "failed" || status() === "stopped") {
     <div class="error" [class.failed]="status() === 'failed'">
       <span>{{

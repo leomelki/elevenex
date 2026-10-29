@@ -136,6 +136,37 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  for (const phase of ["running", "idle"] as const) {
+    it(`keeps tools after the message that introduced them while ${phase}, with collapsible output`, async () => {
+      const { fixture, root } = setup([
+        item("u", "user", "Check the code"),
+        item("a", "assistant", "I’ll check the code first."),
+        { ...item("t", "tool_use", ""), toolId: "call", toolKind: "bash", toolName: "Run command", input: '{"command":"pnpm test"}' },
+        { ...item("r", "tool_result", "All tests passed"), toolId: "call" },
+      ], { ...state, phase });
+      await settle(fixture);
+      const turn = root.querySelector<HTMLElement>("ex-turn")!;
+      const toggle = turn.querySelector<HTMLButtonElement>(".work")!;
+      if (toggle.getAttribute("aria-expanded") === "false") toggle.click();
+      await settle(fixture);
+      const answer = turn.querySelector(".answer")!;
+      const tool = turn.querySelector("ex-tool-step")!;
+      expect(answer.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(turn.querySelector(".facts")?.textContent).toContain("Ran 1 command");
+      expect(turn.querySelectorAll(".caret")).toHaveLength(0);
+      const head = tool.querySelector<HTMLButtonElement>(".head")!;
+      expect(head.getAttribute("aria-expanded")).toBe("false");
+      head.click();
+      await settle(fixture);
+      expect(head.getAttribute("aria-expanded")).toBe("true");
+      expect(tool.querySelector("pre")?.textContent).toContain("All tests passed");
+      toggle.click();
+      await settle(fixture);
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(tool.closest("ex-fold[inert]")).not.toBeNull();
+      expect(answer.closest("[inert]")).toBeNull();
+    });
+  }
   it("shows final text outside collapsed work even when a system record follows it", async () => {
     const { fixture, root } = setup([
       item("u", "user", "Hi"),

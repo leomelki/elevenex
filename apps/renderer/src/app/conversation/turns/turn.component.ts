@@ -52,6 +52,7 @@ import { formatDuration, isProse, summarizeWork } from "./work-summary";
 export class TurnComponent {
   readonly status = input<TurnStatus>("done");
   readonly steps = input<readonly WorkStep[]>([]);
+  readonly answerBeforeStepId = input<string>();
   readonly duration = input(0);
   readonly elapsed = input(0);
   readonly files = input<readonly ChangedFile[]>([]);
@@ -73,16 +74,24 @@ export class TurnComponent {
   readonly expanded = computed(
     () => this.toggled() ?? (this.status() === "live" || this.open()),
   );
-  readonly activeStep = computed(() =>
-    this.status() === "live"
-      ? ([...this.steps()]
-          .reverse()
-          .find((step) => step.status === "running") ?? null)
-      : null,
+  private readonly answerBoundary = computed(() => {
+    const boundary = this.answerBeforeStepId();
+    const index = this.steps().findIndex((step) => step.id === boundary);
+    return index < 0 ? this.steps().length : index;
+  });
+  readonly precedingSteps = computed(() =>
+    this.steps().slice(0, this.answerBoundary()),
   );
+  readonly followingSteps = computed(() =>
+    this.steps().slice(this.answerBoundary()),
+  );
+  readonly activeStep = computed(() => {
+    const last = this.precedingSteps().at(-1);
+    return this.status() === "live" && last?.status === "running" ? last : null;
+  });
   readonly heldStep = signal<WorkStep | null>(null);
-  readonly completedSteps = computed(() =>
-    this.steps().filter((step) => step.status !== "running"),
+  readonly timelineSteps = computed(() =>
+    this.precedingSteps().filter((step) => step.id !== this.activeStep()?.id),
   );
   readonly workLabel = computed(() => {
     const seconds = this.status() === 'live' ? this.elapsed() : this.duration();
@@ -92,7 +101,12 @@ export class TurnComponent {
   readonly stepCount = computed(
     () => this.steps().filter((step) => !isProse(step)).length,
   );
-  readonly facts = computed(() => summarizeWork(this.steps(), this.files()));
+  readonly facts = computed(() =>
+    summarizeWork(
+      this.steps().filter((step) => step.status !== "running"),
+      this.files(),
+    ),
+  );
   protected readonly factsElement =
     viewChild<ElementRef<HTMLElement>>("factsRegion");
   protected readonly factsClipped = signal(false);

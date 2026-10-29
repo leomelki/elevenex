@@ -464,6 +464,24 @@ describe("provider-neutral transcript presentation", () => {
       output: expect.stringContaining("Failed to connect"),
     });
     expect(exchanges[0]?.answer).toBe("Here is the result.");
+    expect(exchanges[0]?.answerBeforeStepId).toBeUndefined();
+  });
+  it("keeps work on both sides of the latest message, including late paired results", () => {
+    const items = [
+      item("u", "user", "Check it"),
+      item("before", "tool_use", "", { toolId: "first", toolKind: "read" }),
+      item("a", "assistant", "Now checking tests"),
+      item("late", "tool_result", "Read output", { toolId: "first" }),
+      item("after", "tool_use", "", { toolId: "second", toolKind: "bash" }),
+    ];
+    const exchange = chatExchanges(items, { ...state, phase: "running" }, new Set())[0]!;
+    expect(exchange.steps.map(step => step.id)).toEqual(["before", "after"]);
+    expect(exchange.answerBeforeStepId).toBe("after");
+    expect(exchange.steps[0]?.output).toContain("Read output");
+    const completed = chatExchanges([...items, item("final", "assistant", "Done")], state, new Set())[0]!;
+    expect(completed.steps.map(step => step.id)).toEqual(["before", "a", "after"]);
+    expect(completed.answerBeforeStepId).toBeUndefined();
+    expect(completed.answer).toBe("Done");
   });
   it("renders partial history and orphan results instead of silently discarding them", () => {
     const exchanges = chatExchanges(

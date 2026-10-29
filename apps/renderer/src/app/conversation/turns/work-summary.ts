@@ -4,9 +4,13 @@ import type {
   WorkStep,
 } from "../conversation.models";
 export interface WorkFact {
-  readonly kind: "failure" | "files" | "tests" | "commands" | "reads";
+  readonly kind:
+    | "failure" | "files" | "tests" | "commands" | "reads"
+    | "edits" | "searches" | "lists" | "web" | "tools";
   readonly label: string;
-  readonly icon: "x" | "changes" | "check" | "terminal" | "file";
+  readonly icon:
+    | "x" | "changes" | "check" | "terminal"
+    | "file" | "search" | "globe" | "plug";
   readonly tone?: "ok" | "danger";
   readonly diff?: { readonly add: number; readonly del: number };
 }
@@ -18,6 +22,11 @@ export function summarizeWork(
   let failures = 0;
   let commands = 0;
   let reads = 0;
+  let edits = 0;
+  let searches = 0;
+  let lists = 0;
+  let web = 0;
+  let tools = 0;
   let testResult = "";
   let testFailed = false;
   for (const step of steps) {
@@ -25,6 +34,11 @@ export function summarizeWork(
       failures++;
     if (step.kind === "run") commands++;
     if (step.kind === "read") reads++;
+    if (step.kind === "edit" || step.kind === "create") edits++;
+    if (step.kind === "search") searches++;
+    if (step.kind === "list") lists++;
+    if (step.kind === "web") web++;
+    if (step.kind === "tool") tools++;
     if (
       step.kind === "test" &&
       step.result &&
@@ -71,6 +85,31 @@ export function summarizeWork(
       kind: "reads",
       icon: "file",
       label: `Read ${reads} ${reads === 1 ? "file" : "files"}`,
+    });
+  if (edits && !files.length)
+    facts.push({
+      kind: "edits", icon: "changes",
+      label: `${edits} ${edits === 1 ? "edit" : "edits"}`,
+    });
+  if (searches)
+    facts.push({
+      kind: "searches", icon: "search",
+      label: `${searches} ${searches === 1 ? "search" : "searches"}`,
+    });
+  if (lists)
+    facts.push({
+      kind: "lists", icon: "file",
+      label: `${lists} ${lists === 1 ? "listing" : "listings"}`,
+    });
+  if (web)
+    facts.push({
+      kind: "web", icon: "globe",
+      label: `${web} web ${web === 1 ? "request" : "requests"}`,
+    });
+  if (tools)
+    facts.push({
+      kind: "tools", icon: "plug",
+      label: `${tools} tool ${tools === 1 ? "call" : "calls"}`,
     });
   return facts.slice(0, 4);
 }
