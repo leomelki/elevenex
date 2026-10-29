@@ -66,7 +66,7 @@ motion through the real Angular components.
 
 ## Harness choice
 
-The composer’s agent chip opens settings with a Harness dropdown using the connected backend registry's
+The composer’s agent chip opens settings with a Harness segment using the connected backend registry's
 bounded provider labels (currently Claude Code, Codex, Pi and OpenCode). Optional
 `providers` and `providerLocked` state fields keep older engines compatible;
 without them, the desktop retains its previous read-only harness display.
@@ -85,7 +85,7 @@ conversation just by displaying the picker. Once a native conversation starts,
 the existing attachment lifecycle resumes. Existing one-argument runtime reads
 retain their previous initialization behavior.
 
-`session-harness.mjs` verifies real dropdown keyboard navigation, all advertised
+`session-harness.mjs` verifies real radio-group keyboard navigation, all advertised
 choices, changing back and forth, draft retention, model refresh, narrow layouts,
 both themes and locking after the first prompt with preview-only provider data.
 
@@ -114,7 +114,8 @@ The connected chat now uses `Composer`’s Plan/Code switch, agent chip and
 permission picker directly. Harness, model, thinking and fast mode live inside
 the agent popover; the toolbar stays on one row. All choices use authoritative
 state with busy/error handling, retain the draft, and reject archived/historical
-edits. Queue removal/steering restores composer focus before a row disappears.
+edits. An accepted harness change returns focus to the composer, guarded by the
+selected scope/task/session identity. Queue removal/steering restores composer focus before a row disappears.
 Enter sends or queues, Alt Enter steers, Shift Enter inserts a newline, Shift Tab
 toggles mode, Cmd/Ctrl J opens agent settings and Cmd/Ctrl . stops a running agent.
 
@@ -130,3 +131,9 @@ remain hidden until their corresponding platform operations are available.
 permissions, multiline input, queue/remove/steer/stop, retained uncertain drafts,
 container-responsive layout and reduced motion in both themes. `session-harness`
 verifies changing harness inside the popover and locking after the first prompt.
+
+The agent menu follows the standalone ZIP’s fixed-column form and usage block.
+Live context/token values come from the selected session; plan display remains an
+optional supplied-data UI capability. The menu’s snapshot stays mounted through
+its inert exit. The dedicated `/agent-picker` preview and `agent-picker.mjs`
+verify the full reference component independently of transcript motion.

@@ -85,9 +85,11 @@
           [showSavePreset]="showSavePreset()"
           [reasoningAvailable]="reasoningAvailable()"
           [fastAvailable]="fastAvailable()"
+          [canCompact]="canCompact()"
           (changed)="agentChanged.emit($event)"
           (fork)="forkAgent.emit()"
           (savePreset)="savePreset.emit($event)"
+          (compactRequested)="compactRequested.emit()"
         />
       }
     }

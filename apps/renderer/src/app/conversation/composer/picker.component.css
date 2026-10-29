@@ -1,3 +1,4 @@
+/* Shared permission/tools popovers. Agent configuration owns dedicated styles. */
 :host {
   display: inline-flex;
   min-width: 0;
@@ -27,9 +28,7 @@
   opacity: 0.45;
   cursor: default;
 }
-.trigger > .mark,
-.trigger > ex-icon,
-.trigger > ex-context-meter {
+.trigger > ex-icon {
   flex: none;
 }
 .trigger:focus-visible,
@@ -52,24 +51,11 @@ input:focus-visible {
   transform-origin: bottom;
   animation: arrive var(--dur-base) var(--ease-glide) both;
 }
-.agent-settings {
-  width: min(360px, calc(100vw - var(--space-8)));
-}
 .field {
   min-width: 0;
 }
 .field > span {
   color: var(--ink-muted);
-}
-.field ex-dropdown {
-  max-width: 220px;
-  min-width: 0;
-}
-.harness {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-weight: var(--text-ui-weight);
 }
 .choice {
   display: flex;
@@ -134,40 +120,10 @@ select {
 input[type="checkbox"] {
   accent-color: var(--accent);
 }
-.mark {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-xs);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-  font-size: var(--text-overline-size);
-}
-.sub {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--ink-muted);
-}
-.name {
-  color: var(--ink);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-@container composer (max-width: 600px) {
-  .trigger .sub {
-    display: none;
-  }
-}
 @container composer (max-width: 440px) {
   .permission-label {
     display: none;
   }
-}
-.trigger ex-icon[name="bolt"] {
-  color: var(--accent);
 }
 .error {
   color: var(--danger);

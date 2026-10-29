@@ -1,9 +1,9 @@
-<button class="trigger" [cdkMenuTriggerFor]="menu" type="button" [disabled]="unavailable()" [attr.aria-label]="label() + ': ' + (selected()?.label ?? (value() || placeholder()))">
+<button class="trigger" [class.subtle]="appearance() === 'subtle'" [cdkMenuTriggerFor]="menu" type="button" [disabled]="unavailable()" [attr.aria-label]="label() + ': ' + (selected()?.label ?? (value() || placeholder()))">
   @if (selected()?.mark; as mark) { <span class="mark" aria-hidden="true">{{ mark }}</span> }
   @if (icon(); as name) { <ex-icon [name]="name" [size]="12" /> }
   <span class="text" [class.mono]="mono()">{{ selected()?.label ?? (value() || placeholder()) }}</span>
   @if (selected()?.detail; as detail) { <span class="detail">{{ detail }}</span> }
-  <ex-icon name="chevron-down" [size]="12" />
+  <ex-icon name="chevron-down" [size]="appearance() === 'subtle' ? 13 : 12" />
 </button>
 <ng-template #menu>
   <ex-dropdown-menu [label]="label()">

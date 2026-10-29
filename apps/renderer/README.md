@@ -13,7 +13,7 @@ pnpm desktop:preview
 ```
 
 Open `http://127.0.0.1:4310`. The workspace preview composes real components;
-Foundations, Tasks, Projects, Settings, Sub-tasks, Git helpers, Conversation, Machines and views, and Machine flow exercise their public
+Foundations, Tasks, Projects, Settings, Sub-tasks, Git helpers, Conversation, Agent picker, Machines and views, and Machine flow exercise their public
 APIs. Example data lives only in `preview/`, under a separate Angular build
 configuration. It is absent from the production entry graph and packaged app.
 
@@ -178,3 +178,8 @@ Toast defaults still dismiss after an action. For asynchronous Undo, use
 `dismissOnAction=false`, bind `busy` to disable duplicate actions, and remove the
 toast after confirmed success. The session archive owner retains a dismissible
 notification (`duration=0`) so a failed/uncertain restore remains reviewable.
+
+The `/agent-picker` preview compares the supplied AgentPicker layout and usage
+variants. `Switch` accepts `size="sm"` for its reference 28×16 agent-setting form;
+its default size remains unchanged. Both sizes expose native switch semantics,
+visible focus and reduced-motion behavior.

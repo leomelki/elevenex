@@ -1,5 +1,42 @@
 # Component design review
 
+## AgentPicker reference port, 2026-10-29
+
+The connected composer's initial settings form did not reproduce the standalone
+AgentPicker. It now follows the ZIP's actual `AgentPicker`, `UsageBlock`,
+`UsageCard` and `PlanMeter` output: fixed columns, harness monogram or radio
+segment, compact model selector, thinking segment, fast-mode hint/switch,
+context/plan block and separated action footer. The old agent styles were
+removed from the shared permission/tools picker stylesheet.
+
+The reference uses content-box dimensions; the renderer uses border-box.
+Measured standard dimensions are 368×211px, four 36px rows, 84px labels starting
+12px inside the menu, values starting at 104px, and a 24px footer. With the
+reference's complete context/plan values the menu is 368×419px. The hover card
+is 288px including its padding. The ZIP declares `AgentMark` twice; its exported
+picker resolves to the later 16px mark at runtime. The port follows that actual
+rendered output, using one private decorative mark component rather than
+reproducing the duplicate declaration.
+
+`AgentPicker` owns focus and anchored surfaces; `AgentSettings` owns controlled
+choices; `AgentUsage` and `AgentPlanMeter` own supplied usage presentation.
+`PopoverPresence` owns retained readonly snapshots, reduced motion and exit
+fallbacks. Closing releases pointer input and restores focus immediately;
+content survives its exit and reopens without duplicate portals. Hover/focus
+usage arrives after 400ms, including when its data arrives after focus. Harness
+changes clear the prior harness's usage. Busy states keep the surface mounted
+and recover focus from controls that become disabled. Compact focuses stable
+content before its button disappears.
+
+Viewport constraints are intentional responsive adaptations: CDK flexible
+positioning confines the original dimensions, long choice tracks scroll, and
+footers can wrap. Provider-specific thinking IDs remain available alongside the
+standard levels; unsupported choices remain disabled. The connected owner
+supplies live context/tokens. Account plan data is optional supplied UI data;
+Compact, preset persistence and fork remain gated typed intents where the
+platform integration is unavailable. No usage values or working actions are
+invented to make the reference specimen look complete.
+
 ## Browsable archived sessions, 2026-10-27
 
 Ready tasks now have a quiet collapsible Archived section. Completed and stopped

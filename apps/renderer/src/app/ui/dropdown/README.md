@@ -16,7 +16,8 @@ For a controlled single choice:
 `disabled`. `value` is owned by the caller: `changed` emits intent and never
 mutates supplied data. Unknown values remain visible without inventing an
 option. Empty/all-disabled lists disable the trigger. `mono`, `icon` and
-`placeholder` customize the control. Pass `active=false` when a retained owner
+`placeholder` customize the control. `appearance="subtle"` supplies the reference
+agent form’s compact 26px sunken selector; the default appearance is unchanged. Pass `active=false` when a retained owner
 closes to immediately release its portaled menu; `disabled` does the same.
 Destroying the component also disposes the CDK trigger and overlay.
 

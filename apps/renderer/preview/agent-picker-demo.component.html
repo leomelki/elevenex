@@ -1,0 +1,51 @@
+<main>
+  <header>
+    <h1>Agent picker</h1>
+    <p>
+      Reference layout with supplied capabilities. Changes are local to this
+      preview.
+    </p>
+  </header>
+  <div class="cases" aria-label="Specimen controls">
+    <button exButton variant="secondary" size="sm" (click)="usage(false)">
+      Reference
+    </button>
+    <button exButton variant="secondary" size="sm" (click)="usage(true)">
+      Context and plan
+    </button>
+    <button
+      exButton
+      variant="secondary"
+      size="sm"
+      (click)="locked.set(!locked())"
+    >
+      {{ locked() ? "Unlock harness" : "Lock harness" }}
+    </button>
+    <button exButton variant="secondary" size="sm" (click)="busy.set(!busy())">
+      {{ busy() ? "Finish update" : "Updating" }}
+    </button>
+    <button
+      exButton
+      variant="secondary"
+      size="sm"
+      (click)="disabled.set(!disabled())"
+    >
+      {{ disabled() ? "Enable" : "Disable" }}
+    </button>
+  </div>
+  <section class="stage" aria-label="Agent picker specimen">
+    <ex-agent-picker
+      [value]="agent()"
+      [harnesses]="harnesses"
+      [locked]="locked()"
+      [busy]="busy()"
+      [disabled]="disabled()"
+      [canCompact]="true"
+      (changed)="agent.set($event)"
+      (fork)="notice.set('Fork requested in preview')"
+      (savePreset)="save($event)"
+      (compactRequested)="compact()"
+    />
+  </section>
+  <p role="status" class="notice">{{ notice() }}</p>
+</main>

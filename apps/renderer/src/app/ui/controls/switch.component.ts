@@ -6,6 +6,7 @@ import {
 } from "@angular/core";
 @Component({
   selector: "ex-switch",
+  host: { "[attr.data-size]": "size()" },
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `<button
     type="button"
@@ -50,9 +51,41 @@ import {
       opacity: 0.45;
       cursor: default;
     }
+    :host([data-size="sm"]) button {
+      width: 28px;
+      height: 16px;
+    }
+    :host([data-size="sm"]) span {
+      width: 12px;
+      height: 12px;
+      box-shadow: var(--shadow-raised);
+      transition:
+        transform var(--dur-glide) var(--ease-glide),
+        width var(--dur-fast) var(--ease-out);
+    }
+    :host([data-size="sm"]) [aria-checked="true"] span {
+      background: var(--surface-raised);
+    }
+    :host([data-size="sm"]) button:active:not(:disabled) span {
+      width: 15px;
+    }
+    :host([data-size="sm"]) [aria-checked="true"]:active:not(:disabled) span {
+      transform: translateX(9px);
+    }
+    button:focus-visible {
+      outline: none;
+      box-shadow: var(--focus-ring);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      button,
+      span {
+        transition: none !important;
+      }
+    }
   `,
 })
 export class SwitchComponent {
+  readonly size = input<"md" | "sm">("md");
   readonly label = input.required<string>();
   readonly on = input(false);
   readonly disabled = input(false);

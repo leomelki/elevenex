@@ -146,6 +146,9 @@ export class SessionChatComponent {
       thinking: state.reasoning ?? undefined,
       fast: state.fast,
       context: state.context ? state.context.percentage / 100 : undefined,
+      tokens: state.context
+        ? `${this.tokenNumber.format(state.context.tokens).toLowerCase()} of ${this.tokenNumber.format(state.context.limit).toLowerCase()}`
+        : undefined,
     };
   });
   readonly fastAvailable = computed(() => {
@@ -157,6 +160,10 @@ export class SessionChatComponent {
           ?.supportsFastMode === true)
     );
   });
+  private readonly tokenNumber = new Intl.NumberFormat("en", {
+    notation: "compact",
+    maximumFractionDigits: 0,
+  });
   agentChanged(value: AgentConfig): void {
     const current = this.agent();
     if (
@@ -166,7 +173,8 @@ export class SessionChatComponent {
       this.store.loading()
     )
       return;
-    if (value.harness !== current.harness) this.chooseProvider(value.harness);
+    if (value.harness !== current.harness)
+      void this.chooseProvider(value.harness);
     else if (value.model !== current.model)
       void this.store.perform({ type: "model", model: value.model || null });
     else if (value.thinking !== current.thinking)
@@ -185,14 +193,17 @@ export class SessionChatComponent {
       this.store.state()?.provider ??
       "Agent",
   );
-  chooseProvider(provider: string): void {
+  async chooseProvider(provider: string): Promise<void> {
     const current = this.store.state()?.provider;
-    if (current && provider !== current)
-      void this.store.perform({
+    const identity = this.identity();
+    if (current && provider !== current) {
+      const accepted = await this.store.perform({
         type: "provider",
         provider,
         expectedProvider: current,
       });
+      if (accepted && identity === this.identity()) this.focusComposer();
+    }
   }
   readonly permissions = computed<readonly PermissionChoice[]>(() =>
     (this.store.state()?.permissionModes ?? []).map((id) => ({

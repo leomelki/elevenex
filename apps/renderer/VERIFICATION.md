@@ -1,5 +1,56 @@
 # Component system verification
 
+## AgentPicker reference fidelity, 2026-10-29
+
+Passed `desktop:lint`, `desktop:test` (106 main/preload/security checks,
+7 capture-tool checks, 418 renderer tests and TypeScript contracts), the final
+6 focused AgentPicker tests, `desktop:build` and `git diff --check`. No backend,
+IPC, dependency, lockfile, migration or legacy app changes. Validation used the
+cached repository-pinned pnpm 8.15.4 and Node 24.22.1. Loopback/native capture and
+worker permissions required sandbox escalation.
+
+The original ZIP was rendered independently using its own React implementation
+and CSS, with the same bundled local fonts. Its two inline gallery scripts were
+externalized only in an ignored comparison artifact to preserve the normal CSP;
+no security allowances or production reference-code imports were added.
+[`agent-picker-original-final`](../../artifacts/desktop-capture/agent-picker-original-final/index.html)
+and [`agent-picker-original-usage`](../../artifacts/desktop-capture/agent-picker-original-usage/index.html)
+report `verified: true`. These are comparison baselines, not application evidence.
+
+Application reports all say `verified: true`:
+
+- [`agent-picker-delivery`](../../artifacts/desktop-capture/agent-picker-delivery/index.html):
+  10 reference, usage, busy and narrow/reduced-motion checkpoints in both themes.
+  It asserts 368×211px standard geometry, 36px rows, 84px label columns, 104px value
+  alignment and the 368×419px full usage variant. It also collects window errors
+  explicitly and reports none. Native tests exercise supported/disabled choices,
+  nested Escape, immediate focus restoration, interrupted reopening, local preview
+  actions, busy/disabled states and Angular router teardown of an open portal.
+  Tab and Shift Tab stay on the stable heading when every setting is disabled;
+  Escape and focus restoration also include CDK-owned trap anchors.
+- [`agent-picker-delivery-harness`](../../artifacts/desktop-capture/agent-picker-delivery-harness/index.html):
+  7 connected checks for all advertised harnesses, radio keyboard selection,
+  draft retention, model refresh, narrow layout and locking after the first prompt.
+- [`agent-picker-delivery-composer`](../../artifacts/desktop-capture/agent-picker-delivery-composer/index.html):
+  16 connected checks for settings, Plan/Code, permissions, typing, queue/remove,
+  steer/stop, resize interruption, uncertain delivery and retained drafts.
+- [`agent-picker-motion`](../../artifacts/desktop-capture/agent-picker-motion/index.html):
+  4 native checkpoints including 0/140/340ms entry frames and measured 140ms menu /
+  120ms usage-card exits, matching the source curves and scale. Final focused tests
+  cover a queued entry-completion event racing a close and retained exit data.
+- [`agent-picker-connected-result`](../../artifacts/desktop-capture/agent-picker-connected-result/index.html):
+  2 cropped connected-session menu captures, with the same Low/fast settings as the
+  reviewed screenshot. New reference, usage, connected, narrow and motion PNGs were
+  inspected. The 39 application checkpoints report zero captured errors/warnings.
+
+Final captures used a fresh preview process after development HMR invalidated a
+lazy route chunk. All source changes were complete before the final runs. Captures
+use actual production components with preview-only backend data, not a live
+provider or packaged app. Current live context/tokens are wired; account-plan
+presentation is supplied-data UI, and unavailable Compact/preset/fork operations
+stay gated in the connected owner. Existing transcript-height diagnostics recorded
+in the previous entry are unchanged. Owned validation servers were stopped.
+
 ## Connected composer, 2026-10-28
 
 Passed `desktop:lint`, `desktop:test` (106 main/preload/security checks,

@@ -28,6 +28,8 @@ export class DropdownComponent {
   readonly mono = input(false);
   readonly icon = input<string>();
   readonly disabled = input(false);
+  /** Compact sunken selector from the agent settings design. */
+  readonly appearance = input<'default' | 'subtle'>('default');
   /** Close portaled content immediately when a retained owner becomes inactive. */
   readonly active = input(true);
   readonly changed = output<string>();

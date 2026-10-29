@@ -23,11 +23,9 @@ export default async function* (capture) {
     // Keyboard access, nested menu dismissal and retained textarea focus.
     await capture.press('j', 4);
     await capture.waitFor(() => document.querySelector('.agent-settings'));
-    await capture.click('.agent-settings button[aria-label^="Thinking level:"]');
-    await capture.waitFor(() => document.querySelector('ex-dropdown-menu[aria-label="Thinking level"]'));
-    assert.equal(await capture.evaluate(() => [...document.querySelectorAll('ex-dropdown-menu[aria-label="Thinking level"] button')].find(b => b.textContent.trim() === 'Max')?.getAttribute('aria-disabled')), 'true');
-    await capture.press('Home'); await capture.press('ArrowDown'); await capture.press('Enter');
-    await capture.waitFor(() => document.querySelector('ex-agent-picker > button .sub')?.textContent === 'Low');
+    assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings [aria-label="Thinking level"] button[aria-label="Max"]')?.disabled), true);
+    await capture.click('.agent-settings [aria-label="Thinking level"] button[aria-label="Low"]');
+    await capture.waitFor(() => document.querySelector('ex-agent-picker > button .sub')?.textContent.trim().endsWith('Low'));
     assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-settings')), true);
     await capture.click('.agent-settings button[aria-label="Fast mode"]');
     await capture.waitFor(() => document.querySelector('ex-agent-picker ex-icon[name="bolt"]'));

@@ -26,3 +26,16 @@ ex-icon { flex: none; color: var(--ink-muted); }
 .mark { flex: none; width: 18px; height: 18px; border-radius: var(--radius-xs); display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-size: 9px; font-weight: 700; }
 .option-text { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
 .option-text .detail { white-space: normal; }
+
+/* AgentPicker's compact form selector; other dropdowns retain their default. */
+.trigger.subtle {
+  height: calc(var(--control-height) - var(--space-1));
+  gap: calc(var(--space-1) * 1.5);
+  background: var(--surface-sunken);
+  box-shadow: none;
+  font-size: var(--text-code-size);
+  font-weight: var(--text-ui-weight);
+}
+.trigger.subtle ex-icon { color: inherit; }
+.trigger.subtle:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.trigger.subtle:focus-visible { box-shadow: var(--focus-ring); }

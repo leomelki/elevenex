@@ -1,0 +1,40 @@
+<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+  <circle
+    cx="7"
+    cy="7"
+    r="5.25"
+    fill="none"
+    stroke="currentColor"
+    stroke-opacity=".22"
+    stroke-width="1.75"
+  />
+  <circle
+    class="arc"
+    cx="7"
+    cy="7"
+    r="5.25"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.75"
+    stroke-linecap="round"
+    [attr.stroke-dasharray]="circumference"
+    [attr.stroke-dashoffset]="circumference * limit().left"
+    transform="rotate(-90 7 7)"
+  />
+  <path
+    d="M7 4.6v2.6l1.6 1"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
+@if (!compact() || limit().left <= 0.2) {
+  <span class="number" animate.enter="number-enter"
+    >{{ label() }}
+    @if (limit().weekly && limit().left > 0) {
+      <span class="weekly"> wk</span>
+    }
+  </span>
+}

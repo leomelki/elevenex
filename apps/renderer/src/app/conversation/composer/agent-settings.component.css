@@ -1,0 +1,105 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+.heading {
+  margin: 0;
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--ink-muted);
+  font-size: var(--text-overline-size);
+  line-height: var(--text-overline-line);
+  font-weight: var(--text-overline-weight);
+  letter-spacing: var(--text-overline-tracking);
+  text-transform: uppercase;
+}
+.heading:focus {
+  outline: none;
+}
+.field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: calc(var(--row-height) + var(--space-1));
+  padding: calc(var(--space-1) / 2) var(--space-2);
+}
+/* The source AgentPicker uses an 84px label column, shared by every field. */
+.field-label {
+  width: 84px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.25);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.harness {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+  min-width: 0;
+  color: var(--ink);
+  font-size: var(--text-code-size);
+  font-weight: var(--text-ui-weight);
+  white-space: nowrap;
+}
+.fork {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.choices {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: var(--space-1);
+  margin: calc(-1 * var(--space-1));
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.field ex-dropdown {
+  min-width: 0;
+}
+.hint {
+  flex: 1;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.field ex-switch {
+  flex: none;
+}
+.separator {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--line);
+}
+footer {
+  display: flex;
+  align-items: center;
+  min-height: var(--space-6);
+  padding: 0 calc(var(--space-1) / 2);
+  gap: var(--space-1);
+}
+.footer-note {
+  margin-left: auto;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  padding-right: calc(var(--space-1) * 1.5);
+}
+footer button {
+  flex: none;
+}
+@media (max-width: 400px) {
+  footer {
+    flex-wrap: wrap;
+  }
+  .footer-note {
+    padding: var(--space-1);
+  }
+}
+
+.harness-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

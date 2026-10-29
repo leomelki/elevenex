@@ -75,6 +75,7 @@ export class ComposerComponent {
   readonly showSavePreset = input(true);
   readonly reasoningAvailable = input(true);
   readonly fastAvailable = input(true);
+  readonly canCompact = input(false);
   readonly showSettings = input(true);
   readonly showTools = input(true);
   readonly showDictation = input(true);
@@ -117,6 +118,7 @@ export class ComposerComponent {
   readonly focusLastMessage = output<void>();
   readonly forkAgent = output<void>();
   readonly savePreset = output<AgentConfig>();
+  readonly compactRequested = output<void>();
   readonly textarea = viewChild<ElementRef<HTMLTextAreaElement>>("textarea");
   readonly agentPicker = viewChild(AgentPickerComponent);
   readonly mentions = viewChild(MentionMenuComponent);

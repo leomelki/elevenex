@@ -63,22 +63,71 @@ assistant text.
 
 ## Connected composer controls
 
-`Composer` keeps the designed single toolbar row at narrow widths using its
-named `composer` container: thinking metadata, mode labels, then permission labels
-yield space while accessible names remain. `settingsDisabled` prevents editing;
-`settingsBusy` disables choices while keeping the agent popover open during
-reconciliation. Neither locks the unfinished message. `modeAvailable` hides an
-unsupported mode switch. `agentLocked`, `showFork`, `showSavePreset`,
-`reasoningAvailable` and `fastAvailable` constrain capabilities without rendering
-unavailable actions. `permissionChoices` accepts bounded, harness-native IDs,
-labels and descriptions; omitting it preserves the three design defaults.
+`Composer` keeps one toolbar row at narrow widths using its named `composer`
+container. Thinking metadata, mode labels, then permission labels yield space;
+accessible names remain. `settingsDisabled` prevents editing; `settingsBusy`
+disables choices while keeping the agent popover mounted during reconciliation.
+Neither locks the draft. `modeAvailable`, `agentLocked`, `showFork`,
+`showSavePreset`, `reasoningAvailable`, `fastAvailable` and `canCompact` gate
+operations supplied by the owner. `permissionChoices` accepts bounded,
+harness-native IDs, labels and descriptions. Omission retains the design defaults.
 
-`AgentConfig.thinking` and `AgentModel.thinking` accept provider-reported strings,
-including custom reasoning variants. Model labels come from `AgentModel.label`.
-Unsupported standard thinking levels remain disabled; only reported variants
-emit changes. The picker uses the shared dropdowns and switch. Nested Escape
-closes the inner menu before the dialog, and CDK restores focus to its opener.
-Harness changes close the dialog; model/thinking/fast changes keep it mounted.
-Its content height and the composer input height use `AutoHeight` with one inner
-wrapper. Queue rows have bounded scrolling, quiet hover/focus actions and
-reduced-motion-aware entry/exit. Send returns focus to the textarea.
+### AgentPicker: reference and ownership
+
+The standalone ZIP's `project/components/bundle.js` (`AgentPicker`, `UsageBlock`,
+`UsageCard`, `PlanMeter`) and its CSS define the actual visual reference. The
+[AgentPicker specification](../../../../../docs/design-system/project/components/AgentPicker/README.md)
+and [usage specification](../../../../../docs/design-system/project/components/PlanMeter/README.md)
+describe its interaction. A dedicated `/agent-picker` preview supplies identical
+reference values, optional context/plan data, editable harnesses and busy states.
+
+- `AgentPicker` owns the chip, 400ms pointer/focus disclosure, CDK portals,
+  positioning, focus trapping/restoration and their lifetimes. It preserves
+  `open` and `openPicker()` for the composer shortcut. Its settings portal stays
+  mounted through exit, immediately becomes inert and releases its backdrop's
+  pointer handling. Reopening interrupts that exit. Nested model-menu Escape
+  closes that menu first. Focus initially reads the settings heading and returns
+  to the opener on close. A compaction intent focuses stable content before its
+  initiating button can disappear. When no settings are enabled, Tab/Shift Tab
+  stay on the heading and Escape remains available through the whole owned pane.
+- Internal `AgentSettings` owns capability-derived choices and controlled config
+  intents. The source's fixed label column, harness mark/segment, compact model
+  dropdown, thinking segment, fast switch/hint and separated footer are retained.
+  Busy state keeps those controls and their data mounted. Unsupported thinking
+  choices remain disabled. Provider-specific variants are appended using their
+  exact IDs. An absent thinking value stays unselected rather than claiming Off.
+- Internal `AgentUsage` renders the same context/plan block in the menu and the
+  read-only hover card. Internal `AgentPlanMeter` shows the tighter account limit
+  as a clock ring. `AgentConfig.tokens` is display text. Optional `plan` follows
+  the supplied `{ win, week, resetWin, resetWeek, name, tier }` API: fractions are
+  **remaining**, independently of the session's context fraction **used**.
+  Missing plan data is omitted. No account catalog, provider or transport reads
+  originate in these components.
+- Internal `PopoverPresence` retains the two portaled surfaces and their
+  readonly data snapshots through their token-based exit and owns reduced-motion subscriptions/fallback timers. It
+  exists because removing a CDK portal immediately would bypass child leave
+  animation. The owner cancels hover timers, releases focus and lets CDK dispose
+  its traps, portals and listeners on destruction. No component-family helper is
+  added to the public barrel solely for this implementation.
+
+`AgentConfig.thinking` and `AgentModel.thinking` accept provider-reported strings.
+Model labels come from `AgentModel.label`. Settings emit a config intent, never a
+platform operation. Fork, Save as preset and Compact emit their existing typed
+intents only when enabled by the integrating owner. The connected session owner
+supplies live context and token usage; optional plan data is a supplied-data UI
+capability until a backend adapter advertises it. Unimplemented platform actions
+remain hidden there. Preview actions are local examples, outside the product graph.
+
+The reference's content-box dimensions are translated explicitly to the renderer's
+global border-box model: the standard menu is 368px overall (360px plus two 4px
+insets), rows are 36px including padding, the label column is 84px, the footer is
+24px, and the hover card is 288px overall. Under a constrained viewport the portal
+stays confined, long choice tracks scroll horizontally, and the footer can wrap.
+The original tokens remain authoritative. Menu entry uses `dur-glide/ease-glide`;
+exit uses `dur-fast/ease-in`; reduced motion removes movement.
+
+The locked CDK version treats numeric zero as an omitted pixel minimum. Popover
+minimum dimensions use CSS `"0px"` strings so flexible connected positioning can
+confine the source layout to a narrow viewport without a custom position engine.
+Harness changes clear transient usage metadata; each harness owns its account and
+context. Closing surfaces retain the prior snapshot until exit completes.

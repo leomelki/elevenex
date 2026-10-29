@@ -17,6 +17,18 @@ export interface AgentConfig {
   readonly thinking?: string;
   readonly fast?: boolean;
   readonly context?: number;
+  /** Human-readable token usage supplied by the session owner. */
+  readonly tokens?: string;
+  /** Account plan limits, when the provider reports them. Fractions are remaining. */
+  readonly plan?: AgentPlanUsage;
+}
+export interface AgentPlanUsage {
+  readonly name?: string;
+  readonly tier?: string;
+  readonly win?: number;
+  readonly week?: number;
+  readonly resetWin?: string;
+  readonly resetWeek?: string;
 }
 export interface AgentModel {
   readonly id: string;

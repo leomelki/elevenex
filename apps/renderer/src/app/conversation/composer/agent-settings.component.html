@@ -1,0 +1,94 @@
+<h2 class="heading" tabindex="-1" cdkFocusInitial>
+  {{ value().preset ? "Adjust “" + value().preset + "”" : "Agent" }}
+</h2>
+<div class="field">
+  <span class="field-label">Harness</span>
+  @if (locked() || !harnesses().length) {
+    <span class="harness" title="The harness is fixed for this conversation">
+      <ex-agent-mark [mark]="value().mark" />{{
+        harness()?.label || value().harness
+      }}
+    </span>
+    @if (showFork()) {
+      <button
+        exButton
+        variant="ghost"
+        size="sm"
+        class="fork"
+        [disabled]="unavailable()"
+        title="Fork this session into another harness"
+        (click)="fork.emit()"
+      >
+        <ex-icon name="fork" [size]="13" />Fork to…
+      </button>
+    }
+  } @else {
+    <div class="choices">
+      <ex-segmented
+        size="sm"
+        label="Harness"
+        [options]="harnessOptions()"
+        [value]="value().harness"
+        (changed)="harnessChange($event)"
+      />
+    </div>
+  }
+</div>
+<div class="field">
+  <span class="field-label">Model</span>
+  <ex-dropdown
+    appearance="subtle"
+    label="Model"
+    [options]="models()"
+    [value]="value().model"
+    placeholder="Provider default"
+    [disabled]="unavailable()"
+    (changed)="modelChange($event)"
+  />
+</div>
+@if (reasoningAvailable()) {
+  <div class="field">
+    <span class="field-label">Thinking</span>
+    <div class="choices">
+      <ex-segmented
+        size="sm"
+        label="Thinking level"
+        [options]="thinkingOptions()"
+        [value]="value().thinking || ''"
+        (changed)="thinkingChange($event)"
+      />
+    </div>
+  </div>
+}
+@if (fastAvailable()) {
+  <div class="field">
+    <span class="field-label"
+      ><ex-icon name="bolt" [size]="13" />Fast mode</span
+    >
+    <span class="hint">Quicker replies</span>
+    <ex-switch
+      size="sm"
+      label="Fast mode"
+      [on]="!!value().fast"
+      [disabled]="unavailable()"
+      (changed)="fastChange($event)"
+    />
+  </div>
+}
+<div class="separator" role="separator"></div>
+<footer>
+  @if (showSavePreset()) {
+    <button
+      exButton
+      variant="ghost"
+      size="sm"
+      [disabled]="unavailable()"
+      (click)="savePreset.emit(value())"
+    >
+      <ex-icon name="plus" [size]="13" />Save as preset
+    </button>
+  }
+  <span class="footer-note" role="status">{{
+    busy() ? "Updating agent…" : "Applies from the next message"
+  }}</span>
+</footer>
