@@ -121,8 +121,10 @@ The connected chat now uses `Composer`’s Plan/Code switch, agent chip and
 permission picker directly. Harness, model, thinking and fast mode live inside
 the agent popover; the toolbar stays on one row. All choices use authoritative
 state with busy/error handling, retain the draft, and reject archived/historical
-edits. An accepted harness change returns focus to the composer, guarded by the
-selected scope/task/session identity. Queue removal/steering restores composer focus before a row disappears.
+edits. Harness changes retain the agent menu and its focus while the new catalog
+loads; settings and sending stay blocked until the new provider is confirmed.
+Escape or an outside click dismisses the menu and restores its opener.
+Queue removal/steering restores composer focus before a row disappears.
 Enter sends or queues, Alt Enter steers, Shift Enter inserts a newline, Shift Tab
 toggles mode, Cmd/Ctrl J opens agent settings and Cmd/Ctrl . stops a running agent.
 
@@ -140,7 +142,25 @@ container-responsive layout and reduced motion in both themes. `session-harness`
 verifies changing harness inside the popover and locking after the first prompt.
 
 The agent menu follows the standalone ZIP’s fixed-column form and usage block.
-Live context/token values come from the selected session; plan display remains an
-optional supplied-data UI capability. The menu’s snapshot stays mounted through
+Live context/token values come from the selected session. Optional `planUsage`
+now crosses the existing scoped chat feed and runtime-validated desktop bridge.
+Only matching Codex/Claude OAuth subscription data is projected; API-key sessions,
+older engines and unknown usage omit the quota UI. At most eight provider windows
+cross the bridge. Their remaining percentages drive the clock ring, delayed
+hover/focus card, menu bars and low/exhausted notices above the composer.
+Reset times use the user's locale and refresh while mounted. Passing a reset
+does not invent replenished allowance: the display waits for a provider update.
+Claude data becomes available when its SDK emits subscription rate-limit events;
+Codex uses its existing coalesced account-limit refresh and notifications.
+No extra repository reads, account credential access or renderer networking is added.
+The notice follows the design's context/quota priority and returns focus to the
+composer on dismissal. Automatic plan pausing/resume, Send at reset, cross-agent
+forking and account-wide island notifications need platform execution support;
+this display integration does not promise or simulate them.
+The menu’s snapshot stays mounted through
 its inert exit. The dedicated `/agent-picker` preview and `agent-picker.mjs`
 verify the full reference component independently of transcript motion.
+
+`session-quota.mjs` exercises connected quota updates, the tighter weekly/model
+window, hover and keyboard disclosure, low/exhausted states, dismissal focus,
+missing/API-key data and narrow reduced-motion layouts in both themes.

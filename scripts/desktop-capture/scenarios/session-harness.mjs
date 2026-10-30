@@ -6,12 +6,14 @@ export default async function* (capture) {
   const select = id => capture.component('ex-machine-workspace', (c, id) => c.store.selectSession({ taskId: '11', sessionId: id }), id);
   const finish = async () => { await capture.settle(); await capture.waitFor(() => document.getAnimations().every(a => !Number.isFinite(a.effect?.getComputedTiming().endTime) || a.playState !== 'running')); };
   const choose = async (key, label) => {
-    await capture.click('ex-agent-picker > button');
-    await capture.waitFor(() => !!document.querySelector('.agent-settings [aria-label="Harness"]'));
-    // Initial focus is the section heading, followed by the current harness radio.
-    await capture.press('Tab'); await capture.press(key);
+    if (!await capture.evaluate(() => !!document.querySelector('.agent-settings:not(.leaving)')))
+      await capture.click('ex-agent-picker > button');
+    await capture.waitFor(() => document.querySelector('.agent-settings')?.getAttribute('aria-busy') === 'false');
+    await capture.click('.agent-settings [aria-label="Harness"] button[aria-checked="true"]');
+    await capture.press(key);
     await capture.waitFor(label => document.querySelector('ex-session-chat .provider')?.textContent.includes(label), label);
-    await capture.waitFor(() => !document.querySelector('.agent-settings'));
+    await capture.waitFor(() => document.querySelector('.agent-settings')?.getAttribute('aria-busy') === 'false');
+    assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-settings')?.contains(document.activeElement)), true);
     assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea').value), 'Keep my message while changing agents');
   };
   await select('102');
@@ -27,14 +29,14 @@ export default async function* (capture) {
     yield { name: theme + '-harness-choices', inspect: ['ex-composer', '.agent-settings'] };
     await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.agent-settings'));
     await choose('Home', 'Claude Code');
-    await capture.click('ex-agent-picker > button');
     await capture.waitFor(() => !!document.querySelector('.agent-settings button[aria-label^="Model:"]'));
     assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings button[aria-label^="Model:"]').textContent.includes('Sonnet')), true);
     await finish(); yield { name: theme + '-claude-selected', inspect: ['ex-composer', '.agent-settings'] };
-    await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.agent-settings'));
     await choose('End', 'OpenCode'); await choose('ArrowLeft', 'Pi'); await choose('ArrowLeft', 'Codex');
     await capture.viewport(1000, 760); await capture.reducedMotion(true); await finish();
-    yield { name: theme + '-narrow-harness', inspect: ['ex-composer', 'ex-composer .bar'] };
+    yield { name: theme + '-narrow-harness', inspect: ['ex-composer', 'ex-composer .bar', '.agent-settings'] };
+    await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.agent-settings'));
+    assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-agent-picker > button')), true);
     await capture.reducedMotion(false);
   }
   await capture.fill('ex-composer textarea', 'Start with Codex'); await capture.press('Enter');

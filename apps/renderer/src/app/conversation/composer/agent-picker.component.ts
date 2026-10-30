@@ -236,9 +236,7 @@ export class AgentPickerComponent {
     this.compactRequested.emit();
   }
   protected changeAgent(value: AgentConfig): void {
-    const harnessChanged = value.harness !== this.value().harness;
     this.changed.emit(value);
-    if (harnessChanged) this.open.set(false);
   }
   protected overlayKey(event: KeyboardEvent): void {
     const pane = this.overlay()?.overlayRef?.overlayElement;

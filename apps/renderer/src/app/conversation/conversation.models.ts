@@ -29,6 +29,17 @@ export interface AgentPlanUsage {
   readonly week?: number;
   readonly resetWin?: string;
   readonly resetWeek?: string;
+  /** Actual provider windows take precedence over the legacy two-window shorthand. */
+  readonly windows?: readonly AgentPlanLimit[];
+  readonly exhausted?: boolean;
+}
+export interface AgentPlanLimit {
+  readonly id: string;
+  readonly label: string;
+  readonly left: number;
+  readonly reset?: string;
+  readonly resetShort?: string;
+  readonly weekly?: boolean;
 }
 export interface AgentModel {
   readonly id: string;

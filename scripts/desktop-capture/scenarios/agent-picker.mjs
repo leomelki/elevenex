@@ -69,11 +69,14 @@ export default async function* (capture) {
     await capture.component('ex-agent-picker-demo', c => c.locked.set(false));
     await open();
     await capture.click('[aria-label="Harness"] button[aria-label="Codex"]');
-    await capture.waitFor(() => !document.querySelector('.agent-settings'));
+    assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-settings:not(.leaving)')?.contains(document.activeElement)), true);
+    await capture.waitFor(() => document.querySelector('.agent-settings button[aria-label^="Model:"]')?.textContent.includes('GPT-5 Codex'));
     await capture.waitFor(() => document.querySelector('ex-agent-picker > button')?.getAttribute('aria-label').includes('Codex'));
     await capture.viewport(360, 760); await capture.reducedMotion(true);
-    await capture.evaluate(() => document.querySelector('ex-agent-picker > button').scrollIntoView({block:'end'}));
-    await open();
+    await capture.waitFor(() => {
+      const box = document.querySelector('.agent-settings')?.getBoundingClientRect();
+      return box && box.left >= 15 && box.right <= innerWidth - 15;
+    });
     const narrow = await capture.evaluate(() => {
       const menu=document.querySelector('.agent-settings'), box=menu.getBoundingClientRect();
       return { left:box.left, right:box.right, viewport:innerWidth, scroll:menu.scrollWidth, width:menu.clientWidth };

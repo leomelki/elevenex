@@ -195,6 +195,9 @@
         </button>
       </div>
     }
+    @if (!archived() && !store.historical()) {
+      <ex-agent-usage-notice [agent]="agent()" [identity]="identity()" (dismissed)="focusComposer()" />
+    }
     <ex-composer
       [clearOnSubmit]="false"
       [draft]="store.draft()"

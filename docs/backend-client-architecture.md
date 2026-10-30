@@ -277,6 +277,14 @@ client integration does not authorize data loss or destructive migrations.
 
 ## Validation and current limits
 
+Session chat optionally includes bounded `planUsage` on its existing state
+reply. The backend projects subscription-only Codex/Claude OAuth snapshots;
+main validates the provider identity, status, dates, up to eight unique windows
+and finite remaining percentages before forwarding them. Older engines can omit
+the field. Existing feed invalidations carry allowance changes without replaying
+prompts or reloading transcript history. This is a display capability; it does
+not implement scheduled sending or automatic pause/resume.
+
 Run `pnpm desktop:lint`, `pnpm desktop:test`, and `pnpm desktop:build` from the
 root. Tests include real loopback HTTP, malformed/oversized responses, deadlines,
 coalescing, lifecycle invalidation, remote capability routing, trusted IPC and

@@ -274,6 +274,12 @@ export class SessionChatFixture {
     this.version++;
     for (const done of [...this.waiting.values()]) done();
   }
+  /** Change only provider-reported allowance while preserving drafts and transcript. */
+  usage(planUsage: SessionChatState["planUsage"], id = 101): void {
+    const session = this.session(id);
+    session.state = { ...session.state, provider: planUsage?.provider ?? session.state.provider, planUsage };
+    this.changed();
+  }
   cancel(id: string): void {
     this.waiting.get(id)?.();
   }

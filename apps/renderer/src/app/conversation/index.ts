@@ -20,6 +20,7 @@ export * from "./decisions/plan-card.component";
 export * from "./decisions/job-brief.component";
 export * from "./composer/mode-toggle.component";
 export * from "./composer/agent-picker.component";
+export * from "./composer/agent-usage-notice.component";
 export * from "./composer/permission-picker.component";
 export * from "./composer/tools-menu.component";
 export * from "./composer/mention.component";

@@ -180,7 +180,7 @@ describe("AgentPicker controlled settings and focus", () => {
     expect(document.querySelector(".agent-settings")).toBeNull();
     fixture.destroy();
   });
-  it("uses an editable harness segment only before the session locks", async () => {
+  it("keeps settings and focus available for successive harness and model choices", async () => {
     const { fixture, open } = await setup();
     fixture.componentRef.setInput("locked", false);
     fixture.componentRef.setInput("value", {
@@ -190,14 +190,36 @@ describe("AgentPicker controlled settings and focus", () => {
       plan: { win: 0.12 },
     });
     const changed = vi.fn();
-    fixture.componentInstance.changed.subscribe(changed);
+    fixture.componentInstance.changed.subscribe((value) => {
+      changed(value);
+      fixture.componentRef.setInput("value", value);
+    });
     await open();
-    button('[aria-label="Harness"] button[aria-label="Codex"]').click();
+    const surface = document.querySelector(".agent-settings");
+    const codex = button('[aria-label="Harness"] button[aria-label="Codex"]');
+    codex.focus();
+    codex.click();
     await settle(fixture);
     expect(changed).toHaveBeenCalledWith(
       expect.objectContaining({ harness: "codex", model: "gpt", mark: "Cx" }),
     );
-    expect(document.querySelector(".agent-settings")).toBeNull();
+    expect(document.querySelector(".agent-settings")).toBe(surface);
+    expect(document.activeElement).toBe(codex);
+    expect(codex.getAttribute("aria-checked")).toBe("true");
+    expect(
+      button('.agent-settings [aria-label^="Model:"]').textContent,
+    ).toContain("GPT");
+    expect(document.querySelector(".menu-usage")).toBeNull();
+    button('[aria-label="Harness"] button[aria-label="Claude Code"]').click();
+    await settle(fixture);
+    button('.agent-settings [aria-label^="Model:"]').click();
+    await settle(fixture);
+    button('ex-dropdown-menu[aria-label="Model"] button:last-child').click();
+    await settle(fixture);
+    expect(changed).toHaveBeenLastCalledWith(
+      expect.objectContaining({ harness: "claude", model: "sonnet" }),
+    );
+    expect(document.querySelector(".agent-settings")).toBe(surface);
   });
   it("keeps the surface mounted during a save and disables every editable choice", async () => {
     const { fixture, open } = await setup();

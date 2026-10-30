@@ -108,6 +108,37 @@ describe('selected session chat', () => {
       type,
       payload: { sessionId: 2, runPhase: 'idle' },
     });
+  it('updates subscription allowance through the existing feed without reloading history', async () => {
+    const plan = {
+      provider: 'codex',
+      planName: 'Plus',
+      status: 'warning',
+      windows: [
+        {
+          id: 'primary',
+          label: '5-hour limit',
+          remainingPercentage: 12,
+          resetsAt: null,
+        },
+      ],
+      updatedAt: '2026-10-30T10:00:00Z',
+    };
+    runtime.getRuntimeState.mockImplementation(async () => ({
+      authStatus: { authMethod: 'oauth' },
+      planUsage: plan,
+    }));
+    const first = (await read())!;
+    expect(first.state.planUsage).toEqual(plan);
+    const pending = read(first.cursor);
+    await settle();
+    plan.windows[0].remainingPercentage = 0;
+    plan.status = 'exhausted';
+    emit('plan_usage');
+    const next = (await pending)!;
+    expect(next.state.planUsage?.windows[0].remainingPercentage).toBe(0);
+    expect(next.reset).toBe(false);
+    expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+  });
   it('exposes bounded model capabilities and validates thinking/fast against the selected model', async () => {
     runtime.getRuntimeState.mockResolvedValue({
       selectedModel: 'gpt',

@@ -393,8 +393,10 @@ export class SessionChatStore {
     )
       entry.uncertain.set("");
     if (this.disposed || epoch !== this.epoch) return result.ok;
-    this.commands.delete(commandId);
-    this.busy.set(this.commands.values().next().value ?? "");
+    if (!result.ok || action.type !== "provider") {
+      this.commands.delete(commandId);
+      this.busy.set(this.commands.values().next().value ?? "");
+    }
     if (!result.ok) {
       this.notice.set("");
       this.error.set(result.error.message);
@@ -424,13 +426,20 @@ export class SessionChatStore {
     if (action.type === "provider") {
       this.cursor = undefined;
       this.items.set([]);
-      this.state.set(null);
       this.before.set(null);
       this.fresh.set(new Set());
     }
     // Explicitly reconcile writes; reconnect and read retries never replay them.
     this.stopRead();
-    void this.load(true);
+    if (action.type === "provider") {
+      // Retain the settings surface and its focus while loading the new catalog.
+      // Keep writes blocked until authoritative provider state replaces it.
+      await this.load(true);
+      if (this.disposed || epoch !== this.epoch) return true;
+      if (this.state()?.provider !== action.provider) this.state.set(null);
+      this.commands.delete(commandId);
+      this.busy.set(this.commands.values().next().value ?? "");
+    } else void this.load(true);
     return true;
   }
   acknowledgeUncertain(): void {

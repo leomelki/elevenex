@@ -12,6 +12,7 @@ import type {
 } from '../agent-runtime/agent-runtime.types.js';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import { chatPlanUsage } from './desktop-chat-usage.js';
 import {
   chatState,
   chatWindow,
@@ -86,6 +87,7 @@ export class DesktopChatService implements OnModuleDestroy {
         session.activeAgentProvider,
         provider.info.permissionModes ?? [],
       ),
+      planUsage: chatPlanUsage(raw, session.activeAgentProvider),
       providers: this.registry
         .listProviders()
         .slice(0, 32)

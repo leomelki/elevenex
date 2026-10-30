@@ -36,6 +36,20 @@ export interface SessionChatQuestion {
     readonly detail: string;
   }[];
 }
+/** Provider-reported subscription allowance; API-key sessions omit it. */
+export interface SessionChatPlanUsage {
+  readonly provider: "codex" | "claude";
+  readonly planName: string | null;
+  readonly status: "available" | "warning" | "exhausted";
+  readonly windows: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly remainingPercentage: number;
+    /** Unix seconds, never a renderer-local countdown. */
+    readonly resetsAt: number | null;
+  }[];
+  readonly updatedAt: string;
+}
 export interface SessionChatState {
   readonly provider: string;
   readonly providers?: readonly {
@@ -70,6 +84,8 @@ export interface SessionChatState {
     readonly limit: number;
     readonly percentage: number;
   } | null;
+  /** Optional for compatibility with engines predating subscription usage. */
+  readonly planUsage?: SessionChatPlanUsage | null;
   readonly queue: readonly { readonly id: string; readonly text: string }[];
   readonly queuePaused: boolean;
   readonly permission: {

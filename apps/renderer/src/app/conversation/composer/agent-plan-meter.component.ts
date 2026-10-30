@@ -26,12 +26,12 @@ export class AgentPlanMeterComponent {
   protected readonly circumference = 2 * Math.PI * 5.25;
   protected readonly label = computed(() =>
     this.limit().left <= 0
-      ? this.limit().reset
+      ? this.limit().resetShort || this.limit().reset || "Used up"
       : usagePercent(this.limit().left),
   );
   protected readonly description = computed(() =>
     this.limit().left <= 0
       ? `Plan limit reached${this.limit().reset ? ", resets " + this.limit().reset : ""}`
-      : `${usagePercent(this.limit().left)} of the ${this.limit().weekly ? "weekly" : "5-hour"} limit left`,
+      : `${usagePercent(this.limit().left)} of the ${this.limit().label.toLowerCase()} left`,
   );
 }

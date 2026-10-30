@@ -7,7 +7,13 @@ import {
 } from "@angular/core";
 import { ContextMeterComponent } from "../../ui";
 import type { AgentConfig } from "../conversation.models";
-import { limitingPlan, usageFraction, usagePercent } from "./agent-usage";
+import {
+  limitingPlan,
+  planLimits,
+  resetLabel,
+  usageFraction,
+  usagePercent,
+} from "./agent-usage";
 
 /** Read-only usage shared by the hover card and the editable agent popover. */
 @Component({
@@ -29,29 +35,11 @@ export class AgentUsageComponent {
     const plan = this.agent().plan;
     if (!plan) return [];
     const bound = limitingPlan(plan);
-    return [
-      {
-        id: "window",
-        label: "5-hour limit",
-        left: usageFraction(plan.win, 1),
-        reset: plan.resetWin,
-        tight: !bound.weekly,
-      },
-      ...(plan.week === undefined
-        ? []
-        : [
-            {
-              id: "week",
-              label: "Weekly limit",
-              left: usageFraction(plan.week, 1),
-              reset: plan.resetWeek,
-              tight: bound.weekly,
-            },
-          ]),
-    ];
+    return planLimits(plan).map((limit) => ({
+      ...limit,
+      tight: limit.id === bound.id,
+    }));
   });
   protected readonly percent = usagePercent;
-  protected resetLabel(reset: string): string {
-    return `Resets ${/^\d/.test(reset) ? "at " : ""}${reset}`;
-  }
+  protected readonly resetLabel = resetLabel;
 }

@@ -1421,3 +1421,58 @@ The existing chat regression at
 `artifacts/desktop-capture/run-FZhPU9/report.json` also passes **verified: true**,
 with 16 checkpoints and no errors/warnings. These are real renderer interactions
 with controlled provider data; authenticated live harnesses were not launched.
+
+## Agent menu retention — October 30
+
+Harness changes keep the same agent settings surface open through command
+completion and catalog reconciliation. Controls and sending remain blocked until
+the new provider is confirmed; focus stays inside settings and drafts are retained.
+Escape still dismisses the menu and restores its opener. Regression tests cover
+success, rejection, delayed catalogs, stale reads and navigation during an update.
+
+Desktop lint, production build and the full desktop suite pass: 106 main-process,
+seven capture-tool and 427 renderer tests, including TypeScript contract checks.
+Checks used the existing `scripts/desktop-shell.mjs` entry directly because the
+pnpm launcher could not fetch its selected version in this environment.
+
+Both `artifacts/desktop-capture/agent-menu-retention/report.json` (seven checkpoints)
+and `artifacts/desktop-capture/agent-picker-retention-settled/report.json`
+(ten checkpoints) are **verified: true**, with no errors or warnings. They cover
+successive harness/model changes, refreshed settings, keyboard focus, nested
+Escape, busy/disabled controls, interrupted dismissal, both themes and narrow
+reduced-motion layouts. Connected light/dark and standalone narrow/busy PNGs were
+inspected. The narrow check awaits CDK viewport repositioning before measuring.
+These runs use real Angular components with preview-only provider data;
+authenticated harnesses and packaged-app execution were not exercised.
+
+## Connected subscription quota — October 30
+
+The selected chat now receives optional provider-reported Codex/Claude subscription
+allowance over its existing scope-bound feed. Backend projection requires matching
+OAuth subscription metadata, caps the data at eight windows and strips provider
+payloads. Main validates provider identity, finite percentages, dates and unique
+window IDs. API-key sessions and older engines omit the quota display.
+
+The agent chip, delayed hover/focus card and settings menu show actual remaining
+allowance and reset times, including weekly-only/model-specific windows. Composer
+notices follow the designed quota/context priority; low warnings are dismissible,
+exhausted/critical states persist, dismissal restores composer focus and retained
+exits are inert. Reset passage waits for provider facts. No dependency changes.
+
+Desktop lint and production build pass. The full desktop suite passed 107 main,
+seven capture-tool and 431 renderer tests, including TypeScript contracts; later
+focused chat/composer checks passed 49 tests, and the final notice accessibility
+check passed both tests. The 20 focused backend chat tests and production backend
+TypeScript check pass. An exploratory all-source backend typecheck encounters
+existing errors in unrelated test files; it is not a clean repository-wide check.
+The installed Electron smoke passes with its fixture backend and secure preload.
+
+`artifacts/desktop-capture/session-quota-final/report.json` is **verified: true**:
+12 checkpoints, no errors/warnings. It covers both themes, healthy/low/exhausted
+allowance, hover/menu disclosure, tighter weekly/model limits, dismissal and focus,
+quota removal, expired reset timestamps and narrow reduced-motion layouts. Final
+dark exhausted and light narrow PNGs were inspected, alongside the preceding
+verified light warning/dark menu/narrow captures. This exercises the real renderer
+with preview-only provider data; authenticated quota accounts and packaged-app
+execution were not exercised. Automatic account-wide pause/resume, send-at-reset,
+cross-agent forks and quota island events remain outside this display integration.

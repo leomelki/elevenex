@@ -253,7 +253,25 @@ describe("session chat ownership", () => {
     const oldRead = deferred<BackendResult<SessionChatPage>>();
     bridge.sessionChatRead.mockReturnValueOnce(oldRead.promise);
     await vi.advanceTimersByTimeAsync(80);
-    bridge.sessionChatRead.mockResolvedValueOnce(
+    const catalog = deferred<BackendResult<SessionChatPage>>();
+    bridge.sessionChatRead.mockReturnValueOnce(catalog.promise);
+    const changing = store.perform({
+      type: "provider",
+      provider: "claude",
+      expectedProvider: "codex",
+    });
+    await settle();
+    expect(store.state()).toBe(available);
+    expect(store.busy()).toBe("provider");
+    expect(store.loading()).toBe(true);
+    await store.perform({ type: "model", model: "old-model" });
+    await store.submit({
+      text: "Keep this draft",
+      intent: "send",
+      context: [],
+    });
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+    catalog.resolve(
       ok(
         page(2, {
           state: {
@@ -264,12 +282,8 @@ describe("session chat ownership", () => {
         }),
       ),
     );
-    await store.perform({
-      type: "provider",
-      provider: "claude",
-      expectedProvider: "codex",
-    });
-    await settle();
+    await changing;
+    expect(store.busy()).toBe("");
     oldRead.resolve(ok(page()));
     await settle();
     expect(store.state()?.provider).toBe("claude");
@@ -286,6 +300,44 @@ describe("session chat ownership", () => {
       },
     });
   });
+  for (const navigate of [false, true]) {
+    it(`does not restore old harness settings after ${navigate ? "navigation during reconciliation" : "a failed catalog read"}`, async () => {
+      const { store, bridge } = setup();
+      await settle();
+      bridge.sessionChatRead.mockResolvedValueOnce(
+        ok(
+          page(2, {
+            state: {
+              ...state,
+              providerLocked: false,
+              providers: [{ id: "claude", label: "Claude Code" }],
+            },
+          }),
+        ),
+      );
+      await store.refresh();
+      const catalog = deferred<BackendResult<SessionChatPage>>();
+      bridge.sessionChatRead.mockReturnValueOnce(catalog.promise);
+      const changing = store.perform({
+        type: "provider",
+        provider: "claude",
+        expectedProvider: "codex",
+      });
+      await settle();
+      if (navigate) {
+        store.open({ scopeId: "scope", taskId: 1, sessionId: 3 }, false);
+        await settle();
+      }
+      catalog.resolve({
+        ok: false,
+        error: { code: "http", status: 503, message: "Unavailable" },
+      });
+      await changing;
+      expect(store.busy()).toBe("");
+      expect(store.state()).toEqual(navigate ? state : null);
+      expect(store.error()).toBe(navigate ? "" : "Unavailable");
+    });
+  }
   it("does not dispatch a harness change on started sessions or engines without selection support", async () => {
     const { store, bridge } = setup();
     await settle();

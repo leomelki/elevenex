@@ -562,3 +562,17 @@ test('composer capability metadata is optional, bounded and validated before cro
     assert.throws(() => parseChatPage({ ...page, state: { ...state, ...extra } }, 1, 2));
   }
 });
+
+test('subscription usage stays optional, scoped to its provider and bounded at the bridge', () => {
+  const { parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  const usage = { provider: 'codex', planName: 'Plus', status: 'warning', updatedAt: '2026-10-30T10:00:00Z', windows: [{ id: 'primary', label: '5-hour limit', remainingPercentage: 12, resetsAt: 1793368800 }] };
+  const parse = planUsage => parseChatPage({ ...page, state: { ...state, planUsage } }, 1, 2).state.planUsage;
+  assert.equal(parseChatPage(page, 1, 2).state.planUsage, undefined);
+  assert.equal(parse(null), null);
+  assert.deepEqual(parse({ ...usage, credential: 'discard' }), usage);
+  for (const extra of [{ provider: 'claude' }, { status: 'unknown' }, { updatedAt: 'invalid' }, { windows: [] }, { windows: Array(9).fill(usage.windows[0]) }, { windows: [usage.windows[0], usage.windows[0]] }]) assert.throws(() => parse({ ...usage, ...extra }));
+  for (const remainingPercentage of [-1, 101, NaN, Infinity, '12']) assert.throws(() => parse({ ...usage, windows: [{ ...usage.windows[0], remainingPercentage }] }));
+  for (const resetsAt of [-1, Infinity, 9e12, 'tomorrow']) assert.throws(() => parse({ ...usage, windows: [{ ...usage.windows[0], resetsAt }] }));
+});

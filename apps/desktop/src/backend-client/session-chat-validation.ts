@@ -4,6 +4,7 @@ import type {
   SessionChatItem,
   SessionChatPage,
   SessionChatState,
+  SessionChatPlanUsage,
 } from "@elevenex/shared";
 import { BackendRequestError } from "./transport";
 const invalid = () =>
@@ -81,6 +82,50 @@ function item(value: unknown): SessionChatItem {
     truncated: bool(raw["truncated"]),
   };
 }
+function planUsage(
+  value: unknown,
+  provider: unknown,
+): SessionChatPlanUsage | null {
+  if (value === null) return null;
+  const raw = chatObject(value);
+  const source = raw["provider"],
+    status = raw["status"];
+  if (
+    (source !== "codex" && source !== "claude") ||
+    source !== provider ||
+    (status !== "available" && status !== "warning" && status !== "exhausted")
+  )
+    throw invalid();
+  const updatedAt = chatText(raw["updatedAt"], 100);
+  if (!Number.isFinite(Date.parse(updatedAt))) throw invalid();
+  const windows = array(raw["windows"], 8, (value) => {
+    const window = chatObject(value);
+    const id = chatText(window["id"], 100),
+      label = chatText(window["label"], 100);
+    if (!id || !label) throw invalid();
+    return {
+      id,
+      label,
+      remainingPercentage: number(window["remainingPercentage"], 100),
+      resetsAt:
+        window["resetsAt"] === null
+          ? null
+          : number(window["resetsAt"], 8.64e12),
+    };
+  });
+  if (
+    !windows.length ||
+    new Set(windows.map((window) => window.id)).size !== windows.length
+  )
+    throw invalid();
+  return {
+    provider: source,
+    planName: nullable(raw["planName"], 100),
+    status,
+    windows,
+    updatedAt,
+  };
+}
 function state(value: unknown): SessionChatState {
   const raw = chatObject(value),
     phase = raw["phase"];
@@ -98,6 +143,11 @@ function state(value: unknown): SessionChatState {
   const context = raw["context"] === null ? null : chatObject(raw["context"]);
   return {
     provider: chatText(raw["provider"]),
+    ...(raw["planUsage"] === undefined
+      ? {}
+      : {
+          planUsage: planUsage(raw["planUsage"], raw["provider"]),
+        }),
     ...(raw["providers"] === undefined
       ? {}
       : {

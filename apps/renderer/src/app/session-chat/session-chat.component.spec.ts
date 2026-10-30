@@ -131,7 +131,12 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
     publish: (next: SessionChatPage) => {
       page = next;
     },
-    complete: () => resolve({ ok: true, value: { accepted: true } }),
+    complete: (
+      result: BackendResult<{ readonly accepted: true }> = {
+        ok: true,
+        value: { accepted: true },
+      },
+    ) => resolve(result),
   };
 }
 
@@ -317,6 +322,88 @@ describe("connected composer controls", () => {
     complete();
     await settle(fixture);
   });
+  for (const accepted of [true, false]) {
+    it(`keeps the connected agent menu open after a ${accepted ? "successful" : "rejected"} harness change`, async () => {
+      const { fixture, root, bridge, publish, complete } = setup(
+        [],
+        capabilities,
+      );
+      await settle(fixture);
+      fixture.componentInstance.store.setDraft("Keep this draft");
+      const trigger = root.querySelector<HTMLButtonElement>(
+        "ex-agent-picker > button",
+      )!;
+      trigger.focus();
+      trigger.click();
+      await settle(fixture);
+      const surface = document.querySelector<HTMLElement>(".agent-settings")!;
+      const claude = surface.querySelector<HTMLButtonElement>(
+        '[aria-label="Harness"] button[aria-label="Claude Code"]',
+      )!;
+      claude.focus();
+      claude.click();
+      await settle(fixture);
+      expect(surface.getAttribute("aria-busy")).toBe("true");
+      expect(surface.contains(document.activeElement)).toBe(true);
+      expect(bridge.sessionChatCommand).toHaveBeenCalledWith(
+        "scope",
+        expect.objectContaining({
+          action: {
+            type: "provider",
+            provider: "claude",
+            expectedProvider: "codex",
+          },
+        }),
+      );
+      if (accepted)
+        publish({
+          taskId: 1,
+          sessionId: 2,
+          cursor: "claude",
+          reset: true,
+          before: null,
+          items: [],
+          events: [],
+          state: {
+            ...capabilities,
+            provider: "claude",
+            model: "sonnet",
+            models: [{ id: "sonnet", label: "Sonnet" }],
+          },
+        });
+      complete(
+        accepted
+          ? { ok: true, value: { accepted: true } }
+          : {
+              ok: false,
+              error: {
+                code: "http",
+                status: 409,
+                message: "Harness unavailable",
+              },
+            },
+      );
+      await settle(fixture);
+      expect(document.querySelector(".agent-settings")).toBe(surface);
+      expect(surface.getAttribute("aria-busy")).toBe("false");
+      expect(surface.contains(document.activeElement)).toBe(true);
+      expect(
+        surface.querySelector('[aria-label^="Model:"]')?.textContent,
+      ).toContain(accepted ? "Sonnet" : "GPT");
+      expect(fixture.componentInstance.store.draft()).toBe("Keep this draft");
+      surface.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          keyCode: 27,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await settle(fixture);
+      expect(document.querySelector(".agent-settings")).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+    });
+  }
   it("keeps older engine settings usable without inventing thinking or fast capabilities", async () => {
     const { fixture } = setup();
     await settle(fixture);
@@ -338,5 +425,28 @@ describe("connected composer controls", () => {
       fast: true,
     });
     expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe("connected subscription quota", () => {
+  it("renders live usage and removes quota when an API-key snapshot replaces it", async () => {
+    const usage = {
+      provider: "codex" as const,
+      planName: "Plus",
+      status: "warning" as const,
+      updatedAt: new Date().toISOString(),
+      windows: [{ id: "primary", label: "5-hour limit", remainingPercentage: 12, resetsAt: Math.floor(Date.now() / 1000) + 3600 }],
+    };
+    const { fixture, root, publish } = setup([], { ...state, planUsage: usage });
+    await settle(fixture);
+    expect(root.querySelector("ex-agent-plan-meter")?.getAttribute("aria-label")).toContain("12%");
+    expect(root.querySelector("ex-agent-usage-notice")?.textContent).toContain("12% of your 5-hour limit left");
+    fixture.componentInstance.store.setDraft("Keep this draft");
+    publish({ taskId: 1, sessionId: 2, cursor: "new", reset: false, items: [], events: [], before: null, state: { ...state, planUsage: null } });
+    fixture.componentInstance.store.refresh();
+    await settle(fixture);
+    expect(root.querySelector("ex-agent-plan-meter")).toBeNull();
+    expect(root.querySelector("ex-agent-usage-notice .notice")).toBeNull();
+    expect(root.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Keep this draft");
   });
 });

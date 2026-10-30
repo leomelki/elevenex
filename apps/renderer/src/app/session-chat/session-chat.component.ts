@@ -13,6 +13,7 @@ import {
 } from "@angular/core";
 import {
   ApprovalCardComponent,
+  AgentUsageNoticeComponent,
   ChatComponent,
   ComposerComponent,
   QuestionCardComponent,
@@ -33,6 +34,7 @@ import {
 } from "../ui";
 import { SessionChatStore, type ChatSelection } from "./session-chat.store";
 import { SessionChatContentComponent } from "./session-chat-content.component";
+import { sessionPlanUsage } from "./session-chat-usage";
 
 @Component({
   selector: "ex-session-chat",
@@ -42,6 +44,7 @@ import { SessionChatContentComponent } from "./session-chat-content.component";
     ChatComponent,
     ComposerComponent,
     ApprovalCardComponent,
+    AgentUsageNoticeComponent,
     QuestionCardComponent,
     ButtonComponent,
     ContextMeterComponent,
@@ -77,11 +80,12 @@ export class SessionChatComponent {
       ? ("input" as const)
       : ("text" as const),
   );
-  private readonly identity = computed(
+  readonly identity = computed(
     () =>
       `${this.selection().scopeId}:${this.selection().taskId}:${this.selection().sessionId}`,
   );
   private copyTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly usageTime = signal(Date.now());
   readonly status = computed(() =>
     this.store.state()?.permission || this.store.state()?.question
       ? "attention"
@@ -149,6 +153,7 @@ export class SessionChatComponent {
       tokens: state.context
         ? `${this.tokenNumber.format(state.context.tokens).toLowerCase()} of ${this.tokenNumber.format(state.context.limit).toLowerCase()}`
         : undefined,
+      plan: sessionPlanUsage(state.planUsage, this.usageTime()),
     };
   });
   readonly fastAvailable = computed(() => {
@@ -195,14 +200,12 @@ export class SessionChatComponent {
   );
   async chooseProvider(provider: string): Promise<void> {
     const current = this.store.state()?.provider;
-    const identity = this.identity();
     if (current && provider !== current) {
-      const accepted = await this.store.perform({
+      await this.store.perform({
         type: "provider",
         provider,
         expectedProvider: current,
       });
-      if (accepted && identity === this.identity()) this.focusComposer();
     }
   }
   readonly permissions = computed<readonly PermissionChoice[]>(() =>
@@ -246,6 +249,12 @@ export class SessionChatComponent {
     effect(() => {
       this.identity();
       this.contentId.set(null);
+    });
+    effect((cleanup) => {
+      if (!this.store.state()?.planUsage) return;
+      this.usageTime.set(Date.now());
+      const timer = setInterval(() => this.usageTime.set(Date.now()), 30_000);
+      cleanup(() => clearInterval(timer));
     });
     inject(DestroyRef).onDestroy(() => clearTimeout(this.copyTimer));
   }

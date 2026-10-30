@@ -97,7 +97,9 @@ reference values, optional context/plan data, editable harnesses and busy states
   mounted through exit, immediately becomes inert and releases its backdrop's
   pointer handling. Reopening interrupts that exit. Nested model-menu Escape
   closes that menu first. Focus initially reads the settings heading and returns
-  to the opener on close. A compaction intent focuses stable content before its
+  to the opener on close. Harness, model, thinking and fast-mode changes keep
+  the settings menu open so users can finish adjusting the agent.
+  A compaction intent focuses stable content before its
   initiating button can disappear. When no settings are enabled, Tab/Shift Tab
   stay on the heading and Escape remains available through the whole owned pane.
 - Internal `AgentSettings` owns capability-derived choices and controlled config
@@ -111,6 +113,10 @@ reference values, optional context/plan data, editable harnesses and busy states
   as a clock ring. `AgentConfig.tokens` is display text. Optional `plan` follows
   the supplied `{ win, week, resetWin, resetWeek, name, tier }` API: fractions are
   **remaining**, independently of the session's context fraction **used**.
+  A supplied `windows` list takes precedence over that shorthand and carries
+  actual provider IDs, labels, remaining fractions, optional `weekly`, `reset`
+  and compact `resetShort` text. A weekly-only snapshot never invents a 5-hour
+  allowance. Optional `exhausted` also reflects a provider-declared limit.
   Missing plan data is omitted. No account catalog, provider or transport reads
   originate in these components.
 - Internal `PopoverPresence` retains the two portaled surfaces and their
@@ -124,8 +130,11 @@ reference values, optional context/plan data, editable harnesses and busy states
 Model labels come from `AgentModel.label`. Settings emit a config intent, never a
 platform operation. Fork, Save as preset and Compact emit their existing typed
 intents only when enabled by the integrating owner. The connected session owner
-supplies live context and token usage; optional plan data is a supplied-data UI
-capability until a backend adapter advertises it. Unimplemented platform actions
+supplies live context, token usage and provider-reported subscription limits.
+`AgentUsageNotice` accepts `agent` and a session `identity`; it chooses one line
+in order: exhausted plan, critical context, low plan, high context. Only the low
+plan/high context lines can be dismissed; `dismissed` lets the owner restore focus.
+It does not schedule prompts or change an agent's execution. Unimplemented platform actions
 remain hidden there. Preview actions are local examples, outside the product graph.
 
 The reference's content-box dimensions are translated explicitly to the renderer's
