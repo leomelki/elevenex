@@ -141,6 +141,35 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it("retains separate tool names, output and failures when live work becomes saved history", async () => {
+    const items = [
+      item("u", "user", "Check the code"),
+      { ...item("read:tool_use", "tool_use", ""), toolId: "read", toolKind: "read", toolName: "Read", input: '{"file_path":"package.json"}' },
+      { ...item("read:tool_result", "tool_result", '{"name":"example"}'), toolId: "read" },
+      { ...item("test:tool_use", "tool_use", ""), toolId: "test", toolKind: "bash", toolName: "Bash", input: '{"command":"pnpm test"}' },
+      { ...item("test:tool_result", "tool_result", "FAIL retry.spec.ts"), toolId: "test", error: true },
+    ];
+    const { fixture, root, publish } = setup(items, { ...state, phase: "running" });
+    await settle(fixture);
+    publish({ taskId: 1, sessionId: 2, cursor: "saved", reset: true, before: null,
+      items: [...items, item("answer", "assistant", "The test failed; the output is retained.")], events: [], state });
+    await fixture.componentInstance.store.refresh();
+    await settle(fixture);
+    const work = root.querySelector<HTMLButtonElement>("ex-turn .work")!;
+    if (work.getAttribute("aria-expanded") === "false") work.click();
+    await settle(fixture);
+    const tools = root.querySelectorAll("ex-tool-step");
+    expect(tools).toHaveLength(2);
+    expect(tools[0]?.querySelector(".verb")?.textContent).toBe("Read");
+    expect(tools[1]?.querySelector(".verb")?.textContent).toBe("Bash");
+    expect(tools[0]?.querySelector("section.failed")).toBeNull();
+    expect(tools[1]?.querySelector("section.failed")).not.toBeNull();
+    tools[1]?.querySelector<HTMLButtonElement>(".head")?.click();
+    await settle(fixture);
+    expect(tools[1]?.querySelector("pre")?.textContent).toContain("FAIL retry.spec.ts");
+    expect(root.textContent).not.toContain("Script completed");
+  });
+
   for (const phase of ["running", "idle"] as const) {
     it(`keeps tools after the message that introduced them while ${phase}, with collapsible output`, async () => {
       const { fixture, root } = setup([

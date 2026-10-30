@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { codexWebSearchInput } from './codex-web-search.js';
+import { codexHistoryTools } from './codex-history-tools.js';
 import { codexAgentMessage } from './codex-agent-message.js';
 import { promises as fs } from 'fs';
 import { createReadStream } from 'fs';
@@ -591,6 +592,7 @@ export class CodexHistoryService {
 
   private normalizeRecords(records: JsonRecord[]): ClaudeTranscriptItem[] {
     const items: ClaudeTranscriptItem[] = [];
+    const { native, nativeToolIds, wrappers } = codexHistoryTools(records);
     const asyncQuestions = new Map<string, ClaudeTranscriptItem>();
     const answeredQuestions = new Map<string, ClaudeTranscriptItem>();
     const responseMessageIds = new Set(
@@ -607,6 +609,11 @@ export class CodexHistoryService {
     for (const [index, record] of records.entries()) {
       const timestamp =
         stringValue(record.timestamp) ?? new Date().toISOString();
+      const nativeTools = native.get(index);
+      if (nativeTools) {
+        items.push(...nativeTools);
+        continue;
+      }
       if (this.isVisibleUserMessage(record)) {
         const content = this.extractUserMessageText(record);
         if (content) {
@@ -701,6 +708,12 @@ export class CodexHistoryService {
       if (!payloadItem) {
         continue;
       }
+      // Native receipts use the live stream's IDs, arguments, output and exit
+      // status. Do not duplicate them with raw calls or their exec envelopes.
+      const toolId =
+        stringValue(payloadItem.call_id) ?? stringValue(payloadItem.id);
+      if (toolId && (nativeToolIds.has(toolId) || wrappers.has(toolId)))
+        continue;
       if (payloadItem.type === 'web_search_call') {
         const id =
           stringValue(payloadItem.id) ??

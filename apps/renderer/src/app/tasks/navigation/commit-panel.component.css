@@ -255,8 +255,3 @@ button:disabled {
     transition: none;
   }
 }
-
-.commit-layer.pending {
-  visibility: hidden;
-  pointer-events: none;
-}

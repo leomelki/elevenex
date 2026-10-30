@@ -20,6 +20,10 @@ so nested/preview backend scopes resolve consistently.
   pairing tools/results by tool ID and preserving commentary, reasoning,
   unknown tools, orphan results and explicit failures. Fresh prompts alone opt
   into entry motion; initial history stays still.
+- Codex history restores native command, patch, MCP and web-search receipts with
+  the live stream's tool IDs. Code-mode `exec` envelopes are omitted when native
+  receipts supply the work, retaining separate output and exit/error status for
+  each tool. Envelopes without supported native receipts remain inspectable.
 - `SessionChatContent` reads original long messages, tool input and output in
   16,000-character pages. Its modal owns focus and cancellation. Content is
   rendered as text, including HTML returned by tools.

@@ -2,7 +2,6 @@
   <div
     #layer
     class="commit-layer"
-    [class.pending]="pending()"
     [attr.inert]="open() && presenting() ? null : ''"
     [attr.aria-hidden]="!open() || !presenting()"
     [cdkTrapFocus]="open() && presenting()"

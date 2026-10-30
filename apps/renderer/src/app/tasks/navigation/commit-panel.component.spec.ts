@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommitPanelComponent } from "./commit-panel.component";
 import { TaskGroupComponent } from "../outline/task-group.component";
 import { TaskHeaderComponent } from "../lifecycle/task-header.component";
-import type { CommitFile } from "./commit-panel.models";
+import type { CommitFile, CommitFileWindow } from "./commit-panel.models";
 
 const files: readonly CommitFile[] = [
   {
@@ -43,6 +43,84 @@ function panel() {
   return { fixture, root: fixture.nativeElement as HTMLElement };
 }
 describe("commit panel public behavior", () => {
+  it("opens and accepts a message before the file check completes, then enables submission", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolve!: (value: CommitFileWindow) => void;
+      const provider = vi.fn(() => new Promise<CommitFileWindow>((done) => { resolve = done; }));
+      const fixture = TestBed.createComponent(CommitPanelComponent);
+      fixture.componentRef.setInput("fileProvider", provider);
+      fixture.componentRef.setInput("open", true);
+      fixture.detectChanges();
+      TestBed.tick();
+      await vi.advanceTimersByTimeAsync(0);
+      fixture.detectChanges();
+      TestBed.tick();
+      const root = fixture.nativeElement as HTMLElement;
+      const layer = root.querySelector<HTMLElement>(".commit-layer")!;
+      expect(layer.getAttribute("aria-hidden")).toBe("false");
+      expect(layer.hasAttribute("inert")).toBe(false);
+      expect(getComputedStyle(layer).visibility).toBe("visible");
+      expect(root.querySelector<HTMLButtonElement>("footer button[exButton]")!.disabled).toBe(true);
+      const message = root.querySelector<HTMLInputElement>(".message input")!;
+      message.value = "Keep the menu responsive";
+      message.dispatchEvent(new Event("input"));
+      const commit = vi.fn();
+      fixture.componentInstance.commitRequested.subscribe(commit);
+      message.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(commit).not.toHaveBeenCalled();
+      resolve({
+        revision: "checked-revision", items: [files[1]!], nextCursor: null,
+        matches: 1, total: 1, unstaged: 0,
+        selected: { files: 1, add: 100, del: 0, staged: 1, unstaged: 0 }, running: [],
+      });
+      await Promise.resolve();
+      fixture.detectChanges();
+      TestBed.tick();
+      expect(root.querySelector(".message input")).toBe(message);
+      expect(message.value).toBe("Keep the menu responsive");
+      const submit = root.querySelector<HTMLButtonElement>("footer button[exButton]")!;
+      expect(submit.disabled).toBe(false);
+      submit.click();
+      expect(commit).toHaveBeenCalledWith(expect.objectContaining({ message: message.value, revision: "checked-revision" }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes during the initial file check and ignores its late failure", async () => {
+    vi.useFakeTimers();
+    try {
+      let reject!: (reason: Error) => void;
+      let signal!: AbortSignal;
+      const fixture = TestBed.createComponent(CommitPanelComponent);
+      fixture.componentRef.setInput("fileProvider", (_query: unknown, abort: AbortSignal) => {
+        signal = abort;
+        return new Promise<CommitFileWindow>((_resolve, fail) => { reject = fail; });
+      });
+      fixture.componentRef.setInput("open", true);
+      fixture.detectChanges();
+      TestBed.tick();
+      await vi.advanceTimersByTimeAsync(0);
+      const close = vi.fn(() => fixture.componentRef.setInput("open", false));
+      fixture.componentInstance.closeRequested.subscribe(close);
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      fixture.detectChanges();
+      TestBed.tick();
+      expect(close).toHaveBeenCalledOnce();
+      expect(signal.aborted).toBe(true);
+      reject(new Error("Late file check failure"));
+      await Promise.resolve();
+      fixture.detectChanges();
+      TestBed.tick();
+      const root = fixture.nativeElement as HTMLElement;
+      expect(root.querySelector("[role=alert]")).toBeNull();
+      expect(root.querySelector('.commit-layer[aria-hidden="false"]')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("defaults to all safe files, keeps the list folded, and commits an empty optional message", () => {
     const { fixture, root } = panel();
     const commit = vi.fn();

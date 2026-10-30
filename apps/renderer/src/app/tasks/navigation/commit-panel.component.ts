@@ -63,13 +63,6 @@ export class CommitPanelComponent implements OnChanges {
   readonly commitRequested = output<CommitIntent>();
   protected readonly retained = signal(false);
   protected readonly presenting = signal(false);
-  protected readonly pending = computed(
-    () =>
-      !!this.fileProvider() &&
-      !this.remote() &&
-      !this.error() &&
-      !this.presenting(),
-  );
   protected readonly message = signal("");
   protected readonly list = signal(false);
   protected readonly query = signal("");
@@ -246,15 +239,6 @@ export class CommitPanelComponent implements OnChanges {
       if (!layer) return;
       if (!this.open() && !this.mode) {
         this.retained.set(false);
-        this.opener?.setAttribute("aria-busy", "false");
-        return;
-      }
-      if (this.open() && this.pending()) {
-        this.opener =
-          this.root
-            .closest("ex-git-bar")
-            ?.querySelector<HTMLElement>(".primary") ?? undefined;
-        this.opener?.setAttribute("aria-busy", "true");
         return;
       }
       if (this.open() && this.mode !== "open") {
@@ -263,7 +247,6 @@ export class CommitPanelComponent implements OnChanges {
             .closest("ex-git-bar")
             ?.querySelector<HTMLElement>(".primary") ?? undefined;
         this.presenting.set(true);
-        this.opener?.setAttribute("aria-busy", "false");
         this.opener?.setAttribute("aria-expanded", "true");
         this.opener?.setAttribute("aria-haspopup", "dialog");
         this.fit();

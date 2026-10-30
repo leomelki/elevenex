@@ -142,6 +142,8 @@ retains one page; **Next files** replaces it inside the same six-row scroll area
 The owner must honor abort/stale scope checks. Paged owners commit the explicit
 `selection` and `revision`; `intent.files` is complete only for supplied-data use.
 Exceptions are limited to 1,000 paths and 64 KiB per list by the platform boundary.
+The panel opens immediately while the provider checks files. The message stays
+editable during loading; submission remains disabled until the check succeeds.
 
 The panel owns draft/filter/disclosures, focus trapping, Escape/outside dismissal,
 resize observation and its retained exit. Its content stays frozen while closing.

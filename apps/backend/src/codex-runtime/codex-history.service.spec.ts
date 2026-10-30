@@ -2,8 +2,170 @@ import { CodexHistoryService } from './codex-history.service.js';
 import { appendFile, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { chatWindow } from '../desktop-workspace/desktop-chat-projection.js';
 
 describe('CodexHistoryService', () => {
+  it('restores native tools inside exec with stable live IDs, readable output and individual failures', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-native-tools-'));
+    try {
+      const stamp = '2026-10-30T10:00:00Z';
+      const response = (payload: Record<string, unknown>) => ({
+        type: 'response_item',
+        timestamp: stamp,
+        payload,
+      });
+      const completed = (item: Record<string, unknown>) => ({
+        type: 'event_msg',
+        timestamp: stamp,
+        payload: { type: 'item_completed', item },
+      });
+      const read = {
+        type: 'CommandExecution',
+        id: 'read',
+        command: 'cat package.json',
+        parsed_cmd: [
+          { type: 'read', path: 'package.json', cmd: 'cat package.json' },
+        ],
+        status: 'completed',
+        exit_code: 0,
+        aggregated_output: '{"name":"example"}',
+      };
+      await writeFile(
+        join(root, 'native.jsonl'),
+        [
+          { type: 'session_meta', payload: { id: 'native', cwd: '/repo' } },
+          response({
+            type: 'custom_tool_call',
+            call_id: 'wrapper',
+            name: 'exec',
+            input: 'JavaScript wrapper',
+          }),
+          completed(read),
+          completed({
+            type: 'CommandExecution',
+            id: 'test',
+            command: 'pnpm test',
+            status: 'completed',
+            exit_code: 1,
+            aggregated_output: 'FAIL retry.spec.ts',
+          }),
+          completed({
+            type: 'McpToolCall',
+            id: 'mcp',
+            server: 'repo',
+            tool: 'lookup',
+            arguments: { query: 'retry' },
+            status: 'completed',
+            result: {
+              isError: true,
+              content: [{ type: 'text', text: 'Lookup failed' }],
+            },
+          }),
+          completed({
+            type: 'FileChange',
+            id: 'patch',
+            status: 'failed',
+            changes: {
+              'retry.ts': { type: 'update', unified_diff: '-old\n+new' },
+            },
+            stderr: 'Patch rejected',
+          }),
+          completed({
+            type: 'Extension',
+            kind: 'web.search',
+            id: 'search',
+            query: 'retry behavior',
+            results: [],
+          }),
+          response({
+            type: 'custom_tool_call_output',
+            call_id: 'wrapper',
+            output: 'Script completed\n[large duplicate output]',
+          }),
+          // Some versions also save a raw call with the native tool's ID.
+          response({
+            type: 'function_call',
+            call_id: 'read',
+            name: 'exec_command',
+            arguments: '{"cmd":"cat package.json"}',
+          }),
+          response({
+            type: 'function_call_output',
+            call_id: 'read',
+            output: 'duplicate output',
+          }),
+          // Without native receipts the wrapper remains the only evidence.
+          response({
+            type: 'custom_tool_call',
+            call_id: 'fallback',
+            name: 'exec',
+            input: 'text("useful script")',
+          }),
+          response({
+            type: 'custom_tool_call_output',
+            call_id: 'fallback',
+            output: 'useful script',
+          }),
+        ]
+          .map((row) => JSON.stringify(row))
+          .join('\n'),
+      );
+
+      for (let reload = 0; reload < 2; reload++) {
+        const history = await new CodexHistoryService(root).getHistory(
+          'native',
+        );
+        const page = chatWindow(history, []);
+        expect(page?.items).toHaveLength(12);
+        expect(
+          page?.items.find((item) => item.id === 'read:tool_use'),
+        ).toMatchObject({
+          toolId: 'read',
+          toolName: 'Read',
+          toolKind: 'read',
+          input: expect.stringContaining('package.json'),
+        });
+        expect(
+          page?.items.find((item) => item.id === 'test:tool_result'),
+        ).toMatchObject({
+          text: 'FAIL retry.spec.ts',
+          error: true,
+        });
+        expect(
+          page?.items.find((item) => item.id === 'mcp:tool_result'),
+        ).toMatchObject({
+          text: 'Lookup failed',
+          error: true,
+        });
+        expect(
+          page?.items.find((item) => item.id === 'patch:tool_use')?.toolKind,
+        ).toBe('file_changes');
+        expect(
+          page?.items.find((item) => item.id === 'patch:tool_result'),
+        ).toMatchObject({
+          text: 'update: retry.ts\nPatch rejected',
+          error: true,
+        });
+        expect(
+          page?.items.find((item) => item.id === 'search:tool_use')?.toolKind,
+        ).toBe('web_search');
+        expect(history.some((item) => item.toolUseId === 'wrapper')).toBe(
+          false,
+        );
+        expect(
+          history.filter((item) => item.toolUseId === 'fallback'),
+        ).toHaveLength(2);
+        expect(
+          history.filter((item) => item.toolUseId === 'read'),
+        ).toHaveLength(2);
+        const live = history.filter((item) => item.toolUseId === 'test');
+        expect(chatWindow(history, live)?.items).toEqual(page?.items);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('restores incoming agent routing and readable bodies after reload', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-agent-messages-'));
     try {
