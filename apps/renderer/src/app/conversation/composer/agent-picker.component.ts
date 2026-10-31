@@ -45,10 +45,10 @@ import { AgentMarkComponent } from "./agent-mark.component";
   styleUrl: "./agent-picker.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    "(mouseenter)": "pointerInside.set(true)",
-    "(mouseleave)": "pointerInside.set(false)",
-    "(focusin)": "triggerFocused.set(true)",
-    "(focusout)": "triggerFocused.set(false)",
+    "(mousemove)": "usageHovered.set(!open())",
+    "(mouseleave)": "usageHovered.set(false)",
+    "(focusin)": "focusTrigger()",
+    "(focusout)": "usageFocused.set(false)",
   },
 })
 export class AgentPickerComponent {
@@ -68,8 +68,8 @@ export class AgentPickerComponent {
   readonly compactRequested = output<void>();
   readonly open = signal(false);
   protected readonly usageOpen = signal(false);
-  protected readonly pointerInside = signal(false);
-  protected readonly triggerFocused = signal(false);
+  protected readonly usageHovered = signal(false);
+  protected readonly usageFocused = signal(false);
   private readonly destroy = inject(DestroyRef);
   private readonly element =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
@@ -147,9 +147,10 @@ export class AgentPickerComponent {
       this.hasUsage() &&
       !this.open() &&
       !this.disabled() &&
-      (this.pointerInside() || this.triggerFocused()),
+      (this.usageHovered() || this.usageFocused()),
   );
   private restoreTarget: HTMLElement | null = null;
+  private restoringFocus = false;
   private focused = false;
 
   constructor() {
@@ -162,6 +163,10 @@ export class AgentPickerComponent {
             ? document.activeElement
             : null;
         this.usageOpen.set(false);
+        // Settings consume this interaction. Listen for actual mouse movement:
+        // removing the backdrop can synthesize mouseenter over a still cursor.
+        this.usageHovered.set(false);
+        this.usageFocused.set(false);
       } else if (!open && wasOpen) {
         this.restoreFocus();
       }
@@ -232,6 +237,9 @@ export class AgentPickerComponent {
   protected toggle(): void {
     if (!this.disabled()) this.open.update((open) => !open);
   }
+  protected focusTrigger(): void {
+    this.usageFocused.set(!this.open() && !this.restoringFocus);
+  }
   protected compact(): void {
     // A successful compaction removes its button. Move focus to stable content.
     this.dialog()
@@ -275,8 +283,14 @@ export class AgentPickerComponent {
         focus === document.body) &&
       this.restoreTarget?.isConnected &&
       !this.restoreTarget.matches(":disabled")
-    )
-      this.restoreTarget.focus({ preventScroll: true });
+    ) {
+      this.restoringFocus = true;
+      try {
+        this.restoreTarget.focus({ preventScroll: true });
+      } finally {
+        this.restoringFocus = false;
+      }
+    }
   }
   private thinkingLabel(value: string | undefined): string {
     return value === "xhigh"

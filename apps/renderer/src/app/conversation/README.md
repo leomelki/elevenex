@@ -101,7 +101,9 @@ reference values, optional context/plan data, editable harnesses and busy states
   mounted through exit, immediately becomes inert and releases its backdrop's
   pointer handling. Reopening interrupts that exit. Nested model-menu Escape
   closes that menu first. Focus initially reads the settings heading and returns
-  to the opener on close. Harness, model, thinking and fast-mode changes keep
+  to the opener on close. Opening settings consumes the current usage hover/focus;
+  restored focus does not reopen usage until a fresh hover or focus interaction.
+  Harness, model, thinking and fast-mode changes keep
   the settings menu open so users can finish adjusting the agent.
   A compaction intent focuses stable content before its
   initiating button can disappear. When no settings are enabled, Tab/Shift Tab

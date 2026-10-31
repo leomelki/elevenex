@@ -257,6 +257,51 @@ describe("AgentPicker controlled settings and focus", () => {
     await settle(fixture);
     expect(document.querySelector(".agent-settings")).toBeNull();
   });
+  it.each(["Escape", "backdrop", "trigger", "owner"])(
+    "keeps usage closed after dismissing settings via %s until a fresh hover or focus",
+    async (dismissal) => {
+      const { fixture, trigger, open } = await setup();
+      fixture.componentRef.setInput("value", {
+        ...agent,
+        plan: { week: 0.58 },
+      });
+      const host = fixture.nativeElement as HTMLElement;
+      host.dispatchEvent(new MouseEvent("mousemove"));
+      await open();
+      if (dismissal === "Escape")
+        escape(button('.agent-settings [aria-label^="Model:"]'));
+      else if (dismissal === "backdrop")
+        document.querySelector<HTMLElement>(".cdk-overlay-backdrop")?.click();
+      else if (dismissal === "trigger") trigger.click();
+      else fixture.componentInstance.closePicker();
+      await settle(fixture);
+      expect(document.activeElement).toBe(trigger);
+      // Uncovering the trigger can generate an enter without pointer movement.
+      host.dispatchEvent(new MouseEvent("mouseenter"));
+      await new Promise((resolve) => setTimeout(resolve, 420));
+      await settle(fixture);
+      expect(document.querySelector('[role="tooltip"]')).toBeNull();
+      expect(trigger.hasAttribute("aria-describedby")).toBe(false);
+
+      host.dispatchEvent(new MouseEvent("mouseleave"));
+      host.dispatchEvent(new MouseEvent("mouseenter"));
+      host.dispatchEvent(new MouseEvent("mousemove"));
+      await settle(fixture);
+      await new Promise((resolve) => setTimeout(resolve, 420));
+      await settle(fixture);
+      expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+      host.dispatchEvent(new MouseEvent("mouseleave"));
+      await settle(fixture);
+      expect(document.querySelector('[role="tooltip"]')).toBeNull();
+
+      trigger.blur();
+      trigger.focus();
+      await settle(fixture);
+      await new Promise((resolve) => setTimeout(resolve, 420));
+      await settle(fixture);
+      expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+    },
+  );
   it("discloses usage after the focus delay and releases hover and portal resources on destruction", async () => {
     const { fixture, trigger } = await setup();
     // Usage can arrive after focus, without another pointer or focus event.

@@ -1712,3 +1712,25 @@ the production composition with its preview provider cover light/dark themes,
 narrow layout, reduced motion, menu keyboard activation, Escape/focus return and
 retained output after recovery. The PNGs were inspected. This is unpackaged
 verification; no packaged launch was attempted.
+
+### Agent picker usage dismissal (2026-10-31)
+
+Opening agent settings consumes the current usage hover/focus. Restoring the
+opener's focus or uncovering it when the backdrop leaves does not reopen the
+quota tooltip; a fresh mouse movement or keyboard focus still discloses usage.
+Regression tests cover Escape, backdrop, trigger and owner-driven dismissal.
+
+Lint, renderer TypeScript checks, all 461 renderer tests and the production
+desktop build pass. The broader desktop suite passes 108 of 113 tests; five
+backend/remote process tests fail with local Node stack/startup errors. Validation
+used temporary larger-stack Node/Electron launchers outside the source tree
+because the default runtimes also overflowed during built-in module loading.
+No dependency or lockfile changes were needed.
+
+`artifacts/desktop-capture/agent-usage-dismissal-final/report.json` is
+**verified: true**, with 12 checkpoints and no errors/warnings. Native preview
+coverage includes light/dark usage dismissal with retained opener focus, fresh
+hover disclosure and dismissal, settings changes, interrupted reopening, busy
+controls, narrow layouts and reduced motion. The light/dark dismissed-state PNGs
+were inspected. This checks the real components with preview data; no packaged
+launch was attempted.

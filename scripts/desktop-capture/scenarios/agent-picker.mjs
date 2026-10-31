@@ -46,6 +46,7 @@ export default async function* (capture) {
     assert.equal(await capture.evaluate(() => document.querySelectorAll('.agent-settings').length), 1);
     await close();
     await capture.component('ex-agent-picker-demo', c => c.usage(true));
+    await capture.hover('ex-agent-picker-demo h1');
     await capture.hover('ex-agent-picker > button');
     await capture.waitFor(() => !!document.querySelector('.usage-card:not(.leaving)')); await finish();
     assert.equal(await capture.evaluate(() => !!document.querySelector('.usage-card button, .usage-card input')), false);
@@ -53,6 +54,18 @@ export default async function* (capture) {
     await open(); await capture.waitFor(() => !document.querySelector('.usage-card'));
     assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings').getBoundingClientRect().height), 419);
     yield { name:theme+'-usage-menu', selector:'.agent-settings', inspect:['.agent-settings','ex-agent-usage','.plan-heading','.limit'] };
+    await close();
+    // Wait beyond disclosure and exit: focus restoration must not open usage.
+    await new Promise(resolve => setTimeout(resolve, 550));
+    assert.equal(await capture.evaluate(() => !!document.querySelector('.usage-card')), false);
+    assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-agent-picker > button')), true);
+    yield { name:theme+'-usage-dismissed', inspect:['ex-agent-picker > button','.usage-card'] };
+    await capture.hover('ex-agent-picker-demo h1');
+    await capture.hover('ex-agent-picker > button');
+    await capture.waitFor(() => !!document.querySelector('.usage-card:not(.leaving)'));
+    await capture.hover('ex-agent-picker-demo h1');
+    await capture.waitFor(() => !document.querySelector('.usage-card'));
+    await open();
     await capture.click('.agent-settings button.compact');
     await capture.waitFor(() => !document.querySelector('.agent-settings button.compact'));
     assert.equal(await capture.evaluate(() => !!document.activeElement?.matches('.agent-settings .heading')), true);
