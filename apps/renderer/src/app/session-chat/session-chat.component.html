@@ -56,7 +56,8 @@
   (copyCode)="copy($event, true)"
   (openLink)="openLink($event)"
   (openPage)="openFile($event)"
-  (openFile)="openFile($event)"
+  (fileReview)="review($event.id, $event.path)"
+  (review)="review($event)"
   (contentRequested)="contentId.set($event)"
 >
   <div chatHistory class="history-controls">

@@ -80,3 +80,16 @@ focused; editable fields retain their normal keys.
 
 Sample data is isolated in `apps/renderer/preview/`. The production components
 contain no fixtures or platform calls.
+
+
+`fullFilesAvailable=false` hides Full files when a source provides recorded diffs
+only. `openFilesAvailable=false` on `DiffReview`/`DiffFile` hides Code opening when
+that platform operation is unavailable. Defaults preserve existing consumers.
+`DiffFileContent.hasMoreLines` supports cursor-based content sources without a
+known remaining count; it shows “More lines available” and emits the existing
+`more` request, alongside the existing exact `remainingLines` option.
+
+For replacement content windows, set `hasPreviousLines` to expose Previous lines
+on that file. It emits `reason: 'previous'`; the owner supplies that earlier page
+with the same file/revision/mode identity. This keeps line paging attached to the
+file while scroll-based selection moves between its neighbours.

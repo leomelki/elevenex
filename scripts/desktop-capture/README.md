@@ -447,3 +447,10 @@ keyboard choice, delayed/cancelled model reads, retry, per-harness draft recover
 Cancel isolation and applying a chosen harness only on Create. It covers both
 themes, narrow/compact reduced-motion layouts and retained message/name drafts.
 Run it against the connected-workspace preview URL.
+
+
+`scenarios/session-changes.mjs` exercises the production reply outcome and its
+connected Changes panel using preview-only backend data: file chips and counts,
+mouse/keyboard Review, exact file selection, wide/compact panels, 1,001-file
+summaries, bounded line paging, errors and narrow reduced-motion states in both
+themes. Run against the same preview URL, sequentially with native captures.

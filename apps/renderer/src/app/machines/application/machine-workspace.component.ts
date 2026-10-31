@@ -5,6 +5,7 @@ import { ButtonComponent, IconComponent, SkeletonComponent } from '../../ui';
 import { WorkspacePanelsComponent } from '../../workbench/workspace-panels.component';
 import { WorkspaceDialogsComponent, WorkspaceNavigationComponent, WorkspaceOnboardingComponent, WorkspaceProjectRailComponent, WorkspaceStore, WorkspaceTaskSetupComponent, WorkspaceTaskHeaderComponent } from '../../workspace';
 import type { Machine } from '../index';
+import { SessionChatReviewComponent, type ChatReviewTarget } from '../../session-chat/session-chat-review.component';
 import { SessionChatComponent } from '../../session-chat/session-chat.component';
 import { SessionChatDrafts } from '../../session-chat/session-chat-drafts';
 import { SessionChatClient } from '../../backend/session-chat-client.service';
@@ -13,7 +14,7 @@ import { SessionChatClient } from '../../backend/session-chat-client.service';
 @Component({
   selector: 'ex-machine-workspace',
   providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient],
-  imports: [SessionChatComponent, AppShellComponent, ButtonComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  imports: [SessionChatReviewComponent, SessionChatComponent, AppShellComponent, ButtonComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
   templateUrl: './machine-workspace.component.html',
   styleUrl: './machine-workspace.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -31,6 +32,14 @@ export class MachineWorkspaceComponent {
   readonly panelOpen = this.store.panelOpen;
   readonly panel = this.store.panel;
   readonly wideReview = this.store.wideReview;
+  readonly reviewTarget = signal<ChatReviewTarget | null>(null);
+  readonly selectedReview = computed(() => {
+    const target = this.reviewTarget(), selected = this.store.selected();
+    return target && selected && target.scopeId === selected.scopeId && target.taskId === selected.taskId && target.sessionId === selected.sessionId ? target : null;
+  });
+  review(target: ChatReviewTarget): void {
+    this.reviewTarget.set(target); this.store.selectPanel('changes'); this.panelOpen.set(true);
+  }
   readonly launch = signal<'idle' | 'creating' | 'flying'>('idle');
   private readonly setupStarted = signal(false);
   readonly onboarding = computed(() => this.launch() !== 'idle' || (!!this.store.scopeId() && !this.store.loading() && !this.store.projects().length && (!this.store.error() || this.setupStarted())));

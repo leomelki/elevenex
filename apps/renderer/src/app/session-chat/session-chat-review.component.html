@@ -1,0 +1,54 @@
+@if (busy()) {
+  <p class="feedback" role="status">Loading changes…</p>
+} @else if (error()) {
+  <div class="feedback" role="alert">
+    <p>{{ error() }}</p>
+    <button exButton variant="secondary" (click)="load()">Retry</button>
+  </div>
+} @else if (page(); as page) {
+  @if (page.total > 100) {
+    <nav class="pages" aria-label="Reply changes pages">
+      @if (page.total > 100) {
+        <button
+          exButton
+          variant="ghost"
+          size="sm"
+          [disabled]="page.offset === 0"
+          (click)="pageFiles(-1)"
+        >
+          Previous files
+        </button>
+        <span
+          >{{ page.offset + 1 }}–{{ page.offset + page.files.length }} of
+          {{ page.total }}</span
+        >
+        <button
+          exButton
+          variant="ghost"
+          size="sm"
+          [disabled]="page.nextOffset === null"
+          (click)="pageFiles(1)"
+        >
+          Next files
+        </button>
+      }
+
+    </nav>
+  }
+  <ex-diff-review
+    [files]="files()"
+    [contents]="contents()"
+    [activeFileId]="activeFile()"
+    [wide]="wide()"
+    [wrap]="wrap()"
+    [fullFilesAvailable]="false"
+    [commentsEnabled]="false"
+    [openFilesAvailable]="false"
+    (fileSelected)="activeFile.set($event)"
+    (fileRequested)="request($event)"
+    (viewedChange)="viewed($event)"
+    (wrapChange)="wrap.set($event)"
+    (wideChange)="wideChange.emit($event)"
+    (exitRequested)="exitRequested.emit()"
+  />
+}

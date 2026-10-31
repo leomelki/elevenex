@@ -98,6 +98,7 @@
     ><footer>
       <ex-outcome-bar
         [files]="files()"
+        [filesTotal]="filesTotal()"
         action=""
         (openFile)="openFile.emit($event)"
         (review)="review.emit()"

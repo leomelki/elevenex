@@ -12,6 +12,7 @@ const page = <T>(items: readonly T[]): WorkspacePage<T> => ({ items, nextCursor:
 export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   readonly chat = new SessionChatFixture(inject(DestroyRef));
   sessionChatCatalog = (_scope: string, input: import('@elevenex/shared').SessionChatCatalogRead) => this.chat.catalog(input);
+  sessionChatChanges = (_scope: string, input: import('@elevenex/shared').SessionChatChangesRead) => this.chat.changes(input);
   sessionChatRead = (_scope: string, input: import('@elevenex/shared').SessionChatRead) => this.chat.read(input);
   sessionChatCommand = (_scope: string, input: import('@elevenex/shared').SessionChatCommand) => this.chat.command(input);
   sessionChatContent = (_scope: string, input: import('@elevenex/shared').SessionChatContentRead) => this.chat.content(input);

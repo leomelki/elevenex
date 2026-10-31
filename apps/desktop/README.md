@@ -18,8 +18,9 @@ Once a configured machine is ready, the connected workspace loads projects,
 tasks and sessions through scope-bound named bridge operations. It includes
 project creation/settings, task creation/preparation/recovery, task stages, safe
 git operations and close/reopen flows. Selected sessions render streaming chat
-with tool activity, decisions, queue controls and retained drafts; side views
-provide their frames only. See [chat ownership](../renderer/src/app/session-chat/README.md)
+with tool activity, decisions, queue controls and retained drafts. Completed
+replies expose their changed files and a paginated Changes review; other side
+views provide their frames only. See [chat ownership](../renderer/src/app/session-chat/README.md)
 and the [workspace guide](../renderer/src/app/workspace/README.md).
 The backend gains additive `desktop-workspace` routes;
 the existing app's routes and defaults remain available. A versioned capability
@@ -69,6 +70,12 @@ dependencies, migrations and assets. Mutable data remains under
 launch development (including the `better-sqlite3` and `node-pty` native modules).
 Restart `pnpm desktop:dev` after backend edits to rebuild the bundle. Renderer
 HMR and main/preload restarts continue to work during the run.
+
+If the engine fails to start, open the machine card's **… → View error details…**
+to read and select the diagnostic output. Startup failures include bounded tails
+from stderr and stdout. A missing `better-sqlite3` binding requires rebuilding
+the checkout's native dependencies with `pnpm --dir apps/backend rebuild better-sqlite3 node-pty`
+under the same Node version used to launch development.
 
 The launcher supplies `ELEVENEX_DESKTOP_DEV_BACKEND` and
 `ELEVENEX_DESKTOP_DEV_NODE` only to its Electron child. Packaged applications

@@ -143,6 +143,7 @@ export function chatExchanges(
           toolIds.has(item.toolId)
         )
           return [];
+        if (item.kind === "system" && item.changes && !item.text.trim()) return [];
         if (item.kind === "tool_use") {
           const result = results.get(item.toolId ?? item.id);
           return [
@@ -201,6 +202,10 @@ export function chatExchanges(
           },
         ];
       });
+    const captured = group.items.filter(item => item.kind === "system" && item.changes).at(-1)?.changes;
+    const reported = new Map(group.items.flatMap(item => item.kind === "tool_result" && !item.error ? (item.changes?.files ?? []).map(file => [file.path, file] as const) : []));
+    const files = captured?.files ?? [...reported.values()];
+    const filesTotal = captured?.total ?? files.length;
     return {
       overflow: group.items
         .filter((item) => item.truncated)
@@ -229,6 +234,8 @@ export function chatExchanges(
           ? "failed"
           : "done",
       steps,
+      files,
+      filesTotal,
       answerBeforeStepId:
         finalEnd > 0
           ? steps.find((step) => followingIds.has(step.id))?.id

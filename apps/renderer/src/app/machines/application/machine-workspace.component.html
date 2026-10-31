@@ -5,7 +5,7 @@
     <div shellMain class="main-content">
       @if (store.selected()) {
         <ex-workspace-task-header [panelOpen]="panelOpen()" (panelToggle)="togglePanel()" />
-        <ex-session-chat [selection]="store.selected()!" [archived]="store.selectedSession()?.status === 'archived' || store.selectedTask()?.state === 'finished'" (reviewRequested)="store.selectPanel('changes'); panelOpen.set(true)" />
+        <ex-session-chat [selection]="store.selected()!" [archived]="store.selectedSession()?.status === 'archived' || store.selectedTask()?.state === 'finished'" (reviewRequested)="review($event)" />
       } @else if (store.pendingTask(); as task) {
         <ex-workspace-task-setup [task]="task" [busy]="store.busy()" [paused]="store.preparationPaused()" [uncertain]="store.mutationUncertain()" [error]="store.error()" (retryRequested)="store.retryPreparation($event)" (refreshRequested)="store.reconcilePreparation()" />
       } @else {
@@ -32,7 +32,17 @@
         </section>
       }
     </div>
-    <ex-workspace-panels shellPanel [panel]="panel()" (panelChange)="store.selectPanel($event)" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (closed)="closePanel()" />
+    <ex-workspace-panels shellPanel [panel]="panel()" (panelChange)="store.selectPanel($event)" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (closed)="closePanel()">
+      <div workspaceChanges #workspaceChanges class="review-content">
+        @if (selectedReview(); as target) {
+          @if (panelOpen() && panel() === 'changes' && active()) {
+            <ex-session-chat-review [target]="target" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (exitRequested)="wideReview.set(false)" />
+          }
+        } @else {
+          <p class="review-hint">Choose Review beneath an agent reply to see its changes.</p>
+        }
+      </div>
+    </ex-workspace-panels>
   </ex-app-shell>
 </div>
 @if (onboarding()) {

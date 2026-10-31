@@ -142,6 +142,23 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it("renders the designed outcome after the answer and routes Review and a file chip to their reply", async () => {
+    const { fixture, root } = setup([
+      item("u", "user", "Create a test file"),
+      item("a", "assistant", "Created skill-test.txt with a short test message."),
+      { ...item("capture", "system", ""), changes: { total: 1, files: [{ path: "skill-test.txt", status: "A", add: 1, del: 0 }] } },
+    ]);
+    const review = vi.fn(); fixture.componentInstance.reviewRequested.subscribe(review);
+    await settle(fixture);
+    const chip = root.querySelector<HTMLButtonElement>("ex-file-chip button")!;
+    expect(chip.textContent).toContain("skill-test.txt"); expect(chip.textContent).toContain("+1");
+    expect(root.querySelector("ex-turn .answer")!.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    chip.click();
+    expect(review).toHaveBeenLastCalledWith({ scopeId: "scope", taskId: 1, sessionId: 2, turnId: "u", path: "skill-test.txt" });
+    root.querySelectorAll<HTMLButtonElement>("ex-turn footer button").forEach(button => { if (button.textContent?.trim() === "Review") button.click(); });
+    expect(review).toHaveBeenLastCalledWith({ scopeId: "scope", taskId: 1, sessionId: 2, turnId: "u" });
+  });
+
   it("retains separate tool names, output and failures when live work becomes saved history", async () => {
     const items = [
       item("u", "user", "Check the code"),

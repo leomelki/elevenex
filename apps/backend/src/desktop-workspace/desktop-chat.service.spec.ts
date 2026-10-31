@@ -103,6 +103,27 @@ describe('selected session chat', () => {
     chat = module.get(DesktopChatService);
   });
   afterEach(async () => module.close());
+
+  it('coalesces prepared reply reads until transcript invalidation', async () => {
+    history = [{ ...item('u'), kind: 'user' }];
+    await Promise.all([chat.changes(1, 2, 'u', 0), chat.changes(1, 2, 'u', 0)]);
+    expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    await chat.changes(1, 2, 'u', 0);
+    expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    emit('history_snapshot');
+    await chat.changes(1, 2, 'u', 0);
+    expect(runtime.getHistory).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads archived reply diffs without attaching a runtime and validates task ownership', async () => {
+    status = 'archived';
+    history = [{ ...item('u'), kind: 'user' }, { ...item('s'), kind: 'system', turnChanges: { files: 0, additions: 0, deletions: 0, filesChanged: [] } }];
+    expect((await chat.changes(1, 2, 'u', 0)).total).toBe(0);
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+    expect(runtime.onClientAttached).not.toHaveBeenCalled();
+    await expect(chat.changes(99, 2, 'u', 0)).rejects.toThrow('does not belong');
+    await expect(chat.changes(1, 2, 'u', -1)).rejects.toThrow('Invalid changes');
+  });
   const read = (
     after?: string,
     before?: string,

@@ -56,7 +56,7 @@ at 4 MiB. Feed expiry/rewrite produces a fresh bounded tail rather than a
 pretend lossless event log.
 
 The integration deliberately hides unavailable attachment, dictation, mention,
-fork, side-chat and queue edit/reorder controls. File links request the Changes
+fork, side-chat and queue edit/reorder controls. File links request the selected reply’s Changes
 panel; external HTTP(S) links use the existing main-process navigation policy.
 Media resolution, subagent transcript navigation and richer MCP schemas remain
 separate integrations. The desktop connection layer and legacy app are unchanged.
@@ -235,3 +235,36 @@ Create sends optional `save-preset.provider` plus the original chat's
 mix, and retains the existing stale/uncertain-write policy. Omitted `provider`
 retains older callers' current-harness semantics. Engines without the capability
 keep their locked creator rather than issuing unsupported reads.
+
+## Reply changes
+
+Completed replies supply the designed file chips, counts, overflow and Review
+button from optional bounded transcript `changes` metadata. Main validates it;
+older engines can omit it. Persisted net captures include shell edits and survive
+history reloads. Successful native edits provide a fallback; failed/pending calls
+do not claim changed files. Captured unchanged paths remove reverted edits, while
+explicit edits outside the captured repository survive reconciliation.
+
+`SessionChat.reviewRequested` carries the selected scope/task/session, stable
+reply ID and optional file path. `MachineWorkspace` owns that selection and
+projects `SessionChatReview` into the Changes panel. The named
+`sessionChatChanges` operation reads only recorded reply changes, never arbitrary
+filesystem paths. It validates task/session membership, file identity and revision.
+Closing/hiding the panel, switching session or destroying its owner cancels reads;
+late responses cannot update another selection. No mutations are retried.
+
+Summaries include at most 200 file entries plus the full count. Reviews page
+100 file records, render the existing 12-file window, and lazily read at most
+three diffs concurrently. The backend coalesces and briefly retains one prepared
+reply per feed, invalidated by transcript revisions, so scrolling does not reread
+the complete provider history for each file. Content pages contain at most 400 lines / 128 KiB,
+with bounded line text and explicit next/previous controls. The owner caches at
+most one file page and one content page per file (100 maximum). Captured patches
+are decoded linearly in the backend; native fallback computation is limited to
+320 completed calls / 256 KiB, with individual inputs capped at 32,000 characters.
+Full-file browsing, Code opening and comments stay hidden because recorded turn
+diffs do not supply those platform operations.
+
+`session-changes.mjs` verifies creation, exact file selection, Review via keyboard,
+wide/compact panels, 1,001-file summaries, line pagination, errors and narrow
+reduced-motion layouts in both themes through the production composition.

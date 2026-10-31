@@ -45,6 +45,7 @@ export class ChatComponent {
   readonly resolve = input<MarkdownAssetResolver>();
   readonly turnAction = output<{ id: string; action: TurnAction }>();
   readonly openFile = output<string>();
+  readonly fileReview = output<{ readonly id: string; readonly path: string }>();
   readonly openLink = output<string>();
   readonly openPage = output<string>();
   readonly copyCode = output<string>();

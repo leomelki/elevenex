@@ -26,6 +26,8 @@ export interface SessionChatItem {
   readonly input: string;
   readonly error: boolean;
   readonly truncated: boolean;
+  /** Bounded outcome metadata; captured net changes take precedence over tool edits. */
+  readonly changes?: SessionChatChangeSummary;
 }
 export interface SessionChatQuestion {
   readonly id: string;
@@ -239,4 +241,44 @@ export interface SessionChatCatalog {
   readonly reasoningAvailable: boolean;
   readonly fastAvailable: boolean;
   readonly error: string | null;
+}
+
+export interface SessionChatChangedFile {
+  readonly path: string;
+  readonly status: "A" | "M" | "D";
+  readonly add: number;
+  readonly del: number;
+}
+export interface SessionChatChangeSummary {
+  readonly files: readonly SessionChatChangedFile[];
+  readonly total: number;
+}
+export interface SessionChatChangesRead extends SessionChatTarget {
+  readonly requestId: string;
+  readonly turnId: string;
+  readonly offset: number;
+  readonly path?: string;
+  readonly lineOffset?: number;
+  readonly revision?: string;
+}
+export interface SessionChatChangeLine {
+  readonly id: string;
+  readonly kind: "context" | "add" | "del";
+  readonly oldNumber?: number;
+  readonly newNumber?: number;
+  readonly text: string;
+}
+export interface SessionChatChangesPage {
+  readonly turnId: string;
+  readonly revision: string;
+  readonly offset: number;
+  readonly files: readonly SessionChatChangedFile[];
+  readonly total: number;
+  readonly nextOffset: number | null;
+  readonly content: {
+    readonly path: string;
+    readonly lines: readonly SessionChatChangeLine[];
+    readonly nextOffset: number | null;
+    readonly error?: string;
+  } | null;
 }

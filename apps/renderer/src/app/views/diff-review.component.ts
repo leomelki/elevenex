@@ -20,9 +20,11 @@ export class DiffReviewComponent {
   readonly contents = input<readonly DiffFileContent[]>([]);
   readonly activeFileId = input<string>();
   readonly mode = input<ReviewMode>('changes');
+  readonly fullFilesAvailable = input(true);
   readonly wide = input(false);
   readonly wrap = input(true);
   readonly commentsEnabled = input(true);
+  readonly openFilesAvailable = input(true);
   readonly largeAt = input(400);
   readonly fileSelected = output<string>();
   readonly modeChange = output<ReviewMode>();

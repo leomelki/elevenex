@@ -194,5 +194,6 @@ export interface ChatExchange {
   readonly duration?: number;
   readonly elapsed?: number;
   readonly files?: readonly ChangedFile[];
+  readonly filesTotal?: number;
   readonly error?: string;
 }

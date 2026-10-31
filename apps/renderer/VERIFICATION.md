@@ -1606,3 +1606,53 @@ verified light warning/dark menu/narrow captures. This exercises the real render
 with preview-only provider data; authenticated quota accounts and packaged-app
 execution were not exercised. Automatic account-wide pause/resume, send-at-reset,
 cross-agent forks and quota island events remain outside this display integration.
+
+
+## Connected reply changes — October 30
+
+Completed replies now carry bounded change summaries into their designed file
+chips and Review action. The Changes panel reads the selected reply's recorded
+diffs through a named scoped operation. Persisted shell captures survive history
+reloads; successful native edits are a fallback. Captured reverted paths and
+out-of-scope edits reconcile through the existing domain operation. File and line
+windows, three concurrent reads, cancellation, stale-selection/revision guards,
+and a short-lived prepared-reply cache bound the integration.
+
+`pnpm desktop:lint`, `pnpm desktop:test` and `pnpm desktop:build` pass. The suite
+includes 108 desktop, seven capture-tool and 438 renderer tests, plus the IPC
+TypeScript assertions. Production backend TypeScript and 32 focused chat/change
+regressions pass. The installed Electron smoke passes with the actual sandboxed
+preload, `app://`, scoped review HTTP read and malformed-argument rejection using
+its fixture backend. Dependencies and lockfile are unchanged.
+
+`artifacts/desktop-capture/run-fKue99/report.json` is **verified: true** with
+14 checkpoints and no errors/warnings. The real production composition with
+preview-only provider data covers both themes, created-file outcomes, file-chip
+selection, keyboard Review, wide/compact panels, 1,001-file counts, forward/back
+content windows, errors and narrow reduced motion. The dark review and light
+narrow PNGs were inspected. This verifies the renderer and fixture-backed IPC;
+authenticated agent execution and packaged-app launch were not exercised.
+Full-file reading, Code opening and review comments remain unavailable for this
+recorded-diff source and their controls are hidden.
+
+### Startup error details (2026-10-31)
+
+Failed machine menus now expose retained diagnostics in a selectable, scrollable
+plain-text dialog. Startup supervision retains bounded stderr/stdout tails and
+waits for pipe drainage before publishing an early exit. The local development
+failure was a missing SQLite native binding; the backend-scoped pnpm rebuild
+under Node 24.22.1 repaired it, and the actual staged backend reached readiness
+with disposable data.
+
+Lint, production build, TypeScript contract checks, 110 desktop tests and seven
+capture-tool tests pass; the final focused backend rerun passes all 12 tests.
+All 441 renderer tests pass on rerun (the earlier full run hit two workspace
+timeouts). The real Electron preload/protocol smoke also passes with its fixture
+backend. No dependency or lockfile changes were needed.
+
+`artifacts/desktop-capture/startup-error-details-final/report.json` reports
+**verified: true**, four checkpoints and no errors/warnings. Native captures of
+the production composition with its preview provider cover light/dark themes,
+narrow layout, reduced motion, menu keyboard activation, Escape/focus return and
+retained output after recovery. The PNGs were inspected. This is unpackaged
+verification; no packaged launch was attempted.

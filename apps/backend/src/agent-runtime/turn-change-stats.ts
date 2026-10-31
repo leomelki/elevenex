@@ -58,6 +58,7 @@ interface EditOp {
 }
 
 interface ExtractedEdits {
+  status?: TurnChangedFile['status'];
   filePath: string;
   toolName: string;
   edits: EditOp[];
@@ -273,18 +274,26 @@ function extractEdits(toolName: string, input: unknown): ExtractedEdits[] {
         'newText',
         'content',
       ]);
-      const patch = readPath(change, ['patch', 'diff', 'unifiedDiff']);
+      let patch = readPath(change, ['patch', 'diff', 'unifiedDiff']);
+      const kind = asString(change['kind']) || asString(asRecord(change['kind'])?.['type']);
+      const created = kind === 'add' || kind === 'create';
+      const deleted = kind === 'delete';
+      const plainContent = (created || deleted) && patch && !/^@@ /m.test(patch) && !/^[+-]/m.test(patch) ? patch : undefined;
+      if (plainContent) patch = '';
+      const addedLines = patch.split('\n').filter(line => line.startsWith('+') && !line.startsWith('+++')).length;
+      const deletedLines = patch.split('\n').filter(line => line.startsWith('-') && !line.startsWith('---')).length;
       extracted.push({
         filePath,
         toolName,
+        status: created ? 'created' : deleted ? 'deleted' : kind === 'update' || kind === 'modify' ? 'modified' : undefined,
         edits: [
           {
-            oldString,
-            newString,
+            oldString: deleted && plainContent ? plainContent : oldString,
+            newString: created && plainContent ? plainContent : newString,
             patch,
             label: changes.length > 1 ? `Change ${index + 1}` : undefined,
-            additions: asNumber(change['additions']),
-            deletions: asNumber(change['deletions']),
+            additions: asNumber(change['additions']) ?? (patch ? addedLines : undefined),
+            deletions: asNumber(change['deletions']) ?? (patch ? deletedLines : undefined),
           },
         ],
       });
@@ -449,7 +458,7 @@ function computeTurnChangeDetails(units: ToolUnit[]): TurnChangeDetails | null {
       if (file.hunks.length === 0) {
         files.delete(extracted.filePath);
       } else {
-        file.status = statusForFile(file.hunks);
+        file.status = extracted.status ?? statusForFile(file.hunks);
       }
     }
   }

@@ -18,6 +18,7 @@ export interface WorkFact {
 export function summarizeWork(
   steps: readonly WorkStep[],
   files: readonly ChangedFile[],
+  fileCount = files.length,
 ): readonly WorkFact[] {
   let failures = 0;
   let commands = 0;
@@ -62,9 +63,9 @@ export function summarizeWork(
     const removed = files.reduce((sum, file) => sum + (file.del ?? 0), 0);
     facts.push({
       kind: "files",
-      label: `Edited ${files.length} ${files.length === 1 ? "file" : "files"}`,
+      label: `Edited ${fileCount} ${fileCount === 1 ? "file" : "files"}`,
       icon: "changes",
-      diff: { add: added, del: removed },
+      diff: fileCount === files.length ? { add: added, del: removed } : undefined,
     });
   }
   if (testResult)

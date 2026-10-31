@@ -1,6 +1,7 @@
 import { chatCatalog } from './desktop-chat-catalog.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { chatPresets, executePresetAction } from './desktop-chat-presets.js';
+import { prepareTurnChanges, preparedChangesPage, type PreparedTurnChanges } from './desktop-chat-changes.js';
 import { executeChatAction } from './desktop-chat-actions.js';
 import {
   BadRequestException,
@@ -18,6 +19,7 @@ import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-regi
 import { SessionsService } from '../sessions/sessions.service.js';
 import { chatPlanUsage } from './desktop-chat-usage.js';
 import {
+  type ChatChangesCache,
   chatState,
   chatWindow,
   display,
@@ -33,6 +35,8 @@ interface ChatFeed {
     string,
     { readonly json: string; readonly revision: number }
   >;
+  readonly changesCache: ChatChangesCache;
+  review?: { readonly turnId: string; readonly revision: number; readonly historyRevision: number; readonly expires: number; readonly pending: Promise<PreparedTurnChanges> };
   revision: number;
   historyRevision: number;
   touched: number;
@@ -47,9 +51,12 @@ export class DesktopChatService implements OnModuleDestroy {
   private readonly configuring = new Set<number>();
   private readonly feeds = new Map<number, ChatFeed>();
   private readonly expiry = setInterval(() => {
-    for (const [id, feed] of this.feeds)
+    for (const [id, feed] of this.feeds) {
+      if (feed.review && feed.review.expires < Date.now())
+        feed.review = undefined;
       if (Date.now() - feed.touched > 30000 && !feed.waiters.size)
         this.release(id);
+    }
   }, 10000).unref();
   constructor(
     private readonly sessions: SessionsService,
@@ -157,6 +164,7 @@ export class DesktopChatService implements OnModuleDestroy {
       attached: false,
       waiters: new Set(),
       projections: new Map(),
+      changesCache: new WeakMap(),
       stop: () => {
         provider.off('event', changed);
         if (feed.attached) provider.onClientDetached?.(sessionId);
@@ -264,7 +272,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const live = Array.isArray(raw.liveItems)
       ? (raw.liveItems as AgentTranscriptItem[])
       : [];
-    const window = chatWindow(history, live, before);
+    const window = chatWindow(history, live, before, feed.changesCache);
     if (!window)
       throw new BadRequestException(
         'History cursor expired. Return to latest messages.',
@@ -332,6 +340,73 @@ export class DesktopChatService implements OnModuleDestroy {
       if (preset) this.configuring.delete(sessionId);
       if (preset || action.type === 'provider') this.release(sessionId);
     }
+  }
+
+  async changes(
+    taskId: number,
+    sessionId: number,
+    turnId: string,
+    offset: number,
+    path?: string,
+    lineOffset = 0,
+    revision?: string,
+  ) {
+    if (
+      !turnId ||
+      turnId.length > 1000 ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Number.isSafeInteger(lineOffset) ||
+      lineOffset < 0 ||
+      (path !== undefined && (!path || path.length > 1000)) ||
+      (revision !== undefined && !/^[a-f0-9]{64}$/.test(revision))
+    )
+      throw new BadRequestException('Invalid changes window.');
+    const session = await this.target(taskId, sessionId);
+    const feed = this.feed(sessionId, session.activeAgentProvider, false);
+    if (
+      !feed.review ||
+      feed.review.turnId !== turnId ||
+      feed.review.revision !== feed.revision ||
+      feed.review.historyRevision !== feed.historyRevision ||
+      feed.review.expires < Date.now()
+    ) {
+      const pending = (async () => {
+        const [history, raw] = await Promise.all([
+          (feed.history ??= feed.provider.getHistory(sessionId).finally(() => {
+            feed.history = undefined;
+          })),
+          session.status === 'archived' || session.workspaceArchivedAt
+            ? Promise.resolve({})
+            : feed.provider
+                .getRuntimeState(sessionId, { initialize: false })
+                .then(record),
+        ]);
+        const live = Array.isArray(record(raw).liveItems)
+          ? (record(raw).liveItems as AgentTranscriptItem[])
+          : [];
+        const merged = new Map(history.map((item) => [item.id, item]));
+        for (const item of live) merged.set(item.id, item);
+        return prepareTurnChanges([...merged.values()], turnId);
+      })();
+      feed.review = {
+        turnId,
+        revision: feed.revision,
+        historyRevision: feed.historyRevision,
+        expires: Date.now() + 10000,
+        pending,
+      };
+      void pending.catch(() => {
+        if (feed.review?.pending === pending) feed.review = undefined;
+      });
+    }
+    return preparedChangesPage(
+      await feed.review.pending,
+      offset,
+      path,
+      lineOffset,
+      revision,
+    );
   }
 
   async content(

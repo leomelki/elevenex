@@ -1,3 +1,4 @@
+import { parseChangesPage } from "./session-chat-changes";
 import { handleForWindow, type TrustedSender } from "../ipc";
 import type { BackendClient } from "./client";
 import {
@@ -100,6 +101,76 @@ export function registerSessionChatIpc(
             provider,
           ),
         30000,
+      );
+    },
+  );
+  const changes = handleForWindow(
+    "session-chat:changes",
+    trusted,
+    (window, ...args) => {
+      if (args.length !== 2) throw new Error("Invalid review arguments.");
+      const scopeId = scope(args[0]),
+        raw = chatObject(args[1]);
+      const taskId = chatId(raw["taskId"]),
+        sessionId = chatId(raw["sessionId"]);
+      const turnId = chatText(raw["turnId"]),
+        offset = raw["offset"],
+        lineOffset = raw["lineOffset"] ?? 0;
+      const filePath =
+        raw["path"] === undefined ? undefined : chatText(raw["path"]);
+      const revision =
+        raw["revision"] === undefined
+          ? undefined
+          : chatText(raw["revision"], 64);
+      if (
+        !turnId ||
+        (filePath !== undefined && !filePath) ||
+        typeof offset !== "number" ||
+        !Number.isSafeInteger(offset) ||
+        offset < 0 ||
+        typeof lineOffset !== "number" ||
+        !Number.isSafeInteger(lineOffset) ||
+        lineOffset < 0 ||
+        (revision !== undefined && !/^[a-f0-9]{64}$/.test(revision))
+      )
+        throw new Error("Invalid review window.");
+      const query = new URLSearchParams({
+        turnId,
+        offset: String(offset),
+        lineOffset: String(lineOffset),
+      });
+      if (filePath !== undefined) query.set("path", filePath);
+      if (revision !== undefined) query.set("revision", revision);
+      return client.execute(
+        window,
+        scopeId,
+        `session-chat:${requestId(raw["requestId"])}:${taskId}:${sessionId}:changes:${query}`,
+        false,
+        async (endpoint, signal) => {
+          const page = parseChangesPage(
+            await requestBackendJson(
+              endpoint,
+              {
+                path: path(taskId, sessionId) + "/changes?" + query,
+                limit: 512 * 1024,
+              },
+              signal,
+            ),
+            turnId,
+            filePath,
+          );
+          if (filePath === undefined && page.offset !== offset)
+            throw new Error("The review page changed.");
+          if (revision !== undefined && page.revision !== revision)
+            throw new Error("The review revision changed.");
+          if (
+            page.content?.nextOffset !== null &&
+            page.content?.nextOffset !== undefined &&
+            page.content.nextOffset !== lineOffset + page.content.lines.length
+          )
+            throw new Error("Invalid diff cursor.");
+          return page;
+        },
       );
     },
   );
@@ -253,6 +324,7 @@ export function registerSessionChatIpc(
     },
   );
   return () => {
+    changes();
     read();
     catalog();
     command();

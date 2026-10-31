@@ -1,3 +1,4 @@
+import { parseChangeSummary } from "./session-chat-changes";
 import type {
   SessionChatAction,
   SessionChatEvent,
@@ -8,21 +9,8 @@ import type {
   SessionChatPresetDefault,
   SessionChatCatalog,
 } from "@elevenex/shared";
-import { BackendRequestError } from "./transport";
-const invalid = () =>
-  new BackendRequestError({
-    code: "invalid-response",
-    message: "The machine returned incompatible conversation data.",
-  });
-export function chatObject(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw invalid();
-  return value as Record<string, unknown>;
-}
-export function chatText(value: unknown, max = 1000): string {
-  if (typeof value !== "string" || value.length > max) throw invalid();
-  return value;
-}
+import { chatObject, chatText, invalid } from "./session-chat-values";
+export { chatObject, chatText } from "./session-chat-values";
 function bool(value: unknown): boolean {
   if (typeof value !== "boolean") throw invalid();
   return value;
@@ -145,6 +133,7 @@ function item(value: unknown): SessionChatItem {
     input: chatText(raw["input"], 16100),
     error: bool(raw["error"]),
     truncated: bool(raw["truncated"]),
+    ...(raw["changes"] !== undefined ? { changes: parseChangeSummary(raw["changes"]) } : {}),
   };
 }
 function planUsage(

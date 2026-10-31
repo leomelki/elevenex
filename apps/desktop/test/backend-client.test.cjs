@@ -611,3 +611,15 @@ test('preset catalogs reject mismatched identities and unsupported configuration
   const action = { type: 'save-preset', id: 'new', name: 'Claude', expectedProvider: 'codex', provider: 'claude', model: 'sonnet', reasoning: 'high', fast: false };
   assert.deepEqual(parseChatAction(action), action);
 });
+
+test('reply changes validate bounded metadata, revisions and text-only diff lines', () => {
+  const { parseChangesPage, parseChangeSummary } = require('../dist/backend-client/session-chat-changes');
+  const file = { path: 'new.txt', status: 'A', add: 1, del: 0 };
+  const page = { turnId: 'reply', revision: 'a'.repeat(64), offset: 0, total: 1, files: [file], nextOffset: null, content: { path: 'new.txt', lines: [{ id: 'line', kind: 'add', newNumber: 1, text: '<script>inert</script>' }], nextOffset: null } };
+  assert.deepEqual(parseChangesPage(page, 'reply', 'new.txt'), page);
+  assert.throws(() => parseChangesPage(page, 'other', 'new.txt'));
+  assert.throws(() => parseChangesPage(page, 'reply', 'other.txt'));
+  for (const extra of [{ revision: 'invalid' }, { files: Array(101).fill(file), total: 101 }, { nextOffset: 0 }, { content: { ...page.content, lines: Array(401).fill(page.content.lines[0]) } }, { content: { ...page.content, lines: [{ id: 'line', kind: 'html', text: 'no' }] } }]) assert.throws(() => parseChangesPage({ ...page, ...extra }, 'reply', 'new.txt'));
+  assert.deepEqual(parseChangeSummary({ total: 5000, files: [file], secret: 'discard' }), { total: 5000, files: [file] });
+  assert.throws(() => parseChangeSummary({ total: 1, files: [{ ...file, add: -1 }] }));
+});

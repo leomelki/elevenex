@@ -3,7 +3,7 @@ import { CdkMenu } from '@angular/cdk/menu';
 import { DropdownMenuComponent, DropdownItemComponent, IconComponent, KbdComponent } from '../ui';
 import { Machine, machineConnected } from './machine.models';
 
-export type MachineMenuAction = 'edit' | 'new-window' | 'disconnect' | 'remove';
+export type MachineMenuAction = 'edit' | 'new-window' | 'disconnect' | 'remove' | 'details';
 
 /** Supplied menu content; compose with a CDK trigger or MachineMenuPopup. */
 @Component({

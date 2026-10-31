@@ -1,3 +1,4 @@
+import { capturedChangeSummary, changeSummary, toolChanges } from './desktop-chat-changes.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 
 export function record(value: unknown): Record<string, unknown> {
@@ -22,12 +23,21 @@ const nullable = (value: unknown) =>
   typeof value === 'string' ? display(value, 1000) : null;
 const count = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
-export function chatItem(item: AgentTranscriptItem) {
+export type ChatChangesCache = WeakMap<AgentTranscriptItem, { readonly result: AgentTranscriptItem; readonly fingerprint: string; readonly changes: ReturnType<typeof changeSummary> }>;
+export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache) {
   const input = display(item.toolInput);
   const text = display(
     item.content ?? item.providerToolResult ?? item.agentMessage?.body ?? '',
   );
+  let changes = changeSummary(item.turnChanges);
+  if (!item.turnChanges && call) {
+    const previous = cache?.get(call);
+    const fingerprint = JSON.stringify([call.toolKind, display(call.toolInput, 32000), item.isError, call.toolKind === 'bash' ? display(item.providerToolResult, 32000) : null]);
+    changes = previous?.result === item && previous.fingerprint === fingerprint ? previous.changes : changeSummary(toolChanges(call, item));
+    cache?.set(call, { result: item, fingerprint, changes });
+  }
   return {
+    ...(changes ? { changes } : {}),
     id: item.id,
     kind: item.kind,
     text,
@@ -231,6 +241,7 @@ export function chatWindow(
   history: readonly AgentTranscriptItem[],
   live: readonly AgentTranscriptItem[],
   before?: string,
+  changesCache?: ChatChangesCache,
 ) {
   const historyEnd = before
     ? history.findIndex((item) => item.id === before)
@@ -251,10 +262,20 @@ export function chatWindow(
       if (candidates.has(item.id)) candidates.set(item.id, item);
   const all = [...candidates.values()],
     items: ReturnType<typeof chatItem>[] = [];
+  const calls = new Map(all.filter(item => item.kind === 'tool_use').map(item => [item.toolUseId ?? item.id, item]));
   let bytes = 0,
     start = all.length;
   while (start > 0 && items.length < 80) {
-    const item = chatItem(all[start - 1]);
+    const raw = all[start - 1];
+    const item = chatItem(raw, raw.kind === 'tool_result' ? calls.get(raw.toolUseId ?? raw.id) : undefined, changesCache);
+    if (raw.turnChanges) {
+      let turnStart = start - 2;
+      while (turnStart >= 0 && all[turnStart].kind !== 'user') turnStart--;
+      item.changes = capturedChangeSummary(raw, all.slice(Math.max(0, turnStart), start - 1).filter(value => value.kind === 'tool_result').map(result => {
+        const call = calls.get(result.toolUseId ?? result.id);
+        return call ? chatItem(result, call, changesCache).changes : undefined;
+      }));
+    }
     const size = Buffer.byteLength(JSON.stringify(item));
     if (bytes + size > 512 * 1024) break;
     bytes += size;

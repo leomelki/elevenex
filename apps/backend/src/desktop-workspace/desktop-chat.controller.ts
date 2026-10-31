@@ -63,6 +63,14 @@ export class DesktopChatController {
       refresh === '1',
     );
   }
+  @Get('changes')
+  changes(
+    @Param('taskId') task: string, @Param('sessionId') session: string,
+    @Query('turnId') turn: string, @Query('offset') offset: string,
+    @Query('path') path?: string, @Query('lineOffset') lineOffset?: string, @Query('revision') revision?: string,
+  ) {
+    return this.chat.changes(resourceId(task), resourceId(session), turn, Number(offset), path, lineOffset === undefined ? 0 : Number(lineOffset), revision);
+  }
   @Get('content')
   content(
     @Param('taskId') task: string,

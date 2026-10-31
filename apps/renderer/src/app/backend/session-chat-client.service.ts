@@ -7,6 +7,8 @@ import type {
   SessionChatCommandReply,
   SessionChatPage,
   SessionChatRead,
+  SessionChatChangesRead,
+  SessionChatChangesPage,
   SessionChatContentRead,
   SessionChatContent,
 } from "@elevenex/shared";
@@ -19,6 +21,9 @@ import {
 export class SessionChatClient {
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private readonly backend = inject(BackendClientService);
+  changes(scope: string, input: SessionChatChangesRead): Promise<BackendResult<SessionChatChangesPage>> {
+    return this.invoke(scope, false, () => this.bridge.sessionChatChanges(scope, input));
+  }
   read(
     scope: string,
     input: SessionChatRead,

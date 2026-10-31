@@ -93,6 +93,11 @@ and launches only after it is ready and its card has settled (about 450ms).
 Other selections, failures and navigation must cancel the prior pending launch.
 Command/Control intents open a separate window without taking over this one.
 
+For a failed machine with `error` and a diagnostic in `last`, `MachineMenu`
+offers **View error details…** and emits the `details` action. The application
+owner retains that diagnostic in a scrollable, selectable text dialog; opening
+details never retries the connection. The modal owns Escape and focus return.
+
 `MachineHome.firstRun` shows one grid and the two dashed `MachineAdd` cards.
 Later visits use Connected / Not connected and footer actions. `addServer` and
 `pairComputer` return the actual clicked element. Use it as `ModalLayer.from`;

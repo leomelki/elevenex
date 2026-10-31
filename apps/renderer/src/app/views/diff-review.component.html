@@ -21,8 +21,10 @@
       <div class="modes" role="group" aria-label="Review mode">
         <button type="button" [disabled]="!files().length" [attr.aria-pressed]="mode() === 'changes'"
           (click)="setMode('changes')">Changes</button>
+        @if (fullFilesAvailable()) {
         <button type="button" [disabled]="!files().length" [attr.aria-pressed]="mode() === 'full'"
           (click)="setMode('full')">Full files</button>
+        }
       </div>
       <ex-icon-button icon="wrap" label="Wrap lines" size="sm" [disabled]="!files().length"
         [active]="wrap()" (pressed)="toggleWrap()" />
@@ -48,7 +50,7 @@
           <div #fileCard [attr.data-file-id]="file.id">
             <ex-diff-file [file]="file" [content]="contentMap().get(file.id)" [mode]="mode()" [wide]="wide()"
               [stuck]="stuckFileId() === file.id"
-              [wrap]="wrap()" [commentsEnabled]="commentsEnabled()" [largeAt]="largeAt()"
+              [wrap]="wrap()" [commentsEnabled]="commentsEnabled()" [openFilesAvailable]="openFilesAvailable()" [largeAt]="largeAt()"
               (viewedChange)="viewFile($event)" (fileRequested)="fileRequested.emit($event)"
               (collapsing)="prepareCollapse(file.id)"
               (contextRequested)="requestContext($event)" (commented)="commented.emit($event)"

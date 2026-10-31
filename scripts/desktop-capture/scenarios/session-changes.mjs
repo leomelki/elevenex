@@ -1,0 +1,68 @@
+import assert from 'node:assert/strict';
+
+export default async function* (capture) {
+  await capture.evaluate(() => { location.href = '/connected-workspace'; });
+  await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
+  await capture.component('ex-machine-workspace', c => c.store.selectSession({ taskId: '11', sessionId: '101' }));
+  const scenario = mode => capture.component('ex-connected-workspace-demo', (c, mode) => c.fixture.chat.changedFiles(mode), mode);
+  const finish = async () => {
+    await capture.settle();
+    await capture.waitFor(() => document.getAnimations().every(a => !Number.isFinite(a.effect?.getComputedTiming().endTime) || a.playState !== 'running'));
+  };
+  for (const theme of ['light', 'dark']) {
+    await capture.theme(theme);
+    await capture.viewport(1440, 960);
+    await scenario('created');
+    await capture.waitFor(() => document.querySelector('ex-file-chip')?.textContent.includes('skill-test.txt'));
+    await finish();
+    assert.match(await capture.evaluate(() => document.querySelector('ex-turn footer').textContent), /\+1/);
+    yield { name: theme + '-created-file-outcome', inspect: ['ex-turn footer', 'ex-file-chip'] };
+    await capture.click('ex-file-chip button');
+    await capture.waitFor(() => document.querySelector('ex-session-chat-review [data-kind="add"]')?.textContent.includes('A short test message.'));
+    await finish();
+    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Changes review');
+    yield { name: theme + '-file-review', inspect: ['ex-session-chat-review', 'ex-diff-file'] };
+    await capture.click('ex-session-chat-review [aria-label="Wider review (⇧⌘R)"]');
+    await finish();
+    yield { name: theme + '-wide-review', inspect: ['ex-session-chat-review'] };
+    await capture.press('Escape');
+    await finish();
+    await capture.click('[aria-label="Close side panel"]');
+    await finish();
+    await capture.evaluate(() => document.querySelector('ex-turn footer > button').focus());
+    await capture.press('Enter');
+    await capture.waitFor(() => document.querySelector('ex-session-chat-review [data-kind="add"]'));
+    await finish();
+    yield { name: theme + '-keyboard-review', inspect: ['ex-session-chat-review', ':focus'] };
+    await capture.click('[aria-label="Close side panel"]');
+    await finish();
+    await scenario('many');
+    await capture.waitFor(() => document.querySelector('ex-outcome-bar')?.textContent.includes('998 more'));
+    await capture.click('ex-file-chip:nth-child(2) button');
+    await capture.waitFor(() => document.querySelector('ex-session-chat-review ex-diff-file .load button'));
+    await finish();
+    await capture.evaluate(() => document.querySelector('[data-file-id="src/example-1.ts"] .load button').scrollIntoView({ block: 'center' }));
+    await capture.click('ex-session-chat-review [data-file-id="src/example-1.ts"] .load button');
+    await capture.waitFor(() => document.querySelectorAll('[data-file-id="src/example-1.ts"] [data-kind="add"]').length === 400);
+    await capture.evaluate(() => document.querySelector('[data-file-id="src/example-1.ts"] .load button').scrollIntoView({ block: 'center' }));
+    await capture.click('[data-file-id="src/example-1.ts"] .load button');
+    await capture.waitFor(() => document.querySelectorAll('[data-file-id="src/example-1.ts"] [data-kind="add"]').length === 1);
+    assert.match(await capture.evaluate(() => document.querySelector('[data-file-id="src/example-1.ts"] [data-kind="add"]').textContent), /value400/);
+    yield { name: theme + '-bounded-next-lines', inspect: ['ex-session-chat-review nav.pages', '[data-file-id="src/example-1.ts"]'] };
+    await capture.click('[data-file-id="src/example-1.ts"] .load button');
+    await capture.waitFor(() => document.querySelectorAll('[data-file-id="src/example-1.ts"] [data-kind="add"]').length === 400);
+    await capture.viewport(1000, 760);
+    await capture.reducedMotion(true);
+    await finish();
+    yield { name: theme + '-narrow-reduced-motion', inspect: ['ex-session-chat-review'] };
+    await capture.click('[aria-label="Close side panel"]');
+    await scenario('failed');
+    await capture.waitFor(() => document.querySelectorAll('ex-file-chip').length === 1);
+    await capture.click('ex-turn footer > button');
+    await capture.waitFor(() => document.querySelector('ex-session-chat-review [role="alert"]'));
+    yield { name: theme + '-review-error', inspect: ['ex-session-chat-review [role="alert"]'] };
+    await capture.reducedMotion(false);
+    await capture.click('[aria-label="Close side panel"]');
+    await finish();
+  }
+}

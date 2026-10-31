@@ -35,6 +35,7 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         '/api/desktop-workspace/projects': { items: [], nextCursor: null },
         '/api/desktop-workspace/tasks': { items: [], nextCursor: null },
         '/api/desktop-workspace/folders': [],
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/changes': { turnId: 'reply', revision: 'a'.repeat(64), offset: 0, files: [], total: 0, nextOffset: null, content: null },
       };
       assert.equal(request.method, 'GET');
       assert.ok(Object.hasOwn(responses, pathname), `Unexpected smoke endpoint: ${pathname}`);
@@ -79,7 +80,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, 'sessionChatCatalog', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent'].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -112,6 +113,9 @@ void (async () => {
   assert.equal(presetCatalog.ok, true);
   assert.equal(presetCatalog.value.models[0].id, 'sonnet');
   assert.equal(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('').then(() => false, () => true)`), true);
+  const changes = await window.webContents.executeJavaScript(`window.elevenex.sessionChatChanges('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'smoke-review', turnId: 'reply', offset: 0 })`);
+  assert.equal(changes.ok, true); assert.equal(changes.value.turnId, 'reply'); assert.equal(changes.value.total, 0);
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.sessionChatChanges('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'invalid-review', turnId: 'reply', offset: -1 }).then(() => false, () => true)`), true);
   // Exercise the production deferred workspace through app://, real IPC and HTTP.
   // This also catches missing style nonces when its lazy components are mounted.
   await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {

@@ -2,6 +2,7 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { stripVTControlCharacters } from 'node:util';
 import { boundedBody } from './download';
 import type { InstalledBackend } from './install';
 import { signalBackendTree } from './process-tree';
@@ -91,6 +92,7 @@ export async function startBackend(
       env: environment(installation, root, port), silent: true, windowsHide: true,
     });
     let stderr = '';
+    let stdout = '';
     let backendPid: number | undefined;
     child.on('message', (message: unknown) => {
       if (message && typeof message === 'object' && 'type' in message && message.type === 'spawned'
@@ -98,28 +100,34 @@ export async function startBackend(
     });
     let spawnError: Error | undefined;
     // Drain both pipes while retaining only a bounded diagnostic tail in memory.
-    child.stdout?.resume();
-    child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString('utf8')).slice(-8192); });
+    child.stdout?.on('data', (chunk: Buffer) => { stdout = (stdout + stripVTControlCharacters(chunk.toString('utf8'))).slice(-2048); });
+    child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + stripVTControlCharacters(chunk.toString('utf8'))).slice(-8192); });
+    const diagnostic = () => [spawnError?.message, stderr.trim() && `stderr:\n${stderr.trim()}`, stdout.trim() && `stdout:\n${stdout.trim()}`].filter(Boolean).join('\n\n') || 'The backend exited without diagnostic output.';
     const exited = new Promise<BackendExit>(resolve => {
       child.once('error', error => { spawnError = error; resolve({ code: null, signal: null }); });
-      child.once('exit', (code, exitSignal) => resolve({ code, signal: exitSignal }));
+      // close follows pipe drainage, so the final error cannot overtake its output.
+      child.once('close', (code, exitSignal) => resolve({ code, signal: exitSignal }));
     });
     let stopping: Promise<void> | undefined;
     const stop = () => stopping ??= stopHost(child, exited, backendPid);
     const readiness = new AbortController();
+    const timeout = AbortSignal.timeout(30_000);
     try {
       await Promise.race([
-        waitReady(url, version, AbortSignal.any([signal, readiness.signal, AbortSignal.timeout(30_000)])),
-        exited.then(result => { throw new Error(`Backend stopped during startup (${result.code ?? result.signal ?? 'spawn error'}): ${spawnError?.message ?? stderr}`); }),
+        waitReady(url, version, AbortSignal.any([signal, readiness.signal, timeout])),
+        exited.then(result => { throw new Error(`Backend stopped during startup (${result.code ?? result.signal ?? 'spawn error'}).\n\n${diagnostic()}`); }),
       ]);
       signal.throwIfAborted();
       return { url, exited, stop };
     } catch (error) {
       await stop();
       signal.throwIfAborted();
-      const portConflict = /EADDRINUSE|address already in use/.test(stderr);
+      const portConflict = /EADDRINUSE|address already in use/.test(`${stderr} ${stdout}`);
       const windowsLock = process.platform === 'win32' && /EBUSY|EPERM|EACCES|ETXTBSY|UNKNOWN|ENOENT|permission denied/.test(`${spawnError?.message ?? ''} ${stderr}`);
-      if (attempt >= 3 || (!portConflict && !windowsLock)) throw error;
+      if (attempt >= 3 || (!portConflict && !windowsLock)) {
+        if (timeout.aborted) throw new Error(`Backend did not become ready within 30 seconds.\n\n${diagnostic()}`, { cause: error });
+        throw error;
+      }
       await delay(250 * (attempt + 1), undefined, { signal });
     } finally { readiness.abort(); }
   }

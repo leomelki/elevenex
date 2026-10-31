@@ -56,6 +56,7 @@ export class TurnComponent {
   readonly duration = input(0);
   readonly elapsed = input(0);
   readonly files = input<readonly ChangedFile[]>([]);
+  readonly filesTotal = input<number>();
   readonly error = input("");
   readonly open = input(false);
   readonly maxVisible = input(4);
@@ -105,6 +106,7 @@ export class TurnComponent {
     summarizeWork(
       this.steps().filter((step) => step.status !== "running"),
       this.files(),
+      this.filesTotal() ?? this.files().length,
     ),
   );
   protected readonly factsElement =

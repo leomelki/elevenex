@@ -1,4 +1,4 @@
-import type { SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
+import type { SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
 export type * from './session-chat';
 import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-commit';
 import type { WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
@@ -31,6 +31,7 @@ export interface GitStatus {
 
 export interface InvokeContracts {
   'session-chat:catalog': { args: [scopeId: string, input: SessionChatCatalogRead]; result: BackendResult<SessionChatCatalog> };
+  'session-chat:changes': { args: [scopeId: string, input: SessionChatChangesRead]; result: BackendResult<SessionChatChangesPage> };
   'session-chat:read': { args: [scopeId: string, input: SessionChatRead]; result: BackendResult<SessionChatPage> };
   'session-chat:command': { args: [scopeId: string, input: SessionChatCommand]; result: BackendResult<SessionChatCommandReply> };
   'session-chat:cancel': { args: [scopeId: string, requestId: string]; result: void };
@@ -118,6 +119,7 @@ export type Subscribe = <C extends keyof EventContracts>(
 /** The entire public preload API; raw IPC and Electron events stay private. */
 export interface ElevenexBridge {
   sessionChatCatalog(scopeId: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>>;
+  sessionChatChanges(scopeId: string, input: SessionChatChangesRead): Promise<BackendResult<SessionChatChangesPage>>;
   sessionChatRead(scopeId: string, input: SessionChatRead): Promise<BackendResult<SessionChatPage>>;
   sessionChatCommand(scopeId: string, input: SessionChatCommand): Promise<BackendResult<SessionChatCommandReply>>;
   sessionChatCancel(scopeId: string, requestId: string): Promise<void>;

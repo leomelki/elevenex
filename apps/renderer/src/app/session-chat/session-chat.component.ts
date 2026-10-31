@@ -72,7 +72,7 @@ import { sessionPlanUsage } from "./session-chat-usage";
 export class SessionChatComponent {
   readonly selection = input.required<ChatSelection>();
   readonly archived = input(false);
-  readonly reviewRequested = output<void>();
+  readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
   readonly composer = viewChild(ComposerComponent);
   readonly chat = viewChild(ChatComponent);
@@ -359,8 +359,12 @@ export class SessionChatComponent {
       this.store.error.set("This link could not be opened.");
     }
   }
+  review(turnId: string, path?: string): void {
+    this.reviewRequested.emit({ ...this.selection(), turnId, ...(path ? { path } : {}) });
+  }
   openFile(path: string): void {
     this.store.notice.set(path);
-    this.reviewRequested.emit();
+    const turn = this.store.exchanges().filter(exchange => exchange.files?.some(file => file.path === path)).at(-1) ?? this.store.exchanges().at(-1);
+    if (turn) this.review(turn.id, path);
   }
 }

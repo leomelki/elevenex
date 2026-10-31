@@ -81,6 +81,29 @@ test('early process failure reports stderr promptly instead of waiting for readi
   assert.ok(Date.now() - started < 5000);
 });
 
+test('startup failure retains bounded output from both pipes without terminal escapes', async t => {
+  const { root, installation } = await setup(t, `
+    process.stdout.write('startup progress'.repeat(1000));
+    process.stderr.write('warning'.repeat(2000));
+    process.stdout.write('\\n\\x1b[31mstdout bootstrap failure\\x1b[0m\\n');
+    process.stderr.write('\\nstderr bootstrap failure\\n');
+    process.exitCode = 9;
+  `);
+  await assert.rejects(startBackend(installation, root, version, new AbortController().signal), error => {
+    assert.match(error.message, /Backend stopped during startup \(9\)/);
+    assert.match(error.message, /stdout bootstrap failure/);
+    assert.match(error.message, /stderr bootstrap failure/);
+    assert.equal(error.message.includes('\u001b'), false);
+    assert.ok(error.message.length < 11_000);
+    return true;
+  });
+});
+
+test('startup failure explains when the backend produced no diagnostics', async t => {
+  const { root, installation } = await setup(t, 'process.exit(9);');
+  await assert.rejects(startBackend(installation, root, version, new AbortController().signal), /without diagnostic output/);
+});
+
 test('the supervisor preserves the backend restart exit code', async t => {
   const { root, installation } = await setup(t);
   const running = await startBackend(installation, root, version, new AbortController().signal);
