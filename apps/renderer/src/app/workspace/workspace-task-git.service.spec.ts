@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BackendResult, ElevenexBridge, WorkspaceGitSummary } from '@elevenex/shared';
+import type { BackendResult, ElevenexBridge, WorkspaceCommitPreview, WorkspaceGitSummary } from '@elevenex/shared';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { WorkspaceStore } from './workspace.store';
 import { WorkspaceTaskGitService } from './workspace-task-git.service';
@@ -9,12 +9,13 @@ import type { WorkspaceSelection } from './workspace.models';
 
 const summary: WorkspaceGitSummary = { taskId: 1, branch: 'work', upstream: null, ahead: 0, behind: 0, files: 2, additions: 5, deletions: 1, conflicted: false };
 const ok = (value: WorkspaceGitSummary): BackendResult<WorkspaceGitSummary> => ({ ok: true, value });
+const preview: WorkspaceCommitPreview = { taskId: 1, revision: 'revision', items: [{ path: 'app.ts', status: 'M', add: 5, del: 1, staged: false }], nextCursor: null, total: 2, matches: 2, unstaged: 2, selected: { files: 2, add: 5, del: 1, staged: 0, unstaged: 2 }, running: [], runningCount: 0 };
 async function settle(): Promise<void> { for (let index = 0; index < 8; index++) await Promise.resolve(); }
 
 function setup() {
   const selected = signal<WorkspaceSelection | null>({ scopeId: 'scope', taskId: 1, sessionId: 2 });
-  const store = { selected, selectedTask: () => ({ state: 'ready', archivedAt: null }), reconcileTaskBranch: vi.fn() };
-  const bridge = { workspaceGit: vi.fn(async () => ok(summary)), workspaceGitAction: vi.fn(async () => ok(summary)) } satisfies Pick<ElevenexBridge, 'workspaceGit' | 'workspaceGitAction'>;
+  const store = { selected, selectedTask: () => ({ state: 'ready', archivedAt: null }), commitPanelAvailable: signal(true), reconcileTaskBranch: vi.fn() };
+  const bridge = { workspaceGit: vi.fn(async () => ok(summary)), workspaceGitAction: vi.fn(async () => ok(summary)), workspaceCommitPreview: vi.fn(async (): Promise<BackendResult<WorkspaceCommitPreview>> => ({ ok: true, value: preview })) } satisfies Pick<ElevenexBridge, 'workspaceGit' | 'workspaceGitAction' | 'workspaceCommitPreview'>;
   TestBed.configureTestingModule({ providers: [WorkspaceTaskGitService, { provide: WorkspaceStore, useValue: store }, { provide: ELEVENEX_BRIDGE, useValue: bridge }, { provide: BackendClientService, useValue: { state: signal({ revision: 1, scope: { id: 'scope', environment: { kind: 'local' } } }) } }] });
   const git = TestBed.inject(WorkspaceTaskGitService); TestBed.tick();
   return { git, bridge, store, selected };
@@ -22,6 +23,65 @@ function setup() {
 afterEach(() => { TestBed.resetTestingModule(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('WorkspaceTaskGitService', () => {
+  it('preloads the default bounded file window with status and refreshes it on the existing poll', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { git, bridge } = setup(); await settle();
+    expect(git.commitPreview()).toEqual(preview);
+    expect(bridge.workspaceCommitPreview).toHaveBeenCalledExactlyOnceWith('scope', { taskId: 1, query: '', includeUnstaged: true, excluded: [], includedSecrets: [] });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(bridge.workspaceCommitPreview).toHaveBeenCalledTimes(2);
+    TestBed.resetTestingModule(); await vi.advanceTimersByTimeAsync(10000);
+    expect(bridge.workspaceCommitPreview).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips preloading for hidden windows, clean tasks and unsupported engines', async () => {
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    const { git, bridge, store } = setup(); await settle();
+    expect(bridge.workspaceCommitPreview).not.toHaveBeenCalled();
+    hidden.mockReturnValue(false); store.commitPanelAvailable.set(false);
+    await git.refresh();
+    expect(bridge.workspaceCommitPreview).not.toHaveBeenCalled();
+    store.commitPanelAvailable.set(true); bridge.workspaceGit.mockResolvedValueOnce(ok({ ...summary, files: 0 }));
+    await git.refresh();
+    expect(bridge.workspaceCommitPreview).not.toHaveBeenCalled();
+    expect(git.commitPreview()).toBeNull();
+  });
+
+  it('discards a pending preload across navigation away and back to the same task', async () => {
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { git, bridge, selected } = setup(); await settle();
+    let resolve!: (value: BackendResult<WorkspaceCommitPreview>) => void;
+    bridge.workspaceCommitPreview.mockReturnValueOnce(new Promise(yes => { resolve = yes; }));
+    await git.refresh();
+    selected.set(null); TestBed.tick();
+    expect(git.commitPreview()).toBeNull();
+    selected.set({ scopeId: 'scope', taskId: 1, sessionId: 2 }); TestBed.tick(); await settle();
+    resolve({ ok: true, value: { ...preview, revision: 'old' } }); await settle();
+    expect(git.commitPreview()?.revision).toBe('revision');
+  });
+
+  it('drops preloaded files during mutations and ignores a preload finishing after teardown', async () => {
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { git, bridge } = setup(); await settle();
+    const action = git.perform({ type: 'commit', message: 'Commit changes' });
+    expect(git.commitPreview()).toBeNull();
+    await action; await settle();
+    expect(git.commitPreview()).toEqual(preview);
+    let resolve!: (value: BackendResult<WorkspaceCommitPreview>) => void;
+    bridge.workspaceCommitPreview.mockReturnValueOnce(new Promise(yes => { resolve = yes; }));
+    await git.refresh(); TestBed.resetTestingModule();
+    resolve({ ok: true, value: { ...preview, revision: 'late' } }); await settle();
+    expect(git.commitPreview()?.revision).toBe('revision');
+  });
+
+  it('keeps preload errors silent so the panel can perform its own check', async () => {
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { git, bridge } = setup(); await settle();
+    bridge.workspaceCommitPreview.mockRejectedValueOnce(new Error('Unavailable'));
+    await git.refresh(); await settle();
+    expect(git.commitPreview()).toBeNull(); expect(git.error()).toBeNull();
+  });
+
   it('polls only the selected visible task and releases its timer on teardown', async () => {
     vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     const { git, bridge } = setup(); await settle();

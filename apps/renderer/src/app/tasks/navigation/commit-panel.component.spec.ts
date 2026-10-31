@@ -44,6 +44,70 @@ function panel() {
   return { fixture, root: fixture.nativeElement as HTMLElement };
 }
 describe("commit panel public behavior", () => {
+  it("shows preloaded files immediately and keeps the draft and list while revalidating", async () => {
+    vi.useFakeTimers();
+    try {
+      const initial: CommitFileWindow = {
+        revision: "preloaded", items: files, nextCursor: null,
+        total: files.length, matches: files.length, unstaged: 8,
+        selected: { files: 10, add: 955, del: 45, staged: 2, unstaged: 8 },
+        running: ["Working session"],
+      };
+      let resolve!: (value: CommitFileWindow) => void;
+      const provider = vi.fn(() => new Promise<CommitFileWindow>(done => { resolve = done; }));
+      const fixture = TestBed.createComponent(CommitPanelComponent);
+      fixture.componentRef.setInput("initialWindow", initial);
+      fixture.componentRef.setInput("fileProvider", provider);
+      fixture.componentRef.setInput("open", true);
+      fixture.detectChanges(); TestBed.tick();
+      const root = fixture.nativeElement as HTMLElement;
+      const submit = root.querySelector<HTMLButtonElement>("footer button[exButton]")!;
+      expect(root.querySelector(".summary")?.textContent).toContain("+955");
+      expect(root.textContent).toContain(".env.local may hold secrets");
+      expect(root.textContent).toContain("Working session");
+      expect(submit.disabled).toBe(true);
+      root.querySelector<HTMLButtonElement>(".summary")!.click(); fixture.detectChanges();
+      expect(root.querySelectorAll(".file")).toHaveLength(5);
+      const message = root.querySelector<HTMLInputElement>(".message input")!;
+      message.value = "Keep this draft"; message.dispatchEvent(new Event("input"));
+      await vi.advanceTimersByTimeAsync(0);
+      resolve({ ...initial, items: files.slice(1), revision: "fresh" }); await Promise.resolve(); fixture.detectChanges();
+      expect(submit.disabled).toBe(false);
+      expect(root.querySelector(".note")?.textContent).not.toContain(".env.local");
+      expect(root.querySelector(".message input")).toBe(message);
+      expect(message.value).toBe("Keep this draft");
+      expect(root.querySelector(".summary")?.getAttribute("aria-expanded")).toBe("true");
+      // A background preload is only an initial value, never a replacement for an open view.
+      fixture.componentRef.setInput("initialWindow", { ...initial, selected: { ...initial.selected, add: 9999 } });
+      fixture.detectChanges();
+      expect(root.querySelector(".summary")?.textContent).toContain("+955");
+      const commit = vi.fn(); fixture.componentInstance.commitRequested.subscribe(commit);
+      submit.click();
+      expect(commit).toHaveBeenCalledWith(expect.objectContaining({ message: "Keep this draft", revision: "fresh" }));
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("blocks submission from preloaded files if revalidation fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = TestBed.createComponent(CommitPanelComponent);
+      fixture.componentRef.setInput("initialWindow", {
+        revision: "preloaded", items: [files[1]!], nextCursor: null,
+        matches: 1, total: 1, unstaged: 0,
+        selected: { files: 1, add: 100, del: 0, staged: 1, unstaged: 0 }, running: [],
+      } satisfies CommitFileWindow);
+      fixture.componentRef.setInput("fileProvider", async () => { throw new Error("Refresh failed"); });
+      fixture.componentRef.setInput("open", true);
+      fixture.detectChanges(); TestBed.tick(); await vi.advanceTimersByTimeAsync(0); fixture.detectChanges();
+      const root = fixture.nativeElement as HTMLElement;
+      expect(root.querySelector("[role=alert]")?.textContent).toContain("Refresh failed");
+      expect(root.querySelector<HTMLButtonElement>("footer button[exButton]")!.disabled).toBe(true);
+      const commit = vi.fn(); fixture.componentInstance.commitRequested.subscribe(commit);
+      root.querySelector("input")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(commit).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("hides the completed exit before cancelling its filled animation and can open again", async () => {
     let finish!: (completed: boolean) => void;
     const closing = new Promise<boolean>((resolve) => { finish = resolve; });

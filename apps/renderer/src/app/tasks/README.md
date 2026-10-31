@@ -144,6 +144,10 @@ The owner must honor abort/stale scope checks. Paged owners commit the explicit
 Exceptions are limited to 1,000 paths and 64 KiB per list by the platform boundary.
 The panel opens immediately while the provider checks files. The message stays
 editable during loading; submission remains disabled until the check succeeds.
+Owners may supply `initialWindow` with the default first page (all unstaged files
+included, no filter or exceptions). It seeds counts, rows and warnings on a fresh
+opening while the provider revalidates. Later input updates do not overwrite an
+open panel’s selection, filter or page; interrupted reopening retains its draft.
 
 The panel owns draft/filter/disclosures, focus trapping, Escape/outside dismissal,
 resize observation and its retained exit. Its content stays frozen while closing.

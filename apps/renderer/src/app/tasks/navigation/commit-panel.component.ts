@@ -58,6 +58,8 @@ export class CommitPanelComponent implements OnChanges {
   readonly running = input<readonly string[]>([]);
   readonly push = input(false);
   readonly fileProvider = input<CommitFileProvider>();
+  /** Default first page for immediate display on opening; the provider still validates it. */
+  readonly initialWindow = input<CommitFileWindow | null>(null);
   readonly pushChange = output<boolean>();
   readonly closeRequested = output<void>();
   readonly commitRequested = output<CommitIntent>();
@@ -208,7 +210,7 @@ export class CommitPanelComponent implements OnChanges {
             (result) => {
               if (!abort.signal.aborted) {
                 this.remote.set(result);
-                if (!this.secretFile())
+                if (!this.secretFile() || (!query.query && !query.cursor))
                   this.secretFile.set(
                     result.items.find((file) => file.flag) ?? null,
                   );
@@ -342,8 +344,10 @@ export class CommitPanelComponent implements OnChanges {
       this.includeUnstaged.set(true);
       this.excluded.set([]);
       this.includedSecrets.set([]);
-      this.remote.set(null);
-      this.secretFile.set(null);
+      const initial = this.fileProvider() ? this.initialWindow() : null;
+      this.remote.set(initial);
+      this.secretFile.set(initial?.items.find((file) => file.flag) ?? null);
+      this.loading.set(!!this.fileProvider());
       this.error.set(null);
     }
   }

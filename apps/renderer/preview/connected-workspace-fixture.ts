@@ -60,6 +60,12 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   private readonly pendingFolderReads = new Set<() => void>();
   private taskDelay = 0;
   private readonly pendingTaskReads = new Set<() => void>();
+  private commitPreviewHeld = false;
+  private readonly pendingCommitPreviews = new Set<() => void>();
+  setCommitPreviewHeld(held: boolean): void {
+    this.commitPreviewHeld = held;
+    if (!held) for (const finish of this.pendingCommitPreviews) finish();
+  }
   setTaskDelay(milliseconds: number): void { this.taskDelay = Math.max(0, Math.min(2000, milliseconds)); }
   setFolderDelay(milliseconds: number): void { this.folderDelay = Math.max(0, Math.min(2000, milliseconds)); }
   setProjectFailure(value: 'rejected' | 'uncertain' | null): void { this.createFailure = value; }
@@ -71,6 +77,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     super(); this.ready();
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingFolderReads) finish(); });
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingTaskReads) finish(); });
+    inject(DestroyRef).onDestroy(() => this.setCommitPreviewHeld(false));
   }
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
@@ -185,6 +192,10 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   workspaceGit = async (_scope: string, taskId: number) => success(this.git.get(taskId) ?? { taskId, branch: this.taskRows.find(task => task.id === taskId)?.branchName ?? '', upstream: 'origin/main', ahead: 0, behind: 0, files: 48, additions: 3288, deletions: 1128, conflicted: false });
   workspaceClosePreview = async (_scope: string, taskId: number) => success({ taskId, sessions: this.sessionRows.filter(session => session.taskId === taskId).length, running: this.sessionRows.filter(session => session.taskId === taskId && session.status === 'running').length, terminals: 0, actions: 0, unpushed: this.git.get(taskId)?.ahead ?? 0, uncommitted: this.git.get(taskId)?.files ?? 3 });
   workspaceCommitPreview = async (_scope: string, query: WorkspaceCommitQuery) => {
+    if (this.commitPreviewHeld) await new Promise<void>(resolve => {
+      const finish = () => { this.pendingCommitPreviews.delete(finish); resolve(); };
+      this.pendingCommitPreviews.add(finish);
+    });
     const files = Array.from({length: 48}, (_, index) => ({path: index === 0 ? '.env.local' : index < 4 ? 'src/payments/retry-' + index + '.ts' : 'src/payments/test-' + index + '.spec.ts', status: index === 0 ? 'A' : 'M', add: 92 - index, del: index, staged: index > 0 && index < 15, ...(index === 0 ? {flag: 'secrets' as const} : {}) }));
     const selected = files.filter(file => (query.includeUnstaged || file.staged) && !query.excluded.includes(file.path) && (!file.flag || query.includedSecrets.includes(file.path)));
     const matches = files.filter(file => file.path.includes(query.query ?? '')).sort((a,b) => Number(query.includeUnstaged || b.staged) - Number(query.includeUnstaged || a.staged));

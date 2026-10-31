@@ -1,5 +1,24 @@
 # Component system verification
 
+## Preloaded commit files, 2026-10-31
+
+The selected visible task preloads the default bounded commit page alongside
+its existing Git polling. Opening seeds counts, rows and warnings immediately;
+a fresh check gates submission and replaces cached warnings. Background updates
+preserve the panel's draft, selection and page. Task/scope changes, mutations
+and teardown reject stale preload replies. Clean tasks, hidden windows and
+engines without the capability skip preloading.
+
+Passed desktop lint, production build and the full desktop suite (113 desktop,
+7 capture-tool and 470 renderer tests, including TypeScript contracts).
+The [preload capture](../../artifacts/desktop-capture/commit-preload-final/report.json)
+and [existing motion regression](../../artifacts/desktop-capture/commit-preload-motion/report.json)
+are `verified: true`, with 18 checkpoints and no renderer errors or warnings.
+Inspected light/dark PNGs cover a held refresh with cached files, disabled
+submission, retained typing, focus restoration, interrupted reopening and narrow
+reduced-motion layouts. Captures use the production components with an isolated
+preview backend; live repositories and packaged-app launches were not exercised.
+
 ## Initial default choice for new presets, 2026-10-31
 
 When the supported default snapshot has no saved preset, opening the creator

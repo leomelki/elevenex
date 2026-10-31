@@ -309,6 +309,11 @@ frames, interrupted reopening with retained draft, focus return, and hidden
 visibility at animation cancellation before Angular removes the panel. It
 includes both themes and narrow reduced-motion states.
 
+`scenarios/commit-panel-preload.mjs` holds the connected preview's file check
+after its initial preload. It verifies immediately visible cached rows, counts
+and secret warnings, disabled submission until revalidation, retained typing,
+focus restoration and narrow reduced-motion layouts in both themes.
+
 ## Output and failures
 
 Every checkpoint yields a numbered PNG plus `.json` (layout/state/focus) and

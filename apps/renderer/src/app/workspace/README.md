@@ -191,6 +191,12 @@ generator. A private index freezes selected changes before generation; excluded
 staged entries and edits made later by running sessions remain outside the commit.
 `WorkspaceTaskGitService` observes writing/committing/pushing phases only while
 its own operation is pending. Timers and replies belong to the selected task/scope.
+The visible selected task preloads one default 100-file commit page after each
+Git status refresh when changes exist and the engine supports the panel. The
+header supplies it as `initialWindow`, so opening immediately shows counts,
+files and warnings while a fresh provider check gates submission. The cache
+is cleared on task/scope changes and Git mutations; late replies are discarded.
+Background input updates never replace an open panel’s selection or page.
 No write is replayed on reconnect. Refresh status after an uncertain outcome.
 
 Close checks authoritative uncommitted, unpushed and process counts. A clean,
