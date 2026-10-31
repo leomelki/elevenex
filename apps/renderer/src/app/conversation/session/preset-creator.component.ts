@@ -76,7 +76,7 @@ export class PresetCreatorComponent {
   readonly blocked = input(false);
   readonly reasoningAvailable = input(true);
   readonly defaultAvailable = input(false);
-  readonly useAsDefault = signal(false);
+  readonly useAsDefault = linkedSignal(() => this.initial().default === true);
   readonly defaultOptions = computed<readonly SegmentOption[]>(() => {
     const disabled = !this.open() || this.busy() || this.blocked();
     return [

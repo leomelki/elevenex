@@ -39,7 +39,10 @@ describe('SessionsService', () => {
     cleanupSession: jest.Mock;
     reactivateSession: jest.Mock;
   };
-  let settingsServiceMock: { findOne: jest.Mock };
+  let settingsServiceMock: {
+    findOne: jest.Mock;
+    getInitialAgentProvider: jest.Mock;
+  };
 
   beforeEach(async () => {
     const testDb = createTestDb();
@@ -77,6 +80,7 @@ describe('SessionsService', () => {
       reactivateSession: jest.fn().mockResolvedValue(undefined),
     };
     settingsServiceMock = {
+      getInitialAgentProvider: jest.fn((provider: string) => provider),
       findOne: jest.fn().mockResolvedValue({
         defaultClaudeSessionSurface: 'claude-ui',
         defaultAgentProvider: 'claude',
@@ -218,6 +222,46 @@ describe('SessionsService', () => {
       });
 
       expect(result.activeAgentProvider).toBe('codex');
+    });
+
+    it('uses the persisted last harness only without a default, and retains explicit session choices', async () => {
+      const settings = new SettingsService(db);
+      await settings.rememberAgentConfig({
+        provider: 'codex',
+        model: 'gpt',
+        reasoningEffort: 'high',
+        fastMode: true,
+      });
+      settingsServiceMock.findOne.mockImplementation(() => settings.findOne());
+      settingsServiceMock.getInitialAgentProvider.mockImplementation(
+        (provider) => settings.getInitialAgentProvider(provider),
+      );
+      const workspace = {
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/last-used',
+      };
+      expect((await service.create(workspace)).activeAgentProvider).toBe(
+        'codex',
+      );
+      expect(
+        (await service.create({ ...workspace, activeAgentProvider: 'pi' }))
+          .activeAgentProvider,
+      ).toBe('pi');
+      settings.addAgentModelPreset(
+        {
+          id: 'pinned',
+          name: 'Pinned',
+          provider: 'claude',
+          model: null,
+          reasoningEffort: null,
+        },
+        true,
+        settings.getAgentPresetDefault().revision,
+      );
+      expect((await service.create(workspace)).activeAgentProvider).toBe(
+        'claude',
+      );
     });
 
     it('should auto-generate name as "Session N" when not provided', async () => {

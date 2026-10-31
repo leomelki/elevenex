@@ -220,8 +220,19 @@ The creator groups its default preference below the agent controls, using SetRow
 Segmented. Keep current preserves the saved default; Use this preset requests
 the new default when Create succeeds. Both choices have full button targets and
 radio keyboard navigation, and disable while busy, blocked or closing. The
-selected choice stays local until creation. No default mutation happens
+creator initially chooses Use this preset when the backend reports no default,
+and Keep current when a default already exists. That initial preference is
+captured when the draft opens; explicit edits survive harness/model changes.
+The selected choice stays local until creation. No default mutation happens
 while editing this form.
+
+The backend separately remembers the last successfully used harness, model,
+thinking level and fast mode after agent changes or accepted sends. New sessions
+use this persisted mix when no explicit preset or legacy provider default is
+configured. Explicit session harness choices and configured defaults win;
+remembering a mix never creates a preset or adds a Default label. Passive reads,
+failed commands and default Undo do not replace it. The additive settings
+migration preserves it across backend restarts without a renderer cache.
 
 
 The optional `presetCatalogs` capability adds the named scoped

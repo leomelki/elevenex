@@ -26,7 +26,10 @@ describe('PlanChatForksService', () => {
     submitPrompt: jest.Mock;
   };
   let agentRuntimeCleanup: { cleanupSession: jest.Mock };
-  let settingsService: { findOne: jest.Mock };
+  let settingsService: {
+    findOne: jest.Mock;
+    getInitialAgentProvider: jest.Mock;
+  };
 
   beforeEach(async () => {
     const testDb = createTestDb();
@@ -56,6 +59,7 @@ describe('PlanChatForksService', () => {
       cleanupSession: jest.fn().mockResolvedValue(undefined),
     };
     settingsService = {
+      getInitialAgentProvider: jest.fn((provider: string) => provider),
       findOne: jest.fn().mockResolvedValue({
         defaultClaudeSessionSurface: 'claude-ui',
         defaultAgentProvider: 'claude',

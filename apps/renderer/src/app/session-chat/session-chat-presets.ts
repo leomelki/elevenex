@@ -134,7 +134,11 @@ export class SessionChatPresets {
     const id = crypto.randomUUID();
     this.presetDraft.set({
       id,
-      initial: { ...value, preset: undefined },
+      initial: {
+        ...value,
+        preset: undefined,
+        default: this.defaultPreset()?.id === null,
+      },
       identity: this.owner.identity(),
       harnesses: this.owner.harnesses(),
       ...(this.owner.store.state()?.presetCatalogs

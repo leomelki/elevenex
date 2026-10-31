@@ -447,7 +447,9 @@ same connected workspace preview.
 `scenarios/session-preset-default.mjs` verifies the quiet default selector and its
 keyboard menu, persisted default versus current selection, Undo, creator opt-in,
 retained drafts and new-session defaults in both themes. It includes narrow,
-reduced-motion checkpoints using the connected workspace preview backend.
+reduced-motion checkpoints using the connected workspace preview backend, and
+checks Use this preset is initially selected when no default exists, respects
+cancellation, and becomes the default for a new session only after Create.
 
 
 `scenarios/preset-creator-harness.mjs` checks the creator Harness dropdown,

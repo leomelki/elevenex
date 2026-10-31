@@ -411,6 +411,29 @@ describe("connected composer controls", () => {
     complete(); await choosing; await settle(fixture);
     expect(root.querySelector('ex-preset-picker button[aria-pressed="true"]')?.textContent).toContain('Same mix, different purpose');
   });
+  it.each([true, false])('starts with Use this preset when no default exists and respects opt-in=%s on Create', async (useDefault) => {
+    const before = { id: null, provider: 'codex', defaultIds: [], revision: 'a'.repeat(64) };
+    const { fixture, root, bridge, complete } = setup([], { ...capabilities, presets: [], presetDefault: before });
+    await settle(fixture);
+    root.querySelector<HTMLButtonElement>('.preset-heading > button')!.click(); await settle(fixture);
+    expect(document.querySelector('.default-choice button[aria-label="Use this preset"]')?.getAttribute('aria-checked')).toBe('true');
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    if (!useDefault) {
+      document.querySelector<HTMLButtonElement>('.default-choice button[aria-label="Keep current"]')!.click();
+      await settle(fixture);
+    }
+    const name = document.querySelector<HTMLInputElement>('.preset-creator input')!;
+    name.value = 'First preset'; name.dispatchEvent(new Event('input')); await settle(fixture);
+    document.querySelector('.preset-creator')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await settle(fixture);
+    const defaultWrite = expect.objectContaining({ makeDefault: true, expectedDefaultRevision: before.revision });
+    expect(bridge.sessionChatCommand).toHaveBeenCalledWith('scope', expect.objectContaining({ action: expect.objectContaining({ type: 'save-preset', name: 'First preset' }) }));
+    if (useDefault)
+      expect(bridge.sessionChatCommand).toHaveBeenCalledWith('scope', expect.objectContaining({ action: defaultWrite }));
+    else
+      expect(bridge.sessionChatCommand).not.toHaveBeenCalledWith('scope', expect.objectContaining({ action: defaultWrite }));
+    complete(); await settle(fixture);
+  });
   it('offers a keyboard-operated default choice without submitting or saving until Create', async () => {
     const fixture = TestBed.createComponent(PresetCreatorComponent);
     fixture.componentRef.setInput('initial', { mark: 'Cx', harness: 'codex', model: 'gpt' });

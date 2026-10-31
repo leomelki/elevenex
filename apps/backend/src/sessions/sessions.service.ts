@@ -1311,7 +1311,8 @@ export class SessionsService extends EventEmitter {
       return explicit;
     }
 
-    return (await this.settingsService.findOne()).defaultAgentProvider;
+    const settings = await this.settingsService.findOne();
+    return this.settingsService.getInitialAgentProvider(settings.defaultAgentProvider);
   }
 
   private visibleWhere(

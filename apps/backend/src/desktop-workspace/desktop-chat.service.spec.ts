@@ -33,16 +33,19 @@ describe('selected session chat', () => {
     answerUserInput: jest.fn(),
     setReasoningEffort: jest.fn(),
     setFastMode: jest.fn(),
+    setSelectedModel: jest.fn(),
   });
   const session = jest.fn();
   const started = jest.fn();
   const updateProvider = jest.fn();
   const advertised = jest.fn();
+  const rememberAgentConfig = jest.fn();
   beforeEach(async () => {
     history = [];
     live = [];
     status = 'active';
     jest.clearAllMocks();
+    rememberAgentConfig.mockReset().mockResolvedValue(undefined);
     started.mockReturnValue(true);
     advertised.mockReturnValue([
       runtime.info,
@@ -70,7 +73,7 @@ describe('selected session chat', () => {
         DesktopChatService,
         {
           provide: SettingsService,
-          useValue: { getAgentModelPresets: () => [], getAgentPresetDefault: () => ({ id: null, provider: 'codex', defaultIds: [], revision: 'a'.repeat(64) }) },
+          useValue: { rememberAgentConfig, getAgentModelPresets: () => [], getAgentPresetDefault: () => ({ id: null, provider: 'codex', defaultIds: [], revision: 'a'.repeat(64) }) },
         },
         {
           provide: SessionsService,
@@ -103,6 +106,44 @@ describe('selected session chat', () => {
     chat = module.get(DesktopChatService);
   });
   afterEach(async () => module.close());
+
+  it('remembers successful config changes and sends, but never rejected commands or passive reads', async () => {
+    runtime.getRuntimeState.mockResolvedValue({ selectedModel: 'gpt', reasoningEffort: 'high', fastMode: true });
+    await read();
+    expect(rememberAgentConfig).not.toHaveBeenCalled();
+    await chat.command(1, 2, { type: 'fast', enabled: false });
+    expect(rememberAgentConfig).toHaveBeenCalledWith({ provider: 'codex', model: 'gpt', reasoningEffort: 'high', fastMode: true });
+    rememberAgentConfig.mockClear();
+    await chat.command(1, 2, { type: 'send', text: 'Hello', queue: false });
+    expect(rememberAgentConfig).toHaveBeenCalledTimes(1);
+    rememberAgentConfig.mockClear();
+    await expect(chat.command(1, 2, { type: 'reasoning', effort: 'invalid' })).rejects.toThrow('Unsupported thinking');
+    expect(rememberAgentConfig).not.toHaveBeenCalled();
+  });
+
+  it('does not report an accepted prompt as failed if remembering the fallback fails', async () => {
+    rememberAgentConfig.mockRejectedValueOnce(new Error('Database unavailable'));
+    await expect(chat.command(1, 2, { type: 'send', text: 'Hello', queue: false })).resolves.toEqual({ accepted: true });
+    expect(runtime.submitPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it('remembers a fully applied preset and leaves the fallback alone on partial failure', async () => {
+    jest.spyOn(module.get(SettingsService), 'getAgentModelPresets').mockReturnValue([
+      { id: 'deep', name: 'Deep', provider: 'codex', model: 'gpt', reasoningEffort: 'high', fastMode: true },
+    ]);
+    started.mockReturnValue(false);
+    runtime.getRuntimeState.mockResolvedValue({
+      selectedModel: 'gpt', reasoningEffort: 'high', fastMode: true,
+      availableModels: [{ id: 'gpt', reasoningEfforts: ['high'], supportsFastMode: true }],
+    });
+    const action = { type: 'preset', id: 'deep', expectedProvider: 'codex' };
+    await chat.command(1, 2, action);
+    expect(rememberAgentConfig).toHaveBeenCalledWith({ provider: 'codex', model: 'gpt', reasoningEffort: 'high', fastMode: true });
+    rememberAgentConfig.mockClear();
+    runtime.setReasoningEffort.mockRejectedValueOnce(new Error('Disconnected'));
+    await expect(chat.command(1, 2, action)).rejects.toThrow('could not be fully applied');
+    expect(rememberAgentConfig).not.toHaveBeenCalled();
+  });
 
   it('coalesces prepared reply reads until transcript invalidation', async () => {
     history = [{ ...item('u'), kind: 'user' }];

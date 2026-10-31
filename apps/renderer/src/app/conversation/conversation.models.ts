@@ -12,7 +12,7 @@ export type ThinkingLevel = "Off" | "Low" | "Medium" | "High" | "Max";
 export interface AgentConfig {
   readonly id?: string;
   readonly preset?: string;
-  /** Saved default; creator submissions request the same default with this flag. */
+  /** Saved default; also seeds the creator's local choice and carries its submission. */
   readonly default?: boolean;
   readonly mark: string;
   readonly harness: string;

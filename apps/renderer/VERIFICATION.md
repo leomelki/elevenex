@@ -1,5 +1,24 @@
 # Component system verification
 
+## Initial default choice for new presets, 2026-10-31
+
+When the supported default snapshot has no saved preset, opening the creator
+seeds Use this preset. An existing saved default keeps Keep current selected;
+engines without default support retain their previous behavior. The owner
+captures this initial choice in the fixed draft, and the form retains explicit
+overrides independently of later harness/model edits. Only Create sends the
+existing revision-guarded default write.
+
+Lint, the production build and the full desktop suite pass: 113 desktop, 7 capture-tool and 457
+renderer tests, including TypeScript contracts. The new tests cover first-use
+preselection, writing on Create and opting out without a default write.
+[Default-choice capture](../../artifacts/desktop-capture/first-preset-default/report.json)
+is `verified: true`, with 25 checkpoints and no renderer errors or warnings.
+New PNGs were inspected in both themes, including compact/reduced-motion layouts,
+cancellation, preserved defaults, Undo and using the first preset in a new chat.
+Captures use the production components and isolated preview backend, not live
+provider accounts or a packaged application.
+
 ## Custom preset creation from the current configuration, 2026-10-31
 
 Custom now opens the retained preset creator directly with the current harness,

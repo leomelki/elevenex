@@ -351,6 +351,13 @@
       "when": 1793010974305,
       "tag": "0049_left_leo",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1793448109147,
+      "tag": "0050_striped_star_brand",
+      "breakpoints": true
     }
   ]
 }

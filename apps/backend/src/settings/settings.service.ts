@@ -29,6 +29,7 @@ import {
   DefaultClaudeSessionSurface,
   LOCAL_WHISPER_MODELS,
   LocalWhisperModelId,
+  LastUsedAgentConfig,
   MAX_AGENT_PREFERENCE_ENTRIES,
   MAX_AGENT_PREFERENCE_VALUE_LENGTH,
   MAX_AGENT_MODEL_PRESETS,
@@ -110,6 +111,7 @@ export class SettingsService implements OnModuleInit {
    */
   private defaultPresets: AgentModelPreset[] = [];
   private presetDefaultProvider: DefaultAgentProvider = DEFAULT_AGENT_PROVIDER;
+  private lastUsedAgentConfig: LastUsedAgentConfig | null = null;
 
   private agentDefaultsCache: {
     models: AgentProviderPreferenceMap;
@@ -195,9 +197,9 @@ export class SettingsService implements OnModuleInit {
   }
 
   /**
-   * Startup model/thinking level for `provider`, or nulls when the user hasn't
-   * pinned one (meaning: defer to the provider's own default). Synchronous by
-   * design — see `agentDefaultsCache`.
+   * Startup config for `provider`: explicit defaults, then the last used mix,
+   * then nulls to defer to the provider. Synchronous by design — see
+   * `agentDefaultsCache`.
    */
   getAgentProviderDefaults(provider: string): AgentProviderDefaults {
     if (!provider) {
@@ -213,10 +215,75 @@ export class SettingsService implements OnModuleInit {
         reasoningEffort: preset.reasoningEffort,
         fastMode: preset.fastMode ?? false,
       };
+    if (
+      !this.hasAgentProviderDefault(provider) &&
+      this.lastUsedAgentConfig?.provider === provider
+    ) {
+      const { model, reasoningEffort, fastMode } = this.lastUsedAgentConfig;
+      return { model, reasoningEffort, fastMode };
+    }
     return {
       model: this.agentDefaultsCache.models[provider] ?? null,
       reasoningEffort:
         this.agentDefaultsCache.reasoningEfforts[provider] ?? null,
+    };
+  }
+
+  /** Called after findOne() refreshes the cache; explicit defaults always win. */
+  getInitialAgentProvider(
+    provider: DefaultAgentProvider,
+  ): DefaultAgentProvider {
+    return this.hasAgentProviderDefault(provider)
+      ? provider
+      : (this.lastUsedAgentConfig?.provider ?? provider);
+  }
+
+  private hasAgentProviderDefault(provider: string): boolean {
+    return (
+      this.defaultPresets.some((p) => p.provider === provider && p.isDefault) ||
+      Object.hasOwn(this.agentDefaultsCache.models, provider) ||
+      Object.hasOwn(this.agentDefaultsCache.reasoningEfforts, provider)
+    );
+  }
+
+  async rememberAgentConfig(value: unknown): Promise<void> {
+    const config = this.parseLastUsedAgentConfig(value);
+    if (!config) throw new BadRequestException('Invalid agent configuration.');
+    const serialized = JSON.stringify(config);
+    if (serialized === JSON.stringify(this.lastUsedAgentConfig)) return;
+    // Patch only this column, so recent use cannot overwrite a concurrent default edit.
+    await this.db
+      .insert(schema.appSettings)
+      .values({ id: SINGLETON_SETTINGS_ID, lastUsedAgentConfig: serialized })
+      .onConflictDoUpdate({
+        target: schema.appSettings.id,
+        set: { lastUsedAgentConfig: serialized },
+      });
+    this.lastUsedAgentConfig = config;
+  }
+
+  private parseLastUsedAgentConfig(value: unknown): LastUsedAgentConfig | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      return null;
+    const config = value as Record<string, unknown>;
+    const provider = DEFAULT_AGENT_PROVIDERS.find((p) => p === config.provider);
+    const validChoice = (choice: unknown): choice is string | null =>
+      choice === null ||
+      (typeof choice === 'string' &&
+        choice.length > 0 &&
+        choice.length <= 1000);
+    if (
+      !provider ||
+      !validChoice(config.model) ||
+      !validChoice(config.reasoningEffort) ||
+      typeof config.fastMode !== 'boolean'
+    )
+      return null;
+    return {
+      provider,
+      model: config.model,
+      reasoningEffort: config.reasoningEffort,
+      fastMode: config.fastMode,
     };
   }
 
@@ -604,6 +671,16 @@ export class SettingsService implements OnModuleInit {
   }
 
   private toResponse(row: typeof schema.appSettings.$inferSelect): AppSettings {
+    this.lastUsedAgentConfig = null;
+    if (row.lastUsedAgentConfig && row.lastUsedAgentConfig.length <= 8192) {
+      try {
+        this.lastUsedAgentConfig = this.parseLastUsedAgentConfig(
+          JSON.parse(row.lastUsedAgentConfig),
+        );
+      } catch {
+        /* A malformed optional snapshot must not block settings or startup. */
+      }
+    }
     const defaultClaudeSessionSurface = CLAUDE_SESSION_SURFACES.includes(
       row.defaultClaudeSessionSurface as DefaultClaudeSessionSurface,
     )

@@ -7,6 +7,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   OnModuleDestroy,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -48,6 +49,7 @@ interface ChatFeed {
 /** Only selected conversations are observed. Idle feeds expire and never hydrate sidebar sessions. */
 @Injectable()
 export class DesktopChatService implements OnModuleDestroy {
+  private readonly logger = new Logger(DesktopChatService.name);
   private readonly configuring = new Set<number>();
   private readonly feeds = new Map<number, ChatFeed>();
   private readonly expiry = setInterval(() => {
@@ -310,6 +312,26 @@ export class DesktopChatService implements OnModuleDestroy {
     return chatCatalog(this.registry, this.settings, providerId, refresh);
   }
 
+  private async rememberConfiguration(sessionId: number): Promise<void> {
+    try {
+      const current = await this.sessions.findOne(sessionId);
+      const provider = this.registry.getProvider(current.activeAgentProvider);
+      const raw = record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      );
+      await this.settings.rememberAgentConfig({
+        provider: current.activeAgentProvider,
+        model: raw.selectedModel ?? null,
+        reasoningEffort: raw.reasoningEffort ?? null,
+        fastMode: raw.fastMode === true,
+      });
+    } catch {
+      // The command already succeeded, especially a prompt: never invite replay
+      // because saving its optional startup fallback failed.
+      this.logger.warn('Could not remember the last used agent configuration.');
+    }
+  }
+
   async command(taskId: number, sessionId: number, value: unknown) {
     const session = await this.target(taskId, sessionId);
     const action = record(value);
@@ -320,7 +342,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const preset = ['preset', 'save-preset', 'preset-default', 'preset-default-restore'].includes(String(action.type));
     if (preset) this.configuring.add(sessionId);
     try {
-      return preset
+      const result = preset
         ? await executePresetAction(
             this.sessions,
             this.registry,
@@ -336,6 +358,12 @@ export class DesktopChatService implements OnModuleDestroy {
             session,
             action,
           );
+      if ([
+        'provider', 'model', 'reasoning', 'fast', 'preset', 'save-preset',
+        'preset-default', 'send',
+      ].includes(String(action.type)))
+        await this.rememberConfiguration(sessionId);
+      return result;
     } finally {
       if (preset) this.configuring.delete(sessionId);
       if (preset || action.type === 'provider') this.release(sessionId);

@@ -2,6 +2,7 @@ import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import type { DrizzleDB } from '../database/database.provider.js';
 import { UpdateAppSettingsDto } from './dto/update-app-settings.dto.js';
 import { SettingsService } from './settings.service.js';
+import { createTestDb } from '../database/testing/create-test-db.js';
 import {
   DEFAULT_MAX_WORKTREES_PER_REPO,
   DEFAULT_SPEECH_TO_TEXT_SETTINGS,
@@ -73,6 +74,124 @@ function createDbMock(initialRows: unknown[] = []) {
 }
 
 describe('SettingsService', () => {
+  it('persists the last mix across service restarts without creating or changing defaults', async () => {
+    const { db, sqlite } = createTestDb();
+    try {
+      const settings = new SettingsService(db);
+      const config = {
+        provider: 'codex',
+        model: 'gpt',
+        reasoningEffort: 'high',
+        fastMode: true,
+      };
+      const before = settings.getAgentPresetDefault();
+      await settings.rememberAgentConfig(config);
+      const restarted = new SettingsService(db);
+      await restarted.onModuleInit();
+      expect(restarted.getInitialAgentProvider('claude')).toBe('codex');
+      expect(restarted.getAgentProviderDefaults('codex')).toEqual({
+        model: 'gpt',
+        reasoningEffort: 'high',
+        fastMode: true,
+      });
+      expect(restarted.getAgentProviderDefaults('claude')).toEqual({
+        model: null,
+        reasoningEffort: null,
+      });
+      expect(restarted.getAgentPresetDefault()).toEqual(before);
+      expect((await restarted.findOne()).defaultAgentProvider).toBe('claude');
+      await restarted.update({ runTimeLimitHours: 2 });
+      await restarted.findOne();
+      expect(restarted.getAgentProviderDefaults('codex').fastMode).toBe(true);
+      await restarted.rememberAgentConfig({
+        ...config,
+        model: null,
+        reasoningEffort: null,
+        fastMode: false,
+      });
+      expect(restarted.getAgentProviderDefaults('codex')).toEqual({
+        model: null,
+        reasoningEffort: null,
+        fastMode: false,
+      });
+    } finally {
+      sqlite.close();
+    }
+  });
+  it('prefers explicit preset and legacy defaults over the last used mix', async () => {
+    const { db } = createDbMock();
+    const settings = new SettingsService(db);
+    await settings.rememberAgentConfig({
+      provider: 'codex',
+      model: 'recent',
+      reasoningEffort: 'low',
+      fastMode: true,
+    });
+    await settings.update({ defaultModelByProvider: { codex: 'pinned' } });
+    expect(settings.getInitialAgentProvider('codex')).toBe('codex');
+    expect(settings.getAgentProviderDefaults('codex')).toMatchObject({
+      model: 'pinned',
+      reasoningEffort: null,
+    });
+    settings.addAgentModelPreset(
+      {
+        id: 'pinned',
+        name: 'Pinned',
+        provider: 'claude',
+        model: null,
+        reasoningEffort: null,
+      },
+      true,
+      settings.getAgentPresetDefault().revision,
+    );
+    expect(settings.getInitialAgentProvider('claude')).toBe('claude');
+    expect(settings.getAgentProviderDefaults('claude')).toEqual({
+      model: null,
+      reasoningEffort: null,
+      fastMode: false,
+    });
+    await settings.rememberAgentConfig({
+      provider: 'claude',
+      model: 'recent',
+      reasoningEffort: 'high',
+      fastMode: true,
+    });
+    expect(settings.getAgentProviderDefaults('claude')).toEqual({
+      model: null,
+      reasoningEffort: null,
+      fastMode: false,
+    });
+  });
+  it.each([
+    '{',
+    JSON.stringify({
+      provider: 'unknown',
+      model: 'm',
+      reasoningEffort: null,
+      fastMode: false,
+    }),
+    JSON.stringify({
+      provider: 'codex',
+      model: 'x'.repeat(1001),
+      reasoningEffort: null,
+      fastMode: false,
+    }),
+  ])(
+    'ignores malformed persisted last configs (%s)',
+    async (lastUsedAgentConfig) => {
+      const { db } = createDbMock([{ id: 1, lastUsedAgentConfig }]);
+      const settings = new SettingsService(db);
+      await settings.onModuleInit();
+      expect(settings.getInitialAgentProvider('claude')).toBe('claude');
+      expect(settings.getAgentProviderDefaults('codex')).toEqual({
+        model: null,
+        reasoningEffort: null,
+      });
+      await expect(
+        settings.rememberAgentConfig({ provider: 'unknown' }),
+      ).rejects.toThrow('Invalid agent');
+    },
+  );
   it('appends presets without losing concurrent additions or changing existing startup defaults', async () => {
     const { db, getRows } = createDbMock();
     const service = new SettingsService(db);

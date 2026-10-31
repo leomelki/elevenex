@@ -114,6 +114,7 @@ describe('ReviewChatsService', () => {
         {
           provide: SettingsService,
           useValue: {
+            getInitialAgentProvider: jest.fn((provider: string) => provider),
             findOne: jest.fn().mockResolvedValue({
               defaultClaudeSessionSurface: 'claude-ui',
               defaultAgentProvider: 'claude',
