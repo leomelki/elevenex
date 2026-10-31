@@ -8,10 +8,22 @@ import type {
   SessionChatPage,
   SessionChatRead,
   SessionChatState,
+  SessionChatPreset,
+  SessionChatCommandReply,
+  SessionChatCatalog,
+  SessionChatCatalogRead,
+  SessionChatPresetDefault,
 } from "@elevenex/shared";
 
+const savedPresets: readonly SessionChatPreset[] = [
+  { id: 'deep', name: 'Deep work', provider: 'codex', providerLabel: 'Codex', model: 'gpt-6', modelLabel: 'GPT-6', reasoning: 'high', fast: false },
+  { id: 'quick', name: 'Quick pass', provider: 'codex', providerLabel: 'Codex', model: 'gpt-6', modelLabel: 'GPT-6', reasoning: 'low', fast: true },
+  { id: 'explore', name: 'Explore', provider: 'claude', providerLabel: 'Claude Code', model: 'sonnet', modelLabel: 'Claude Sonnet', reasoning: 'medium', fast: false },
+];
 const stamp = "2026-10-28T10:20:00.000Z";
 export const previewChatState = (): SessionChatState => ({
+  presets: savedPresets,
+  presetCatalogs: true,
   provider: "codex",
   providers: [
     { id: "claude", label: "Claude Code" },
@@ -117,6 +129,33 @@ const opening = () => [
 ];
 /** Harness-shaped fixtures stay outside the production import graph. */
 export class SessionChatFixture {
+  private presets = [...savedPresets];
+  private defaultProvider = 'codex';
+  private defaultIds: readonly string[] = ['deep'];
+  private defaultVersion = 1;
+  private defaultSnapshot(): SessionChatPresetDefault {
+    return { id: this.presets.find(p => p.provider === this.defaultProvider && this.defaultIds.includes(p.id))?.id ?? null,
+      provider: this.defaultProvider, defaultIds: [...this.defaultIds], revision: this.defaultVersion.toString(16).padStart(64, '0') };
+  }
+  private catalogDelay = 0;
+  private catalogFailure = false;
+  catalogBehavior(delay: number, fail = false): void { this.catalogDelay = Math.min(5000, Math.max(0, delay)); this.catalogFailure = fail; }
+  private catalogData(provider: string): SessionChatCatalog {
+    const label = previewChatState().providers?.find(p => p.id === provider)?.label ?? provider;
+    const model = provider === 'claude' ? { id: 'sonnet', label: 'Claude Sonnet', reasoningEfforts: ['low', 'medium', 'high'], supportsFastMode: false }
+      : provider === 'codex' ? previewChatState().models[0]!
+      : { id: provider + '-model', label: 'Provider model', reasoningEfforts: [], supportsFastMode: false };
+    return { provider, label, models: [model], model: model.id, reasoning: model.reasoningEfforts?.includes('high') ? 'high' : null,
+      fast: false, reasoningAvailable: !!model.reasoningEfforts?.length, fastAvailable: !!model.supportsFastMode, error: null };
+  }
+  async catalog(input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>> {
+    if (this.catalogDelay) await new Promise<void>(resolve => {
+      const done = () => { clearTimeout(timer); this.timers.delete(timer); this.waiting.delete(input.requestId); resolve(); };
+      const timer = setTimeout(done, this.catalogDelay); this.timers.add(timer); this.waiting.set(input.requestId, done);
+    });
+    return this.catalogFailure ? { ok: false, error: { code: 'http', status: 503, message: 'Could not load this harness’s models. Try again.' } }
+      : { ok: true, value: this.catalogData(input.provider) };
+  }
   private version = 1;
   private resetVersion = 1;
   private readonly sessions = new Map<
@@ -143,6 +182,11 @@ export class SessionChatFixture {
         items: id === 101 ? opening() : [],
         state: previewChatState(),
       };
+      const defaultPreset = this.presets.find(p => p.id === this.defaultSnapshot().id);
+      if (!session.items.length && defaultPreset) {
+        session.state = { ...session.state, provider: defaultPreset.provider, model: defaultPreset.model, reasoning: defaultPreset.reasoning, fast: defaultPreset.fast,
+          ...(defaultPreset.provider === 'claude' ? { models: [{ id: 'sonnet', label: 'Claude Sonnet', reasoningEfforts: ['low', 'medium', 'high'] }] } : {}) };
+      }
       session.state = {
         ...session.state,
         providerLocked: session.items.length > 0,
@@ -318,7 +362,7 @@ export class SessionChatFixture {
         items: reset ? items : [],
         events: !reset ? items.map((item) => ({ type: "item", item })) : [],
         before: end > 80 ? (items[0]?.id ?? null) : null,
-        state: session.state,
+        state: { ...session.state, presets: this.presets, presetDefault: this.defaultSnapshot() },
       },
     };
   }
@@ -344,7 +388,7 @@ export class SessionChatFixture {
   }
   async command(
     input: SessionChatCommand,
-  ): Promise<BackendResult<{ readonly accepted: true }>> {
+  ): Promise<BackendResult<SessionChatCommandReply>> {
     if (this.commandFailure) {
       this.commandFailure = false;
       return {
@@ -358,7 +402,37 @@ export class SessionChatFixture {
     }
     const session = this.session(input.sessionId),
       action = input.action;
-    if (action.type === "provider") {
+    let defaultChange: SessionChatCommandReply['defaultChange'];
+    if (action.type === 'preset-default-restore') {
+      if (action.expectedRevision !== this.defaultSnapshot().revision)
+        return { ok: false, error: { code: 'http', status: 409, message: 'The default changed. Refresh before trying again.' } };
+      this.defaultProvider = action.provider; this.defaultIds = [...action.defaultIds]; this.defaultVersion++;
+    } else if (action.type === 'preset' || action.type === 'save-preset' || action.type === 'preset-default') {
+      if (session.state.providerLocked || session.state.provider !== action.expectedProvider)
+        return { ok: false, error: { code: 'http', status: 409, message: 'This conversation has already started.' } };
+      const before = this.defaultSnapshot();
+      const makeDefault = action.type === 'preset-default' || (action.type === 'save-preset' && action.makeDefault === true);
+      const revision = action.type === 'preset-default' ? action.expectedRevision : action.type === 'save-preset' ? action.expectedDefaultRevision : undefined;
+      if (makeDefault && revision !== before.revision)
+        return { ok: false, error: { code: 'http', status: 409, message: 'The default changed. Refresh before trying again.' } };
+      let preset = this.presets.find(p => p.id === action.id);
+      if (action.type === 'save-preset') {
+        preset = { id: action.id, name: action.name, provider: action.provider ?? action.expectedProvider,
+          providerLabel: session.state.providers?.find(p => p.id === (action.provider ?? action.expectedProvider))?.label ?? (action.provider ?? action.expectedProvider),
+          model: action.model, modelLabel: this.catalogData(action.provider ?? action.expectedProvider).models.find(m => m.id === action.model)?.label ?? 'Provider default',
+          reasoning: action.reasoning, fast: action.fast };
+        this.presets = [preset, ...this.presets.filter(p => p.id !== action.id)];
+      }
+      if (!preset) return { ok: false, error: { code: 'http', message: 'Preset unavailable' } };
+      if (preset.provider !== session.state.provider)
+        await this.command({ ...input, action: { type: 'provider', provider: preset.provider, expectedProvider: session.state.provider } });
+      session.state = { ...session.state, model: preset.model, reasoning: preset.reasoning, fast: preset.fast };
+      if (makeDefault) {
+        this.defaultIds = [...this.defaultIds.filter(id => this.presets.find(p => p.id === id)?.provider !== preset.provider), preset.id];
+        this.defaultProvider = preset.provider; this.defaultVersion++;
+        defaultChange = { before, after: this.defaultSnapshot() };
+      }
+    } else if (action.type === "provider") {
       if (
         session.state.providerLocked ||
         session.state.provider !== action.expectedProvider
@@ -492,6 +566,6 @@ export class SessionChatFixture {
     else if (action.type === "permission-mode")
       session.state = { ...session.state, permissionMode: action.mode };
     this.changed();
-    return { ok: true, value: { accepted: true } };
+    return { ok: true, value: { accepted: true, ...(defaultChange ? { defaultChange } : {}) } };
   }
 }

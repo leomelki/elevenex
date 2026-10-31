@@ -1,0 +1,34 @@
+<div class="height" exAutoHeight>
+  <div
+    class="presets"
+    role="group"
+    aria-label="Agent presets"
+    [class.compact]="compact()"
+    [attr.aria-busy]="disabled()"
+  >
+    @for (
+      preset of presets();
+      track preset.id || preset.preset || preset.model;
+      let i = $index
+    ) {
+      <ex-preset-card
+        [animate.enter]="ready() ? 'preset-enter' : ''"
+        [preset]="preset"
+        [selected]="value() === (preset.id || preset.preset || preset.model)"
+        [shortcut]="i < 9 ? '⌥' + (i + 1) : ''"
+        [compact]="compact()"
+        [disabled]="disabled()"
+        (picked)="selected.emit(preset.id || preset.preset || preset.model)"
+      />
+    }
+    @if (custom()) {
+      <ex-preset-card
+        [custom]="true"
+        [selected]="value() === 'custom'"
+        [compact]="compact()"
+        [disabled]="disabled()"
+        (picked)="selected.emit('custom')"
+      />
+    }
+  </div>
+</div>

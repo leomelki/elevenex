@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   input,
   output,
 } from "@angular/core";
@@ -19,5 +20,14 @@ export class PresetCardComponent {
   readonly shortcut = input("");
   readonly custom = input(false);
   readonly compact = input(false);
+  readonly disabled = input(false);
+  readonly thinking = computed(() => {
+    const value = this.preset()?.thinking;
+    return value === "xhigh"
+      ? "Extra high"
+      : value
+        ? value.charAt(0).toUpperCase() + value.slice(1)
+        : "";
+  });
   readonly picked = output<void>();
 }

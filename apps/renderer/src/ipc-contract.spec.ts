@@ -4,6 +4,8 @@ import type { BackendClientState, BackendInfo, BackendResult, MachineState } fro
 
 describe('IPC bridge contract', () => {
   it('keeps the public API arguments and replies typed', () => {
+    expectTypeOf<Parameters<ElevenexBridge['sessionChatCatalog']>>().toEqualTypeOf<[scopeId: string, input: import('@elevenex/shared').SessionChatCatalogRead]>();
+    expectTypeOf<ReturnType<ElevenexBridge['sessionChatCatalog']>>().toEqualTypeOf<Promise<BackendResult<import('@elevenex/shared').SessionChatCatalog>>>();
     expectTypeOf<Parameters<ElevenexBridge['gitStatus']>>().toEqualTypeOf<[path: string]>();
     expectTypeOf<ReturnType<ElevenexBridge['gitStatus']>>().toEqualTypeOf<Promise<GitStatus>>();
     expectTypeOf<ReturnType<ElevenexBridge['appVersion']>>().toEqualTypeOf<Promise<string>>();

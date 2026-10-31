@@ -5,7 +5,9 @@ import {
   chatObject,
   chatText,
   parseChatAction,
+  parseChatCatalog,
   parseChatPage,
+  parsePresetDefault,
   requestId,
 } from "./session-chat-validation";
 import { BackendRequestError, requestBackendJson } from "./transport";
@@ -59,6 +61,48 @@ export function registerSessionChatIpc(
       );
     },
   );
+  const catalog = handleForWindow(
+    "session-chat:catalog",
+    trusted,
+    (window, ...args) => {
+      if (args.length !== 2) throw new Error("Invalid catalog arguments.");
+      const scopeId = scope(args[0]),
+        raw = chatObject(args[1]);
+      const taskId = chatId(raw["taskId"]),
+        sessionId = chatId(raw["sessionId"]);
+      const provider = chatText(raw["provider"], 200),
+        id = requestId(raw["requestId"]);
+      if (raw["refresh"] !== undefined && typeof raw["refresh"] !== "boolean")
+        throw new Error("Invalid catalog refresh.");
+      if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(provider))
+        throw new Error("Invalid harness.");
+      return client.execute(
+        window,
+        scopeId,
+        `session-chat:${id}:catalog:${taskId}:${sessionId}:${provider}`,
+        false,
+        async (endpoint, signal) =>
+          parseChatCatalog(
+            await requestBackendJson(
+              endpoint,
+              {
+                path:
+                  path(taskId, sessionId) +
+                  "/catalog?" +
+                  new URLSearchParams({
+                    provider,
+                    ...(raw["refresh"] === true ? { refresh: "1" } : {}),
+                  }),
+                limit: 256 * 1024,
+              },
+              signal,
+            ),
+            provider,
+          ),
+        30000,
+      );
+    },
+  );
   const command = handleForWindow(
     "session-chat:command",
     trusted,
@@ -92,7 +136,37 @@ export function registerSessionChatIpc(
               code: "invalid-response",
               message: "The machine did not confirm the conversation action.",
             });
-          return { accepted: true as const };
+          const change =
+            reply["defaultChange"] === undefined
+              ? undefined
+              : {
+                  before: parsePresetDefault(
+                    chatObject(reply["defaultChange"])["before"],
+                  ),
+                  after: parsePresetDefault(
+                    chatObject(reply["defaultChange"])["after"],
+                  ),
+                };
+          if (
+            change &&
+            ((action.type !== "preset-default" &&
+              !(action.type === "save-preset" && action.makeDefault)) ||
+              change.after.id !== action.id ||
+              change.before.revision !==
+                (action.type === "preset-default"
+                  ? action.expectedRevision
+                  : action.type === "save-preset"
+                    ? action.expectedDefaultRevision
+                    : undefined))
+          )
+            throw new BackendRequestError({
+              code: "invalid-response",
+              message: "The machine returned an incompatible default change.",
+            });
+          return {
+            accepted: true as const,
+            ...(change ? { defaultChange: change } : {}),
+          };
         },
         30000,
       );
@@ -180,6 +254,7 @@ export function registerSessionChatIpc(
   );
   return () => {
     read();
+    catalog();
     command();
     cancel();
     content();

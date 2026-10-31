@@ -25,3 +25,7 @@ ex-turn-nav {
   margin: 0 auto;
   padding: var(--space-3) var(--space-4) var(--space-4);
 }
+
+:host.center-composer { justify-content: center; overflow-y: auto; }
+:host.center-composer .conversation { display: none; }
+:host.center-composer .composer { margin: auto; }

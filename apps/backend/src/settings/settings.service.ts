@@ -1,6 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   OnModuleInit,
@@ -108,6 +109,7 @@ export class SettingsService implements OnModuleInit {
    * read and write of the settings row.
    */
   private defaultPresets: AgentModelPreset[] = [];
+  private presetDefaultProvider: DefaultAgentProvider = DEFAULT_AGENT_PROVIDER;
 
   private agentDefaultsCache: {
     models: AgentProviderPreferenceMap;
@@ -216,6 +218,205 @@ export class SettingsService implements OnModuleInit {
       reasoningEffort:
         this.agentDefaultsCache.reasoningEfforts[provider] ?? null,
     };
+  }
+
+  getAgentModelPresets(): readonly AgentModelPreset[] {
+    return this.defaultPresets.map((preset) => ({ ...preset }));
+  }
+
+  getAgentPresetDefault() {
+    return {
+      id:
+        this.defaultPresets.find(
+          (p) => p.provider === this.presetDefaultProvider && p.isDefault,
+        )?.id ?? null,
+      provider: this.presetDefaultProvider,
+      defaultIds: this.defaultPresets
+        .filter((p) => p.isDefault)
+        .map((p) => p.id),
+      revision: createHash('sha256')
+        .update(
+          JSON.stringify([
+            this.presetDefaultProvider,
+            this.defaultPresets.map((p) => [
+              p.id,
+              p.name,
+              p.provider,
+              p.model,
+              p.reasoningEffort,
+              !!p.fastMode,
+              !!p.isDefault,
+            ]),
+          ]),
+        )
+        .digest('hex'),
+    };
+  }
+
+  assertPresetDefaultRevision(revision: unknown): void {
+    if (revision !== this.getAgentPresetDefault().revision)
+      throw new ConflictException(
+        'The default or saved presets changed. Refresh before trying again.',
+      );
+  }
+
+  setAgentPresetDefault(id: string, revision: string) {
+    return this.changePresetDefaults(revision, (presets) => {
+      const selected = presets.find((p) => p.id === id);
+      if (!selected)
+        throw new BadRequestException('This preset is no longer available.');
+      return {
+        provider: selected.provider,
+        defaultIds: [
+          ...presets
+            .filter((p) => p.isDefault && p.provider !== selected.provider)
+            .map((p) => p.id),
+          id,
+        ],
+      };
+    });
+  }
+
+  restoreAgentPresetDefault(
+    snapshot: { provider: string; defaultIds: readonly string[] },
+    revision: string,
+  ) {
+    return this.changePresetDefaults(revision, () => snapshot);
+  }
+
+  /** At most 24 small records: keep the comparison and write in one SQLite transaction. */
+  private changePresetDefaults(
+    revision: string,
+    choose: (presets: readonly AgentModelPreset[]) => {
+      provider: string;
+      defaultIds: readonly string[];
+    },
+  ) {
+    return this.db.transaction((tx) => {
+      const row = tx
+        .select()
+        .from(schema.appSettings)
+        .where(eq(schema.appSettings.id, SINGLETON_SETTINGS_ID))
+        .get();
+      if (row) this.toResponse(row);
+      this.assertPresetDefaultRevision(revision);
+      const before = this.getAgentPresetDefault();
+      const next = choose(this.defaultPresets);
+      const provider = DEFAULT_AGENT_PROVIDERS.find((p) => p === next.provider);
+      if (
+        !provider ||
+        next.defaultIds.length > MAX_AGENT_MODEL_PRESETS ||
+        new Set(next.defaultIds).size !== next.defaultIds.length ||
+        next.defaultIds.some(
+          (id) => !this.defaultPresets.some((p) => p.id === id),
+        )
+      )
+        throw new BadRequestException('Invalid preset defaults.');
+      const presets = this.normalizeAgentModelPresets(
+        this.defaultPresets.map((p) => ({
+          ...p,
+          isDefault: next.defaultIds.includes(p.id),
+        })),
+        true,
+      );
+      const values = {
+        defaultAgentProvider: provider,
+        agentModelPresets: JSON.stringify(presets),
+      };
+      tx.insert(schema.appSettings)
+        .values({ id: SINGLETON_SETTINGS_ID, ...values })
+        .onConflictDoUpdate({
+          target: schema.appSettings.id,
+          set: { ...values, updatedAt: new Date().toISOString() },
+        })
+        .run();
+      this.defaultPresets = presets;
+      this.presetDefaultProvider = provider;
+      return { before, after: this.getAgentPresetDefault() };
+    });
+  }
+
+  /** A small synchronous transaction prevents concurrent creators losing each other's presets. */
+  addAgentModelPreset(
+    preset: AgentModelPreset,
+    makeDefault = false,
+    expectedRevision?: string,
+  ) {
+    const next = this.db.transaction((tx) => {
+      const row = tx
+        .select()
+        .from(schema.appSettings)
+        .where(eq(schema.appSettings.id, SINGLETON_SETTINGS_ID))
+        .get();
+      const current = row ? this.toResponse(row).agentModelPresets : [];
+      if (makeDefault) this.assertPresetDefaultRevision(expectedRevision);
+      const before = this.getAgentPresetDefault();
+      const existing = current.find((item) => item.id === preset.id);
+      if (existing) {
+        if (
+          existing.name !== preset.name ||
+          existing.provider !== preset.provider ||
+          existing.model !== preset.model ||
+          existing.reasoningEffort !== preset.reasoningEffort ||
+          !!existing.fastMode !== !!preset.fastMode
+        )
+          throw new BadRequestException(
+            'This preset identity is already in use.',
+          );
+        return { presets: current, change: undefined };
+      }
+      if (
+        current.some(
+          (item) => item.name.toLowerCase() === preset.name.toLowerCase(),
+        )
+      )
+        throw new BadRequestException(
+          'A preset with this name already exists.',
+        );
+      if (current.length >= MAX_AGENT_MODEL_PRESETS)
+        throw new BadRequestException(
+          'You can save up to 24 presets. Remove an unused preset in Settings first.',
+        );
+      const presets = this.normalizeAgentModelPresets(
+        [preset, ...current].map((p) =>
+          makeDefault && p.provider === preset.provider
+            ? { ...p, isDefault: p.id === preset.id }
+            : p,
+        ),
+        true,
+      );
+      const provider = makeDefault
+        ? DEFAULT_AGENT_PROVIDERS.find((p) => p === preset.provider)
+        : undefined;
+      if (makeDefault && !provider)
+        throw new BadRequestException('Unsupported default agent provider.');
+      const defaults = provider ? { defaultAgentProvider: provider } : {};
+      tx.insert(schema.appSettings)
+        .values({
+          id: SINGLETON_SETTINGS_ID,
+          agentModelPresets: JSON.stringify(presets),
+          ...defaults,
+        })
+        .onConflictDoUpdate({
+          target: schema.appSettings.id,
+          set: {
+            agentModelPresets: JSON.stringify(presets),
+            ...defaults,
+            updatedAt: new Date().toISOString(),
+          },
+        })
+        .run();
+      this.defaultPresets = presets;
+      if (provider) this.presetDefaultProvider = provider;
+      return {
+        presets,
+        change: makeDefault
+          ? { before, after: this.getAgentPresetDefault() }
+          : undefined,
+      };
+    });
+    this.defaultPresets = next.presets;
+    return next.change;
   }
 
   /**
@@ -414,6 +615,7 @@ export class SettingsService implements OnModuleInit {
       ? (row.defaultAgentProvider as DefaultAgentProvider)
       : DEFAULT_AGENT_PROVIDER;
 
+    this.presetDefaultProvider = defaultAgentProvider;
     const defaultModelByProvider = this.parseAgentPreferences(
       row.defaultModelByProvider,
     );

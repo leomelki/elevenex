@@ -10,10 +10,15 @@ export type ConversationMode = "plan" | "code";
 export type PermissionLevel = "ask" | "edits" | "auto";
 export type ThinkingLevel = "Off" | "Low" | "Medium" | "High" | "Max";
 export interface AgentConfig {
+  readonly id?: string;
   readonly preset?: string;
+  /** Saved default; creator submissions request the same default with this flag. */
+  readonly default?: boolean;
   readonly mark: string;
   readonly harness: string;
   readonly model: string;
+  readonly modelLabel?: string;
+  readonly harnessLabel?: string;
   readonly thinking?: string;
   readonly fast?: boolean;
   readonly context?: number;

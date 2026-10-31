@@ -45,6 +45,7 @@
 </header>
 <ex-chat
   [exchanges]="store.exchanges()"
+  [centerComposer]="showWelcome()"
   [actions]="['copy']"
   [stoppable]="!archived() && !!store.state()?.canInterrupt"
   [retryable]="!blocked()"
@@ -80,15 +81,6 @@
   <div chatContent>
     @if (store.loading() && !store.exchanges().length) {
       <ex-skeleton variant="message" [count]="3" />
-    }
-    @if (!store.loading() && store.empty() && !message()) {
-      <section class="start">
-        <ex-icon name="chat" [size]="24" />
-        <h2>What would you like to work on?</h2>
-        <p>
-          Choose an agent below, then send a message to start this conversation.
-        </p>
-      </section>
     }
     @if (store.state()?.permission; as request) {
       <ex-approval-card
@@ -149,6 +141,56 @@
     }
   </div>
   <div chatComposer>
+    @if (showWelcome()) {
+      <section class="start">
+        <h1>What should we work on?</h1>
+        @if (store.state()?.presets !== undefined) {
+          <div class="preset-heading">
+            @if (presetFlow.defaultPreset()) {
+              <ex-dropdown
+                class="default-preset"
+                label="Default preset for new chats"
+                prefix="Default:"
+                appearance="quiet"
+                [options]="presetFlow.defaultOptions()"
+                [value]="presetFlow.defaultPreset()?.id || ''"
+                placeholder="Choose preset"
+                [disabled]="blocked() || store.loading()"
+                (changed)="presetFlow.setDefault($event)"
+              />
+            } @else {
+              <span>Start with a preset</span>
+            }
+            <button
+              exButton
+              variant="ghost"
+              size="sm"
+              [disabled]="blocked() || presetFlow.presets().length >= 24"
+              [title]="
+                presetFlow.presets().length >= 24
+                  ? 'You can save up to 24 presets'
+                  : 'Save a starting configuration'
+              "
+              (click)="presetFlow.openPresetCreator()"
+            >
+              <ex-icon name="plus" [size]="13" />New preset
+            </button>
+          </div>
+          <ex-preset-picker
+            [presets]="presetFlow.visiblePresets()"
+            [value]="presetFlow.selectedPreset()?.id || 'custom'"
+            [disabled]="blocked() || store.loading()"
+            (selected)="presetFlow.selectPreset($event)"
+          />
+          @if (!presetFlow.presets().length) {
+            <p>Choose your agent below, or save your own starting point.</p>
+          }
+        } @else {
+          <p>Choose an agent below, then send your first message.</p>
+        }
+      </section>
+    }
+
     @if (message()) {
       <div class="feedback error" role="alert">
         <span>{{ message() }}</span
@@ -196,7 +238,11 @@
       </div>
     }
     @if (!archived() && !store.historical()) {
-      <ex-agent-usage-notice [agent]="agent()" [identity]="identity()" (dismissed)="focusComposer()" />
+      <ex-agent-usage-notice
+        [agent]="agent()"
+        [identity]="identity()"
+        (dismissed)="focusComposer()"
+      />
     }
     <ex-composer
       [clearOnSubmit]="false"
@@ -216,7 +262,12 @@
       "
       [settingsBusy]="!!store.busy() || store.loading()"
       [showFork]="false"
-      [showSavePreset]="false"
+      [showSavePreset]="
+        store.state()?.presets !== undefined &&
+        store.state()?.providerLocked === false &&
+        presetFlow.presets().length < 24
+      "
+      (savePreset)="presetFlow.createPresetFromAgent($event)"
       [reasoningAvailable]="!!store.state()?.controls?.reasoning"
       [fastAvailable]="fastAvailable()"
       [permission]="store.state()?.permissionMode || ''"
@@ -269,3 +320,45 @@
     (copyRequested)="copy($event)"
   />
 }
+
+@for (
+  draft of presetFlow.presetDraft() ? [presetFlow.presetDraft()!] : [];
+  track draft.id
+) {
+  <ex-preset-creator
+    [initial]="draft.initial"
+    [harnesses]="draft.harnesses"
+    [harnessLocked]="!draft.catalogProvider"
+    [catalogProvider]="draft.catalogProvider"
+    [names]="presetFlow.presetNames()"
+    [defaultAvailable]="!!presetFlow.defaultPreset()"
+    [open]="presetFlow.creatorOpen()"
+    [busy]="presetFlow.presetSaving()"
+    [blocked]="!!store.uncertain() || draft.identity !== identity()"
+    [reasoningAvailable]="!!store.state()?.controls?.reasoning"
+    [fastAvailable]="!!store.state()?.controls?.fast"
+    [error]="presetFlow.presetError()"
+    (submitted)="presetFlow.savePreset($event)"
+    (closeRequested)="presetFlow.creatorOpen.set(false)"
+    (closed)="presetFlow.presetDraft.set(null)"
+  />
+}
+
+<ex-presence [show]="presetFlow.defaultNoticeOpen()">
+  @for (
+    undo of presetFlow.defaultUndo() ? [presetFlow.defaultUndo()!] : [];
+    track undo.afterRevision
+  ) {
+    <div class="preset-toast">
+      <ex-toast
+        [title]="'Default changed to ' + undo.label"
+        action="Undo"
+        [duration]="7000"
+        [dismissOnAction]="false"
+        [busy]="presetFlow.undoBusy() || blocked()"
+        (actionSelected)="presetFlow.undoDefault()"
+        (dismissed)="presetFlow.defaultNoticeOpen.set(false)"
+      />
+    </div>
+  }
+</ex-presence>

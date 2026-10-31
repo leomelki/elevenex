@@ -168,3 +168,70 @@ verify the full reference component independently of transcript motion.
 `session-quota.mjs` exercises connected quota updates, the tighter weekly/model
 window, hover and keyboard disclosure, low/exhausted states, dismissal focus,
 missing/API-key data and narrow reduced-motion layouts in both themes.
+
+
+The component-owned `SessionChatPresets` controller owns preset view models, stable chosen identities, the retained creator draft and stale/disposed reply checks. Transcript state remains in `SessionChatStore`.
+
+Starting presets use the optional bounded `SessionChatState.presets` capability.
+The blank chat centers one composer beneath at most six reference preset cards
+and Custom, which opens the existing agent picker. A selection submits one
+`preset` action, validates the entire mix before applying it, reconciles state,
+and restores typing focus only while the same session is selected. Typing and
+its draft remain available during configuration. Started sessions and archived
+history do not expose starting choices. Engines omitting presets keep the agent
+picker and composer without unsupported controls.
+
+New preset and the agent menu’s Save as preset open a local named draft for the
+initially selected harness, with an editable Harness dropdown when the engine advertises `presetCatalogs`. Model, supported thinking levels and fast mode stay
+local until Create. A `save-preset` command carries a stable draft identity;
+settings append it transactionally to the existing 24-preset storage, without
+changing legacy startup defaults. Successful saves put the new card first and
+apply it to this unstarted session. Rejected saves retain the draft; uncertain
+writes use the existing explicit conversation reconciliation and are never
+replayed. Closing a pending creator or changing sessions rejects late UI work.
+The backend checks workspace/session ownership and prevents other desktop chat
+commands from interleaving with a preset application. Partial
+provider failures retain saved presets and require inspecting reconciled agent
+state. Editing a preset never starts a runtime or sends a message; Create applies settings through the chosen harness’s existing setters.
+
+
+The optional `presetDefault` snapshot enables the quiet Default dropdown above
+the cards. It changes the connected machine's default provider/preset and applies
+that mix to the current blank chat. Ordinary card selection remains session-only.
+The Default card label and selected ring have separate meanings. A bounded
+six-card window retains a selected/default preset chosen beyond the first six;
+the dropdown lists the existing bounded 24-preset catalog.
+
+Default writes and creator choice reuse existing settings columns. A settings
+transaction compares a revision of the provider and canonical preset catalog,
+then writes the provider and default flags together. Replies include validated
+before/after snapshots for a seven-second Undo notification. Undo restores future
+provider defaults without changing the current agent or deleting a new preset.
+Its revision precondition rejects overwriting another client's later edits;
+neither writes nor Undo replay after reconnection. A new toast identity resets
+its timer, and its owner clears notifications/stale replies on navigation.
+Older preset-capable engines without this field retain their existing controls.
+
+
+The creator groups its default preference below the agent controls, using SetRow and
+Segmented. Keep current preserves the saved default; Use this preset requests
+the new default when Create succeeds. Both choices have full button targets and
+radio keyboard navigation, and disable while busy, blocked or closing. The
+selected choice stays local until creation. No default mutation happens
+while editing this form.
+
+
+The optional `presetCatalogs` capability adds the named scoped
+`sessionChatCatalog` read through the same per-window backend client. The
+`PresetCatalogProvider` captures the selected task/session and draft identity,
+validates scope before/after dispatch, and maps supported metadata into renderer
+view models. The form owns one abortable request and a bounded per-harness draft
+cache. Models load independently of a session runtime; changing a harness in the
+creator does not persist the chat provider, select a model on a running agent or
+start a conversation. Explicit retry refreshes the provider-owned model cache.
+
+Create sends optional `save-preset.provider` plus the original chat's
+`expectedProvider`, validates the selected catalog before saving/applying the
+mix, and retains the existing stale/uncertain-write policy. Omitted `provider`
+retains older callers' current-harness semantics. Engines without the capability
+keep their locked creator rather than issuing unsupported reads.

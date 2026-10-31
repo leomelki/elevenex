@@ -576,3 +576,38 @@ test('subscription usage stays optional, scoped to its provider and bounded at t
   for (const remainingPercentage of [-1, 101, NaN, Infinity, '12']) assert.throws(() => parse({ ...usage, windows: [{ ...usage.windows[0], remainingPercentage }] }));
   for (const resetsAt of [-1, Infinity, 9e12, 'tomorrow']) assert.throws(() => parse({ ...usage, windows: [{ ...usage.windows[0], resetsAt }] }));
 });
+
+test('starting presets validate bounded state and discard extra action fields', () => {
+  const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const preset = { id: 'deep', name: 'Deep work', provider: 'codex', providerLabel: 'Codex', model: 'gpt', modelLabel: 'GPT', reasoning: 'high', fast: true };
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [], presets: [preset] };
+  const page = { taskId: 1, sessionId: 2, cursor: 'x', reset: true, items: [], events: [], before: null, state };
+  assert.deepEqual(parseChatPage(page, 1, 2).state.presets, [preset]);
+  assert.throws(() => parseChatPage({ ...page, state: { ...state, presets: Array(25).fill(preset) } }, 1, 2));
+  assert.throws(() => parseChatPage({ ...page, state: { ...state, presets: [{ ...preset, fast: 'true' }] } }, 1, 2));
+  const action = { type: 'save-preset', id: 'new', name: 'Quick', expectedProvider: 'codex', model: null, reasoning: null, fast: false };
+  assert.deepEqual(parseChatAction({ ...action, shell: 'discard' }), action);
+  for (const bad of [{ ...action, name: ' ' }, { ...action, name: 'x'.repeat(49) }, { ...action, fast: 'true' }, { ...action, reasoning: 1 }]) assert.throws(() => parseChatAction(bad));
+});
+
+test('default preset snapshots and writes are bounded and revision guarded', () => {
+  const { parseChatAction, parsePresetDefault } = require('../dist/backend-client/session-chat-validation');
+  const revision = 'a'.repeat(64);
+  const snapshot = { id: 'deep', provider: 'codex', defaultIds: ['deep'], revision };
+  assert.deepEqual(parsePresetDefault(snapshot), snapshot);
+  for (const value of [{ ...snapshot, revision: 'bad' }, { ...snapshot, defaultIds: ['deep', 'deep'] }, { ...snapshot, id: 'missing' }]) assert.throws(() => parsePresetDefault(value));
+  const action = { type: 'preset-default', id: 'deep', expectedProvider: 'codex', expectedRevision: revision };
+  assert.deepEqual(parseChatAction({ ...action, private: 'discard' }), action);
+  assert.throws(() => parseChatAction({ ...action, expectedRevision: undefined }));
+  assert.throws(() => parseChatAction({ type: 'save-preset', id: 'new', name: 'New', model: null, reasoning: null, fast: false, expectedProvider: 'codex', makeDefault: true }));
+  assert.throws(() => parseChatAction({ type: 'preset-default-restore', provider: 'codex', defaultIds: Array(25).fill('deep'), expectedRevision: revision }));
+});
+
+test('preset catalogs reject mismatched identities and unsupported configurations', () => {
+  const { parseChatCatalog, parseChatAction } = require('../dist/backend-client/session-chat-validation');
+  const catalog = { provider: 'claude', label: 'Claude Code', models: [{ id: 'sonnet', label: 'Sonnet', reasoningEfforts: ['high'], supportsFastMode: false }], model: 'sonnet', reasoning: 'high', fast: false, reasoningAvailable: true, fastAvailable: false, error: null };
+  assert.deepEqual(parseChatCatalog(catalog, 'claude'), catalog);
+  for (const bad of [{ ...catalog, provider: 'codex' }, { ...catalog, model: 'missing' }, { ...catalog, fast: true }, { ...catalog, reasoning: 'invented' }, { ...catalog, models: Array(101).fill(catalog.models[0]) }]) assert.throws(() => parseChatCatalog(bad, 'claude'));
+  const action = { type: 'save-preset', id: 'new', name: 'Claude', expectedProvider: 'codex', provider: 'claude', model: 'sonnet', reasoning: 'high', fast: false };
+  assert.deepEqual(parseChatAction(action), action);
+});

@@ -17,7 +17,7 @@ For a controlled single choice:
 mutates supplied data. Unknown values remain visible without inventing an
 option. Empty/all-disabled lists disable the trigger. `mono`, `icon` and
 `placeholder` customize the control. `appearance="subtle"` supplies the reference
-agent form’s compact 26px sunken selector; the default appearance is unchanged. Pass `active=false` when a retained owner
+agent form’s compact 26px sunken selector. `appearance="quiet"` is a transparent caption-sized trigger, and optional `prefix` adds trigger-only context such as “Default:”. Quiet triggers omit their mark and detail; full labels/details remain in the menu and accessible name. Other appearances retain their existing behavior. Pass `active=false` when a retained owner
 closes to immediately release its portaled menu; `disabled` does the same.
 Destroying the component also disposes the CDK trigger and overlay.
 

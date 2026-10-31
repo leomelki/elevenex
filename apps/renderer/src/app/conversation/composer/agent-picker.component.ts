@@ -225,6 +225,10 @@ export class AgentPickerComponent {
   openPicker(): void {
     if (!this.disabled()) this.open.set(true);
   }
+  closePicker(): void {
+    this.open.set(false);
+    this.restoreFocus();
+  }
   protected toggle(): void {
     if (!this.disabled()) this.open.update((open) => !open);
   }

@@ -1,3 +1,4 @@
+import { SettingsService } from '../settings/settings.service.js';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { EventEmitter } from 'node:events';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
@@ -67,6 +68,10 @@ describe('selected session chat', () => {
     module = await Test.createTestingModule({
       providers: [
         DesktopChatService,
+        {
+          provide: SettingsService,
+          useValue: { getAgentModelPresets: () => [], getAgentPresetDefault: () => ({ id: null, provider: 'codex', defaultIds: [], revision: 'a'.repeat(64) }) },
+        },
         {
           provide: SessionsService,
           useValue: {
@@ -290,6 +295,9 @@ describe('selected session chat', () => {
       decision: 'approved',
     });
     expect(runtime.approvePermission).toHaveBeenCalledWith(2, 'current', false);
+  });
+  it('rejects a catalog read for a conversation belonging to another task before probing a harness', async () => {
+    await expect(chat.catalog(9, 2, 'claude')).rejects.toThrow('does not belong');
   });
   it('advertises registered harnesses and reads an unstarted session without initializing a conversation', async () => {
     started.mockReturnValue(false);

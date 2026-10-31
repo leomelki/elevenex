@@ -7,6 +7,7 @@ import {
 } from "@angular/core";
 import type {
   SessionChatAction,
+  SessionChatCommandReply,
   SessionChatItem,
   SessionChatPage,
   SessionChatState,
@@ -47,6 +48,8 @@ export class SessionChatStore {
   readonly fresh = signal<ReadonlySet<string>>(new Set());
   readonly loading = signal(true);
   readonly error = signal("");
+  readonly defaultChange =
+    signal<SessionChatCommandReply["defaultChange"]>(undefined);
   readonly notice = signal("");
   readonly busy = signal("");
   readonly readOnly = signal(false);
@@ -129,6 +132,7 @@ export class SessionChatStore {
     this.fresh.set(new Set());
     this.error.set("");
     this.notice.set("");
+    this.defaultChange.set(undefined);
     this.commands.clear();
     this.busy.set("");
     this.historical.set(false);
@@ -373,6 +377,8 @@ export class SessionChatStore {
     );
     this.busy.set(action.type);
     this.error.set("");
+    if (action.type === "preset-default" || action.type === "save-preset")
+      this.defaultChange.set(undefined);
     this.notice.set(
       action.type === "send"
         ? "Sending…"
@@ -380,7 +386,12 @@ export class SessionChatStore {
           ? "Changing harness…"
           : "Updating…",
     );
-    if (action.type === "provider") this.stopRead();
+    if (
+      ["provider", "preset", "save-preset", "preset-default"].includes(
+        action.type,
+      )
+    )
+      this.stopRead();
     const result = await this.client.command(selection.scopeId, {
       taskId: selection.taskId,
       sessionId: selection.sessionId,
@@ -393,7 +404,13 @@ export class SessionChatStore {
     )
       entry.uncertain.set("");
     if (this.disposed || epoch !== this.epoch) return result.ok;
-    if (!result.ok || action.type !== "provider") {
+    const configuration = [
+      "provider",
+      "preset",
+      "save-preset",
+      "preset-default",
+    ].includes(action.type);
+    if (!result.ok || !configuration) {
       this.commands.delete(commandId);
       this.busy.set(this.commands.values().next().value ?? "");
     }
@@ -408,7 +425,7 @@ export class SessionChatStore {
         this.entry.uncertain.set(result.error.message);
         this.checked.set(false);
       }
-      if (action.type === "provider") {
+      if (configuration) {
         this.stopRead();
         void this.load(true);
       }
@@ -423,7 +440,8 @@ export class SessionChatStore {
             ? "Harness changed"
             : "Updated",
     );
-    if (action.type === "provider") {
+    this.defaultChange.set(result.value.defaultChange);
+    if (configuration) {
       this.cursor = undefined;
       this.items.set([]);
       this.before.set(null);
@@ -431,12 +449,16 @@ export class SessionChatStore {
     }
     // Explicitly reconcile writes; reconnect and read retries never replay them.
     this.stopRead();
-    if (action.type === "provider") {
+    if (configuration) {
       // Retain the settings surface and its focus while loading the new catalog.
       // Keep writes blocked until authoritative provider state replaces it.
       await this.load(true);
       if (this.disposed || epoch !== this.epoch) return true;
-      if (this.state()?.provider !== action.provider) this.state.set(null);
+      if (
+        action.type === "provider" &&
+        this.state()?.provider !== action.provider
+      )
+        this.state.set(null);
       this.commands.delete(commandId);
       this.busy.set(this.commands.values().next().value ?? "");
     } else void this.load(true);

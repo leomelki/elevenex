@@ -1,7 +1,10 @@
 import { Injectable, inject } from "@angular/core";
 import type {
   BackendResult,
+  SessionChatCatalog,
+  SessionChatCatalogRead,
   SessionChatCommand,
+  SessionChatCommandReply,
   SessionChatPage,
   SessionChatRead,
   SessionChatContentRead,
@@ -24,10 +27,13 @@ export class SessionChatClient {
       this.bridge.sessionChatRead(scope, input),
     );
   }
+  catalog(scope: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>> {
+    return this.invoke(scope, false, () => this.bridge.sessionChatCatalog(scope, input));
+  }
   command(
     scope: string,
     input: SessionChatCommand,
-  ): Promise<BackendResult<{ readonly accepted: true }>> {
+  ): Promise<BackendResult<SessionChatCommandReply>> {
     return this.invoke(scope, true, () =>
       this.bridge.sessionChatCommand(scope, input),
     );

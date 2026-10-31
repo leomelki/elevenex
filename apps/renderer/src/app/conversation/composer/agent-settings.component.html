@@ -1,10 +1,19 @@
-<h2 class="heading" tabindex="-1" cdkFocusInitial>
-  {{ value().preset ? "Adjust “" + value().preset + "”" : "Agent" }}
-</h2>
+@if (!draftMode()) {
+  <h2 class="heading" tabindex="-1" cdkFocusInitial>
+    {{ value().preset ? "Adjust “" + value().preset + "”" : "Agent" }}
+  </h2>
+}
 <div class="field">
   <span class="field-label">Harness</span>
   @if (locked() || !harnesses().length) {
-    <span class="harness" title="The harness is fixed for this conversation">
+    <span
+      class="harness"
+      [title]="
+        draftMode()
+          ? 'The harness is fixed for this preset'
+          : 'The harness is fixed for this conversation'
+      "
+    >
       <ex-agent-mark [mark]="value().mark" />{{
         harness()?.label || value().harness
       }}
@@ -22,6 +31,15 @@
         <ex-icon name="fork" [size]="13" />Fork to…
       </button>
     }
+  } @else if (harnessAppearance() === "dropdown") {
+    <ex-dropdown
+      appearance="subtle"
+      label="Harness"
+      [options]="harnesses()"
+      [value]="value().harness"
+      [disabled]="unavailable()"
+      (changed)="harnessChange($event)"
+    />
   } @else {
     <div class="choices">
       <ex-segmented
@@ -42,7 +60,7 @@
     [options]="models()"
     [value]="value().model"
     placeholder="Provider default"
-    [disabled]="unavailable()"
+    [disabled]="modelUnavailable()"
     (changed)="modelChange($event)"
   />
 </div>
@@ -70,25 +88,27 @@
       size="sm"
       label="Fast mode"
       [on]="!!value().fast"
-      [disabled]="unavailable()"
+      [disabled]="modelUnavailable()"
       (changed)="fastChange($event)"
     />
   </div>
 }
-<div class="separator" role="separator"></div>
-<footer>
-  @if (showSavePreset()) {
-    <button
-      exButton
-      variant="ghost"
-      size="sm"
-      [disabled]="unavailable()"
-      (click)="savePreset.emit(value())"
-    >
-      <ex-icon name="plus" [size]="13" />Save as preset
-    </button>
-  }
-  <span class="footer-note" role="status">{{
-    busy() ? "Updating agent…" : "Applies from the next message"
-  }}</span>
-</footer>
+@if (!draftMode()) {
+  <div class="separator" role="separator"></div>
+  <footer>
+    @if (showSavePreset()) {
+      <button
+        exButton
+        variant="ghost"
+        size="sm"
+        [disabled]="unavailable()"
+        (click)="savePreset.emit(value())"
+      >
+        <ex-icon name="plus" [size]="13" />Save as preset
+      </button>
+    }
+    <span class="footer-note" role="status">{{
+      busy() ? "Updating agent…" : "Applies from the next message"
+    }}</span>
+  </footer>
+}

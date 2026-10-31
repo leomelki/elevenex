@@ -17,6 +17,8 @@ import {
   ChatComponent,
   ComposerComponent,
   QuestionCardComponent,
+  PresetPickerComponent,
+  PresetCreatorComponent,
   type AgentQuestion,
   type QuestionAnswers,
   type TurnAction,
@@ -29,11 +31,16 @@ import {
   ButtonComponent,
   ContextMeterComponent,
   IconComponent,
+  DropdownComponent,
+  PresenceComponent,
+  ToastComponent,
   SkeletonComponent,
   StatusGlyphComponent,
 } from "../ui";
 import { SessionChatStore, type ChatSelection } from "./session-chat.store";
 import { SessionChatContentComponent } from "./session-chat-content.component";
+import { SessionChatPresets } from "./session-chat-presets";
+import { SessionChatClient } from "../backend/session-chat-client.service";
 import { sessionPlanUsage } from "./session-chat-usage";
 
 @Component({
@@ -46,14 +53,20 @@ import { sessionPlanUsage } from "./session-chat-usage";
     ApprovalCardComponent,
     AgentUsageNoticeComponent,
     QuestionCardComponent,
+    PresetPickerComponent,
+    PresetCreatorComponent,
     ButtonComponent,
     ContextMeterComponent,
     StatusGlyphComponent,
     SkeletonComponent,
     IconComponent,
+    DropdownComponent,
+    PresenceComponent,
+    ToastComponent,
   ],
   templateUrl: "./session-chat.component.html",
   styleUrl: "./session-chat.component.css",
+  host: { "(keydown)": "presetFlow.presetShortcut($event)" },
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SessionChatComponent {
@@ -138,10 +151,36 @@ export class SessionChatComponent {
       models: provider.id === state.provider ? this.models() : [],
     }));
   });
+  readonly showWelcome = computed(
+    () =>
+      !this.archived() &&
+      !!this.store.state() &&
+      this.store.empty() &&
+      !this.store.historical() &&
+      !this.store.state()?.providerLocked &&
+      !this.store.state()?.permission &&
+      !this.store.state()?.question,
+  );
+  readonly presetFlow: SessionChatPresets = new SessionChatPresets({
+    store: this.store,
+    client: inject(SessionChatClient),
+    selection: this.selection,
+    identity: this.identity,
+    harnesses: this.harnesses,
+    models: this.models,
+    blocked: this.blocked,
+    showWelcome: this.showWelcome,
+    agent: (): AgentConfig | undefined => this.agent(),
+    focusComposer: () => this.focusComposer(),
+    openAgent: () => this.composer()?.agentPicker()?.openPicker(),
+    closeAgent: () => this.composer()?.agentPicker()?.closePicker(),
+  });
   readonly agent = computed<AgentConfig | undefined>(() => {
     const state = this.store.state();
     if (!state) return undefined;
     return {
+      preset: this.presetFlow.selectedPreset()?.preset,
+      harnessLabel: this.providerLabel(),
       harness: state.provider,
       mark:
         this.harnesses().find((harness) => harness.id === state.provider)
@@ -249,6 +288,7 @@ export class SessionChatComponent {
     effect(() => {
       this.identity();
       this.contentId.set(null);
+      this.presetFlow.reset();
     });
     effect((cleanup) => {
       if (!this.store.state()?.planUsage) return;
@@ -256,7 +296,10 @@ export class SessionChatComponent {
       const timer = setInterval(() => this.usageTime.set(Date.now()), 30_000);
       cleanup(() => clearInterval(timer));
     });
-    inject(DestroyRef).onDestroy(() => clearTimeout(this.copyTimer));
+    inject(DestroyRef).onDestroy(() => {
+      clearTimeout(this.copyTimer);
+      this.presetFlow.dispose();
+    });
   }
   focusDecision(): void {
     this.chat()?.scroll()?.scrollToEnd();

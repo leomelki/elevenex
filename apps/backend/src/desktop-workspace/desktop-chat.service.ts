@@ -1,6 +1,10 @@
+import { chatCatalog } from './desktop-chat-catalog.js';
+import { SettingsService } from '../settings/settings.service.js';
+import { chatPresets, executePresetAction } from './desktop-chat-presets.js';
 import { executeChatAction } from './desktop-chat-actions.js';
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   OnModuleDestroy,
 } from '@nestjs/common';
@@ -40,6 +44,7 @@ interface ChatFeed {
 /** Only selected conversations are observed. Idle feeds expire and never hydrate sidebar sessions. */
 @Injectable()
 export class DesktopChatService implements OnModuleDestroy {
+  private readonly configuring = new Set<number>();
   private readonly feeds = new Map<number, ChatFeed>();
   private readonly expiry = setInterval(() => {
     for (const [id, feed] of this.feeds)
@@ -49,6 +54,7 @@ export class DesktopChatService implements OnModuleDestroy {
   constructor(
     private readonly sessions: SessionsService,
     private readonly registry: AgentRuntimeRegistryService,
+    private readonly settings: SettingsService,
   ) {}
 
   onModuleDestroy(): void {
@@ -77,6 +83,9 @@ export class DesktopChatService implements OnModuleDestroy {
   ) {
     const provider = this.registry.getProvider(session.activeAgentProvider);
     return {
+      presetCatalogs: true,
+      presets: chatPresets(this.settings, this.registry),
+      presetDefault: this.settings.getAgentPresetDefault(),
       controls: {
         plan: typeof provider.setPlanMode === 'function',
         reasoning: typeof provider.setReasoningEffort === 'function',
@@ -288,18 +297,41 @@ export class DesktopChatService implements OnModuleDestroy {
     };
   }
 
+  async catalog(taskId: number, sessionId: number, providerId: string, refresh = false) {
+    await this.target(taskId, sessionId);
+    return chatCatalog(this.registry, this.settings, providerId, refresh);
+  }
+
   async command(taskId: number, sessionId: number, value: unknown) {
     const session = await this.target(taskId, sessionId);
     const action = record(value);
-    const result = await executeChatAction(
-      this.sessions,
-      this.registry,
-      sessionId,
-      session,
-      action,
-    );
-    if (action.type === 'provider') this.release(sessionId);
-    return result;
+    if (this.configuring.has(sessionId))
+      throw new ConflictException(
+        'An agent configuration is being applied. Please wait.',
+      );
+    const preset = ['preset', 'save-preset', 'preset-default', 'preset-default-restore'].includes(String(action.type));
+    if (preset) this.configuring.add(sessionId);
+    try {
+      return preset
+        ? await executePresetAction(
+            this.sessions,
+            this.registry,
+            this.settings,
+            sessionId,
+            session,
+            action,
+          )
+        : await executeChatAction(
+            this.sessions,
+            this.registry,
+            sessionId,
+            session,
+            action,
+          );
+    } finally {
+      if (preset) this.configuring.delete(sessionId);
+      if (preset || action.type === 'provider') this.release(sessionId);
+    }
   }
 
   async content(

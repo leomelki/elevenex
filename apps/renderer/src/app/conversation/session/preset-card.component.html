@@ -1,5 +1,6 @@
 <button
   type="button"
+  [disabled]="disabled()"
   [class.selected]="selected()"
   [class.custom]="custom()"
   [class.compact]="compact()"
@@ -21,7 +22,14 @@
       <span class="check"><ex-icon name="check" [size]="12" /></span>
     }</span
   ><span class="name"
-    >{{ custom() ? "Custom" : preset()?.preset || preset()?.model }}
+    ><span class="label">{{
+      custom()
+        ? "Custom"
+        : preset()?.preset || preset()?.modelLabel || preset()?.model
+    }}</span>
+    @if (!custom() && preset()?.default) {
+      <span class="default">Default</span>
+    }
     @if (preset()?.fast) {
       <ex-icon name="bolt" [size]="13" />
     }
@@ -30,11 +38,13 @@
     <span class="sub">{{
       custom()
         ? "Choose your own mix"
-        : preset()?.model +
-          (preset()?.thinking ? " · " + preset()?.thinking : "")
+        : (preset()?.modelLabel || preset()?.model || "Provider default") +
+          (thinking() ? " · " + thinking() : "")
     }}</span
     ><span class="harness">{{
-      custom() ? "Adjust the agent" : preset()?.harness
+      custom()
+        ? "Adjust the agent"
+        : preset()?.harnessLabel || preset()?.harness
     }}</span>
   }
 </button>

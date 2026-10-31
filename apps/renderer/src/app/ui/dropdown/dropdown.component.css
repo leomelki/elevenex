@@ -39,3 +39,9 @@ ex-icon { flex: none; color: var(--ink-muted); }
 .trigger.subtle ex-icon { color: inherit; }
 .trigger.subtle:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--line-strong); }
 .trigger.subtle:focus-visible { box-shadow: var(--focus-ring); }
+
+.trigger.quiet { height: var(--space-6); padding: 0 var(--space-1); gap: var(--space-1); background: transparent; box-shadow: none; color: var(--ink-muted); font-size: var(--text-caption-size); }
+.trigger.quiet:hover:not(:disabled) { background: var(--surface-sunken); color: var(--ink); }
+.trigger.quiet:focus-visible { box-shadow: var(--focus-ring); }
+.trigger.quiet .mark, .trigger.quiet .detail { display: none; }
+.prefix { flex: none; color: var(--ink-muted); }

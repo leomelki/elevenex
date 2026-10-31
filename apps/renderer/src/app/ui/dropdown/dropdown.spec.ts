@@ -24,6 +24,17 @@ describe('Shared dropdown public behavior', () => {
     return { fixture, trigger, overlay };
   }
 
+  it('supports a quiet prefixed trigger without changing accessible selection or menu labels', async () => {
+    const { fixture, trigger, overlay } = choice();
+    fixture.componentRef.setInput('appearance', 'quiet');
+    fixture.componentRef.setInput('prefix', 'Default:'); fixture.detectChanges();
+    expect(trigger.classList.contains('quiet')).toBe(true);
+    expect(trigger.textContent).toContain('Default:');
+    expect(trigger.getAttribute('aria-label')).toBe('Default preset: Deep work');
+    trigger.click(); fixture.detectChanges(); await fixture.whenStable();
+    expect(overlay.querySelector('[role="menuitemradio"]')?.textContent).toContain('Deep work');
+    expect(overlay.querySelector('[role="menuitemradio"]')?.textContent).not.toContain('Default:');
+  });
   it('opens with the keyboard, announces disabled items and emits a controlled choice with restored focus', async () => {
     const { fixture, trigger, overlay } = choice();
     const changed = vi.fn();

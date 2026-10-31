@@ -22,11 +22,11 @@ const SPEECH_ENV_VARS = [
 function createDbMock(initialRows: unknown[] = []) {
   const rows = [...initialRows];
   const limit = jest.fn(async () => rows);
-  const where = jest.fn(() => ({ limit }));
+  const where = jest.fn(() => ({ limit, get: () => rows[0] }));
   const from = jest.fn(() => ({ where }));
   const select = jest.fn(() => ({ from }));
   const onConflictDoUpdate = jest.fn(
-    async ({ set }: { set: Record<string, unknown> }) => {
+    ({ set }: { set: Record<string, unknown> }) => {
       const values = valuesMock.mock.calls.at(-1)?.[0] as Record<
         string,
         unknown
@@ -47,13 +47,18 @@ function createDbMock(initialRows: unknown[] = []) {
           ...set,
         };
       }
+      return { run: () => undefined };
     },
   );
   const valuesMock = jest.fn(() => ({ onConflictDoUpdate }));
   const insert = jest.fn(() => ({ values: valuesMock }));
 
   return {
-    db: { select, insert } as unknown as DrizzleDB,
+    db: {
+      select,
+      insert,
+      transaction: (run: (tx: unknown) => unknown) => run({ select, insert }),
+    } as unknown as DrizzleDB,
     getRows: () => rows,
     mocks: {
       select,
@@ -68,6 +73,109 @@ function createDbMock(initialRows: unknown[] = []) {
 }
 
 describe('SettingsService', () => {
+  it('appends presets without losing concurrent additions or changing existing startup defaults', async () => {
+    const { db, getRows } = createDbMock();
+    const service = new SettingsService(db);
+    const deep = {
+      id: 'deep',
+      name: 'Deep work',
+      provider: 'codex',
+      model: 'gpt',
+      reasoningEffort: 'high',
+      fastMode: false,
+      isDefault: false,
+    };
+    service.addAgentModelPreset(deep);
+    service.addAgentModelPreset({ ...deep, id: 'quick', name: 'Quick pass' });
+    service.addAgentModelPreset(deep);
+    expect(service.getAgentModelPresets().map((p) => p.id)).toEqual([
+      'quick',
+      'deep',
+    ]);
+    expect(
+      JSON.parse(
+        (getRows()[0] as { agentModelPresets: string }).agentModelPresets,
+      ),
+    ).toHaveLength(2);
+    expect(service.getAgentProviderDefaults('codex')).toEqual({
+      model: null,
+      reasoningEffort: null,
+    });
+    expect(() =>
+      service.addAgentModelPreset({
+        ...deep,
+        id: 'collision',
+        name: 'DEEP WORK',
+      }),
+    ).toThrow('already exists');
+    expect(() =>
+      service.addAgentModelPreset({ ...deep, name: 'Different' }),
+    ).toThrow('identity');
+    expect(service.getAgentModelPresets()).toHaveLength(2);
+  });
+  it('saves a global preset default, preserves other harness defaults and restores the exact previous choice', async () => {
+    const { db } = createDbMock();
+    const settings = new SettingsService(db);
+    settings.addAgentModelPreset({
+      id: 'deep',
+      name: 'Deep',
+      provider: 'codex',
+      model: 'gpt',
+      reasoningEffort: 'high',
+    });
+    settings.addAgentModelPreset({
+      id: 'quick',
+      name: 'Quick',
+      provider: 'codex',
+      model: 'gpt',
+      reasoningEffort: 'low',
+    });
+    const original = settings.getAgentPresetDefault();
+    const changed = settings.setAgentPresetDefault('quick', original.revision);
+    expect(changed.before).toEqual(original);
+    expect((await settings.findOne()).defaultAgentProvider).toBe('codex');
+    expect(settings.getAgentProviderDefaults('codex').reasoningEffort).toBe(
+      'low',
+    );
+    expect(() =>
+      settings.setAgentPresetDefault('deep', original.revision),
+    ).toThrow('changed');
+    settings.restoreAgentPresetDefault(changed.before, changed.after.revision);
+    expect(settings.getAgentPresetDefault()).toEqual(original);
+    expect(
+      settings.getAgentProviderDefaults('codex').reasoningEffort,
+    ).toBeNull();
+  });
+  it('creates a default atomically and rejects stale Undo after another settings edit', () => {
+    const { db } = createDbMock();
+    const settings = new SettingsService(db);
+    const before = settings.getAgentPresetDefault();
+    const change = settings.addAgentModelPreset(
+      {
+        id: 'review',
+        name: 'Review',
+        provider: 'codex',
+        model: 'gpt',
+        reasoningEffort: 'high',
+      },
+      true,
+      before.revision,
+    )!;
+    expect(change.before).toEqual(before);
+    expect(settings.getAgentPresetDefault().id).toBe('review');
+    settings.addAgentModelPreset({
+      id: 'new',
+      name: 'Another',
+      provider: 'claude',
+      model: null,
+      reasoningEffort: null,
+    });
+    expect(() =>
+      settings.restoreAgentPresetDefault(change.before, change.after.revision),
+    ).toThrow('changed');
+    expect(settings.getAgentPresetDefault().id).toBe('review');
+    expect(settings.getAgentModelPresets()).toHaveLength(2);
+  });
   const savedEnv = new Map<string, string | undefined>();
 
   beforeEach(() => {

@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, Res } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { DesktopChatService } from './desktop-chat.service.js';
 import { resourceId } from './desktop-workspace.service.js';
@@ -37,6 +46,22 @@ export class DesktopChatController {
     @Body() action: unknown,
   ) {
     return this.chat.command(resourceId(task), resourceId(session), action);
+  }
+  @Get('catalog')
+  catalog(
+    @Param('taskId') task: string,
+    @Param('sessionId') session: string,
+    @Query('provider') provider: string,
+    @Query('refresh') refresh?: string,
+  ) {
+    if (refresh !== undefined && refresh !== '1')
+      throw new BadRequestException('Invalid catalog refresh.');
+    return this.chat.catalog(
+      resourceId(task),
+      resourceId(session),
+      provider,
+      refresh === '1',
+    );
   }
   @Get('content')
   content(

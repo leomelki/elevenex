@@ -1,5 +1,135 @@
 # Component system verification
 
+## Editable harness in preset creation, 2026-10-30
+
+The creator now offers a compact Harness dropdown. A scoped, session-independent
+catalog read supplies the chosen harness’s supported model/thinking/fast settings.
+Name/default preferences and per-harness model drafts survive switching. One
+abortable request belongs to the form; cancellation, replacement, scope changes
+and destruction discard late replies. Loading/error states block Create but
+leave harness choice available, with explicit model-cache refresh on retry.
+Cancel leaves the conversation agent untouched. Fresh keyed creator identities
+prevent old catalog/name drafts crossing a rapid reopen or scope replacement.
+
+Create sends the chosen provider separately from the expected original chat
+provider and validates the catalog before saving/applying the mix. The optional
+capability and request field preserve older engine/caller behavior. No new
+packages or migrations. Catalog reads never allocate a session runtime; applying
+on Create uses the existing provider setters.
+
+Passed `desktop:lint`, `desktop:test` (110 main/security, 7 capture-tool and
+443 renderer tests plus TypeScript contracts), `desktop:build`, backend production
+TypeScript and 29 focused catalog/preset/chat tests. Native Electron smoke passes
+the catalog operation through sandboxed preload and scoped HTTP transport, with
+a fixture backend. Source/dependency review and `git diff --check` pass.
+
+[`preset-creator-harness-delivery`](../../artifacts/desktop-capture/preset-creator-harness-delivery/report.json)
+is `verified: true`: 14 checkpoints, no errors/warnings. New PNGs were inspected
+in both themes and compact reduced-motion layouts. The regression covers the
+keyboard menu, delayed/cancelled reads, retry, local edit restoration, Cancel,
+retained chat/name drafts and applying a different harness only on Create.
+These captures use production components and an isolated preview provider;
+live-provider and packaged-app behavior were not exercised.
+
+
+## Compact preset creator without preview, 2026-10-30
+
+Removed the “Your preset” card, its derived view model, import and styling.
+The form now proceeds from agent settings directly to the existing default
+choice. Validation, keyboard operation and submitted/default behavior remain
+covered by the existing tests; capture assertions use the actual controls.
+
+Passed `desktop:lint`, `desktop:test` (109 main/security, 7 capture-tool and
+439 renderer tests plus TypeScript contracts), `desktop:build` and
+`git diff --check`.
+[`preset-creator-no-preview`](../../artifacts/desktop-capture/preset-creator-no-preview/report.json)
+is `verified: true` with 19 checkpoints and no errors/warnings. Newly inspected
+light/dark and 420px PNGs verify the shorter form, keyboard default selection,
+creation, Undo and new-chat defaults using the isolated preview backend.
+This check does not establish live-provider or packaged-app behavior.
+
+
+## Creator default preference, 2026-10-30
+
+Replaced the native checkbox with a SetRow/Segmented setting below the preset
+preview: Keep current / Use this preset, with “Applied on creation” timing.
+The pending choice updates the preview; persistence still occurs only on Create.
+The two button targets support radio arrow navigation, preserve a single tab
+stop, and disable while busy, blocked or closing. No switch is used for this
+confirmation-dependent choice. Existing backend/default contracts are unchanged.
+
+Passed `desktop:lint`, `desktop:test` (109 main/security tests, 7 capture-tool
+tests, 439 renderer tests and TypeScript contracts), `desktop:build` and source
+whitespace review. The focused component regression checks initial selection,
+keyboard focus, no submission while choosing, disabled state and the final
+submitted default flag.
+
+[`preset-default-choice`](../../artifacts/desktop-capture/preset-default-choice/report.json)
+reports `verified: true`, 19 checkpoints, zero errors/warnings. Newly inspected
+PNGs cover both themes, initial and chosen states, 1000px/420px layouts, reduced
+motion, retained input, creation and Undo/new-chat default behavior. Capture uses
+production components and the isolated connected preview backend. This is UI
+verification, not live-provider or packaged-app verification.
+
+
+## Default preset from blank chat, 2026-10-30
+
+The quiet “Default:” dropdown shares the previous section-label space. Its
+radio menu changes the saved default and current blank-chat agent; ordinary
+cards remain session-only. The creator adds an initially unchecked default
+checkbox and live Default marker. A keyed seven-second Toast offers guarded
+Undo without changing the current agent or deleting a newly created preset.
+
+Passed `desktop:lint`, `desktop:test` (109 main/IPC/security tests, 7 capture-tool
+tests, 438 renderer tests and TypeScript contracts), `desktop:build`, backend
+production TypeScript and 85 focused chat/preset/settings tests. Native Electron
+smoke passed with the real sandbox/preload/protocol and a fixture backend;
+packaged-app and live-provider launch were not exercised. No dependencies,
+lockfile changes or migrations.
+
+[`preset-default-verified`](../../artifacts/desktop-capture/preset-default-verified/report.json)
+reports `verified: true`, 15 checkpoints, zero errors and warnings. Newly
+inspected PNGs cover both themes, the keyboard-operated menu, current selection
+versus saved default, retained typing, Undo, creator opt-in, narrow reduced
+motion and a new conversation receiving the saved default. It uses production
+components with the isolated connected preview backend on port 4311. The
+scenario ignores the Toast countdown when awaiting settled surface motion.
+
+Settings writes compare a canonical preset/provider revision inside a bounded
+SQLite transaction; stale Undo cannot overwrite later settings changes. Main
+validates optional snapshots and write receipts against the requested identity
+and revision. Older engines omit the capability and keep existing controls.
+
+
+## Blank-chat presets and creator, 2026-10-30
+
+Passed `desktop:lint`, `desktop:test` (main/preload/security checks, 7 capture
+checks, 436 renderer tests and TypeScript contracts), `desktop:build`, backend
+production TypeScript and 81 focused backend preset/chat/settings tests.
+The native Electron smoke passed with the sandboxed preload, scoped backend,
+protocol, theme and window checks; its backend is a test fixture. This is an
+unpackaged smoke, not packaged-app or live-provider verification. The broader
+backend spec-inclusive TypeScript command has pre-existing errors in unrelated
+tests; the production config and focused Jest tests pass.
+
+[`session-presets-delivery`](../../artifacts/desktop-capture/session-presets-delivery/report.json)
+reports `verified: true`, 18 checkpoints, zero errors and zero warnings. The
+capture uses the real connected chat and isolated preview backend on port 4311
+(4310 was already occupied). New PNGs were inspected in both themes, including
+narrow reduced-motion layouts. The regression verifies one-click selection,
+Option digit shortcuts while typing, retained drafts, duplicate-name validation,
+creator preview and model/thinking controls, saved creation, Escape/focus return,
+Save as preset handoff and the first-message transition. Opening filmstrips use
+live finite modal/background animation objects at 0/140/560ms, avoiding stale
+CDP animation IDs from unrelated completed activity.
+
+Saved presets reuse the backend's existing bounded settings storage and are
+validated before application. No dependencies, lockfile changes or migrations.
+Older engines omit the optional capability and retain the existing composer.
+Preset application is verified with controlled provider adapters, not live
+provider accounts. Final source review and `git diff --check` passed.
+
+
 ## AgentPicker reference fidelity, 2026-10-29
 
 Passed `desktop:lint`, `desktop:test` (106 main/preload/security checks,

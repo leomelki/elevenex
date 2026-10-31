@@ -426,3 +426,24 @@ URL as the connected workspace scenarios.
 `scenarios/session-reply-boundaries.mjs` verifies final replies outside collapsed
 work, output arriving before its user receipt, one current reply cursor, immediate
 first-send welcome removal, and narrow/reduced-motion rendering in both themes.
+
+
+`scenarios/session-presets.mjs` checks the connected blank-chat cards, one-command
+selection, Option shortcuts from the composer, retained typing, duplicate names,
+the compact creator form, model/thinking controls, native form submission, Escape and
+focus restoration, both themes and narrow reduced-motion layouts. It also
+captures the modal opening at 0/140/560ms and verifies starting choices disappear
+after the first message. Use the connected workspace preview URL.
+
+
+`scenarios/session-preset-default.mjs` verifies the quiet default selector and its
+keyboard menu, persisted default versus current selection, Undo, creator opt-in,
+retained drafts and new-session defaults in both themes. It includes narrow,
+reduced-motion checkpoints using the connected workspace preview backend.
+
+
+`scenarios/preset-creator-harness.mjs` checks the creator Harness dropdown,
+keyboard choice, delayed/cancelled model reads, retry, per-harness draft recovery,
+Cancel isolation and applying a chosen harness only on Create. It covers both
+themes, narrow/compact reduced-motion layouts and retained message/name drafts.
+Run it against the connected-workspace preview URL.

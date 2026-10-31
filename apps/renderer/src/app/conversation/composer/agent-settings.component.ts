@@ -33,8 +33,11 @@ import { AgentMarkComponent } from "./agent-mark.component";
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AgentSettingsComponent {
+  readonly draftMode = input(false);
   readonly value = input.required<AgentConfig>();
   readonly harnesses = input<readonly AgentHarness[]>([]);
+  readonly harnessAppearance = input<"segmented" | "dropdown">("segmented");
+  readonly modelBusy = input(false);
   readonly locked = input(true);
   readonly disabled = input(false);
   readonly busy = input(false);
@@ -47,6 +50,9 @@ export class AgentSettingsComponent {
   readonly savePreset = output<AgentConfig>();
   protected readonly unavailable = computed(
     () => this.disabled() || this.busy(),
+  );
+  protected readonly modelUnavailable = computed(
+    () => this.unavailable() || this.modelBusy(),
   );
   protected readonly harness = computed(() =>
     this.harnesses().find((harness) => harness.id === this.value().harness),
@@ -81,7 +87,7 @@ export class AgentSettingsComponent {
           id,
           label: label === "Medium" ? "Med" : label,
           title: label,
-          disabled: this.unavailable() || !supported.includes(id),
+          disabled: this.modelUnavailable() || !supported.includes(id),
         };
       });
       const known = new Set(standard.map((level) => level.id));
@@ -96,13 +102,13 @@ export class AgentSettingsComponent {
                 ? "XHigh"
                 : id.charAt(0).toUpperCase() + id.slice(1),
             title: id === "xhigh" ? "Extra high" : id,
-            disabled: this.unavailable(),
+            disabled: this.modelUnavailable(),
           })),
       ];
     },
   );
   modelChange(model: string): void {
-    if (this.unavailable() || model === this.value().model) return;
+    if (this.modelUnavailable() || model === this.value().model) return;
     const selected = this.models().find((item) => item.id === model);
     if (!selected) return;
     this.changed.emit({
@@ -116,6 +122,7 @@ export class AgentSettingsComponent {
   }
   thinkingChange(thinking: string): void {
     if (
+      this.modelUnavailable() ||
       !this.reasoningAvailable() ||
       !this.thinkingOptions().some(
         (option) => option.id === thinking && !option.disabled,
@@ -144,7 +151,7 @@ export class AgentSettingsComponent {
       });
   }
   fastChange(fast: boolean): void {
-    if (!this.unavailable() && this.fastAvailable())
+    if (!this.modelUnavailable() && this.fastAvailable())
       this.changed.emit({ ...this.value(), preset: undefined, fast });
   }
 }

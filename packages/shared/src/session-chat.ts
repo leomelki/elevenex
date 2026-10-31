@@ -51,6 +51,10 @@ export interface SessionChatPlanUsage {
   readonly updatedAt: string;
 }
 export interface SessionChatState {
+  /** Bounded saved starting configurations; omitted by older engines. */
+  readonly presets?: readonly SessionChatPreset[];
+  readonly presetCatalogs?: boolean;
+  readonly presetDefault?: SessionChatPresetDefault;
   readonly provider: string;
   readonly providers?: readonly {
     readonly id: string;
@@ -120,7 +124,51 @@ export interface SessionChatPage extends SessionChatTarget {
   readonly before: string | null;
   readonly state: SessionChatState;
 }
+export interface SessionChatPresetDefault {
+  readonly id: string | null;
+  readonly provider: string;
+  /** Provider-level defaults are retained so Undo can restore them exactly. */
+  readonly defaultIds: readonly string[];
+  readonly revision: string;
+}
+export interface SessionChatCommandReply {
+  readonly accepted: true;
+  readonly defaultChange?: {
+    readonly before: SessionChatPresetDefault;
+    readonly after: SessionChatPresetDefault;
+  };
+}
 export type SessionChatAction =
+  | {
+      readonly type: "preset-default";
+      readonly id: string;
+      readonly expectedProvider: string;
+      readonly expectedRevision: string;
+    }
+  | {
+      readonly type: "preset-default-restore";
+      readonly provider: string;
+      readonly defaultIds: readonly string[];
+      readonly expectedRevision: string;
+    }
+  | {
+      readonly type: "preset";
+      readonly id: string;
+      readonly expectedProvider: string;
+    }
+  | {
+      readonly type: "save-preset";
+      /** Optional for compatibility: omitted means the current conversation harness. */
+      readonly provider?: string;
+      readonly makeDefault?: boolean;
+      readonly expectedDefaultRevision?: string;
+      readonly id: string;
+      readonly name: string;
+      readonly expectedProvider: string;
+      readonly model: string | null;
+      readonly reasoning: string | null;
+      readonly fast: boolean;
+    }
   | {
       readonly type: "provider";
       readonly provider: string;
@@ -162,4 +210,33 @@ export interface SessionChatContent {
   readonly text: string;
   readonly nextOffset: number | null;
   readonly total: number;
+}
+
+export interface SessionChatPreset {
+  readonly id: string;
+  readonly name: string;
+  readonly provider: string;
+  readonly providerLabel: string;
+  readonly model: string | null;
+  readonly modelLabel: string;
+  readonly reasoning: string | null;
+  readonly fast: boolean;
+}
+
+export interface SessionChatCatalogRead extends SessionChatTarget {
+  readonly refresh?: boolean;
+  readonly provider: string;
+  readonly requestId: string;
+}
+/** A bounded, session-independent catalog; this read never switches or starts a harness. */
+export interface SessionChatCatalog {
+  readonly provider: string;
+  readonly label: string;
+  readonly models: SessionChatState["models"];
+  readonly model: string | null;
+  readonly reasoning: string | null;
+  readonly fast: boolean;
+  readonly reasoningAvailable: boolean;
+  readonly fastAvailable: boolean;
+  readonly error: string | null;
 }

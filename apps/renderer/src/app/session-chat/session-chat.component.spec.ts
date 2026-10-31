@@ -6,6 +6,7 @@ import type {
   SessionChatItem,
   SessionChatPage,
   SessionChatState,
+  SessionChatCommandReply,
 } from "@elevenex/shared";
 import {
   BackendClientService,
@@ -13,7 +14,7 @@ import {
 } from "../backend/backend-client.service";
 import { SessionChatDrafts } from "./session-chat-drafts";
 import { SessionChatComponent } from "./session-chat.component";
-import { MarkdownComponent, NowLineComponent } from "../conversation";
+import { MarkdownComponent, NowLineComponent, PresetCreatorComponent } from "../conversation";
 
 const state: SessionChatState = {
   provider: "codex",
@@ -91,12 +92,12 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
     events: [],
     state: chatState,
   };
-  let resolve!: (value: BackendResult<{ readonly accepted: true }>) => void;
+  let resolve!: (value: BackendResult<SessionChatCommandReply>) => void;
   const bridge = {
     sessionChatRead: vi.fn(async () => ({ ok: true as const, value: page })),
     sessionChatCommand: vi.fn(
       () =>
-        new Promise<BackendResult<{ readonly accepted: true }>>((yes) => {
+        new Promise<BackendResult<SessionChatCommandReply>>((yes) => {
           resolve = yes;
         }),
     ),
@@ -132,7 +133,7 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
       page = next;
     },
     complete: (
-      result: BackendResult<{ readonly accepted: true }> = {
+      result: BackendResult<SessionChatCommandReply> = {
         ok: true,
         value: { accepted: true },
       },
@@ -318,6 +319,117 @@ describe("connected composer controls", () => {
     permissionMode: "auto",
     permissionModes: ["auto", "default"],
   };
+  const savedPresets = [
+    { id: 'deep', name: 'Deep work', provider: 'codex', providerLabel: 'Codex', model: 'gpt', modelLabel: 'GPT', reasoning: 'high', fast: false },
+    { id: 'quick', name: 'Quick pass', provider: 'codex', providerLabel: 'Codex', model: 'gpt', modelLabel: 'GPT', reasoning: 'low', fast: true },
+  ];
+  it('keeps current selection distinct from the default and sends a guarded change with Undo', async () => {
+    const before = { id: 'deep', provider: 'codex', defaultIds: ['deep'], revision: 'a'.repeat(64) };
+    const after = { id: 'quick', provider: 'codex', defaultIds: ['quick'], revision: 'b'.repeat(64) };
+    const { fixture, root, bridge, complete, publish } = setup([], { ...capabilities, presets: savedPresets, presetDefault: before });
+    await settle(fixture);
+    fixture.componentInstance.store.setDraft('Keep my message');
+    const changing = fixture.componentInstance.presetFlow.setDefault('quick');
+    expect(bridge.sessionChatCommand).toHaveBeenCalledWith('scope', expect.objectContaining({ action: {
+      type: 'preset-default', id: 'quick', expectedProvider: 'codex', expectedRevision: before.revision,
+    } }));
+    publish({ taskId: 1, sessionId: 2, cursor: 'new', reset: true, before: null, items: [], events: [], state: { ...capabilities, presets: savedPresets, presetDefault: after, reasoning: 'low', fast: true } });
+    complete({ ok: true, value: { accepted: true, defaultChange: { before, after } } });
+    await changing; await settle(fixture);
+    expect(root.querySelector('.default-preset')?.textContent).toContain('Quick pass');
+    expect(root.querySelector('ex-preset-card .default')?.closest('button')?.textContent).toContain('Quick pass');
+    expect(fixture.componentInstance.store.draft()).toBe('Keep my message');
+    const undo = fixture.componentInstance.presetFlow.undoDefault();
+    expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith('scope', expect.objectContaining({ action: {
+      type: 'preset-default-restore', provider: 'codex', defaultIds: ['deep'], expectedRevision: after.revision,
+    } }));
+    complete(); await undo; await settle(fixture);
+    expect(fixture.componentInstance.presetFlow.defaultNoticeOpen()).toBe(false);
+  });
+  it('applies a whole preset in one command, retaining typing and the welcome during reconciliation', async () => {
+    const { fixture, root, bridge, publish, complete } = setup([], { ...capabilities, presets: savedPresets });
+    await settle(fixture);
+    fixture.componentInstance.store.setDraft('Keep my question');
+    const choosing = fixture.componentInstance.presetFlow.selectPreset('quick');
+    fixture.detectChanges();
+    expect(root.querySelectorAll('ex-preset-picker button:disabled')).toHaveLength(3);
+    expect(root.querySelector('.start')).not.toBeNull();
+    expect(bridge.sessionChatCommand).toHaveBeenCalledWith('scope', expect.objectContaining({ action: { type: 'preset', id: 'quick', expectedProvider: 'codex' } }));
+    publish({ taskId: 1, sessionId: 2, cursor: 'quick', reset: true, before: null, items: [], events: [], state: { ...capabilities, presets: savedPresets, reasoning: 'low', fast: true } });
+    complete(); await choosing; await settle(fixture);
+    expect(root.querySelector('ex-preset-picker button[aria-pressed="true"]')?.textContent).toContain('Quick pass');
+    expect(fixture.componentInstance.store.draft()).toBe('Keep my question');
+    expect(document.activeElement).toBe(root.querySelector('textarea'));
+  });
+  it('retains the chosen identity when two named presets share the same mix', async () => {
+    const identical = { ...savedPresets[0]!, id: 'other', name: 'Same mix, different purpose' };
+    const { fixture, root, complete } = setup([], { ...capabilities, presets: [...savedPresets, identical] });
+    await settle(fixture);
+    const choosing = fixture.componentInstance.presetFlow.selectPreset('other');
+    complete(); await choosing; await settle(fixture);
+    expect(root.querySelector('ex-preset-picker button[aria-pressed="true"]')?.textContent).toContain('Same mix, different purpose');
+  });
+  it('offers a keyboard-operated default choice without submitting or saving until Create', async () => {
+    const fixture = TestBed.createComponent(PresetCreatorComponent);
+    fixture.componentRef.setInput('initial', { mark: 'Cx', harness: 'codex', model: 'gpt' });
+    fixture.componentRef.setInput('defaultAvailable', true);
+    fixture.componentRef.setInput('harnesses', [{ id: 'codex', label: 'Codex', mark: 'Cx', models: [{ id: 'gpt', label: 'GPT', thinking: [] }] }]);
+    const submissions = vi.fn(); fixture.componentInstance.submitted.subscribe(submissions);
+    await settle(fixture);
+    const keep = document.querySelector<HTMLButtonElement>('.default-choice button[aria-label="Keep current"]')!;
+    const use = document.querySelector<HTMLButtonElement>('.default-choice button[aria-label="Use this preset"]')!;
+    expect(keep.getAttribute('aria-checked')).toBe('true');
+    expect(document.querySelector('.preset-creator input[type="checkbox"]')).toBeNull();
+    keep.focus(); keep.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    await settle(fixture);
+    expect(use.getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(use);
+    expect(submissions).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('busy', true); await settle(fixture);
+    expect(keep.disabled).toBe(true); expect(use.disabled).toBe(true);
+    keep.click(); expect(fixture.componentInstance.useAsDefault()).toBe(true);
+    fixture.componentRef.setInput('busy', false); await settle(fixture);
+    fixture.componentInstance.name.set('Review');
+    document.querySelector<HTMLFormElement>('.preset-creator')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    expect(submissions).toHaveBeenCalledWith(expect.objectContaining({ preset: 'Review', default: true }));
+  });
+  it('starts a fresh creator draft when reopened before the previous exit completes', async () => {
+    const { fixture } = setup([], { ...capabilities, presets: savedPresets });
+    await settle(fixture);
+    fixture.componentInstance.presetFlow.openPresetCreator(); await settle(fixture);
+    const oldName = document.querySelector<HTMLInputElement>('.preset-creator input')!;
+    oldName.value = 'Discard this draft'; oldName.dispatchEvent(new Event('input'));
+    fixture.componentInstance.presetFlow.creatorOpen.set(false);
+    fixture.componentInstance.presetFlow.openPresetCreator(); await settle(fixture);
+    const freshName = document.querySelector<HTMLInputElement>('.preset-creator input')!;
+    expect(freshName).not.toBe(oldName); expect(freshName.value).toBe('');
+  });
+  it('creates a named draft with duplicate validation and never writes when cancelled', async () => {
+    const { fixture, bridge } = setup([], { ...capabilities, presets: savedPresets });
+    await settle(fixture);
+    fixture.componentInstance.presetFlow.openPresetCreator(); await settle(fixture);
+    const name = document.querySelector<HTMLInputElement>('ex-preset-creator input, .preset-creator input')!;
+    name.value = ' DEEP WORK '; name.dispatchEvent(new Event('input')); await settle(fixture);
+    expect(name.getAttribute('aria-invalid')).toBe('true');
+    expect(document.querySelector<HTMLButtonElement>('.preset-creator button[type="submit"]')?.disabled).toBe(true);
+    name.value = 'Review'; name.dispatchEvent(new Event('input')); await settle(fixture);
+    expect(name.getAttribute('aria-invalid')).toBe('false');
+    fixture.componentInstance.presetFlow.creatorOpen.set(false); await settle(fixture);
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+  it('handles Option digit keys from the composer and ignores them after the session starts', async () => {
+    const { fixture, root, bridge, complete } = setup([], { ...capabilities, presets: savedPresets });
+    await settle(fixture);
+    const event = new KeyboardEvent('keydown', { key: '™', code: 'Digit2', altKey: true, bubbles: true, cancelable: true });
+    root.querySelector('textarea')!.dispatchEvent(event); fixture.detectChanges();
+    expect(event.defaultPrevented).toBe(true);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+    complete(); await settle(fixture);
+    fixture.componentInstance.store.state.update(state => state && ({ ...state, providerLocked: true })); fixture.detectChanges();
+    root.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: '2', code: 'Digit2', altKey: true, bubbles: true }));
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+    expect(root.querySelector('ex-preset-picker')).toBeNull();
+  });
   it("composes a single agent picker with advertised settings and harness-native permission IDs", async () => {
     const { fixture, root } = setup([], capabilities);
     await settle(fixture);

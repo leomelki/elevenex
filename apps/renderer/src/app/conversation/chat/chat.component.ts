@@ -31,9 +31,11 @@ import { ButtonComponent } from '../../ui';
   ],
   templateUrl: "./chat.component.html",
   styleUrl: "./chat.component.css",
+  host: { "[class.center-composer]": "centerComposer()" },
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ChatComponent {
+  readonly centerComposer = input(false);
   readonly exchanges = input<readonly ChatExchange[]>([]);
   readonly actions = input<readonly TurnAction[]>(['side-chat', 'fork', 'copy']);
   readonly stoppable = input(true);

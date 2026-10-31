@@ -1,0 +1,124 @@
+<ex-modal-layer
+  [open]="open()"
+  (closeRequested)="closeRequested.emit()"
+  (closed)="closed.emit()"
+>
+  <form
+    class="preset-creator"
+    role="dialog"
+    aria-modal="true"
+    [attr.aria-labelledby]="titleId"
+    [attr.aria-busy]="busy()"
+    (submit)="submit($event)"
+  >
+    <header>
+      <span class="symbol"><ex-icon name="plus" [size]="18" /></span>
+      <div>
+        <h2 [id]="titleId">Create a preset</h2>
+        <p>A familiar starting point, one click away.</p>
+      </div>
+      <ex-icon-button
+        icon="x"
+        label="Close preset creator"
+        (pressed)="closeRequested.emit()"
+      />
+    </header>
+    <div exAutoHeight>
+      <div class="body">
+        <div class="name-field">
+          <label [for]="nameId">Preset name</label>
+          <input
+            cdkFocusInitial
+            [id]="nameId"
+            [value]="name()"
+            (input)="updateName($event)"
+            maxlength="48"
+            required
+            placeholder="e.g. Deep work"
+            autocomplete="off"
+            [disabled]="busy() || !open()"
+            [attr.aria-invalid]="duplicate()"
+            [attr.aria-describedby]="duplicate() ? issueId : null"
+          />
+          @if (duplicate()) {
+            <p class="error" [id]="issueId" role="status">
+              A preset with this name already exists.
+            </p>
+          }
+        </div>
+        <ex-agent-settings
+          [draftMode]="true"
+          [value]="draft()"
+          [harnesses]="availableHarnesses()"
+          harnessAppearance="dropdown"
+          [modelBusy]="catalogBusy() || !!catalogError()"
+          [locked]="harnessLocked()"
+          [disabled]="!open() || blocked()"
+          [busy]="busy()"
+          [showFork]="false"
+          [showSavePreset]="false"
+          [reasoningAvailable]="canReason()"
+          [fastAvailable]="supportsFast()"
+          (changed)="change($event)"
+        />
+        @if (catalogBusy()) {
+          <p class="catalog-status" role="status">Loading models…</p>
+        }
+        @if (catalogError()) {
+          <div class="catalog-error" role="alert">
+            <span>{{ catalogError() }}</span>
+            <button
+              exButton
+              variant="ghost"
+              size="sm"
+              [disabled]="busy() || blocked() || !open()"
+              (click)="loadCatalog(true)"
+            >
+              Try again
+            </button>
+          </div>
+        }
+        @if (defaultAvailable()) {
+          <div class="default-choice">
+            <ex-set-row label="Default for new chats" sub="Applied on creation">
+              <ex-segmented
+                size="sm"
+                label="Default for new chats"
+                [options]="defaultOptions()"
+                [value]="useAsDefault() ? 'use' : 'keep'"
+                (changed)="chooseDefault($event)"
+              />
+            </ex-set-row>
+          </div>
+        }
+        @if (error()) {
+          <p class="error" role="alert">{{ error() }}</p>
+        }
+      </div>
+    </div>
+    <footer>
+      <span class="note" role="status">{{
+        busy() ? "Saving preset…" : "Saved on this machine for new sessions"
+      }}</span>
+      <button exButton variant="ghost" (click)="closeRequested.emit()">
+        Cancel
+      </button>
+      <button
+        exButton
+        variant="primary"
+        type="submit"
+        [disabled]="
+          busy() ||
+          catalogBusy() ||
+          !!catalogError() ||
+          blocked() ||
+          !open() ||
+          !name().trim() ||
+          duplicate()
+        "
+      >
+        Create preset
+      </button>
+    </footer>
+  </form>
+</ex-modal-layer>

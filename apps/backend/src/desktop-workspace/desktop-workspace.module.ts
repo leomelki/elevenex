@@ -1,3 +1,4 @@
+import { SettingsModule } from '../settings/settings.module.js';
 import { AgentRuntimeModule } from '../agent-runtime/agent-runtime.module.js';
 import { DesktopChatController } from './desktop-chat.controller.js';
 import { DesktopChatService } from './desktop-chat.service.js';
@@ -17,6 +18,7 @@ import { DesktopWorkspaceService } from './desktop-workspace.service.js';
 import { DesktopProjectDeletionService } from './desktop-project-deletion.service.js';
 @Module({
   imports: [
+    SettingsModule,
     GitModule,
     AgentRuntimeModule,
     ClaudeHooksModule,

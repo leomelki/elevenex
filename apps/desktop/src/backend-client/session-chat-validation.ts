@@ -5,6 +5,8 @@ import type {
   SessionChatPage,
   SessionChatState,
   SessionChatPlanUsage,
+  SessionChatPresetDefault,
+  SessionChatCatalog,
 } from "@elevenex/shared";
 import { BackendRequestError } from "./transport";
 const invalid = () =>
@@ -55,6 +57,69 @@ export function requestId(value: unknown): string {
   const id = chatText(value, 100);
   if (!/^[\w-]{1,100}$/.test(id)) throw invalid();
   return id;
+}
+function presetId(value: unknown): string {
+  const id = chatText(value, 64);
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(id)) throw invalid();
+  return id;
+}
+function defaultRevision(value: unknown): string {
+  const revision = chatText(value, 64);
+  if (!/^[a-f0-9]{64}$/.test(revision)) throw invalid();
+  return revision;
+}
+export function parsePresetDefault(value: unknown): SessionChatPresetDefault {
+  const raw = chatObject(value);
+  const defaultIds = array(raw["defaultIds"], 24, presetId);
+  if (new Set(defaultIds).size !== defaultIds.length) throw invalid();
+  const id = raw["id"] === null ? null : presetId(raw["id"]);
+  if (id !== null && !defaultIds.includes(id)) throw invalid();
+  return {
+    id,
+    provider: presetId(raw["provider"]),
+    defaultIds,
+    revision: defaultRevision(raw["revision"]),
+  };
+}
+export function parseChatCatalog(
+  value: unknown,
+  provider: string,
+): SessionChatCatalog {
+  const raw = chatObject(value);
+  if (raw["provider"] !== provider) throw invalid();
+  const models = array(raw["models"], 100, (value) => {
+    const model = chatObject(value);
+    return {
+      id: chatText(model["id"], 200),
+      label: chatText(model["label"], 200),
+      reasoningEfforts: array(model["reasoningEfforts"], 20, (v) =>
+        chatText(v, 100),
+      ),
+      supportsFastMode: bool(model["supportsFastMode"]),
+    };
+  });
+  if (new Set(models.map((m) => m.id)).size !== models.length) throw invalid();
+  const selected = nullable(raw["model"], 200);
+  const reasoning = nullable(raw["reasoning"], 100);
+  const model = models.find((m) => m.id === selected);
+  const fast = bool(raw["fast"]);
+  if (
+    (selected !== null && !model) ||
+    (reasoning !== null && !model?.reasoningEfforts.includes(reasoning)) ||
+    (fast && !model?.supportsFastMode)
+  )
+    throw invalid();
+  return {
+    provider,
+    label: chatText(raw["label"], 200),
+    models,
+    model: selected,
+    reasoning,
+    fast,
+    reasoningAvailable: bool(raw["reasoningAvailable"]),
+    fastAvailable: bool(raw["fastAvailable"]),
+    error: nullable(raw["error"], 1000),
+  };
 }
 function item(value: unknown): SessionChatItem {
   const raw = chatObject(value),
@@ -140,9 +205,38 @@ function state(value: unknown): SessionChatState {
     raw["permission"] === null ? null : chatObject(raw["permission"]);
   const question =
     raw["question"] === null ? null : chatObject(raw["question"]);
+  if (raw["presets"] !== undefined) {
+    const presets = array(raw["presets"], 24, (value) =>
+      presetId(chatObject(value)["id"]),
+    );
+    if (new Set(presets).size !== presets.length) throw invalid();
+  }
   const context = raw["context"] === null ? null : chatObject(raw["context"]);
   return {
     provider: chatText(raw["provider"]),
+    ...(raw["presetCatalogs"] === undefined
+      ? {}
+      : { presetCatalogs: bool(raw["presetCatalogs"]) }),
+    ...(raw["presetDefault"] === undefined
+      ? {}
+      : { presetDefault: parsePresetDefault(raw["presetDefault"]) }),
+    ...(raw["presets"] === undefined
+      ? {}
+      : {
+          presets: array(raw["presets"], 24, (value) => {
+            const preset = chatObject(value);
+            return {
+              id: presetId(preset["id"]),
+              name: chatText(preset["name"], 48),
+              provider: chatText(preset["provider"]),
+              providerLabel: chatText(preset["providerLabel"]),
+              model: nullable(preset["model"]),
+              modelLabel: chatText(preset["modelLabel"]),
+              reasoning: nullable(preset["reasoning"]),
+              fast: bool(preset["fast"]),
+            };
+          }),
+        }),
     ...(raw["planUsage"] === undefined
       ? {}
       : {
@@ -279,6 +373,60 @@ export function parseChatAction(value: unknown): SessionChatAction {
   const raw = chatObject(value),
     type = raw["type"];
   switch (type) {
+    case "preset-default":
+      return {
+        type,
+        id: presetId(raw["id"]),
+        expectedProvider: presetId(raw["expectedProvider"]),
+        expectedRevision: defaultRevision(raw["expectedRevision"]),
+      };
+    case "preset-default-restore": {
+      const defaultIds = array(raw["defaultIds"], 24, presetId);
+      if (new Set(defaultIds).size !== defaultIds.length) throw invalid();
+      return {
+        type,
+        provider: presetId(raw["provider"]),
+        defaultIds,
+        expectedRevision: defaultRevision(raw["expectedRevision"]),
+      };
+    }
+    case "preset":
+      return {
+        type,
+        id: presetId(raw["id"]),
+        expectedProvider: chatText(raw["expectedProvider"]),
+      };
+    case "save-preset": {
+      const name = chatText(raw["name"], 48).trim();
+      if (
+        !name ||
+        (raw["makeDefault"] === true &&
+          raw["expectedDefaultRevision"] === undefined)
+      )
+        throw invalid();
+      return {
+        type,
+        id: presetId(raw["id"]),
+        name,
+        ...(raw["provider"] === undefined
+          ? {}
+          : { provider: presetId(raw["provider"]) }),
+        ...(raw["makeDefault"] === undefined
+          ? {}
+          : { makeDefault: bool(raw["makeDefault"]) }),
+        ...(raw["expectedDefaultRevision"] === undefined
+          ? {}
+          : {
+              expectedDefaultRevision: defaultRevision(
+                raw["expectedDefaultRevision"],
+              ),
+            }),
+        expectedProvider: chatText(raw["expectedProvider"]),
+        model: nullable(raw["model"]),
+        reasoning: nullable(raw["reasoning"]),
+        fast: bool(raw["fast"]),
+      };
+    }
     case "provider": {
       const provider = chatText(raw["provider"]),
         expectedProvider = chatText(raw["expectedProvider"]);

@@ -30,6 +30,7 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
       const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
       const responses = {
         '/api/info': { backendSha: revision },
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/catalog': { provider: 'claude', label: 'Claude Code', models: [{ id: 'sonnet', label: 'Sonnet', reasoningEfforts: ['high'], supportsFastMode: false }], model: 'sonnet', reasoning: 'high', fast: false, reasoningAvailable: true, fastAvailable: false, error: null },
         '/api/desktop-workspace/revision': { revision: 0, version: 1 },
         '/api/desktop-workspace/projects': { items: [], nextCursor: null },
         '/api/desktop-workspace/tasks': { items: [], nextCursor: null },
@@ -78,7 +79,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent'].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, 'sessionChatCatalog', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -107,6 +108,9 @@ void (async () => {
   assert.deepEqual(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('${firstScope.scope.id}')`), {
     ok: true, value: { backendSha: revision },
   });
+  const presetCatalog = await window.webContents.executeJavaScript(`window.elevenex.sessionChatCatalog('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'smoke-catalog', provider: 'claude' })`);
+  assert.equal(presetCatalog.ok, true);
+  assert.equal(presetCatalog.value.models[0].id, 'sonnet');
   assert.equal(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('').then(() => false, () => true)`), true);
   // Exercise the production deferred workspace through app://, real IPC and HTTP.
   // This also catches missing style nonces when its lazy components are mounted.

@@ -28,6 +28,8 @@ export * from "./composer/mention-menu.component";
 export * from "./composer/composer-queue.component";
 export * from "./composer/composer.component";
 export * from "./session/preset-card.component";
+export * from "./session/preset-creator.component";
+export * from "./session/preset-catalog.models";
 export * from "./session/preset-picker.component";
 export * from "./session/session-start.component";
 export * from "./chat/message.component";
