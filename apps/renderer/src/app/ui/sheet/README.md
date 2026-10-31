@@ -28,7 +28,11 @@ before a reversal, including content/face/shadow opacity. Completion removes the
 decorations and restores natural sizing. Disposal also restores the projected
 surface's original transform origin.
 
-Unanchored sheets/confirmations keep the plain pop and `dur-base` exit.
+Unanchored sheets/confirmations enter with a plain `dur-slow` pop on `ease-out`
+and leave over `dur-base` on `ease-in`. The dim owns an inert decorative layer
+and animates opacity independently of the dialog, keeping the overlay at full opacity instead of
+making the whole form translucent. Reversals snapshot the painted surface and
+dim separately; anchored launch morph timings remain unchanged.
 Reduced motion skips the morph; a preference change finishes existing movement
 and releases its resources. AutoHeight resets its baseline when a portal detaches,
 so a reused dialog can open with a different body without an obsolete height.

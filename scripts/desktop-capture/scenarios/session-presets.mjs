@@ -19,13 +19,28 @@ export default async function* (capture) {
     await capture.waitFor(() => document.querySelector('ex-preset-picker button[aria-pressed="true"]')?.textContent.includes('Quick pass'));
     assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea').value), 'Keep my question while choosing a preset');
     assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-composer textarea')), true);
+    await capture.click('ex-preset-picker button.custom');
+    await capture.waitFor(() => document.activeElement?.matches('.preset-creator input'));
+    assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-settings')), false);
+    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator input').value), '');
+    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator button[aria-label^="Harness:"]').textContent.includes('Codex')), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator button[aria-label^="Model:"]').textContent.includes('GPT-6')), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator [aria-label="Thinking level"] button[aria-checked="true"]').getAttribute('aria-label')), 'Low');
+    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator [role="switch"]').getAttribute('aria-checked')), 'true');
+    await settle(); yield { name: theme + '-custom-current-config', inspect: ['.preset-creator'] };
+    await capture.click('.preset-creator [aria-label="Thinking level"] button[aria-label="High"]');
+    await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.preset-creator'));
+    assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-preset-picker button.custom')), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-preset-picker button[aria-pressed="true"]').textContent.includes('Quick pass')), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea').value), 'Keep my question while choosing a preset');
+    await capture.click('ex-composer textarea');
     const deepIndex = await capture.evaluate(() => [...document.querySelectorAll('ex-preset-picker ex-preset-card')].findIndex(card => card.textContent.includes('Deep work')));
     await capture.press(String(deepIndex + 1), 1);
     await capture.waitFor(() => document.querySelector('ex-preset-picker button[aria-pressed="true"]')?.textContent.includes('Deep work'));
-    const opener = 'ex-session-chat .preset-heading button';
+    const opener = 'ex-session-chat .preset-heading > button';
     await settle();
     await capture.motion.freeze(); await capture.click(opener);
-    for (const time of [0, 140, 560]) {
+    for (const time of [0, 140, 280]) {
       await capture.evaluate(time => {
         for (const animation of document.getAnimations()) {
           const target = animation.effect?.target;
@@ -55,12 +70,12 @@ export default async function* (capture) {
     await settle(); yield { name: theme + '-created', inspect: ['ex-session-chat .start', 'ex-composer'] };
     await capture.click(opener); await capture.waitFor(() => !!document.querySelector('.preset-creator'));
     await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.preset-creator'));
-    assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-session-chat .preset-heading button')), true);
+    assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-session-chat .preset-heading > button')), true);
     await capture.reducedMotion(false);
     // Return to the original six-or-fewer starting choices for the next theme.
     await capture.click('ex-preset-picker ex-preset-card button[aria-pressed="true"]');
   }
-  await capture.click('ex-preset-picker button.custom');
+  await capture.click('ex-composer ex-agent-picker > button');
   await capture.waitFor(() => !!document.querySelector('.agent-settings'));
   await capture.click('.agent-settings footer button');
   await capture.waitFor(() => !!document.querySelector('.preset-creator'));

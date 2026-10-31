@@ -23,77 +23,79 @@
         (pressed)="closeRequested.emit()"
       />
     </header>
-    <div exAutoHeight>
-      <div class="body">
-        <div class="name-field">
-          <label [for]="nameId">Preset name</label>
-          <input
-            cdkFocusInitial
-            [id]="nameId"
-            [value]="name()"
-            (input)="updateName($event)"
-            maxlength="48"
-            required
-            placeholder="e.g. Deep work"
-            autocomplete="off"
-            [disabled]="busy() || !open()"
-            [attr.aria-invalid]="duplicate()"
-            [attr.aria-describedby]="duplicate() ? issueId : null"
+    <div class="scroll">
+      <div exAutoHeight>
+        <div class="body">
+          <div class="name-field">
+            <label [for]="nameId">Preset name</label>
+            <input
+              cdkFocusInitial
+              [id]="nameId"
+              [value]="name()"
+              (input)="updateName($event)"
+              maxlength="48"
+              required
+              placeholder="e.g. Deep work"
+              autocomplete="off"
+              [disabled]="busy() || !open()"
+              [attr.aria-invalid]="duplicate()"
+              [attr.aria-describedby]="duplicate() ? issueId : null"
+            />
+            @if (duplicate()) {
+              <p class="error" [id]="issueId" role="status">
+                A preset with this name already exists.
+              </p>
+            }
+          </div>
+          <ex-agent-settings
+            [draftMode]="true"
+            [value]="draft()"
+            [harnesses]="availableHarnesses()"
+            harnessAppearance="dropdown"
+            [modelBusy]="catalogBusy() || !!catalogError()"
+            [locked]="harnessLocked()"
+            [disabled]="!open() || blocked()"
+            [busy]="busy()"
+            [showFork]="false"
+            [showSavePreset]="false"
+            [reasoningAvailable]="canReason()"
+            [fastAvailable]="supportsFast()"
+            (changed)="change($event)"
           />
-          @if (duplicate()) {
-            <p class="error" [id]="issueId" role="status">
-              A preset with this name already exists.
-            </p>
+          @if (catalogBusy()) {
+            <p class="catalog-status" role="status">Loading models…</p>
+          }
+          @if (catalogError()) {
+            <div class="catalog-error" role="alert">
+              <span>{{ catalogError() }}</span>
+              <button
+                exButton
+                variant="ghost"
+                size="sm"
+                [disabled]="busy() || blocked() || !open()"
+                (click)="loadCatalog(true)"
+              >
+                Try again
+              </button>
+            </div>
+          }
+          @if (defaultAvailable()) {
+            <div class="default-choice">
+              <ex-set-row label="Default for new chats" sub="Applied on creation">
+                <ex-segmented
+                  size="sm"
+                  label="Default for new chats"
+                  [options]="defaultOptions()"
+                  [value]="useAsDefault() ? 'use' : 'keep'"
+                  (changed)="chooseDefault($event)"
+                />
+              </ex-set-row>
+            </div>
+          }
+          @if (error()) {
+            <p class="error" role="alert">{{ error() }}</p>
           }
         </div>
-        <ex-agent-settings
-          [draftMode]="true"
-          [value]="draft()"
-          [harnesses]="availableHarnesses()"
-          harnessAppearance="dropdown"
-          [modelBusy]="catalogBusy() || !!catalogError()"
-          [locked]="harnessLocked()"
-          [disabled]="!open() || blocked()"
-          [busy]="busy()"
-          [showFork]="false"
-          [showSavePreset]="false"
-          [reasoningAvailable]="canReason()"
-          [fastAvailable]="supportsFast()"
-          (changed)="change($event)"
-        />
-        @if (catalogBusy()) {
-          <p class="catalog-status" role="status">Loading models…</p>
-        }
-        @if (catalogError()) {
-          <div class="catalog-error" role="alert">
-            <span>{{ catalogError() }}</span>
-            <button
-              exButton
-              variant="ghost"
-              size="sm"
-              [disabled]="busy() || blocked() || !open()"
-              (click)="loadCatalog(true)"
-            >
-              Try again
-            </button>
-          </div>
-        }
-        @if (defaultAvailable()) {
-          <div class="default-choice">
-            <ex-set-row label="Default for new chats" sub="Applied on creation">
-              <ex-segmented
-                size="sm"
-                label="Default for new chats"
-                [options]="defaultOptions()"
-                [value]="useAsDefault() ? 'use' : 'keep'"
-                (changed)="chooseDefault($event)"
-              />
-            </ex-set-row>
-          </div>
-        }
-        @if (error()) {
-          <p class="error" role="alert">{{ error() }}</p>
-        }
       </div>
     </div>
     <footer>

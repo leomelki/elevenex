@@ -147,7 +147,7 @@
         <h1>What should we work on?</h1>
         @if (store.state()?.presets !== undefined) {
           <div class="preset-heading">
-            @if (presetFlow.defaultPreset()) {
+            @if (presetFlow.defaultPreset() && presetFlow.presets().length) {
               <ex-dropdown
                 class="default-preset"
                 label="Default preset for new chats"
@@ -160,7 +160,7 @@
                 (changed)="presetFlow.setDefault($event)"
               />
             } @else {
-              <span>Start with a preset</span>
+              <span>{{ presetFlow.presets().length ? 'Start with a preset' : 'Agent setup' }}</span>
             }
             <button
               exButton

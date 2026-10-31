@@ -116,6 +116,29 @@ describe('modal motion ownership', () => {
     motion!.dispose(); expect(trigger.style.visibility).toBe('');
   });
 
+  it('fades an unanchored dim independently and reverses without a stale close', async () => {
+    const layer = document.createElement('div'), surface = document.createElement('section'), dim = document.createElement('div');
+    layer.style.setProperty('--dur-slow', '280ms');
+    layer.style.setProperty('--dur-base', '200ms');
+    layer.style.setProperty('--ease-in', 'ease-in');
+    layer.style.setProperty('--ease-out', 'ease-out');
+    dim.className = 'ex-modal-dim'; dim.style.opacity = '0.6';
+    surface.style.opacity = '0.8';
+    layer.append(surface, dim); root.append(layer);
+    motion = new ModalMotion(layer);
+    const closing = motion.retarget(false);
+    expect(animations[0]!.frames[0]?.['opacity']).toBe('0.8');
+    expect(animations[1]!.target).toBe(dim);
+    expect(animations[1]!.frames).toEqual([{ opacity: '0.6' }, { opacity: '0' }]);
+    expect(animations.slice(0, 2).every(animation => animation.options.duration === 200)).toBe(true);
+    const reopening = motion.retarget(true);
+    expect(await closing).toBe(false);
+    expect(animations[3]!.frames).toEqual([{ opacity: '0.6' }, { opacity: '1' }]);
+    expect(animations.slice(2).every(animation => animation.options.duration === 280)).toBe(true);
+    await finish(); expect(await reopening).toBe(true);
+    expect(animations.every(animation => animation.cancel.mock.calls.length > 0)).toBe(true);
+  });
+
   it('rejects stale exits when reopened and releases every animation on destruction', async () => {
     const { layer, surface, trigger } = setup();
     animations[0]!.progress = .4;

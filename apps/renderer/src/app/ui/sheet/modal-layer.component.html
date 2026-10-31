@@ -4,5 +4,6 @@
     [cdkTrapFocus]="open()" [cdkTrapFocusAutoCapture]="true" tabindex="-1"
     (keydown.escape)="dismiss($event)" (mousedown)="backdrop($event)">
     <ng-content />
+    <div class="ex-modal-dim" aria-hidden="true"></div>
   </div>
 </ng-template>

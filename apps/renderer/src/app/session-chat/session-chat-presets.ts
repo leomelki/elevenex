@@ -20,7 +20,6 @@ interface PresetOwner {
   readonly showWelcome: Signal<boolean>;
   readonly agent: () => AgentConfig | undefined;
   readonly focusComposer: () => void;
-  readonly openAgent: () => void;
   readonly closeAgent: () => void;
 }
 
@@ -265,7 +264,7 @@ export class SessionChatPresets {
     )
       return;
     if (id === "custom") {
-      this.owner.openAgent();
+      this.openPresetCreator();
       return;
     }
     if (id === this.selectedPreset()?.id) {

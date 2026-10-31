@@ -6,6 +6,7 @@ export class ModalMotion {
   private readonly media = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : undefined;
   private readonly reducedChanged = () => { if (this.media?.matches) this.animations.forEach(animation => animation.finish()); };
   private readonly surface: HTMLElement | null;
+  private readonly dim: HTMLElement;
   private window: Element | null;
   private origin?: ModalBox;
   private face?: HTMLElement;
@@ -22,6 +23,8 @@ export class ModalMotion {
     this.returnElement = from;
     this.media?.addEventListener('change', this.reducedChanged);
     this.surface = layer.firstElementChild instanceof HTMLElement ? layer.firstElementChild : null;
+    // Imperative popovers use the same motion owner without a modal backdrop.
+    this.dim = layer.querySelector<HTMLElement>(':scope > .ex-modal-dim') ?? layer;
     this.window = from?.closest('[data-modal-window], .ex-window, ex-app-shell') ?? null;
     if (!this.media?.matches && from?.isConnected && this.surface?.animate) {
       const origin = measureModalOrigin(layer, from);
@@ -46,7 +49,7 @@ export class ModalMotion {
     // Snapshot painted values before cancelling: rapid reversals start at exactly this frame.
     const layerStyle = getComputedStyle(this.layer), surfaceStyle = getComputedStyle(surface);
     const painted = { opacity: surfaceStyle.opacity, transform: surfaceStyle.transform, clipPath: surfaceStyle.clipPath };
-    const dim = layerStyle.backgroundColor, opacity = layerStyle.opacity;
+    const dimOpacity = getComputedStyle(this.dim).opacity;
     const content = Array.from(surface.children).filter((child): child is HTMLElement => child instanceof HTMLElement);
     const contentOpacity = content.map(child => getComputedStyle(child).opacity);
     const copyPose = (element?: HTMLElement) => {
@@ -118,13 +121,13 @@ export class ModalMotion {
         }
         this.animations.push(this.face.animate(frames.face, options));
       }
-      if (!this.options.noFace) this.animations.push(this.layer.animate([{ backgroundColor: timing == null && open ? 'transparent' : dim }, { backgroundColor: open ? 'color-mix(in srgb, #08101c 22%, transparent)' : 'transparent' }], options));
+      if (!this.options.noFace) this.animations.push(this.dim.animate([{ opacity: timing == null && open ? '0' : dimOpacity }, { opacity: open ? '1' : '0' }], options));
     } else {
-      const duration = parseFloat(layerStyle.getPropertyValue(open ? '--dur-glide' : '--dur-base')) || (open ? 340 : 200);
+      const duration = parseFloat(layerStyle.getPropertyValue(open ? '--dur-slow' : '--dur-base')) || (open ? 280 : 200);
       const easing = layerStyle.getPropertyValue(open ? '--ease-out' : '--ease-in').trim();
       this.animations = [
-        surface.animate([painted, { opacity: open ? '1' : '0', transform: open ? 'none' : 'translateY(-8px) scale(.985)' }], { duration: open ? 560 : duration, easing: open ? MODAL_LAUNCH_EASING : easing, fill: 'both' }),
-        this.layer.animate([{ opacity }, { opacity: open ? '1' : '0' }], { duration, easing, fill: 'both' }),
+        surface.animate([painted, { opacity: open ? '1' : '0', transform: open ? 'none' : 'translateY(-8px) scale(.985)' }], { duration, easing, fill: 'both' }),
+        this.dim.animate([{ opacity: dimOpacity }, { opacity: open ? '1' : '0' }], { duration, easing, fill: 'both' }),
       ];
     }
     try { await Promise.all(this.animations.map(animation => animation.finished)); }

@@ -174,7 +174,10 @@ The component-owned `SessionChatPresets` controller owns preset view models, sta
 
 Starting presets use the optional bounded `SessionChatState.presets` capability.
 The blank chat centers one composer beneath at most six reference preset cards
-and Custom, which opens the existing agent picker. A selection submits one
+and Custom, which opens the preset creator with the current harness, model,
+thinking and fast-mode configuration and an empty name. Editing or cancelling
+this local draft leaves the conversation settings unchanged. A saved-card
+selection submits one
 `preset` action, validates the entire mix before applying it, reconciles state,
 and restores typing focus only while the same session is selected. Typing and
 its draft remain available during configuration. Started sessions and archived

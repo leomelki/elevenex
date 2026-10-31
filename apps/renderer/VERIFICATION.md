@@ -1,5 +1,61 @@
 # Component system verification
 
+## Custom preset creation from the current configuration, 2026-10-31
+
+Custom now opens the retained preset creator directly with the current harness,
+model, thinking and fast-mode values and a blank name. Editing/cancelling stays
+local; Escape restores the Custom card and preserves the message draft and
+selected agent. The composer agent menu retains its Save as preset action.
+
+[Current-configuration capture](../../artifacts/desktop-capture/custom-preset-current-config/report.json)
+is `verified: true`: 20 checkpoints with no renderer errors/warnings. New light
+and dark PNGs were inspected. The regression covers prefilled values, editing
+then cancelling without applying them, restored focus, retained typing, ordinary
+creation and the agent-menu handoff. It uses production components with an
+isolated preview backend rather than live-provider or packaged-app execution.
+
+Lint, renderer TypeScript checks and the production desktop build pass. The full desktop test retry passed
+113 desktop and 7 capture-tool tests; the renderer run passed 452 tests and timed
+out in three existing workspace tests. All 32 chat/workspace tests, including
+the new prefill/cancellation cases and those three workspace tests, passed when
+rerun together without a concurrent production build. The initial desktop run
+also encountered an unrelated native SSH timeout, which passed on retry.
+
+## Preset cards and modal surfaces, 2026-10-31
+
+The starting grid retains its card columns with an empty catalog instead of
+stretching Custom across the chat. Selected Custom uses the saved-card accent
+ring and raised surface; hover preserves selection and keyboard focus remains
+visible on dashed choices. Empty catalogs omit the empty Default dropdown.
+
+Unanchored dialogs enter over `dur-slow` (280ms) and leave over `dur-base`
+(200ms). A separate decorative dim animates opacity without fading the entire
+overlay, and reversals preserve painted surface/dim values. The preset creator
+scrolls its body while its title and actions stay visible in short windows.
+
+Passed `desktop:lint`, `desktop:test` (113 desktop, 7 capture-tool and 453 renderer
+tests plus TypeScript contracts), and `desktop:build`. No dependencies or
+backend contracts changed. Source review and `git diff --check` pass.
+
+The native reports are `verified: true`, with no renderer errors or warnings:
+
+- [Surface regression](../../artifacts/desktop-capture/preset-ui-final/report.json):
+  20 checkpoints covering empty catalogs, hover/keyboard focus, 0/140/280ms
+  opening frames, interrupted entry, focus restoration, duplicate names and
+  420×360 scrolling in light/dark and reduced motion.
+- [Creation flow](../../artifacts/desktop-capture/preset-ui-creation-final/report.json):
+  18 checkpoints for selection, Option shortcuts, retained typing, saving,
+  Escape, Save as preset handoff and first-message welcome removal.
+- [Catalog states](../../artifacts/desktop-capture/preset-ui-catalogs-final/report.json):
+  14 checkpoints for harness menus, loading/cancellation, retry, retained drafts
+  and compact layouts in both themes.
+- [Shared anchored modals](../../artifacts/desktop-capture/preset-ui-shared-modals-final/report.json):
+  22 checkpoints preserving trigger geometry, interrupted reversals, decorative
+  cleanup and focus restoration in both themes.
+
+New PNGs were inspected. Captures use the production components with an isolated
+preview backend; live-provider and packaged-app behavior were not exercised.
+
 ## Editable harness in preset creation, 2026-10-30
 
 The creator now offers a compact Harness dropdown. A scoped, session-independent

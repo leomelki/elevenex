@@ -340,6 +340,31 @@ describe("connected composer controls", () => {
     { id: 'deep', name: 'Deep work', provider: 'codex', providerLabel: 'Codex', model: 'gpt', modelLabel: 'GPT', reasoning: 'high', fast: false },
     { id: 'quick', name: 'Quick pass', provider: 'codex', providerLabel: 'Codex', model: 'gpt', modelLabel: 'GPT', reasoning: 'low', fast: true },
   ];
+  it.each([
+    { reasoning: 'high', fast: false },
+    { reasoning: 'low', fast: true },
+  ])('opens Custom with the current mix ($reasoning thinking, fast=$fast) without changing the chat', async ({ reasoning, fast }) => {
+    const chatState = { ...capabilities, presets: savedPresets, reasoning, fast };
+    const { fixture, root, bridge } = setup([], chatState);
+    await settle(fixture);
+    fixture.componentInstance.store.setDraft('Keep my message');
+    const custom = root.querySelector<HTMLButtonElement>('ex-preset-card button.custom')!;
+    custom.focus(); custom.click(); await settle(fixture);
+    expect(document.querySelector('.agent-settings')).toBeNull();
+    expect(document.querySelector<HTMLInputElement>('.preset-creator input')?.value).toBe('');
+    expect(document.querySelector('.preset-creator button[aria-label="Model: GPT"]')).not.toBeNull();
+    expect(document.querySelector('.preset-creator [aria-label="Thinking level"] [aria-checked="true"]')?.getAttribute('aria-label')).toBe(reasoning === 'high' ? 'High' : 'Low');
+    expect(document.querySelector('.preset-creator [role="switch"]')?.getAttribute('aria-checked')).toBe(String(fast));
+    document.querySelector<HTMLButtonElement>(`.preset-creator [aria-label="Thinking level"] button[aria-label="${reasoning === 'high' ? 'Low' : 'High'}"]`)!.click();
+    await settle(fixture);
+    expect(fixture.componentInstance.store.state()).toMatchObject(chatState);
+    document.querySelector('.preset-creator')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await settle(fixture);
+    expect(document.querySelector('.preset-creator')).toBeNull();
+    expect(document.activeElement).toBe(custom);
+    expect(fixture.componentInstance.store.draft()).toBe('Keep my message');
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
   it('keeps current selection distinct from the default and sends a guarded change with Undo', async () => {
     const before = { id: 'deep', provider: 'codex', defaultIds: ['deep'], revision: 'a'.repeat(64) };
     const after = { id: 'quick', provider: 'codex', defaultIds: ['quick'], revision: 'b'.repeat(64) };

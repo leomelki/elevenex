@@ -135,6 +135,12 @@ export class SessionChatFixture {
   private defaultProvider = 'codex';
   private defaultIds: readonly string[] = ['deep'];
   private defaultVersion = 1;
+  /** Exercise first-use layout without replacing the connected chat components. */
+  presetCatalog(mode: 'empty' | 'saved'): void {
+    this.presets = mode === 'empty' ? [] : [...savedPresets];
+    this.defaultVersion++;
+    this.changed();
+  }
   private defaultSnapshot(): SessionChatPresetDefault {
     return { id: this.presets.find(p => p.provider === this.defaultProvider && this.defaultIds.includes(p.id))?.id ?? null,
       provider: this.defaultProvider, defaultIds: [...this.defaultIds], revision: this.defaultVersion.toString(16).padStart(64, '0') };

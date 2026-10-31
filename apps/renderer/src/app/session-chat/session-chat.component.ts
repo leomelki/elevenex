@@ -172,7 +172,6 @@ export class SessionChatComponent {
     showWelcome: this.showWelcome,
     agent: (): AgentConfig | undefined => this.agent(),
     focusComposer: () => this.focusComposer(),
-    openAgent: () => this.composer()?.agentPicker()?.openPicker(),
     closeAgent: () => this.composer()?.agentPicker()?.closePicker(),
   });
   readonly agent = computed<AgentConfig | undefined>(() => {

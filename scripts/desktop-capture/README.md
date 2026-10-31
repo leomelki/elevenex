@@ -429,11 +429,19 @@ first-send welcome removal, and narrow/reduced-motion rendering in both themes.
 
 
 `scenarios/session-presets.mjs` checks the connected blank-chat cards, one-command
-selection, Option shortcuts from the composer, retained typing, duplicate names,
+selection, Custom opening the creator with the current mix, cancellation without
+changing the chat, Option shortcuts from the composer, retained typing, duplicate names,
 the compact creator form, model/thinking controls, native form submission, Escape and
 focus restoration, both themes and narrow reduced-motion layouts. It also
-captures the modal opening at 0/140/560ms and verifies starting choices disappear
+captures the modal opening at 0/140/280ms and verifies starting choices disappear
 after the first message. Use the connected workspace preview URL.
+
+`scenarios/session-preset-surfaces.mjs` covers the first-use empty catalog,
+stable card widths and selection on hover, visible Custom keyboard focus,
+independent dim/surface opening at 0/140/280ms, focus trapping/restoration,
+Escape during entry, duplicate-name validation, and a scrollable 420×360 dialog
+with its actions visible. It checks both themes and reduced motion against the
+same connected workspace preview.
 
 
 `scenarios/session-preset-default.mjs` verifies the quiet default selector and its
