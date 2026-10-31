@@ -431,7 +431,7 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
   const url = await server(context, (request, response) => {
     let body = ''; request.setEncoding('utf8'); request.on('data', chunk => { body += chunk; });
     request.on('end', () => {
-      requests.push({ method: request.method, path: request.url, body: JSON.parse(body) });
+      requests.push({ method: request.method, path: request.url, body: body ? JSON.parse(body) : null });
       response.writeHead(200, json); response.end(JSON.stringify(reply));
     });
   });
@@ -453,6 +453,12 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
   const committed = await handlers.get('workspace:git-action')(event, scope, { taskId: 1, type: 'commit', message: '', selection, revision: preview.revision, push: true });
   assert.equal(committed.ok, true);
   assert.deepEqual(requests.at(-1).body, { type: 'commit', message: '', selection, revision: preview.revision, push: true });
+  reply = { ...summary, changesRevision: 'b'.repeat(64) };
+  assert.equal((await handlers.get('workspace:git')(event, scope, 1)).value.changesRevision, reply.changesRevision);
+  for (const changesRevision of ['', 'x'.repeat(64), 123, 'a'.repeat(65)]) {
+    reply = { ...summary, changesRevision };
+    assert.equal((await handlers.get('workspace:git')(event, scope, 1)).error.code, 'invalid-response');
+  }
   const count = requests.length; client.reset(42); assert.equal((await read()).error.code, 'stale-scope'); assert.equal(requests.length, count);
 });
 

@@ -11,8 +11,23 @@ export default async function* (capture) {
       const header = document.querySelector('ex-workspace-task-header');
       return header && window.ng.getComponent(header).git.commitPreview()?.total === 48;
     });
+    await capture.component('ex-workspace-task-header', component => {
+      const selected = component.store.selected();
+      return component.git.readCommitPreview(selected.scopeId, { taskId: selected.taskId, query: '', includeUnstaged: true, excluded: [], includedSecrets: [] });
+    });
     await capture.component('ex-workspace-task-header', component => component.bridge.setCommitPreviewHeld(true));
     try {
+      // With the backend held, a ready panel proves opening reused the recent preload.
+      await capture.click('ex-git-bar .primary');
+      await capture.waitFor(() => document.activeElement?.matches('ex-commit-panel .message input') && !document.querySelector('ex-commit-panel .loading'));
+      assert.equal(await capture.evaluate(() => document.querySelector('ex-commit-panel footer button[exbutton]').disabled), false);
+      await capture.motion.finish(); await capture.settle();
+      yield { name: `${theme}-recent-ready`, inspect: ['ex-commit-panel .box'] };
+      await capture.press('Escape');
+      await capture.waitFor(() => !document.querySelector('ex-commit-panel .commit-layer'));
+      // Exercise the real five-second expiry without replacing the product clock.
+      const beforeExpiry = await capture.evaluate(() => Date.now());
+      await capture.waitFor(start => Date.now() - start >= 5000, beforeExpiry);
       await capture.click('ex-git-bar .primary');
       await capture.waitFor(() => document.activeElement?.matches('ex-commit-panel .message input'));
       await capture.click('ex-commit-panel .summary');

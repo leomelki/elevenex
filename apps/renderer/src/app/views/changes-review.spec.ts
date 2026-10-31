@@ -114,6 +114,26 @@ describe('Changes review usability', () => {
     fixture.destroy();
   });
 
+  it('can use the containing panel expansion control while retaining the review shortcut', () => {
+    const fixture = TestBed.createComponent(DiffReviewComponent);
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelector('[aria-label="Wider review (⇧⌘R)"]')).not.toBeNull();
+    fixture.componentRef.setInput('showWideToggle', false);
+    fixture.detectChanges();
+    expect(root.querySelector('[aria-label="Wider review (⇧⌘R)"]')).toBeNull();
+    const wide = vi.fn();
+    fixture.componentInstance.wideChange.subscribe(wide);
+    root.querySelector('.review')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'R', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    expect(wide).toHaveBeenCalledExactlyOnceWith(true);
+    fixture.componentRef.setInput('wide', true);
+    fixture.detectChanges();
+    expect(root.querySelector('[aria-label="Leave wider review (⇧⌘R)"]')).toBeNull();
+    wide.mockClear();
+    root.querySelector('.review')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'R', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    expect(wide).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
   it('disables unavailable empty-review actions', () => {
     const fixture = TestBed.createComponent(DiffReviewComponent);
     fixture.detectChanges();

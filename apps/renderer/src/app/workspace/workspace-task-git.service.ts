@@ -1,6 +1,6 @@
 import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
-import type { WorkspaceCommitPreview, WorkspaceGitAction, WorkspaceGitSummary } from '@elevenex/shared';
+import type { WorkspaceCommitPreview, WorkspaceCommitQuery, WorkspaceGitAction, WorkspaceGitSummary } from '@elevenex/shared';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import type { GitState } from '../tasks';
 import { WorkspaceStore } from './workspace.store';
@@ -31,13 +31,17 @@ export class WorkspaceTaskGitService {
   private disposed = false;
   private selectionEpoch = 0;
   private pollTimer?: ReturnType<typeof setTimeout>;
+  private previewGeneration = 0;
+  private previewRevision?: string;
+  private previewCheckedAt = 0;
+  private previewRequest?: Promise<WorkspaceCommitPreview>;
 
   constructor() {
-    effect(() => { const key = this.key(); untracked(() => { this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); this.summary.set(null); this.commitPreview.set(null); this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
+    effect(() => { const key = this.key(); untracked(() => { this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); this.summary.set(null); this.clearCommitPreview(); this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
     const refreshVisible = () => { if (!this.document.hidden) void this.refresh(); };
     this.document.addEventListener('visibilitychange', refreshVisible);
     this.document.defaultView?.addEventListener('focus', refreshVisible);
-    inject(DestroyRef).onDestroy(() => { this.disposed = true; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.document.removeEventListener('visibilitychange', refreshVisible); this.document.defaultView?.removeEventListener('focus', refreshVisible); });
+    inject(DestroyRef).onDestroy(() => { this.disposed = true; this.revision++; this.clearCommitPreview(); clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.document.removeEventListener('visibilitychange', refreshVisible); this.document.defaultView?.removeEventListener('focus', refreshVisible); });
   }
 
   async refresh(): Promise<void> {
@@ -49,7 +53,7 @@ export class WorkspaceTaskGitService {
     try {
       const result = await this.bridge.workspaceGit(selected.scopeId, selected.taskId);
       if (!this.current(selected.scopeId, selected.taskId) || revision !== this.revision) return;
-      if (result.ok) { this.summary.set(result.value); this.uncertain.set(false); void this.preloadCommitPreview(selected.scopeId, selected.taskId, revision); }
+      if (result.ok) { this.acceptSummary(result.value); this.uncertain.set(false); void this.preloadCommitPreview(selected.scopeId, selected.taskId); }
       else this.error.set(result.error.message);
     } catch { if (this.current(selected.scopeId, selected.taskId)) this.error.set('Git status could not be loaded.'); }
     finally { if (revision === this.revision) { this.loading.set(false); this.schedule(); } }
@@ -60,14 +64,14 @@ export class WorkspaceTaskGitService {
     if (!selected || this.busy() || this.uncertain() || !this.current(selected.scopeId, selected.taskId)) return false;
     const epoch = this.selectionEpoch;
     this.revision++; this.loading.set(false);
-    this.commitPreview.set(null);
+    this.clearCommitPreview();
     clearTimeout(this.pollTimer);
     this.busy.set(input.type); this.error.set(null);
     if (input.type === 'commit') { this.phase.set(input.message ? 'committing' : 'writing'); this.watchPhase(selected.scopeId, selected.taskId, epoch); }
     try {
       const result = await this.bridge.workspaceGitAction(selected.scopeId, { ...input, taskId: selected.taskId });
       if (!this.current(selected.scopeId, selected.taskId) || epoch !== this.selectionEpoch) return false;
-      if (result.ok) { this.summary.set(result.value); this.store.reconcileTaskBranch(selected.scopeId, selected.taskId, result.value.branch); void this.preloadCommitPreview(selected.scopeId, selected.taskId, this.revision); return true; }
+      if (result.ok) { this.acceptSummary(result.value); this.store.reconcileTaskBranch(selected.scopeId, selected.taskId, result.value.branch); void this.preloadCommitPreview(selected.scopeId, selected.taskId); return true; }
       this.error.set(result.error.message);
       if (result.error.code === 'outcome-unknown' || result.error.code === 'transport' || result.error.code === 'timeout') this.uncertain.set(true);
     } catch { if (this.current(selected.scopeId, selected.taskId) && epoch === this.selectionEpoch) { this.uncertain.set(true); this.error.set('The git operation could not be confirmed. Refresh its status before trying again.'); } }
@@ -75,16 +79,53 @@ export class WorkspaceTaskGitService {
     return false;
   }
 
-  private async preloadCommitPreview(scope: string, taskId: number, revision: number): Promise<void> {
-    if (!this.summary()?.files || !this.store.commitPanelAvailable()) { this.commitPreview.set(null); return; }
+  /** The default page has one task-owned cache and pending read; searches/pages bypass it. */
+  async readCommitPreview(scope: string, input: WorkspaceCommitQuery): Promise<WorkspaceCommitPreview> {
+    if (!this.current(scope, input.taskId)) throw new Error('The selected task changed.');
+    const defaults = input.includeUnstaged && !input.query && !input.cursor && !input.excluded.length && !input.includedSecrets.length;
+    const revision = this.summary()?.changesRevision;
+    const cached = this.commitPreview();
+    if (defaults && cached && this.previewRevision === revision && Date.now() - this.previewCheckedAt < 5000) return cached;
+    if (defaults && this.previewRequest) return this.previewRequest;
+    const generation = this.previewGeneration;
+    const read = async () => {
+      const result = await this.bridge.workspaceCommitPreview(scope, input);
+      if (!this.current(scope, input.taskId) || generation !== this.previewGeneration) throw new Error('The task changes moved on. Refresh the files.');
+      if (!result.ok) throw new Error(result.error.message);
+      if (defaults) {
+        this.commitPreview.set(result.value); this.previewRevision = revision; this.previewCheckedAt = Date.now();
+      }
+      return result.value;
+    };
+    const pending = read();
+    if (!defaults) return pending;
+    this.previewRequest = pending;
+    try { return await pending; }
+    finally { if (this.previewRequest === pending) this.previewRequest = undefined; }
+  }
+
+  private acceptSummary(summary: WorkspaceGitSummary): void {
+    if (summary.changesRevision !== this.summary()?.changesRevision) {
+      this.previewGeneration++; this.previewRequest = undefined;
+    }
+    this.summary.set(summary);
+  }
+
+  private clearCommitPreview(): void {
+    this.previewGeneration++; this.previewRequest = undefined; this.previewRevision = undefined;
+    this.previewCheckedAt = 0; this.commitPreview.set(null);
+  }
+
+  private async preloadCommitPreview(scope: string, taskId: number): Promise<void> {
+    if (!this.summary()?.files || !this.store.commitPanelAvailable()) { this.clearCommitPreview(); return; }
     if (this.document.hidden) return;
+    const revision = this.summary()?.changesRevision;
+    // Old engines omit the token and retain bounded polling. New engines skip unchanged pages.
+    if (revision && this.commitPreview() && this.previewRevision === revision) return;
     try {
-      // Keep only the default first page. Main coalesces this with an opening panel's identical read.
-      const result = await this.bridge.workspaceCommitPreview(scope, { taskId, query: '', includeUnstaged: true, excluded: [], includedSecrets: [] });
-      if (this.current(scope, taskId) && revision === this.revision) this.commitPreview.set(result.ok ? result.value : null);
+      await this.readCommitPreview(scope, { taskId, query: '', includeUnstaged: true, excluded: [], includedSecrets: [] });
     } catch {
-      // Preloading is optional; the panel reports errors from its own fresh check.
-      if (this.current(scope, taskId) && revision === this.revision) this.commitPreview.set(null);
+      // Keep the previous page for display; expired/invalidated data never bypasses a fresh check.
     }
   }
 

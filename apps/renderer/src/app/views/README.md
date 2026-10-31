@@ -77,6 +77,9 @@ context so that this anchor remains meaningful.
 panel. The shell owns the actual takeover and restoring the chat. Escape,
 Command/Ctrl-Shift-R, Alt-Up/Down, V and F7/Shift-F7 are handled while review is
 focused; editable fields retain their normal keys.
+Set `showWideToggle=false` when the containing panel already supplies an expand
+button. This hides the review's duplicate button while keeping its keyboard
+shortcut and controlled `wide`/`wideChange` behavior.
 
 Sample data is isolated in `apps/renderer/preview/`. The production components
 contain no fixtures or platform calls.

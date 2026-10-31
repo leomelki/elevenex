@@ -22,6 +22,7 @@ export class DiffReviewComponent {
   readonly mode = input<ReviewMode>('changes');
   readonly fullFilesAvailable = input(true);
   readonly wide = input(false);
+  readonly showWideToggle = input(true);
   readonly wrap = input(true);
   readonly commentsEnabled = input(true);
   readonly openFilesAvailable = input(true);

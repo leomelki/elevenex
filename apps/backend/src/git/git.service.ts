@@ -125,6 +125,8 @@ export interface GitStatusSummary {
   upstream: string | null;
   headSha: string | null;
   worktreeFingerprint: string;
+  /** Local changes only; remote tracking updates do not invalidate file previews. */
+  changesRevision?: string;
   ahead: number;
   behind: number;
   hasChanges: boolean;
@@ -421,6 +423,7 @@ export class GitService {
       upstream,
       headSha,
       worktreeFingerprint: statusSnapshot.fingerprint,
+      changesRevision: createHash('sha256').update(localVersion).update('\0').update(statusSnapshot.fingerprint).digest('hex'),
       ahead,
       behind,
       hasChanges: files.length > 0,

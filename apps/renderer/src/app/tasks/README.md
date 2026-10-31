@@ -146,7 +146,8 @@ The panel opens immediately while the provider checks files. The message stays
 editable during loading; submission remains disabled until the check succeeds.
 Owners may supply `initialWindow` with the default first page (all unstaged files
 included, no filter or exceptions). It seeds counts, rows and warnings on a fresh
-opening while the provider revalidates. Later input updates do not overwrite an
+opening while the provider resolves the current window. The provider may reuse
+a recent validated window; expired data must be checked before submission. Later input updates do not overwrite an
 open panel’s selection, filter or page; interrupted reopening retains its draft.
 
 The panel owns draft/filter/disclosures, focus trapping, Escape/outside dismissal,

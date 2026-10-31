@@ -34,6 +34,7 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         '/api/desktop-workspace/revision': { revision: 0, version: 1 },
         '/api/desktop-workspace/projects': { items: [], nextCursor: null },
         '/api/desktop-workspace/tasks': { items: [], nextCursor: null },
+        '/api/desktop-workspace/tasks/1/git': { taskId: 1, branch: 'work', upstream: null, ahead: 0, behind: 0, files: 1, additions: 3, deletions: 1, conflicted: false, changesRevision: 'b'.repeat(64) },
         '/api/desktop-workspace/folders': [],
         '/api/desktop-workspace/tasks/1/sessions/2/chat/changes': { turnId: 'reply', revision: 'a'.repeat(64), offset: 0, files: [], total: 0, nextOffset: null, content: null },
       };
@@ -106,6 +107,8 @@ void (async () => {
   assert.equal(await window.webContents.executeJavaScript('window.elevenex.openMachineWindow({kind:"remote",hostId:"unknown"}).then(()=>false,()=>true)'), true);
   const firstScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.equal(firstScope.scope.environment.kind, 'local');
+  const gitSummary = await window.webContents.executeJavaScript(`window.elevenex.workspaceGit('${firstScope.scope.id}', 1)`);
+  assert.equal(gitSummary.ok, true); assert.equal(gitSummary.value.changesRevision, 'b'.repeat(64));
   assert.deepEqual(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('${firstScope.scope.id}')`), {
     ok: true, value: { backendSha: revision },
   });

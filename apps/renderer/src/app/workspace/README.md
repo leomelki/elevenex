@@ -191,12 +191,20 @@ generator. A private index freezes selected changes before generation; excluded
 staged entries and edits made later by running sessions remain outside the commit.
 `WorkspaceTaskGitService` observes writing/committing/pushing phases only while
 its own operation is pending. Timers and replies belong to the selected task/scope.
-The visible selected task preloads one default 100-file commit page after each
-Git status refresh when changes exist and the engine supports the panel. The
-header supplies it as `initialWindow`, so opening immediately shows counts,
-files and warnings while a fresh provider check gates submission. The cache
-is cleared on task/scope changes and Git mutations; late replies are discarded.
-Background input updates never replace an open panel’s selection or page.
+The visible selected task preloads one default 100-file commit page. The optional
+`changesRevision` from Git status covers local HEAD/index/worktree state, so
+unchanged polls and incoming upstream commits do not reload the file preview.
+Engines without the token retain bounded periodic reads. One pending default
+read is shared by preloading and panel opening; searches, exceptions and pages
+always use their exact query. A preload less than five seconds old opens without
+another read; older or locally invalidated data remains visible while the panel
+checks again. The backend's existing commit revision guard remains authoritative
+at submission. Cache metadata (including running-session warnings) expires after
+five seconds even when the local-change token stays the same.
+The header supplies cached data as `initialWindow`. Task/scope changes, Git
+mutations and teardown invalidate the cache and late replies. Failed background
+reads retain the previous page for display; they never mark it fresh. Background
+input updates do not replace an open panel's selection or page.
 No write is replayed on reconnect. Refresh status after an uncertain outcome.
 
 Close checks authoritative uncommitted, unpushed and process counts. A clean,

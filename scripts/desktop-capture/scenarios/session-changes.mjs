@@ -21,9 +21,12 @@ export default async function* (capture) {
     await capture.waitFor(() => document.querySelector('ex-session-chat-review [data-kind="add"]')?.textContent.includes('A short test message.'));
     await finish();
     assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Changes review');
+    assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-workspace-panels button[aria-label="Expand side panel"]').length), 1);
+    assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-session-chat-review button[aria-label*="wider review" i]').length), 0);
     yield { name: theme + '-file-review', inspect: ['ex-session-chat-review', 'ex-diff-file'] };
-    await capture.click('ex-session-chat-review [aria-label="Wider review (⇧⌘R)"]');
+    await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
     await finish();
+    assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-workspace-panels button[aria-label="Return to chat"]').length), 1);
     yield { name: theme + '-wide-review', inspect: ['ex-session-chat-review'] };
     await capture.press('Escape');
     await finish();

@@ -189,7 +189,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   workspaceRestoreProject = async () => { if (this.archived) this.projectRows = [...this.projectRows, this.archived]; this.archived = null; return success({ accepted: true as const }); };
   workspaceDeleteProject = async (_scope: string, id: number) => { this.projectRows = this.projectRows.filter(project => project.id !== id); return success({ accepted: true as const }); };
   workspaceAddRepository = async (_scope: string, input: WorkspaceAddRepository) => success(this.detail(input.projectId));
-  workspaceGit = async (_scope: string, taskId: number) => success(this.git.get(taskId) ?? { taskId, branch: this.taskRows.find(task => task.id === taskId)?.branchName ?? '', upstream: 'origin/main', ahead: 0, behind: 0, files: 48, additions: 3288, deletions: 1128, conflicted: false });
+  workspaceGit = async (_scope: string, taskId: number) => success(this.git.get(taskId) ?? { taskId, branch: this.taskRows.find(task => task.id === taskId)?.branchName ?? '', upstream: 'origin/main', ahead: 0, behind: 0, files: 48, additions: 3288, deletions: 1128, conflicted: false, changesRevision: 'c'.repeat(64) });
   workspaceClosePreview = async (_scope: string, taskId: number) => success({ taskId, sessions: this.sessionRows.filter(session => session.taskId === taskId).length, running: this.sessionRows.filter(session => session.taskId === taskId && session.status === 'running').length, terminals: 0, actions: 0, unpushed: this.git.get(taskId)?.ahead ?? 0, uncommitted: this.git.get(taskId)?.files ?? 3 });
   workspaceCommitPreview = async (_scope: string, query: WorkspaceCommitQuery) => {
     if (this.commitPreviewHeld) await new Promise<void>(resolve => {

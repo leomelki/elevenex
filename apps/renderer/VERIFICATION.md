@@ -1,5 +1,32 @@
 # Component system verification
 
+## Revision-aware commit preloading, 2026-10-31
+
+The selected task skips preview reads when Git status's optional local-change
+token stays unchanged. HEAD, index and worktree versions contribute to the token;
+upstream-only updates do not. Old engines keep bounded periodic refreshes. One
+default-page request is shared by background preload and panel opening. A page
+less than five seconds old opens ready; expired data remains visible during a
+fresh check. Searches, exceptions and further pages bypass this cache, and the
+existing backend commit revision guard remains authoritative at submission.
+
+Desktop lint, production build, backend TypeScript, the backend Git revision
+regression and the native sandboxed Electron IPC smoke pass. The backend run
+passed 85 existing Git/workspace tests; the new revision regression passed on
+its focused run. The desktop suite passed 113 desktop and seven capture-tool
+tests, including TypeScript contracts. Its renderer run passed 472 tests and
+timed out in three existing view/chat/workspace tests; all 47 tests in those
+three files passed together on a focused rerun. Changed-area cache tests passed,
+including same-count edits, upstream-only changes, expiry, shared pending reads,
+old-engine fallback and stale replies within the same task.
+
+The [revision-aware capture](../../artifacts/desktop-capture/commit-preload-revision/report.json)
+is `verified: true`: eight checkpoints, no renderer errors or warnings. Inspected
+PNGs cover recent-cache opening with the backend held, real five-second expiry,
+cached files during revalidation, retained typing, keyboard/focus restoration
+and narrow reduced-motion layouts in both themes. It uses production components
+with an isolated preview backend; no packaged-app launch was verified.
+
 ## Preloaded commit files, 2026-10-31
 
 The selected visible task preloads the default bounded commit page alongside

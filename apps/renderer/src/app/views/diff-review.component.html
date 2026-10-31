@@ -28,8 +28,10 @@
       </div>
       <ex-icon-button icon="wrap" label="Wrap lines" size="sm" [disabled]="!files().length"
         [active]="wrap()" (pressed)="toggleWrap()" />
-      <ex-icon-button [icon]="wide() ? 'shrink' : 'expand'" size="sm"
-        [label]="wide() ? 'Leave wider review (⇧⌘R)' : 'Wider review (⇧⌘R)'" (pressed)="wideChange.emit(!wide())" />
+      @if (showWideToggle()) {
+        <ex-icon-button [icon]="wide() ? 'shrink' : 'expand'" size="sm"
+          [label]="wide() ? 'Leave wider review (⇧⌘R)' : 'Wider review (⇧⌘R)'" (pressed)="wideChange.emit(!wide())" />
+      }
       <ng-content select="[reviewToolbarEnd]" />
     </div>
   </div>

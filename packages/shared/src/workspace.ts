@@ -166,6 +166,8 @@ export interface WorkspaceGitSummary {
   readonly deletions: number;
   readonly conflicted: boolean;
   readonly commitPhase?: 'writing' | 'committing' | 'pushing';
+  /** Opaque local HEAD/index/worktree version, independent of upstream activity. */
+  readonly changesRevision?: string;
 }
 export type WorkspaceGitAction = { readonly taskId: number } & (
   | { readonly type: 'commit'; readonly message: string; readonly selection?: WorkspaceCommitSelection; readonly revision?: string; readonly push?: boolean }

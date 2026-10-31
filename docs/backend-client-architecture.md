@@ -317,6 +317,14 @@ and index changes before publication, and holds the real index lock only through
 commit/publication. Excluded staged entries remain staged; later working edits
 remain uncommitted. Temporary files and owned locks are released on success and
 failure. Failures after a saved commit retain an unknown outcome for reconciliation.
+The Git status reply may additionally supply an optional `changesRevision`: a
+64-character opaque digest of the local HEAD/index/worktree versions already
+collected by Git status. Remote tracking changes do not invalidate it. Main
+validates it; older engines omit it. The selected renderer uses this token to
+skip unchanged background commit previews and retains one bounded default page.
+Recent pages are reused for five seconds, with expired reads coalesced and the
+existing submission revision guard unchanged. This token is a cache validator,
+not a replacement for commit authorization or the frozen-index revision.
 The existing git status operation may carry an optional commit phase; the feature
 polls it only during its pending commit, with selection/epoch/cleanup guards.
 
