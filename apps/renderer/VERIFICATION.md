@@ -1753,3 +1753,24 @@ hover disclosure and dismissal, settings changes, interrupted reopening, busy
 controls, narrow layouts and reduced motion. The light/dark dismissed-state PNGs
 were inspected. This checks the real components with preview data; no packaged
 launch was attempted.
+
+### Commit popover motion (2026-10-31)
+
+File-preview replies can grow the surface during entry. The anchored morph now
+updates its surface/shadow geometry on the existing animation clock. Completed
+exits hide the retained layer before releasing their filled animation frames,
+preventing the natural full-size surface from flashing before Angular removes it.
+
+`artifacts/desktop-capture/commit-motion-final-verified/report.json` is **verified: true**
+with 12 checkpoints and no errors/warnings. Native Electron captures exercise
+the real connected components with preview data in both themes, including entry
+and exit endpoints, draft-preserving reversal, hidden visibility during animation
+cancellation, focus restoration, and narrow reduced-motion layouts. Opening and
+narrow PNGs were inspected. This is unpackaged visual verification.
+The existing `commit-behavior-fixed/report.json` run also verifies 20 task-screen
+checkpoints, including filtering, secret inclusion, staged-only and submission.
+
+`pnpm desktop:lint`, `pnpm desktop:test` (113 desktop, 7 capture-tool and 463
+renderer tests, including TypeScript contracts) and `pnpm desktop:build` pass.
+Tests and build needed an unsandboxed run for local sockets/processes and Angular
+compilation. No dependency or lockfile changes were made.

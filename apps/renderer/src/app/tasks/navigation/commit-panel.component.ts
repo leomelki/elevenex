@@ -247,6 +247,7 @@ export class CommitPanelComponent implements OnChanges {
             .closest("ex-git-bar")
             ?.querySelector<HTMLElement>(".primary") ?? undefined;
         this.presenting.set(true);
+        layer.style.visibility = "visible";
         this.opener?.setAttribute("aria-expanded", "true");
         this.opener?.setAttribute("aria-haspopup", "dialog");
         this.fit();
@@ -285,6 +286,10 @@ export class CommitPanelComponent implements OnChanges {
           this.motion?.retarget(false, this.opener) ?? Promise.resolve(true)
         ).then((done) => {
           if (done && !this.open() && !this.destroy.destroyed) {
+            // Signal rendering removes the view later. Hide it before cancelling
+            // the filled exit frame so the natural, full-size box cannot flash.
+            layer.style.visibility = "hidden";
+            this.presenting.set(false);
             this.retained.set(false);
             this.motion?.dispose();
             this.motion = undefined;

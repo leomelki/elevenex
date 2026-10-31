@@ -4,6 +4,7 @@ import { CommitPanelComponent } from "./commit-panel.component";
 import { TaskGroupComponent } from "../outline/task-group.component";
 import { TaskHeaderComponent } from "../lifecycle/task-header.component";
 import type { CommitFile, CommitFileWindow } from "./commit-panel.models";
+import { MorphFromMotion } from "../../ui";
 
 const files: readonly CommitFile[] = [
   {
@@ -43,6 +44,35 @@ function panel() {
   return { fixture, root: fixture.nativeElement as HTMLElement };
 }
 describe("commit panel public behavior", () => {
+  it("hides the completed exit before cancelling its filled animation and can open again", async () => {
+    let finish!: (completed: boolean) => void;
+    const closing = new Promise<boolean>((resolve) => { finish = resolve; });
+    const retarget = vi.spyOn(MorphFromMotion.prototype, "retarget")
+      .mockImplementation((open) => open ? Promise.resolve(true) : closing);
+    const { fixture, root } = panel();
+    const dispose = vi.spyOn(MorphFromMotion.prototype, "dispose")
+      .mockImplementation(() => {
+        expect(root.querySelector<HTMLElement>(".commit-layer")?.style.visibility).toBe("hidden");
+      });
+    try {
+      TestBed.tick();
+      fixture.componentRef.setInput("open", false);
+      fixture.detectChanges(); TestBed.tick();
+      const layer = root.querySelector<HTMLElement>(".commit-layer")!;
+      expect(layer.hasAttribute("inert")).toBe(true);
+      finish(true);
+      await Promise.resolve(); await Promise.resolve();
+      expect(dispose).toHaveBeenCalledOnce();
+      fixture.detectChanges(); TestBed.tick();
+      expect(root.querySelector(".commit-layer")).toBeNull();
+      fixture.componentRef.setInput("open", true);
+      fixture.detectChanges(); TestBed.tick();
+      expect(root.querySelector<HTMLElement>(".commit-layer")?.style.visibility).toBe("visible");
+    } finally {
+      retarget.mockRestore(); dispose.mockRestore();
+    }
+  });
+
   it("opens and accepts a message before the file check completes, then enables submission", async () => {
     vi.useFakeTimers();
     try {

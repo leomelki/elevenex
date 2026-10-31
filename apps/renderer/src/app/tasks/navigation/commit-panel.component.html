@@ -2,6 +2,7 @@
   <div
     #layer
     class="commit-layer"
+    [style.visibility]="presenting() ? 'visible' : 'hidden'"
     [attr.inert]="open() && presenting() ? null : ''"
     [attr.aria-hidden]="!open() || !presenting()"
     [cdkTrapFocus]="open() && presenting()"

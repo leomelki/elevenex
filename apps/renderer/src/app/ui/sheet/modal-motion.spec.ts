@@ -1,15 +1,21 @@
 import { ModalMotion } from './modal-motion';
 import { measureModalOrigin } from './modal-morph';
 
+class ControlledEffect {
+  readonly setKeyframes = vi.fn((frames: Keyframe[]) => { this.animation.frames = frames; });
+  constructor(private readonly animation: ControlledAnimation) {}
+  getComputedTiming() { return { progress: this.animation.progress }; }
+}
+
 class ControlledAnimation {
   progress = 0;
   private resolve!: () => void;
   private reject!: () => void;
   readonly finished = new Promise<void>((resolve, reject) => { this.resolve = resolve; this.reject = reject; });
-  readonly effect = { getComputedTiming: () => ({ progress: this.progress }) };
+  readonly effect = new ControlledEffect(this);
   readonly finish = vi.fn(() => { this.progress = 1; this.resolve(); });
   readonly cancel = vi.fn(() => this.reject());
-  constructor(readonly target: HTMLElement, readonly frames: Keyframe[], readonly options: KeyframeAnimationOptions) {}
+  constructor(readonly target: HTMLElement, public frames: Keyframe[], readonly options: KeyframeAnimationOptions) {}
 }
 
 describe('modal motion ownership', () => {
@@ -24,6 +30,7 @@ describe('modal motion ownership', () => {
   beforeEach(() => {
     media.matches = false; animations.length = 0;
     vi.stubGlobal('matchMedia', () => media);
+    vi.stubGlobal('KeyframeEffect', ControlledEffect);
     Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: function (this: HTMLElement, frames: Keyframe[], options: KeyframeAnimationOptions) {
       const animation = new ControlledAnimation(this, frames, options); animations.push(animation); return animation;
     } });
@@ -38,21 +45,51 @@ describe('modal motion ownership', () => {
     vi.unstubAllGlobals();
   });
 
-  function setup(visibility = '') {
+  function setup(visibility = '', options?: ConstructorParameters<typeof ModalMotion>[2]) {
     const layer = document.createElement('div'), surface = document.createElement('section'), trigger = document.createElement('button');
     trigger.id = 'origin'; trigger.innerHTML = '<span id="origin-label">Server</span>';
     trigger.style.visibility = visibility;
     surface.innerHTML = '<input aria-label="Host" />'; surface.style.transformOrigin = '10px 20px';
     layer.append(surface); root.append(trigger, layer);
     for (const [element, width, height] of [[layer, 1440, 960], [surface, 460, 330], [trigger, 170, 128]] as const) {
-      Object.defineProperty(element, 'offsetWidth', { value: width }); Object.defineProperty(element, 'offsetHeight', { value: height });
+      Object.defineProperty(element, 'offsetWidth', { configurable: true, value: width }); Object.defineProperty(element, 'offsetHeight', { configurable: true, value: height });
     }
     vi.spyOn(layer, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1440, 960));
     vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue(new DOMRect(540, 560, 170, 128));
-    motion = new ModalMotion(layer, trigger);
+    motion = new ModalMotion(layer, trigger, options);
     return { layer, surface, trigger };
   }
   async function finish() { animations.forEach(animation => animation.finish()); await Promise.resolve(); await Promise.resolve(); }
+
+  it('fits an anchored popover to arriving content without restarting entry and releases its observer', async () => {
+    let resized!: () => void;
+    const disconnect = vi.fn();
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback; }
+      observe = vi.fn();
+      disconnect = disconnect;
+    });
+    const { layer, surface, trigger } = setup('', { noFace: true, fadeIn: .3 });
+    const entry = animations[0]!;
+    entry.progress = .4;
+    const count = animations.length;
+    Object.defineProperty(surface, 'offsetHeight', { value: 480 });
+    resized();
+    expect(animations).toHaveLength(count);
+    expect(entry.progress).toBe(.4);
+    expect(entry.effect.setKeyframes).toHaveBeenCalledOnce();
+    expect(entry.frames.at(-1)).toMatchObject({ transform: 'translate(0px, 0px) scale(1)', clipPath: 'inset(0px 0px round 0px)' });
+    expect(layer.querySelector<HTMLElement>('.ex-modal-shadow')?.style.height).toBe('480px');
+    expect(trigger.style.visibility).toBe('');
+    await finish();
+    expect(disconnect).toHaveBeenCalledOnce();
+    resized();
+    expect(entry.effect.setKeyframes).toHaveBeenCalledOnce();
+    const closing = motion!.retarget(false);
+    motion!.dispose();
+    expect(await closing).toBe(false);
+    expect(disconnect).toHaveBeenCalledTimes(2);
+  });
 
   it('normalizes an origin inside a scaled overlay', () => {
     const layer = document.createElement('div'), trigger = document.createElement('button');

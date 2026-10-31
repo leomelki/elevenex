@@ -121,4 +121,7 @@ origin element. Call `retarget(open, origin)` for interrupted transitions and
 the real opener visible and fades the surface during the first 30% of the morph;
 it is used by the anchored commit popover. Focus, presence, sizing and dismissal
 remain the consuming component's responsibility. Default ModalLayer behavior is
-unchanged.
+unchanged. In `noFace` mode, an owned ResizeObserver updates the moving surface
+and shadow keyframes as content arrives without restarting the animation clock;
+it disconnects on completion, retargeting and disposal. The consumer must hide
+or detach a completed exit before disposal releases its invisible filled frame.

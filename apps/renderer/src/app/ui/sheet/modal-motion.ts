@@ -3,6 +3,7 @@ import { copyModalFace, measureModalOrigin, ModalBox, modalMorphFrames, MODAL_LA
 /** Owns modal animation handles and decorative copies. The component owns focus and presence. */
 export class ModalMotion {
   private animations: Animation[] = [];
+  private resize?: ResizeObserver;
   private readonly media = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : undefined;
   private readonly reducedChanged = () => { if (this.media?.matches) this.animations.forEach(animation => animation.finish()); };
   private readonly surface: HTMLElement | null;
@@ -108,6 +109,29 @@ export class ModalMotion {
       Object.assign(this.shadow.style, { position: 'absolute', margin: '0', transformOrigin: '0 0', pointerEvents: 'none', left: `${dialog.left}px`, top: `${dialog.top}px`, width: `${dialog.width}px`, height: `${dialog.height}px`, borderRadius: `${dialog.radius}px`, boxShadow: surfaceStyle.boxShadow });
       this.layer.append(this.shadow);
       this.animations = [surface.animate(frames.surface, options), this.shadow.animate(frames.shadow, options)];
+      if (this.options.noFace && typeof ResizeObserver !== 'undefined') {
+        // File previews can arrive during entry. Update geometry on the same
+        // animation clock; restarting the morph on each resize would delay it.
+        const surfaceEffect = this.animations[0]?.effect;
+        const shadowEffect = this.animations[1]?.effect;
+        let measured = dialog;
+        this.resize = new ResizeObserver(() => {
+          if (generation !== this.generation) return;
+          const resized = { ...dialog, width: surface.offsetWidth, height: surface.offsetHeight };
+          if (!resized.width || !resized.height || !this.origin) return;
+          if (resized.width === measured.width && resized.height === measured.height) return;
+          measured = resized;
+          const next = modalMorphFrames(this.origin, resized, value, open ? 1 : 0, this.options.fadeIn);
+          if (timing != null) {
+            next.surface[0] = frames.surface[0]!;
+            next.shadow[0] = frames.shadow[0]!;
+          }
+          if (surfaceEffect instanceof KeyframeEffect) surfaceEffect.setKeyframes(next.surface);
+          if (shadowEffect instanceof KeyframeEffect) shadowEffect.setKeyframes(next.shadow);
+          if (this.shadow) Object.assign(this.shadow.style, { width: `${resized.width}px`, height: `${resized.height}px` });
+        });
+        this.resize.observe(surface);
+      }
       content.forEach((child, index) => this.animations.push(child.animate(timing == null ? frames.content : [{ offset: 0, opacity: contentOpacity[index] }, ...frames.content.slice(1)], options)));
       if (this.face) {
         Object.assign(this.face.style, { left: `${this.origin.left}px`, top: `${this.origin.top}px`, width: `${this.origin.width}px`, height: `${this.origin.height}px` });
@@ -167,6 +191,7 @@ export class ModalMotion {
   }
 
   private cancelAnimations(): void {
+    this.resize?.disconnect(); this.resize = undefined;
     this.generation++;
     for (const animation of this.animations.splice(0)) animation.cancel();
   }

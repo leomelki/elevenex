@@ -303,6 +303,12 @@ scrubbing. Drive their state explicitly, or record live behavior using CDP.
 No MP4 encoder is included; screenshot sequences are cheap, directly inspectable
 filmstrips. Screenshots capture web content, excluding native OS title-bar buttons.
 
+`scenarios/commit-panel-motion.mjs` runs against the connected workspace preview.
+It checks file-preview growth on the existing morph clock, late entry/exit
+frames, interrupted reopening with retained draft, focus return, and hidden
+visibility at animation cancellation before Angular removes the panel. It
+includes both themes and narrow reduced-motion states.
+
 ## Output and failures
 
 Every checkpoint yields a numbered PNG plus `.json` (layout/state/focus) and

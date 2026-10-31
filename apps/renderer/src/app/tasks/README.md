@@ -153,12 +153,16 @@ The connected preview demonstrates the production composition. Run
 `task-screen-update.mjs` through the desktop capture tool for both themes,
 keyboard/focus, filtering, secret opt-in, staged-only, motion and narrow layouts.
 
-For a remote `fileProvider`, the initial window resolves before measuring entry,
-so summary/notices cannot change the morph's target mid-flight. The opener stays
-available for a second click/Escape and announces busy while that read is pending.
-Subsequent queries keep the panel mounted, disable confirmation and show Checking
-files in its footer. Reopening during a retained exit preserves the current draft;
-a fresh open after the exit resets it.
+For a remote `fileProvider`, entry begins before the initial window resolves.
+The morph observes the surface while moving and updates its geometry and shadow
+on the existing animation clock when summary/notices arrive. The opener stays
+available for a second click/Escape during the read. Subsequent queries keep the
+panel mounted and disable confirmation. A completed exit hides its retained
+layer before cancelling the filled animation, preventing a full-size flash before
+Angular removes it. Reopening during an exit preserves the current draft; a
+fresh open after the exit resets it. `commit-panel-motion.mjs` verifies arriving
+content, entry/exit boundaries, reversals, focus and narrow reduced-motion states
+in both themes.
 
 ## Session archiving and working window
 
