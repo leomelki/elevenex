@@ -56,7 +56,7 @@ const examples: readonly ToolExample[] = [
   },
   {
     kind: 'file_changes', name: 'File changes',
-    input: { changes: [{ path: 'src/payments/retry.ts', kind: 'update', diff: '@@ -1 +1 @@\n-const claim = retries.find(key);\n+const claim = await retries.claim(key);' }, { path: 'src/payments/claim.ts', kind: 'add', diff: '@@ -0,0 +1 @@\n+export interface Claim { created: boolean; }' }] },
+    input: { changes: [{ path: 'src/payments/retry.ts', kind: 'update', diff: '@@ -1 +1 @@\n-const claim = retries.find(key);\n+const claim = await retries.claim(key);' }, { path: 'src/payments/claim.ts', kind: { type: 'add' }, diff: 'export interface Claim { created: boolean; }\n' }] },
     result: 'Applied changes to 2 files.',
   },
   {
@@ -101,11 +101,12 @@ const examples: readonly ToolExample[] = [
   },
 ];
 
+const base = (id: string, kind: SessionChatItem['kind'], text: string, extra: Partial<SessionChatItem> = {}): SessionChatItem => ({
+  id, kind, text, timestamp: '2026-10-28T10:20:00.000Z', toolId: null, toolName: null,
+  toolKind: null, input: '', error: false, truncated: false, ...extra,
+});
+
 export function sessionToolItems(running = false): SessionChatItem[] {
-  const base = (id: string, kind: SessionChatItem['kind'], text: string, extra: Partial<SessionChatItem> = {}): SessionChatItem => ({
-    id, kind, text, timestamp: '2026-10-28T10:20:00.000Z', toolId: null, toolName: null,
-    toolKind: null, input: '', error: false, truncated: false, ...extra,
-  });
   const items = [base('tools-prompt', 'user', 'Review the retry implementation, make it safe, and show the evidence for each step.')];
   examples.forEach((example, index) => {
     const id = `example-${index}`;
@@ -118,5 +119,24 @@ export function sessionToolItems(running = false): SessionChatItem[] {
   if (running)
     items.push(base('example-live', 'tool_use', '', { toolId: 'example-live', toolName: 'Bash', toolKind: 'bash', input: JSON.stringify({ command: 'pnpm test retry --watch', cwd: '/workspace/payments', description: 'Wait for the next regression result' }) }));
   items.push(base('tools-answer', 'assistant', running ? 'The focused regression is still running.' : 'The retry claim is now atomic. **12 tests passed**; the offline run needs its dependency cache restored.'));
+  return items;
+}
+
+/** Native Codex whole-file receipts deliberately use `diff` without hunk markers. */
+export function sessionCodexFileItems(): SessionChatItem[] {
+  const changes = [
+    { path: 'test-file.txt', kind: { type: 'add' }, diff: 'Hello! This text file was created to test my file-writing capability.\n' },
+    { path: 'notes/old.txt', kind: 'delete', diff: '  Leading and trailing spaces  \r\n\r\nLast line  \r\n' },
+    { path: 'src/banner.txt', kind: { type: 'update' }, diff: 'diff --git a/src/banner.txt b/src/banner.txt\n--- a/src/banner.txt\n+++ b/src/banner.txt\n@@ -1 +1 @@\n---old\n+++new\n' },
+    { path: 'empty.txt', kind: { type: 'add' }, diff: '' },
+    { path: 'src/old-name.txt', kind: { type: 'update', move_path: 'src/renamed.txt' }, diff: '' },
+  ];
+  const items = [base('codex-files-prompt', 'user', 'Create a small text file to test file writing, then inspect native additions, deletions, and renames.')];
+  changes.forEach((change, index) => {
+    const id = `codex-file-${index}`;
+    items.push(base(id, 'tool_use', '', { toolId: id, toolName: 'File changes', toolKind: 'file_changes', input: JSON.stringify({ changes: [change] }) }));
+    items.push(base(id + '-result', 'tool_result', 'Applied file change.', { toolId: id, toolName: 'File changes', toolKind: 'file_changes' }));
+  });
+  items.push(base('codex-files-answer', 'assistant', 'Created `test-file.txt` and verified the native file-change receipts.'));
   return items;
 }

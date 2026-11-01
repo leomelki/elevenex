@@ -304,11 +304,6 @@
       (queueRemove)="queueAction('cancel-queued', $event)"
     >
     </ex-composer>
-    @if (store.notice(); as notice) {
-      <div class="composer-note">
-        <span role="status">{{ notice }}</span>
-      </div>
-    }
   </div>
 </ex-chat>
 @if (contentId(); as id) {

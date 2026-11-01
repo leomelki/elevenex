@@ -305,3 +305,14 @@ diffs do not supply those platform operations.
 `session-changes.mjs` verifies creation, exact file selection, Review via keyboard,
 wide/compact panels, 1,001-file summaries, line pagination, errors and narrow
 reduced-motion layouts in both themes through the production composition.
+
+
+Codex file-change receipts distinguish whole-file add/delete content from update
+patches. Native additions/deletions can place raw file text in a field named
+`diff`; the presenter renders these as before/after diffs rather than assuming
+prefixes already exist. History decoding adds `diffFormat: 'content'` when the
+source explicitly supplies content, retaining the legacy diff text and avoiding
+ambiguity when a newly added file is itself a patch document. Older receipts use
+the change kind plus actual unified-hunk syntax. Empty files and missing inline
+content stay distinct; display normalizes CRLF and removes one terminal split
+sentinel without stripping meaningful spaces or blank lines.

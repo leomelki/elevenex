@@ -42,6 +42,105 @@ function result(
 }
 
 describe("session tool presentation", () => {
+  it("renders native Codex whole-file additions and deletions as before/after diffs", () => {
+    const content =
+      "Hello! This text file was created to test my file-writing capability.\n";
+    for (const kind of ["add", "delete"] as const) {
+      for (const nativeKind of [kind, { type: kind }]) {
+        const presentation = presentSessionTool(
+          tool("file_changes", {
+            changes: [
+              {
+                path: "/workspace/skill-test.txt",
+                kind: nativeKind,
+                diff: content,
+              },
+            ],
+          }),
+          result("Applied"),
+        );
+        expect(presentation.blocks).toContainEqual({
+          kind: "diff",
+          title: "/workspace/skill-test.txt",
+          before: kind === "delete" ? content : "",
+          after: kind === "add" ? content : "",
+        });
+        expect(presentation.preview?.[0]).toMatchObject({
+          kind: "diff",
+          title: "/workspace/skill-test.txt",
+          before: kind === "delete" ? content.slice(0, -1) : "",
+          after: kind === "add" ? content.slice(0, -1) : "",
+        });
+      }
+    }
+  });
+
+  it("preserves literal file content and actual unified patch semantics", () => {
+    const patch = "@@ -0,0 +1,2 @@\n+++counter\n+--comment\n";
+    const unified = presentSessionTool(
+      tool("file_changes", {
+        changes: [{ path: "literal.ts", kind: { type: "add" }, diff: patch }],
+      }),
+      result("Applied"),
+    );
+    expect(
+      unified.blocks.find((block) => block.kind === "patch"),
+    ).toMatchObject({ text: patch });
+    const wholeFile = presentSessionTool(
+      tool("file_changes", {
+        changes: [
+          {
+            path: "example.patch",
+            kind: "add",
+            diff: patch,
+            diffFormat: "content",
+          },
+        ],
+      }),
+      result("Applied"),
+    );
+    expect(
+      wholeFile.blocks.find((block) => block.kind === "diff"),
+    ).toMatchObject({ before: "", after: patch });
+    const literal = "++counter\r\n--comment\r\n  keep spaces  \r\n\r\n";
+    const created = presentSessionTool(
+      tool("file_changes", {
+        changes: [{ path: "literal.ts", kind: "add", content: literal }],
+      }),
+      result("Applied"),
+    );
+    expect(created.blocks.find((block) => block.kind === "diff")).toMatchObject(
+      { before: "", after: literal },
+    );
+    expect(created.preview?.[0]).toMatchObject({
+      kind: "diff",
+      after: "++counter\n--comment\n  keep spaces  \n\n",
+    });
+  });
+
+  it("distinguishes an empty new file from a receipt without inline content", () => {
+    const empty = presentSessionTool(
+      tool("file_changes", {
+        changes: [{ path: "empty.txt", kind: { type: "add" }, diff: "" }],
+      }),
+      result("Applied"),
+    );
+    expect(empty.preview?.[0]).toMatchObject({
+      kind: "text",
+      title: "empty.txt",
+      text: "Empty file",
+    });
+    const absent = presentSessionTool(
+      tool("file_changes", { changes: [{ path: "unknown.txt", kind: "add" }] }),
+      result("Applied"),
+    );
+    expect(
+      absent.blocks.some(
+        (block) => block.kind === "diff" || block.kind === "patch",
+      ),
+    ).toBe(false);
+  });
+
   it("separates commands, working directory, stderr and native exit status", () => {
     const presentation = presentSessionTool(
       tool("bash", {

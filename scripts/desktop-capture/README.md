@@ -484,3 +484,12 @@ commands, shortened output and unknown completion. It checks parsed content
 separately from original data, keyboard disclosure, inert closing, proposed diffs,
 plan statuses, both themes and narrow reduced-motion layouts. Use
 `--url http://127.0.0.1:4310/connected-workspace` with the preview server.
+
+
+`scenarios/session-codex-patches.mjs` regresses actual Codex raw add/delete
+contents, unified updates, empty additions and rename-only receipts. It checks
+primary/full diff signs and token colors, whitespace/CRLF/blank lines, neutral
+headers versus literal triple-prefix hunk content, lazy Details, keyboard/inert
+behavior and both themes/narrow reduced motion. Use the connected-workspace
+preview URL. Its added-file fixture reproduces the Hello sentence that exposed
+the original raw-content-versus-patch bug.

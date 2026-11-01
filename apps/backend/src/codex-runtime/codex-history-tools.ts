@@ -37,6 +37,11 @@ function codexHistoryTool(
             path,
             kind: change.type,
             diff: change.unified_diff ?? change.content,
+            // Preserve whether this was whole-file content, even when a file
+            // itself contains text that looks like a unified patch.
+            ...(typeof change.unified_diff !== 'string' && typeof change.content === 'string'
+              ? { diffFormat: 'content' }
+              : {}),
             ...(typeof change.move_path === 'string'
               ? { movePath: change.move_path }
               : {}),

@@ -626,12 +626,48 @@ export function presentSessionTool(
       if (changes.length > 8) shortened = true;
       for (const value of changes.slice(0, 8)) {
         const change = record(value);
-        text(
-          `${succeeded ? "" : "Proposed patch: "}${string(change, "path", "file_path") || "Patch"}`,
-          string(change, "diff", "patch"),
-          false,
-          true,
-        );
+        const operation =
+          string(change, "kind", "type", "status") ||
+          string(record(change["kind"]), "type");
+        const title = `${succeeded ? "" : "Proposed patch: "}${string(change, "path", "file_path") || "Patch"}`;
+        const patch = [
+          change["diff"],
+          change["patch"],
+          change["unified_diff"],
+        ].find((value): value is string => typeof value === "string");
+        const content = [
+          change["content"],
+          operation === "add" ? change["new_string"] : change["old_string"],
+        ].find((value): value is string => typeof value === "string");
+        // Native Codex additions/deletions contain a whole file, including in
+        // its `diff` field. Older saved calls lack the explicit format marker.
+        const wholeFile = operation === "add" || operation === "delete";
+        const unified =
+          typeof change["patch"] === "string" ||
+          typeof change["unified_diff"] === "string" ||
+          (patch !== undefined &&
+            (/(?:^|\n)@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(patch) ||
+              patch.startsWith("*** Begin Patch")));
+        if (
+          wholeFile &&
+          (content !== undefined ||
+            (patch !== undefined &&
+              (change["diffFormat"] === "content" || !unified)))
+        ) {
+          const source = content ?? patch ?? "";
+          if (source === "") text(title, "Empty file");
+          else {
+            const bounded = take(source, 8000);
+            add({
+              kind: "diff",
+              title,
+              before: operation === "delete" ? bounded : "",
+              after: operation === "add" ? bounded : "",
+            });
+          }
+          continue;
+        }
+        text(title, patch ?? "", false, true);
       }
       text(
         succeeded ? "Patch" : "Proposed patch",

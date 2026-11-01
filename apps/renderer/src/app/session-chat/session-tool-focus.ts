@@ -1,8 +1,5 @@
 import type { SessionChatItem } from "@elevenex/shared";
-import type {
-  ToolBlock,
-  ToolListItem,
-} from "../conversation";
+import type { ToolBlock, ToolListItem } from "../conversation";
 
 interface ToolFocus {
   readonly preview: readonly ToolBlock[];
@@ -34,11 +31,14 @@ export function focusSessionTool(
     return value.slice(0, limit).trimEnd() + "…";
   };
   const lines = (value: string, limit = 6, tail = false): string => {
-    const all = value.trimEnd().split("\n");
+    const all = value.split(/\r?\n/);
+    if (all.at(-1) === "") all.pop();
     hiddenLines += Math.max(0, all.length - limit);
-    return (tail ? all.slice(-limit) : all.slice(0, limit))
-      .map((line) => short(line, 110))
-      .join("\n");
+    const selected = tail ? all.slice(-limit) : all.slice(0, limit);
+    return (
+      selected.map((line) => short(line, 110)).join("\n") +
+      (selected.at(-1) === "" ? "\n" : "")
+    );
   };
   const cleanRow = (row: ToolListItem): ToolListItem => ({
     ...row,
@@ -84,8 +84,18 @@ export function focusSessionTool(
       case "diff":
         return {
           ...block,
-          before: lines(block.before, 3),
-          after: lines(block.after, 3),
+          before: lines(
+            block.before,
+            block.before && block.after
+              ? Math.max(1, Math.floor(lineLimit / 2))
+              : lineLimit,
+          ),
+          after: lines(
+            block.after,
+            block.before && block.after
+              ? Math.max(1, Math.floor(lineLimit / 2))
+              : lineLimit,
+          ),
         };
       case "list": {
         hiddenRows += Math.max(0, block.items.length - rowLimit);
@@ -117,7 +127,7 @@ export function focusSessionTool(
     const selected = shrink(block, limit, tail, rowLimit);
     if (selected)
       preview.push(
-        selected.kind === "patch"
+        selected.kind === "patch" || item.toolKind === "file_changes"
           ? selected
           : { ...selected, title: undefined },
       );
@@ -218,7 +228,12 @@ export function focusSessionTool(
       break;
     case "file_changes": {
       if (failed) break;
-      const patches = input.filter((block) => block.kind === "patch");
+      const patches = input.filter(
+        (block) =>
+          block.kind === "patch" ||
+          block.kind === "diff" ||
+          block.kind === "text",
+      );
       if (patches.length) {
         add(patches[0], patches.length > 1 ? 3 : 6);
         add(patches[1], 3);

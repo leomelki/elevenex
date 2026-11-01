@@ -1879,3 +1879,25 @@ unknown completion, both themes and narrow reduced motion. Captured primary
 bodies measured 52–180px; the sample command card is 108px overall. The relevant
 new PNGs were inspected, including dark/narrow layout and approval evidence.
 These are native unpackaged preview-provider checks, not a packaged-app launch.
+
+
+### Native Codex file additions and deletions (2026-11-01)
+
+Fixed the live/history payload variant missed by the original preview: a Codex
+addition can carry a complete file in `diff` without any patch prefixes. Known
+whole-file additions/deletions now use colored before/after rows; actual unified
+updates retain hunk rendering. Native history retains content identity through an
+additive format marker, leaving existing diff text intact. Empty files, missing
+content, literal +/- prefixes, meaningful whitespace and CRLF are covered. Patch
+header coloring respects hunk ranges so literal +++/--- source lines stay colored.
+
+Final lint, desktop:test (114 desktop, seven capture-tool and 514 renderer tests),
+production build, backend production TypeScript and 34 focused backend history
+regressions passed. No dependencies or lockfile changes. The new native scenario
+session-codex-patches.mjs uses the exact Hello sentence with the real payload
+shapes, plus deletion, unified update, empty addition and rename-only cases.
+artifacts/desktop-capture/run-pov3yX/report.json is verified: true with 32
+light/dark, narrow/reduced-motion, primary/Details, keyboard and inert checkpoints,
+and no errors or warnings. Added, deleted and updated PNGs were inspected. This
+verifies the unpackaged renderer with provider-shaped preview data; no packaged
+launch was attempted. Unrelated concurrent composer-note edits were preserved.

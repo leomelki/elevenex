@@ -1,5 +1,5 @@
 import type { DestroyRef } from "@angular/core";
-import { sessionToolItems } from './session-tools-fixture';
+import { sessionCodexFileItems, sessionToolItems } from './session-tools-fixture';
 import type {
   BackendResult,
   SessionChatChangesRead,
@@ -217,12 +217,14 @@ export class SessionChatFixture {
       | "tools"
       | "tools-running"
       | "tools-incomplete"
+      | "tools-codex-files"
       | "reply-boundaries",
     id = 101,
   ): void {
     const session = this.session(id);
     session.items = opening();
     session.state = previewChatState();
+    if (mode === 'tools-codex-files') session.items = sessionCodexFileItems();
     if (mode === 'tools' || mode === 'tools-running' || mode === 'tools-incomplete') {
       session.items = sessionToolItems(mode !== 'tools').map(item =>
         mode === 'tools-incomplete' && item.id === 'tools-answer'
