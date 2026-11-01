@@ -81,20 +81,45 @@ button:focus-visible {
   font-size: var(--text-caption-size);
   color: var(--accent);
 }
-.new {
+.return {
   position: absolute;
   z-index: 6;
   bottom: var(--space-3);
   left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
+  transform: translate(-50%, var(--space-2)) scale(0.96);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) var(--ease-in),
+    transform var(--dur-fast) var(--ease-in),
+    visibility 0s var(--dur-fast);
+}
+.return.visible {
+  transform: translate(-50%, 0) scale(1);
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-slow) var(--ease-out),
+    visibility 0s;
+}
+.return-button {
+  height: calc(var(--space-8) + var(--space-1));
+  padding: 0 var(--space-4);
   gap: var(--space-2);
-  background: var(--surface-raised);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line-strong);
   border-radius: var(--radius-full);
   box-shadow: var(--shadow-pop);
-  color: var(--ink);
   font-size: var(--text-ui-size);
+}
+.return-button:focus-visible {
+  box-shadow: var(--focus-ring), var(--shadow-pop);
+}
+@media (prefers-reduced-motion: reduce) {
+  .return,
+  .return.visible {
+    transform: translateX(-50%);
+    transition: none;
+  }
 }

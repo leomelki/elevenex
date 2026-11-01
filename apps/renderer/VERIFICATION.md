@@ -1,5 +1,26 @@
 # Component system verification
 
+## Chat scroll return, 2026-11-01
+
+The floating return control appears above the composer when reading more than
+40px from the end. It retains one button through interrupted transitions, keeps
+visible during native smooth travel, and hands focus to the transcript before
+becoming inert. Incoming content uses the existing New messages feedback;
+reduced motion returns immediately. Content and viewport observers reconcile
+layout changes and are released with the component.
+
+The [native capture](../../artifacts/desktop-capture/run-IKzIj0/report.json)
+is `verified: true`: 18 checkpoints, no renderer errors or warnings. Inspected
+PNGs cover light/dark, scrubbed entrance frames, keyboard activation/focus,
+smooth intermediate frames, interruption, unread labels and narrow reduced
+motion. This uses production components with an isolated preview backend;
+it does not verify a packaged launch.
+
+Desktop lint, production build, the four scroll tests and TypeScript contracts
+pass. The full suite passed 115 desktop, seven capture-tool and 525 renderer
+tests; two workspace composition tests timed out at five seconds. All six
+workspace tests passed on an isolated rerun after the build finished.
+
 ## Project navigation transitions, 2026-11-01
 
 The active task outline stays mounted through project reads with no overlapping

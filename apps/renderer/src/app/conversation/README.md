@@ -26,6 +26,13 @@ These standalone OnPush components consume renderer view models and emit typed i
 `"instant"` for opening history before paint. Reduced motion always jumps directly.
 The connected session owner jumps once after each selected session has loaded;
 subsequent updates preserve the reader's position when they scroll up.
+The floating Scroll to bottom control appears whenever the reader is more than
+40px from the end, even without incoming content. Growth changes its label to
+New messages. It stays present during native smooth scrolling, becomes inert
+as it fades out at the end, and hands keyboard focus to the transcript on
+activation. Its reversible opacity/transform transitions and label swap use the
+shared motion tokens; reduced motion settles immediately. Observing both the
+content and viewport also reconciles the control after layout changes.
 
 ## Markdown and security
 

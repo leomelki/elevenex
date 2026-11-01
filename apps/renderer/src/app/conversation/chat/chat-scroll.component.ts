@@ -10,14 +10,14 @@ import {
   viewChild,
   type ElementRef,
 } from "@angular/core";
-import { IconComponent } from "../../ui";
+import { ButtonComponent, EaseSwapComponent, IconComponent } from "../../ui";
 interface Reminder {
   readonly id: string;
   readonly text: string;
 }
 @Component({
   selector: "ex-chat-scroll",
-  imports: [IconComponent],
+  imports: [ButtonComponent, EaseSwapComponent, IconComponent],
   templateUrl: "./chat-scroll.component.html",
   styleUrl: "./chat-scroll.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -50,6 +50,7 @@ export class ChatScrollComponent {
       this.lastScrollHeight = viewport.scrollHeight;
       const resize = new ResizeObserver(() => this.scheduleMeasure());
       resize.observe(content);
+      resize.observe(viewport);
       const mutations = new MutationObserver((records) => {
         if (
           records.some(
@@ -81,12 +82,15 @@ export class ChatScrollComponent {
     });
   }
   onScroll(): void {
+    this.updatePosition();
+    this.scheduleMeasure();
+  }
+  private updatePosition(): void {
     const viewport = this.viewport().nativeElement;
     this.atEnd.set(
       viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 40,
     );
     if (this.atEnd()) this.unread.set(false);
-    this.scheduleMeasure();
   }
   hideReminder(): void {
     const pin = this.pin();
@@ -117,11 +121,18 @@ export class ChatScrollComponent {
   }
   scrollToEnd(behavior: ScrollBehavior = "smooth"): void {
     const viewport = this.viewport().nativeElement;
-    this.atEnd.set(true);
-    this.unread.set(false);
-    if (behavior === "instant" || this.reducedMotion())
+    // Keep the return control present until native smooth scrolling arrives.
+    // Claiming the end early would hide/reveal it on intermediate scroll events.
+    if (behavior === "instant" || this.reducedMotion()) {
       viewport.scrollTop = viewport.scrollHeight;
-    else viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+      this.updatePosition();
+    } else viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+  }
+  returnToEnd(): void {
+    // The control becomes inert at the end. Move focus to the transcript first
+    // so keyboard readers retain a useful location after it leaves.
+    this.viewport().nativeElement.focus({ preventScroll: true });
+    this.scrollToEnd();
   }
   private refreshMessages(): void {
     this.messages = Array.from(
@@ -148,6 +159,7 @@ export class ChatScrollComponent {
     if (changed && this.atEnd()) viewport.scrollTop = viewport.scrollHeight;
     else if (changed) this.unread.set(true);
     this.lastScrollHeight = viewport.scrollHeight;
+    this.updatePosition();
     const top = viewport.getBoundingClientRect().top;
     let low = 0;
     let high = this.messages.length - 1;

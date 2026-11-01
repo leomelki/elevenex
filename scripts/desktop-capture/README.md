@@ -441,6 +441,11 @@ sessions starts at the end on the first rendered frame. It also checks reading
 position through refresh, both themes, narrow layouts and reduced motion using
 the connected workspace preview.
 
+`scenarios/chat-scroll-return.mjs` checks the floating return control without
+incoming content, scrubbed entrance frames, native smooth scrolling, keyboard
+focus handoff, interrupted exits and unread message labels. It covers both
+themes and narrow reduced-motion layouts against the same connected preview.
+
 `scenarios/session-harness.mjs` verifies the connected composer's pre-start harness
 choice, registry labels, keyboard operation, draft retention, model refresh,
 started-session locking and narrow layouts in both themes. Use the same preview
