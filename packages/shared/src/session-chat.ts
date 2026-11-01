@@ -26,6 +26,12 @@ export interface SessionChatItem {
   readonly input: string;
   readonly error: boolean;
   readonly truncated: boolean;
+  /** Provider-reported command facts; absent values remain unknown. */
+  readonly execution?: {
+    readonly exitCode?: number;
+    readonly cwd?: string;
+    readonly interrupted?: boolean;
+  };
   /** Bounded outcome metadata; captured net changes take precedence over tool edits. */
   readonly changes?: SessionChatChangeSummary;
 }

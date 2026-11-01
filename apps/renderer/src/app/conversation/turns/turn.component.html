@@ -8,6 +8,7 @@
 <div class="body">
   <div class="work-row">
     <button
+      #workButton
       type="button"
       class="work"
       [attr.aria-expanded]="expanded()"
@@ -62,8 +63,8 @@
       [live]="status() === 'live'"
       [maxVisible]="maxVisible()"
   /></ex-fold>
-  <ex-fold [open]="status() === 'live' && heldStep() !== null">
-    @if (heldStep(); as step) {
+  <ex-fold #nowRegion [open]="status() === 'live' && heldStep() !== null">
+    @for (step of heldStep() ? [heldStep()!] : []; track step.id) {
       <ex-now-line [step]="step" [streaming]="activeStep()?.id === step.id" />
     }
   </ex-fold>

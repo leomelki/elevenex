@@ -109,6 +109,16 @@ export function parseChatCatalog(
     error: nullable(raw["error"], 1000),
   };
 }
+function execution(value: unknown): NonNullable<SessionChatItem["execution"]> {
+  const raw = chatObject(value);
+  const exitCode = raw["exitCode"];
+  if (exitCode !== undefined && (typeof exitCode !== "number" || !Number.isSafeInteger(exitCode))) throw invalid();
+  return {
+    ...(typeof exitCode === "number" ? { exitCode } : {}),
+    ...(raw["cwd"] !== undefined ? { cwd: chatText(raw["cwd"], 4000) } : {}),
+    ...(raw["interrupted"] !== undefined ? { interrupted: bool(raw["interrupted"]) } : {}),
+  };
+}
 function item(value: unknown): SessionChatItem {
   const raw = chatObject(value),
     kind = raw["kind"];
@@ -133,6 +143,7 @@ function item(value: unknown): SessionChatItem {
     input: chatText(raw["input"], 16100),
     error: bool(raw["error"]),
     truncated: bool(raw["truncated"]),
+    ...(raw["execution"] !== undefined ? { execution: execution(raw["execution"]) } : {}),
     ...(raw["changes"] !== undefined ? { changes: parseChangeSummary(raw["changes"]) } : {}),
   };
 }

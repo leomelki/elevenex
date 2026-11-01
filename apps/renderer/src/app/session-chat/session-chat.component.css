@@ -125,17 +125,6 @@ ex-chat {
 .feedback button {
   flex-shrink: 0;
 }
-.permission-input {
-  overflow: auto;
-  max-height: 240px;
-  padding: var(--space-3);
-  background: var(--surface-sunken);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: var(--text-code-size);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 .question {
   margin-block: var(--space-4);
 }

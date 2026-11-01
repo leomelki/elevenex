@@ -1,41 +1,11 @@
 import type { SessionChatItem, SessionChatState } from "@elevenex/shared";
-import type { ChatExchange, StepKind, WorkStep } from "../conversation";
+import type { ChatExchange, WorkStep } from "../conversation";
+import {
+  presentSessionTool,
+  sessionToolKind,
+  sessionToolVerb,
+} from "./session-chat-tools";
 
-const toolKinds: Readonly<Record<string, StepKind>> = {
-  read: "read",
-  write: "create",
-  edit: "edit",
-  file_changes: "edit",
-  notebook_edit: "edit",
-  bash: "run",
-  grep: "search",
-  glob: "list",
-  web_fetch: "web",
-  web_search: "web",
-  task_agent: "tool",
-  todo_write: "note",
-};
-function toolDetail(item: SessionChatItem): string {
-  try {
-    const raw: unknown = JSON.parse(item.input);
-    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-      const input = raw as Record<string, unknown>;
-      for (const key of [
-        "command",
-        "file_path",
-        "path",
-        "pattern",
-        "query",
-        "url",
-        "description",
-      ])
-        if (typeof input[key] === "string") return input[key].slice(0, 500);
-    }
-  } catch {
-    /* Some harnesses expose plain text tool arguments. */
-  }
-  return item.toolName ?? "Tool";
-}
 export interface PendingChatPrompt {
   readonly id: string;
   readonly text: string;
@@ -143,22 +113,29 @@ export function chatExchanges(
           toolIds.has(item.toolId)
         )
           return [];
-        if (item.kind === "system" && item.changes && !item.text.trim()) return [];
+        if (item.kind === "system" && item.changes && !item.text.trim())
+          return [];
         if (item.kind === "tool_use") {
           const result = results.get(item.toolId ?? item.id);
+          const presentation = presentSessionTool(item, result);
+          const outcome =
+            result?.error || item.error
+              ? "failed"
+              : !result && !live
+                ? "unknown"
+                : undefined;
           return [
             {
               id: item.id,
-              kind: toolKinds[item.toolKind ?? ""] ?? "tool",
-              detail: toolDetail(item),
-              verb: item.toolName ?? "Tool",
-              status: result
-                ? result.error
-                  ? "failed"
-                  : "done"
-                : live
-                  ? "running"
-                  : "done",
+              kind: sessionToolKind(item),
+              detail: presentation.summary,
+              verb: sessionToolVerb(item, !result && live, outcome),
+              meta:
+                outcome === "unknown"
+                  ? "Completion unknown"
+                  : presentation.meta,
+              presentation,
+              status: outcome ?? (result ? "done" : "running"),
               output: [
                 "Input",
                 item.input || "(none)",
@@ -180,7 +157,7 @@ export function chatExchanges(
                 ? "think"
                 : item.kind === "assistant"
                   ? "say"
-                  : item.kind === "error"
+                  : item.kind === "error" || item.kind === "tool_result"
                     ? "tool"
                     : "note",
             text: item.text,
@@ -191,6 +168,10 @@ export function chatExchanges(
                   ? (item.toolName ?? "Tool result")
                   : undefined,
             output: item.kind === "tool_result" ? item.text : undefined,
+            presentation:
+              item.kind === "tool_result"
+                ? presentSessionTool({ ...item, input: "" }, item)
+                : undefined,
             status:
               item.error || item.kind === "error"
                 ? "failed"
@@ -202,8 +183,18 @@ export function chatExchanges(
           },
         ];
       });
-    const captured = group.items.filter(item => item.kind === "system" && item.changes).at(-1)?.changes;
-    const reported = new Map(group.items.flatMap(item => item.kind === "tool_result" && !item.error ? (item.changes?.files ?? []).map(file => [file.path, file] as const) : []));
+    const captured = group.items
+      .filter((item) => item.kind === "system" && item.changes)
+      .at(-1)?.changes;
+    const reported = new Map(
+      group.items.flatMap((item) =>
+        item.kind === "tool_result" && !item.error
+          ? (item.changes?.files ?? []).map(
+              (file) => [file.path, file] as const,
+            )
+          : [],
+      ),
+    );
     const files = captured?.files ?? [...reported.values()];
     const filesTotal = captured?.total ?? files.length;
     return {

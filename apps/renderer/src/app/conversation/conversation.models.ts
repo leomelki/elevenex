@@ -1,3 +1,5 @@
+import type { ToolPresentation } from './tool-presentation';
+
 /** Renderer-owned view models. IDs are stable across streamed and incremental updates. */
 export type ConversationStatus =
   | "running"
@@ -115,12 +117,14 @@ export interface WorkStep {
   readonly kind: StepKind;
   readonly detail?: string;
   readonly verb?: string;
-  readonly status?: "running" | "done" | "failed";
+  readonly status?: "running" | "done" | "failed" | "unknown";
   readonly meta?: string;
   readonly result?: string;
   readonly duration?: number;
   readonly diff?: { readonly add: number; readonly del: number };
   readonly output?: string;
+  /** Parsed, bounded evidence. Original output stays separately inspectable. */
+  readonly presentation?: ToolPresentation;
   readonly hunk?: readonly string[];
   readonly recovered?: boolean | string;
   readonly expected?: boolean | string;

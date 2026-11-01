@@ -28,6 +28,7 @@ describe('CodexHistoryService', () => {
         ],
         status: 'completed',
         exit_code: 0,
+        cwd: '/repo',
         aggregated_output: '{"name":"example"}',
       };
       await writeFile(
@@ -124,12 +125,14 @@ describe('CodexHistoryService', () => {
           toolName: 'Read',
           toolKind: 'read',
           input: expect.stringContaining('package.json'),
+          execution: { cwd: '/repo' },
         });
         expect(
           page?.items.find((item) => item.id === 'test:tool_result'),
         ).toMatchObject({
           text: 'FAIL retry.spec.ts',
           error: true,
+          execution: { exitCode: 1 },
         });
         expect(
           page?.items.find((item) => item.id === 'mcp:tool_result'),
@@ -1083,7 +1086,7 @@ describe('CodexHistoryService', () => {
         type: 'function_call',
         name: 'exec_command',
         call_id: 'tool-1',
-        arguments: JSON.stringify({ cmd: 'pnpm test' }),
+        arguments: JSON.stringify({ cmd: 'pnpm test', workdir: '/repo' }),
       },
       '2026-05-22T10:00:00.000Z',
       0,
@@ -1096,8 +1099,8 @@ describe('CodexHistoryService', () => {
       providerToolName: 'Bash',
       toolKind: 'bash',
       toolDisplayName: 'Bash',
-      toolInput: { command: 'pnpm test' },
-      providerToolInput: { command: 'pnpm test' },
+      toolInput: { command: 'pnpm test', workdir: '/repo' },
+      providerToolInput: { command: 'pnpm test', workdir: '/repo' },
     });
   });
 

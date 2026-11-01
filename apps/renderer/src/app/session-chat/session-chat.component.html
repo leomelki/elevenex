@@ -99,7 +99,9 @@
           })
         "
       >
-        <pre class="permission-input">{{ request.input }}</pre>
+        @if (permissionEvidence(); as evidence) {
+          <ex-tool-content [presentation]="evidence" [original]="request.input" />
+        }
       </ex-approval-card>
     }
     @for (

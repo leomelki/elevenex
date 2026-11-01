@@ -629,3 +629,13 @@ test('reply changes validate bounded metadata, revisions and text-only diff line
   assert.deepEqual(parseChangeSummary({ total: 5000, files: [file], secret: 'discard' }), { total: 5000, files: [file] });
   assert.throws(() => parseChangeSummary({ total: 1, files: [{ ...file, add: -1 }] }));
 });
+
+test('command facts remain optional, bounded and allowlisted across the bridge', () => {
+  const { parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const item = { id: 'r', kind: 'tool_result', text: 'output', timestamp: '2026-11-01T12:00:00Z', toolId: 'c', toolName: null, toolKind: null, input: '', error: false, truncated: false };
+  const parse = extra => parseChatPage({ taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [{ ...item, ...extra }], events: [], state }, 1, 2).items[0];
+  assert.equal(parse({}).execution, undefined);
+  assert.deepEqual(parse({ execution: { cwd: '/repo', exitCode: -1, interrupted: true, private: 'discard' } }).execution, { cwd: '/repo', exitCode: -1, interrupted: true });
+  for (const execution of [null, [], { exitCode: 0.5 }, { exitCode: Infinity }, { exitCode: '0' }, { cwd: 'x'.repeat(4001) }, { interrupted: 'false' }]) assert.throws(() => parse({ execution }));
+});

@@ -3,6 +3,7 @@
   min-width: 0;
 }
 section {
+  container-type: inline-size;
   position: relative;
   overflow: hidden;
   border-radius: var(--radius-sm);
@@ -40,6 +41,7 @@ section {
   white-space: nowrap;
 }
 code {
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--text-caption-size);
   overflow: hidden;
@@ -51,6 +53,9 @@ code {
 }
 .meta {
   white-space: nowrap;
+  max-width: 35%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 pre {
   padding: var(--space-2) var(--space-3);

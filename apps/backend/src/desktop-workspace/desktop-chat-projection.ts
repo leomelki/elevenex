@@ -24,7 +24,26 @@ const nullable = (value: unknown) =>
 const count = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
 export type ChatChangesCache = WeakMap<AgentTranscriptItem, { readonly result: AgentTranscriptItem; readonly fingerprint: string; readonly changes: ReturnType<typeof changeSummary> }>;
+/** Keep execution facts separate from output without forwarding provider payloads. */
+function commandExecution(item: AgentTranscriptItem, call?: AgentTranscriptItem) {
+  const source = item.kind === 'tool_use' ? item : call;
+  const input = record(source?.toolInput);
+  if (source?.toolKind !== 'bash' && !input.command && !input.cmd) return undefined;
+  const result = record(item.providerToolResult);
+  const exitCode = result.exitCode ?? result.exit_code;
+  const cwd = input.cwd ?? input.workdir ?? result.cwd;
+  const interrupted = result.interrupted;
+  const execution = {
+    ...(typeof exitCode === 'number' && Number.isSafeInteger(exitCode)
+      ? { exitCode }
+      : {}),
+    ...(typeof cwd === 'string' && cwd.length <= 4000 ? { cwd } : {}),
+    ...(typeof interrupted === 'boolean' ? { interrupted } : {}),
+  };
+  return Object.keys(execution).length ? execution : undefined;
+}
 export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache) {
+  const execution = commandExecution(item, call);
   const input = display(item.toolInput);
   const text = display(
     item.content ?? item.providerToolResult ?? item.agentMessage?.body ?? '',
@@ -37,6 +56,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
     cache?.set(call, { result: item, fingerprint, changes });
   }
   return {
+    ...(execution ? { execution } : {}),
     ...(changes ? { changes } : {}),
     id: item.id,
     kind: item.kind,
@@ -47,7 +67,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
       item.toolDisplayName ?? item.providerToolName ?? item.toolName ?? null,
     toolKind: item.toolKind ?? null,
     input,
-    error: item.isError === true,
+    error: item.isError === true || execution?.interrupted === true || (execution?.exitCode !== undefined && execution.exitCode !== 0),
     truncated:
       text.endsWith('… [display shortened]') ||
       input.endsWith('… [display shortened]'),

@@ -19,6 +19,7 @@ import {
   QuestionCardComponent,
   PresetPickerComponent,
   PresetCreatorComponent,
+  ToolContentComponent,
   type AgentQuestion,
   type QuestionAnswers,
   type TurnAction,
@@ -42,6 +43,7 @@ import { SessionChatContentComponent } from "./session-chat-content.component";
 import { SessionChatPresets } from "./session-chat-presets";
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import { sessionPlanUsage } from "./session-chat-usage";
+import { presentSessionTool } from './session-chat-tools';
 
 @Component({
   selector: "ex-session-chat",
@@ -55,6 +57,7 @@ import { sessionPlanUsage } from "./session-chat-usage";
     QuestionCardComponent,
     PresetPickerComponent,
     PresetCreatorComponent,
+    ToolContentComponent,
     ButtonComponent,
     ContextMeterComponent,
     StatusGlyphComponent,
@@ -74,6 +77,14 @@ export class SessionChatComponent {
   readonly archived = input(false);
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
+  readonly permissionEvidence = computed(() => {
+    const request = this.store.state()?.permission;
+    return request ? presentSessionTool({
+      id: request.id, kind: 'tool_use', timestamp: '', text: '',
+      toolId: null, toolKind: null, toolName: request.title,
+      input: request.input, error: false, truncated: false,
+    }) : null;
+  });
   readonly composer = viewChild(ComposerComponent);
   readonly chat = viewChild(ChatComponent);
   readonly requestElement = viewChild<unknown, ElementRef<HTMLElement>>(

@@ -6,6 +6,8 @@ export * from "./markdown/markdown-media.component";
 export * from "./turns/work-summary";
 export * from "./turns/stream-text.component";
 export * from "./turns/tool-step.component";
+export * from "./turns/tool-content.component";
+export type * from "./tool-presentation";
 export * from "./turns/thinking-block.component";
 export * from "./turns/now-line.component";
 export * from "./turns/file-chip.component";

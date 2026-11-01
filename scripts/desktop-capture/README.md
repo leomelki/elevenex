@@ -476,3 +476,11 @@ connected Changes panel using preview-only backend data: file chips and counts,
 mouse/keyboard Review, exact file selection, wide/compact panels, 1,001-file
 summaries, bounded line paging, errors and narrow reduced-motion states in both
 themes. Run against the same preview URL, sequentially with native captures.
+
+
+`scenarios/session-tools.mjs` covers every normalized tool family through the
+connected production chat, plus generic/MCP nested results, running inputs, failed
+commands, shortened output and unknown completion. It checks parsed content
+separately from original data, keyboard disclosure, inert closing, proposed diffs,
+plan statuses, both themes and narrow reduced-motion layouts. Use
+`--url http://127.0.0.1:4310/connected-workspace` with the preview server.

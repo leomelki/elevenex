@@ -31,6 +31,7 @@ export function summarizeWork(
   let testResult = "";
   let testFailed = false;
   for (const step of steps) {
+    if (step.status === 'unknown') continue;
     if (step.status === "failed" && !step.recovered && !step.expected)
       failures++;
     if (step.kind === "run") commands++;
@@ -165,8 +166,7 @@ export function groupWorkSteps(
   for (const step of steps) {
     if (
       ["read", "search", "list"].includes(step.kind) &&
-      step.status !== "failed" &&
-      step.status !== "running"
+      (step.status === undefined || step.status === "done")
     )
       pending.push(step);
     else {

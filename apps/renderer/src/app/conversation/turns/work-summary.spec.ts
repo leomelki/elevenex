@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { formatDuration, groupWorkSteps, summarizeWork } from "./work-summary";
 
 describe("work timeline grouping", () => {
+  it('keeps unknown completion visible without counting it as completed work', () => {
+    const steps = [
+      { id: 'a', kind: 'read', status: 'done' },
+      { id: 'b', kind: 'read', status: 'unknown' },
+      { id: 'c', kind: 'read', status: 'done' },
+    ] as const;
+    expect(groupWorkSteps(steps).map(step => step.id)).toEqual(['a', 'b', 'c']);
+    expect(summarizeWork(steps, [])).toEqual([{ kind: 'reads', icon: 'file', label: 'Read 2 files' }]);
+  });
   it("groups adjacent discoveries while preserving failure evidence and stable keys", () => {
     const groups = groupWorkSteps([
       { id: "a", kind: "read", status: "done" },

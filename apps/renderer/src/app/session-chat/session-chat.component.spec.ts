@@ -142,6 +142,24 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it('renders orphan structured receipts as tool evidence and leaves missing completion unknown', async () => {
+    const { fixture, root } = setup([
+      { ...item('orphan', 'tool_result', '{"title":"Retry safety","owner":"Payments"}'), toolKind: 'mcp', toolName: 'Issue lookup', toolId: 'outside-window' },
+      { ...item('attempt', 'tool_use', ''), toolKind: 'edit', toolName: 'Edit', toolId: 'unfinished', input: '{"file_path":"retry.ts","old_string":"old()","new_string":"new()"}' },
+    ]);
+    await settle(fixture);
+    const work = root.querySelector<HTMLButtonElement>('ex-turn .work')!;
+    work.click(); await settle(fixture);
+    const tools = root.querySelectorAll('ex-tool-step');
+    expect(tools).toHaveLength(2);
+    expect(tools[0]?.querySelector('.tool-preview')?.textContent).toContain('Retry safety');
+    expect(tools[0]?.querySelector('.tool-preview')?.textContent).not.toContain('{');
+    expect(tools[1]?.querySelector('.verb')?.textContent).toBe('Attempted to edit');
+    expect(tools[1]?.querySelector('[aria-label="Completion unknown"]')).not.toBeNull();
+    expect(tools[1]?.querySelector('ex-status-glyph')).toBeNull();
+    expect(root.querySelector('ex-turn .facts')?.textContent).not.toContain('edit');
+  });
+
   it("renders the designed outcome after the answer and routes Review and a file chip to their reply", async () => {
     const { fixture, root } = setup([
       item("u", "user", "Create a test file"),
@@ -179,12 +197,12 @@ describe("connected chat reply rendering", () => {
     const tools = root.querySelectorAll("ex-tool-step");
     expect(tools).toHaveLength(2);
     expect(tools[0]?.querySelector(".verb")?.textContent).toBe("Read");
-    expect(tools[1]?.querySelector(".verb")?.textContent).toBe("Bash");
+    expect(tools[1]?.querySelector(".verb")?.textContent).toBe("Failed to run");
     expect(tools[0]?.querySelector("section.failed")).toBeNull();
     expect(tools[1]?.querySelector("section.failed")).not.toBeNull();
     tools[1]?.querySelector<HTMLButtonElement>(".head")?.click();
     await settle(fixture);
-    expect(tools[1]?.querySelector("pre")?.textContent).toContain("FAIL retry.spec.ts");
+    expect(tools[1]?.querySelector(".tool-content")?.textContent).toContain("FAIL retry.spec.ts");
     expect(root.textContent).not.toContain("Script completed");
   });
 
@@ -211,7 +229,7 @@ describe("connected chat reply rendering", () => {
       head.click();
       await settle(fixture);
       expect(head.getAttribute("aria-expanded")).toBe("true");
-      expect(tool.querySelector("pre")?.textContent).toContain("All tests passed");
+      expect(tool.querySelector(".tool-content")?.textContent).toContain("All tests passed");
       toggle.click();
       await settle(fixture);
       expect(toggle.getAttribute("aria-expanded")).toBe("false");

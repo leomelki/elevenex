@@ -1,4 +1,5 @@
 import type { DestroyRef } from "@angular/core";
+import { sessionToolItems } from './session-tools-fixture';
 import type {
   BackendResult,
   SessionChatChangesRead,
@@ -213,12 +214,22 @@ export class SessionChatFixture {
       | "ready"
       | "unknown"
       | "long"
+      | "tools"
+      | "tools-running"
+      | "tools-incomplete"
       | "reply-boundaries",
     id = 101,
   ): void {
     const session = this.session(id);
     session.items = opening();
     session.state = previewChatState();
+    if (mode === 'tools' || mode === 'tools-running' || mode === 'tools-incomplete') {
+      session.items = sessionToolItems(mode !== 'tools').map(item =>
+        mode === 'tools-incomplete' && item.id === 'tools-answer'
+          ? { ...item, text: 'No completion receipt was reported for the final command.' } : item);
+      if (mode === 'tools-running')
+        session.state = { ...session.state, phase: 'running', canInterrupt: true };
+    }
     if (mode === "reply-boundaries")
       session.items = [
         item("u1", "user", "hi"),

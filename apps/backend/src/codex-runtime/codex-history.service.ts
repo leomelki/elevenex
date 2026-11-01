@@ -1042,6 +1042,8 @@ export class CodexHistoryService {
       const commandActions =
         arrayValue(args?.commandActions) ?? arrayValue(args?.command_actions);
       return {
+        ...(typeof args?.cwd === 'string' ? { cwd: args.cwd } : {}),
+        ...(typeof args?.workdir === 'string' ? { workdir: args.workdir } : {}),
         command:
           stringValue(args?.command) ??
           stringValue(args?.cmd) ??

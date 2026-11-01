@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  type OnChanges,
   afterRenderEffect,
   computed,
   effect,
@@ -49,7 +50,7 @@ import { formatDuration, isProse, summarizeWork } from "./work-summary";
     "(keydown)": "onKey($event)",
   },
 })
-export class TurnComponent {
+export class TurnComponent implements OnChanges {
   readonly status = input<TurnStatus>("done");
   readonly steps = input<readonly WorkStep[]>([]);
   readonly answerBeforeStepId = input<string>();
@@ -65,7 +66,11 @@ export class TurnComponent {
   readonly time = input("");
   readonly stoppable = input(true);
   readonly retryable = input(true);
-  readonly actions = input<readonly TurnAction[]>(['side-chat', 'fork', 'copy']);
+  readonly actions = input<readonly TurnAction[]>([
+    "side-chat",
+    "fork",
+    "copy",
+  ]);
   readonly stop = output<void>();
   readonly retry = output<void>();
   readonly action = output<TurnAction>();
@@ -95,9 +100,18 @@ export class TurnComponent {
     this.precedingSteps().filter((step) => step.id !== this.activeStep()?.id),
   );
   readonly workLabel = computed(() => {
-    const seconds = this.status() === 'live' ? this.elapsed() : this.duration();
-    const label = this.status() === 'live' ? 'Working' : this.status() === 'stopped' ? 'Stopped' : this.status() === 'failed' ? 'Failed' : 'Worked';
-    return seconds > 0 ? `${label}${this.status() === 'stopped' || this.status() === 'failed' ? ' after' : ''} ${formatDuration(seconds)}` : label;
+    const seconds = this.status() === "live" ? this.elapsed() : this.duration();
+    const label =
+      this.status() === "live"
+        ? "Working"
+        : this.status() === "stopped"
+          ? "Stopped"
+          : this.status() === "failed"
+            ? "Failed"
+            : "Worked";
+    return seconds > 0
+      ? `${label}${this.status() === "stopped" || this.status() === "failed" ? " after" : ""} ${formatDuration(seconds)}`
+      : label;
   });
   readonly stepCount = computed(
     () => this.steps().filter((step) => !isProse(step)).length,
@@ -111,6 +125,13 @@ export class TurnComponent {
   );
   protected readonly factsElement =
     viewChild<ElementRef<HTMLElement>>("factsRegion");
+  private readonly workButton =
+    viewChild<ElementRef<HTMLButtonElement>>("workButton");
+  private readonly nowRegion = viewChild<unknown, ElementRef<HTMLElement>>(
+    "nowRegion",
+    { read: ElementRef },
+  );
+  private currentStepId: string | undefined;
   protected readonly factsClipped = signal(false);
   constructor() {
     afterRenderEffect((cleanup) => {
@@ -137,6 +158,18 @@ export class TurnComponent {
       );
       cleanup(() => clearTimeout(timer));
     });
+  }
+  ngOnChanges(): void {
+    // Run before the template updates: hiding or replacing a focused live tool
+    // would otherwise move focus to the document and hide it from accessibility.
+    const region = this.nowRegion()?.nativeElement;
+    const nextId = this.activeStep()?.id;
+    if (
+      region?.contains(region.ownerDocument.activeElement) &&
+      nextId !== this.currentStepId
+    )
+      this.workButton()?.nativeElement.focus();
+    this.currentStepId = nextId;
   }
   onKey(event: KeyboardEvent): void {
     if (

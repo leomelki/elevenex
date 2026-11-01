@@ -20,6 +20,7 @@ function codexHistoryTool(
       name = 'Bash';
       input = {
         command: text(item.command),
+        ...(typeof item.cwd === 'string' ? { cwd: item.cwd } : {}),
         ...(Array.isArray(item.parsed_cmd)
           ? { commandActions: item.parsed_cmd }
           : {}),
@@ -91,7 +92,12 @@ function codexHistoryTool(
       id: `${item.id}:tool_result`,
       kind: 'tool_result',
       content,
-      providerToolResult: item.result,
+      providerToolResult: item.type === 'CommandExecution'
+        ? {
+            ...(typeof item.exit_code === 'number' ? { exitCode: item.exit_code } : {}),
+            ...(typeof item.interrupted === 'boolean' ? { interrupted: item.interrupted } : {}),
+          }
+        : item.result,
       isError,
       authoredAt: timestamp,
     },

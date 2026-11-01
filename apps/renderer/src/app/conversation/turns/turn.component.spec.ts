@@ -9,6 +9,48 @@ interface EvidenceObservation {
 }
 
 describe("turn evidence", () => {
+  it("restores focus when an inspected live tool completes and resets disclosure for the next tool", async () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    const host: HTMLElement = fixture.nativeElement;
+    document.body.append(host);
+    fixture.componentRef.setInput("status", "live");
+    const running = {
+      id: "first",
+      kind: "run",
+      detail: "pnpm test",
+      status: "running",
+      presentation: {
+        summary: "pnpm test",
+        blocks: [{ kind: "code", title: "Command", text: "pnpm test" }],
+      },
+    } as const;
+    fixture.componentRef.setInput("steps", [running]);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const head = host.querySelector<HTMLButtonElement>("ex-now-line .head")!;
+    head.click();
+    head.focus();
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(head);
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    fixture.componentRef.setInput("steps", [{ ...running, id: "second" }]);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(host.querySelector(".work"));
+    const next = host.querySelector<HTMLButtonElement>("ex-now-line .head")!;
+    expect(next).not.toBe(head);
+    expect(next.getAttribute("aria-expanded")).toBe("false");
+    next.focus();
+    fixture.componentRef.setInput("status", "done");
+    fixture.componentRef.setInput("steps", [
+      { ...running, id: "second", status: "done" },
+    ]);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(document.activeElement).toBe(host.querySelector(".work"));
+    fixture.destroy();
+    host.remove();
+  });
   afterEach(() => vi.unstubAllGlobals());
 
   it("updates overflow after resize and releases the observer when evidence leaves", async () => {
@@ -83,7 +125,10 @@ describe("turn evidence", () => {
     const host: HTMLElement = fixture.nativeElement;
     const tool = host.querySelector("ex-tool-step")!;
     const commentary = host.querySelector(".prose")!;
-    expect(tool.compareDocumentPosition(commentary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      tool.compareDocumentPosition(commentary) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(host.querySelector("ex-now-line")).toBeNull();
     expect(host.querySelector(".facts")).toBeNull();
     fixture.destroy();

@@ -170,3 +170,25 @@ work facts omit partial aggregate line counts. `Chat.fileReview` carries
 `{ id, path }` for file chips and Markdown file links, so connected owners can
 open the correct reply even when several replies edit the same file. The existing
 `openFile` path output remains available for other consumers.
+
+
+`WorkStep.presentation` accepts a readonly `ToolPresentation` with a short summary,
+optional meta/notice and bounded fields, code, text, diff, patch or list blocks.
+`ToolStep` and live `NowLine` render these through `ToolContentComponent`; the
+legacy string output API remains supported. Optional `preview` blocks supply the
+concise primary result; `previewNotice` carries an actual omitted line/item count.
+Full `blocks` mount only when the native Details disclosure opens. Original data
+is a second, nested disclosure. The internal `ToolBlock` renderer is shared by
+those two views and keeps all content inert. `ToolContent` is also available for
+approval evidence using `[presentation]` and optional `[original]`. Original text
+is mounted only when its nested native disclosure opens. Closing Details releases
+its full parsed and original content while retaining the short primary result. All tool data stays inert text;
+these components never fetch URLs or load returned images. The supplying adapter
+owns parsing and limits. Closed Fold content remains inert, and running-to-result
+updates retain the tool disclosure. The `/connected-workspace` tools preview and
+`session-tools.mjs` capture scenario exercise every normalized family.
+`WorkStep.status='unknown'` means no completion receipt was received: it uses a
+neutral clock, stays outside discovery groups and completed-work facts, and does
+not imply failure or success. A live tool's focus returns to the turn's work
+control before replacement/completion hides it; each new tool starts with its
+own disclosure state.

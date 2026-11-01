@@ -2453,6 +2453,7 @@ export class CodexRuntimeService
       const commandActions = commandActionsFrom(item);
       const providerToolInput = {
         command: item.command,
+        ...(typeof record(item).cwd === 'string' ? { cwd: record(item).cwd } : {}),
         ...(commandActions ? { commandActions } : {}),
       };
       const canonicalTool = canonicalizeAgentTool('Bash', providerToolInput);
@@ -2604,6 +2605,10 @@ export class CodexRuntimeService
         kind: 'tool_result',
         toolUseId: item.id,
         content: item.aggregated_output,
+        providerToolResult: {
+          ...(typeof item.exit_code === 'number' ? { exitCode: item.exit_code } : {}),
+          ...(typeof record(item).interrupted === 'boolean' ? { interrupted: record(item).interrupted } : {}),
+        },
         isError: item.status === 'failed' || (item.exit_code ?? 0) !== 0,
         timestamp,
         authoredAt: timestamp,
@@ -4611,6 +4616,8 @@ export class CodexRuntimeService
           id,
           type: 'command_execution',
           command: typeof raw.command === 'string' ? raw.command : '',
+          ...(typeof raw.cwd === 'string' ? { cwd: raw.cwd } : {}),
+          ...(typeof raw.interrupted === 'boolean' ? { interrupted: raw.interrupted } : {}),
           ...(commandActions ? { command_actions: commandActions } : {}),
           aggregated_output:
             typeof raw.aggregatedOutput === 'string'

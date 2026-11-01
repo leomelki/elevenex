@@ -512,7 +512,7 @@ describe("provider-neutral transcript presentation", () => {
     expect(exchanges[0]?.steps.map((step) => step.id)).toEqual(["a", "t"]);
     expect(exchanges[0]?.steps[1]).toMatchObject({
       status: "failed",
-      verb: "External tool",
+      verb: "Failed to use connection",
       output: expect.stringContaining("Failed to connect"),
     });
     expect(exchanges[0]?.answer).toBe("Here is the result.");

@@ -1820,3 +1820,62 @@ checkpoints, including filtering, secret inclusion, staged-only and submission.
 renderer tests, including TypeScript contracts) and `pnpm desktop:build` pass.
 Tests and build needed an unsandboxed run for local sockets/processes and Angular
 compilation. No dependency or lockfile changes were made.
+
+
+### Structured session tools (2026-11-01)
+
+The connected transcript now presents all 21 normalized tool families through
+bounded typed evidence: semantic verbs, command purpose/directory/output/exit
+facts, file content, proposed or applied diffs/patches, searches, sources, plans,
+agents, questions, workspace/symbol/skill fields and generic/MCP results.
+Original data remains a separate lazy disclosure. Unknown completion is neutral;
+orphan receipts use the same parsed renderer. Live tool identity changes release
+keyboard focus to the turn's work control before hiding the old surface.
+
+Final checks passed: pnpm desktop:lint, pnpm desktop:test (114 desktop, seven
+capture-tool and 500 renderer tests, including TypeScript contract checks), and
+pnpm desktop:build. The focused backend projection/history suite passed 36 tests
+and its production TypeScript check passed. A prior full test rerun hit an
+unrelated remote bootstrap timing assertion; the final full rerun passed.
+Loopback tests/native launches and the production build required unsandboxed
+execution. No dependency or lockfile changes were made.
+
+Native Electron reports are verified: true with no errors or warnings:
+
+- artifacts/desktop-capture/run-uqvNYP/report.json: 32 tool-family checkpoints,
+  including light/dark, code whitespace, diff signs, structured/MCP results,
+  failure/truncation, keyboard disclosure, inert closure, live-tool focus return,
+  unknown completion and narrow reduced motion.
+- artifacts/desktop-capture/run-nnqsrB/report.json: 16 connected-chat checkpoints,
+  including the updated approval evidence, decisions, streaming, draft retention,
+  bounded original content/history and uncertain delivery.
+- artifacts/desktop-capture/run-SscpHc/report.json: four unobstructed running and
+  unknown-completion card captures in both themes using the same tool scenario.
+
+The relevant new PNGs were inspected. The built app's real Electron smoke passed
+sandbox, bridge validation, deferred workspace, events, native theme, multiple
+windows and app:// history/CSP checks with its fixture backend. These are native
+unpackaged and preview-provider checks; a packaged app was not launched.
+
+
+### Concise tool evidence (2026-11-01)
+
+Tool cards now lead with at most two short, chosen result blocks. Parameters,
+working directories, technical IDs, routine receipts and repeated paths stay in
+Details. Commands show an output tail, edits show a small diff, plans prioritize
+unfinished steps, and generic/MCP results favor a title and meaningful state.
+Full parsed blocks and original data mount only on explicit disclosure. The
+shared internal ToolBlock renderer keeps preview and expanded rendering identical
+for whitespace, diff signs and inert content.
+
+Final desktop lint, TypeScript checks, desktop:test (114 desktop, seven capture
+runner and 509 renderer tests), and production build passed. No dependencies or
+lockfile changed. Native preview reports have verified: true, no errors and no
+warnings: artifacts/desktop-capture/run-MK73l1/report.json (34 checkpoints) and
+artifacts/desktop-capture/run-Oj20vG/report.json (two compact approval checkpoints).
+The full tool scenario covers all normalized families, compact default content,
+full Details access, nested original data, keyboard/focus, inert closing, live and
+unknown completion, both themes and narrow reduced motion. Captured primary
+bodies measured 52–180px; the sample command card is 108px overall. The relevant
+new PNGs were inspected, including dark/narrow layout and approval evidence.
+These are native unpackaged preview-provider checks, not a packaged-app launch.

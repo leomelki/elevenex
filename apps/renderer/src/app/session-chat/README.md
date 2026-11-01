@@ -20,6 +20,19 @@ so nested/preview backend scopes resolve consistently.
   pairing tools/results by tool ID and preserving commentary, reasoning,
   unknown tools, orphan results and explicit failures. Fresh prompts alone opt
   into entry motion; initial history stays still.
+- `session-chat-tools` selects semantic verbs and bounded presentation blocks for all
+  normalized tool kinds. Commands separate purpose, working directory, stdout/stderr
+  and reported exit/interruption facts; file tools preserve code whitespace and
+  show replacement diffs or colored patches. Search, web, plan, agent, question,
+  workspace, symbol and skill tools expose their domain fields. Generic/MCP results
+  unwrap text and structured data, avoid duplicate receipts and describe attachments
+  without embedding untrusted media. Pending approvals use the same field renderer.
+  `session-tool-focus` selects at most two short primary blocks per tool, keeping
+  the useful result and avoiding repeated paths, parameters, IDs or routine success
+  receipts. Commands use a short output tail; edits show the focused diff; plans
+  favor unfinished work; web/MCP results favor titles and meaningful state.
+  Full parsed evidence lives under Details; original data is nested beneath it; shortened previews retain the existing
+  paged transcript reader. Plans stay in the work timeline instead of becoming prose.
 - Codex history restores native command, patch, MCP and web-search receipts with
   the live stream's tool IDs. Code-mode `exec` envelopes are omitted when native
   receipts supply the work, retaining separate output and exit/error status for
