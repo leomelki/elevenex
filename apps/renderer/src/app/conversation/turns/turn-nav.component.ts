@@ -7,7 +7,7 @@ import {
 import type { TurnNavigationItem } from "../conversation.models";
 @Component({
   selector: "ex-turn-nav",
-  template: `@if (turns().length >= 5) {
+  template: `@if (turns().length) {
     <nav aria-label="Conversation turns">
       @for (turn of turns(); track turn.id) {
         <button

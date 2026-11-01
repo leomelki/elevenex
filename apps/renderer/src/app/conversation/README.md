@@ -20,6 +20,9 @@ These standalone OnPush components consume renderer view models and emit typed i
 
 ## Scrolling and performance
 
+`TurnNav` shows the right-edge message selector from the first turn, regardless
+of session length. Empty sessions have no navigation targets and hide it.
+
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
 
 `ChatScroll.scrollToEnd(behavior)` defaults to smooth scrolling and accepts

@@ -1963,3 +1963,20 @@ reopening and refresh, in both themes and narrow/reduced-motion layouts.
 artifacts/desktop-capture/run-vHE2cH/report.json reports verified: true, four
 checkpoints and no errors or warnings. All four PNGs were inspected. These are
 unpackaged preview-provider checks; no packaged-app launch was attempted.
+
+
+### Message selector in short sessions (2026-11-01)
+
+TurnNav now appears from the first turn instead of requiring five. Empty sessions
+retain no navigation targets. Regression tests cover one, two, four, five and
+eight turns, selection, active state and switching to short/empty sessions.
+
+Desktop lint, production build and desktop tests passed (115 desktop, seven
+capture-tool and 533 renderer tests, plus TypeScript checks). Native preview
+verification at artifacts/desktop-capture/turn-nav-final/report.json reports
+verified: true, ten checkpoints and no errors or warnings. It covers session
+length changes, keyboard selection, both themes and narrow/reduced-motion layout.
+The light single-turn and dark narrow PNGs were inspected. The isolated preview
+disabled HMR/live reload to avoid the development server's CSP-blocked blob worker;
+production security settings were unchanged. This was an unpackaged component
+preview, not a packaged-app launch.
