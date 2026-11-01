@@ -180,6 +180,12 @@ when integrating a hierarchy. The connected workspace validates task/session
 ownership and current activity again in main/backend, retains history and edits,
 then removes the row and offers Undo. Restoring a stopped turn never restarts it.
 
+`TaskList.loading` folds in a loading status when the supplied task window is
+empty and suppresses the settled empty message during reads. Keep the TaskList
+mounted across project reads so its outgoing rows can fold away and returning
+identities can reverse their exit. The workspace mounts initial history after
+the first read, then retains the outline through subsequent active-project reads.
+
 `TaskGroup.cap` / `TaskList.sessionCap` show the newest five normal sessions in
 supplied chronological order, plus attention/failed, selected and fresh rows.
 Each Older click reveals at most `capStep` more hidden sessions. Show fewer

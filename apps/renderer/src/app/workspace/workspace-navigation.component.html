@@ -13,7 +13,7 @@
   @if (visibleError(); as error) {
     <div class="notice" role="alert"><span>{{ error }}</span><button exButton size="sm" [disabled]="store.loading()" (click)="store.refresh()">Refresh</button></div>
   }
-  @if (store.loading() && !store.tasks().length) {
+  @if (!taskListMounted() && store.loading() && !store.tasks().length) {
     <p class="loading" role="status">Loading tasks…</p>
   } @else if (store.closed()) {
     <div class="closed-tasks">
@@ -26,7 +26,7 @@
       } @empty { <p>No closed tasks.</p> }
     </div>
   } @else {
-    <ex-task-list (archivedSessionsRequested)="store.loadArchivedSessions($event)" (restoreRequested)="restoreSession($event)" [(sessionDisclosures)]="store.sessionDisclosures" [sessionCap]="preferences.sessionCap()" [allowArchive]="store.sessionArchiveAvailable()" (archiveRequested)="archiveSession($event)" [tasks]="store.tasks()" [selected]="store.selected()?.sessionId?.toString() ?? null" [filter]="store.filter()" [showProjects]="store.activeProject() === 'all'" [disabled]="store.busy()" (selectSession)="store.selectSession($event)" (addSession)="store.createSession($event)" (emptyTaskRequested)="store.openEmptyTask($event)" (moreSessionsRequested)="store.nextSessions($event)" (closedRequested)="store.showClosed()" />
+    <ex-task-list [loading]="store.loading()" (archivedSessionsRequested)="store.loadArchivedSessions($event)" (restoreRequested)="restoreSession($event)" [(sessionDisclosures)]="store.sessionDisclosures" [sessionCap]="preferences.sessionCap()" [allowArchive]="store.sessionArchiveAvailable()" (archiveRequested)="archiveSession($event)" [tasks]="store.tasks()" [selected]="store.selected()?.sessionId?.toString() ?? null" [filter]="store.filter()" [showProjects]="store.activeProject() === 'all'" [disabled]="store.busy()" (selectSession)="store.selectSession($event)" (addSession)="store.createSession($event)" (emptyTaskRequested)="store.openEmptyTask($event)" (moreSessionsRequested)="store.nextSessions($event)" (closedRequested)="store.showClosed()" />
   }
   <footer>
     @if (store.taskPage()) { <button exButton size="sm" [disabled]="store.loading()" (click)="store.loadTasks()">Newest tasks</button> }

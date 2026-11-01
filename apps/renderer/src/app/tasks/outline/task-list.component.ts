@@ -50,7 +50,7 @@ type OutlineRow =
       readonly task: TaskOutline;
       readonly visible: boolean;
     }
-  | { readonly kind: "empty"; readonly key: string; readonly visible: boolean }
+  | { readonly kind: "empty" | "loading"; readonly key: string; readonly visible: boolean }
   | {
       readonly kind: "closed";
       readonly key: string;
@@ -85,6 +85,8 @@ export class TaskListComponent {
     });
   }
   readonly tasks = input<readonly TaskOutline[]>([]);
+  /** Keep this component mounted through reads so outgoing rows can finish. */
+  readonly loading = input(false);
   readonly allowArchive = input(false);
   readonly restoreRequested = output<{ readonly taskId: string; readonly session: TaskSession }>();
   readonly archivedSessionsRequested = output<{ readonly taskId: string; readonly page: 'latest' | 'earlier' }>();
@@ -214,7 +216,8 @@ export class TaskListComponent {
       },
       ...tasks,
     );
-    rows.push({ kind: "empty", key: "empty", visible: visibleTasks === 0 });
+    rows.push({ kind: "loading", key: "loading", visible: this.loading() && this.tasks().length === 0 });
+    rows.push({ kind: "empty", key: "empty", visible: !this.loading() && visibleTasks === 0 });
     rows.push({
       kind: "closed",
       key: "closed",

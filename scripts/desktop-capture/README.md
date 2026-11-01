@@ -411,6 +411,12 @@ stable header/title/filter/task-list geometry, and removal of other projects,
 with no selection and with another project selected,
 in both themes and a narrow reduced-motion layout.
 
+`scenarios/sidebar-project-switching.mjs` samples frame geometry from before
+trusted rail input through loading and cleanup. It checks exits and entries
+between distinct projects and All projects in both directions, retained shared
+rows, interrupted returns, stale reads and a narrow reduced-motion layout in
+both themes. Run against the connected-workspace preview.
+
 `scenarios/sidebar-session-cap.mjs` measures the replacement cap scroll in both
 themes: five-row opening and ten-row closing from before trusted input through
 cleanup, revealed selection DOM identity, muted title movement, selected-session

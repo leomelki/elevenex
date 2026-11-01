@@ -4,6 +4,7 @@ import type { BackendClientState, BackendResult, ElevenexBridge, WorkspacePage, 
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { WorkspaceStore } from './workspace.store';
 import { WorkspaceDialogsComponent } from './workspace-dialogs.component';
+import { WorkspaceNavigationComponent } from './workspace-navigation.component';
 
 const project: WorkspaceProject = { id: 1, name: 'Project', agentInstructions: null };
 const session: WorkspaceSession = { id: 5, taskId: 3, repoId: 2, name: 'Session', status: 'created', provider: 'claude', updatedAt: '' };
@@ -290,6 +291,38 @@ describe('WorkspaceStore', () => {
       expect(store.tasks().filter(task => task.id !== '7')).toEqual(matching);
       expect(store.tasks().map(task => task.id)).toEqual(projectId === 'all' ? ['3', '4', '7'] : ['3', '4']);
     }
+  });
+
+  it('keeps the active outline mounted through disjoint project reads, failures and interrupted returns', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: () => undefined, removeEventListener: () => undefined }));
+    const { store, bridge, start } = setup();
+    bridge.workspaceProjects.mockResolvedValue(ok(page([project, { ...project, id: 2 }])));
+    await start();
+    const fixture = TestBed.createComponent(WorkspaceNavigationComponent);
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    const list = root.querySelector('ex-task-list')!;
+    const row = root.querySelector<HTMLElement>('[data-task-id="3"]')!;
+    row.querySelector<HTMLButtonElement>('header .toggle')!.click();
+    fixture.detectChanges();
+    for (const fails of [false, true]) {
+      let resolve!: (value: BackendResult<WorkspacePage<WorkspaceTask>>) => void;
+      bridge.workspaceTasks.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+      const pending = store.selectProject('2'); fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('ex-task-list')).toBe(list);
+      expect(row.isConnected).toBe(true);
+      expect(row.closest('[inert]')).not.toBeNull();
+      expect(list.querySelector('[role="status"]')!.closest('[inert]')).toBeNull();
+      expect(list.querySelector('p.empty')!.closest('[inert]')).not.toBeNull();
+      resolve(fails ? { ok: false, error: { code: 'transport', message: 'Offline' } } : ok(page([])));
+      await pending; fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('ex-task-list')).toBe(list);
+      await store.selectProject('1'); fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('[data-task-id="3"]')).toBe(row);
+      expect(row.closest('[inert]')).toBeNull();
+      expect(row.querySelector('header .toggle')!.getAttribute('aria-expanded')).toBe('false');
+    }
+    fixture.destroy();
   });
 
   it('retains task disclosures across project navigation and resource mutations, and releases them with the backend scope', async () => {

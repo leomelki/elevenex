@@ -97,6 +97,10 @@ session `active` is not an indication that an agent is running.
   removes only tasks outside the destination view before loading its replacement.
   All matching tasks and their sessions stay mounted throughout loading and on
   read failure, preserving row identity and local folds independently of selection.
+  After initial history loads, the active outline also stays mounted when no
+  tasks overlap the destination project. Its outgoing rows fold away while a
+  folding loading status bridges the read; incoming rows then grow in. Empty
+  state is reserved for completed reads. Backend scope changes reset retention.
   A matching selected task also keeps its main view mounted. Closed history
   clears the previous view before loading its replacement.
 - Optional `WorkspaceTask.projectRepositoryCount` arrives with task summaries;

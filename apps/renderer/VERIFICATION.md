@@ -1,5 +1,31 @@
 # Component system verification
 
+## Project navigation transitions, 2026-11-01
+
+The active task outline stays mounted through project reads with no overlapping
+tasks. Outgoing rows retain their exit folds, loading folds inside the outline,
+and incoming rows enter through the same retained list. Shared tasks keep their
+DOM identities and manual disclosures. Initial history and backend-scope reset
+retain their separate lifetimes; empty state waits for the read to finish.
+
+Desktop lint, production build, TypeScript contracts and the full desktop suite
+pass: 115 desktop tests, seven capture-tool tests and 522 renderer tests. The
+new navigation regression covers disjoint reads, empty replies, failures and
+returning during an exit.
+
+The [project-switch capture](../../artifacts/desktop-capture/run-qeXGXm/report.json)
+is `verified: true` across 17 checkpoints. Frame samples start before trusted rail
+input and verify both exit and entry geometry for project ↔ project and project
+↔ All projects, rapid returns, superseded reads, both themes and narrow reduced
+motion. The [existing retention regression](../../artifacts/desktop-capture/run-SgFsMn/report.json)
+also passes all 12 checkpoints, including stable header geometry, manual folds
+and session identity through delayed reads. Inspected settled PNGs and
+[scrubbed transition frames](../../artifacts/desktop-capture/run-sUkhzK/report.json),
+including [visible entry frames](../../artifacts/desktop-capture/run-MgUGkr/report.json),
+come from native Electron running the connected preview, not a packaged app.
+Capture diagnostics include Angular NG0956 identity-tracking warnings during
+count updates, with no renderer errors.
+
 ## Revision-aware commit preloading, 2026-10-31
 
 The selected task skips preview reads when Git status's optional local-change
