@@ -2715,6 +2715,8 @@ describe('CodexRuntimeService', () => {
           isDefault: true,
           supportedReasoningEfforts: [
             { reasoningEffort: 'low', description: 'Quick' },
+            { reasoningEffort: 'custom-middle', description: 'Custom' },
+            { reasoningEffort: 'xhigh', description: 'Extra high' },
             { reasoningEffort: 'ultra', description: 'Deep' },
           ],
         },
@@ -2732,13 +2734,13 @@ describe('CodexRuntimeService', () => {
       expect.objectContaining({
         id: 'gpt-current',
         displayName: 'GPT Current',
-        reasoningEfforts: ['low', 'ultra'],
+        reasoningEfforts: ['low', 'custom-middle', 'xhigh', 'ultra'],
         supportsEffort: true,
         isProviderDefault: true,
       }),
     ]);
     expect(catalog.providerDefaultModelId).toBe('gpt-current');
-    expect(catalog.reasoningEfforts).toEqual(['low', 'ultra']);
+    expect(catalog.reasoningEfforts).toEqual(['low', 'xhigh', 'ultra', 'custom-middle']);
   });
 
   it('probes the updated CLI even with a fresh cache and defers replacement of the shared server', async () => {

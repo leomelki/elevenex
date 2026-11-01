@@ -64,7 +64,7 @@
     (changed)="modelChange($event)"
   />
 </div>
-@if (reasoningAvailable()) {
+@if (reasoningAvailable() && thinkingOptions().length) {
   <div class="field">
     <span class="field-label">Thinking</span>
     <div class="choices">

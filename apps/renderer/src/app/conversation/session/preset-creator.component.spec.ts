@@ -9,7 +9,7 @@ beforeEach(() => {
 });
 afterEach(() => { TestBed.resetTestingModule(); vi.unstubAllGlobals(); });
 const claude: PresetAgentCatalog = {
-  harness: { id: 'claude', label: 'Claude Code', mark: 'Cl', models: [{ id: 'sonnet', label: 'Sonnet', thinking: ['low', 'high'], supportsFastMode: false }] },
+  harness: { id: 'claude', label: 'Claude Code', mark: 'Cl', models: [{ id: 'sonnet', label: 'Sonnet', thinking: ['low', 'high', 'xhigh', 'max'], supportsFastMode: false }] },
   initial: { harness: 'claude', mark: 'Cl', model: 'sonnet', thinking: 'high', fast: false }, reasoningAvailable: true, fastAvailable: false,
 };
 function setup() {
@@ -37,6 +37,7 @@ it('keeps a draft per harness, restores edits, and never submits on harness sele
   expect(document.querySelector<HTMLButtonElement>('.preset-creator button[type="submit"]')!.disabled).toBe(true);
   expect(document.querySelector<HTMLButtonElement>('button[aria-label="Harness: Claude Code"]')!.disabled).toBe(false);
   requests[0]!.resolve(claude); await settle();
+  expect([...document.querySelectorAll('[aria-label="Thinking level"] button')].map(button => button.textContent?.trim())).toEqual(['Low', 'High', 'XHigh', 'Max']);
   expect(form.draft()).toMatchObject({ harness: 'claude', model: 'sonnet', fast: false });
   form.change({ ...form.draft(), thinking: 'low' });
   form.change({ harness: 'codex', mark: 'Cx', model: '' }); await settle();

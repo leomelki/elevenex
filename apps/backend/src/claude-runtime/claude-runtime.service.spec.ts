@@ -2326,7 +2326,7 @@ describe('ClaudeRuntimeService', () => {
           displayName: 'Sonnet',
           description: '',
           supportsEffort: true,
-          supportedEffortLevels: ['low', 'medium', 'high'],
+          supportedEffortLevels: ['max', 'high', 'xhigh', 'low', 'medium', 'high'],
         },
       ]),
       getContextUsage: jest.fn().mockResolvedValue({
@@ -2342,7 +2342,7 @@ describe('ClaudeRuntimeService', () => {
     expect(state.availableModels[0]).toMatchObject({
       id: 'sonnet',
       supportsEffort: true,
-      reasoningEfforts: ['low', 'medium', 'high'],
+      reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     });
   });
 

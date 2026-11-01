@@ -28,7 +28,7 @@ export async function chatCatalog(
       label: model.displayName.slice(0, 200),
       reasoningEfforts:
         reasoningAvailable && model.supportsEffort !== false
-          ? [...new Set(model.reasoningEfforts ?? catalog.reasoningEfforts)]
+          ? [...new Set(model.reasoningEfforts ?? [])]
               .filter((level) => level.length > 0 && level.length <= 100)
               .slice(0, 20)
           : [],

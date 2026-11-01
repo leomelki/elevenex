@@ -10,7 +10,6 @@ import {
   clearBinaryPathCache,
   refreshLoginShellEnv,
 } from '../config/system-paths.js';
-import { AGENT_REASONING_EFFORTS } from './agent-runtime.types.js';
 import type {
   AgentProviderId,
   AgentProviderModelCatalog,
@@ -88,7 +87,7 @@ export class AgentRuntimeRegistryService {
           return {
             ...base,
             models: [],
-            reasoningEfforts: [...AGENT_REASONING_EFFORTS],
+            reasoningEfforts: [],
             providerDefaultModelId: null,
             supportsModelSelection: true,
             unavailableReason: 'Could not reach this agent to list its models.',

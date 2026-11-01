@@ -33,7 +33,6 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
-import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
 import type {
   AgentForkConversationRequest,
   AgentForkConversationResult,
@@ -289,9 +288,7 @@ export class CodexRuntimeService
 
     return {
       models,
-      reasoningEfforts: reported.size
-        ? orderReasoningEfforts([...reported])
-        : [...AGENT_REASONING_EFFORTS],
+      reasoningEfforts: orderReasoningEfforts([...reported]),
       providerDefaultModelId: this.codexDefaultModel,
       supportsModelSelection: true,
       unavailableReason: this.modelRefreshError,
@@ -3341,17 +3338,19 @@ export class CodexRuntimeService
         ? model.description.trim()
         : 'Codex model.';
     const reasoningEfforts = Array.isArray(model.supportedReasoningEfforts)
-      ? orderReasoningEfforts(
-          model.supportedReasoningEfforts
-            .map((effort): string => {
-              if (typeof effort === 'string') return effort.trim();
-              if (!effort || typeof effort !== 'object') return '';
-              const value = (effort as CodexReasoningEffortDescriptor)
-                .reasoningEffort;
-              return typeof value === 'string' ? value.trim() : '';
-            })
-            .filter((effort) => effort.length > 0),
-        )
+      ? [
+          ...new Set(
+            model.supportedReasoningEfforts
+              .map((effort): string => {
+                if (typeof effort === 'string') return effort.trim();
+                if (!effort || typeof effort !== 'object') return '';
+                const value = (effort as CodexReasoningEffortDescriptor)
+                  .reasoningEffort;
+                return typeof value === 'string' ? value.trim() : '';
+              })
+              .filter((effort) => effort.length > 0),
+          ),
+        ]
       : [];
     const supportsEffort = reasoningEfforts.length > 0;
     const supportsFastMode =

@@ -28,16 +28,17 @@ export interface AgentRuntimeProviderInfo {
   permissionModes?: readonly string[];
 }
 
-/**
- * Thinking levels offered when a provider does not publish its own list. Kept
- * in sync with what the per-session picker already offers for every provider.
- */
+/** Known progression for unordered catalogs, never a fallback capability list. */
 export const AGENT_REASONING_EFFORTS = [
+  'off',
+  'none',
+  'minimal',
   'low',
   'medium',
   'high',
   'xhigh',
   'max',
+  'ultra',
 ] as const;
 
 export type AgentCatalogModel =
@@ -102,7 +103,8 @@ export interface AgentSubagentHistoryPayload {
 }
 
 export type AgentMcpSnapshot = import('../mcp/mcp.types.js').McpSnapshot;
-export type AgentMcpAuthStartResult = import('../mcp/mcp.types.js').McpAuthStartResult;
+export type AgentMcpAuthStartResult =
+  import('../mcp/mcp.types.js').McpAuthStartResult;
 
 export interface AgentAuthStatus {
   isAuthenticating: boolean;
@@ -145,7 +147,10 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
 
   getHistory(sessionId: number): Promise<AgentTranscriptItem[]>;
   /** initialize=false permits pre-start selection without creating a native conversation. */
-  getRuntimeState(sessionId: number, options?: { initialize?: boolean }): Promise<AgentRuntimeStatePayload>;
+  getRuntimeState(
+    sessionId: number,
+    options?: { initialize?: boolean },
+  ): Promise<AgentRuntimeStatePayload>;
   getSnapshot(sessionId: number): Promise<AgentSessionSnapshotPayload>;
   getAutocompleteItems(sessionId: number): Promise<AgentAutocompleteItem[]>;
   setSelectedModel(

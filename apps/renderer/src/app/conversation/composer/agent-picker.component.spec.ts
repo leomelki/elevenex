@@ -116,8 +116,9 @@ describe("AgentPicker controlled settings and focus", () => {
         "aria-checked",
       ),
     ).toBe("true");
-    expect(button(`${thinking} button[aria-label="Low"]`).disabled).toBe(true);
-    button(`${thinking} button[aria-label="Low"]`).click();
+    expect(
+      document.querySelector(`${thinking} button[aria-label="Low"]`),
+    ).toBeNull();
     expect(changed).not.toHaveBeenCalled();
     button(`${thinking} button[aria-label="Max"]`).click();
     expect(changed).toHaveBeenCalledWith(
@@ -127,6 +128,68 @@ describe("AgentPicker controlled settings and focus", () => {
     expect(document.querySelector("footer")?.textContent).toContain(
       "Applies from the next message",
     );
+  });
+  it.each([
+    ["claude", ["low", "medium", "high", "xhigh", "max"]],
+    [
+      "codex",
+      ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
+    ],
+    ["pi", ["off", "minimal", "low", "medium", "high"]],
+    ["opencode", ["low", "high", "custom-deep", "custom-fast"]],
+  ] as const)(
+    "preserves the %s model effort IDs and progression",
+    async (harness, levels) => {
+      const { fixture, open } = await setup();
+      fixture.componentRef.setInput("harnesses", [
+        {
+          id: harness,
+          label: harness,
+          mark: "A",
+          models: [{ id: "model", label: "Model", thinking: levels }],
+        },
+      ]);
+      fixture.componentRef.setInput("value", {
+        harness,
+        mark: "A",
+        model: "model",
+        thinking: levels[0],
+      });
+      const changed = vi.fn();
+      fixture.componentInstance.changed.subscribe(changed);
+      await open();
+      const options = [
+        ...document.querySelectorAll<HTMLButtonElement>(
+          '[aria-label="Thinking level"] button',
+        ),
+      ];
+      expect(options.map((option) => option.textContent?.trim())).toEqual(
+        levels.map((id) =>
+          id === "medium"
+            ? "Med"
+            : id === "xhigh"
+              ? "XHigh"
+              : id.charAt(0).toUpperCase() + id.slice(1),
+        ),
+      );
+      options.at(-1)!.click();
+      expect(changed).toHaveBeenCalledWith(
+        expect.objectContaining({ thinking: levels.at(-1) }),
+      );
+    },
+  );
+  it("hides thinking when the selected model has no reported efforts", async () => {
+    const { fixture, open } = await setup();
+    fixture.componentRef.setInput("harnesses", [
+      {
+        id: "claude",
+        label: "Claude",
+        mark: "Cl",
+        models: [{ id: "opus", label: "Unknown", thinking: [] }],
+      },
+    ]);
+    await open();
+    expect(document.querySelector('[aria-label="Thinking level"]')).toBeNull();
   });
   it("dismisses a nested model menu before settings and restores the original focus", async () => {
     const { fixture, trigger, open } = await setup();

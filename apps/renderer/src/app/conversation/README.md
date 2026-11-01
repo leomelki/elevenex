@@ -36,6 +36,12 @@ Components use the supplied design tokens, native controls, CDK overlays/focus t
 
 ## Connected adapter and capability controls
 
+The shared agent settings render only the selected model's advertised thinking
+levels, preserving their IDs and catalog progression. There are no placeholder
+Off/Max choices for models that do not support them. Missing or empty metadata
+hides the thinking row. Live settings and the preset creator use the same control;
+busy/loading states disable every advertised choice.
+
 The production [session chat adapter](../session-chat/README.md) owns transport,
 selection, drafts, decisions and feedback. `Chat` accepts a `chatHistory` slot,
 controlled `actions`, `stoppable`, `retryable`, and `copiedCode`. A

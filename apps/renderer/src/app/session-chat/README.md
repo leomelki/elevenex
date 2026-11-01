@@ -121,6 +121,16 @@ operation and narrow reduced-motion layouts in both themes.
 
 ## Designed composer
 
+Reasoning choices come from each model rather than a generic harness-wide fallback.
+Codex preserves its ordered `supportedReasoningEfforts`; Claude uses its SDK's
+`supportedEffortLevels`. OpenCode filters disabled native variants, orders known
+efforts from low to high and retains custom variant IDs in their native order.
+Pi uses its model thinking mappings (including off/minimal and explicit xhigh/max
+support), reconciles a live selection with `get_available_thinking_levels`, and
+applies changes through `set_thinking_level` before prompting. Catalog failures
+and unknown model capabilities do not invent supported efforts. Both live
+settings and preset catalogs carry these same per-model capabilities.
+
 The connected chat now uses `Composer`’s Plan/Code switch, agent chip and
 permission picker directly. Harness, model, thinking and fast mode live inside
 the agent popover; the toolbar stays on one row. All choices use authoritative

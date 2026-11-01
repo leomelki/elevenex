@@ -70,41 +70,27 @@ export class AgentSettingsComponent {
       const supported =
         this.models().find((model) => model.id === this.value().model)
           ?.thinking ?? [];
-      const lowercase = supported.some(
-        (level) => level === level.toLowerCase(),
-      );
-      const standard = ["Off", "Low", "Medium", "High", "Max"].map((label) => {
-        const id =
-          supported.find(
-            (level) => level.toLowerCase() === label.toLowerCase(),
-          ) ??
-          (label === "Off" && supported.includes("none")
-            ? "none"
-            : lowercase
-              ? label.toLowerCase()
-              : label);
+      // The harness owns availability and progression, including custom variants.
+      return [...new Set(supported)].map((id) => {
+        const level = id.toLowerCase();
+        const label =
+          level === "medium"
+            ? "Med"
+            : level === "xhigh"
+              ? "XHigh"
+              : id.charAt(0).toUpperCase() + id.slice(1);
         return {
           id,
-          label: label === "Medium" ? "Med" : label,
-          title: label,
-          disabled: this.modelUnavailable() || !supported.includes(id),
+          label,
+          title:
+            level === "xhigh"
+              ? "Extra high"
+              : level === "medium"
+                ? "Medium"
+                : label,
+          disabled: this.modelUnavailable(),
         };
       });
-      const known = new Set(standard.map((level) => level.id));
-      return [
-        ...standard,
-        ...supported
-          .filter((id) => !known.has(id))
-          .map((id) => ({
-            id,
-            label:
-              id === "xhigh"
-                ? "XHigh"
-                : id.charAt(0).toUpperCase() + id.slice(1),
-            title: id === "xhigh" ? "Extra high" : id,
-            disabled: this.modelUnavailable(),
-          })),
-      ];
     },
   );
   modelChange(model: string): void {

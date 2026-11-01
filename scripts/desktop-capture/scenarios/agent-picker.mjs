@@ -32,7 +32,7 @@ export default async function* (capture) {
     await capture.click('.agent-settings button[aria-label^="Model:"]');
     await capture.press('End'); await capture.press('Enter');
     await capture.waitFor(() => document.querySelector('.agent-settings button[aria-label^="Model:"]')?.textContent.includes('Sonnet'));
-    assert.equal(await capture.evaluate(() => document.querySelector('[aria-label="Thinking level"] button[aria-label="Max"]').disabled), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('[aria-label="Thinking level"] button[aria-label="Max"]')), null);
     await capture.click('[aria-label="Thinking level"] button[aria-label="Low"]');
     await capture.click('ex-switch button[aria-label="Fast mode"]');
     await capture.waitFor(() => !!document.querySelector('ex-agent-picker .fast'));

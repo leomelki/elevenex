@@ -1,6 +1,7 @@
 import type { Model } from '@opencode-ai/sdk/v2/client';
 import type { AgentProviderModelCatalogPayload } from '../agent-runtime/agent-runtime.types.js';
 import type { OpenCodeClient } from './opencode-client.js';
+import { orderReasoningEfforts } from '../agent-runtime/agent-model-defaults.js';
 
 /** Catalogs are location-dependent: project providers must not be replaced by global defaults. */
 export async function loadOpenCodeModels(client: OpenCodeClient): Promise<{
@@ -21,9 +22,11 @@ export async function loadOpenCodeModels(client: OpenCodeClient): Promise<{
         .map((model) => {
           const id = `${provider.id}/${model.id}`;
           native.set(id, model);
-          const variants = Object.entries(model.variants ?? {})
-            .filter(([, value]) => !value.disabled)
-            .map(([key]) => key);
+          const variants = orderReasoningEfforts(
+            Object.entries(model.variants ?? {})
+              .filter(([, value]) => !value.disabled)
+              .map(([key]) => key),
+          );
           return {
             id,
             displayName: `${provider.name} · ${model.name}`,
@@ -39,9 +42,9 @@ export async function loadOpenCodeModels(client: OpenCodeClient): Promise<{
     models: native,
     catalog: {
       models,
-      reasoningEfforts: [
-        ...new Set(models.flatMap((model) => model.reasoningEfforts)),
-      ],
+      reasoningEfforts: orderReasoningEfforts(
+        models.flatMap((model) => model.reasoningEfforts),
+      ),
       providerDefaultModelId: config.data?.model ?? null,
       supportsModelSelection: true,
       unavailableReason: models.length

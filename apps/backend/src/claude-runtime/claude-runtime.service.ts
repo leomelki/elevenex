@@ -172,8 +172,10 @@ import {
   taskSubagent,
 } from './claude-subagents.js';
 import { ClaudeSessionRuntime } from './claude-session-runtime.js';
-import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
-import { resolveAgentStartupSelection } from '../agent-runtime/agent-model-defaults.js';
+import {
+  orderReasoningEfforts,
+  resolveAgentStartupSelection,
+} from '../agent-runtime/agent-model-defaults.js';
 import type {
   AgentAuthStatus,
   AgentForkConversationRequest,
@@ -787,11 +789,14 @@ export class ClaudeRuntimeService
   ): Promise<AgentProviderModelCatalogPayload> {
     if (refresh) await this.refreshGlobalModels('manual', true);
     else this.refreshGlobalModelsIfStale();
+    const models = this.modelsCache?.length
+      ? [...this.modelsCache]
+      : [...FALLBACK_MODELS];
     return {
-      models: this.modelsCache?.length
-        ? [...this.modelsCache]
-        : [...FALLBACK_MODELS],
-      reasoningEfforts: [...AGENT_REASONING_EFFORTS],
+      models,
+      reasoningEfforts: orderReasoningEfforts(
+        models.flatMap((model) => model.reasoningEfforts ?? []),
+      ),
       providerDefaultModelId: null,
       supportsModelSelection: true,
       unavailableReason: this.modelsRefreshError,
@@ -6837,7 +6842,10 @@ export class ClaudeRuntimeService
       displayName: model.displayName,
       description: model.description,
       supportsEffort: model.supportsEffort,
-      reasoningEfforts: model.supportedEffortLevels,
+      reasoningEfforts:
+        model.supportsEffort === false
+          ? []
+          : orderReasoningEfforts(model.supportedEffortLevels ?? []),
       supportsFastMode: model.supportsFastMode,
       supportsAutoMode: model.supportsAutoMode,
     };

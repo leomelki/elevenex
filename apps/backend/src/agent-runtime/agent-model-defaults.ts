@@ -1,15 +1,17 @@
-import { AGENT_REASONING_EFFORTS } from './agent-runtime.types.js';
 import type { AgentCatalogModel } from './agent-runtime.types.js';
+import { AGENT_REASONING_EFFORTS } from './agent-runtime.types.js';
 
 /**
  * Sorts thinking levels weakest-first using the well-known order, keeping any
  * provider-specific level we don't recognise at the end rather than dropping
- * it — a provider may ship a new level before this list knows about it.
+ * it, in native order — custom variants need not describe reasoning depth.
+ * Use only for unordered catalogs; an explicitly ordered native list wins.
  */
 export function orderReasoningEfforts(efforts: readonly string[]): string[] {
-  const known = AGENT_REASONING_EFFORTS as readonly string[];
-  const unknown = efforts.filter((effort) => !known.includes(effort)).sort();
-  return [...known.filter((effort) => efforts.includes(effort)), ...unknown];
+  const known: readonly string[] = AGENT_REASONING_EFFORTS;
+  const unique = [...new Set(efforts)];
+  const unknown = unique.filter((effort) => !known.includes(effort));
+  return [...known.filter((effort) => unique.includes(effort)), ...unknown];
 }
 
 export interface AgentStartupSelection {
