@@ -1994,3 +1994,31 @@ The light single-turn and dark narrow PNGs were inspected. The isolated preview
 disabled HMR/live reload to avoid the development server's CSP-blocked blob worker;
 production security settings were unchanged. This was an unpackaged component
 preview, not a packaged-app launch.
+
+### Compact message navigation (2026-11-01)
+
+TurnNav uses a virtual scroll window of up to seven 24px targets, capped at 40%
+of the conversation height. Idle navigation follows the current prompt; pointer
+and keyboard browsing hold their position until the user leaves or history is
+replaced. Browsing does not select a message until click, Enter or Space. Fades,
+hover/focus position counts, prompt/status tooltips and a native scrollbar retain
+orientation. Arrow/Page/Home/End navigation keeps focus on one stable listbox.
+Content-only streaming changes do not trigger rail recentering.
+
+Desktop lint, production build and the complete desktop test command passed
+(116 desktop tests, seven capture-tool tests, IPC TypeScript assertions and 539
+renderer tests). Seven focused rail regressions cover short and 10,000-turn
+histories, selection, stable targets, focused session changes and observer cleanup.
+The workspace tests also passed independently after a full-suite timing failure;
+the final full run passed. Concurrent attachment edits were preserved.
+
+`artifacts/desktop-capture/turn-navigation-verified/report.json` reports
+`verified: true`, 13 checkpoints and no errors or warnings. The native scenario
+checks both themes, 1/10,000 targets, keyboard navigation, trusted local wheel
+scrolling, pointer stability, narrow/reduced-motion and an 80px container, plus
+completed first/latest jumps through the real Chat owner. With 10,000 targets,
+the 360px example container held a 144px rail and only 13 rendered controls.
+Light keyboard and dark chat PNGs were inspected, along with narrow/short states
+from the preceding identical-layout capture. The isolated preview disabled
+live reload; production security settings were unchanged. These checks verify
+the unpackaged component preview, not a packaged-app launch.

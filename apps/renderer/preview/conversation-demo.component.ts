@@ -37,10 +37,13 @@ import {
   type McpServer,
   type QuestionAnswers,
   type WorkStep,
+  type TurnNavigationItem,
 } from "../src/app/conversation";
+import { ButtonComponent } from "../src/app/ui";
 @Component({
   selector: "ex-conversation-demo",
   imports: [
+    ButtonComponent,
     AgentPickerComponent,
     ApprovalCardComponent,
     ChatComponent,
@@ -74,6 +77,17 @@ import {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ConversationDemoComponent {
+  readonly navigationTurns = signal<readonly TurnNavigationItem[]>([]);
+  readonly navigationActive = signal("navigation-500");
+  navigationSize(count: number): void {
+    this.navigationTurns.set(Array.from({ length: count }, (_, index) => ({
+      id: `navigation-${index}`,
+      label: `Investigate conversation message ${index + 1}`,
+      state: index % 7 === 1 ? "changes" : index % 11 === 2 ? "attention" : index === count - 1 ? "live" : undefined,
+    })));
+    this.navigationActive.set(`navigation-${Math.floor(count / 2)}`);
+  }
+  constructor() { this.navigationSize(1000); }
   readonly mode = signal<ConversationMode>("code");
   readonly permission = signal<string>("edits");
   readonly agent = signal<AgentConfig>({

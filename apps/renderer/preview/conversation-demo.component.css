@@ -54,6 +54,9 @@ p {
 .session-start {
   height: 460px;
 }
+.navigation-demo { position: relative; display: flex; align-items: center; height: 360px; padding-right: var(--space-8); }
+.navigation-demo ex-turn-nav { position: absolute; right: 0; max-height: 40%; }
+.navigation-demo p { padding-right: var(--space-6); color: var(--ink-muted); }
 @media (max-width: 960px) {
   .gallery {
     grid-template-columns: 1fr;

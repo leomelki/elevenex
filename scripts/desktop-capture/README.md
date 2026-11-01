@@ -317,6 +317,12 @@ focus restoration and narrow reduced-motion layouts in both themes.
 
 ## Output and failures
 
+`scenarios/turn-navigation.mjs` checks the compact message rail with 1 and 10,000
+targets: bounded height/DOM, keyboard browsing and jumps, stable pointer targets,
+local wheel scrolling, both themes, narrow/short/reduced-motion layouts and real
+Chat selection. Run it against the component preview URL, with live reload
+disabled if the development server's blob worker is rejected by the capture CSP.
+
 Every checkpoint yields a numbered PNG plus `.json` (layout/state/focus) and
 `.a11y.json`. `index.html` compares images, links to snapshots, and shows errors;
 `report.json` records timings, theme, viewport, metadata and verification status.

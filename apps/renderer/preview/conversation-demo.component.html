@@ -186,16 +186,15 @@
   </section>
   <section>
     <h2>Turn navigation</h2>
-    <ex-turn-nav
-      [turns]="[
-        { id: 'a', label: 'Retry policy' },
-        { id: 'b', label: 'Add coverage', state: 'changes' },
-        { id: 'c', label: 'Confirm behavior', state: 'attention' },
-        { id: 'd', label: 'Run tests', state: 'live' },
-        { id: 'e', label: 'Write docs' },
-      ]"
-      active="b"
-    />
+    <div class="controls">
+      @for (count of [1, 7, 1000, 10000]; track count) {
+        <button exButton size="sm" variant="secondary" (click)="navigationSize(count)">{{ count }} messages</button>
+      }
+    </div>
+    <div class="navigation-demo">
+      <p>Scroll the rail to browse. Select a marker to jump.<br />Arrow keys browse; Home / End reach the first / latest message.</p>
+      <ex-turn-nav [turns]="navigationTurns()" [active]="navigationActive()" (selected)="navigationActive.set($event)" />
+    </div>
   </section>
   <section class="wide">
     <h2>New session</h2>

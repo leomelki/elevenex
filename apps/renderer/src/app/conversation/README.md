@@ -22,6 +22,17 @@ These standalone OnPush components consume renderer view models and emit typed i
 
 `TurnNav` shows the right-edge message selector from the first turn, regardless
 of session length. Empty sessions have no navigation targets and hide it.
+The rail is a small scrollable window: at most seven 24px targets, further capped
+at 40% of the chat height. CDK virtual scrolling keeps only a small buffered set
+of markers mounted, even with thousands of supplied turns. Faded edges indicate
+more history; hovering or focusing reveals a position count and scrollbar, and
+marker tooltips include the prompt, ordinal and status. It follows the current
+message when idle, but holds its position during pointer/keyboard browsing.
+Changing the history window releases that hold. Arrow keys, Page Up/Down and
+Home/End browse without moving the chat; Enter/Space selects. There is one Tab
+stop, with focus retained on the viewport while virtual rows change. Resize and
+range subscriptions are released with the rail. The `/conversation` preview has
+1/7/1,000/10,000-message controls for this behavior.
 
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
 
