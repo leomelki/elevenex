@@ -302,14 +302,11 @@
       (queueRemove)="queueAction('cancel-queued', $event)"
     >
     </ex-composer>
-    <div class="composer-note">
-      <span role="status">{{
-        store.notice() ||
-          (store.running()
-            ? "Enter to queue · Alt Enter to steer"
-            : "Enter to send · Shift Enter for a new line")
-      }}</span>
-    </div>
+    @if (store.notice(); as notice) {
+      <div class="composer-note">
+        <span role="status">{{ notice }}</span>
+      </div>
+    }
   </div>
 </ex-chat>
 @if (contentId(); as id) {
