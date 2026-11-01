@@ -1510,6 +1510,42 @@ export class CodexRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options: { waitForCompletion?: boolean } = {},
+  ): Promise<void> {
+    if (options.waitForCompletion !== false)
+      return this.runPrompt(sessionId, prompt, titlePrompt, images);
+    let owned = false;
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
+    let accepted!: () => void;
+    const receipt = new Promise<void>((resolve) => { accepted = resolve; });
+    const completion = this.runPrompt(sessionId, prompt, titlePrompt, images, () => {
+      owned = true;
+      accepted();
+    });
+    // Keep runtime ownership and stop/cleanup intact after HTTP acknowledges the send.
+    // In particular a late turn-change cleanup failure must still reach the live UI.
+    void completion.catch((error: unknown) => {
+      if (!owned || this.invalidatedSessions.has(sessionId) ||
+          generation !== (this.sessionGenerations.get(sessionId) ?? 0)) return;
+      const state = this.ensureRuntimeState(sessionId);
+      const message = error instanceof Error ? error.message : String(error);
+      state.lastError = message;
+      state.runPhase = 'error';
+      state.sessionState = 'idle';
+      state.canInterrupt = false;
+      this.emitEvent({ type: 'error', payload: { sessionId, message } });
+      this.emitRunState(sessionId);
+      this.logger.error(`Codex run failed session=${sessionId}: ${message}`);
+    });
+    await Promise.race([receipt, completion]);
+  }
+
+  private async runPrompt(
+    sessionId: number,
+    prompt: string,
+    titlePrompt?: string,
+    images?: AgentImageInput[],
+    onAccepted?: () => void,
   ): Promise<void> {
     const generation = this.sessionGenerations.get(sessionId) ?? 0;
     this.assertNotRewinding(sessionId);
@@ -1654,6 +1690,7 @@ export class CodexRuntimeService
       userInputRequests: new Map(),
     });
 
+    onAccepted?.();
     let stagedImageDir: string | null = null;
     let changeCapture: TurnChangeCapture | undefined;
     try {

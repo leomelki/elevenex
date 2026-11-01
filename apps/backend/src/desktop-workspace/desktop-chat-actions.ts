@@ -67,7 +67,7 @@ export async function executeChatAction(
         text(action.text, 64000),
         undefined,
         undefined,
-        { human: true, queue: action.queue },
+        { human: true, queue: action.queue, waitForCompletion: false },
       );
       break;
     case 'cancel-queued':

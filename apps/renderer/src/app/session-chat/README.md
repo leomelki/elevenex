@@ -15,7 +15,9 @@ so nested/preview backend scopes resolve consistently.
 - `SessionChatDrafts` retains at most 20 ordinary session drafts per workspace
   scope. Unresolved writes are not evicted silently. A failed send restores its
   text ahead of any newly typed draft. An uncertain outcome requires checking
-  delivery and explicit acknowledgement before another send.
+  delivery and explicit acknowledgement before another send. A new matching
+  user/queue receipt confirms delivery even if the command reply is lost;
+  running state or assistant output alone does not confirm a particular send.
 - `session-chat-transcript` projects provider-neutral items into stable turns,
   pairing tools/results by tool ID and preserving commentary, reasoning,
   unknown tools, orphan results and explicit failures. Fresh prompts alone opt
@@ -42,7 +44,10 @@ so nested/preview backend scopes resolve consistently.
   rendered as text, including HTML returned by tools.
 
 The backend adapter supports the registry's Claude, Codex, Pi and OpenCode
-providers, with its existing prompt/queue/steer/stop semantics. Questions include
+providers, with its existing prompt/queue/steer/stop semantics. Desktop Codex
+sends request acknowledgement once the runtime owns the turn, without keeping
+HTTP open until generation finishes; existing completion-waiting callers retain
+their default behavior. Later failures still use the runtime error/state feed. Questions include
 Claude's permission-backed AskUserQuestion and provider-native questions/MCP
 primitive form fields. Permission decisions target the actual pending request;
 one-shot requests omit Always allow. Model/permission choices come from runtime

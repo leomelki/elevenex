@@ -24,6 +24,7 @@ import {
 interface PendingSubmission extends PendingChatPrompt {
   readonly queue: boolean;
   readonly knownQueueIds: ReadonlySet<string>;
+  confirmed: boolean;
 }
 
 export interface ChatSelection extends SessionChatTarget {
@@ -281,8 +282,10 @@ export class SessionChatStore {
           (item) =>
             !pending.knownQueueIds.has(item.id) && item.text === pending.text,
         ))
-    )
+    ) {
+      pending.confirmed = true;
       this.pending.set(null);
+    }
     const queued = this.pendingQueue();
     if (
       queued &&
@@ -296,8 +299,10 @@ export class SessionChatStore {
             !queued.knownIds.has(item.id) &&
             item.text === queued.text,
         ))
-    )
+    ) {
+      queued.confirmed = true;
       this.pendingQueue.set(null);
+    }
   }
 
   async submit(submission: ComposerSubmission): Promise<void> {
@@ -316,6 +321,7 @@ export class SessionChatStore {
     }
     const pending = {
       id: "local-" + crypto.randomUUID(),
+      confirmed: false,
       text: submission.text,
       queue: submission.intent === "queue",
       timestamp: new Date().toISOString(),
@@ -392,11 +398,18 @@ export class SessionChatStore {
       )
     )
       this.stopRead();
-    const result = await this.client.command(selection.scopeId, {
+    const pending = action.type === "send"
+      ? (action.queue ? this.pendingQueue() : this.pending())
+      : null;
+    let result = await this.client.command(selection.scopeId, {
       taskId: selection.taskId,
       sessionId: selection.sessionId,
       action,
     });
+    // A durable user/queue receipt is stronger evidence than a lost HTTP reply.
+    // Running state or assistant output alone cannot identify this submission.
+    if (!result.ok && result.error.code === "outcome-unknown" && pending?.confirmed)
+      result = { ok: true, value: { accepted: true } };
     if (
       result.ok ||
       (result.error.code !== "outcome-unknown" &&

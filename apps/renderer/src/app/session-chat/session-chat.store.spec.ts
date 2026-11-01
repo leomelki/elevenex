@@ -152,6 +152,44 @@ describe("session chat ownership", () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
   });
+  it.each([false, true])("uses confirmed delivery when a command reply is lost (queue=%s)", async (queue) => {
+    const { store, bridge } = setup();
+    await settle();
+    const write = deferred<BackendResult<{ readonly accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(write.promise);
+    const sending = store.submit({ text: "Do the work", intent: queue ? "queue" : "send", context: [] });
+    store.setDraft("Next thought");
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, queue
+      ? { state: { ...state, queue: [{ id: "queued", text: "Do the work" }] } }
+      : { items: [item("delivered", "user", "Do the work")] })));
+    await store.refresh();
+    write.resolve({ ok: false, error: { code: "outcome-unknown", message: "Check delivery" } });
+    await sending;
+    expect(store.uncertain()).toBe("");
+    expect(store.error()).toBe("");
+    expect(store.busy()).toBe("");
+    expect(store.draft()).toBe("Next thought");
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps delivery uncertain when only running state and assistant output are observed", async () => {
+    const { store, bridge } = setup();
+    await settle();
+    const write = deferred<BackendResult<{ readonly accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(write.promise);
+    const sending = store.submit({ text: "Do the work", intent: "send", context: [] });
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      state: { ...state, phase: "running", canInterrupt: true },
+      items: [item("output", "assistant", "Already working")],
+    })));
+    await store.refresh();
+    write.resolve({ ok: false, error: { code: "outcome-unknown", message: "Check delivery" } });
+    await sending;
+    expect(store.uncertain()).toBe("Check delivery");
+    expect(store.draft()).toBe("Do the work");
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  });
+
   it("blocks uncertain sends across navigation and never replays them on read recovery", async () => {
     const { store, bridge } = setup();
     await settle();

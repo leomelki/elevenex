@@ -163,7 +163,12 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options?: { human?: boolean; queue?: boolean },
+    options?: {
+      human?: boolean;
+      queue?: boolean;
+      /** Codex can acknowledge runtime ownership before the turn completes. Defaults to waiting. */
+      waitForCompletion?: boolean;
+    },
   ): Promise<void>;
   interrupt(sessionId: number): Promise<void>;
   cancelPendingPrompt(sessionId: number, id: string): Promise<void>;

@@ -1097,6 +1097,53 @@ describe('CodexRuntimeService', () => {
     expect(state).toMatchObject({ pendingPrompts: [], runPhase: 'idle' });
   });
 
+  it('acknowledges desktop sends while retaining the running turn and streaming lifecycle', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    await service.submitPrompt(7, 'Keep working', undefined, undefined, { waitForCompletion: false });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(wire.turnStartParams).toMatchObject({ input: [{ type: 'text', text: 'Keep working' }] });
+    expect(await service.getRuntimeState(7)).toMatchObject({ runPhase: 'running', canInterrupt: true });
+    wire.notificationHandler({
+      method: 'item/agentMessage/delta',
+      params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'reply', delta: 'Still working' },
+    });
+    expect((await service.getRuntimeState(7)).liveItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'assistant', content: 'Still working' }),
+    ]));
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(await service.getRuntimeState(7)).toMatchObject({ runPhase: 'idle', canInterrupt: false });
+  });
+
+  it('rejects an unaccepted desktop send without starting a turn', async () => {
+    const { service, appServer } = createService();
+    await service.cleanupSession(7);
+    await expect(service.submitPrompt(7, 'Closed', undefined, undefined, { waitForCompletion: false }))
+      .rejects.toThrow('closed');
+    expect(appServer.request).not.toHaveBeenCalledWith('turn/start', expect.anything());
+  });
+
+  it('publishes cleanup failures after a desktop send was acknowledged', async () => {
+    const turnChanges = {
+      begin: jest.fn<TurnChangesService['begin']>().mockResolvedValue(undefined),
+      finish: jest.fn<TurnChangesService['finish']>().mockRejectedValue(new Error('capture cleanup failed')),
+    };
+    const { service, appServer } = createService(undefined, turnChanges);
+    const wire = wireAppServerTurn(appServer);
+    await service.submitPrompt(7, 'Do the work', undefined, undefined, { waitForCompletion: false });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    wire.notificationHandler({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(await service.getRuntimeState(7)).toMatchObject({ runPhase: 'error', lastError: 'capture cleanup failed', canInterrupt: false });
+  });
+
   it('accepts a new prompt after reactivation and reloads the task’s current environment', async () => {
     const { service, sessionsService } = createService();
     (service as any).ensureRuntimeState(7).cachedWorktreePath =

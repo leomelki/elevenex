@@ -133,6 +133,8 @@ describe('selected session chat', () => {
     rememberAgentConfig.mockRejectedValueOnce(new Error('Database unavailable'));
     await expect(chat.command(1, 2, { type: 'send', text: 'Hello', queue: false })).resolves.toEqual({ accepted: true });
     expect(runtime.submitPrompt).toHaveBeenCalledTimes(1);
+    expect(runtime.submitPrompt).toHaveBeenCalledWith(2, 'Hello', undefined, undefined,
+      { human: true, queue: false, waitForCompletion: false });
   });
 
   it('remembers a fully applied preset and leaves the fallback alone on partial failure', async () => {
@@ -468,7 +470,7 @@ describe('selected session chat', () => {
       'Use the selected harness',
       undefined,
       undefined,
-      { human: true, queue: false },
+      { human: true, queue: false, waitForCompletion: false },
     );
     expect(runtime.submitPrompt).not.toHaveBeenCalled();
   });
