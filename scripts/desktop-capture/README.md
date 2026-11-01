@@ -436,6 +436,11 @@ questions, keyboard sending, editable drafts while streaming, navigation retenti
 uncertain delivery, paged original content, bounded history and narrow reduced
 motion states. It uses the connected workspace at the same preview URL.
 
+`scenarios/session-opening-scroll.mjs` checks that switching and reopening long
+sessions starts at the end on the first rendered frame. It also checks reading
+position through refresh, both themes, narrow layouts and reduced motion using
+the connected workspace preview.
+
 `scenarios/session-harness.mjs` verifies the connected composer's pre-start harness
 choice, registry labels, keyboard operation, draft retention, model refresh,
 started-session locking and narrow layouts in both themes. Use the same preview

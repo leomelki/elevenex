@@ -1,5 +1,6 @@
 import { SessionChatMedia } from './session-chat-media';
 import {
+  afterRenderEffect,
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
@@ -10,6 +11,7 @@ import {
   input,
   output,
   signal,
+  untracked,
   viewChild,
 } from "@angular/core";
 import {
@@ -305,6 +307,21 @@ export class SessionChatComponent {
       this.identity();
       this.contentId.set(null);
       this.presetFlow.reset();
+    });
+    let scrollIdentity = "";
+    let opening = true;
+    afterRenderEffect(() => {
+      const identity = this.identity();
+      if (identity !== scrollIdentity) {
+        scrollIdentity = identity;
+        opening = true;
+      }
+      const ready = !this.store.loading() && !!this.store.state();
+      const scroll = this.chat()?.scroll();
+      if (!opening || !ready || !scroll) return;
+      opening = false;
+      // Hydrated history must be positioned before paint, without scroll animation.
+      untracked(() => scroll.scrollToEnd("instant"));
     });
     effect((cleanup) => {
       if (!this.store.state()?.planUsage) return;

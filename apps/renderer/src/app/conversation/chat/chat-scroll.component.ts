@@ -115,14 +115,13 @@ export class ChatScrollComponent {
       );
     }
   }
-  scrollToEnd(): void {
+  scrollToEnd(behavior: ScrollBehavior = "smooth"): void {
     const viewport = this.viewport().nativeElement;
     this.atEnd.set(true);
     this.unread.set(false);
-    viewport.scrollTo({
-      top: viewport.scrollHeight,
-      behavior: this.reducedMotion() ? "instant" : "smooth",
-    });
+    if (behavior === "instant" || this.reducedMotion())
+      viewport.scrollTop = viewport.scrollHeight;
+    else viewport.scrollTo({ top: viewport.scrollHeight, behavior });
   }
   private refreshMessages(): void {
     this.messages = Array.from(

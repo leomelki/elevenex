@@ -143,6 +143,55 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it("opens hydrated sessions at the end and preserves reading position on refresh", async () => {
+    const { fixture, root } = setup([
+      item("prompt", "user", "An existing conversation"),
+      item("reply", "assistant", "The latest reply"),
+    ]);
+    const viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
+    Object.defineProperties(viewport, {
+      scrollHeight: { configurable: true, value: 2000 },
+      clientHeight: { configurable: true, value: 400 },
+    });
+    await settle(fixture);
+    expect(viewport.scrollTop).toBe(2000);
+
+    viewport.scrollTop = 100;
+    viewport.dispatchEvent(new Event("scroll"));
+    await fixture.componentInstance.store.refresh();
+    await settle(fixture);
+    expect(viewport.scrollTop).toBe(100);
+  });
+
+  it("jumps to the end after a switched session's delayed history renders, including reopening", async () => {
+    const { fixture, root, bridge } = setup([item("first", "user", "First session")]);
+    await settle(fixture);
+    const viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
+    Object.defineProperties(viewport, {
+      scrollHeight: { configurable: true, value: 3000 },
+      clientHeight: { configurable: true, value: 400 },
+    });
+    viewport.scrollTop = 100;
+    viewport.dispatchEvent(new Event("scroll"));
+    let resolveRead!: (reply: { ok: true; value: SessionChatPage }) => void;
+    bridge.sessionChatRead.mockImplementationOnce(() => new Promise(resolve => { resolveRead = resolve; }));
+    fixture.componentRef.setInput("selection", { scopeId: "scope", taskId: 1, sessionId: 3 });
+    await settle(fixture);
+    expect(fixture.componentInstance.store.loading()).toBe(true);
+    resolveRead({ ok: true, value: {
+      taskId: 1, sessionId: 3, cursor: "next", reset: true, before: null,
+      items: [item("second", "user", "Second session")], events: [], state,
+    } });
+    await settle(fixture);
+    expect(viewport.scrollTop).toBe(3000);
+
+    viewport.scrollTop = 200;
+    viewport.dispatchEvent(new Event("scroll"));
+    fixture.componentRef.setInput("selection", { scopeId: "scope", taskId: 1, sessionId: 2 });
+    await settle(fixture);
+    expect(viewport.scrollTop).toBe(3000);
+  });
+
   it('renders orphan structured receipts as tool evidence and leaves missing completion unknown', async () => {
     const { fixture, root } = setup([
       { ...item('orphan', 'tool_result', '{"title":"Retry safety","owner":"Payments"}'), toolKind: 'mcp', toolName: 'Issue lookup', toolId: 'outside-window' },

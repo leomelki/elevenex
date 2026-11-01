@@ -1927,3 +1927,18 @@ light/dark, narrow/reduced-motion, primary/Details, keyboard and inert checkpoin
 and no errors or warnings. Added, deleted and updated PNGs were inspected. This
 verifies the unpackaged renderer with provider-shaped preview data; no packaged
 launch was attempted. Unrelated concurrent composer-note edits were preserved.
+
+### Session opening scroll (2026-11-01)
+
+Selected sessions jump directly to the transcript end after initial history
+renders, before paint. Switching and reopening reset bottom following; refresh
+preserves the position of a reader who scrolled up. Focused tests cover delayed
+history as well as initial hydration and reopening.
+
+Desktop lint, production build and desktop:test passed (115 desktop, seven
+capture-tool and 524 renderer tests). The native session-opening-scroll.mjs
+scenario verified the first rendered frame across repeated session switches,
+reopening and refresh, in both themes and narrow/reduced-motion layouts.
+artifacts/desktop-capture/run-vHE2cH/report.json reports verified: true, four
+checkpoints and no errors or warnings. All four PNGs were inspected. These are
+unpackaged preview-provider checks; no packaged-app launch was attempted.

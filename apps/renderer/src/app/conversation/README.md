@@ -22,6 +22,11 @@ These standalone OnPush components consume renderer view models and emit typed i
 
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
 
+`ChatScroll.scrollToEnd(behavior)` defaults to smooth scrolling and accepts
+`"instant"` for opening history before paint. Reduced motion always jumps directly.
+The connected session owner jumps once after each selected session has loaded;
+subsequent updates preserve the reader's position when they scroll up.
+
 ## Markdown and security
 
 Markdown becomes a typed AST rendered as text nodes and semantic Angular templates. Raw HTML is always inert text. Active link schemes and credential-bearing URLs are rejected. File and web links emit separate intents; copying code emits `copyCode`. Mermaid fences remain code until a future trusted diagram adapter is supplied.
