@@ -29,11 +29,12 @@ of session length. Empty sessions have no navigation targets and hide it.
 `"instant"` for opening history before paint. Reduced motion always jumps directly.
 The connected session owner jumps once after each selected session has loaded;
 subsequent updates preserve the reader's position when they scroll up.
-The floating Scroll to bottom control appears whenever the reader is more than
-40px from the end, even without incoming content. Growth changes its label to
-New messages. It stays present during native smooth scrolling, becomes inert
+The floating arrow-only return control appears whenever the reader is more than
+40px from the end, even without incoming content. Growth adds a small unread dot;
+the tooltip and accessible label describe its action. It stays present during
+native smooth scrolling, becomes inert
 as it fades out at the end, and hands keyboard focus to the transcript on
-activation. Its reversible opacity/transform transitions and label swap use the
+activation. Its reversible opacity/transform transitions use the
 shared motion tokens; reduced motion settles immediately. Observing both the
 content and viewport also reconciles the control after layout changes.
 

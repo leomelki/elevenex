@@ -21,6 +21,8 @@ export default async function* (capture) {
     for (const reduced of [false, true]) {
       await capture.viewport(reduced ? 1000 : 1440, reduced ? 760 : 960);
       await capture.reducedMotion(reduced);
+      await capture.waitFor(() => document.getAnimations().every(animation =>
+        !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running'));
       await capture.component('ex-chat-scroll', component => component.scrollToEnd('instant'));
       const name = `${theme}-${reduced ? 'narrow-reduced' : 'full'}`;
       assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-scroll .return').inert), true);
@@ -47,7 +49,13 @@ export default async function* (capture) {
       }
       yield { name: `${name}-reading`, inspect: ['ex-chat-scroll .return', 'ex-composer'] };
       assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-scroll .return').inert), false);
-      assert.match(await capture.evaluate(() => document.querySelector('ex-chat-scroll .return-button').textContent), /Scroll to bottom/);
+      assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-scroll .return-button').textContent.trim()), '');
+      assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-scroll .return-button').getAttribute('aria-label')), 'Scroll to bottom');
+      const geometry = await capture.evaluate(() => {
+        const rect = document.querySelector('ex-chat-scroll .return-button').getBoundingClientRect();
+        return { width: rect.width, height: rect.height };
+      });
+      assert.equal(geometry.width, geometry.height);
 
       // Native Enter activates the same return action as pointer input.
       await capture.evaluate(() => document.querySelector('ex-chat-scroll .return-button').focus());
@@ -91,7 +99,8 @@ export default async function* (capture) {
       await capture.component('ex-session-chat', component => component.store.submit({
         text: 'Verify the scroll return while I read the earlier reply.', intent: 'send', context: [],
       }));
-      await capture.waitFor(() => document.querySelector('ex-chat-scroll .return-button')?.textContent.includes('New messages'));
+      await capture.waitFor(() => document.querySelector('ex-chat-scroll .return-button .unread-dot'));
+      assert.match(await capture.evaluate(() => document.querySelector('ex-chat-scroll .return-button').getAttribute('aria-label')), /New messages/);
       yield { name: `${name}-unread`, inspect: ['ex-chat-scroll .return', 'ex-composer'] };
       await capture.click('ex-chat-scroll .return-button');
       await capture.waitFor(() => {
@@ -103,6 +112,7 @@ export default async function* (capture) {
         const chat = document.querySelector('ex-session-chat');
         return window.ng.getComponent(chat).store.state()?.phase === 'idle';
       });
+      await capture.component('ex-session-chat', component => component.store.refresh());
     }
   }
 }

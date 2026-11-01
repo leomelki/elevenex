@@ -1,5 +1,19 @@
 # Component system verification
 
+## Compact chat return control, 2026-11-01
+
+The return control is now a 36px circular arrow button without visible text.
+A small unread dot preserves new-message feedback; the tooltip and accessible
+name describe the action. Smooth scrolling, interrupted transitions and focus
+handoff are retained.
+
+Desktop lint, production build and all four scroll tests pass. The updated
+[native capture](../../artifacts/desktop-capture/run-HiYUXu/report.json) is
+`verified: true` across 18 checkpoints with no errors or warnings. Inspected
+PNGs cover light/dark, unread feedback, narrow/reduced motion and entrance
+frames. The isolated preview disabled HMR/live reload to avoid interruptions
+from concurrent edits. This is an unpackaged preview check.
+
 ## Chat scroll return, 2026-11-01
 
 The floating return control appears above the composer when reading more than

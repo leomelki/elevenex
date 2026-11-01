@@ -443,8 +443,9 @@ the connected workspace preview.
 
 `scenarios/chat-scroll-return.mjs` checks the floating return control without
 incoming content, scrubbed entrance frames, native smooth scrolling, keyboard
-focus handoff, interrupted exits and unread message labels. It covers both
-themes and narrow reduced-motion layouts against the same connected preview.
+focus handoff, interrupted exits and unread indicators on the arrow-only button.
+It covers both themes and narrow reduced-motion layouts against the same
+connected preview.
 
 `scenarios/session-harness.mjs` verifies the connected composer's pre-start harness
 choice, registry labels, keyboard operation, draft retention, model refresh,

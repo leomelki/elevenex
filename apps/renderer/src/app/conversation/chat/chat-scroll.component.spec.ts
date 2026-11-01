@@ -106,7 +106,8 @@ describe("ChatScroll return to bottom", () => {
     expect(control.hasAttribute("inert")).toBe(true);
     moveTo(200);
     expect(control.hasAttribute("inert")).toBe(false);
-    expect(button.textContent).toContain("Scroll to bottom");
+    expect(button.textContent?.trim()).toBe("");
+    expect(button.getAttribute("aria-label")).toBe("Scroll to bottom");
     expect(fixture.componentInstance.unread()).toBe(false);
 
     button.focus();
@@ -124,7 +125,7 @@ describe("ChatScroll return to bottom", () => {
   });
 
   it("preserves reading position on growth, clears unread at the end, and resumes following", async () => {
-    const { fixture, viewport, dimensions, moveTo, control } = await setup();
+    const { fixture, viewport, dimensions, moveTo, button, control } = await setup();
     moveTo(200);
     dimensions.height = 1400;
     // Exercise the owned content observer rather than calling private measurement.
@@ -133,6 +134,8 @@ describe("ChatScroll return to bottom", () => {
     fixture.detectChanges();
     expect(viewport.scrollTop).toBe(200);
     expect(fixture.componentInstance.unread()).toBe(true);
+    expect(button.getAttribute("aria-label")).toBe("New messages. Scroll to bottom");
+    expect(button.querySelector(".unread-dot")).not.toBeNull();
     expect(control.hasAttribute("inert")).toBe(false);
     moveTo(1000);
     expect(fixture.componentInstance.unread()).toBe(false);

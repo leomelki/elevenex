@@ -31,10 +31,13 @@
     exButton
     variant="secondary"
     class="return-button"
-    aria-label="Scroll to bottom"
+    [attr.aria-label]="returnLabel()"
+    [exTooltip]="returnLabel()"
     (click)="returnToEnd()"
   >
     <ex-icon name="arrow-down" [size]="16" />
-    <ex-ease-swap [value]="unread() ? 'New messages' : 'Scroll to bottom'" />
+    @if (unread()) {
+      <span class="unread-dot" aria-hidden="true"></span>
+    }
   </button>
 </div>

@@ -2,6 +2,7 @@ import {
   afterNextRender,
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   inject,
   input,
@@ -10,14 +11,14 @@ import {
   viewChild,
   type ElementRef,
 } from "@angular/core";
-import { ButtonComponent, EaseSwapComponent, IconComponent } from "../../ui";
+import { ButtonComponent, IconComponent, TooltipDirective } from "../../ui";
 interface Reminder {
   readonly id: string;
   readonly text: string;
 }
 @Component({
   selector: "ex-chat-scroll",
-  imports: [ButtonComponent, EaseSwapComponent, IconComponent],
+  imports: [ButtonComponent, IconComponent, TooltipDirective],
   templateUrl: "./chat-scroll.component.html",
   styleUrl: "./chat-scroll.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -29,6 +30,9 @@ export class ChatScrollComponent {
   readonly atEnd = signal(true);
   readonly pin = signal<Reminder | null>(null);
   readonly unread = signal(false);
+  readonly returnLabel = computed(() =>
+    this.unread() ? "New messages. Scroll to bottom" : "Scroll to bottom",
+  );
   readonly viewport =
     viewChild.required<ElementRef<HTMLDivElement>>("viewport");
   readonly content = viewChild.required<ElementRef<HTMLDivElement>>("content");

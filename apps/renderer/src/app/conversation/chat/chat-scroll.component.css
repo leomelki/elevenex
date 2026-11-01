@@ -106,12 +106,21 @@ button:focus-visible {
     visibility 0s;
 }
 .return-button {
+  position: relative;
+  width: calc(var(--space-8) + var(--space-1));
   height: calc(var(--space-8) + var(--space-1));
-  padding: 0 var(--space-4);
-  gap: var(--space-2);
+  padding: 0;
   border-radius: var(--radius-full);
   box-shadow: var(--shadow-pop);
-  font-size: var(--text-ui-size);
+}
+.unread-dot {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--accent);
 }
 .return-button:focus-visible {
   box-shadow: var(--focus-ring), var(--shadow-pop);
