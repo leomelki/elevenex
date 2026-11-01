@@ -197,6 +197,9 @@ export function chatExchanges(
     );
     const files = captured?.files ?? [...reported.values()];
     const filesTotal = captured?.total ?? files.length;
+    const answer = group.items.slice(finalStart, finalEnd).map(item => item.text).join("\n\n");
+    const attachments = group.items.filter(item => !item.error).flatMap(item => item.media ?? [])
+      .filter(media => media.inline && !answer.includes(`](${media.path})`));
     return {
       overflow: group.items
         .filter((item) => item.truncated)
@@ -231,10 +234,7 @@ export function chatExchanges(
         finalEnd > 0
           ? steps.find((step) => followingIds.has(step.id))?.id
           : undefined,
-      answer: group.items
-        .slice(finalStart, finalEnd)
-        .map((item) => item.text)
-        .join("\n\n"),
+      answer: [answer, ...attachments.map(media => `![${media.caption.replace(/[[\]\r\n]/g, " ")}](${media.path})`)].filter(Boolean).join("\n\n"),
       author: state?.provider ?? "Agent",
       mark: (state?.provider ?? "EX").slice(0, 2).toUpperCase(),
       error: index === groups.length - 1 ? (state?.error ?? "") : "",

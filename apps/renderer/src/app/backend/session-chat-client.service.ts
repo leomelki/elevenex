@@ -11,6 +11,8 @@ import type {
   SessionChatChangesPage,
   SessionChatContentRead,
   SessionChatContent,
+  SessionChatMediaRead,
+  SessionChatMedia,
 } from "@elevenex/shared";
 import {
   BackendClientService,
@@ -42,6 +44,9 @@ export class SessionChatClient {
     return this.invoke(scope, true, () =>
       this.bridge.sessionChatCommand(scope, input),
     );
+  }
+  media(scope: string, input: SessionChatMediaRead): Promise<BackendResult<SessionChatMedia>> {
+    return this.invoke(scope, false, () => this.bridge.sessionChatMedia(scope, input));
   }
   content(
     scope: string,

@@ -1,3 +1,4 @@
+import { chatMedia, readChatMedia } from './desktop-chat-media.js';
 import { chatCatalog } from './desktop-chat-catalog.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { chatPresets, executePresetAction } from './desktop-chat-presets.js';
@@ -21,6 +22,7 @@ import { SessionsService } from '../sessions/sessions.service.js';
 import { chatPlanUsage } from './desktop-chat-usage.js';
 import {
   type ChatChangesCache,
+  type ChatMediaCache,
   chatState,
   chatWindow,
   display,
@@ -37,6 +39,7 @@ interface ChatFeed {
     { readonly json: string; readonly revision: number }
   >;
   readonly changesCache: ChatChangesCache;
+  readonly mediaCache: ChatMediaCache;
   review?: { readonly turnId: string; readonly revision: number; readonly historyRevision: number; readonly expires: number; readonly pending: Promise<PreparedTurnChanges> };
   revision: number;
   historyRevision: number;
@@ -167,6 +170,7 @@ export class DesktopChatService implements OnModuleDestroy {
       waiters: new Set(),
       projections: new Map(),
       changesCache: new WeakMap(),
+      mediaCache: new WeakMap(),
       stop: () => {
         provider.off('event', changed);
         if (feed.attached) provider.onClientDetached?.(sessionId);
@@ -274,7 +278,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const live = Array.isArray(raw.liveItems)
       ? (raw.liveItems as AgentTranscriptItem[])
       : [];
-    const window = chatWindow(history, live, before, feed.changesCache);
+    const window = chatWindow(history, live, before, feed.changesCache, feed.mediaCache);
     if (!window)
       throw new BadRequestException(
         'History cursor expired. Return to latest messages.',
@@ -437,21 +441,7 @@ export class DesktopChatService implements OnModuleDestroy {
     );
   }
 
-  async content(
-    taskId: number,
-    sessionId: number,
-    itemId: string,
-    part: string,
-    offset: number,
-  ) {
-    if (
-      !itemId ||
-      itemId.length > 1000 ||
-      (part !== 'text' && part !== 'input') ||
-      !Number.isSafeInteger(offset) ||
-      offset < 0
-    )
-      throw new BadRequestException('Invalid content window.');
+  private async transcriptItem(taskId: number, sessionId: number, itemId: string) {
     const session = await this.target(taskId, sessionId),
       provider = this.registry.getProvider(session.activeAgentProvider);
     const [history, runtime] = await Promise.all([
@@ -470,6 +460,34 @@ export class DesktopChatService implements OnModuleDestroy {
       throw new BadRequestException(
         'This transcript item is no longer available.',
       );
+    return { item, session };
+  }
+
+  async media(taskId: number, sessionId: number, itemId: string, mediaId: string) {
+    if (!itemId || itemId.length > 1000 || !/^\d{1,2}$/.test(mediaId))
+      throw new BadRequestException('Invalid image reference.');
+    const { item, session } = await this.transcriptItem(taskId, sessionId, itemId);
+    const media = chatMedia(item).media.find(value => value.id === mediaId);
+    if (!media) throw new BadRequestException('This image is no longer available.');
+    return { itemId, mediaId, source: await readChatMedia(media.source, session.worktreePath, session.activeAgentProvider) };
+  }
+
+  async content(
+    taskId: number,
+    sessionId: number,
+    itemId: string,
+    part: string,
+    offset: number,
+  ) {
+    if (
+      !itemId ||
+      itemId.length > 1000 ||
+      (part !== 'text' && part !== 'input') ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0
+    )
+      throw new BadRequestException('Invalid content window.');
+    const { item } = await this.transcriptItem(taskId, sessionId, itemId);
     const full = display(
       part === 'input'
         ? item.toolInput

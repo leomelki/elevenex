@@ -94,6 +94,7 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
   };
   let resolve!: (value: BackendResult<SessionChatCommandReply>) => void;
   const bridge = {
+    sessionChatMedia: vi.fn(async (_scope: string, input: { itemId: string; mediaId: string }) => ({ ok: true as const, value: { ...input, source: 'data:image/png;base64,iVBORw0KGgo=' } })),
     sessionChatRead: vi.fn(async () => ({ ok: true as const, value: page })),
     sessionChatCommand: vi.fn(
       () =>
@@ -673,4 +674,22 @@ describe("connected subscription quota", () => {
     expect(root.querySelector("ex-agent-usage-notice .notice")).toBeNull();
     expect(root.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Keep this draft");
   });
+});
+
+
+it('shows generated images through the existing Markdown renderer without a full-output fallback', async () => {
+  vi.stubGlobal('Image', class { src = ''; naturalWidth = 640; naturalHeight = 360; decode = async () => undefined; });
+  const output: SessionChatItem = { ...item('generated', 'tool_result', 'Image attachment'),
+    media: [{ id: '0', path: 'chat-image-generated-0', caption: 'Waving robot', inline: true }] };
+  const { fixture, root, bridge, publish } = setup([item('prompt', 'user', 'Draw a robot'), output, item('reply', 'assistant', 'Here is your robot.')]);
+  await settle(fixture);
+  expect(bridge.sessionChatMedia).toHaveBeenCalledTimes(1);
+  expect(root.querySelector('ex-markdown-media img')?.getAttribute('src')).toContain('data:image/png;base64,');
+  expect(root.textContent).not.toContain('Read full tool output');
+  expect(root.textContent).not.toContain("isn't in the workspace");
+  publish({ taskId: 1, sessionId: 3, cursor: 'new', reset: true, before: null, items: [], events: [], state });
+  fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 3 });
+  await settle(fixture);
+  expect(bridge.sessionChatMedia).toHaveBeenCalledTimes(1);
+  expect(root.querySelector('ex-markdown-media')).toBeNull();
 });

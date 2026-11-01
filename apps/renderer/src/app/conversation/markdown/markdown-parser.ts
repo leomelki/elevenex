@@ -53,6 +53,8 @@ export type MarkdownBlock =
 export type MarkdownAsset =
   | {
       readonly kind: "image";
+      readonly loading?: boolean;
+      readonly error?: string;
       readonly src: string;
       readonly w: number;
       readonly h: number;

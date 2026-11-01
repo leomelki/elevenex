@@ -1,3 +1,4 @@
+import { codexImageResult } from './codex-image-result.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import { record } from './codex-subagents.js';
@@ -11,6 +12,7 @@ function codexHistoryTool(
   transcriptMessageId: string,
 ): ClaudeTranscriptItem[] {
   if (typeof item.id !== 'string') return [];
+  const id = item.id;
   let name: string;
   let input: Record<string, unknown>;
   let content: string;
@@ -58,6 +60,20 @@ function codexHistoryTool(
         .join('\n');
       break;
     }
+    case 'ImageGeneration':
+      name = 'image_generation';
+      input = {};
+      item = { ...item, result: codexImageResult(item) };
+      content = resultText(item.result);
+      isError ||= Boolean(item.failure);
+      break;
+    case 'DynamicToolCall':
+      name = text(item.tool) || 'Tool';
+      input = record(item.arguments);
+      item = { ...item, result: { content: item.content_items ?? item.contentItems ?? [] } };
+      content = resultText(item.result);
+      isError ||= item.success === false;
+      break;
     case 'McpToolCall': {
       name = text(item.tool) || 'MCP tool';
       input = { server: item.server, arguments: item.arguments };
@@ -76,8 +92,8 @@ function codexHistoryTool(
       return [];
   }
   const common = {
-    toolUseId: item.id,
-    sourceMessageId: item.id,
+    toolUseId: id,
+    sourceMessageId: id,
     transcriptMessageId,
     timestamp,
   };

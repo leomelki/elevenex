@@ -25,6 +25,7 @@ export class MarkdownMediaComponent {
   readonly openFile = output<string>();
   readonly openPage = output<string>();
   readonly viewerOpen = signal(false);
+  readonly failedSource = signal<string | null>(null);
   readonly viewer = viewChild<ElementRef<HTMLDialogElement>>("viewer");
   readonly safeSource = computed(() => {
     const asset = this.asset();

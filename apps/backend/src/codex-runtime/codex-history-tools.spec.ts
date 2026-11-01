@@ -23,3 +23,16 @@ describe('Codex whole-file change receipts', () => {
     ] });
   });
 });
+
+
+describe('Codex generated image history', () => {
+  it('retains saved image references and native PNG results after reload', () => {
+    for (const image of [{ saved_path: '/home/user/.codex/generated_images/robot.png' }, { result: 'cG5n' }]) {
+      const { native } = codexHistoryTools([{ type: 'event_msg', timestamp: '2026-11-01T12:00:00Z',
+        payload: { type: 'item_completed', item: { id: 'image', type: 'ImageGeneration', status: 'completed', ...image } } }]);
+      expect(native.get(0)?.[1]).toMatchObject({ kind: 'tool_result', providerToolResult: {
+        content: [{ type: 'image', image_url: image.saved_path ?? 'data:image/png;base64,cG5n' }],
+      } });
+    }
+  });
+});

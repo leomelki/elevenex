@@ -44,6 +44,7 @@
   }
 </header>
 <ex-chat
+  [resolve]="media.resolve"
   [exchanges]="store.exchanges()"
   [centerComposer]="showWelcome()"
   [actions]="['copy']"

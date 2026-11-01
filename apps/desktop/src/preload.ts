@@ -17,6 +17,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   sessionChatRead: (scope, input) => invoke('session-chat:read', scope, input),
   sessionChatCommand: (scope, input) => invoke('session-chat:command', scope, input),
   sessionChatCancel: (scope, requestId) => invoke('session-chat:cancel', scope, requestId),
+  sessionChatMedia: (scope, input) => invoke('session-chat:media', scope, input),
   sessionChatContent: (scope, input) => invoke('session-chat:content', scope, input),
   platform: process.platform as DesktopPlatform,
   machineState: () => invoke('machines:state'),

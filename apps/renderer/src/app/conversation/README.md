@@ -192,3 +192,9 @@ neutral clock, stays outside discovery groups and completed-work facts, and does
 not imply failure or success. A live tool's focus returns to the turn's work
 control before replacement/completion hides it; each new tool starts with its
 own disclosure state.
+
+Image `MarkdownAsset` values may carry `loading` or `error` for an asynchronous
+owner-supplied resolver. Media shows those states without claiming that a file is
+outside the workspace. Failed browser decoding also has a readable status.
+Zero/unknown image dimensions omit the native width/height attributes until the
+image's intrinsic dimensions are available.

@@ -1,3 +1,4 @@
+import { registerSessionChatMedia } from './session-chat-media';
 import { parseChangesPage } from "./session-chat-changes";
 import { handleForWindow, type TrustedSender } from "../ipc";
 import type { BackendClient } from "./client";
@@ -18,6 +19,7 @@ export function registerSessionChatIpc(
   client: BackendClient,
   trusted: TrustedSender,
 ): () => void {
+  const media = registerSessionChatMedia(client, trusted);
   const scope = (value: unknown) => {
     if (typeof value !== "string" || !/^[a-f0-9-]{36}$/.test(value))
       throw new Error("A backend scope is required.");
@@ -324,6 +326,7 @@ export function registerSessionChatIpc(
     },
   );
   return () => {
+    media();
     changes();
     read();
     catalog();

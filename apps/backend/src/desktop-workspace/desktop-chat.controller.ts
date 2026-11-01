@@ -71,6 +71,13 @@ export class DesktopChatController {
   ) {
     return this.chat.changes(resourceId(task), resourceId(session), turn, Number(offset), path, lineOffset === undefined ? 0 : Number(lineOffset), revision);
   }
+  @Get('media')
+  media(
+    @Param('taskId') task: string, @Param('sessionId') session: string,
+    @Query('itemId') item: string, @Query('mediaId') media: string,
+  ) {
+    return this.chat.media(resourceId(task), resourceId(session), item, media);
+  }
   @Get('content')
   content(
     @Param('taskId') task: string,

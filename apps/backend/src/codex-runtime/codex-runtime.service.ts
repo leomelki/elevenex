@@ -1,3 +1,4 @@
+import { codexImageResult } from './codex-image-result.js';
 import {
   elevenexMcpUrl,
   SESSION_TOOL_INSTRUCTIONS,
@@ -2633,6 +2634,7 @@ export class CodexRuntimeService
         kind: 'tool_result',
         toolUseId: item.id,
         content: item.error?.message ?? JSON.stringify(item.result ?? {}),
+        providerToolResult: item.result,
         isError: item.status === 'failed',
         timestamp,
         authoredAt: timestamp,
@@ -4635,6 +4637,20 @@ export class CodexRuntimeService
           type: 'file_change',
           changes: Array.isArray(raw.changes) ? raw.changes : [],
           status: status === 'in_progress' ? 'completed' : status,
+        };
+      case 'imageGeneration':
+        return {
+          id, type: 'mcp_tool_call', server: 'codex', tool: 'image_generation',
+          arguments: {}, result: { content: [{ type: 'text', text: JSON.stringify(codexImageResult(raw)) }], structured_content: null },
+          ...(raw.failure ? { error: { message: 'Image generation failed.' } } : {}),
+          status,
+        };
+      case 'dynamicToolCall':
+        return {
+          id, type: 'mcp_tool_call', server: typeof raw.namespace === 'string' ? raw.namespace : 'codex',
+          tool: typeof raw.tool === 'string' ? raw.tool : 'Tool', arguments: raw.arguments ?? {},
+          result: { content: [{ type: 'text', text: JSON.stringify(raw.contentItems ?? []) }], structured_content: null },
+          ...(raw.success === false ? { error: { message: 'Tool failed.' } } : {}), status,
         };
       case 'mcpToolCall':
         return {

@@ -1,4 +1,4 @@
-import type { SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
+import type { SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
 export type * from './session-chat';
 import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-commit';
 import type { WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
@@ -35,6 +35,7 @@ export interface InvokeContracts {
   'session-chat:read': { args: [scopeId: string, input: SessionChatRead]; result: BackendResult<SessionChatPage> };
   'session-chat:command': { args: [scopeId: string, input: SessionChatCommand]; result: BackendResult<SessionChatCommandReply> };
   'session-chat:cancel': { args: [scopeId: string, requestId: string]; result: void };
+  'session-chat:media': { args: [scopeId: string, input: SessionChatMediaRead]; result: BackendResult<SessionChatMedia> };
   'session-chat:content': { args: [scopeId: string, input: SessionChatContentRead]; result: BackendResult<SessionChatContent> };
   'machines:state': { args: []; result: MachineState };
   'machines:opened': { args: [selection: EnvironmentSelection]; result: MachineState };
@@ -123,6 +124,7 @@ export interface ElevenexBridge {
   sessionChatRead(scopeId: string, input: SessionChatRead): Promise<BackendResult<SessionChatPage>>;
   sessionChatCommand(scopeId: string, input: SessionChatCommand): Promise<BackendResult<SessionChatCommandReply>>;
   sessionChatCancel(scopeId: string, requestId: string): Promise<void>;
+  sessionChatMedia(scopeId: string, input: SessionChatMediaRead): Promise<BackendResult<SessionChatMedia>>;
   sessionChatContent(scopeId: string, input: SessionChatContentRead): Promise<BackendResult<SessionChatContent>>;
   readonly platform: DesktopPlatform;
   machineState(): Promise<MachineState>;

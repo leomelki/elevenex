@@ -639,3 +639,37 @@ test('command facts remain optional, bounded and allowlisted across the bridge',
   assert.deepEqual(parse({ execution: { cwd: '/repo', exitCode: -1, interrupted: true, private: 'discard' } }).execution, { cwd: '/repo', exitCode: -1, interrupted: true });
   for (const execution of [null, [], { exitCode: 0.5 }, { exitCode: Infinity }, { exitCode: '0' }, { cwd: 'x'.repeat(4001) }, { interrupted: 'false' }]) assert.throws(() => parse({ execution }));
 });
+
+test('chat media IPC uses scoped attachment identities, validates bytes and cleans up its handler', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  let reply = { itemId: 'image', mediaId: '0', source: 'data:image/png;base64,iVBORw0KGgo=' };
+  let calls = 0;
+  const url = await server(context, (request, response) => {
+    calls++;
+    assert.equal(request.url, '/api/desktop-workspace/tasks/1/sessions/2/chat/media?itemId=image&mediaId=0');
+    response.writeHead(200, json); response.end(JSON.stringify(reply));
+  });
+  const client = new BackendClient(() => local(url), () => undefined);
+  context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id;
+  const handlers = new Map(), ipc = {}, media = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/session-chat-media'), 'utf8'), { exports: media, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/' + name.slice(2)) });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = media.registerSessionChatMedia(client, (candidate, contents) => candidate === frame && contents === sender);
+  context.after(stop);
+  const read = handlers.get('session-chat:media');
+  const input = { taskId: 1, sessionId: 2, requestId: 'media', itemId: 'image', mediaId: '0' };
+  assert.equal((await read(event, scope, input)).value.source, reply.source);
+  assert.throws(() => read({ senderFrame: {}, sender }, scope, input), /Untrusted/);
+  assert.throws(() => read(event, scope, { ...input, mediaId: '../private.png' }), /incompatible|Invalid/);
+  assert.equal((await read(event, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', input)).error.code, 'stale-scope');
+  assert.equal(calls, 1);
+  for (const bad of [{ ...reply, itemId: 'other' }, { ...reply, mediaId: '1' }, { ...reply, source: 'file:///private/secret.png' }, { ...reply, source: 'data:image/svg+xml;base64,PHN2Zz4=' }]) {
+    reply = bad;
+    assert.equal((await read(event, scope, input)).error.code, 'invalid-response');
+  }
+  stop(); assert.equal(handlers.size, 0);
+});

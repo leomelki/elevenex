@@ -15,6 +15,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   sessionChatChanges = (_scope: string, input: import('@elevenex/shared').SessionChatChangesRead) => this.chat.changes(input);
   sessionChatRead = (_scope: string, input: import('@elevenex/shared').SessionChatRead) => this.chat.read(input);
   sessionChatCommand = (_scope: string, input: import('@elevenex/shared').SessionChatCommand) => this.chat.command(input);
+  sessionChatMedia = (_scope: string, input: import('@elevenex/shared').SessionChatMediaRead) => this.chat.media(input);
   sessionChatContent = (_scope: string, input: import('@elevenex/shared').SessionChatContentRead) => this.chat.content(input);
   sessionChatCancel = async (_scope: string, requestId: string) => this.chat.cancel(requestId);
   private projectRows: WorkspaceProject[] = [

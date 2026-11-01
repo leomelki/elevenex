@@ -1,3 +1,4 @@
+import { chatMedia } from './desktop-chat-media.js';
 import { capturedChangeSummary, changeSummary, toolChanges } from './desktop-chat-changes.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 
@@ -23,6 +24,7 @@ const nullable = (value: unknown) =>
   typeof value === 'string' ? display(value, 1000) : null;
 const count = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+export type ChatMediaCache = WeakMap<AgentTranscriptItem, ReturnType<typeof chatMedia>>;
 export type ChatChangesCache = WeakMap<AgentTranscriptItem, { readonly result: AgentTranscriptItem; readonly fingerprint: string; readonly changes: ReturnType<typeof changeSummary> }>;
 /** Keep execution facts separate from output without forwarding provider payloads. */
 function commandExecution(item: AgentTranscriptItem, call?: AgentTranscriptItem) {
@@ -42,12 +44,12 @@ function commandExecution(item: AgentTranscriptItem, call?: AgentTranscriptItem)
   };
   return Object.keys(execution).length ? execution : undefined;
 }
-export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache) {
+export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache, mediaCache?: ChatMediaCache) {
   const execution = commandExecution(item, call);
   const input = display(item.toolInput);
-  const text = display(
-    item.content ?? item.providerToolResult ?? item.agentMessage?.body ?? '',
-  );
+  const projected = mediaCache?.get(item) ?? chatMedia(item);
+  mediaCache?.set(item, projected);
+  const text = display(projected.text);
   let changes = changeSummary(item.turnChanges);
   if (!item.turnChanges && call) {
     const previous = cache?.get(call);
@@ -56,6 +58,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
     cache?.set(call, { result: item, fingerprint, changes });
   }
   return {
+    ...(projected.media.length ? { media: projected.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline })) } : {}),
     ...(execution ? { execution } : {}),
     ...(changes ? { changes } : {}),
     id: item.id,
@@ -69,7 +72,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
     input,
     error: item.isError === true || execution?.interrupted === true || (execution?.exitCode !== undefined && execution.exitCode !== 0),
     truncated:
-      text.endsWith('… [display shortened]') ||
+      projected.shortened || text.endsWith('… [display shortened]') ||
       input.endsWith('… [display shortened]'),
   };
 }
@@ -264,6 +267,7 @@ export function chatWindow(
   live: readonly AgentTranscriptItem[],
   before?: string,
   changesCache?: ChatChangesCache,
+  mediaCache?: ChatMediaCache,
 ) {
   const historyEnd = before
     ? history.findIndex((item) => item.id === before)
@@ -289,13 +293,13 @@ export function chatWindow(
     start = all.length;
   while (start > 0 && items.length < 80) {
     const raw = all[start - 1];
-    const item = chatItem(raw, raw.kind === 'tool_result' ? calls.get(raw.toolUseId ?? raw.id) : undefined, changesCache);
+    const item = chatItem(raw, raw.kind === 'tool_result' ? calls.get(raw.toolUseId ?? raw.id) : undefined, changesCache, mediaCache);
     if (raw.turnChanges) {
       let turnStart = start - 2;
       while (turnStart >= 0 && all[turnStart].kind !== 'user') turnStart--;
       item.changes = capturedChangeSummary(raw, all.slice(Math.max(0, turnStart), start - 1).filter(value => value.kind === 'tool_result').map(result => {
         const call = calls.get(result.toolUseId ?? result.id);
-        return call ? chatItem(result, call, changesCache).changes : undefined;
+        return call ? chatItem(result, call, changesCache, mediaCache).changes : undefined;
       }));
     }
     const size = Buffer.byteLength(JSON.stringify(item));

@@ -316,3 +316,25 @@ ambiguity when a newly added file is itself a patch document. Older receipts use
 the change kind plus actual unified-hunk syntax. Empty files and missing inline
 content stay distinct; display normalizes CRLF and removes one terminal split
 sentinel without stripping meaningful spaces or blank lines.
+
+Chat images use optional, bounded `SessionChatItem.media` references and the named
+`sessionChatMedia` bridge operation. Inline Codex/native/MCP image results join the
+answer, while Markdown image paths resolve through the same selected-session
+owner. Binary image data never enters the transcript preview or triggers its raw
+output overflow control. Ordinary shortened text keeps the full-content reader.
+
+`SessionChatMedia` owns the latest 12 image references in the mounted transcript,
+three concurrent reads, a 32 MiB source budget, cancellation and stale-selection
+rejection. It supplies the existing Markdown resolver; loading/read/decode errors
+are explicit. Leaving the session releases sources and queued work. Older engines
+can omit media metadata. This slice supports PNG, JPEG, GIF and WebP; it does not
+fetch external URLs or execute SVG/HTML.
+
+Backend reads revalidate task/session/item membership and select a recorded
+attachment ID rather than accepting arbitrary renderer paths. Referenced file
+images must resolve inside the session workspace or, for Codex, its configured
+`CODEX_HOME/generated_images` directory (`~/.codex/generated_images` by default).
+Real paths, regular-file checks, signature validation and an 8 MiB byte limit
+confine reads. Remote image bytes travel through the main-owned backend client;
+renderer CSP and credentials remain unchanged. Per-feed weak projection caches
+avoid reparsing unchanged binary tool results during streaming polls.

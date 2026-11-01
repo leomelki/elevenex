@@ -1,3 +1,4 @@
+import { codexImageResult } from './codex-image-result.js';
 import {
   BadRequestException,
   Inject,
@@ -805,13 +806,18 @@ export class CodexHistoryService {
           }
         : null;
     }
+    if (type === 'image_generation_call') {
+      return { id: `${id}:tool_result`, kind: 'tool_result', toolUseId: id,
+        providerToolResult: codexImageResult(item), isError: item.status === 'failed', timestamp };
+    }
     if (type === 'message' && item.role === 'assistant') {
       const content = this.contentToText(item.content);
-      return content
+      return content || Array.isArray(item.content)
         ? {
             id,
             kind: 'assistant',
             content,
+            providerToolResult: item.content,
             sourceMessageId: id,
             transcriptMessageId,
             timestamp,
@@ -888,6 +894,7 @@ export class CodexHistoryService {
         toolUseId: stringValue(item.call_id) ?? id,
         content:
           this.contentToText(item.output) || JSON.stringify(item.output ?? ''),
+        providerToolResult: item.output,
         isError: Boolean(item.error),
         sourceMessageId: id,
         transcriptMessageId,

@@ -338,3 +338,11 @@ reply lifecycle/task identity. The renderer loads archived windows lazily, keeps
 them separate from normal-session activity and pagination, and reuses the named
 restore operation without requiring an Undo notification. No additional channel,
 generic transport, migration or unbounded history response is introduced.
+
+The chat media slice adds optional attachment references to transcript items and
+`sessionChatMedia(scope, { taskId, sessionId, itemId, mediaId, requestId })`.
+References, rather than filesystem paths, cross IPC. The backend rechecks session
+membership and confines referenced raster files to the task or Codex's generated
+image directory. Main validates matching identities and bounded raster data URLs;
+transport and cancellation use the existing window lease. Image bytes are fetched
+separately from bounded transcript pages, with no renderer networking or CSP change.

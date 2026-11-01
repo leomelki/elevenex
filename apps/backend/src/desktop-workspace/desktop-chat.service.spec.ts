@@ -40,6 +40,14 @@ describe('selected session chat', () => {
   const updateProvider = jest.fn();
   const advertised = jest.fn();
   const rememberAgentConfig = jest.fn();
+  it('only serves image references belonging to the requested task and transcript item', async () => {
+    history = [{ ...item('image'), providerToolResult: [{ type: 'output_image', image_url: 'data:image/png;base64,iVBORw0KGgo=' }] }];
+    await expect(chat.media(1, 2, 'image', '0')).resolves.toMatchObject({ itemId: 'image', mediaId: '0' });
+    await expect(chat.media(9, 2, 'image', '0')).rejects.toThrow('does not belong');
+    await expect(chat.media(1, 2, 'missing', '0')).rejects.toThrow('no longer available');
+    await expect(chat.media(1, 2, 'image', '1')).rejects.toThrow('no longer available');
+    await expect(chat.media(1, 2, 'image', '../secret')).rejects.toThrow('Invalid image');
+  });
   beforeEach(async () => {
     history = [];
     live = [];

@@ -1,3 +1,4 @@
+import { SessionChatMedia } from './session-chat-media';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -47,7 +48,7 @@ import { presentSessionTool } from './session-chat-tools';
 
 @Component({
   selector: "ex-session-chat",
-  providers: [SessionChatStore],
+  providers: [SessionChatStore, SessionChatMedia],
   imports: [
     SessionChatContentComponent,
     ChatComponent,
@@ -77,6 +78,7 @@ export class SessionChatComponent {
   readonly archived = input(false);
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
+  readonly media = inject(SessionChatMedia);
   readonly permissionEvidence = computed(() => {
     const request = this.store.state()?.permission;
     return request ? presentSessionTool({
@@ -294,7 +296,11 @@ export class SessionChatComponent {
   );
 
   constructor() {
-    effect(() => this.store.open(this.selection(), this.archived()));
+    effect(() => {
+      const selection = this.selection();
+      this.store.open(selection, this.archived());
+      this.media.update(selection, this.store.items());
+    });
     effect(() => {
       this.identity();
       this.contentId.set(null);

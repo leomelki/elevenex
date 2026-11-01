@@ -143,6 +143,12 @@ function item(value: unknown): SessionChatItem {
     input: chatText(raw["input"], 16100),
     error: bool(raw["error"]),
     truncated: bool(raw["truncated"]),
+    ...(raw["media"] !== undefined ? { media: array(raw["media"], 12, value => {
+      const media = chatObject(value);
+      const id = chatText(media["id"], 2);
+      if (!/^\d{1,2}$/.test(id)) throw invalid();
+      return { id, path: chatText(media["path"], 4000), caption: chatText(media["caption"], 200), inline: bool(media["inline"]) };
+    }) } : {}),
     ...(raw["execution"] !== undefined ? { execution: execution(raw["execution"]) } : {}),
     ...(raw["changes"] !== undefined ? { changes: parseChangeSummary(raw["changes"]) } : {}),
   };

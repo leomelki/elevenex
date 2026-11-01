@@ -1,3 +1,4 @@
+import { previewChatImage } from './session-chat-media-fixture';
 import type { DestroyRef } from "@angular/core";
 import { sessionCodexFileItems, sessionToolItems } from './session-tools-fixture';
 import type {
@@ -173,6 +174,11 @@ export class SessionChatFixture {
   >();
   private readonly waiting = new Map<string, () => void>();
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
+  private imageState: 'ready' | 'held' | 'failed' = 'ready';
+  imageDelivery(state: 'ready' | 'held' | 'failed'): void {
+    this.imageState = state;
+    if (state !== 'held') for (const done of [...this.waiting.values()]) done();
+  }
   private commandFailure = false;
   private delayedReceipts = false;
   deferUserReceipts(value: boolean): void {
@@ -206,6 +212,7 @@ export class SessionChatFixture {
   }
   scenario(
     mode:
+      | "images"
       | "permission"
       | "question"
       | "running"
@@ -224,6 +231,13 @@ export class SessionChatFixture {
     const session = this.session(id);
     session.items = opening();
     session.state = previewChatState();
+    if (mode === 'images') session.items = [
+      item('image-prompt', 'user', 'Draw a friendly robot and show the saved image.'),
+      item('image-output', 'tool_result', 'Image attachment', { media: [{ id: '0', path: 'generated-robot', caption: 'Generated robot', inline: true }] }),
+      item('image-answer', 'assistant', "Here’s a friendly robot waving hello!\n\n![Saved image](/Users/agent/.codex/generated_images/robot.png)", {
+        media: [{ id: '0', path: '/Users/agent/.codex/generated_images/robot.png', caption: 'Saved image', inline: false }],
+      }),
+    ];
     if (mode === 'tools-codex-files') session.items = sessionCodexFileItems();
     if (mode === 'tools' || mode === 'tools-running' || mode === 'tools-incomplete') {
       session.items = sessionToolItems(mode !== 'tools').map(item =>
@@ -412,6 +426,14 @@ export class SessionChatFixture {
         state: { ...session.state, presets: this.presets, presetDefault: this.defaultSnapshot() },
       },
     };
+  }
+  async media(input: import('@elevenex/shared').SessionChatMediaRead): Promise<BackendResult<import('@elevenex/shared').SessionChatMedia>> {
+    if (this.imageState === 'held') await new Promise<void>(resolve => {
+      this.waiting.set(input.requestId, () => { this.waiting.delete(input.requestId); resolve(); });
+    });
+    return this.imageState === 'failed'
+      ? { ok: false, error: { code: 'http', status: 404, message: 'Image unavailable.' } }
+      : { ok: true, value: { itemId: input.itemId, mediaId: input.mediaId, source: previewChatImage() } };
   }
   async content(
     input: SessionChatContentRead,

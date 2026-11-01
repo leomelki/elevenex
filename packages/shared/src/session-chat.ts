@@ -18,6 +18,8 @@ export interface SessionChatItem {
     | "tool_result"
     | "system"
     | "error";
+  /** Attachment references only; bytes are fetched separately for the selected chat. */
+  readonly media?: readonly SessionChatMediaReference[];
   readonly text: string;
   readonly timestamp: string;
   readonly toolId: string | null;
@@ -287,4 +289,21 @@ export interface SessionChatChangesPage {
     readonly nextOffset: number | null;
     readonly error?: string;
   } | null;
+}
+
+export interface SessionChatMediaReference {
+  readonly id: string;
+  readonly path: string;
+  readonly caption: string;
+  readonly inline: boolean;
+}
+export interface SessionChatMediaRead extends SessionChatTarget {
+  readonly requestId: string;
+  readonly itemId: string;
+  readonly mediaId: string;
+}
+export interface SessionChatMedia {
+  readonly itemId: string;
+  readonly mediaId: string;
+  readonly source: string;
 }
