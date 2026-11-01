@@ -61,6 +61,7 @@ export interface SessionChatPlanUsage {
   readonly updatedAt: string;
 }
 export interface SessionChatState {
+  readonly attachments?: boolean;
   /** Bounded saved starting configurations; omitted by older engines. */
   readonly presets?: readonly SessionChatPreset[];
   readonly presetCatalogs?: boolean;
@@ -292,6 +293,7 @@ export interface SessionChatChangesPage {
 }
 
 export interface SessionChatMediaReference {
+  readonly kind?: "image" | "video" | "file";
   readonly id: string;
   readonly path: string;
   readonly caption: string;

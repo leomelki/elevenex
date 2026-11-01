@@ -40,16 +40,16 @@ export function registerSessionChatMedia(
             endpoint,
             {
               path: `/api/desktop-workspace/tasks/${taskId}/sessions/${sessionId}/chat/media?${query}`,
-              limit: 12 * 1024 * 1024,
+              limit: 28 * 1024 * 1024,
             },
             signal,
           ),
         );
-        const source = chatText(reply["source"], 12 * 1024 * 1024);
+        const source = chatText(reply["source"], 28 * 1024 * 1024);
         if (
           reply["itemId"] !== itemId ||
           reply["mediaId"] !== mediaId ||
-          !/^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(
+          !/^data:(?:image\/(?:png|jpeg|gif|webp)|video\/(?:mp4|webm|ogg));base64,[A-Za-z0-9+/]+={0,2}$/.test(
             source,
           )
         )

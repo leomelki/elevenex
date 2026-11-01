@@ -95,6 +95,7 @@ export class DesktopChatService implements OnModuleDestroy {
   ) {
     const provider = this.registry.getProvider(session.activeAgentProvider);
     return {
+      attachments: true,
       presetCatalogs: true,
       presets: chatPresets(this.settings, this.registry),
       presetDefault: this.settings.getAgentPresetDefault(),
@@ -469,7 +470,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const { item, session } = await this.transcriptItem(taskId, sessionId, itemId);
     const media = chatMedia(item).media.find(value => value.id === mediaId);
     if (!media) throw new BadRequestException('This image is no longer available.');
-    return { itemId, mediaId, source: await readChatMedia(media.source, session.worktreePath, session.activeAgentProvider) };
+    return { itemId, mediaId, source: await readChatMedia(media.source, session.worktreePath, session.activeAgentProvider, sessionId) };
   }
 
   async content(

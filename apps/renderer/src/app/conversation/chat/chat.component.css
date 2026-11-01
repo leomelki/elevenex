@@ -18,7 +18,7 @@ ex-turn-nav {
   top: 50%;
   right: var(--space-2);
   transform: translateY(-50%);
-  max-height: min(calc(6 * var(--space-8)), 40%);
+  max-height: min(calc(7 * var(--space-8)), 40%);
 }
 .composer {
   width: 100%;

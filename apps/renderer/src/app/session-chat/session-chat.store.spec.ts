@@ -111,6 +111,27 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("session chat ownership", () => {
+  it("shows files-only prompts immediately and restores attachments to their original session after a rejected send", async () => {
+    const { store, bridge } = setup();
+    await settle();
+    const drafts = TestBed.inject(SessionChatDrafts);
+    const entry = drafts.entry('scope', 2);
+    const file = { id: 'attachment', path: '/stored/notes.txt', name: 'notes.txt', kind: 'file' as const, status: 'ready' as const, file: new File(['notes'], 'notes.txt') };
+    entry.files.set([file]);
+    const write = deferred<BackendResult<{ readonly accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(write.promise);
+    const sending = store.submit({ text: '', intent: 'send', context: [] });
+    expect(store.exchanges().at(-1)?.attachments?.[0]?.name).toBe('notes.txt');
+    expect(store.exchanges().at(-1)?.prompt).toBe('');
+    expect(entry.files()).toEqual([]);
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false);
+    await settle();
+    write.resolve({ ok: false, error: { code: 'http', status: 400, message: 'Rejected' } });
+    await sending;
+    expect(entry.files()).toEqual([file]);
+    expect(drafts.entry('scope', 3).files()).toEqual([]);
+  });
+
   it("cancels old reads and rejects late same-scope replies after session navigation", async () => {
     const { store, bridge } = setup();
     await settle();

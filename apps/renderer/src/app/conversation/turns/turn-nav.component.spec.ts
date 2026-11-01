@@ -32,7 +32,7 @@ describe("TurnNav", () => {
     vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(
       function (this: Element) {
         return this.classList.contains("markers")
-          ? 168
+          ? 216
           : (originalHeight?.call(this) ?? 0);
       },
     );
@@ -94,7 +94,7 @@ describe("TurnNav", () => {
     return { fixture, host, viewport, key };
   }
 
-  it.each([1, 2, 4, 5])(
+  it.each([1, 2, 4, 5, 9])(
     "shows short sessions with %i targets",
     async (count) => {
       const { fixture, host } = await setup(count);
@@ -137,7 +137,7 @@ describe("TurnNav", () => {
     await key("PageDown");
     expect(selected).toHaveBeenCalledTimes(1);
     await key(" ");
-    expect(selected).toHaveBeenLastCalledWith("turn-8");
+    expect(selected).toHaveBeenLastCalledWith("turn-10");
     expect(host.querySelectorAll("button").length).toBeLessThan(30);
     fixture.destroy();
     host.remove();
@@ -157,6 +157,23 @@ describe("TurnNav", () => {
     fixture.detectChanges();
     await fixture.whenStable();
     expect(viewport?.scrollTop).toBeGreaterThan(offset ?? 0);
+    fixture.destroy();
+    host.remove();
+  });
+
+  it("keeps the keyboard choice when a virtual marker appears under a stationary pointer", async () => {
+    const { fixture, host, viewport, key } = await setup(10000, "turn-5000");
+    const selected = vi.fn();
+    fixture.componentInstance.selected.subscribe(selected);
+    viewport?.focus();
+    await key("Home");
+    const marker = host.querySelector<HTMLButtonElement>('[aria-posinset="4"]')!;
+    marker.dispatchEvent(new Event("pointerenter"));
+    await key("Enter");
+    expect(selected).toHaveBeenLastCalledWith("turn-0");
+    marker.dispatchEvent(new Event("pointermove"));
+    await key("Enter");
+    expect(selected).toHaveBeenLastCalledWith("turn-3");
     fixture.destroy();
     host.remove();
   });

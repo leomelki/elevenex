@@ -26,6 +26,7 @@ const savedPresets: readonly SessionChatPreset[] = [
 ];
 const stamp = "2026-10-28T10:20:00.000Z";
 export const previewChatState = (): SessionChatState => ({
+  attachments: true,
   presets: savedPresets,
   presetCatalogs: true,
   provider: "codex",
@@ -427,7 +428,25 @@ export class SessionChatFixture {
       },
     };
   }
+  uploadState: "ready" | "failed" | "held" = "ready";
+  private readonly uploadedFiles = new Map<string, { name: string; path: string; data: string[] }>();
+  async upload(input: import('@elevenex/shared').ChatAttachmentUpload): Promise<BackendResult<import('@elevenex/shared').ChatAttachmentReceipt>> {
+    if (this.uploadState === 'held') await new Promise<void>(resolve => { this.waiting.set(input.requestId, resolve); });
+    if (this.uploadState === 'failed') return { ok: false, error: { code: 'transport', message: 'Upload failed' } };
+    let file = this.uploadedFiles.get(input.id);
+    if (!file) { file = { name: input.name, path: `/preview/chat-attachments/${input.sessionId}/${input.id}/${input.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`, data: [] }; this.uploadedFiles.set(input.id, file); }
+    file.data.push(input.data);
+    const offset = input.offset + atob(input.data).length;
+    return { ok: true, value: { id: input.id, offset, path: offset === input.size ? file.path : null } };
+  }
   async media(input: import('@elevenex/shared').SessionChatMediaRead): Promise<BackendResult<import('@elevenex/shared').SessionChatMedia>> {
+    const ref = this.session(input.sessionId).items.find(item => item.id === input.itemId)?.media?.find(media => media.id === input.mediaId);
+    const file = [...this.uploadedFiles.values()].find(file => file.path === ref?.path);
+    if (file) {
+      const mime = ref?.kind === 'video' ? 'video/webm' : 'image/png';
+      const binary = file.data.map(data => atob(data)).join('');
+      return { ok: true, value: { itemId: input.itemId, mediaId: input.mediaId, source: `data:${mime};base64,${btoa(binary)}` } };
+    }
     if (this.imageState === 'held') await new Promise<void>(resolve => {
       this.waiting.set(input.requestId, () => { this.waiting.delete(input.requestId); resolve(); });
     });
@@ -555,7 +574,8 @@ export class SessionChatFixture {
           ],
         };
       else {
-        const receipt = item(`sent-${this.version}`, "user", action.text);
+        const refs = [...action.text.matchAll(/^\[([^\]]+)\]\(<([^>]+)>\)/gm)].map((match, index) => ({ id: String(index), path: match[2]!, caption: match[1]!, inline: false, kind: /\.(png|jpe?g|gif|webp)$/i.test(match[2]!) ? 'image' as const : /\.(mp4|webm|mov)$/i.test(match[2]!) ? 'video' as const : 'file' as const }));
+        const receipt = item(`sent-${this.version}`, "user", action.text, { media: refs });
         const delayed = this.delayedReceipts;
         if (!delayed) session.items.push(receipt);
         session.items.push(item(`reply-${this.version}`, "assistant", ""));

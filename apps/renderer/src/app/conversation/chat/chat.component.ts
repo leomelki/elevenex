@@ -18,11 +18,13 @@ import { TurnComponent } from "../turns/turn.component";
 import { TurnNavComponent } from "../turns/turn-nav.component";
 import { ChatScrollComponent } from "./chat-scroll.component";
 import { MessageComponent } from "./message.component";
+import { AttachmentsComponent } from "./attachments.component";
 import { ButtonComponent } from '../../ui';
 @Component({
   selector: "ex-chat",
   imports: [
     ButtonComponent,
+    AttachmentsComponent,
     MarkdownComponent,
     TurnComponent,
     TurnNavComponent,

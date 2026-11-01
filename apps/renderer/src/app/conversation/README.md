@@ -22,7 +22,7 @@ These standalone OnPush components consume renderer view models and emit typed i
 
 `TurnNav` shows the right-edge message selector from the first turn, regardless
 of session length. Empty sessions have no navigation targets and hide it.
-The rail is a small scrollable window: at most seven 24px targets, further capped
+The rail is a small scrollable window: at most nine 24px targets, further capped
 at 40% of the chat height. CDK virtual scrolling keeps only a small buffered set
 of markers mounted, even with thousands of supplied turns. Faded edges indicate
 more history; hovering or focusing reveals a position count and scrollbar, and
@@ -32,7 +32,7 @@ Changing the history window releases that hold. Arrow keys, Page Up/Down and
 Home/End browse without moving the chat; Enter/Space selects. There is one Tab
 stop, with focus retained on the viewport while virtual rows change. Resize and
 range subscriptions are released with the rail. The `/conversation` preview has
-1/7/1,000/10,000-message controls for this behavior.
+1/9/1,000/10,000-message controls for this behavior.
 
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
 
@@ -225,3 +225,29 @@ owner-supplied resolver. Media shows those states without claiming that a file i
 outside the workspace. Failed browser decoding also has a readable status.
 Zero/unknown image dimensions omit the native width/height attributes until the
 image's intrinsic dimensions are available.
+
+
+### File attachments
+
+`Composer.attachmentsEnabled` adds a dedicated file input/paperclip independent of
+`showTools`. `attachments` is a readonly `ConversationAttachment[]`; removals and
+retries emit IDs. `filesAttached` handles picker, drop and paste selections.
+The owner supplies uploading/ready/error state and progress; unfinished uploads
+block sending. Ready attachments permit an empty text submission. `ChatExchange`
+accepts the same attachment view models, rendered by `AttachmentsComponent` with
+the existing confined asset resolver. This component emits `removed`, `retry` and
+`copyPath`; it does not read or upload files. Draft previews must be raster data
+sources supplied by the trusted feature owner. The connected owner handles
+limits, retention, selection changes, send failures and uncertain delivery.
+`MarkdownMedia.showCaption=false` omits a repeated caption when a surrounding
+attachment card already labels the media; viewer naming remains available.
+
+
+Attachment cards keep filenames once, omit redundant type/ready labels, and show
+size or upload progress inline. Draft chips wrap in a bounded tray; sent media
+uses compact, fixed-height previews with the message text above them. File cards
+fit their contents. `MarkdownMedia.compact` opts into this thumbnail presentation
+without changing the full-size image viewer. Its compact video adapter passes
+`MarkdownRecording.compact` and uses native playback controls; ordinary Markdown
+keeps the existing recording toolbar. `MarkdownRecording.showCaption` only controls
+the visible caption, independently of the video's accessible name.

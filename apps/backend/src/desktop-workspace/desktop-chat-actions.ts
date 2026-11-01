@@ -1,3 +1,9 @@
+import {
+  chatMedia,
+  readChatMedia,
+  uploadedAttachment,
+} from './desktop-chat-media.js';
+import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { AgentRuntimeProviderFeatures } from '../agent-runtime/agent-runtime.types.js';
 import type { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
@@ -57,19 +63,57 @@ export async function executeChatAction(
       await sessions.updateActiveAgentProvider(sessionId, next);
       break;
     }
-    case 'send':
+    case 'send': {
       if (typeof action.queue !== 'boolean')
         throw new BadRequestException('Invalid queue option.');
       if (session.status === 'stopped')
         await sessions.reactivateRuntime(sessionId);
+      const prompt = text(action.text, 64000);
+      const refs = chatMedia({
+        id: 'send',
+        kind: 'user',
+        content: prompt,
+        timestamp: '',
+      }).media.filter(
+        (media) =>
+          media.kind === 'image' && uploadedAttachment(media.source, sessionId),
+      );
+      const images: AgentImageInput[] = [];
+      let imageBytes = 0;
+      for (const ref of refs.slice(0, 8)) {
+        const source = await readChatMedia(
+          ref.source,
+          session.worktreePath,
+          session.activeAgentProvider,
+          sessionId,
+        );
+        const [header, data] = source.split(',');
+        imageBytes += Buffer.byteLength(data, 'base64');
+        if (imageBytes > 8 * 1024 * 1024)
+          throw new BadRequestException(
+            'Image attachments exceed the native input limit.',
+          );
+        const mediaType = header.slice(5, -7);
+        if (
+          mediaType !== 'image/png' &&
+          mediaType !== 'image/jpeg' &&
+          mediaType !== 'image/gif' &&
+          mediaType !== 'image/webp'
+        )
+          throw new BadRequestException('Unsupported image input.');
+        images.push({ mediaType, data });
+      }
       await provider.submitPrompt(
         sessionId,
-        text(action.text, 64000),
+        prompt,
         undefined,
-        undefined,
+        images.length && provider.info.capabilities.multimodalPrompts
+          ? images
+          : undefined,
         { human: true, queue: action.queue, waitForCompletion: false },
       );
       break;
+    }
     case 'cancel-queued':
       await provider.cancelPendingPrompt(sessionId, text(action.id));
       break;

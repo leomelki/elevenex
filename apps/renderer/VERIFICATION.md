@@ -1995,6 +1995,32 @@ disabled HMR/live reload to avoid the development server's CSP-blocked blob work
 production security settings were unchanged. This was an unpackaged component
 preview, not a packaged-app launch.
 
+## Session file attachments — 2026-11-01
+
+- Added a dedicated paperclip/native multiple-file picker, Cmd/Ctrl U, file
+  paste, conversation-wide drop, controlled attachment cards and files-only sends.
+- The connected owner uses sequential 512 KiB uploads, selection-scoped
+  cancellation, retained per-session drafts, explicit retry/removal and existing
+  uncertain-send reconciliation. Image inputs use the native provider slot;
+  videos/documents retain durable local paths outside the checkout.
+- Sent media uses a responsive grid, existing image viewer and recording player;
+  documents have named cards and Copy path. Both themes, narrow layouts and
+  reduced motion were inspected. Preview data remains outside the product graph.
+- `session-attachments.mjs`: **verified: true**, 10 checkpoints, zero errors or
+  warnings, in `artifacts/desktop-capture/run-nJfLar/report.json`. Inspected PNGs
+  include light selection, sent image/video cards, viewer, failure/retry and both
+  narrow theme states. File selection uses native browser input; paste/drop use
+  DOM file-transfer events without modifying the operating-system clipboard.
+- Desktop lint/build passed; desktop tests passed (116 native/adapter tests,
+  7 capture-tool tests, IPC TypeScript assertions and 539 Angular tests).
+  Backend production TypeScript and 35 focused attachment/media/chat tests passed.
+  Native Electron smoke passed, including a real sandboxed upload bridge call.
+- Broad backend spec typechecking still reports pre-existing errors outside this
+  feature (including agent-generation, runtime, speech and todo test types).
+  These checks do not claim a paid provider turn, remote-machine execution or a
+  packaged-app launch. Upload limits and draft/storage lifetimes are documented
+  in the session-chat guide.
+
 ### Compact message navigation (2026-11-01)
 
 TurnNav uses a virtual scroll window of up to seven 24px targets, capped at 40%
@@ -2022,3 +2048,42 @@ Light keyboard and dark chat PNGs were inspected, along with narrow/short states
 from the preceding identical-layout capture. The isolated preview disabled
 live reload; production security settings were unchanged. These checks verify
 the unpackaged component preview, not a packaged-app launch.
+
+## Compact attachment presentation — 2026-11-01
+
+- Drafts now use single-line chips with filename, size/progress and removal.
+  Repeated Ready/type labels and large icon tiles are removed; errors retain
+  their status, Retry and Remove actions. The tray remains bounded and wraps.
+- Sent messages put text first, followed by 148px media previews, one filename
+  per preview and content-sized document chips. Compact video uses one set of
+  native controls, with its accessible name retained independently of caption
+  visibility. Fullscreen video and full-size image viewers retain their sizing.
+  Ordinary Markdown keeps its existing recording toolbar.
+- `session-attachments.mjs`: **verified: true**, 10 checkpoints, no errors or
+  warnings, in `artifacts/desktop-capture/run-AsfbuF/report.json`. Inspected light
+  and dark images, narrow/reduced-motion layouts, failures, retry, removal and
+  viewer focus. The regression asserts ready chips are at most 40px tall and
+  sent media cards at most 180px; trusted keyboard input verifies video playback,
+  followed by seeking before the sent-media capture.
+- Desktop lint/build and the full desktop suite passed (541 Angular tests plus
+  native/adapter/capture suites and IPC type assertions). After the final native
+  control refinement, 41 focused media/composer/connected-chat tests passed and
+  the production build passed again. The owned preview server was stopped.
+
+
+## Nine-marker message navigation — 2026-11-01
+
+Raised the rail limit to nine 24px targets (224px including padding), retaining
+the 40% conversation-height cap. Preview controls and usage guides match the
+new limit. Hover previews now respond to pointer movement: a virtual row
+appearing under a stationary pointer cannot override a Home/End keyboard choice.
+
+Desktop lint, production build and the full desktop test command passed,
+including 543 Angular tests and nine focused navigation regressions.
+artifacts/desktop-capture/turn-navigation-nine-final/report.json reports
+verified: true, 15 checkpoints and no errors or warnings. In both themes a
+640px example contains a 224px rail with nine fully visible markers; 360px and
+80px examples retain the 40% cap. Native keyboard/pointer selection, 10,000
+targets, narrow/reduced-motion layouts and real Chat jumps also passed. The
+light/dark nine-marker and dark short-layout PNGs were inspected. This is an
+unpackaged preview check; no packaged-app launch was attempted.

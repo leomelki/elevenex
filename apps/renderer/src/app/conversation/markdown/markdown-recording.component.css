@@ -101,3 +101,11 @@ figcaption {
 .fallback {
   background: var(--surface-sunken);
 }
+
+:host.compact .player {
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+:host.compact video:not(:fullscreen) {
+  height: 148px;
+}

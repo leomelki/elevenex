@@ -17,6 +17,7 @@
         (edited)="queueEdited.emit($event)"
         (reordered)="queueReordered.emit($event)"
       />
+      @if (attachments().length) { <ex-attachments [files]="attachments()" [editing]="true" [disabled]="disabled() || sending()" (removed)="attachmentRemoved.emit($event)" (retry)="attachmentRetry.emit($event)" /> }
       @if (context().length) {
         <div class="context">
           @for (mention of context(); track mention.kind + ":" + mention.id) {
@@ -29,7 +30,7 @@
         </div>
       }
       @if (dropping()) {
-        <div class="drop-label">Drop to attach</div>
+        <div class="drop-label">Drop files to attach</div>
       }
       <textarea
         #textarea
@@ -124,6 +125,10 @@
       </ex-presence>
     }
     <span class="grow"></span>
+    @if (attachmentsEnabled()) {
+      <input #fileInput type="file" multiple hidden (change)="filesChosen($event)" />
+      <ex-icon-button icon="attach" label="Attach files (⌘U)" [disabled]="disabled() || sending()" (pressed)="chooseFiles()" />
+    }
     @if (showTools()) {
       <ex-tools-menu
         [servers]="servers()"
@@ -155,7 +160,7 @@
       size="sm"
       class="send"
       type="button"
-      [disabled]="disabled() || sending() || !draft().trim() || !!recording()"
+      [disabled]="disabled() || sending() || !canSend() || !!recording()"
       [attr.aria-busy]="sending()"
       [attr.aria-label]="
         running()

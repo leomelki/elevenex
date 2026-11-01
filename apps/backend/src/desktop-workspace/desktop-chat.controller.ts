@@ -9,12 +9,24 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { DesktopChatAttachments } from './desktop-chat-attachments.js';
+import { SessionsService } from '../sessions/sessions.service.js';
+import { record } from './desktop-chat-projection.js';
 import { DesktopChatService } from './desktop-chat.service.js';
 import { resourceId } from './desktop-workspace.service.js';
 
 @Controller('desktop-workspace/tasks/:taskId/sessions/:sessionId/chat')
 export class DesktopChatController {
-  constructor(private readonly chat: DesktopChatService) {}
+  constructor(private readonly chat: DesktopChatService, private readonly attachments: DesktopChatAttachments, private readonly sessions: SessionsService) {}
+  @Post('attachments')
+  async upload(@Param('taskId') task: string, @Param('sessionId') session: string, @Body() body: unknown) {
+    const sessionId = resourceId(session);
+    const target = await this.sessions.findOne(sessionId);
+    if (target.workspaceId !== resourceId(task) || target.surface !== 'session' || target.status === 'archived' || target.workspaceArchivedAt)
+      throw new BadRequestException('Attachments require an active session in this task.');
+    await this.sessions.assertSessionWorkspaceLinked(sessionId);
+    return this.attachments.chunk(sessionId, record(body));
+  }
   @Get()
   async read(
     @Param('taskId') task: string,

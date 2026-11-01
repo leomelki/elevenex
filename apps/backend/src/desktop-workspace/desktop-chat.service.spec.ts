@@ -1,3 +1,7 @@
+import { DesktopChatAttachments } from './desktop-chat-attachments.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { SettingsService } from '../settings/settings.service.js';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { EventEmitter } from 'node:events';
@@ -22,7 +26,7 @@ describe('selected session chat', () => {
     live: AgentTranscriptItem[],
     status: string;
   const runtime = Object.assign(new EventEmitter(), {
-    info: { id: 'codex', displayName: 'Codex', permissionModes: ['default'] },
+    info: { id: 'codex', displayName: 'Codex', permissionModes: ['default'], capabilities: { multimodalPrompts: true } },
     getRuntimeState: jest.fn(),
     getHistory: jest.fn(),
     onClientAttached: jest.fn(),
@@ -71,6 +75,7 @@ describe('selected session chat', () => {
     }));
     session.mockImplementation(async () => ({
       workspaceId: 1,
+      worktreePath: '/workspace',
       surface: 'session',
       status,
       activeAgentProvider: 'codex',
@@ -114,6 +119,24 @@ describe('selected session chat', () => {
     chat = module.get(DesktopChatService);
   });
   afterEach(async () => module.close());
+
+  it('delivers uploaded image bytes in the native image slot and retains file references in the prompt', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'chat-native-image-'));
+    const previous = process.env.ELEVENEX_DATA_ROOT;
+    process.env.ELEVENEX_DATA_ROOT = root;
+    const attachments = new DesktopChatAttachments();
+    try {
+      const data = 'iVBORw0KGgo=';
+      const upload = await attachments.chunk(2, { id: '11111111-1111-4111-8111-111111111111', name: 'reference.png', size: 8, offset: 0, data });
+      const text = `Review this image.\n\n[reference.png](<${upload.path}>)`;
+      await chat.command(1, 2, { type: 'send', text, queue: false });
+      expect(runtime.submitPrompt).toHaveBeenCalledWith(2, text, undefined, [{ mediaType: 'image/png', data }], { human: true, queue: false, waitForCompletion: false });
+    } finally {
+      await attachments.onModuleDestroy();
+      if (previous === undefined) delete process.env.ELEVENEX_DATA_ROOT; else process.env.ELEVENEX_DATA_ROOT = previous;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it('remembers successful config changes and sends, but never rejected commands or passive reads', async () => {
     runtime.getRuntimeState.mockResolvedValue({ selectedModel: 'gpt', reasoningEffort: 'high', fastMode: true });

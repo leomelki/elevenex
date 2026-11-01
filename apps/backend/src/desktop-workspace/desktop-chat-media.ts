@@ -1,3 +1,4 @@
+import { attachmentRoot } from './desktop-chat-attachments.js';
 import { BadRequestException } from '@nestjs/common';
 import { constants } from 'node:fs';
 import { open, realpath } from 'node:fs/promises';
@@ -5,13 +6,14 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 
-const MAX_BYTES = 8 * 1024 * 1024;
-const MAX_DATA = Math.ceil(MAX_BYTES / 3) * 4;
+const MAX_BYTES = 20 * 1024 * 1024;
+const MAX_DATA = Math.ceil((8 * 1024 * 1024) / 3) * 4;
 const object = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : {};
 interface ChatMedia {
+  readonly kind?: 'image' | 'video' | 'file';
   readonly id: string;
   readonly path: string;
   readonly caption: string;
@@ -122,10 +124,58 @@ export function chatMedia(item: AgentTranscriptItem) {
         (isAbsolute(match[2]) || !/^[a-z][a-z\d+.-]*:|^\/\//i.test(match[2]))
       )
         add(match[2], match[2], match[1]);
-  return { text, media, shortened };
+  const uploaded: ChatMedia[] = [];
+  if (item.kind === 'user') {
+    for (const match of text.matchAll(
+      /^\[([^\]\r\n]+)\]\(<([^>\r\n]+)>\)\s*$/gm,
+    )) {
+      // Only our private upload namespace creates file cards, never arbitrary Markdown links.
+      if (
+        !uploadedAttachment(match[2]) ||
+        uploaded.length >= 8 ||
+        uploaded.some((value) => value.source === match[2])
+      )
+        continue;
+      const source = match[2];
+      uploaded.push({
+        id: String(uploaded.length),
+        path: source,
+        source,
+        caption: match[1].slice(0, 200),
+        inline: false,
+        kind: attachmentKind(source),
+      });
+    }
+  }
+  const selected = item.kind === 'user' && uploaded.length ? uploaded : media;
+  return {
+    text,
+    media: selected.map((value, index) => ({ ...value, id: String(index) })),
+    shortened,
+  };
 }
 
-function imageType(bytes: Buffer): string | undefined {
+export function uploadedAttachment(path: string, sessionId?: number): boolean {
+  const root = attachmentRoot(sessionId ?? 1);
+  const base = sessionId === undefined ? resolve(root, '..') : root;
+  const child = relative(base, path).split(sep);
+  return (
+    isAbsolute(path) &&
+    (sessionId === undefined
+      ? child.length === 3 && /^\d+$/.test(child.shift() ?? '')
+      : child.length === 2) &&
+    /^[a-f0-9-]{36}$/.test(child[0]) &&
+    /^[a-zA-Z0-9_-][a-zA-Z0-9._-]{0,179}$/.test(child[1])
+  );
+}
+export function attachmentKind(path: string): 'image' | 'video' | 'file' {
+  return /\.(png|jpe?g|gif|webp)$/i.test(path)
+    ? 'image'
+    : /\.(mp4|webm|mov|m4v|ogv)$/i.test(path)
+      ? 'video'
+      : 'file';
+}
+export function imageType(bytes: Buffer): string | undefined {
   if (
     bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
   )
@@ -158,6 +208,7 @@ export async function readChatMedia(
   source: string,
   workspace: string,
   provider: string,
+  sessionId?: number,
 ) {
   let bytes: Buffer;
   const data =
@@ -180,6 +231,9 @@ export async function readChatMedia(
       throw new BadRequestException('Unsupported image source.');
     const roots = [
       workspace,
+      ...(sessionId !== undefined && uploadedAttachment(source, sessionId)
+        ? [attachmentRoot(sessionId)]
+        : []),
       ...(provider === 'codex'
         ? [
             join(
@@ -227,8 +281,23 @@ export async function readChatMedia(
       await file.close();
     }
   }
-  const type = imageType(bytes);
-  if (!type || bytes.length > MAX_BYTES)
+  const type =
+    imageType(bytes) ??
+    (sessionId !== undefined &&
+    uploadedAttachment(source, sessionId) &&
+    attachmentKind(source) === 'video'
+      ? bytes.subarray(4, 8).toString() === 'ftyp'
+        ? 'video/mp4'
+        : bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))
+          ? 'video/webm'
+          : bytes.subarray(0, 4).toString() === 'OggS'
+            ? 'video/ogg'
+            : undefined
+      : undefined);
+  if (
+    !type ||
+    bytes.length > (type.startsWith('image/') ? 8 * 1024 * 1024 : MAX_BYTES)
+  )
     throw new BadRequestException('Unsupported or oversized image.');
   return `data:${type};base64,${bytes.toString('base64')}`;
 }

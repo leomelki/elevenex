@@ -1,3 +1,4 @@
+import { registerChatAttachments } from './session-chat-attachments';
 import { registerSessionChatMedia } from './session-chat-media';
 import { parseChangesPage } from "./session-chat-changes";
 import { handleForWindow, type TrustedSender } from "../ipc";
@@ -19,6 +20,7 @@ export function registerSessionChatIpc(
   client: BackendClient,
   trusted: TrustedSender,
 ): () => void {
+  const attachments = registerChatAttachments(client, trusted);
   const media = registerSessionChatMedia(client, trusted);
   const scope = (value: unknown) => {
     if (typeof value !== "string" || !/^[a-f0-9-]{36}$/.test(value))
@@ -326,6 +328,7 @@ export function registerSessionChatIpc(
     },
   );
   return () => {
+    attachments();
     media();
     changes();
     read();

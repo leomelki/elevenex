@@ -58,7 +58,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
     cache?.set(call, { result: item, fingerprint, changes });
   }
   return {
-    ...(projected.media.length ? { media: projected.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline })) } : {}),
+    ...(projected.media.length ? { media: projected.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
     ...(execution ? { execution } : {}),
     ...(changes ? { changes } : {}),
     id: item.id,

@@ -46,6 +46,18 @@ describe("Composer public interactions", () => {
     );
     fixture.detectChanges();
   }
+  it("allows ready attachments without text and blocks unfinished uploads", () => {
+    fixture.componentRef.setInput('attachmentsEnabled', true);
+    fixture.componentRef.setInput('attachments', [{ id: 'file', path: '/file', name: 'clip.webm', kind: 'video', status: 'uploading' }]);
+    fixture.detectChanges();
+    press(type(''));
+    expect(sent).toEqual([]);
+    fixture.componentRef.setInput('attachments', [{ id: 'file', path: '/file', name: 'clip.webm', kind: 'video', status: 'ready' }]);
+    fixture.detectChanges();
+    press(type(''));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.text).toBe('');
+  });
   it("sends, queues and steers with the correct intent and clears accepted drafts", () => {
     press(type("  Explain the retry policy  "));
     expect(sent[0]?.intent).toBe("send");

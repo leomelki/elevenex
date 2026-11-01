@@ -35,6 +35,7 @@ export * from "./session/preset-catalog.models";
 export * from "./session/preset-picker.component";
 export * from "./session/session-start.component";
 export * from "./chat/message.component";
+export * from "./chat/attachments.component";
 export * from "./chat/chat-scroll.component";
 export * from "./chat/side-thread.component";
 export * from "./chat/chat.component";

@@ -73,10 +73,10 @@ activity collections have separate finite bounds; main caps the complete reply
 at 4 MiB. Feed expiry/rewrite produces a fresh bounded tail rather than a
 pretend lossless event log.
 
-The integration deliberately hides unavailable attachment, dictation, mention,
+The integration deliberately hides unavailable dictation, mention,
 fork, side-chat and queue edit/reorder controls. File links request the selected reply’s Changes
 panel; external HTTP(S) links use the existing main-process navigation policy.
-Media resolution, subagent transcript navigation and richer MCP schemas remain
+Subagent transcript navigation and richer MCP schemas remain
 separate integrations. The desktop connection layer and legacy app are unchanged.
 
 Run the standard desktop checks and the backend `desktop-chat.service.spec.ts`.
@@ -165,7 +165,7 @@ engines. Thinking and fast changes use validated actions on the existing named,
 scoped command bridge. The backend checks the selected model before delegating,
 and advertises only installed provider operations. No extra catalogs, provider
 hydration or repository reads are added. Missing capability metadata hides the
-new controls. File attachments, mentions, dictation and preset/fork integrations
+new controls. Mentions, dictation and preset/fork integrations
 remain hidden until their corresponding platform operations are available.
 
 `session-composer.mjs` verifies settings, nested Escape/focus, keyboard modes,
@@ -329,7 +329,7 @@ owner. Binary image data never enters the transcript preview or triggers its raw
 output overflow control. Ordinary shortened text keeps the full-content reader.
 
 `SessionChatMedia` owns the latest 12 image references in the mounted transcript,
-three concurrent reads, a 32 MiB source budget, cancellation and stale-selection
+three concurrent reads, a 48 MiB source budget, cancellation and stale-selection
 rejection. It supplies the existing Markdown resolver; loading/read/decode errors
 are explicit. Leaving the session releases sources and queued work. Older engines
 can omit media metadata. This slice supports PNG, JPEG, GIF and WebP; it does not
@@ -343,3 +343,52 @@ Real paths, regular-file checks, signature validation and an 8 MiB byte limit
 confine reads. Remote image bytes travel through the main-owned backend client;
 renderer CSP and credentials remain unchanged. Per-feed weak projection caches
 avoid reparsing unchanged binary tool results during streaming polls.
+
+
+## Sending files
+
+Engines advertising `attachments` enable the dedicated paperclip (Cmd/Ctrl U),
+multiple selection, file paste and file drop anywhere in the selected conversation.
+The presentational Composer accepts controlled `attachments`, `attachmentsEnabled`,
+`attachmentRemoved` and `attachmentRetry`; it emits browser Files through
+`filesAttached`. Files-only sends are allowed once every upload is ready.
+Unsupported engines and read-only/historical sessions keep uploads unavailable.
+
+`SessionChatAttachments` owns a sequential upload worker, abortable FileReaders,
+progress, explicit retries, cancellation and selection guards. Workspace-owned
+`SessionChatDrafts` keeps the selected files while navigating; pending/failed sends
+retain them with their text. Uploads never prompt the agent. The existing delivery
+reconciliation compares the full prompt, including stable attachment references;
+uncertain sends require checking delivery and never replay automatically.
+
+The named `sessionChatUpload` bridge carries at most 512 KiB per chunk through the
+existing per-window backend scope. The backend revalidates task/session membership
+and active workspace ownership for each chunk. Exclusive private directories,
+ordered offsets, non-following file opens, bounded writes and atomic publication
+keep partial files out of the transcript. Pending uploads expire after ten minutes
+or clean shutdown. Completed files remain in the engine's app-data directory at
+`chat-attachments/<session>/<uuid>/<safe-name>` so queued prompts and reopened
+history retain valid references. They are outside the checkout and git changes.
+Completed uploads are retained even when removed from a draft: removal cannot
+invalidate another queued/sent reference to the same file. Unsent drafts are kept
+in memory for this workspace window, not across application restarts.
+
+Limits are eight files, 20 MiB per file, 32 MiB per draft and 8 MiB of native
+images per draft. PNG/JPEG/GIF/WebP bytes use native image input when the selected
+harness supports it. Videos and other files are supplied as absolute local-file
+references to the agent; processing depends on its model/tools. SVG, HTML and
+other documents remain file cards and are never executed or embedded.
+
+Provider history retains ordinary named Markdown links. Projection recognizes only
+our private upload namespace, emits bounded image/video/file metadata, and avoids
+duplicating provider-native image blocks. The transcript shows supplied images in
+the existing accessible image viewer, videos in the existing recording player,
+and documents as named cards with Copy path. Media reads select a recorded item
+and attachment ID, validate signatures, and confine real paths to that session's
+upload directory. Video data is limited to MP4/WebM/Ogg; codec failures remain
+readable. The desktop CSP permits local data media, with no external media hosts.
+
+The preview adapter and `session-attachments.mjs` exercise native file selection,
+DOM paste/drop, files-only sends, retry/removal, viewer focus, playback and both
+themes/narrow reduced-motion states. Provider execution is covered by backend
+regressions rather than sending a paid prompt during visual verification.

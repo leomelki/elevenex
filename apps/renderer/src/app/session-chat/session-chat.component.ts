@@ -1,3 +1,4 @@
+import { SessionChatAttachments } from './session-chat-attachments';
 import { SessionChatMedia } from './session-chat-media';
 import {
   afterRenderEffect,
@@ -50,7 +51,7 @@ import { presentSessionTool } from './session-chat-tools';
 
 @Component({
   selector: "ex-session-chat",
-  providers: [SessionChatStore, SessionChatMedia],
+  providers: [SessionChatStore, SessionChatMedia, SessionChatAttachments],
   imports: [
     SessionChatContentComponent,
     ChatComponent,
@@ -72,7 +73,12 @@ import { presentSessionTool } from './session-chat-tools';
   ],
   templateUrl: "./session-chat.component.html",
   styleUrl: "./session-chat.component.css",
-  host: { "(keydown)": "presetFlow.presetShortcut($event)" },
+  host: {
+    "(keydown)": "presetFlow.presetShortcut($event)",
+    "(dragover)": "dragOver($event)",
+    "(drop)": "dropFiles($event)",
+    "(dragleave)": "composer()?.dragLeave($event)",
+  },
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SessionChatComponent {
@@ -81,6 +87,7 @@ export class SessionChatComponent {
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
   readonly media = inject(SessionChatMedia);
+  readonly attachments = inject(SessionChatAttachments);
   readonly permissionEvidence = computed(() => {
     const request = this.store.state()?.permission;
     return request ? presentSessionTool({
@@ -297,10 +304,17 @@ export class SessionChatComponent {
     })),
   );
 
+  dragOver(event: DragEvent): void {
+    if (!event.defaultPrevented && this.store.state()?.attachments) this.composer()?.dragOver(event);
+  }
+  dropFiles(event: DragEvent): void {
+    if (!event.defaultPrevented && this.store.state()?.attachments) this.composer()?.drop(event);
+  }
   constructor() {
     effect(() => {
       const selection = this.selection();
       this.store.open(selection, this.archived());
+      untracked(() => this.attachments.open(selection));
       this.media.update(selection, this.store.items());
     });
     effect(() => {

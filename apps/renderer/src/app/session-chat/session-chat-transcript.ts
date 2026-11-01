@@ -11,6 +11,8 @@ export interface PendingChatPrompt {
   readonly text: string;
   readonly timestamp: string;
   readonly knownIds: ReadonlySet<string>;
+  readonly media?: SessionChatItem["media"];
+  readonly attachments?: ChatExchange["attachments"];
 }
 
 /** Runtime output may precede the harness's durable user-message receipt. */
@@ -22,6 +24,7 @@ function withPendingPrompt(
     id: pending.id,
     kind: "user",
     text: pending.text,
+    media: pending.media,
     timestamp: pending.timestamp,
     toolId: null,
     toolName: null,
@@ -46,6 +49,7 @@ export function chatExchanges(
   const groups: {
     id: string;
     prompt: string;
+    attachments?: ChatExchange["attachments"];
     time: string;
     items: SessionChatItem[];
   }[] = [];
@@ -53,7 +57,8 @@ export function chatExchanges(
     if (item.kind === "user")
       groups.push({
         id: item.id,
-        prompt: item.text,
+        prompt: item.text.split('\n').filter(line => !line.startsWith('[') || !item.media?.some(media => line.endsWith(`](<${media.path}>)`))).join('\n').trim(),
+        attachments: item.media?.map(media => ({ id: media.id, path: media.path, name: media.caption, kind: media.kind ?? 'image' })),
         time: new Date(item.timestamp).toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
@@ -214,6 +219,7 @@ export function chatExchanges(
         })),
       id: group.id,
       prompt: group.prompt,
+      attachments: group.id === pending?.id ? pending.attachments : group.attachments,
       time: group.time,
       isNew: fresh.has(group.id),
       streaming:

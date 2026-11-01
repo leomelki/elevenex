@@ -24,7 +24,9 @@
               (error)="failedSource.set(safeSource())"
             />
           </button>
-          <figcaption>{{ caption() }}</figcaption>
+          @if (showCaption()) {
+            <figcaption>{{ caption() }}</figcaption>
+          }
         </figure>
         <dialog
           #viewer
@@ -52,16 +54,24 @@
       }
     }
     @case ("video") {
-      <ex-markdown-recording
-        [source]="file.src || ''"
-        [knownDuration]="file.dur || 0"
-        [poster]="file.poster || ''"
-        [width]="file.w"
-        [height]="file.h"
-        [caption]="caption()"
-        [marks]="file.marks || []"
-        (openFile)="openFile.emit(path())"
-      />
+      @if (file.loading) {
+        <p role="status">Loading video…</p>
+      } @else if (file.error) {
+        <p role="status">{{ file.error }}</p>
+      } @else {
+        <ex-markdown-recording
+          [source]="file.src || ''"
+          [knownDuration]="file.dur || 0"
+          [poster]="file.poster || ''"
+          [width]="file.w"
+          [height]="file.h"
+          [caption]="caption()"
+          [showCaption]="showCaption()"
+          [compact]="compact()"
+          [marks]="file.marks || []"
+          (openFile)="openFile.emit(path())"
+        />
+      }
     }
     @case ("page") {
       <section class="page">

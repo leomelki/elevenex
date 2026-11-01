@@ -1,9 +1,9 @@
 :host {
   display: flex;
   flex-direction: column;
-  /* Seven comfortable targets, independent of the transcript's length. */
-  height: calc(min(var(--turn-count), 7) * var(--space-6) + var(--space-2));
-  max-height: calc(6 * var(--space-8));
+  /* Nine comfortable targets, independent of the transcript's length. */
+  height: calc(min(var(--turn-count), 9) * var(--space-6) + var(--space-2));
+  max-height: calc(7 * var(--space-8));
   min-height: 0;
   width: calc(var(--space-8) + var(--space-2));
 }

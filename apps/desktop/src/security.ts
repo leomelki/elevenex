@@ -33,6 +33,7 @@ export function contentSecurityPolicy(devUrl?: string): string {
     devUrl ? "style-src 'self' 'unsafe-inline'" : "style-src 'self' 'nonce-__ELEVENEX_NONCE__'",
     "font-src 'self'",
     "img-src 'self' data:",
+    "media-src 'self' data:",
     `connect-src ${connect}`,
     "base-uri 'self'",
     "object-src 'none'",

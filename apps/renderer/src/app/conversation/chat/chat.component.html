@@ -2,13 +2,15 @@
   <ex-chat-scroll (activeExchange)="active.set($event)">
     <ng-content select="[chatHistory]" />
     @for (exchange of exchanges(); track exchange.id) {
-      @if (exchange.prompt) {
+      @if (exchange.prompt || exchange.attachments?.length) {
         <ex-message
           role="user"
           [messageId]="exchange.id"
           [isNew]="exchange.isNew || false"
           [time]="exchange.time || ''"
-          >{{ exchange.prompt }}</ex-message
+          >{{ exchange.prompt }}@if (exchange.attachments?.length) {
+            <ex-attachments [files]="exchange.attachments || []" [resolve]="resolve()" (copyPath)="copyCode.emit($event)" />
+          }</ex-message
         >
       }
       <ex-turn

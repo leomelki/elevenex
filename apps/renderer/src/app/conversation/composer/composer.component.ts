@@ -21,6 +21,7 @@ import type {
   AgentHarness,
   ComposerSubmission,
   ConversationMention,
+  ConversationAttachment,
   ConversationMode,
   McpServer,
   PermissionChoice,
@@ -33,6 +34,7 @@ import { MentionComponent } from "./mention.component";
 import { MentionMenuComponent } from "./mention-menu.component";
 import { ModeToggleComponent } from "./mode-toggle.component";
 import { PermissionPickerComponent } from "./permission-picker.component";
+import { AttachmentsComponent } from "../chat/attachments.component";
 import { ToolsMenuComponent } from "./tools-menu.component";
 @Component({
   selector: "ex-composer",
@@ -50,6 +52,7 @@ import { ToolsMenuComponent } from "./tools-menu.component";
     ModeToggleComponent,
     PermissionPickerComponent,
     ToolsMenuComponent,
+    AttachmentsComponent,
   ],
   templateUrl: "./composer.component.html",
   styleUrl: "./composer.component.css",
@@ -78,6 +81,29 @@ export class ComposerComponent {
   readonly canCompact = input(false);
   readonly showSettings = input(true);
   readonly showTools = input(true);
+  readonly attachmentsEnabled = input(false);
+  readonly attachments = input<readonly ConversationAttachment[]>([]);
+  readonly attachmentRemoved = output<string>();
+  readonly attachmentRetry = output<string>();
+  readonly fileInput = viewChild<ElementRef<HTMLInputElement>>("fileInput");
+  chooseFiles(): void {
+    if (!this.disabled() && !this.sending())
+      this.fileInput()?.nativeElement.click();
+  }
+  filesChosen(event: Event): void {
+    if (!(event.target instanceof HTMLInputElement)) return;
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length && !this.disabled() && !this.sending())
+      this.filesAttached.emit(files);
+    this.textarea()?.nativeElement.focus();
+  }
+  canSend(): boolean {
+    return (
+      (!!this.draft().trim() || !!this.attachments().length) &&
+      this.attachments().every((file) => file.status === "ready")
+    );
+  }
   readonly showDictation = input(true);
   readonly mentionsEnabled = input(true);
   readonly queueEditable = input(true);
@@ -131,7 +157,13 @@ export class ComposerComponent {
   }
   send(steer = false): void {
     const text = this.draft().trim();
-    if (!text || this.disabled() || this.sending() || this.recording()) return;
+    if (
+      !this.canSend() ||
+      this.disabled() ||
+      this.sending() ||
+      this.recording()
+    )
+      return;
     this.submitted.emit({
       text,
       intent: this.running() ? (steer ? "steer" : "queue") : "send",
@@ -192,12 +224,13 @@ export class ComposerComponent {
       return;
     }
     if (
-      this.showTools() &&
+      (this.showTools() || this.attachmentsEnabled()) &&
       (event.metaKey || event.ctrlKey) &&
       event.key.toLowerCase() === "u"
     ) {
       event.preventDefault();
-      this.attach.emit();
+      if (this.attachmentsEnabled()) this.chooseFiles();
+      else this.attach.emit();
       return;
     }
     if (
@@ -223,16 +256,21 @@ export class ComposerComponent {
       event.preventDefault();
       this.send(event.altKey);
     }
-    if (event.key === "ArrowUp" && !this.draft()) {
+    if (
+      event.key === "ArrowUp" &&
+      !this.draft() &&
+      !this.attachments().length
+    ) {
       event.preventDefault();
       this.focusLastMessage.emit();
     }
   }
   dragOver(event: DragEvent): void {
     if (
-      !this.showTools() ||
+      (!this.showTools() && !this.attachmentsEnabled()) ||
       !event.dataTransfer?.types.includes("Files") ||
-      this.disabled()
+      this.disabled() ||
+      this.sending()
     )
       return;
     event.preventDefault();
@@ -251,19 +289,23 @@ export class ComposerComponent {
   drop(event: DragEvent): void {
     this.dropping.set(false);
     if (
-      !this.showTools() ||
+      (!this.showTools() && !this.attachmentsEnabled()) ||
       !event.dataTransfer?.files.length ||
-      this.disabled()
+      this.disabled() ||
+      this.sending()
     )
       return;
     event.preventDefault();
+    const entries = Array.from(event.dataTransfer.items ?? []);
+    if (entries.some((item) => item.webkitGetAsEntry?.()?.isDirectory)) return;
     this.filesAttached.emit(Array.from(event.dataTransfer.files));
   }
   paste(event: ClipboardEvent): void {
     if (
-      !this.showTools() ||
+      (!this.showTools() && !this.attachmentsEnabled()) ||
       !event.clipboardData?.files.length ||
-      this.disabled()
+      this.disabled() ||
+      this.sending()
     )
       return;
     event.preventDefault();

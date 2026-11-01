@@ -673,3 +673,38 @@ test('chat media IPC uses scoped attachment identities, validates bytes and clea
   }
   stop(); assert.equal(handlers.size, 0);
 });
+
+test('file uploads are named, bounded, scoped and validate each chunk receipt', async context => {
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  const id = '11111111-1111-4111-8111-111111111111';
+  let reply = { id, offset: 3, path: `/private/chat-attachments/2/${id}/notes.txt` }, calls = 0;
+  const url = await server(context, async (request, response) => {
+    calls++;
+    assert.equal(request.method, 'POST');
+    assert.equal(request.url, '/api/desktop-workspace/tasks/1/sessions/2/chat/attachments');
+    let body = ''; for await (const chunk of request) body += chunk;
+    assert.deepEqual(JSON.parse(body), { id, name: 'notes.txt', size: 3, offset: 0, data: 'YWJj' });
+    response.writeHead(200, json); response.end(JSON.stringify(reply));
+  });
+  const client = new BackendClient(() => local(url), () => undefined);
+  context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id;
+  const handlers = new Map(), ipc = {}, adapter = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/session-chat-attachments'), 'utf8'), { exports: adapter, Buffer, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/' + name.slice(2)) });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = adapter.registerChatAttachments(client, (candidate, contents) => candidate === frame && contents === sender);
+  context.after(stop);
+  const upload = handlers.get('session-chat:upload');
+  const input = { taskId: 1, sessionId: 2, requestId: 'upload', id, name: 'notes.txt', size: 3, offset: 0, data: 'YWJj' };
+  assert.equal((await upload(event, scope, input)).value.path, reply.path);
+  assert.throws(() => upload({ senderFrame: {}, sender }, scope, input), /Untrusted/);
+  for (const bad of [{ ...input, size: 21 * 1024 * 1024 }, { ...input, offset: -1 }, { ...input, data: '!' }, { ...input, data: 'A'.repeat(700000) }])
+    assert.throws(() => upload(event, scope, bad));
+  assert.equal((await upload(event, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', input)).error.code, 'stale-scope');
+  assert.equal(calls, 1);
+  reply = { ...reply, offset: 2 };
+  assert.equal((await upload(event, scope, input)).error.code, 'invalid-response');
+  stop(); assert.equal(handlers.size, 0);
+});

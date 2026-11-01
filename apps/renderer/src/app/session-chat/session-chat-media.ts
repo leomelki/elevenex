@@ -13,7 +13,12 @@ export class SessionChatMedia {
   );
   private selection: ChatSelection | undefined;
   private generation = 0;
-  private queue: { itemId: string; id: string; path: string }[] = [];
+  private queue: {
+    itemId: string;
+    id: string;
+    path: string;
+    kind?: "image" | "video" | "file";
+  }[] = [];
   private readonly decoders = new Set<HTMLImageElement>();
   private readonly requests = new Set<string>();
   private readonly known = new Set<string>();
@@ -34,7 +39,9 @@ export class SessionChatMedia {
     }
     const refs = items
       .flatMap((item) =>
-        (item.media ?? []).map((media) => ({ itemId: item.id, ...media })),
+        (item.media ?? [])
+          .filter((media) => media.kind !== "file")
+          .map((media) => ({ itemId: item.id, ...media })),
       )
       .slice(-12);
     const paths = new Set(refs.map((ref) => ref.path));
@@ -58,13 +65,24 @@ export class SessionChatMedia {
       if (!ref) break;
       const id = crypto.randomUUID();
       this.requests.add(id);
-      this.set(ref.path, { kind: "image", src: "", w: 0, h: 0, loading: true });
+      this.set(ref.path, {
+        kind: ref.kind === "video" ? "video" : "image",
+        src: "",
+        w: 0,
+        h: 0,
+        loading: true,
+      });
       void this.load(selection, ref, id, generation);
     }
   }
   private async load(
     selection: ChatSelection,
-    ref: { itemId: string; id: string; path: string },
+    ref: {
+      itemId: string;
+      id: string;
+      path: string;
+      kind?: "image" | "video" | "file";
+    },
     id: string,
     generation: number,
   ): Promise<void> {
@@ -76,7 +94,23 @@ export class SessionChatMedia {
         mediaId: ref.id,
       });
       if (generation !== this.generation || !this.known.has(ref.path)) return;
-      if (!result.ok) throw new Error("Image read failed.");
+      if (!result.ok) throw new Error("Media read failed.");
+      const budget = [...this.assets().values()].reduce(
+        (sum, asset) =>
+          sum + (asset.kind !== "page" ? (asset.src?.length ?? 0) : 0),
+        0,
+      );
+      if (budget + result.value.source.length > 48 * 1024 * 1024)
+        throw new Error("Media display budget exceeded.");
+      if (ref.kind === "video") {
+        this.set(ref.path, {
+          kind: "video",
+          src: result.value.source,
+          w: 0,
+          h: 0,
+        });
+        return;
+      }
       const decoder = new Image();
       this.decoders.add(decoder);
       let width: number, height: number;
@@ -91,13 +125,14 @@ export class SessionChatMedia {
       }
       if (generation !== this.generation || !this.known.has(ref.path)) return;
       const bytes = [...this.assets().values()].reduce(
-        (sum, asset) => sum + (asset.kind === "image" ? asset.src.length : 0),
+        (sum, asset) =>
+          sum + (asset.kind !== "page" ? (asset.src?.length ?? 0) : 0),
         0,
       );
       if (
         !width ||
         !height ||
-        bytes + result.value.source.length > 32 * 1024 * 1024
+        bytes + result.value.source.length > 48 * 1024 * 1024
       )
         throw new Error("Image exceeds the display budget.");
       this.set(ref.path, {
@@ -109,11 +144,12 @@ export class SessionChatMedia {
     } catch {
       if (generation === this.generation && this.known.has(ref.path))
         this.set(ref.path, {
-          kind: "image",
+          kind: ref.kind === "video" ? "video" : "image",
           src: "",
           w: 0,
           h: 0,
-          error: "Could not load this image. Reopen the conversation to retry.",
+          error:
+            "Could not load this attachment. Reopen the conversation to retry.",
         });
     } finally {
       this.requests.delete(id);

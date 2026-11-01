@@ -41,7 +41,7 @@
           [attr.aria-setsize]="turns().length"
           [attr.aria-label]="label(turn, index)"
           [exTooltip]="label(turn, index)"
-          (pointerenter)="preview(turn)"
+          (pointermove)="preview(turn)"
           (mousedown)="$event.preventDefault()"
           (click)="select(turn)"
         >

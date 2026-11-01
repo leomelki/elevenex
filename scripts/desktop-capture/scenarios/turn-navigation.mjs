@@ -37,7 +37,7 @@ export default async function* (capture) {
         geometry.height <= geometry.parent * 0.4 + 1,
         JSON.stringify(geometry),
       );
-      assert.ok(geometry.height <= 192, JSON.stringify(geometry));
+      assert.ok(geometry.height <= 224, JSON.stringify(geometry));
       assert.ok(
         geometry.rows > 0 && geometry.rows < 30,
         JSON.stringify(geometry),
@@ -48,6 +48,36 @@ export default async function* (capture) {
         metadata: geometry,
       };
       if (count === 1) continue;
+      // Large windows expose all nine targets; smaller ones retain the 40% cap.
+      await capture.evaluate(() => {
+        const stage = document.querySelector(".navigation-demo");
+        stage.style.height = "640px";
+        stage.scrollIntoView({ block: "center" });
+      });
+      await capture.waitFor(() => {
+        const viewport = document.querySelector(".navigation-demo .markers");
+        const box = viewport.getBoundingClientRect();
+        return viewport.clientHeight === 216 && Array.from(viewport.querySelectorAll("button")).filter(button => {
+          const row = button.getBoundingClientRect();
+          return row.top >= box.top - 1 && row.bottom <= box.bottom + 1;
+        }).length === 9;
+      });
+      const expanded = await capture.evaluate(() => {
+        const rail = document.querySelector(".navigation-demo ex-turn-nav");
+        const box = rail.querySelector(".markers").getBoundingClientRect();
+        return {
+          height: rail.getBoundingClientRect().height,
+          visible: Array.from(rail.querySelectorAll("button")).filter(button => {
+            const row = button.getBoundingClientRect();
+            return row.top >= box.top - 1 && row.bottom <= box.bottom + 1;
+          }).length,
+        };
+      });
+      assert.equal(expanded.height, 224);
+      assert.equal(expanded.visible, 9);
+      yield { name: `${theme}-nine-markers`, selector: ".navigation-demo", metadata: expanded };
+      await capture.evaluate(() => { document.querySelector(".navigation-demo").style.height = ""; });
+      await capture.settle();
       const viewport = ".navigation-demo .markers";
       await capture.evaluate(() =>
         document.querySelector(".navigation-demo .markers").focus(),
@@ -219,6 +249,9 @@ export default async function* (capture) {
   await capture.evaluate(() =>
     document.querySelector(".demo-chat").scrollIntoView({ block: "start" }),
   );
+  // Keep the pointer over the list while Home recycles its rows. A stationary
+  // pointer must not replace the keyboard choice with a newly revealed marker.
+  await capture.hover("ex-chat .markers");
   await capture.evaluate(() =>
     document.querySelector("ex-chat .markers").focus(),
   );

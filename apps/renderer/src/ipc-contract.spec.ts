@@ -120,3 +120,8 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   subscribe('theme:changed', (event: { sender: unknown }) => void event);
 }
 void checkContract;
+function checkUpload(invoke: <K extends keyof import('@elevenex/shared').InvokeContracts>(channel: K, ...args: import('@elevenex/shared').InvokeContracts[K]['args']) => unknown) {
+  // @ts-expect-error File system paths are not accepted as an upload payload.
+  invoke('session-chat:upload', 'scope', '/Users/private/file.png');
+}
+void checkUpload;

@@ -15,7 +15,7 @@ import type {
 } from "@elevenex/shared";
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import type { ChatExchange, ComposerSubmission } from "../conversation";
-import { SessionChatDrafts } from "./session-chat-drafts";
+import { SessionChatDrafts, type AttachmentDraft } from "./session-chat-drafts";
 import {
   chatExchanges,
   type PendingChatPrompt,
@@ -36,7 +36,7 @@ export class SessionChatStore {
   private readonly client = inject(SessionChatClient);
   private readonly drafts = inject(SessionChatDrafts);
   private selection: ChatSelection | null = null;
-  private entry = { text: signal(""), uncertain: signal("") };
+  private entry = { text: signal(""), uncertain: signal(""), files: signal<readonly AttachmentDraft[]>([]) };
   private epoch = 0;
   private readEpoch = 0;
   private cursor: string | undefined;
@@ -311,7 +311,8 @@ export class SessionChatStore {
       this.readOnly() ||
       this.historical() ||
       this.uncertain() ||
-      !submission.text.trim()
+      (!submission.text.trim() && !this.entry.files().length) ||
+      this.entry.files().some(file => file.status !== "ready")
     )
       return;
     if (submission.text.length > 64000) {
@@ -319,10 +320,15 @@ export class SessionChatStore {
       this.setDraft(submission.text);
       return;
     }
+    const files = this.entry.files();
+    const text = [submission.text.trim(), ...files.map(file => `[${file.name.replace(/[[\]\r\n]/g, '_')}](<${file.path}>)`)].filter(Boolean).join('\n\n');
+    if (text.length > 64000) { this.error.set('Message and attachments exceed 64,000 characters.'); return; }
     const pending = {
+      attachments: files,
+      media: files.map((file, index) => ({ id: String(index), path: file.path, caption: file.name.replace(/[[\]\r\n]/g, '_'), kind: file.kind, inline: false })),
       id: "local-" + crypto.randomUUID(),
       confirmed: false,
-      text: submission.text,
+      text,
       queue: submission.intent === "queue",
       timestamp: new Date().toISOString(),
       knownIds: new Set(this.items().map((item) => item.id)),
@@ -333,11 +339,13 @@ export class SessionChatStore {
     const pendingChannel = pending.queue ? this.pendingQueue : this.pending;
     pendingChannel.set(pending);
     this.setDraft("");
+    entry.files.set([]);
     const success = await this.perform({
       type: "send",
-      text: submission.text,
+      text,
       queue: pending.queue,
     });
+    if (!success) entry.files.update(current => [...files, ...current]);
     if (epoch !== this.epoch || this.disposed) {
       if (!success)
         entry.text.set(

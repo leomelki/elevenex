@@ -147,11 +147,15 @@ function item(value: unknown): SessionChatItem {
       const media = chatObject(value);
       const id = chatText(media["id"], 2);
       if (!/^\d{1,2}$/.test(id)) throw invalid();
-      return { id, path: chatText(media["path"], 4000), caption: chatText(media["caption"], 200), inline: bool(media["inline"]) };
+      return { id, path: chatText(media["path"], 4000), caption: chatText(media["caption"], 200), inline: bool(media["inline"]), ...(media["kind"] === undefined ? {} : { kind: mediaKind(media["kind"]) }) };
     }) } : {}),
     ...(raw["execution"] !== undefined ? { execution: execution(raw["execution"]) } : {}),
     ...(raw["changes"] !== undefined ? { changes: parseChangeSummary(raw["changes"]) } : {}),
   };
+}
+function mediaKind(value: unknown): "image" | "video" | "file" {
+  if (value !== "image" && value !== "video" && value !== "file") throw invalid();
+  return value;
 }
 function planUsage(
   value: unknown,
@@ -220,6 +224,7 @@ function state(value: unknown): SessionChatState {
   const context = raw["context"] === null ? null : chatObject(raw["context"]);
   return {
     provider: chatText(raw["provider"]),
+    ...(raw["attachments"] === undefined ? {} : { attachments: bool(raw["attachments"]) }),
     ...(raw["presetCatalogs"] === undefined
       ? {}
       : { presetCatalogs: bool(raw["presetCatalogs"]) }),

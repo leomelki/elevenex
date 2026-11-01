@@ -83,6 +83,17 @@ export interface QueuedMessage {
   readonly id: string;
   readonly text: string;
 }
+export interface ConversationAttachment {
+  readonly id: string;
+  readonly path: string;
+  readonly name: string;
+  readonly kind: "image" | "video" | "file";
+  readonly size?: number;
+  readonly preview?: string;
+  readonly status?: "uploading" | "ready" | "error";
+  readonly progress?: number;
+  readonly error?: string;
+}
 export interface ComposerSubmission {
   readonly text: string;
   readonly intent: "send" | "queue" | "steer";
@@ -187,6 +198,7 @@ export interface ChatExchange {
   }[];
   readonly id: string;
   readonly prompt: string;
+  readonly attachments?: readonly ConversationAttachment[];
   readonly time?: string;
   readonly author?: string;
   readonly mark?: string;

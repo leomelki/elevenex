@@ -248,6 +248,7 @@
         (dismissed)="focusComposer()"
       />
     }
+    @if (attachments.error()) { <p class="feedback error" role="alert">{{ attachments.error() }}</p> }
     <ex-composer
       [clearOnSubmit]="false"
       [draft]="store.draft()"
@@ -284,6 +285,11 @@
         store.perform({ type: 'permission-mode', mode: $event })
       "
       [showTools]="false"
+      [attachmentsEnabled]="!!store.state()?.attachments"
+      [attachments]="attachments.files()"
+      (filesAttached)="attachments.add($event)"
+      (attachmentRemoved)="attachments.remove($event); focusComposer()"
+      (attachmentRetry)="attachments.retry($event); focusComposer()"
       [showDictation]="false"
       [mentionsEnabled]="false"
       [queueEditable]="false"

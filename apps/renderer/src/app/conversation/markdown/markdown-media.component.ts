@@ -17,10 +17,13 @@ import { safeMediaSource, type MarkdownAsset } from "./markdown-parser";
   templateUrl: "./markdown-media.component.html",
   styleUrl: "./markdown-media.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { "[class.compact]": "compact()" },
 })
 export class MarkdownMediaComponent {
   readonly path = input.required<string>();
   readonly caption = input("");
+  readonly showCaption = input(true);
+  readonly compact = input(false);
   readonly asset = input<MarkdownAsset | null>();
   readonly openFile = output<string>();
   readonly openPage = output<string>();
