@@ -51,6 +51,8 @@ export class TaskTerminalStore {
     }
   >();
   private revision = 0;
+  private readRevision = 0;
+  private readonly closing = new Set<string>();
   private lastReadError: string | null = null;
   private timer?: ReturnType<typeof setTimeout>;
   private disposed = false;
@@ -60,6 +62,7 @@ export class TaskTerminalStore {
       this.revision++;
       clearTimeout(this.timer);
       this.cache.clear();
+      this.closing.clear();
     });
   }
   reset(): void {
@@ -107,23 +110,31 @@ export class TaskTerminalStore {
       this.selection()?.taskId === target.taskId
     );
   }
-  async refresh(): Promise<void> {
+  async refresh(): Promise<boolean> {
     const target = this.selection(),
-      revision = this.revision;
-    if (!target || !this.connected()) return;
+      revision = this.revision,
+      readRevision = ++this.readRevision;
+    if (!target || !this.connected()) return false;
     this.loading.set(!this.snapshot());
     try {
       const result = await this.bridge.taskTerminalList(
         target.scopeId,
         target.taskId,
       );
-      if (!this.currentSelection(target, revision)) return;
+      if (
+        !this.currentSelection(target, revision) ||
+        readRevision !== this.readRevision
+      ) return false;
       if (result.ok) {
         this.readRecovered();
-        this.resetSeenForGeneration(result.value.terminals, true);
-        this.snapshot.set(result.value);
-        if (!result.value.terminals.some((row) => row.id === this.active()))
-          this.active.set(result.value.terminals[0]?.id ?? null);
+        const terminals = result.value.terminals.filter(
+          (row) => !this.closing.has(this.closeKey(target, row.id)),
+        );
+        this.resetSeenForGeneration(terminals, true);
+        this.snapshot.set({ ...result.value, terminals });
+        if (!terminals.some((row) => row.id === this.active()))
+          this.active.set(terminals[0]?.id ?? null);
+        return true;
       } else
         this.readFailed(
           result.error.status === 404
@@ -131,11 +142,16 @@ export class TaskTerminalStore {
             : result.error.message,
         );
     } catch {
-      if (this.currentSelection(target, revision))
+      if (
+        this.currentSelection(target, revision) &&
+        readRevision === this.readRevision
+      )
         this.readFailed("Could not load terminals. Reconnect to try again.");
     } finally {
-      if (revision === this.revision) this.loading.set(false);
+      if (revision === this.revision && readRevision === this.readRevision)
+        this.loading.set(false);
     }
+    return false;
   }
   private async refreshLoop(revision: number): Promise<void> {
     await this.refresh();
@@ -178,14 +194,62 @@ export class TaskTerminalStore {
     }
   }
   async close(id: number): Promise<void> {
-    await this.mutate(id, "close");
+    const target = this.selection(),
+      snapshot = this.snapshot(),
+      revision = this.revision;
+    if (!target || !snapshot || !this.connected()) return;
+    const index = snapshot.terminals.findIndex((row) => row.id === id);
+    const key = this.closeKey(target, id);
+    if (index < 0 || this.closing.has(key)) return;
+
+    // Closing a process can take seconds. Detach its UI now without locking other tabs.
+    this.closing.add(key);
+    const terminals = snapshot.terminals.filter((row) => row.id !== id);
+    this.snapshot.set({ ...snapshot, terminals });
+    if (this.active() === id)
+      this.active.set(terminals[Math.min(index, terminals.length - 1)]?.id ?? null);
+    const seen = new Map(this.seen());
+    seen.delete(id);
+    this.seen.set(seen);
+    this.error.set("");
+    try {
+      const reply = await this.bridge.taskTerminalClose(target.scopeId, {
+        taskId: target.taskId,
+        terminalId: id,
+      });
+      if (!this.currentSelection(target, revision)) return;
+      if (!reply.ok)
+        this.error.set(
+          reply.error.code === "outcome-unknown"
+            ? "Closing outcome is unknown. Inspect the refreshed tabs before trying again."
+            : reply.error.message,
+        );
+    } catch {
+      if (this.currentSelection(target, revision))
+        this.error.set(
+          "Closing outcome is unknown. Inspect the refreshed tabs before trying again.",
+        );
+    } finally {
+      this.closing.delete(key);
+      // Reject list replies started before cleanup settled, then reconcile without retrying close.
+      if (
+        !this.disposed &&
+        this.connected() &&
+        this.selection()?.scopeId === target.scopeId &&
+        this.selection()?.taskId === target.taskId
+      )
+        await this.refresh();
+    }
+  }
+  private closeKey(target: TerminalSelection, id: number): string {
+    return JSON.stringify([target.scopeId, target.taskId, id]);
   }
   async action(id: number, type: "interrupt" | "rerun"): Promise<void> {
     await this.mutate(id, type);
   }
   private async mutate(
     id: number,
-    type: "close" | "interrupt" | "rerun",
+    type: "interrupt" | "rerun",
   ): Promise<void> {
     const target = this.selection(),
       terminal = this.snapshot()?.terminals.find((row) => row.id === id),
@@ -195,21 +259,18 @@ export class TaskTerminalStore {
       !terminal ||
       !this.connected() ||
       this.busy() ||
-      (type !== "close" && !terminal.generation)
+      !terminal.generation
     )
       return;
     this.busy.set(true);
     this.error.set("");
     try {
       const input = { taskId: target.taskId, terminalId: id };
-      const reply =
-        type === "close"
-          ? await this.bridge.taskTerminalClose(target.scopeId, input)
-          : await this.bridge.taskTerminalAction(target.scopeId, {
-              ...input,
-              generation: terminal.generation!,
-              type,
-            });
+      const reply = await this.bridge.taskTerminalAction(target.scopeId, {
+        ...input,
+        generation: terminal.generation,
+        type,
+      });
       if (!this.currentSelection(target, revision)) return;
       if (!reply.ok)
         this.error.set(

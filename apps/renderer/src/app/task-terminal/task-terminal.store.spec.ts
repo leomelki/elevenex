@@ -44,6 +44,134 @@ function setup() {
 }
 afterEach(() => TestBed.resetTestingModule());
 
+function terminal(id: number): TaskTerminal {
+  return {
+    id, taskId: 1, title: `Shell ${id}`, cwd: "/task", branch: "work",
+    generation: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", sequence: 0,
+    alive: true, status: "idle", command: "", exitCode: 0, port: null, canRerun: false,
+  };
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+async function setupTerminals() {
+  const state = setup();
+  state.bridge.taskTerminalList.mockResolvedValue({
+    ok: true,
+    value: { taskId: 1, terminals: [terminal(2), terminal(3), terminal(4)], scripts: [], limit: 16 },
+  });
+  state.store.select({ scopeId: "scope", taskId: 1 });
+  await state.store.refresh();
+  return state;
+}
+
+describe("Immediate terminal close", () => {
+  it("clears the last tab immediately without entering a loading or busy state", async () => {
+    const { store, bridge } = await setupTerminals();
+    bridge.taskTerminalList.mockResolvedValue({
+      ok: true,
+      value: { taskId: 1, terminals: [terminal(2)], scripts: [], limit: 16 },
+    });
+    await store.refresh();
+    const cleanup = deferred<{ ok: true; value: { closed: true } }>();
+    bridge.taskTerminalClose.mockReturnValue(cleanup.promise);
+    const closing = store.close(2);
+    expect(store.snapshot()?.terminals).toEqual([]);
+    expect(store.current()).toBeNull();
+    expect(store.active()).toBeNull();
+    expect(store.busy()).toBe(false);
+    expect(store.loading()).toBe(false);
+    await store.refresh();
+    expect(store.snapshot()?.terminals).toEqual([]);
+    bridge.taskTerminalList.mockResolvedValue(page(1));
+    cleanup.resolve({ ok: true, value: { closed: true } });
+    await closing;
+  });
+  it("removes the selected tab immediately and allows creating another while cleanup is pending", async () => {
+    const { store, bridge } = await setupTerminals();
+    const cleanup = deferred<{ ok: true; value: { closed: true } }>();
+    bridge.taskTerminalClose.mockReturnValue(cleanup.promise);
+    store.active.set(3);
+    store.markSeen(3, 10);
+    const closing = store.close(3);
+    expect(store.snapshot()?.terminals.map(row => row.id)).toEqual([2, 4]);
+    expect(store.active()).toBe(4);
+    expect(store.seen().has(3)).toBe(false);
+    expect(store.busy()).toBe(false);
+    await store.refresh();
+    expect(store.snapshot()?.terminals.map(row => row.id)).toEqual([2, 4]);
+    bridge.taskTerminalCreate.mockResolvedValue({ ok: true, value: terminal(5) });
+    await store.create();
+    expect(bridge.taskTerminalCreate).toHaveBeenCalledTimes(1);
+    bridge.taskTerminalList.mockResolvedValue(page(1));
+    cleanup.resolve({ ok: true, value: { closed: true } });
+    await closing;
+  });
+  it("allows concurrent closes, deduplicates the same tab and preserves the selected remaining tab", async () => {
+    const { store, bridge } = await setupTerminals();
+    const cleanup = deferred<{ ok: true; value: { closed: true } }>();
+    bridge.taskTerminalClose.mockReturnValue(cleanup.promise);
+    const first = store.close(3);
+    const second = store.close(4);
+    await store.close(3);
+    await store.refresh();
+    expect(bridge.taskTerminalClose).toHaveBeenCalledTimes(2);
+    expect(store.snapshot()?.terminals.map(row => row.id)).toEqual([2]);
+    expect(store.active()).toBe(2);
+    bridge.taskTerminalList.mockResolvedValue(page(1));
+    cleanup.resolve({ ok: true, value: { closed: true } });
+    await Promise.all([first, second]);
+  });
+  it("rejects a stale list that finishes after successful cleanup", async () => {
+    const { store, bridge } = await setupTerminals();
+    const oldList = deferred<BackendResult<TaskTerminalList>>();
+    bridge.taskTerminalList.mockReturnValueOnce(oldList.promise);
+    const refresh = store.refresh();
+    bridge.taskTerminalClose.mockResolvedValue({ ok: true, value: { closed: true } });
+    bridge.taskTerminalList.mockResolvedValue(page(1));
+    await store.close(2);
+    oldList.resolve({ ok: true, value: { taskId: 1, terminals: [terminal(2)], scripts: [], limit: 16 } });
+    await refresh;
+    expect(store.snapshot()?.terminals).toEqual([]);
+    expect(store.active()).toBeNull();
+  });
+  it.each(["failure", "unknown", "throw"])("reconciles a %s without replaying close or replacing the person's new selection", async (outcome) => {
+    const { store, bridge } = await setupTerminals();
+    const cleanup = deferred<{ ok: false; error: { code: "http" | "outcome-unknown"; message: string } }>();
+    bridge.taskTerminalClose.mockReturnValue(cleanup.promise);
+    const closing = store.close(2);
+    store.active.set(4);
+    if (outcome === "throw") cleanup.reject(new Error("Disconnected"));
+    else cleanup.resolve({ ok: false, error: { code: outcome === "unknown" ? "outcome-unknown" : "http", message: "Could not close terminal" } });
+    await closing;
+    expect(store.snapshot()?.terminals.map(row => row.id)).toEqual([2, 3, 4]);
+    expect(store.active()).toBe(4);
+    expect(store.busy()).toBe(false);
+    expect(store.error()).toContain(outcome === "failure" ? "Could not close" : "Closing outcome is unknown");
+    expect(bridge.taskTerminalClose).toHaveBeenCalledTimes(1);
+  });
+  it("keeps a closing tab hidden across task switches and ignores errors from the old selection", async () => {
+    const { store, bridge } = await setupTerminals();
+    const cleanup = deferred<{ ok: false; error: { code: "http"; message: string } }>();
+    bridge.taskTerminalClose.mockReturnValue(cleanup.promise);
+    const closing = store.close(2);
+    store.select({ scopeId: "scope", taskId: 2 });
+    store.select({ scopeId: "scope", taskId: 1 });
+    await store.refresh();
+    expect(store.snapshot()?.terminals.map(row => row.id)).toEqual([3, 4]);
+    store.select({ scopeId: "scope", taskId: 2 });
+    bridge.taskTerminalList.mockResolvedValue(page(2));
+    await store.refresh();
+    cleanup.resolve({ ok: false, error: { code: "http", message: "Old close failed" } });
+    await closing;
+    expect(store.snapshot()?.taskId).toBe(2);
+    expect(store.error()).toBe("");
+  });
+});
+
 describe("Task terminal selection and recovery", () => {
   it("does not spawn on selection, discards an old task read and retains the new task owner", async () => {
     const { store, bridge } = setup();

@@ -4,6 +4,27 @@
 > in chat/PR descriptions and keep run artifacts under ignored `artifacts/`, as
 > described in the root `AGENTS.md`. Earlier results do not verify current code.
 
+## Automatic terminal panel lifecycle, 2026-11-03
+
+Opening Terminal checks the selected task's current backend list and creates one
+shell when empty. Existing shells survive hide/show and same-task session changes.
+Startup is attempted once per opening; polling and reconnect do not retry uncertain
+mutations. Pending openings are cancelled on navigation. Closing the final tab
+requests side-panel closure only after successful reconciliation for the same
+visible task/opening; failed closes and late replies cannot hide another view.
+
+Desktop lint, the full suite (137 desktop, seven capture-tool and 645 renderer
+tests, including TypeScript contract checks), and the production build pass.
+Eight focused component regressions cover opening, existing shells, task switches,
+failed/uncertain startup and close, and pending navigation.
+The [native capture report](../../artifacts/desktop-capture/terminal-auto-lifecycle-final/report.json)
+is `verified: true`, with four checkpoints and no errors/warnings. It uses the
+production components and sandboxed bridge with a real isolated backend, SQLite
+database, Git repository/worktree and PTYs. It verifies light/dark, hide/show process
+identity, multiple terminals, final-close panel/focus restoration, reopening, and
+a narrow reduced-motion layout. All four PNGs were inspected. Validation-owned
+processes are stopped; this is an unpackaged development-renderer capture.
+
 ## Terminal prompt glyph coverage, 2026-11-03
 
 Bundled Symbols Nerd Font Mono v3.5.1 locally, restricted it to symbol/private-use
@@ -2604,3 +2625,17 @@ Captures in `artifacts/desktop-capture/reply-mark-tiles` and
 narrow/reduced-motion, connected and standalone PNGs were inspected. Reply
 history still follows the session's current harness, because transcript items
 carry no per-turn provider.
+
+Terminal close now removes the selected tab immediately and selects its neighbour
+while process cleanup continues, without disabling the panel. Pending closes stay
+hidden through polling and task switches. Failed or uncertain closes reconcile
+the backend list without replaying the mutation or replacing a newer selection;
+stale list replies cannot resurrect a successfully closed tab. The store's 15
+regressions pass, including last-tab, concurrent-close, rollback and stale-read
+coverage. Desktop lint and the full desktop suite pass (137 desktop, 7 capture
+checks, 644 renderer tests); the production build passes.
+[Four native captures](../../artifacts/desktop-capture/terminal-close-responsive/index.html)
+verify light/dark, narrow layouts, reduced motion, mouse/keyboard close, focus
+restoration and creating another terminal while cleanup is held pending. Report
+`verified: true`; all four PNGs inspected. These captures use the real terminal
+component/store with preview-controlled backend replies, rather than live PTYs.

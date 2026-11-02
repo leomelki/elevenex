@@ -1,5 +1,5 @@
 <ex-terminal-view [animateTabs]="animateTabs()" [tabs]="tabs()" [active]="store.active() === null ? undefined : '' + store.active()" [scripts]="store.snapshot()?.scripts ?? []" [failure]="failure()" [disabled]="disabled()" [askDisabled]="!askAvailable()" [rerunDisabled]="!current()?.canRerun" [findStatus]="searchResult()"
-  (selected)="selected($event)" (added)="create()" (closed)="store.close(+$event)" (scriptRequested)="create($event.id)" (stopRequested)="interrupt($event)" (rerunRequested)="store.action(+$event.tabId, 'rerun')" (askRequested)="ask()" (portOpened)="openPort($event)" (searchRequested)="find($event)">
+  (selected)="selected($event)" (added)="create()" (closed)="close($event)" (scriptRequested)="create($event.id)" (stopRequested)="interrupt($event)" (rerunRequested)="store.action(+$event.tabId, 'rerun')" (askRequested)="ask()" (portOpened)="openPort($event)" (searchRequested)="find($event)">
   <div terminalContent class="live-content" [class.has-terminal]="!!current()">
     @if (store.error()) { <div class="notice error" role="alert">{{ store.error() }}<button exButton size="sm" variant="ghost" [disabled]="disabled()" (click)="store.refresh()">Refresh</button></div> }
     @if (!available()) { <p class="notice" role="status">Reconnect to reattach. Terminals continue on their machine.</p> }

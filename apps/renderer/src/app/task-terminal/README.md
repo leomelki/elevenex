@@ -3,9 +3,17 @@
 `TaskTerminalComponent` adapts the existing `TerminalView` / `ViewTabs`. The
 workspace projects it through `WorkspacePanels[workspaceTerminal]`; task identity
 is independent of the selected conversation. Terminal data and surfaces activate lazily on first
-use. New shell, script launch, interrupt, rerun and process close are explicit
-user actions. There are no agent terminal tools or chat-output mirrors. Existing
-agent approval flows are unchanged.
+use. Opening Terminal checks the current task's backend list and starts one shell
+if it is empty. Existing tabs (including exited shells) are retained. Each opening
+attempts startup once; polling and reconnect never retry it. Hiding or switching
+tasks cancels a pending opening before startup. New shell, script launch, interrupt,
+rerun and process close remain user actions. There are no agent terminal tools or
+chat-output mirrors. Existing agent approval flows are unchanged.
+
+`lastClosed` asks the workspace to close its side panel after the last terminal's
+close has settled successfully. Failed/uncertain closes remain inspectable, and
+late closes cannot hide another task or panel. Reopening an empty Terminal starts
+a fresh shell; hiding a panel with existing shells only detaches them.
 
 The metadata store owns scoped reads and four task snapshots. The component owns
 up to eight xterm surfaces, each with 2,000 scrollback rows, selection, reading
@@ -16,6 +24,12 @@ Session changes within a task keep the same surface and process. Switching
 machines clears display caches. Window closure detaches; app-owned local engine
 shutdown stops PTYs. Remote daemon processes remain until explicit close, task
 finish, or daemon shutdown. Task finishing uses the existing strict PTY cleanup.
+
+Closing removes a tab and selects its neighbour immediately while backend process
+cleanup continues. Other tabs and actions remain available. Pending closes are
+excluded from metadata refreshes, including after task switches. Completion
+reconciles the backend list without replaying close; failed or uncertain closes
+restore any surviving tab and show an error without replacing the current selection.
 
 Main exposes named runtime-validated operations on its existing per-window
 backend lease. The additive backend routes live in `user-terminal`, reuse

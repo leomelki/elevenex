@@ -60,6 +60,7 @@ export class TaskTerminalComponent {
   readonly askAvailable = input(false);
   readonly question = output<TerminalQuestion>();
   readonly browserRequested = output<TerminalBrowserIntent>();
+  readonly lastClosed = output<void>();
   readonly store = inject(TaskTerminalStore);
   private readonly styles = inject(TerminalStylePolicy);
   private focusOnAttach = false;
@@ -72,6 +73,9 @@ export class TaskTerminalComponent {
   readonly notice = signal("");
   readonly animateTabs = signal(false);
   private tabTask = "";
+  private openingTask = "";
+  private openingRevision = 0;
+  private openingAttempted = false;
   readonly inputBlocked = signal(false);
   readonly searchResult = signal("");
   readonly current = this.store.current;
@@ -126,6 +130,24 @@ export class TaskTerminalComponent {
         }
         this.store.select(selected);
       }
+    });
+    afterRenderEffect((onCleanup) => {
+      const target = this.store.selection();
+      const key = this.visible() && target
+        ? `${this.machineId()}:${target.taskId}`
+        : "";
+      const available = this.available() && this.store.connected();
+      if (key !== this.openingTask) {
+        this.openingTask = key;
+        this.openingRevision++;
+        this.openingAttempted = false;
+      }
+      if (!key || !available || this.openingAttempted) return;
+      // One attempt per opening/task, never a mutation retry on poll or reconnect.
+      this.openingAttempted = true;
+      const controller = new AbortController();
+      onCleanup(() => controller.abort());
+      untracked(() => void this.open(controller.signal));
     });
     afterRenderEffect(() => {
       const selection = this.store.selection(),
@@ -358,6 +380,27 @@ export class TaskTerminalComponent {
     this.focusOnAttach = true;
     await this.store.create(scriptId);
     requestAnimationFrame(() => this.attached?.surface.focus());
+  }
+  private async open(signal: AbortSignal): Promise<void> {
+    const refreshed = await this.store.refresh();
+    if (
+      signal.aborted || !refreshed || this.store.busy() || this.store.error() ||
+      this.store.snapshot()?.terminals.length !== 0
+    ) return;
+    await this.create();
+  }
+  async close(id: string): Promise<void> {
+    const target = this.store.selection();
+    const revision = this.openingRevision;
+    if (!target || !this.store.snapshot()?.terminals.some(row => row.id === Number(id))) return;
+    await this.store.close(Number(id));
+    const current = this.store.selection();
+    if (
+      !this.disposed && revision === this.openingRevision && this.visible() &&
+      target.scopeId === current?.scopeId && target.taskId === current?.taskId &&
+      !this.store.error() && this.store.snapshot()?.terminals.length === 0
+    )
+      this.lastClosed.emit();
   }
   selected(id: string): void {
     this.store.active.set(Number(id));
