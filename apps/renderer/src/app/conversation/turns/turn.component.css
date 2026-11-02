@@ -24,6 +24,36 @@
 :host.live .mark {
   animation: breathe calc(var(--dur-deliberate) * 4) var(--ease-in-out) infinite;
 }
+:host.arriving {
+  /* Follow the 380ms bubble flight by one small beat; reserve layout from frame one. */
+  animation: turn-arrive var(--dur-glide) var(--ease-glide) var(--dur-instant) both;
+}
+:host.arriving .mark {
+  animation: turn-mark-arrive var(--dur-glide) var(--ease-spring) var(--dur-instant) both;
+}
+:host.arriving.live .mark {
+  animation:
+    turn-mark-arrive var(--dur-glide) var(--ease-spring) var(--dur-instant) both,
+    breathe calc(var(--dur-deliberate) * 4) var(--ease-in-out) infinite;
+}
+@keyframes turn-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-3));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes turn-mark-arrive {
+  from { transform: scale(0.86); }
+  to { transform: scale(1); }
+}
+@keyframes turn-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 .body {
   display: flex;
   flex-direction: column;
@@ -214,7 +244,14 @@ footer ex-turn-acts {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  :host.live .mark {
+  :host.arriving {
+    animation: turn-fade 160ms var(--ease-out) both;
+    /* This opacity-only fade is the exception to the global reduced-motion reset. */
+    animation-duration: 160ms !important;
+  }
+  :host.live .mark,
+  :host.arriving .mark,
+  :host.arriving.live .mark {
     animation: none;
   }
   .work-item,

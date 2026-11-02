@@ -13,7 +13,7 @@
       [permission]="permission()"
       [servers]="servers"
       [mentionItems]="mentions"
-      [running]="true"
+      [running]="running()"
       [queue]="queue()"
       (modeChanged)="mode.set($event)"
       (permissionChanged)="permission.set($event)"
@@ -22,6 +22,7 @@
       (queueRemove)="queue.set([])"
   /></ex-chat>
 </div>
+<button exButton variant="ghost" (click)="running.set(!running())">{{ running() ? "Finish agent (preview)" : "Run agent (preview)" }}</button>
 <p class="action" aria-live="polite">
   {{
     lastAction() ||

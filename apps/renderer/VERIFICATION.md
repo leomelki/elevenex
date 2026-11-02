@@ -1,5 +1,89 @@
 # Component system verification
 
+## Bottom-of-history send reveal, 2026-11-02
+
+Replaced snap-to-end plus row transforms with one owned 340ms viewport scroll
+on ease-in-out. The anchor is the last painted transcript row, skipping persistent
+projected decision wrappers; bounded history refreshes retain its screen position.
+The bubble flight follows its moving destination on the same clock. Composer
+shrink and early reply growth retarget from the current position, retaining time
+for a large remaining trip. Wheel/pointer/viewport scroll keys hand control back
+to the reader, removal/navigation cancel the reveal, and reduced motion reveals
+directly. Incoming agent output still preserves an older reading position.
+
+A before-change native probe recorded a 192px first-frame movement. The final
+four natural probes (short/long × light/dark) recorded exactly 0px initial
+movement, followed by continuous travel of 192px/214px. The camera's owned reveal
+kept the return control hidden, landed the moving bubble without a handoff jump,
+and released ownership on native wheel takeover.
+
+Desktop lint, renderer TypeScript and production build passed. The full desktop
+suite passed (116 desktop, seven capture-tool, 580 Angular tests); after adding
+the final long-composer timing regression, all four focused scroll tests passed
+through the installed Angular CLI. Five native reports are `verified: true`,
+78 checkpoints total, with no errors or warnings:
+
+- `artifacts/desktop-capture/run-lBBRc5/report.json`: 18 bottom-reveal states,
+  full history, natural frames from before send, long drafts, paused frames,
+  moving flight destination, native wheel takeover and narrow reduced motion.
+- `artifacts/desktop-capture/run-6KQM6s/report.json`: 20 existing send states.
+- `artifacts/desktop-capture/run-wmuJfl/report.json`: 18 Working/receipt states.
+- `artifacts/desktop-capture/run-qsxvnq/report.json`: four history-opening states.
+- `artifacts/desktop-capture/run-gdCJrg/report.json`: 18 return-control states.
+
+The unread regression now appends incoming assistant output through the preview
+transport; a local send correctly reveals its own exchange instead of leaving
+an unread indicator. Light/dark reveal and narrow PNGs were inspected. These
+are native preview checks with controlled backend data, not packaged-app or
+live-agent verification. The natural send probe covers the entrance/composer
+handoff; later work completion retains its separate regression.
+
+## Paired message and Working entrance, 2026-11-02
+
+Fresh agent turns now follow the sent bubble with an 80ms lead-in and 340ms
+12px glide/fade; only the small agent mark springs from 86%. Final layout space
+is reserved from the first frame. A local receipt that beats first paint retains
+the send origin and fresh flag alongside the bounded render identity, so neither
+entrance is skipped. Receipts/streaming never replay entry; paging/navigation
+release the local arrival data. Keyboard focus settles the entering row at once;
+reduced motion uses only a 160ms fade.
+
+Desktop lint, renderer TypeScript, production build and the full suite passed
+(116 desktop, seven capture-tool and 577 Angular tests). Native reports all say
+`verified: true`, with no errors or warnings:
+
+- `artifacts/desktop-capture/run-QaYT4r/report.json`: 18 paired-entry checkpoints,
+  both themes, immediate receipts, stable turn/bubble layout, mark overshoot,
+  keyboard Stop, interrupted navigation and narrow reduced motion.
+- `artifacts/desktop-capture/run-EzBMNp/report.json`: 20 existing send regressions.
+- `artifacts/desktop-capture/run-XNEqhW/report.json`: 16 work-completion regressions.
+
+The paired entry's measured turn translation goes from 12px to a 0.33px
+overshoot and settles at 0; the mark reaches 1.014 scale. The message's layout top
+stays at 425px throughout the sampled flight. Light/dark entry and narrow PNGs
+were inspected. These are native preview captures of production components with
+controlled backend data, not live-agent or packaged-app verification.
+
+## Message send motion, 2026-11-02
+
+Ported only the standalone zip's send-animation update: ephemeral per-submission
+text origin, 380ms bubble flight on ease-glide, 340ms conversation slide on
+ease-out, press/arrow feedback, delayed placeholder, short-rise fallback and
+160ms reduced-motion fade. Origins never cross the backend bridge. Mounted
+messages release flight copies/effects on completion, cancellation and removal;
+scroll effects cover only the visible preceding rows. Existing history stays still.
+
+Desktop lint, renderer TypeScript checking, production build and the full suite
+passed (116 desktop, seven capture-tool and 574 Angular tests). The final native
+regression is `scripts/desktop-capture/scenarios/message-send.mjs`;
+`artifacts/desktop-capture/run-5Nn7re/report.json` reports `verified: true` with
+20 checkpoints and no errors or warnings. It checks source/landing coordinates,
+first-frame conversation continuity, button timing, placeholder restoration,
+focus/draft clearing, queued/long/no-origin cases, scrolled-up sends, removal
+mid-flight, both themes, narrow reduced motion and the connected chat owner.
+Light/dark motion PNGs and the connected landing were inspected. This is native
+renderer verification with preview data, not a packaged-app or live-agent test.
+
 ## Queue receipt height, 2026-11-02
 
 Queued messages retain their mounted row when an optimistic ID becomes a saved

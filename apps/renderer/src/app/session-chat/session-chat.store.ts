@@ -14,7 +14,7 @@ import type {
   SessionChatTarget,
 } from "@elevenex/shared";
 import { SessionChatClient } from "../backend/session-chat-client.service";
-import type { ChatExchange, ComposerSubmission, ConversationMention, QueuedMessage } from "../conversation";
+import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage } from "../conversation";
 import { SessionChatDrafts, type AttachmentDraft } from "./session-chat-drafts";
 import {
   chatExchanges,
@@ -22,6 +22,7 @@ import {
 } from "./session-chat-transcript";
 
 interface PendingSubmission extends PendingChatPrompt {
+  readonly sendOrigin?: MessageSendOrigin;
   readonly queue: boolean;
   readonly knownQueueIds: ReadonlySet<string>;
   confirmed: boolean;
@@ -73,7 +74,12 @@ export class SessionChatStore {
   readonly checked = signal(false);
   private readonly pending = signal<PendingSubmission | null>(null);
   private readonly pendingQueue = signal<PendingSubmission | null>(null);
-  private readonly turnRenderIds = signal<ReadonlyMap<string, string>>(new Map());
+  // Keep local entry identity and source through a receipt that beats first paint.
+  // Pruned with the bounded transcript and cleared on selection changes.
+  private readonly turnArrivals = signal<ReadonlyMap<string, {
+    readonly renderId: string;
+    readonly sendOrigin?: MessageSendOrigin;
+  }>>(new Map());
   private readonly queueRenderIds = signal<ReadonlyMap<string, string>>(new Map());
   readonly running = computed(
     () =>
@@ -97,14 +103,15 @@ export class SessionChatStore {
       this.fresh(),
       pending && !pending.queue ? pending : undefined,
     ).map((exchange): ChatExchange => {
-      const renderId = this.turnRenderIds().get(exchange.id);
+      const arrival = this.turnArrivals().get(exchange.id);
       if (exchange.id === pending?.id)
         return {
           ...exchange,
           isNew: true,
+          sendOrigin: pending.sendOrigin,
           status: this.running() ? "live" : exchange.status,
         };
-      return renderId ? { ...exchange, renderId } : exchange;
+      return arrival ? { ...exchange, ...arrival, isNew: true } : exchange;
     });
   });
   readonly empty = computed(() => !this.exchanges().length && !this.running());
@@ -147,7 +154,7 @@ export class SessionChatStore {
     this.uncertain.set(this.entry.uncertain());
     this.pending.set(null);
     this.pendingQueue.set(null);
-    this.turnRenderIds.set(new Map());
+    this.turnArrivals.set(new Map());
     this.queueRenderIds.set(new Map());
     this.items.set([]);
     this.state.set(null);
@@ -272,15 +279,15 @@ export class SessionChatStore {
           ]
         : [...next.values()];
     const items = all.slice(-320);
-    if (delivered || this.turnRenderIds().size) {
+    if (delivered || this.turnArrivals().size) {
       // Receipts can arrive with completion. Keep Angular's mounted turn key
       // through that handoff while actions/reviews keep using the durable ID.
-      const renderIds = new Map(this.turnRenderIds());
-      if (delivered && pending) renderIds.set(delivered.id, pending.id);
+      const arrivals = new Map(this.turnArrivals());
+      if (delivered && pending) arrivals.set(delivered.id, { renderId: pending.id, sendOrigin: pending.sendOrigin });
       const retained = new Set(items.map(item => item.id));
-      for (const id of renderIds.keys())
-        if (!retained.has(id)) renderIds.delete(id);
-      this.turnRenderIds.set(renderIds);
+      for (const id of arrivals.keys())
+        if (!retained.has(id)) arrivals.delete(id);
+      this.turnArrivals.set(arrivals);
     }
     if (!older && wasLoaded) {
       const known = new Set(previous.map((item) => item.id));
@@ -372,6 +379,7 @@ export class SessionChatStore {
     const text = [submission.text.trim(), ...files.map(file => `[${file.name.replace(/[[\]\r\n]/g, '_')}](<${file.path}>)`)].filter(Boolean).join('\n\n');
     if (text.length > 64000) { this.error.set('Message and attachments exceed 64,000 characters.'); return; }
     const pending = {
+      sendOrigin: submission.intent === "send" && !files.length && !mentions.length ? submission.sendOrigin : undefined,
       attachments: files,
       mentions: mentions.map(mention => ({ sessionId: Number(mention.id), title: mention.label })),
       media: files.map((file, index) => ({ id: String(index), path: file.path, caption: file.name.replace(/[[\]\r\n]/g, '_'), kind: file.kind, inline: false })),

@@ -46,6 +46,18 @@ describe("Composer public interactions", () => {
     );
     fixture.detectChanges();
   }
+  it("ties an ephemeral origin only to a direct send and keeps the input focused", () => {
+    const textarea = type("Fly from here");
+    press(textarea);
+    expect(sent[0]?.sendOrigin?.at).toBeGreaterThan(0);
+    expect(document.activeElement).toBe(textarea);
+    fixture.componentRef.setInput("running", true);
+    fixture.detectChanges();
+    press(type("Wait for later"));
+    press(type("Steer now"), { altKey: true });
+    expect(sent[1]?.sendOrigin).toBeUndefined();
+    expect(sent[2]?.sendOrigin).toBeUndefined();
+  });
   it("allows ready attachments without text and blocks unfinished uploads", () => {
     fixture.componentRef.setInput('attachmentsEnabled', true);
     fixture.componentRef.setInput('attachments', [{ id: 'file', path: '/file', name: 'clip.webm', kind: 'video', status: 'uploading' }]);

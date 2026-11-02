@@ -186,6 +186,11 @@ export class SessionChatFixture {
   deferUserReceipts(value: boolean | 'completion'): void {
     this.delayedReceipts = value;
   }
+  /** Incoming reply growth without a local submission or transcript reset. */
+  appendAssistant(text: string, id = 101): void {
+    this.session(id).items.push(item(`incoming-${this.version}`, 'assistant', text));
+    this.changed();
+  }
   constructor(destroy: DestroyRef) {
     destroy.onDestroy(() => {
       for (const done of this.waiting.values()) done();

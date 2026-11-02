@@ -111,6 +111,24 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("session chat ownership", () => {
+  it("preserves the paired arrival when a saved receipt beats the first painted optimistic turn", async () => {
+    const { store, bridge } = setup();
+    await settle();
+    const sendOrigin = { left: 20, top: 400, at: performance.now() };
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: [item("immediate", "user", "Start together"), item("reply", "assistant", "Checking")],
+      state: { ...state, phase: "running", canInterrupt: true },
+    })));
+    await store.submit({ text: "Start together", intent: "send", context: [], sendOrigin });
+    await settle();
+    // No intermediate exchanges() read or renderer paint before the receipt.
+    expect(store.exchanges().at(-1)).toMatchObject({
+      id: "immediate", isNew: true, sendOrigin, status: "live",
+    });
+    expect(store.exchanges().at(-1)?.renderId).toMatch(/^local-/);
+    expect(JSON.stringify(bridge.sessionChatCommand.mock.calls)).not.toContain("sendOrigin");
+  });
+
   it("keeps queue render identities through receipts while actions use durable IDs", async () => {
     const { store, bridge } = setup(); await settle();
     const existing = { id: "existing", text: "Repeat this" };
@@ -157,13 +175,16 @@ describe("session chat ownership", () => {
 
   it.each(["paging", "navigation"] as const)("releases reconciled turn identities after %s", async boundary => {
     const { store, bridge } = setup(); await settle();
-    await store.submit({ text: "Hi", intent: "send", context: [] });
+    const sendOrigin = { left: 20, top: 400, at: performance.now() };
+    await store.submit({ text: "Hi", intent: "send", context: [], sendOrigin });
     const temporaryId = store.exchanges().at(-1)!.id;
     const receipt = item("durable", "user", "Hi");
     bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [receipt] })));
     await store.refresh();
     expect(store.exchanges().at(-1)?.id).toBe("durable");
     expect(store.exchanges().at(-1)?.renderId).toBe(temporaryId);
+    expect(store.exchanges().at(-1)?.sendOrigin).toBe(sendOrigin);
+    expect(store.exchanges().at(-1)?.isNew).toBe(true);
     if (boundary === "paging") {
       bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
         reset: false,
@@ -182,6 +203,8 @@ describe("session chat ownership", () => {
     await store.refresh();
     expect(store.exchanges().at(-1)?.id).toBe("durable");
     expect(store.exchanges().at(-1)?.renderId).toBeUndefined();
+    expect(store.exchanges().at(-1)?.sendOrigin).toBeUndefined();
+    expect(store.exchanges().at(-1)?.isNew).toBe(false);
   });
   it('shows session mentions optimistically and restores their durable identities after reopening history', async () => {
     const { store, bridge } = setup(); await settle();
@@ -271,12 +294,16 @@ describe("session chat ownership", () => {
     const write = deferred<BackendResult<{ readonly accepted: true }>>();
     bridge.sessionChatCommand.mockReturnValueOnce(write.promise);
     store.setDraft("Original");
+    const sendOrigin = { left: 20, top: 400, at: performance.now() };
     const sending = store.submit({
       text: "Original",
+      sendOrigin,
       intent: "send",
       context: [],
     });
     expect(store.exchanges().at(-1)?.prompt).toBe("Original");
+    expect(store.exchanges().at(-1)?.sendOrigin).toBe(sendOrigin);
+    expect(JSON.stringify(bridge.sessionChatCommand.mock.calls)).not.toContain("sendOrigin");
     expect(store.draft()).toBe("");
     store.setDraft("Next thought");
     write.resolve({

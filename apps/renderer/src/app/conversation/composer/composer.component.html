@@ -37,6 +37,8 @@
       <span class="drop-announcement" role="status">{{ dropAnnouncement() }}</span>
       <textarea
         #textarea
+        [class.words-leaving]="wordsLeaving()"
+        (animationend)="wordsLeaving.set(false)"
         aria-label="Message the agent"
         aria-autocomplete="list"
         [attr.aria-controls]="mentions()?.listId() || null"
@@ -161,6 +163,7 @@
       exButton
       variant="primary"
       size="sm"
+      #sendButton
       class="send"
       type="button"
       [disabled]="disabled() || sending() || !canSend() || !!recording()"

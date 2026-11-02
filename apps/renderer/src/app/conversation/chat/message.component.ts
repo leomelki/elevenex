@@ -1,10 +1,15 @@
 import {
+  afterNextRender,
+  DestroyRef,
+  ElementRef,
+  inject,
   ChangeDetectionStrategy,
   Component,
   input,
   output,
 } from "@angular/core";
-import type { TurnAction } from "../conversation.models";
+import { animateMessageSend } from "./message-send-animation";
+import type { MessageSendOrigin, TurnAction } from "../conversation.models";
 import { TurnActsComponent } from "../turns/turn-acts.component";
 @Component({
   selector: "ex-message",
@@ -23,6 +28,30 @@ import { TurnActsComponent } from "../turns/turn-acts.component";
   },
 })
 export class MessageComponent {
+  readonly element = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+  private disposeSend?: () => void;
+  private arrived = false;
+  readonly sendOrigin = input<MessageSendOrigin>();
+  constructor() {
+    inject(DestroyRef).onDestroy(() => this.disposeSend?.());
+    afterNextRender(() => {
+      // ChatScroll sequences the scroll and arrival together. Standalone bubbles
+      // still support the same rise/fade, without a conversation to reveal.
+      if (!this.element.closest('ex-chat-scroll')) this.playArrival();
+    });
+  }
+  /** Internal conversation boundary: called by ChatScroll after revealing us. */
+  playArrival(): void {
+    if (this.arrived) return;
+    this.arrived = true;
+    if (this.isNew() && this.role() === 'user')
+      this.disposeSend = animateMessageSend(this.element, this.sendOrigin());
+  }
+  /** Internal scroll handoff: release a flight immediately when the reader takes over. */
+  finishArrival(): void {
+    this.disposeSend?.();
+    this.disposeSend = undefined;
+  }
   readonly role = input<"user" | "agent">("user");
   readonly messageId = input("");
   readonly time = input("");

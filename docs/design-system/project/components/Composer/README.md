@@ -2,6 +2,8 @@
 
 The message box at the foot of the chat, holding every agent control without clutter: one row of quiet controls under the input, everything else one click deeper.
 
+**Sending** (`onSend(text, { queued })`): ↵ (⇧↵ for a new line) or the send button. The button goes down to 86% at once and springs back, its arrow nudging up 4px. The input empties at once and stays focused, and the placeholder waits until the words have left. After a long message, the input gives back its height smoothly. The new user `Message` (`isNew`) then flies from where the words were. While the agent runs or the machine is out of reach, the message goes to the queue instead (`queued: true`) and doesn't fly.
+
 **The bar, left to right:** `ModeToggle` (Plan · Code) · `AgentPicker` (the session's preset; adjusts model, thinking, fast) · `PermissionPicker` (Code mode only) · then `ToolsMenu` (+: attach files, mention, MCP servers) · dictation (mic) · Stop while the agent runs · Send (or Queue while it runs).
 
 **Provide:** `mode` (`plan` · `code`), `agent` (an AgentPicker value), `hideAgent` (on `SessionStart`), `permission` (`ask` · `edits` · `auto`), `servers` (ToolsMenu servers), `context` (attached files and mentions: `[{ kind, status, label }]`), `queue` (`[{ text }]`), `running`, `recording` (`{ time, interim }` while dictating), `placeholder`, the draft as children (or `hasText`), and `agentOpen` / `permissionOpen` / `toolsOpen` to show a menu open.

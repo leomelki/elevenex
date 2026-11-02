@@ -56,7 +56,15 @@ textarea {
   color: var(--ink);
   font: var(--text-body-size)/var(--text-body-line) var(--font-sans);
 }
+textarea.words-leaving {
+  animation: placeholder-return 240ms steps(1, end);
+}
+@keyframes placeholder-return {
+  from { --send-placeholder-opacity: 0; }
+  to { --send-placeholder-opacity: 1; }
+}
 textarea::placeholder {
+  opacity: var(--send-placeholder-opacity, 1);
   color: var(--ink-muted);
 }
 .bar {

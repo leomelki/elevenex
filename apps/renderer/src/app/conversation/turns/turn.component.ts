@@ -47,11 +47,18 @@ import { formatDuration, isProse, summarizeWork } from "./work-summary";
   host: {
     "[class.live]": 'status() === "live"',
     "[class.expanded]": "expanded()",
+    "[class.arriving]": "arriving()",
     tabindex: "0",
     "(keydown)": "onKey($event)",
+    "(animationend)": "arrivalFinished($event)",
+    "(focusin)": "arriving.set(false)",
   },
 })
 export class TurnComponent implements OnChanges {
+  /** Read once on mount, so streamed content and saved receipts never replay entry. */
+  readonly isNew = input(false);
+  protected readonly arriving = signal(false);
+  private initialized = false;
   readonly status = input<TurnStatus>("done");
   readonly steps = input<readonly WorkStep[]>([]);
   readonly answerBeforeStepId = input<string>();
@@ -175,6 +182,10 @@ export class TurnComponent implements OnChanges {
     });
   }
   ngOnChanges(): void {
+    if (!this.initialized) {
+      this.initialized = true;
+      this.arriving.set(this.isNew());
+    }
     if (this.showWork()) {
       this.workHeader.set({
         label: this.workLabel(),
@@ -198,6 +209,10 @@ export class TurnComponent implements OnChanges {
     )
       this.workButton()?.nativeElement.focus();
     this.currentStepId = nextId;
+  }
+  protected arrivalFinished(event: AnimationEvent): void {
+    // Ignore the mark's entry/breathing and animations inside streamed content.
+    if (event.target === event.currentTarget) this.arriving.set(false);
   }
   onKey(event: KeyboardEvent): void {
     if (

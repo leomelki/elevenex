@@ -43,9 +43,11 @@ Older engines omit the capability and retain their original send contract.
   unknown tools, orphan results and explicit failures. Fresh prompts alone opt
   into entry motion; initial history stays still.
 - The store keeps a bounded mapping from durable prompt IDs to their temporary
-  render IDs for the current transcript window. Receipt reconciliation retains
-  the mounted turn and its completion animation; domain intents keep the durable
-  ID. Paging prunes this mapping and session/backend navigation clears it.
+  render IDs and ephemeral send origins for the current transcript window. Receipt
+  reconciliation retains the mounted turn and its animation; a receipt before
+  the first paint also retains `isNew`, so the bubble and Working enter together.
+  Domain intents keep the durable ID, and origin data never crosses the bridge.
+  Paging prunes this mapping and session/backend navigation clears it.
 - Queued messages retain their optimistic render IDs through saved receipts, too.
   The mapping is bounded by the current queue, pruned when messages leave, and
   cleared on session/backend navigation. Queue actions use the saved ID.

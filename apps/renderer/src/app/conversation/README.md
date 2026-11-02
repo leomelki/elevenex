@@ -64,6 +64,54 @@ The production desktop forbids frame embedding and remote media. HTML documents 
 
 Components use the supplied design tokens, native controls, CDK overlays/focus traps and shared folds/height motion. Existing history renders without entry motion; `Message.isNew` explicitly opts a newly sent message into arrival motion. `StreamText` preserves existing chunks and animates only appended live content. Respect reduced motion throughout. Keyboard shortcuts are scoped to the composer, focused message, decision card or preset picker; there are no document-level listeners.
 
+`ComposerSubmission.sendOrigin` is an optional, ephemeral `MessageSendOrigin`
+(left/top text coordinates and a monotonic timestamp) for direct text sends.
+Carry it to the accepted local `ChatExchange.sendOrigin`; bind it to
+`Message.sendOrigin` for manually composed messages. Never persist it or send it
+through the platform bridge. Queue/steer submissions have no origin; the connected
+owner also omits it for attachments and session context. The bounded receipt
+mapping retains it with `isNew` when acknowledgement beats the first paint;
+paging and selection changes release both. Fresh origins still expire after 800ms.
+
+`ChatScroll` remembers the last painted transcript row, skipping projected
+history/decision wrappers. A fresh send preserves that row on the first frame,
+then scrolls the real viewport over 340ms on `ease-in-out` to open space for the
+message and Working. `ChatSendScroll` owns that scroll clock and temporarily
+disables browser anchoring; resize/early reply growth retarget from the current
+position instead of snapping or compressing a long remaining trip. It retains
+follow-at-end state during reveal so the return control does not flash.
+
+`Message.playArrival()` and `finishArrival()` are internal sequencing boundaries;
+consumers should not call them. A flying copy follows its moving destination
+without restarting its 380ms clock, including composer shrink and reply growth.
+Wheel, pointer and viewport scroll keys cancel the owned reveal/flight and keep
+the reader's current position; explicit navigation and destruction release both.
+Reduced motion reveals directly and keeps only the existing opacity fades.
+`Message.isNew` is read once on mount: a fresh origin (under 800ms) flies an inert,
+aria-hidden bubble copy for 380ms on `ease-glide`, with fill/shadow settling as it
+lands. Above 160px or without an origin it rises 14px for 340ms; reduced motion
+fades for 160ms. History stays still. The mounted message owns cancellation and
+copy removal, including navigation during flight. Composer owns its 86% press,
+4px arrow nudge and placeholder delay; existing AutoHeight returns long drafts'
+space. Typing remains available during all motion.
+
+`Turn.isNew` is also read once on mount. `Chat` supplies the exchange's fresh
+flag so the new Working section follows its bubble: an 80ms lead-in, then a
+340ms, 12px glide/fade on `ease-glide`, with the small agent mark settling from
+86% on `ease-spring`. Its final layout space is reserved immediately, keeping
+the bubble's destination steady within the transcript as the viewport reveals it. Receipt/streaming updates keep the same entry
+clock; completion uses the existing work fold. History remains still. Reduced
+motion uses a 160ms fade without delay or movement; keyboard focus settles entry
+immediately so Stop and disclosures stay available. Native CSS animation lifetime
+follows the mounted turn, including removal during entry.
+
+`/conversation` starts with an idle composer for live send previews and provides
+Run agent / Finish agent controls to try queueing. Sent turns retain Working so
+the paired entrance can be inspected. The production path is exercised by
+`scripts/desktop-capture/scenarios/message-send.mjs`, `message-working.mjs` and
+`message-bottom-scroll.mjs` under the same scenarios directory. The last starts
+from a full history window and measures natural frames from before submission.
+
 ## Connected adapter and capability controls
 
 The shared agent settings render only the selected model's advertised thinking

@@ -278,6 +278,7 @@ export class ConversationDemoComponent {
   readonly approval = signal<ApprovalStatus>("pending");
   readonly answers = signal<QuestionAnswers | undefined>(undefined);
   readonly selectedPreset = signal("Thorough");
+  readonly running = signal(false);
   readonly queue = signal([
     { id: "queued-1", text: "Please document the fallback behavior too." },
   ]);
@@ -320,6 +321,11 @@ export class ConversationDemoComponent {
         ...items,
         { id: `queued-${items.length + 1}`, text: value.text },
       ]);
+    } else {
+      this.exchanges.update(items => [...items, {
+        id: `sent-${items.length}`, prompt: value.text, sendOrigin: value.sendOrigin,
+        isNew: true, status: "live", steps: [], answer: "",
+      }]);
     }
   }
 }

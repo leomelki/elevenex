@@ -1,5 +1,7 @@
 import {
   afterNextRender,
+  afterEveryRender,
+  contentChildren,
   ChangeDetectionStrategy,
   Component,
   computed,
@@ -12,6 +14,8 @@ import {
   type ElementRef,
 } from "@angular/core";
 import { ButtonComponent, IconComponent, TooltipDirective } from "../../ui";
+import { MessageComponent } from "./message.component";
+import { ChatSendScroll } from "./chat-send-scroll";
 interface Reminder {
   readonly id: string;
   readonly text: string;
@@ -24,6 +28,85 @@ interface Reminder {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ChatScrollComponent {
+  private readonly messageViews = contentChildren(MessageComponent, { descendants: true });
+  private readonly mounted = new WeakSet<MessageComponent>();
+  private contentReady = false;
+  private renderedMessages?: readonly MessageComponent[];
+  private paintedTail?: { readonly element: Element; readonly top: number };
+  private sendScroll?: ChatSendScroll;
+  private arrivingMessages: readonly MessageComponent[] = [];
+
+  private rememberPosition(): void {
+    if (!this.contentReady) return;
+    let tail = this.content().nativeElement.lastElementChild;
+    // Projection slots can leave a persistent empty decision wrapper at the
+    // bottom. Anchoring that wrapper would jump straight over the new exchange.
+    while (tail && !tail.matches('ex-turn, [data-user-message]'))
+      tail = tail.previousElementSibling;
+    this.paintedTail = tail ? { element: tail, top: tail.getBoundingClientRect().top } : undefined;
+  }
+
+  private revealArrivals(): void {
+    const messages = this.messageViews();
+    if (messages === this.renderedMessages) return;
+    this.renderedMessages = messages;
+    if (this.arrivingMessages.length && this.arrivingMessages.every(message => !message.element.isConnected))
+      this.interruptSendReveal();
+    const arrivals = messages.filter(message => !this.mounted.has(message));
+    if (!arrivals.length) return;
+    const fresh = arrivals.filter(message => message.isNew() && message.role() === "user");
+    if (fresh.length) {
+      this.interruptSendReveal();
+      const viewport = this.viewport().nativeElement;
+      const anchor = this.paintedTail;
+      // A bounded history refresh can remove rows above us in the same render.
+      // Preserve the last painted row, including the browser's anchoring offset.
+      const from = Math.max(0, anchor?.element.isConnected
+        ? viewport.scrollTop + anchor.element.getBoundingClientRect().top - anchor.top
+        : viewport.scrollTop);
+      const end = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      this.arrivingMessages = fresh;
+      if (Math.abs(end - from) > 1 && !this.reducedMotion() && typeof viewport.animate === "function") {
+        const style = getComputedStyle(viewport);
+        this.atEnd.set(true);
+        this.unread.set(false);
+        this.sendScroll = new ChatSendScroll(
+          viewport, from,
+          parseFloat(style.getPropertyValue("--dur-glide")) || 340,
+          style.getPropertyValue("--ease-in-out").trim() || "ease-in-out",
+          parseFloat(style.getPropertyValue("--dur-fast")) || 140,
+          () => {
+            this.sendScroll = undefined;
+            this.lastScrollHeight = viewport.scrollHeight;
+            this.updatePosition();
+            this.scheduleMeasure();
+          },
+        );
+      } else {
+        viewport.scrollTop = viewport.scrollHeight;
+        this.updatePosition();
+      }
+      this.lastScrollHeight = viewport.scrollHeight;
+    }
+    for (const message of arrivals) {
+      this.mounted.add(message);
+      message.playArrival();
+    }
+  }
+
+  interruptSendReveal(): void {
+    this.sendScroll?.cancel();
+    this.sendScroll = undefined;
+    for (const message of this.arrivingMessages) message.finishArrival();
+    this.arrivingMessages = [];
+    if (this.contentReady) this.updatePosition();
+  }
+
+  onViewportKey(event: KeyboardEvent): void {
+    if (event.target === event.currentTarget &&
+      ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))
+      this.interruptSendReveal();
+  }
   readonly startAtEnd = input(true);
   readonly reminder = input(true);
   readonly activeExchange = output<string>();
@@ -44,8 +127,17 @@ export class ChatScrollComponent {
   private lastScrollHeight = 0;
   private highlight: Animation | null = null;
   constructor() {
-    this.destroy.onDestroy(() => this.highlight?.cancel());
+    afterEveryRender(() => {
+      this.revealArrivals();
+      this.rememberPosition();
+    });
+    this.destroy.onDestroy(() => {
+      this.highlight?.cancel();
+      this.sendScroll?.cancel();
+      for (const message of this.arrivingMessages) message.finishArrival();
+    });
     afterNextRender(() => {
+      this.contentReady = true;
       const viewport = this.viewport().nativeElement;
       const content = this.content().nativeElement;
       this.refreshMessages();
@@ -86,7 +178,8 @@ export class ChatScrollComponent {
     });
   }
   onScroll(): void {
-    this.updatePosition();
+    if (!this.sendScroll) this.updatePosition();
+    this.rememberPosition();
     this.scheduleMeasure();
   }
   private updatePosition(): void {
@@ -102,6 +195,7 @@ export class ChatScrollComponent {
     this.pin.set(null);
   }
   scrollToMessage(id: string): void {
+    this.interruptSendReveal();
     const target = this.messages.find(
       (message) => message.dataset["userMessage"] === id,
     );
@@ -124,6 +218,7 @@ export class ChatScrollComponent {
     }
   }
   scrollToEnd(behavior: ScrollBehavior = "smooth"): void {
+    this.interruptSendReveal();
     const viewport = this.viewport().nativeElement;
     // Keep the return control present until native smooth scrolling arrives.
     // Claiming the end early would hide/reveal it on intermediate scroll events.
@@ -160,10 +255,11 @@ export class ChatScrollComponent {
   private measure(): void {
     const viewport = this.viewport().nativeElement;
     const changed = viewport.scrollHeight !== this.lastScrollHeight;
-    if (changed && this.atEnd()) viewport.scrollTop = viewport.scrollHeight;
+    if (this.sendScroll) this.sendScroll.reconcile();
+    else if (changed && this.atEnd()) viewport.scrollTop = viewport.scrollHeight;
     else if (changed) this.unread.set(true);
     this.lastScrollHeight = viewport.scrollHeight;
-    this.updatePosition();
+    if (!this.sendScroll) this.updatePosition();
     const top = viewport.getBoundingClientRect().top;
     let low = 0;
     let high = this.messages.length - 1;
@@ -187,6 +283,7 @@ export class ChatScrollComponent {
       candidate &&
       candidate.getBoundingClientRect().bottom < top &&
       !this.dismissed.has(id);
+    this.rememberPosition();
     this.pin.set(
       shouldPin && candidate
         ? {

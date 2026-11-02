@@ -95,10 +95,10 @@ export default async function* (capture) {
       });
       assert.deepEqual(reversal, { same: true, count: 1 });
 
-      // Use the public store command and preview transport to append real messages.
-      await capture.component('ex-session-chat', component => component.store.submit({
-        text: 'Verify the scroll return while I read the earlier reply.', intent: 'send', context: [],
-      }));
+      // Incoming agent output preserves reading position. A local send correctly
+      // reveals its own new exchange instead of leaving an unread return button.
+      await capture.component('ex-connected-workspace-demo', component =>
+        component.fixture.chat.appendAssistant('More verification arrived while you read the earlier reply.'));
       await capture.waitFor(() => document.querySelector('ex-chat-scroll .return-button .unread-dot'));
       assert.match(await capture.evaluate(() => document.querySelector('ex-chat-scroll .return-button').getAttribute('aria-label')), /New messages/);
       yield { name: `${name}-unread`, inspect: ['ex-chat-scroll .return', 'ex-composer'] };

@@ -5,6 +5,9 @@
   role="region"
   aria-label="Conversation"
   (scroll)="onScroll()"
+  (wheel)="interruptSendReveal()"
+  (pointerdown)="interruptSendReveal()"
+  (keydown)="onViewportKey($event)"
 >
   <div #content class="content"><ng-content /></div>
 </div>

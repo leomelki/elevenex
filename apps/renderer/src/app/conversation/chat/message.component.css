@@ -13,6 +13,7 @@
   box-shadow: var(--focus-ring);
 }
 :host.user {
+  transform-origin: bottom right;
   align-self: flex-end;
   max-width: 78%;
   padding: var(--space-2) var(--space-3);
@@ -83,7 +84,7 @@ footer button {
   font: inherit;
   font-size: var(--text-caption-size);
 }
-:host.fresh {
+:host.agent.fresh {
   animation: rise var(--dur-base) var(--ease-out) both;
 }
 @keyframes rise {
@@ -99,7 +100,7 @@ footer button {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  :host.fresh {
+  :host.agent.fresh {
     animation: none;
   }
   footer,

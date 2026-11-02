@@ -10,6 +10,14 @@ One agent reply, in the chat's reply column: the agent's mark sits in a narrow 2
 
 **Motion:** nothing pops. New thread rows grow in; the now line holds 700ms between two actions instead of collapsing and reopening; the reply eases to its height as it streams; on finish everything above happens together and eases.
 
+**Send handoff (renderer extension):** `isNew` opts a newly mounted reply into
+the sent bubble's entrance. Working follows by 80ms, gliding up 12px and fading
+over 340ms on `ease-glide`; the small agent mark springs from 86% on `ease-spring`.
+Reserve the reply's layout immediately so the bubble's landing position does not
+move. Saved receipts and streamed content do not restart entry. History is still;
+reduced motion fades for 160ms without travel, scale or delay. Focusing a control
+settles the entrance immediately.
+
 - Do keep the answer the most visible thing in a finished turn; the work is evidence, one hover or click away.
 - Do give each thought a short title; it's what the now line and the thread show.
 - Do keep unrecovered failures visible in `danger`; recovered ones live only in the thread, struck through with “fixed”.

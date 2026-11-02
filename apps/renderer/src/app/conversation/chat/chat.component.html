@@ -7,6 +7,7 @@
           role="user"
           [messageId]="exchange.id"
           [isNew]="exchange.isNew || false"
+          [sendOrigin]="exchange.sendOrigin"
           [time]="exchange.time || ''"
           >{{ exchange.prompt }}@if (exchange.mentions?.length) {
             <div class="message-mentions" role="list" aria-label="Mentioned sessions">
@@ -20,6 +21,7 @@
         >
       }
       <ex-turn
+        [isNew]="exchange.isNew || false"
         [status]="exchange.status"
         [actions]="actions()"
         [stoppable]="stoppable()"

@@ -96,7 +96,14 @@ export interface ConversationAttachment {
   readonly progress?: number;
   readonly error?: string;
 }
+/** Ephemeral renderer coordinates; never persisted or sent to the backend. */
+export interface MessageSendOrigin {
+  readonly left: number;
+  readonly top: number;
+  readonly at: number;
+}
 export interface ComposerSubmission {
+  readonly sendOrigin?: MessageSendOrigin;
   readonly text: string;
   readonly intent: "send" | "queue" | "steer";
   readonly context: readonly ConversationMention[];
@@ -196,6 +203,7 @@ export interface ChatExchange {
   /** Whether this reply is currently receiving text, independently of tool work. */
   readonly streaming?: boolean;
   readonly isNew?: boolean;
+  readonly sendOrigin?: MessageSendOrigin;
   readonly overflow?: readonly {
     readonly id: string;
     readonly label: string;

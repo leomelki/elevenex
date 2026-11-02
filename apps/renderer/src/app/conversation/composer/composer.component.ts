@@ -3,12 +3,14 @@ import { SESSION_DRAG_TYPE, readSessionDrag } from '../../tasks';
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
+  inject,
   input,
   model,
   output,
   signal,
   viewChild,
-  type ElementRef,
+  ElementRef,
   type OnChanges,
 } from "@angular/core";
 import {
@@ -69,7 +71,18 @@ import { ToolsMenuComponent } from "./tools-menu.component";
   },
 })
 export class ComposerComponent implements OnChanges {
+  private readonly destroy = inject(DestroyRef);
+  private readonly sendAnimations = new Set<Animation>();
+  readonly wordsLeaving = signal(false);
+  readonly sendButton = viewChild<unknown, ElementRef<HTMLButtonElement>>("sendButton", { read: ElementRef });
   readonly draft = model("");
+
+  constructor() {
+    this.destroy.onDestroy(() => {
+      for (const animation of this.sendAnimations) animation.cancel();
+      this.sendAnimations.clear();
+    });
+  }
   readonly mode = input<ConversationMode>("code");
   readonly agent = input<AgentConfig>();
   readonly harnesses = input<readonly AgentHarness[]>([]);
@@ -161,6 +174,7 @@ export class ComposerComponent implements OnChanges {
   }
   update(event: Event): void {
     if (!(event.target instanceof HTMLTextAreaElement)) return;
+    this.wordsLeaving.set(false);
     this.draft.set(event.target.value);
     const before = event.target.value.slice(0, event.target.selectionStart);
     const match = /(?:^|\s)@([^\s@]*)$/.exec(before);
@@ -175,14 +189,45 @@ export class ComposerComponent implements OnChanges {
       this.recording()
     )
       return;
+    const textarea = this.textarea()?.nativeElement;
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const intent = this.running() ? (steer ? "steer" : "queue") : "send";
+    // A textarea has no text Range. Its content origin includes padding and its
+    // internal scroll offset; long/scrolled drafts use the message rise instead.
+    const rect = textarea?.getBoundingClientRect();
+    const style = textarea ? getComputedStyle(textarea) : undefined;
+    const sendOrigin = intent === "send" && text && rect && style && !textarea?.scrollTop
+      ? { left: rect.left + parseFloat(style.paddingLeft), top: rect.top + parseFloat(style.paddingTop), at: performance.now() }
+      : undefined;
+    if (!reduced) {
+      const button = this.sendButton()?.nativeElement;
+      if (button?.animate) {
+        this.animateSend(button, [{ transform: "scale(.86)" }, { transform: "scale(1)" }], 320, style?.getPropertyValue("--ease-spring").trim() || "ease-out");
+        const icon = button.querySelector("ex-icon");
+        if (icon) this.animateSend(icon, [{ transform: "none" }, { transform: "translateY(-4px)", offset: .35 }, { transform: "none" }], 300, style?.getPropertyValue("--ease-out").trim() || "ease-out");
+      }
+    }
+    this.wordsLeaving.set(!reduced);
     this.submitted.emit({
+      ...(sendOrigin ? { sendOrigin } : {}),
       text,
-      intent: this.running() ? (steer ? "steer" : "queue") : "send",
+      intent,
       context: this.context(),
     });
     if (this.clearOnSubmit()) this.draft.set("");
     this.mentionQuery.set(null);
     this.textarea()?.nativeElement.focus({ preventScroll: true });
+  }
+  private animateSend(element: Element, frames: Keyframe[], duration: number, easing: string): void {
+    // Repeated sends restart the small press feedback and release old effects.
+    for (const previous of this.sendAnimations) {
+      if (previous.effect instanceof KeyframeEffect && previous.effect.target === element) previous.cancel();
+    }
+    const animation = element.animate(frames, { duration, easing });
+    this.sendAnimations.add(animation);
+    const done = () => this.sendAnimations.delete(animation);
+    animation.onfinish = done;
+    animation.oncancel = done;
   }
   insertMention(mention: ConversationMention, source: 'picker' | 'drop' = 'picker'): void {
     if (!this.mentionsEnabled() || this.disabled() || this.sending()) return;

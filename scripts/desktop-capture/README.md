@@ -538,3 +538,27 @@ headers versus literal triple-prefix hunk content, lazy Details, keyboard/inert
 behavior and both themes/narrow reduced motion. Use the connected-workspace
 preview URL. Its added-file fixture reproduces the Hello sentence that exposed
 the original raw-content-versus-patch bug.
+
+
+`scenarios/message-send.mjs` verifies send-source and landing geometry, the
+380ms glide, 340ms conversation slide, button press, keyboard focus, queue and
+long-message fallbacks, scrolled-up sends, interrupted cleanup, both themes and
+narrow reduced-motion fades. It also submits through the connected production
+chat owner. Run against the component preview URL, sequentially with other native
+captures.
+
+
+`scenarios/message-working.mjs` checks the connected send and Working entrance
+together: first-frame opacity, reserved layout and a steady bubble destination,
+mark spring, immediate receipts, keyboard Stop, navigation during entry, both
+themes and a narrow reduced-motion fade. Run against the component preview URL
+and sequentially with other native motion captures.
+
+
+`scenarios/message-bottom-scroll.mjs` starts at the bottom of a full history
+window. Natural frames begin before submission and check the first painted row,
+progressive viewport scrolling, early growth/composer shrink, flight landing and
+return-control stability. Short and long drafts, both themes, native wheel
+takeover, scrubbed reveal frames and narrow reduced motion are covered. It uses
+rAF timestamps for movement-rate checks; completion has its own regression. Run
+against the preview URL, sequentially with other native captures.

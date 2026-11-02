@@ -16,6 +16,59 @@ class ReplyHostComponent {
 }
 
 describe("turn work disclosure", () => {
+  it("animates a fresh turn once, retaining entry through receipt and streaming updates", () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    fixture.componentRef.setInput("isNew", true);
+    fixture.componentRef.setInput("status", "live");
+    fixture.detectChanges();
+    const turn: HTMLElement = fixture.nativeElement;
+    const row = turn.querySelector(".work-row");
+    expect(turn.classList.contains("arriving")).toBe(true);
+    expect(row?.textContent).toContain("Working");
+
+    fixture.componentRef.setInput("isNew", false);
+    fixture.componentRef.setInput("elapsed", 1);
+    fixture.detectChanges();
+    expect(turn.classList.contains("arriving")).toBe(true);
+    expect(turn.querySelector(".work-row")).toBe(row);
+    turn.querySelector(".mark")?.dispatchEvent(new Event("animationend", { bubbles: true }));
+    fixture.detectChanges();
+    expect(turn.classList.contains("arriving")).toBe(true);
+
+    turn.dispatchEvent(new Event("animationend"));
+    fixture.detectChanges();
+    expect(turn.classList.contains("arriving")).toBe(false);
+    fixture.componentRef.setInput("isNew", true);
+    fixture.componentRef.setInput("elapsed", 2);
+    fixture.detectChanges();
+    expect(turn.classList.contains("arriving")).toBe(false);
+    fixture.destroy();
+  });
+
+  it("keeps history still and reveals entering work immediately for keyboard interaction", () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    fixture.componentRef.setInput("status", "live");
+    fixture.detectChanges();
+    const turn: HTMLElement = fixture.nativeElement;
+    expect(turn.classList.contains("arriving")).toBe(false);
+    fixture.destroy();
+
+    const fresh = TestBed.createComponent(TurnComponent);
+    fresh.componentRef.setInput("status", "live");
+    fresh.componentRef.setInput("isNew", true);
+    fresh.detectChanges();
+    const element: HTMLElement = fresh.nativeElement;
+    const stopped = vi.fn();
+    fresh.componentInstance.stop.subscribe(stopped);
+    const stop = element.querySelector<HTMLButtonElement>(".work-row button[exButton]")!;
+    stop.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    fresh.detectChanges();
+    expect(element.classList.contains("arriving")).toBe(false);
+    stop.click();
+    expect(stopped).toHaveBeenCalledOnce();
+    fresh.destroy();
+  });
+
   it.each(["done", "failed", "stopped"] as const)(
     "shows the answer directly without empty work for a %s turn",
     (status) => {
