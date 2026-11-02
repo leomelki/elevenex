@@ -1,13 +1,13 @@
 <section class="terminal" tabindex="-1" aria-label="Your terminals" (keydown)="keydown($event)">
-  <ex-view-tabs label="Terminal tabs" newLabel="New terminal (⌘T)" [items]="tabs()" [active]="current()?.id" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()">
-    @if (scripts().length) { <select #scriptSelect aria-label="Run a project script" (change)="script(scriptSelect.value); scriptSelect.value = ''"><option value="">Run script…</option>@for (script of scripts(); track script.id) { <option [value]="script.id">{{ script.name }}</option> }</select> }
+  <ex-view-tabs label="Terminal tabs" newLabel="New terminal (⌘T)" [items]="tabs()" [active]="current()?.id" [disabled]="disabled()" [animateEntries]="animateTabs()" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()">
+    @if (scripts().length) { <select [disabled]="disabled()" #scriptSelect aria-label="Run a project script" (change)="script(scriptSelect.value); scriptSelect.value = ''"><option value="">Run script…</option>@for (script of scripts(); track script.id) { <option [value]="script.id">{{ script.name }}</option> }</select> }
   </ex-view-tabs>
-  <div class="toolbar"><ex-icon name="folder" [size]="13" /><span class="cwd" [title]="current()?.cwd ?? ''">{{ current()?.cwd ?? 'Workspace' }}</span>@if (current()?.branch; as branch) { <span class="branch"><ex-icon name="branch" [size]="12" />{{ branch }}</span> }
-    @if (current()?.status === 'serving') { <button exButton variant="ghost" size="sm" (click)="openPort()">Open :{{ current()?.port }}</button> }
-    @if (current()?.status === 'running' || current()?.status === 'serving') { <button exButton variant="ghost" size="sm" (click)="stopRequested.emit(current()!.id)">Stop</button> }
+  <div class="toolbar"><ex-icon name="folder" [size]="13" /><span class="cwd" [title]="current()?.cwd ?? ''">{{ current()?.cwd ?? 'Workspace' }}</span>@if (current()?.branch; as branch) { <span class="branch" [title]="branch"><ex-icon name="branch" [size]="12" />{{ branch }}</span> }
+    @if (current()?.status === 'serving') { <button exButton variant="ghost" size="sm" [disabled]="disabled()" (click)="openPort()">Open :{{ current()?.port }}</button> }
+    @if (current()?.status === 'running' || current()?.status === 'serving') { <button exButton variant="ghost" size="sm" [disabled]="disabled()" (click)="stopRequested.emit(current()!.id)">Stop</button> }
     <ex-icon-button icon="search" label="Find in terminal (⌘F)" size="sm" [active]="findOpen()" (pressed)="find()" />
   </div>
-  <ex-fold [open]="findOpen()"><label class="find">Find<input #findInput type="search" aria-label="Find in terminal output" [value]="query()" (input)="query.set(findInput.value)" /></label></ex-fold>
+  <ex-fold [open]="findOpen()"><label class="find">Find<input #findInput type="search" aria-label="Find in terminal output" [value]="query()" (input)="search(findInput.value)" (keydown)="searchKey($event)" /><span class="find-status" aria-live="polite">{{ findStatus() }}</span></label></ex-fold>
   <div class="content"><ng-content select="[terminalContent]" />
     @if (output().length) {
       @if (omitted()) { <p class="omitted">Showing the last 2,000 lines ({{ omitted() }} earlier)</p> }
@@ -15,7 +15,7 @@
         <div class="line" *cdkVirtualFor="let line of preview(); trackBy: trackLine" [attr.data-kind]="line.kind">{{ line.text }}</div>
       </cdk-virtual-scroll-viewport>
     }
-    @if (!tabs().length) { <div class="empty"><ex-icon name="terminal" [size]="24" /><p>Your terminals run in this task’s workspace.</p><button exButton variant="secondary" (click)="added.emit()">New terminal</button></div> }
+    @if (!tabs().length) { <div class="empty"><ex-icon name="terminal" [size]="24" /><p>Your terminals run in this task’s workspace.</p><button exButton variant="secondary" [disabled]="disabled()" (click)="added.emit()">New terminal</button></div> }
   </div>
-  <ex-fold [open]="!!failure()">@if (failure(); as failed) { <div class="failure" role="status"><ex-icon name="alert" [size]="14" /><span>Exited {{ failed.code }} · <code>{{ failed.cmd }}</code></span><button exButton size="sm" variant="secondary" (click)="failureAction('ask')">Ask the agent</button><button exButton size="sm" variant="ghost" (click)="failureAction('rerun')">Run again</button></div> }</ex-fold>
+  <ex-fold [open]="!!failure()">@if (failure(); as failed) { <div class="failure" role="status"><ex-icon name="alert" [size]="14" /><span>Exited {{ failed.code }} · <code>{{ failed.cmd }}</code></span><button exButton size="sm" variant="secondary" [disabled]="disabled() || askDisabled()" (click)="failureAction('ask')">Ask the agent</button><button exButton size="sm" variant="ghost" [disabled]="disabled() || rerunDisabled()" (click)="failureAction('rerun')">Run again</button></div> }</ex-fold>
 </section>

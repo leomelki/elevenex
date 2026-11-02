@@ -1,6 +1,7 @@
 import { CodeSurfaces } from './code/surfaces';
 import { registerCodeIpc } from './code/ipc';
 import { app, BrowserWindow, Menu, dialog, net, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
+import { registerTerminalPorts } from './backend-client/terminal-ports';
 import { readFile, realpath } from 'node:fs/promises';
 import { extname, join, relative, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -222,7 +223,8 @@ void app.whenReady().then(async () => {
   const unregisterCode = registerCodeIpc(code, trusted);
   app.once('will-quit', unregisterCode);
   const unregisterClient = registerBackendClientIpc(backendClient.client, trusted);
-  app.once('will-quit', unregisterClient);
+  const unregisterTerminalPorts = registerTerminalPorts(backendClient.client, remote, trusted, url => shell.openExternal(url));
+  app.once('will-quit', () => { unregisterClient(); unregisterTerminalPorts(); });
   const unregisterRemote = registerRemoteIpc(remote, backend, trusted);
   const unregisterMachines = registerMachineIpc(machines, trusted, selection => { if (windowsReady) createWindow(selection); });
   app.once('will-quit', unregisterMachines);

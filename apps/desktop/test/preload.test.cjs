@@ -1,3 +1,4 @@
+const terminalMethods = ['taskTerminalList', 'taskTerminalCreate', 'taskTerminalRead', 'taskTerminalInput', 'taskTerminalResize', 'taskTerminalAction', 'taskTerminalClose', 'taskTerminalOpenPort'];
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFile } = require('node:fs/promises');
@@ -29,7 +30,7 @@ test('preload exposes only the typed bridge and strips event objects', async () 
       };
     },
   });
-  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
+  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...terminalMethods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
   assert.equal(Object.isFrozen(bridge), true);
   await bridge.appVersion();
   await bridge.gitStatus('/workspace');

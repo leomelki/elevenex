@@ -1,5 +1,7 @@
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
+import type { TaskTerminalTarget, TaskTerminal, TaskTerminalList, TaskTerminalRead, TaskTerminalOutput, TaskTerminalCreate, TaskTerminalInput, TaskTerminalResize, TaskTerminalAction } from './task-terminal';
+export type * from './task-terminal';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
 import type { SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
@@ -46,6 +48,14 @@ export interface InvokeContracts {
   'code:action': { args: [target: CodeTarget, action: CodeAction]; result: void };
   'code:focus': { args: [target: CodeTarget]; result: void };
   'code:release': { args: [target: CodeTarget]; result: void };
+  'task-terminal:open-port': { args: [scopeId: string, input: TaskTerminalTarget & { readonly port: number }]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:list': { args: [scopeId: string, taskId: number]; result: BackendResult<TaskTerminalList> };
+  'task-terminal:create': { args: [scopeId: string, input: TaskTerminalCreate]; result: BackendResult<TaskTerminal> };
+  'task-terminal:read': { args: [scopeId: string, input: TaskTerminalRead]; result: BackendResult<TaskTerminalOutput> };
+  'task-terminal:input': { args: [scopeId: string, input: TaskTerminalInput]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:resize': { args: [scopeId: string, input: TaskTerminalResize]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:action': { args: [scopeId: string, input: TaskTerminalAction]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:close': { args: [scopeId: string, input: TaskTerminalTarget]; result: BackendResult<{ readonly accepted: true }> };
 
   'session-chat:upload': { args: [scopeId: string, input: ChatAttachmentUpload]; result: BackendResult<ChatAttachmentReceipt> };
   'session-chat:catalog': { args: [scopeId: string, input: SessionChatCatalogRead]; result: BackendResult<SessionChatCatalog> };
@@ -154,6 +164,14 @@ export interface ElevenexBridge {
   codeAction(target: CodeTarget, action: CodeAction): Promise<void>;
   codeFocus(target: CodeTarget): Promise<void>;
   codeRelease(target: CodeTarget): Promise<void>;
+  taskTerminalOpenPort(scopeId: string, input: TaskTerminalTarget & { readonly port: number }): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalList(scopeId: string, taskId: number): Promise<BackendResult<TaskTerminalList>>;
+  taskTerminalCreate(scopeId: string, input: TaskTerminalCreate): Promise<BackendResult<TaskTerminal>>;
+  taskTerminalRead(scopeId: string, input: TaskTerminalRead): Promise<BackendResult<TaskTerminalOutput>>;
+  taskTerminalInput(scopeId: string, input: TaskTerminalInput): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalResize(scopeId: string, input: TaskTerminalResize): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalAction(scopeId: string, input: TaskTerminalAction): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalClose(scopeId: string, input: TaskTerminalTarget): Promise<BackendResult<{ readonly accepted: true }>>;
 
   sessionChatUpload(scopeId: string, input: ChatAttachmentUpload): Promise<BackendResult<ChatAttachmentReceipt>>;
   sessionChatCatalog(scopeId: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>>;

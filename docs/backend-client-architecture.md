@@ -149,7 +149,8 @@ model catalogs or read history for unselected sessions. Only semantic activity
 changes invalidate navigation; streamed text and tool progress do not reload
 the sidebar. Session pages supply authoritative activity for the visible window.
 
-The side views currently contain shells only. The implementation does not
+The side views expose supplied-data boundaries. Terminal now connects real
+user-owned task PTYs through the scoped bridge; its ownership is described below. The implementation does not
 introduce direct renderer networking, generic IPC, a second backend or a
 replacement persistence framework. Selected sessions compose the
 [connected chat adapter](../apps/renderer/src/app/session-chat/README.md) with
@@ -383,3 +384,13 @@ Automatic SSH retries stop after ten minutes of transient outage. Wake and
 bounded main-owned network-interface/online-state observation resume that stop;
 authentication and host-trust failures always require a person. Existing
 main-owned transport credentials, CSP and the named bridge remain unchanged.
+
+## User terminal slice
+
+The additive `task-terminal:*` bridge operations use the existing per-window HTTP
+lease. Main validates task/process identity, bounds, generations and contiguous
+output offsets. `user-terminal/desktop-terminal` routes share the existing PTY
+manager and task lifecycle. Reads never spawn; input/mutations never retry.
+See [terminal ownership and limits](../apps/renderer/src/app/task-terminal/README.md)
+for bounded output catch-up, producer gaps, user input backpressure, window/task
+cleanup, prompt integration and the typed Browser/forwarding handoff.

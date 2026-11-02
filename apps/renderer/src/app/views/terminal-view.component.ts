@@ -14,6 +14,12 @@ import { ViewTabsComponent } from './view-tabs.component';
 export class TerminalViewComponent {
   readonly tabs = input<readonly TerminalTab[]>([]);
   readonly active = input<string>();
+  readonly disabled = input(false);
+  readonly animateTabs = input(true);
+  readonly askDisabled = input(false);
+  readonly rerunDisabled = input(false);
+  readonly findStatus = input('');
+  readonly searchRequested = output<{ query: string; backwards: boolean }>();
   readonly scripts = input<readonly TerminalScript[]>([]);
   readonly output = input<readonly TerminalLine[]>([]);
   readonly failure = input<TerminalFailure | null>(null);
@@ -51,7 +57,10 @@ export class TerminalViewComponent {
     });
   }
 
+  protected searchKey(event: KeyboardEvent): void { if (event.key === 'Enter') { event.preventDefault(); this.search(this.query(), event.shiftKey); } }
+  protected search(query: string, backwards = false): void { this.query.set(query); this.searchRequested.emit({ query, backwards }); }
   protected script(id: string): void {
+    if (this.disabled()) return;
     const script = this.scripts().find(item => item.id === id);
     if (script) this.scriptRequested.emit(script);
   }
@@ -79,9 +88,10 @@ export class TerminalViewComponent {
     }
     this.findOpen.set(false);
     this.query.set('');
+    this.searchRequested.emit({ query: '', backwards: false });
   }
   protected keydown(event: KeyboardEvent): void {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 't') { event.preventDefault(); this.added.emit(); }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 't') { event.preventDefault(); if (!this.disabled()) this.added.emit(); }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); this.find(); }
     if (event.key === 'Escape' && this.findOpen()) { event.preventDefault(); event.stopPropagation(); this.closeFind(); }
   }

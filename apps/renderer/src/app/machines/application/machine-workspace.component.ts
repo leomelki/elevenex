@@ -1,5 +1,8 @@
 import { CodePanelComponent } from '../../code';
 import type { CodeTarget, CodeFileIntent } from '@elevenex/shared';
+import { TaskTerminalComponent, type TerminalQuestion } from '../../task-terminal';
+import { ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
+import type { TerminalBrowserIntent } from '@elevenex/shared';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal } from '@angular/core';
 import { jumpHome, settleMark, type CreateProjectIntent } from '../../projects';
 import { AppShellComponent } from '../../shell/app-shell.component';
@@ -18,7 +21,7 @@ import { SessionChatClient } from '../../backend/session-chat-client.service';
 @Component({
   selector: 'ex-machine-workspace',
   providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient, SessionChatOutbox, WorkspaceWritingJournal],
-  imports: [CodePanelComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  imports: [CodePanelComponent, TaskTerminalComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
   templateUrl: './machine-workspace.component.html',
   styleUrl: './machine-workspace.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -50,6 +53,45 @@ export class MachineWorkspaceComponent {
   openCode(path: string): void { const target = this.codeTarget(); if (!target) return; this.codeFile.set({ ...target, file: { path } }); this.store.selectPanel('code'); this.panelOpen.set(true); this.wideReview.set(true); }
   review(target: ChatReviewTarget): void {
     this.reviewTarget.set(target); this.store.selectPanel('changes'); this.panelOpen.set(true);
+  }
+  readonly terminalSelection = computed(() => { const selected = this.store.selected(); return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null; });
+  private readonly chatDrafts = inject(SessionChatDrafts);
+  private terminalFocusFrame?: number;
+  private readonly terminalBridge = inject(ELEVENEX_BRIDGE);
+  readonly terminalBrowser = signal<TerminalBrowserIntent | null>(null);
+  readonly selectedTerminalBrowser = computed(() => { const intent = this.terminalBrowser(), selected = this.store.selected(); return intent && selected?.scopeId === intent.scopeId && selected.taskId === intent.taskId ? intent : null; });
+  readonly terminalBrowserError = signal('');
+  readonly terminalBrowserBusy = signal(false);
+  askTerminal(question: TerminalQuestion): void {
+    const selected = this.store.selected();
+    if (!selected || selected.scopeId !== question.scopeId || selected.taskId !== question.taskId || this.store.offline()) return;
+    const entry = this.chatDrafts.entry(selected.scopeId, selected.sessionId);
+    const context = `Help me understand this terminal failure.\n\nCommand: ${question.command.slice(0, 4096)}\nExit code: ${question.code}\n\nTerminal output (last 80 lines, bounded):\n${question.output.slice(-8000)}`;
+    entry.text.update(text => (text ? text + '\n\n' : '') + context);
+    this.wideReview.set(false);
+    if (this.terminalFocusFrame !== undefined) cancelAnimationFrame(this.terminalFocusFrame);
+    this.terminalFocusFrame = requestAnimationFrame(() => {
+      this.terminalFocusFrame = undefined;
+      const current = this.store.selected();
+      if (current?.scopeId === selected.scopeId && current.taskId === selected.taskId && current.sessionId === selected.sessionId) this.focusWriting();
+    });
+  }
+  openTerminalPort(intent: TerminalBrowserIntent): void {
+    const selected = this.store.selected();
+    if (!selected || selected.scopeId !== intent.scopeId || selected.taskId !== intent.taskId) return;
+    this.terminalBrowser.set(intent); this.store.selectPanel('browser'); this.panelOpen.set(true);
+    void this.launchTerminalPort();
+  }
+  async launchTerminalPort(): Promise<void> {
+    const intent = this.selectedTerminalBrowser();
+    if (!intent || this.terminalBrowserBusy() || this.store.offline()) return;
+    this.terminalBrowserBusy.set(true); this.terminalBrowserError.set('');
+    try {
+      const reply = await this.terminalBridge.taskTerminalOpenPort(intent.scopeId, { taskId: intent.taskId, terminalId: intent.terminalId, port: intent.port });
+      if (this.terminalBrowser() !== intent) return;
+      if (!reply.ok) this.terminalBrowserError.set(reply.error.message);
+    } catch { this.terminalBrowserError.set('Could not open this service. Check the terminal and connection.'); }
+    finally { this.terminalBrowserBusy.set(false); }
   }
   readonly launch = signal<'idle' | 'creating' | 'flying'>('idle');
   private readonly setupStarted = signal(false);
@@ -94,7 +136,10 @@ export class MachineWorkspaceComponent {
       action.focus({ preventScroll: true });
       this.store.projectCreated.set(null);
     });
-    inject(DestroyRef).onDestroy(() => this.stopLaunch());
+    inject(DestroyRef).onDestroy(() => {
+      this.stopLaunch();
+      if (this.terminalFocusFrame !== undefined) cancelAnimationFrame(this.terminalFocusFrame);
+    });
   }
 
   projectSubmitted(intent: CreateProjectIntent): void { this.setupStarted.set(true); this.source = intent; this.launch.set('creating'); }

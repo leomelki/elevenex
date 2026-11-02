@@ -1,3 +1,4 @@
+import { registerTaskTerminalIpc } from './task-terminal';
 import { registerWorkspaceIpc } from './workspace';
 import { registerSessionChatIpc } from './session-chat';
 import { handleForWindow, type TrustedSender } from '../ipc';
@@ -16,5 +17,6 @@ export function registerBackendClientIpc(client: BackendClient, trusted: Trusted
   });
   const stopWorkspace = registerWorkspaceIpc(client, trusted);
   const stopChat = registerSessionChatIpc(client, trusted);
-  return () => { stopState(); stopInfo(); stopWorkspace(); stopChat(); };
+  const stopTerminals = registerTaskTerminalIpc(client, trusted);
+  return () => { stopState(); stopInfo(); stopWorkspace(); stopChat(); stopTerminals(); };
 }

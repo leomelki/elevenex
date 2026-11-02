@@ -1,3 +1,4 @@
+@import "@xterm/xterm/css/xterm.css";
 @import '@angular/cdk/overlay-prebuilt.css';
 @import './design-system/tokens.css';
 @import './app/ui/sheet/modal-recession.css';

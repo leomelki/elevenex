@@ -4,6 +4,49 @@
 > in chat/PR descriptions and keep run artifacts under ignored `artifacts/`, as
 > described in the root `AGENTS.md`. Earlier results do not verify current code.
 
+## Production user Terminal, 2026-11-02
+
+The task-owned Terminal now uses the installed xterm 6 adapter, existing user-PTY
+manager and additive bounded desktop HTTP operations. Backend paths are resolved
+from durable task identity. Shell/script creation, input, interrupt, rerun and
+close are explicit; attachment never launches or restarts a process. Ask stages
+bounded context in the matching selected composer's draft and retains user send.
+See [ownership, UX decisions and bounds](src/app/task-terminal/README.md).
+
+Validation passed:
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`.
+- Desktop tests: 137 main/transport tests, seven capture-tool tests, 629 Angular
+  tests, and TypeScript negative IPC assertions.
+- Backend build-config TypeScript, focused ESLint, and 44 terminal regressions,
+  including real PTYs, fresh worktree roots, interrupt/exit, script failure/rerun,
+  generation loss, invalid payloads, output bounds and command-input privacy.
+  Native backend tests used Node 24 to match installed native modules.
+- Installed native Electron smoke: main/preload, sandbox, IPC scopes, theme,
+  multiple windows and app:// protocol. Its backend remains a test fixture.
+
+The actual backend and disposable repository/database supplied real output for
+these native reports (all `verified: true`, zero renderer errors/warnings):
+- `artifacts/desktop-capture/terminal-production-flow/report.json`: 11 checkpoints;
+  real typing, Find, hide/show, connection reattachment, session changes, script
+  failure/rerun, explicit Ask draft, serving-port handoff, light/dark, expansion,
+  narrow layout, reduced motion and process close.
+- `artifacts/desktop-capture/terminal-final-csp-selection/report.json`: built production
+  app:// renderer, real typing, Unicode Find/copy, 24-bit ANSI colors and
+  nonce-protected terminal styles in both themes. CSP was not relaxed.
+- `artifacts/desktop-capture/terminal-complete-lifecycle/report.json`: 400,000
+  output characters, an explicit expired-history gap, bounded searchable
+  scrollback, rapid task changes without duplicate shells, clipboard paste/copy
+  event paths without changing the system clipboard, trusted Stop/Ctrl-C, exit
+  and process close. The retained buffer stayed within 2,300 rows.
+
+The light/dark failure, built app:// and burst/exit PNGs were inspected. Browser
+handoff verified the typed destination with the system-browser launcher
+intercepted; remote port allocation/cleanup has focused main tests. A deployed
+SSH runtime, packaged launch, Windows and Linux were not exercised. Per-command
+prompt hooks cover Bash/zsh; other shells retain interaction and process-exit
+status. Earlier capture attempts interrupted by HMR or premature state checks
+are not product evidence.
+
 ## Agent picker review fixes, 2026-11-04
 
 Model search stays mounted for its current harness after a catalog shrinks,

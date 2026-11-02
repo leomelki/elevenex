@@ -5,7 +5,8 @@ boundaries: they do not launch terminals, run scripts, make network requests,
 generate diffs, or access the filesystem. Outputs carry stable IDs, not positions.
 
 `ViewTabs` provides arrow/Home/End selection, Delete and middle-click close, native
-focus and animated entry/exit. Browser and Terminal reserve Command/Ctrl-T while
+focus and animated entry/exit. Set `animateEntries=false` while attaching an
+existing tab window; `TerminalView.animateTabs` forwards this policy. Browser and Terminal reserve Command/Ctrl-T while
 focused and expose `selected`, `closed` and `added`.
 
 `BrowserView` accepts a trusted `[browserPreview]` projection. It does not create
@@ -26,11 +27,14 @@ Reduced motion stops the cursor pulse, tab breathing and target travel. The
 isolated `BrowserDemo` measures its sample button with an owned ResizeObserver;
 the production browser owner must supply its own page coordinates.
 
-`TerminalView` accepts `[terminalContent]` for a future terminal adapter. Its text
+`TerminalView` accepts `[terminalContent]` for the [production user-terminal adapter](../task-terminal/README.md). Its text
 preview uses escaped `TerminalLine` objects and CDK virtualization, bounded to the
 latest 2,000 lines; any omitted history is labelled. It emits typed script,
 failure, port and stop intents. Ports are validated before emitting `portOpened`.
-Do not put the agent's tool output in this view.
+Do not put the agent's tool output in this view. `disabled`, `askDisabled` and
+`rerunDisabled` control platform actions. `searchRequested` carries query/direction
+to the real adapter; `findStatus` displays its bounded match count. The preview
+output contract remains available.
 
 `DiffReview` accepts metadata as `ChangeFile[]` and precomputed
 `DiffFileContent[]`. Each content reply must match **fileId, rev and mode**. The

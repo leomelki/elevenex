@@ -46,6 +46,16 @@
     </div>
     <ex-workspace-panels [codeActions]="workspaceCode.actions() ?? null" [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" shellPanel [panel]="panel()" (panelChange)="store.selectPanel($event)" [wide]="shell.panelWide()" (wideChange)="wideReview.set($event)" (closed)="closePanel()">
       <ex-code-panel workspaceCode #workspaceCode [target]="codeTarget()" [file]="codeFile()" [taskName]="store.selectedTask()?.name ?? ''" [branch]="store.selectedTask()?.branchName ?? ''" [active]="panelOpen() && panel() === 'code' && active()" [retained]="shell.panelPresent() && panel() === 'code' && active()" [connected]="!store.offline()" [wide]="shell.panelWide()" (wideChange)="wideReview.set($event)" />
+      <ex-task-terminal workspaceTerminal #workspaceTerminal [machineId]="machine().id" [selection]="terminalSelection()" [available]="!store.offline()" [visible]="active() && panelOpen() && panel() === 'terminal'" [askAvailable]="!!store.selected() && store.selectedSession()?.status !== 'archived'" (question)="askTerminal($event)" (browserRequested)="openTerminalPort($event)" />
+      @if (selectedTerminalBrowser(); as service) {
+        <div workspaceBrowser #workspaceBrowser class="terminal-browser-service">
+          <ex-icon name="globe" [size]="24" />
+          <h2>Service on :{{ service.port }}</h2>
+          <p>{{ machine().name }} · {{ terminalBrowserBusy() ? 'Opening service…' : terminalBrowserError() ? 'Service could not be opened' : 'Opened in your browser' }}{{ machine().id === 'local' ? '' : ' through a managed port forward' }}.</p>
+          @if (terminalBrowserError()) { <p role="alert">{{ terminalBrowserError() }}</p> }
+          <button exButton variant="secondary" [disabled]="terminalBrowserBusy() || store.offline()" (click)="launchTerminalPort()">{{ terminalBrowserBusy() ? 'Opening…' : 'Open in browser' }}</button>
+        </div>
+      }
       <div workspaceChanges #workspaceChanges class="review-content">
         @if (selectedReview(); as target) {
           @if (shell.panelPresent() && panel() === 'changes' && active()) {

@@ -366,6 +366,12 @@ importers:
 
   apps/renderer:
     dependencies:
+      '@xterm/addon-fit':
+        specifier: ^0.11.0
+        version: 0.11.0
+      '@xterm/xterm':
+        specifier: ^6.0.0
+        version: 6.0.0
       '@angular/cdk':
         specifier: 22.2.4
         version: 22.2.4(@angular/common@22.2.3)(@angular/core@22.2.3)(@angular/forms@22.2.3)(@angular/platform-browser@22.2.3)(rxjs@7.8.2)

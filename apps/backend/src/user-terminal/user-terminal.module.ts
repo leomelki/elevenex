@@ -1,3 +1,5 @@
+import { DesktopTerminalController } from './desktop-terminal.controller.js';
+import { DesktopTerminalService } from './desktop-terminal.service.js';
 import { Module } from '@nestjs/common';
 import { UserTerminalController } from './user-terminal.controller.js';
 import { UserTerminalService } from './user-terminal.service.js';
@@ -5,8 +7,13 @@ import { UserTerminalGateway } from './user-terminal.gateway.js';
 import { UserPtyManager } from './user-pty-manager.service.js';
 
 @Module({
-  controllers: [UserTerminalController],
-  providers: [UserTerminalService, UserTerminalGateway, UserPtyManager],
+  controllers: [UserTerminalController, DesktopTerminalController],
+  providers: [
+    DesktopTerminalService,
+    UserTerminalService,
+    UserTerminalGateway,
+    UserPtyManager,
+  ],
   exports: [UserTerminalService, UserTerminalGateway, UserPtyManager],
 })
 export class UserTerminalModule {}

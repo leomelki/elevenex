@@ -134,3 +134,14 @@ function checkUpload(invoke: <K extends keyof import('@elevenex/shared').InvokeC
   invoke('session-chat:upload', 'scope', '/Users/private/file.png');
 }
 void checkUpload;
+
+function checkTerminals(invoke: import('@elevenex/shared').Invoke) {
+  void invoke('task-terminal:read', 'scope', { taskId: 1, terminalId: 2, generation: null, after: 0 });
+  // @ts-expect-error Every keystroke names its backend scope and process generation.
+  void invoke('task-terminal:input', 'scope', { taskId: 1, terminalId: 2, data: 'hello' });
+  // @ts-expect-error A renderer cannot choose an executable or worktree path.
+  void invoke('task-terminal:create', 'scope', { taskId: 1, cwd: '/tmp', shell: 'sh' });
+  // @ts-expect-error Browser handoff is a port intent, never an arbitrary output-supplied URL.
+  void invoke('task-terminal:open-port', 'scope', { taskId: 1, terminalId: 2, url: 'javascript:alert(1)' });
+}
+void checkTerminals;

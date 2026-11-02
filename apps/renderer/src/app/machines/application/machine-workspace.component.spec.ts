@@ -1,3 +1,4 @@
+import { SessionChatDrafts } from '../../session-chat/session-chat-drafts';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { ConnectedWorkspaceFixture } from '../../../../preview/connected-workspace-fixture';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
@@ -172,4 +173,18 @@ describe('Connected workspace composition', () => {
     await settle(fixture);
     expect(root.querySelector('ex-workspace-onboarding')).not.toBeNull();
   });
+  it('stages terminal context only in the matching selected conversation and never sends it', async () => {
+    const { fixture, component, platform } = setup(); await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
+    const selected = component.store.selected()!;
+    const entry = fixture.debugElement.injector.get(SessionChatDrafts).entry(selected.scopeId, selected.sessionId);
+    entry.text.set('Keep this writing.');
+    const question = { scopeId: selected.scopeId, taskId: selected.taskId, command: 'npm test', code: 7, output: 'failure context' };
+    component.askTerminal({ ...question, scopeId: 'stale-scope' });
+    expect(entry.text()).toBe('Keep this writing.');
+    component.askTerminal(question); await settle(fixture);
+    expect(entry.text()).toContain('Keep this writing.'); expect(entry.text()).toContain('failure context');
+    expect(platform.sentChatActions).toHaveLength(0);
+  });
+
 });

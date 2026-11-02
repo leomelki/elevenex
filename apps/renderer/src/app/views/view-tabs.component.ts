@@ -16,6 +16,7 @@ export class ViewTabsComponent {
   readonly newLabel = input('New tab');
   readonly closable = input(true);
   readonly disabled = input(false);
+  readonly animateEntries = input(true);
   readonly selected = output<string>();
   readonly closed = output<string>();
   readonly added = output<void>();
