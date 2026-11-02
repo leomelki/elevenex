@@ -1,11 +1,12 @@
 <div class="source-bar">
-  <ex-dropdown label="Review source" appearance="quiet" icon="changes" [options]="options()" [value]="source()" [active]="active()" (changed)="choose($event)" />
+  <div class="source-menu"><ex-dropdown label="Review source" appearance="quiet" icon="changes" [options]="options()" [value]="source()" [active]="active() && !inlineSources()" (changed)="choose($event)" /></div>
+  <ex-segmented class="source-tabs" label="Review source" size="sm" [options]="sourceSegments()" [value]="source()" (changed)="choose($event)" />
   @if (source() === 'branch') {
     <button exButton variant="ghost" size="sm" class="base" [disabled]="!!unreachable() || !target()" title="Choose the target branch used to resolve the merge-base" (click)="openBase()"><span class="versus">vs</span><span>{{ baseLabel() }}</span><ex-icon name="chevron-down" [size]="11" /></button>
   }
   @if (source() !== 'reply' && store.page(); as page) {
     <div class="summary" [attr.aria-label]="page.total + ' changed file entries, ' + page.additions + ' additions, ' + page.deletions + ' deletions'">
-      <ex-ease-swap [value]="page.total + ' entries'" />
+      <span>{{ page.total }} entries</span>
       <span class="add">{{ page.countsExact ? '+' : '≥ +' }}{{ page.additions }}</span><span class="del">−{{ page.deletions }}</span>
     </div>
   }

@@ -6,6 +6,20 @@ an explicitly separate fourth source. Reply patches retain their original
 session/turn ownership and recorded-patch limitations. Opening a reply selects
 that source; selecting a repository source never substitutes the reply patch.
 
+On the first review of a task, choose Uncommitted when the backend's complete
+uncommitted total is positive (including staged, unstaged and untracked entries).
+Otherwise choose Last commit when HEAD exists; an unborn repository stays on
+Uncommitted. Resolve this before showing the initial file list. Branch changes
+remains an explicit choice. A bounded cache remembers manual source/base choices
+for twenty tasks, including explicit empty-source choices. Explicit Refresh rechecks the automatic choice against the current workspace.
+Background refresh and reconnection do not change a reader's source. Probe failures remain retryable,
+and task/scope/manual-choice changes invalidate an in-flight default check.
+
+Below 720px, sources use the compact dropdown. Wider reviews use the shared
+Segmented control for one-click source switching. Both share the same controlled
+source; resizing closes a hidden menu and returns keyboard focus to the visible
+control. Selected reply joins the inline choices when a reply is available.
+
 The default header has two rows: source/base with aggregate counts and details/
 refresh actions, then file navigation with the Changes/Full files toggle
 and wrap. Comparison SHAs, explanation and read-only status live in the retained
@@ -15,8 +29,8 @@ rows. A filtered picker stays reopenable with zero results, and Clear filter
 returns focus to its input. The search glyph indicates an active filter.
 
 This deliberately reduces the former seven stacked bands; the 440px header is
-70px tall. The same controls remain mounted during shell-controlled wide
-takeover. Hidden reviews close the file picker. The existing
+70px tall (72px with inline source choices). The same state remains mounted
+during shell-controlled wide takeover. Hidden reviews close the file picker. The existing
 review still owns pinned headers, keyboard navigation and reading anchors.
 
 Uncommitted shows separate Staged (HEAD → index), Unstaged (index → working file)

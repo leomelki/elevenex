@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /** Real disposable Git + HTTP + production main/preload + Angular review. No renderer mock data. */
-export default async function* (capture) {
+export default async function* (capture, { sourcesOnly = false } = {}) {
   const require = createRequire(new URL('../../../apps/desktop/package.json', import.meta.url));
   const { ipcMain } = require('electron');
   const { BackendClient } = require('./dist/backend-client/client');
@@ -44,6 +44,10 @@ export default async function* (capture) {
     await writeFile(join(cwd, 'src/payments.ts'), original); await writeFile(join(cwd, 'src/obsolete.ts'), 'export const obsolete = true;\n');
     await git(['add', '-A']); await git(['commit', '-m', 'Initial payment processing']);
     await git(['checkout', '-b', 'task/reliable-payments']);
+    if (sourcesOnly) {
+      await writeFile(join(cwd, 'src/duplicate-guard.ts'), 'export const preventDuplicates = true;\n');
+      await git(['add', '-A']); await git(['commit', '-m', 'Guard duplicate payments']);
+    }
     const committed = original.replace('value10 = 10', 'value10 = 100');
     await writeFile(join(cwd, 'src/payments.ts'), committed); await git(['mv', 'src/obsolete.ts', 'src/receipt.ts']);
     await git(['add', '-A']); await git(['commit', '-m', 'Keep a durable receipt']);
@@ -64,11 +68,86 @@ export default async function* (capture) {
     await capture.component('ex-repository-review-demo', (component, target) => component.target.set(target), target);
     const finish = async () => { await capture.settle(); await capture.waitFor(() => document.getAnimations().every(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running')); };
     const choose = async (index, settleMotion = true) => {
-      await capture.click('.source-bar ex-dropdown button');
-      await capture.click(`[role="menuitemradio"]:nth-child(${index + 1})`);
+      const inline = await capture.evaluate(() => getComputedStyle(document.querySelector('.source-tabs')).display !== 'none');
+      if (inline) await capture.click(`.source-tabs button:nth-of-type(${index + 1})`);
+      else { await capture.click('.source-bar ex-dropdown button'); await capture.click(`[role="menuitemradio"]:nth-child(${index + 1})`); }
       await capture.waitFor(() => !document.querySelector('ex-repository-review .feedback[role="status"]'));
       if (settleMotion) await finish();
     };
+
+    if (sourcesOnly) {
+      const sourceNames = ['uncommitted', 'last-commit', 'branch'];
+      const waitSource = async source => {
+        await capture.waitFor(source => {
+          const component = window.ng.getComponent(document.querySelector('ex-repository-review'));
+          return component.source() === source && component.store.page()?.source === source && !component.store.busy();
+        }, source);
+        await finish();
+        await capture.waitFor(() => {
+          const store = window.ng.getComponent(document.querySelector('ex-repository-review')).store;
+          return store.files().filter(file => !file.binary && !file.large && file.status !== 'D' && file.add + file.del <= 400).every(file => store.contents().some(content => content.fileId === file.id && content.rev === file.rev && content.mode === store.mode() && content.state === 'ready'));
+        });
+      };
+      for (const theme of ['light', 'dark']) {
+        await capture.theme(theme); await capture.viewport(1440, 560);
+        for (const layout of ['narrow', 'wide']) {
+          await capture.component('ex-repository-review-demo', (component, wide) => component.wide.set(wide), layout === 'wide');
+          await choose(0); await waitSource('uncommitted');
+          if (layout === 'narrow') { await capture.click('.source-bar ex-dropdown button'); await finish(); }
+          yield { name: `${theme}-${layout}-source-chooser`, selector: 'ex-repository-review', inspect: ['.source-bar'] };
+          if (layout === 'narrow') {
+            await capture.component('ex-repository-review-demo', component => component.wide.set(true));
+            await capture.waitFor(() => !document.querySelector('[role="menu"]') && document.activeElement?.matches('.source-tabs [aria-checked="true"]'));
+            await finish();
+            yield { name: `${theme}-resize-to-inline`, selector: 'ex-repository-review', inspect: ['.source-tabs', ':focus'] };
+            await capture.component('ex-repository-review-demo', component => component.wide.set(false));
+            await capture.waitFor(() => document.activeElement?.matches('.source-menu button'));
+            await finish();
+            yield { name: `${theme}-resize-to-dropdown`, selector: 'ex-repository-review', inspect: ['.source-menu', ':focus'] };
+          }
+          for (let index = 0; index < sourceNames.length; index++) {
+            await choose(index); await waitSource(sourceNames[index]);
+            if (index === 2) {
+              // Explicitly apply the base so subsequent switches also cover the
+              // boundary that keeps branch refs out of the other source requests.
+              await capture.component('ex-repository-review', component => component.selectBase('refs/heads/trunk'));
+              await waitSource('branch');
+            }
+            await capture.waitFor(index => document.querySelector(index === 0 ? '[data-file-id="unstaged:src/payments.ts"] [data-kind="add"]' : '[data-file-id="committed:src/payments.ts"] [data-kind="add"]'), index);
+            const dimensions = await capture.evaluate(() => {
+              const panel = document.querySelector('ex-repository-review'), bar = panel.querySelector('.source-bar');
+              return { entries: bar.querySelector('.summary > span')?.textContent, width: panel.getBoundingClientRect().width, header: panel.querySelector('ex-diff-review .toolbar').getBoundingClientRect().bottom - panel.getBoundingClientRect().top, overflow: bar.scrollWidth - bar.clientWidth };
+            });
+            assert.match(dimensions.entries, /^\d+ entries$/);
+            assert.equal(await capture.evaluate(() => !!document.querySelector('.source-bar ex-ease-swap')), false);
+            assert.ok(dimensions.overflow <= 1); assert.ok(dimensions.header <= 76);
+            yield { name: `${theme}-${layout}-${sourceNames[index]}`, selector: 'ex-repository-review', inspect: ['.source-bar', 'ex-diff-review .toolbar'], metadata: dimensions };
+          }
+        }
+      }
+      const reopenFresh = async () => {
+        await capture.component('ex-repository-review-demo', component => component.reviewVisible.set(false));
+        await capture.component('ex-repository-review-demo', component => { component.wide.set(false); component.reviewVisible.set(true); });
+      };
+      await reopenFresh(); await waitSource('uncommitted');
+      yield { name: 'automatic-dirty-uncommitted', selector: 'ex-repository-review', inspect: ['.source-bar'] };
+      await git(['add', '-A']); await git(['commit', '-m', 'Save working changes']);
+      await reopenFresh(); await waitSource('last-commit');
+      yield { name: 'automatic-clean-last-commit', selector: 'ex-repository-review', inspect: ['.source-bar'] };
+      await writeFile(join(cwd, 'src/new-after-review.ts'), 'export const fresh = true;\n');
+      await capture.component('ex-repository-review', component => component.store.load(true));
+      assert.equal(await capture.component('ex-repository-review', component => component.source()), 'last-commit');
+      await capture.click('[aria-label="Refresh repository review"]'); await waitSource('uncommitted');
+      yield { name: 'automatic-refresh-new-uncommitted', selector: 'ex-repository-review', inspect: ['.source-bar'] };
+      await rm(join(cwd, 'src/new-after-review.ts'));
+      await capture.click('[aria-label="Refresh repository review"]'); await waitSource('last-commit');
+      yield { name: 'automatic-refresh-clean-last-commit', selector: 'ex-repository-review', inspect: ['.source-bar'] };
+      await choose(0); await waitSource('uncommitted');
+      await capture.component('ex-repository-review', component => component.store.load(true));
+      assert.equal(await capture.component('ex-repository-review', component => component.source()), 'uncommitted');
+      yield { name: 'manual-empty-uncommitted-retained', selector: 'ex-repository-review', inspect: ['.source-bar', '.empty'] };
+      return;
+    }
     for (const theme of ['light', 'dark']) {
       await capture.theme(theme); await capture.viewport(1440, 960); await capture.reducedMotion(false);
       if (theme === 'dark') await choose(0);

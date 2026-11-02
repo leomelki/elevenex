@@ -1,5 +1,6 @@
 import { DestroyRef, Injectable, inject, signal } from "@angular/core";
 import type {
+  BackendResult,
   RepositoryReviewPage,
   RepositoryReviewSource,
   RepositoryReviewFile,
@@ -46,6 +47,13 @@ export class RepositoryReviewStore {
   readonly branchError = signal("");
   private target: RepositoryReviewTarget | null = null;
   private active = false;
+  private defaultResolved = false;
+  private choosingDefault = false;
+  private sourceChosen = false;
+  private readonly sourceChoices = new Map<
+    number,
+    { readonly source: RepositoryReviewSource; readonly base: string }
+  >();
   private offline = false;
   private filterPending = false;
   private epoch = 0;
@@ -105,7 +113,13 @@ export class RepositoryReviewStore {
         this.contents.set([]);
         this.pending.set(null);
         this.selected.set(undefined);
-        this.base.set("");
+        const choice = target
+          ? this.sourceChoices.get(target.taskId)
+          : undefined;
+        this.sourceChosen = !!choice;
+        this.defaultResolved = !!choice;
+        this.source.set(choice?.source ?? "uncommitted");
+        this.base.set(choice?.base ?? "");
         this.query.set("");
         this.viewedRevisions.clear();
         this.selections.clear();
@@ -144,10 +158,30 @@ export class RepositoryReviewStore {
     this.queue = [];
     this.inFlight.clear();
     this.busy.set(false);
+    this.choosingDefault = false;
     this.branchBusy.set(false);
   }
+  private rememberSource(source = this.source()): void {
+    this.sourceChosen = true;
+    this.defaultResolved = true;
+    if (!this.target) return;
+    this.sourceChoices.delete(this.target.taskId);
+    this.sourceChoices.set(this.target.taskId, { source, base: this.base() });
+    while (this.sourceChoices.size > 20) {
+      const oldest = this.sourceChoices.keys().next().value;
+      if (oldest !== undefined) this.sourceChoices.delete(oldest);
+    }
+  }
   setSource(source: RepositoryReviewSource): void {
-    if (source === this.source()) return;
+    const wasChoosing = this.choosingDefault;
+    this.rememberSource(source);
+    if (source === this.source()) {
+      if (wasChoosing) {
+        this.stop();
+        void this.load();
+      }
+      return;
+    }
     this.rememberSelection();
     this.stop();
     this.source.set(source);
@@ -160,6 +194,7 @@ export class RepositoryReviewStore {
     this.rememberSelection();
     this.stop();
     this.base.set(ref);
+    this.rememberSource();
     this.resetReview();
     void this.load();
   }
@@ -207,6 +242,13 @@ export class RepositoryReviewStore {
       base = this.base(),
       query = this.query(),
       requestId = crypto.randomUUID();
+    const chooseDefault =
+      !this.defaultResolved &&
+      !this.sourceChosen &&
+      !pinned &&
+      (!background || !this.page());
+    const requestedSource = chooseDefault ? "uncommitted" : source;
+    this.choosingDefault = chooseDefault;
     this.busy.set(true);
     if (!background) this.error.set("");
     this.requests.set(requestId, target.scopeId);
@@ -214,10 +256,10 @@ export class RepositoryReviewStore {
       const reply = await this.bridge.repositoryReview(target.scopeId, {
         taskId: target.taskId,
         requestId,
-        source,
-        ...(base ? { baseRef: base } : {}),
+        source: requestedSource,
+        ...(requestedSource === "branch" && base ? { baseRef: base } : {}),
         query,
-        offset,
+        offset: chooseDefault ? 0 : offset,
         ...(pinned && this.page() ? { revision: this.page()!.revision } : {}),
       });
       if (
@@ -233,23 +275,118 @@ export class RepositoryReviewStore {
       }
       if (
         reply.value.taskId !== target.taskId ||
-        reply.value.source !== source
+        reply.value.source !== requestedSource
       ) {
         this.error.set(
           "The review reply did not match the selected task. Try again.",
         );
         return;
       }
+      let nextPage = reply.value;
+      if (chooseDefault && !this.sourceChosen) {
+        // A zero-row filtered page is not a clean workspace: use the authoritative
+        // total, including staged, unstaged and untracked entries across all pages.
+        if (
+          requestedSource === "uncommitted" &&
+          nextPage.total === 0 &&
+          nextPage.headSha
+        ) {
+          const lastRequestId = crypto.randomUUID();
+          this.requests.set(lastRequestId, target.scopeId);
+          let last: BackendResult<RepositoryReviewPage>;
+          try {
+            last = await this.bridge.repositoryReview(target.scopeId, {
+              taskId: target.taskId,
+              requestId: lastRequestId,
+              source: "last-commit",
+              query,
+              offset: source === "last-commit" ? offset : 0,
+            });
+          } finally {
+            this.requests.delete(lastRequestId);
+          }
+          if (
+            epoch !== this.epoch ||
+            this.sourceChosen ||
+            source !== this.source()
+          )
+            return;
+          if (
+            !last.ok ||
+            last.value.taskId !== target.taskId ||
+            last.value.source !== "last-commit"
+          ) {
+            if (!this.page()) this.accept(nextPage);
+            this.error.set(
+              last.ok
+                ? "The review reply did not match the selected task. Try again."
+                : last.error.message,
+            );
+            return;
+          }
+          // A concurrent commit must not combine an old clean check with a newer
+          // HEAD. Stay with the coherent first snapshot and reconcile on refresh.
+          if (last.value.headSha === nextPage.headSha) nextPage = last.value;
+        }
+        this.defaultResolved = true;
+        if (nextPage.source !== this.source()) {
+          this.rememberSelection();
+          this.cancelContent();
+        }
+        this.source.set(nextPage.source);
+      }
+      // Keep the current bounded file window when the source remains the same;
+      // clamp removed tails rather than leaving an unreachable empty page.
+      const availableOffset = Math.max(
+        0,
+        Math.floor((nextPage.matched - 1) / 100) * 100,
+      );
+      const desiredOffset =
+        nextPage.source === source ? Math.min(offset, availableOffset) : 0;
+      if (nextPage.offset !== desiredOffset) {
+        const pageRequestId = crypto.randomUUID();
+        this.requests.set(pageRequestId, target.scopeId);
+        let window: BackendResult<RepositoryReviewPage>;
+        try {
+          window = await this.bridge.repositoryReview(target.scopeId, {
+            taskId: target.taskId,
+            requestId: pageRequestId,
+            source: nextPage.source,
+            revision: nextPage.revision,
+            query,
+            offset: desiredOffset,
+          });
+        } finally {
+          this.requests.delete(pageRequestId);
+        }
+        if (epoch !== this.epoch || query !== this.query()) return;
+        if (
+          !window.ok ||
+          window.value.taskId !== target.taskId ||
+          window.value.source !== nextPage.source ||
+          window.value.revision !== nextPage.revision ||
+          window.value.offset !== desiredOffset
+        ) {
+          this.error.set(
+            window.ok
+              ? "The review window changed. Refresh to try again."
+              : window.error.message,
+          );
+          return;
+        }
+        nextPage = window.value;
+      }
       if (background && this.page()) {
-        if (reply.value.revision !== this.page()!.revision)
-          this.pending.set(reply.value);
-      } else this.accept(reply.value);
+        if (nextPage.revision !== this.page()!.revision)
+          this.pending.set(nextPage);
+      } else this.accept(nextPage);
     } catch {
       if (epoch === this.epoch)
         this.error.set("Repository changes could not be loaded. Try again.");
     } finally {
       this.requests.delete(requestId);
       if (epoch === this.epoch) {
+        this.choosingDefault = false;
         this.busy.set(false);
         if (this.filterPending) {
           this.filterPending = false;
@@ -259,6 +396,13 @@ export class RepositoryReviewStore {
     }
   }
   refresh(): void {
+    if (this.busy()) return;
+    if (!this.sourceChosen) {
+      this.defaultResolved = false;
+      this.pending.set(null);
+      void this.load(false);
+      return;
+    }
     const pending = this.pending();
     if (pending && pending.offset === (this.page()?.offset ?? 0)) {
       this.accept(pending);

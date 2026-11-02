@@ -2441,3 +2441,59 @@ report `verified: true`, zero errors and zero warnings. New light/dark PNGs were
 inspected; the scenario retains source switching, interrupted motion, wide review,
 reading anchors, focus return, no-match search recovery, disconnect/retry and
 reduced-motion coverage. Backend and bridge behavior are unchanged by this UI edit.
+
+## Responsive review sources and automatic defaults — 2026-11-02
+
+At 440px the source picker is a dropdown; from 720px it uses the existing
+Segmented control for direct Uncommitted / Last commit / Branch changes choices.
+Selected reply is included inline when available. Resizing with a menu open
+closes it and transfers keyboard focus to the visible control. The header
+measures 70px narrow and 72px expanded, with no horizontal overflow.
+
+The approved automatic rule uses the complete uncommitted entry count: any local
+changes choose Uncommitted, otherwise an existing HEAD chooses Last commit.
+Unborn repositories stay on Uncommitted. Explicit Refresh rechecks the automatic
+choice, while background reads keep the current source. Manual per-task choices
+win. Probes are scope/task/HEAD guarded, preserve filters and bounded file windows,
+and cancel obsolete file reads when the automatic source changes. Branch base
+arguments are sent only for branch reviews.
+
+Desktop lint, full tests (637 renderer tests plus desktop, capture and contract
+checks), production build and `git diff --check` passed. The
+[25 native source-selection captures](../../artifacts/desktop-capture/repository-source-final/index.html)
+have `verified: true`, zero errors and zero warnings. They cover each source in
+both themes at 440px and 1080px, dropdown-to-inline focus handoff, distinct last-
+commit/branch scopes from two task commits, dirty/clean defaults, explicit refresh
+and manual empty-source retention. Key PNGs were inspected. The existing
+[32 full review captures](../../artifacts/desktop-capture/source-regression-final/index.html)
+also pass, covering reading anchors, context, full files/wrap, interrupted source
+motion, empty/retry/disconnect and reduced motion. Captures use real disposable
+Git and the production bridge with an isolated task transport lease.
+
+## Review source selection and defaults — 2026-11-02
+
+Source switching now uses the compact dropdown below 720px and the shared
+Segmented control when wider. Selected reply remains an additional choice when
+available. A cleaned-up ResizeObserver and owned frame restore keyboard focus
+when resizing across the boundary, including with a dropdown open. Narrow and
+expanded headers measure 70px and 72px respectively.
+
+The approved default uses the authoritative uncommitted total: local changes
+select Uncommitted; a clean repository with HEAD selects Last commit; an unborn
+repository remains on Uncommitted. Explicit Refresh reevaluates automatic choices
+while background refresh/reconnect preserves the source. Manual per-task choices
+win. The check preserves filters, bounded windows, selection and Viewed state,
+rejects stale task/scope/HEAD replies and cancels old-source content reads. Branch
+base refs are excluded from Uncommitted/Last commit requests.
+
+Desktop lint, the full test suite (637 renderer tests plus desktop/capture/type
+checks), production build and `git diff --check` passed. The
+[25 source-layout captures](../../artifacts/desktop-capture/repository-source-final/index.html)
+report `verified: true`, zero errors and zero warnings: every source at 440px and
+1080px, both themes, resize focus handoff, dirty/clean defaults, explicit refresh
+and manual overrides. Two task commits make Last commit and Branch changes
+visibly distinct. Fully loaded PNGs were inspected. The
+[32 full review regression checkpoints](../../artifacts/desktop-capture/source-regression-final/index.html)
+also passed, including reading anchors, Full files/wrap, interrupted source
+switching, retry/disconnect and reduced motion. Both runs use real disposable Git
+with an isolated transport lease through production main/preload and UI.

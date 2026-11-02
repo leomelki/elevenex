@@ -1,5 +1,6 @@
 import {
   afterRenderEffect,
+  afterNextRender,
   viewChild,
   ChangeDetectionStrategy,
   Component,
@@ -21,11 +22,11 @@ import type {
 import {
   ButtonComponent,
   DropdownComponent,
-  EaseSwapComponent,
   FoldComponent,
   IconComponent,
   IconButtonComponent,
   ModalLayerComponent,
+  SegmentedComponent,
   type DropdownOption,
 } from "../ui";
 import { DiffReviewComponent, type DiffComment } from "../views";
@@ -48,11 +49,11 @@ export interface RepositoryLineQuestion {
   imports: [
     ButtonComponent,
     DropdownComponent,
-    EaseSwapComponent,
     FoldComponent,
     IconComponent,
     IconButtonComponent,
     ModalLayerComponent,
+    SegmentedComponent,
     DiffReviewComponent,
     SessionChatReviewComponent,
   ],
@@ -60,6 +61,7 @@ export interface RepositoryLineQuestion {
   templateUrl: "./repository-review.component.html",
   styleUrl: "./repository-review.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { "(focusin)": "rememberSourceFocus($event)" },
 })
 export class RepositoryReviewComponent {
   readonly target = input<RepositoryReviewTarget | null>(null);
@@ -80,11 +82,22 @@ export class RepositoryReviewComponent {
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly review = viewChild(DiffReviewComponent);
   private lastWindow = 0;
+  protected readonly inlineSources = signal(false);
+  private sourceObserver?: ResizeObserver;
+  private sourceFocusFrame?: number;
+  private sourceFocus?: HTMLElement;
   private branchTimer?: ReturnType<typeof setTimeout>;
-  readonly source = signal<RepositoryReviewSource | "reply">("uncommitted");
+  private readonly replySelected = signal(false);
+  readonly source = computed<RepositoryReviewSource | "reply">(() =>
+    this.replySelected() && this.reply() ? "reply" : this.store.source(),
+  );
   readonly picker = signal(false);
   readonly detailsOpen = signal(false);
-  readonly details = signal<{ readonly comparison: string; readonly page: RepositoryReviewPage | null; readonly reply: boolean } | null>(null);
+  readonly details = signal<{
+    readonly comparison: string;
+    readonly page: RepositoryReviewPage | null;
+    readonly reply: boolean;
+  } | null>(null);
   readonly branchQuery = signal("");
   readonly baseDraft = signal("");
   readonly options = computed<readonly DropdownOption[]>(() => [
@@ -106,6 +119,16 @@ export class RepositoryReviewComponent {
       disabled: !this.reply(),
     },
   ]);
+  readonly sourceSegments = computed(() =>
+    this.options()
+      .filter((option) => !option.disabled)
+      .map((option) => ({
+        id: option.id,
+        label: option.label,
+        title: option.detail,
+        disabled: !this.active(),
+      })),
+  );
   readonly comparison = computed(() => {
     if (this.source() === "reply")
       return "Recorded patch from the selected agent reply";
@@ -135,12 +158,24 @@ export class RepositoryReviewComponent {
         this.review()?.goTo(window.fileId);
       }
     });
-    inject(DestroyRef).onDestroy(() => clearTimeout(this.branchTimer));
+    afterNextRender(() => {
+      this.measureSourceLayout();
+      if (typeof ResizeObserver !== "undefined") {
+        this.sourceObserver = new ResizeObserver(() =>
+          this.measureSourceLayout(),
+        );
+        this.sourceObserver.observe(this.root);
+      }
+    });
+    inject(DestroyRef).onDestroy(() => {
+      clearTimeout(this.branchTimer);
+      this.sourceObserver?.disconnect();
+      if (this.sourceFocusFrame !== undefined)
+        cancelAnimationFrame(this.sourceFocusFrame);
+    });
     effect(() => {
       const reply = this.reply();
-      if (reply) untracked(() => this.source.set("reply"));
-      else if (untracked(this.source) === "reply")
-        untracked(() => this.source.set(this.store.source()));
+      untracked(() => this.replySelected.set(!!reply));
     });
     effect(() => {
       const target = this.target(),
@@ -151,12 +186,60 @@ export class RepositoryReviewComponent {
       if (!this.active()) this.detailsOpen.set(false);
     });
   }
+  protected rememberSourceFocus(event: FocusEvent): void {
+    const target = event.target;
+    this.sourceFocus =
+      target instanceof HTMLElement &&
+      target.closest(".source-menu, .source-tabs")
+        ? target
+        : undefined;
+  }
+  private measureSourceLayout(): void {
+    const inline = this.root.clientWidth >= 720;
+    if (inline === this.inlineSources()) return;
+    const previous = this.root.querySelector(
+      this.inlineSources() ? ".source-tabs" : ".source-menu",
+    );
+    const active = this.root.ownerDocument.activeElement;
+    const moveFocus =
+      previous?.contains(active) ||
+      (active === this.root.ownerDocument.body &&
+        this.sourceFocus?.isConnected &&
+        previous?.contains(this.sourceFocus)) ||
+      (!this.inlineSources() &&
+        !!this.root.querySelector('.source-menu [aria-expanded="true"]'));
+    this.inlineSources.set(inline);
+    if (this.sourceFocusFrame !== undefined)
+      cancelAnimationFrame(this.sourceFocusFrame);
+    if (moveFocus)
+      this.sourceFocusFrame = requestAnimationFrame(() => {
+        this.sourceFocusFrame = requestAnimationFrame(() => {
+          this.sourceFocusFrame = undefined;
+          if (
+            this.active() &&
+            this.root.ownerDocument.hasFocus() &&
+            !this.root.closest("[inert]")
+          )
+            this.root
+              .querySelector<HTMLElement>(
+                inline
+                  ? '.source-tabs [aria-checked="true"]'
+                  : ".source-menu button",
+              )
+              ?.focus({ preventScroll: true });
+        });
+      });
+  }
   clearFilter(input: HTMLInputElement): void {
     this.store.filter("");
     input.focus({ preventScroll: true });
   }
   showDetails(): void {
-    this.details.set({ comparison: this.comparison(), page: this.source() === "reply" ? null : this.store.page(), reply: this.source() === "reply" });
+    this.details.set({
+      comparison: this.comparison(),
+      page: this.source() === "reply" ? null : this.store.page(),
+      reply: this.source() === "reply",
+    });
     this.detailsOpen.set(true);
   }
   refreshReview(): void {
@@ -175,7 +258,7 @@ export class RepositoryReviewComponent {
   }
   choose(value: string): void {
     if (value === "reply") {
-      if (this.reply()) this.source.set("reply");
+      if (this.reply()) this.replySelected.set(true);
       return;
     }
     if (
@@ -184,7 +267,7 @@ export class RepositoryReviewComponent {
       value !== "branch"
     )
       return;
-    this.source.set(value);
+    this.replySelected.set(false);
     this.store.setSource(value);
   }
   openBase(): void {
