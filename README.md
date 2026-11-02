@@ -45,8 +45,6 @@ Elevenex is a pnpm monorepo with a desktop shell, a frontend, a backend, and a s
 - `apps/frontend`: Angular application for the workspace UI, session views, Claude workspace, project navigation, GitHub panel, and embedded editor panels.
 - `apps/backend`: NestJS backend with REST + WebSocket APIs, Drizzle ORM, `better-sqlite3`, terminal/session orchestration, local persistence, file watching, and supporting app services.
 - `apps/electron`: Electron desktop shell that loads the frontend, manages the embedded runtime, owns remote SSH/runtime orchestration, handles packaging, and owns the in-app browser surfaces.
-- `vscode-filesystem-provider`: custom VS Code extension that exposes worktree files through backend APIs.
-- `vscode-scm-extension`: custom VS Code extension for SCM views, diffs, and quick diff integration inside the embedded editor.
 
 ## Build From Source
 

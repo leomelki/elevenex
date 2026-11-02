@@ -15,7 +15,6 @@
     "frontend:dev": "pnpm --dir apps/frontend start",
     "frontend:build": "pnpm --dir apps/frontend build",
     "source-maps:collect": "node scripts/collect-source-maps.js",
-    "electron:backend:assets": "node scripts/prepare-vscode-web-runtime.js",
     "electron:backend:stage": "node scripts/stage-electron-backend.js",
     "electron:backend:rebuild-natives": "node scripts/rebuild-electron-backend-natives.js",
     "electron:backend:archive": "node scripts/archive-electron-backend.js",

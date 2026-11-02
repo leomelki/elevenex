@@ -12,7 +12,6 @@
       [activeSessionId]="activeSessionId()"
       [projectId]="projectId()"
       [worktreePath]="worktreePath()"
-      [showFiles]="showFilesPanel()"
       [showBrowser]="showBrowserPanel()"
       [showChanges]="showChangesPanel()"
       [showTerminal]="terminalPanelVisible()"
@@ -42,7 +41,6 @@
       (closeTabsToLeft)="onCloseTabsToLeft($event)"
       (toggleScratchpad)="toggleScratchpad()"
       (toggleTodos)="toggleTodos()"
-      (toggleFiles)="toggleFilesPanel()"
       (toggleBrowser)="toggleBrowserPanel()"
       (toggleChanges)="toggleChangesPanel()"
       (toggleTerminal)="toggleTerminalPanel()"
@@ -150,7 +148,6 @@
                           "
                           (agentRuntimeStarted)="onSessionRuntimeStarted(tab.sessionId)"
                           (openReviewWorkspace)="openReviewWorkspace($event)"
-                          (openLocalFile)="openFileInEditor($event)"
                           (conversationForkCreated)="onConversationForkCreated($event)"
                           (conversationForkOpened)="onConversationForkOpened($event)"
                           (unarchive)="onTabUnarchiveRequest(tab.sessionId)"
@@ -167,22 +164,12 @@
                 <z-resizable-handle />
 
                 <z-resizable-panel [zDefaultSize]="45" [zMin]="25" [zMax]="70">
-                  @if (showFilesPanel()) {
-                    <app-vscode-web-panel
-                      [startupAllowed]="editorStartupSessionId() === activeSessionId()"
-                      [taskId]="activeTab()?.workspaceId"
-                      [sessionId]="activeSessionId()!"
-                      [projectId]="projectId()!"
-                      [worktreePath]="worktreePath()!"
-                      class="h-full"
-                    />
-                  } @else if (showChangesPanel()) {
+                  @if (showChangesPanel()) {
                     <app-change-review-panel
                       [worktreePath]="worktreePath()!"
                       [highlightedMentions]="activePendingDiffMentions()"
                       [reviewThreadCount]="reviewWorkspaceState.openChats().length"
                       (mentionSelection)="mentionDiffSelection($event)"
-                      (openFileInEditor)="openDiffFileInEditor($event)"
                       (openReviewWorkspace)="openReviewWorkspace()"
                       class="h-full"
                     />
@@ -191,7 +178,6 @@
                       [review]="activePlanReview()!"
                       [railMode]="activePlanReviewMode()"
                       (railModeChange)="setPlanReviewRailMode($event)"
-                      (openLocalFile)="openFileInEditor($event)"
                       (close)="closePlanAnnotator($event)"
                       (approve)="approvePlanReview($event)"
                       (sendFeedback)="sendPlanReviewFeedback($event)"
@@ -316,7 +302,6 @@
           [focusFilePath]="reviewFileParam()"
           (exit)="closeReviewWorkspace()"
           (promoted)="onConversationForkCreated($event)"
-          (openLocalFile)="closeReviewWorkspace(); openFileInEditor($event)"
         />
       }
     </div>

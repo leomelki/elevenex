@@ -1,3 +1,4 @@
+const { formatSize, getDirectorySize, removeGitArtifacts } = require("./runtime-stage-utils");
 const {
   chmodSync,
   cpSync,
@@ -12,13 +13,6 @@ const {
 } = require("fs");
 const { execSync } = require("child_process");
 const path = require("path");
-const {
-  assembleRuntime,
-  formatSize,
-  getDirectorySize,
-  removeGitArtifacts,
-  stagedVSCodeRoot,
-} = require("./prepare-vscode-web-runtime");
 const repoRoot = path.resolve(__dirname, "..");
 const backendRoot = path.join(repoRoot, "apps", "backend");
 const backendBundleRoot = path.join(backendRoot, "bundle");
@@ -225,31 +219,6 @@ function removeSourceMaps(rootDir) {
   }
 }
 
-function stageExtensionRuntime(extensionDirName) {
-  const sourceRoot = path.join(repoRoot, extensionDirName);
-  const destinationRoot = path.join(stageBackendRoot, extensionDirName);
-
-  ensureDir(destinationRoot);
-  copyRequiredPath(
-    path.join(sourceRoot, "dist"),
-    path.join(destinationRoot, "dist"),
-  );
-  copyRequiredPath(
-    path.join(sourceRoot, "package.json"),
-    path.join(destinationRoot, "package.json"),
-  );
-
-  const packageNlsPath = path.join(sourceRoot, "package.nls.json");
-  if (existsSync(packageNlsPath)) {
-    copyRequiredPath(
-      packageNlsPath,
-      path.join(destinationRoot, "package.nls.json"),
-    );
-  }
-
-  removeSourceMaps(destinationRoot);
-}
-
 function writeStagedBackendPackageJson() {
   const stagedPackageJson = {
     name: "elevenex-embedded-backend",
@@ -340,7 +309,6 @@ function stageNativePackageTree(
 
 async function main() {
   resetStageRoot();
-  await assembleRuntime();
 
   copyRequiredPath(
     path.join(backendBundleRoot, "main.cjs"),
@@ -382,12 +350,6 @@ async function main() {
     path.join(repoRoot, "apps", "frontend", "proxy.conf.json"),
     path.join(stageBackendRoot, "proxy.conf.json"),
   );
-  copyRequiredPath(
-    stagedVSCodeRoot,
-    path.join(stageBackendRoot, "vscode-web-dist"),
-  );
-  stageExtensionRuntime("vscode-filesystem-provider");
-  stageExtensionRuntime("vscode-scm-extension");
   removeSourceMaps(stageBackendRoot);
   removeGitArtifacts(stageBackendRoot);
 
@@ -395,15 +357,6 @@ async function main() {
     "main.cjs": getDirectorySize(path.join(stageBackendRoot, "main.cjs")),
     node: getDirectorySize(path.join(stageBackendRoot, "node")),
     node_modules: getDirectorySize(path.join(stageBackendRoot, "node_modules")),
-    "vscode-web-dist": getDirectorySize(
-      path.join(stageBackendRoot, "vscode-web-dist"),
-    ),
-    "vscode-filesystem-provider": getDirectorySize(
-      path.join(stageBackendRoot, "vscode-filesystem-provider"),
-    ),
-    "vscode-scm-extension": getDirectorySize(
-      path.join(stageBackendRoot, "vscode-scm-extension"),
-    ),
   };
 
   const commitSha = execSync("git rev-parse HEAD", { cwd: repoRoot })

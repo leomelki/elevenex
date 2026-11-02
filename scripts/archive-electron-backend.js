@@ -1,7 +1,7 @@
 const { existsSync, readdirSync, rmSync, statSync } = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const path = require('path');
-const { formatSize, getDirectorySize } = require('./prepare-vscode-web-runtime');
+const { formatSize, getDirectorySize } = require('./runtime-stage-utils');
 
 const repoRoot = path.resolve(__dirname, '..');
 const electronAppRoot = path.join(repoRoot, 'apps', 'electron');
@@ -315,9 +315,6 @@ function logStageSizeSummary() {
   const componentPaths = [
     'main.cjs',
     'node_modules',
-    'vscode-web-dist',
-    'vscode-filesystem-provider',
-    'vscode-scm-extension',
   ];
   const totalSize = getDirectorySize(stageBackendRoot);
 

@@ -10,7 +10,6 @@ export interface TaskFinishData {
   agents: number;
   terminals: number;
   actions: number;
-  dirtyEditors: number;
 }
 @Component({
   selector: 'app-task-finish',

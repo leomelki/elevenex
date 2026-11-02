@@ -11,8 +11,6 @@ apps/backend/agent/
 *.db-shm
 *.db-wal
 *.ts.map
-vscode-web-dist/
-vscode-filesystem-provider/test/out
 apps/backend/bundle/
 apps/backend/src/generated/git-sha.ts
 apps/frontend/src/build-info.ts

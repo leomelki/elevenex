@@ -59,13 +59,13 @@ describe('apiBaseInterceptor', () => {
 
   it('waits for server readiness before sending absolute backend reads', async () => {
     const response = vi.fn();
-    http.get('http://backend.test/vscode-static/index.html', { responseType: 'text' }).subscribe(response);
+    http.get('http://backend.test/static/example.html', { responseType: 'text' }).subscribe(response);
 
-    httpMock.expectNone('http://backend.test/vscode-static/index.html');
+    httpMock.expectNone('http://backend.test/static/example.html');
     resolveGate?.();
     await Promise.resolve();
 
-    const request = httpMock.expectOne('http://backend.test/vscode-static/index.html');
+    const request = httpMock.expectOne('http://backend.test/static/example.html');
     request.flush('<html></html>');
 
     expect(response).toHaveBeenCalledWith('<html></html>');

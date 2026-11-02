@@ -1,18 +1,16 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { spawn } from 'node:child_process';
-import { promises as fs, createWriteStream, Dirent } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { promises as fs, Dirent } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import { StringDecoder } from 'node:string_decoder';
 import {
-  EditorWorkQueue,
-  sortEditorItems,
-  waitForEditorWork,
-  yieldEditorWork,
-} from './editor-work.js';
+  FileOperationQueue,
+  sortFileItems,
+  awaitFileOperation,
+  yieldFileOperation,
+} from './file-operation-scheduling.js';
 
 export interface FileTreeNode {
   key: string; // Relative path from worktree root
@@ -489,7 +487,7 @@ async function runGitLsFiles(
         start = end + 1;
         end = text.indexOf('\0', start);
         if (results.length % 2048 === 0) {
-          await yieldEditorWork();
+          await yieldFileOperation();
           signal.throwIfAborted();
         }
       }
@@ -561,11 +559,11 @@ export async function prepareSearchCandidates(
       });
     }
     if (index % 2048 === 0) {
-      await yieldEditorWork();
+      await yieldFileOperation();
       signal?.throwIfAborted();
     }
   }
-  return sortEditorItems(
+  return sortFileItems(
     candidates,
     (a, b) =>
       a.lowerName !== b.lowerName
@@ -591,7 +589,7 @@ export async function rankSearchCandidates(
     // rank-zero bucket cannot be displaced by any later candidate.
     if (buckets[0].length === limit) break;
     if (index % 2048 === 0) {
-      await yieldEditorWork();
+      await yieldFileOperation();
       signal.throwIfAborted();
     }
   }
@@ -614,8 +612,8 @@ export class FilesService {
     FileSearchCandidateCacheEntry
   >();
 
-  private readonly searchQueue = new EditorWorkQueue(2, 16);
-  private readonly refreshQueue = new EditorWorkQueue(2, 8);
+  private readonly searchQueue = new FileOperationQueue(2, 16);
+  private readonly refreshQueue = new FileOperationQueue(2, 8);
   private readonly searches = new Map<
     string,
     {
@@ -625,7 +623,7 @@ export class FilesService {
     }
   >();
 
-  markEditorWorkspaceChanged(worktreePath: string): void {
+  markWorkspaceChanged(worktreePath: string): void {
     const entry = this.fileSearchCandidateCache.get(path.resolve(worktreePath));
     for (const requestKey of this.ioRequests.keys())
       if (requestKey.includes(`:${path.resolve(worktreePath)}:`))
@@ -637,7 +635,7 @@ export class FilesService {
   }
 
   /** Drop ownership immediately; old refresh completions cannot populate a reused checkout. */
-  invalidateEditorWorkspace(worktreePath: string): void {
+  invalidateWorkspace(worktreePath: string): void {
     const key = path.resolve(worktreePath);
     this.fileSearchCandidateCache.get(key)?.controller?.abort();
     this.fileSearchCandidateCache.delete(key);
@@ -672,7 +670,7 @@ export class FilesService {
         AbortSignal.timeout(15_000),
       ]);
       const promise = this.searchQueue.run(workSignal, async () => {
-        const candidates = await waitForEditorWork(
+        const candidates = await awaitFileOperation(
           this.listSearchCandidatePaths(resolvedWorktree),
           workSignal,
         );
@@ -694,7 +692,7 @@ export class FilesService {
     }
     search.users++;
     try {
-      return await waitForEditorWork(search.promise, deadline);
+      return await awaitFileOperation(search.promise, deadline);
     } finally {
       if (--search.users === 0) search.controller.abort();
     }
@@ -1188,7 +1186,7 @@ export class FilesService {
 
       for (const [index, entry] of entries.entries()) {
         if (index % 2048 === 0) {
-          await yieldEditorWork();
+          await yieldFileOperation();
           signal.throwIfAborted();
         }
         if (entry.name === '.git' || entry.name === 'node_modules') {
@@ -1304,7 +1302,7 @@ export class FilesService {
     });
   }
 
-  private readonly ioQueue = new EditorWorkQueue(8, 128);
+  private readonly ioQueue = new FileOperationQueue(8, 128);
   private readonly ioRequests = new Map<string, Promise<unknown>>();
 
   private coalesceIO<T>(key: string, operation: () => Promise<T>): Promise<T> {
@@ -1319,7 +1317,7 @@ export class FilesService {
     });
     // Keep the actual OS operation in the bounded slot until it returns, even
     // when the caller times out; aborting an fs.stat cannot cancel a kernel I/O.
-    const promise = waitForEditorWork(work, signal);
+    const promise = awaitFileOperation(work, signal);
     this.ioRequests.set(key, promise);
     void work
       .finally(() => {
@@ -1327,50 +1325,6 @@ export class FilesService {
       })
       .catch(() => undefined);
     return promise;
-  }
-
-  stat(
-    targetPath: string,
-    worktreePath: string,
-  ): Promise<{
-    type: 'file' | 'directory';
-    ctime: number;
-    mtime: number;
-    size: number;
-  }> {
-    return this.coalesceIO(
-      `stat:${path.resolve(worktreePath)}:${path.resolve(targetPath)}`,
-      () => this.statUnshared(targetPath, worktreePath),
-    );
-  }
-
-  private async statUnshared(
-    targetPath: string,
-    worktreePath: string,
-  ): Promise<{
-    type: 'file' | 'directory';
-    ctime: number;
-    mtime: number;
-    size: number;
-  }> {
-    if (!isWithinWorktree(worktreePath, targetPath)) {
-      throw new BadRequestException('Access denied: path outside worktree');
-    }
-
-    try {
-      const result = await fs.stat(targetPath);
-      return {
-        type: result.isDirectory() ? 'directory' : 'file',
-        ctime: result.ctimeMs,
-        mtime: result.mtimeMs,
-        size: result.size,
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new BadRequestException(`Path does not exist: ${targetPath}`);
-      }
-      throw error;
-    }
   }
 
   /**
@@ -1429,7 +1383,7 @@ export class FilesService {
     const nodes: FileTreeNode[] = [];
 
     for (const [index, entry] of entries.entries()) {
-      if (index % 2048 === 0) await yieldEditorWork();
+      if (index % 2048 === 0) await yieldFileOperation();
       // Keep project configuration visible without listing Git internals or dependencies.
       if (entry.name === '.git' || entry.name === 'node_modules') {
         continue;
@@ -1459,7 +1413,7 @@ export class FilesService {
     }
 
     // Sort: directories first (leaf: false), then files (leaf: true), both alphabetically
-    return sortEditorItems(nodes, (a, b) => {
+    return sortFileItems(nodes, (a, b) => {
       // Directories before files
       if (a.leaf !== b.leaf) {
         return a.leaf ? 1 : -1;
@@ -1611,212 +1565,6 @@ export class FilesService {
 
     // Write the file
     await fs.writeFile(filePath, content, 'utf-8');
-    this.invalidateEditorWorkspace(worktreePath);
-  }
-
-  /** Stream without buffering the upload or exposing partially written files. */
-  async writeFileStream(
-    filePath: string,
-    content: Readable,
-    worktreePath: string,
-    beforeCommit?: () => Promise<void>,
-  ): Promise<void> {
-    if (!isWithinWorktree(worktreePath, filePath)) {
-      throw new BadRequestException('Access denied: path outside worktree');
-    }
-    if (path.resolve(filePath) === path.resolve(worktreePath)) {
-      throw new BadRequestException(
-        'A file path within the worktree is required',
-      );
-    }
-
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    const realWorktree = await fs.realpath(worktreePath);
-    const realParent = await fs.realpath(path.dirname(filePath));
-    // Save through existing symlinks instead of replacing the link itself.
-    const destination = await fs
-      .realpath(filePath)
-      .catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') throw error;
-        return path.join(realParent, path.basename(filePath));
-      });
-    if (!isWithinWorktree(realWorktree, destination)) {
-      throw new BadRequestException('Access denied: path outside worktree');
-    }
-    if (destination === realWorktree) {
-      throw new BadRequestException(
-        'A file path within the worktree is required',
-      );
-    }
-    const temporary = path.join(
-      path.dirname(destination),
-      `.elevenex-upload-${randomUUID()}.tmp`,
-    );
-    try {
-      await pipeline(content, createWriteStream(temporary, { flags: 'wx' }));
-      // Preserve executable bits when uploading over an existing file.
-      const existing = await fs
-        .stat(destination)
-        .catch((error: NodeJS.ErrnoException) => {
-          if (error.code !== 'ENOENT') throw error;
-          return undefined;
-        });
-      if (existing) await fs.chmod(temporary, existing.mode);
-      await beforeCommit?.();
-      await fs.rename(temporary, destination);
-      this.invalidateEditorWorkspace(worktreePath);
-    } finally {
-      await fs.rm(temporary, { force: true });
-    }
-  }
-
-  async createDirectory(dirPath: string, worktreePath: string): Promise<void> {
-    if (!isWithinWorktree(worktreePath, dirPath)) {
-      throw new BadRequestException('Access denied: path outside worktree');
-    }
-
-    await fs.mkdir(dirPath, { recursive: true });
-    this.invalidateEditorWorkspace(worktreePath);
-  }
-
-  async rename(
-    oldPath: string,
-    newPath: string,
-    worktreePath: string,
-    overwrite = false,
-  ): Promise<void> {
-    if (
-      !isWithinWorktree(worktreePath, oldPath) ||
-      !isWithinWorktree(worktreePath, newPath)
-    ) {
-      throw new BadRequestException('Access denied: path outside worktree');
-    }
-
-    const root = path.resolve(worktreePath);
-    oldPath = path.resolve(oldPath);
-    newPath = path.resolve(newPath);
-    if (oldPath === root || newPath === root) {
-      throw new BadRequestException(
-        'Cannot rename or replace the worktree root',
-      );
-    }
-
-    const source = await fs
-      .lstat(oldPath)
-      .catch((error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') {
-          throw new BadRequestException(`Path does not exist: ${oldPath}`);
-        }
-        throw error;
-      });
-    if (oldPath === newPath) return;
-    if (
-      isWithinWorktree(oldPath, newPath) ||
-      isWithinWorktree(newPath, oldPath)
-    ) {
-      throw new BadRequestException(
-        'Cannot rename between ancestor and descendant paths',
-      );
-    }
-
-    // Resolve parents, not the final entry: rename moves a symlink itself.
-    // This also catches aliases through symlinked directories before touching
-    // either entry, and verifies that the destination parent exists.
-    const [realRoot, oldParent, newParent] = await Promise.all([
-      fs.realpath(root),
-      fs.realpath(path.dirname(oldPath)),
-      fs.realpath(path.dirname(newPath)),
-    ]);
-    const sourceEntry = path.join(oldParent, path.basename(oldPath));
-    const destinationEntry = path.join(newParent, path.basename(newPath));
-    if (
-      !isWithinWorktree(realRoot, sourceEntry) ||
-      !isWithinWorktree(realRoot, destinationEntry)
-    ) {
-      throw new BadRequestException('Access denied: path outside worktree');
-    }
-    if (sourceEntry === destinationEntry) return;
-    if (
-      isWithinWorktree(sourceEntry, destinationEntry) ||
-      isWithinWorktree(destinationEntry, sourceEntry)
-    ) {
-      throw new BadRequestException(
-        'Cannot rename between ancestor and descendant paths',
-      );
-    }
-
-    const destination = await fs
-      .lstat(newPath)
-      .catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') throw error;
-        return undefined;
-      });
-    if (destination) {
-      // Hard links and case-only renames can name the same filesystem entry.
-      // Let the OS handle these without ever removing the source's identity.
-      if (source.dev === destination.dev && source.ino === destination.ino) {
-        await fs.rename(oldPath, newPath);
-        this.invalidateEditorWorkspace(worktreePath);
-        return;
-      }
-      if (!overwrite) {
-        throw new BadRequestException('Destination already exists');
-      }
-    }
-
-    try {
-      // Prefer an atomic replacement; a failed rename leaves the target intact.
-      await fs.rename(oldPath, newPath);
-      this.invalidateEditorWorkspace(worktreePath);
-      return;
-    } catch (error) {
-      if (
-        !destination ||
-        !overwrite ||
-        !['EEXIST', 'ENOTEMPTY', 'EISDIR', 'ENOTDIR'].includes(
-          (error as NodeJS.ErrnoException).code ?? '',
-        )
-      )
-        throw error;
-    }
-
-    // Non-empty directories (and file/directory replacements) require moving
-    // the target aside. Keep it recoverable until the source has moved.
-    const backup = path.join(newParent, `.elevenex-rename-${randomUUID()}.tmp`);
-    await fs.rename(newPath, backup);
-    try {
-      await fs.rename(oldPath, newPath);
-      this.invalidateEditorWorkspace(worktreePath);
-    } catch (error) {
-      try {
-        await fs.rename(backup, newPath);
-      } catch (restoreError) {
-        throw new AggregateError(
-          [error, restoreError],
-          `Rename failed; original destination retained at ${backup}`,
-        );
-      }
-      throw error;
-    }
-    await fs.rm(backup, { recursive: true, force: true });
-  }
-
-  async deleteEntry(
-    targetPath: string,
-    worktreePath: string,
-    recursive: boolean,
-  ): Promise<void> {
-    if (!isWithinWorktree(worktreePath, targetPath)) {
-      throw new BadRequestException('Access denied: path outside worktree');
-    }
-
-    try {
-      await fs.access(targetPath);
-    } catch {
-      throw new BadRequestException(`Path does not exist: ${targetPath}`);
-    }
-
-    await fs.rm(targetPath, { recursive, force: false });
-    this.invalidateEditorWorkspace(worktreePath);
+    this.invalidateWorkspace(worktreePath);
   }
 }
