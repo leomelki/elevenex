@@ -1,6 +1,7 @@
 import { DestroyRef, Injectable, inject } from '@angular/core';
 import type { BackendResult, WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceAddRepository, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceCommitQuery, WorkspaceGitAction, WorkspaceGitSummary, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskQuery, WorkspaceTaskRecovery, WorkspaceUpdateProject } from '@elevenex/shared';
 import { MachineStartupFixture } from './machine-startup-fixture';
+import { SessionChatFixture } from './session-chat-fixture';
 
 const stamp = '2026-10-26T12:30:00.000Z';
 const success = <T>(value: T): BackendResult<T> => ({ ok: true, value });
@@ -9,6 +10,15 @@ const page = <T>(items: readonly T[]): WorkspacePage<T> => ({ items, nextCursor:
 /** Isolated platform data for exercising the production workspace; never shipped. */
 @Injectable()
 export class ConnectedWorkspaceFixture extends MachineStartupFixture {
+  readonly chat = new SessionChatFixture(inject(DestroyRef));
+  sessionChatCatalog = (_scope: string, input: import('@elevenex/shared').SessionChatCatalogRead) => this.chat.catalog(input);
+  sessionChatChanges = (_scope: string, input: import('@elevenex/shared').SessionChatChangesRead) => this.chat.changes(input);
+  sessionChatRead = (_scope: string, input: import('@elevenex/shared').SessionChatRead) => this.chat.read(input);
+  sessionChatCommand = (_scope: string, input: import('@elevenex/shared').SessionChatCommand) => this.chat.command(input);
+  sessionChatUpload = (_scope: string, input: import("@elevenex/shared").ChatAttachmentUpload) => this.chat.upload(input);
+  sessionChatMedia = (_scope: string, input: import('@elevenex/shared').SessionChatMediaRead) => this.chat.media(input);
+  sessionChatContent = (_scope: string, input: import('@elevenex/shared').SessionChatContentRead) => this.chat.content(input);
+  sessionChatCancel = async (_scope: string, requestId: string) => this.chat.cancel(requestId);
   private projectRows: WorkspaceProject[] = [
     { id: 1, name: 'Payments', agentInstructions: '', appearance: { hue: 'pine', look: 'icon', icon: 'repo' } },
     { id: 2, name: 'Storefront', agentInstructions: '', appearance: { hue: 'ocean', look: 'letters' } },
@@ -52,6 +62,12 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   private readonly pendingFolderReads = new Set<() => void>();
   private taskDelay = 0;
   private readonly pendingTaskReads = new Set<() => void>();
+  private commitPreviewHeld = false;
+  private readonly pendingCommitPreviews = new Set<() => void>();
+  setCommitPreviewHeld(held: boolean): void {
+    this.commitPreviewHeld = held;
+    if (!held) for (const finish of this.pendingCommitPreviews) finish();
+  }
   setTaskDelay(milliseconds: number): void { this.taskDelay = Math.max(0, Math.min(2000, milliseconds)); }
   setFolderDelay(milliseconds: number): void { this.folderDelay = Math.max(0, Math.min(2000, milliseconds)); }
   setProjectFailure(value: 'rejected' | 'uncertain' | null): void { this.createFailure = value; }
@@ -63,6 +79,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     super(); this.ready();
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingFolderReads) finish(); });
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingTaskReads) finish(); });
+    inject(DestroyRef).onDestroy(() => this.setCommitPreviewHeld(false));
   }
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
@@ -174,9 +191,13 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   workspaceRestoreProject = async () => { if (this.archived) this.projectRows = [...this.projectRows, this.archived]; this.archived = null; return success({ accepted: true as const }); };
   workspaceDeleteProject = async (_scope: string, id: number) => { this.projectRows = this.projectRows.filter(project => project.id !== id); return success({ accepted: true as const }); };
   workspaceAddRepository = async (_scope: string, input: WorkspaceAddRepository) => success(this.detail(input.projectId));
-  workspaceGit = async (_scope: string, taskId: number) => success(this.git.get(taskId) ?? { taskId, branch: this.taskRows.find(task => task.id === taskId)?.branchName ?? '', upstream: 'origin/main', ahead: 0, behind: 0, files: 48, additions: 3288, deletions: 1128, conflicted: false });
+  workspaceGit = async (_scope: string, taskId: number) => success(this.git.get(taskId) ?? { taskId, branch: this.taskRows.find(task => task.id === taskId)?.branchName ?? '', upstream: 'origin/main', ahead: 0, behind: 0, files: 48, additions: 3288, deletions: 1128, conflicted: false, changesRevision: 'c'.repeat(64) });
   workspaceClosePreview = async (_scope: string, taskId: number) => success({ taskId, sessions: this.sessionRows.filter(session => session.taskId === taskId).length, running: this.sessionRows.filter(session => session.taskId === taskId && session.status === 'running').length, terminals: 0, actions: 0, unpushed: this.git.get(taskId)?.ahead ?? 0, uncommitted: this.git.get(taskId)?.files ?? 3 });
   workspaceCommitPreview = async (_scope: string, query: WorkspaceCommitQuery) => {
+    if (this.commitPreviewHeld) await new Promise<void>(resolve => {
+      const finish = () => { this.pendingCommitPreviews.delete(finish); resolve(); };
+      this.pendingCommitPreviews.add(finish);
+    });
     const files = Array.from({length: 48}, (_, index) => ({path: index === 0 ? '.env.local' : index < 4 ? 'src/payments/retry-' + index + '.ts' : 'src/payments/test-' + index + '.spec.ts', status: index === 0 ? 'A' : 'M', add: 92 - index, del: index, staged: index > 0 && index < 15, ...(index === 0 ? {flag: 'secrets' as const} : {}) }));
     const selected = files.filter(file => (query.includeUnstaged || file.staged) && !query.excluded.includes(file.path) && (!file.flag || query.includedSecrets.includes(file.path)));
     const matches = files.filter(file => file.path.includes(query.query ?? '')).sort((a,b) => Number(query.includeUnstaged || b.staged) - Number(query.includeUnstaged || a.staged));

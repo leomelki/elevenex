@@ -1,0 +1,26 @@
+<div exAutoHeight [attr.inert]="notice() ? null : ''" [attr.aria-hidden]="!notice()">
+  <div>
+    @if (notice(); as notice) {
+      <div
+        class="notice"
+        [class.danger]="notice.danger"
+        role="status"
+        animate.enter="notice-enter"
+        animate.leave="notice-leave"
+      >
+        <ex-icon name="clock" [size]="14" />
+        <span
+          ><strong>{{ notice.text }}</strong> {{ notice.detail }}</span
+        >
+        @if (notice.dismissible) {
+          <ex-icon-button
+            icon="x"
+            size="sm"
+            label="Dismiss usage notice"
+            (pressed)="dismiss()"
+          />
+        }
+      </div>
+    }
+  </div>
+</div>

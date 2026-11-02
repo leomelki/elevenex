@@ -16,6 +16,8 @@ export const appSettings = sqliteTable('app_settings', {
   ),
   // Ordered JSON array of named provider/model/thinking combinations.
   agentModelPresets: text('agent_model_presets'),
+  // One bounded config snapshot; never promoted to an explicit preset default.
+  lastUsedAgentConfig: text('last_used_agent_config'),
   sessionToolbarButtons: text('session_toolbar_buttons'),
   // Worktrees a single repo may hold before creating another one has to be
   // confirmed by the human. 0 disables the cap.

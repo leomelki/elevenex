@@ -1,5 +1,446 @@
 # Component system verification
 
+## Image viewer initial focus, 2026-11-02
+
+Opening the viewer focuses its labelled dialog rather than the Close control,
+preventing an automatically opened tooltip from lingering over the image.
+The [native regression](../../artifacts/desktop-capture/image-viewer-initial-focus/report.json)
+is `verified: true` across 24 checkpoints with no errors or warnings. It checks
+no tooltip on opening, first-Tab access to Close, tooltip appearance on hover
+and keyboard focus, dismissal on pointer exit/blur, and existing viewer behavior
+in both themes. Initial light/dark PNGs were inspected. This is an unpackaged
+preview check; desktop lint/build, 116 desktop tests and seven capture-tool tests
+pass, along with the renderer suite.
+
+## Image viewer, 2026-11-01
+
+The image viewer uses the shared modal boundary, with thumbnail-origin opening
+and closing, focus restoration, Escape and background dismissal. The retained
+preview supports bounded zoom, pointer/keyboard/trackpad panning, loading and
+unavailable states, narrow windows and reduced motion.
+Its compact title bar uses the shared icon-only close control without an Esc
+label or dimensions. The inset image well and centered, combined zoom/Fit
+control follow the existing modal surfaces and button primitives.
+
+Desktop lint, tests (116 desktop, seven capture-tool and 547 renderer tests),
+TypeScript checks and production build pass. The
+[native capture](../../artifacts/desktop-capture/image-viewer-polish-final/report.json)
+is `verified: true`: 24 checkpoints with no errors or warnings. Inspected PNGs
+include both themes, opening frames, interrupted closing, portrait and small
+images at narrow/short sizes. This is an unpackaged component-preview check.
+Reproduce with `pnpm desktop:capture scripts/desktop-capture/scenarios/image-viewer.mjs --url http://127.0.0.1:4310`.
+
+## Compact chat return control, 2026-11-01
+
+The return control is now a 36px circular arrow button without visible text.
+A small unread dot preserves new-message feedback; the tooltip and accessible
+name describe the action. Smooth scrolling, interrupted transitions and focus
+handoff are retained.
+
+Desktop lint, production build and all four scroll tests pass. The updated
+[native capture](../../artifacts/desktop-capture/run-HiYUXu/report.json) is
+`verified: true` across 18 checkpoints with no errors or warnings. Inspected
+PNGs cover light/dark, unread feedback, narrow/reduced motion and entrance
+frames. The isolated preview disabled HMR/live reload to avoid interruptions
+from concurrent edits. This is an unpackaged preview check.
+
+## Chat scroll return, 2026-11-01
+
+The floating return control appears above the composer when reading more than
+40px from the end. It retains one button through interrupted transitions, keeps
+visible during native smooth travel, and hands focus to the transcript before
+becoming inert. Incoming content uses the existing New messages feedback;
+reduced motion returns immediately. Content and viewport observers reconcile
+layout changes and are released with the component.
+
+The [native capture](../../artifacts/desktop-capture/run-IKzIj0/report.json)
+is `verified: true`: 18 checkpoints, no renderer errors or warnings. Inspected
+PNGs cover light/dark, scrubbed entrance frames, keyboard activation/focus,
+smooth intermediate frames, interruption, unread labels and narrow reduced
+motion. This uses production components with an isolated preview backend;
+it does not verify a packaged launch.
+
+Desktop lint, production build, the four scroll tests and TypeScript contracts
+pass. The full suite passed 115 desktop, seven capture-tool and 525 renderer
+tests; two workspace composition tests timed out at five seconds. All six
+workspace tests passed on an isolated rerun after the build finished.
+
+## Project navigation transitions, 2026-11-01
+
+The active task outline stays mounted through project reads with no overlapping
+tasks. Outgoing rows retain their exit folds, loading folds inside the outline,
+and incoming rows enter through the same retained list. Shared tasks keep their
+DOM identities and manual disclosures. Initial history and backend-scope reset
+retain their separate lifetimes; empty state waits for the read to finish.
+
+Desktop lint, production build, TypeScript contracts and the full desktop suite
+pass: 115 desktop tests, seven capture-tool tests and 522 renderer tests. The
+new navigation regression covers disjoint reads, empty replies, failures and
+returning during an exit.
+
+The [project-switch capture](../../artifacts/desktop-capture/run-qeXGXm/report.json)
+is `verified: true` across 17 checkpoints. Frame samples start before trusted rail
+input and verify both exit and entry geometry for project ↔ project and project
+↔ All projects, rapid returns, superseded reads, both themes and narrow reduced
+motion. The [existing retention regression](../../artifacts/desktop-capture/run-SgFsMn/report.json)
+also passes all 12 checkpoints, including stable header geometry, manual folds
+and session identity through delayed reads. Inspected settled PNGs and
+[scrubbed transition frames](../../artifacts/desktop-capture/run-sUkhzK/report.json),
+including [visible entry frames](../../artifacts/desktop-capture/run-MgUGkr/report.json),
+come from native Electron running the connected preview, not a packaged app.
+Capture diagnostics include Angular NG0956 identity-tracking warnings during
+count updates, with no renderer errors.
+
+## Revision-aware commit preloading, 2026-10-31
+
+The selected task skips preview reads when Git status's optional local-change
+token stays unchanged. HEAD, index and worktree versions contribute to the token;
+upstream-only updates do not. Old engines keep bounded periodic refreshes. One
+default-page request is shared by background preload and panel opening. A page
+less than five seconds old opens ready; expired data remains visible during a
+fresh check. Searches, exceptions and further pages bypass this cache, and the
+existing backend commit revision guard remains authoritative at submission.
+
+Desktop lint, production build, backend TypeScript, the backend Git revision
+regression and the native sandboxed Electron IPC smoke pass. The backend run
+passed 85 existing Git/workspace tests; the new revision regression passed on
+its focused run. The desktop suite passed 113 desktop and seven capture-tool
+tests, including TypeScript contracts. Its renderer run passed 472 tests and
+timed out in three existing view/chat/workspace tests; all 47 tests in those
+three files passed together on a focused rerun. Changed-area cache tests passed,
+including same-count edits, upstream-only changes, expiry, shared pending reads,
+old-engine fallback and stale replies within the same task.
+
+The [revision-aware capture](../../artifacts/desktop-capture/commit-preload-revision/report.json)
+is `verified: true`: eight checkpoints, no renderer errors or warnings. Inspected
+PNGs cover recent-cache opening with the backend held, real five-second expiry,
+cached files during revalidation, retained typing, keyboard/focus restoration
+and narrow reduced-motion layouts in both themes. It uses production components
+with an isolated preview backend; no packaged-app launch was verified.
+
+## Preloaded commit files, 2026-10-31
+
+The selected visible task preloads the default bounded commit page alongside
+its existing Git polling. Opening seeds counts, rows and warnings immediately;
+a fresh check gates submission and replaces cached warnings. Background updates
+preserve the panel's draft, selection and page. Task/scope changes, mutations
+and teardown reject stale preload replies. Clean tasks, hidden windows and
+engines without the capability skip preloading.
+
+Passed desktop lint, production build and the full desktop suite (113 desktop,
+7 capture-tool and 470 renderer tests, including TypeScript contracts).
+The [preload capture](../../artifacts/desktop-capture/commit-preload-final/report.json)
+and [existing motion regression](../../artifacts/desktop-capture/commit-preload-motion/report.json)
+are `verified: true`, with 18 checkpoints and no renderer errors or warnings.
+Inspected light/dark PNGs cover a held refresh with cached files, disabled
+submission, retained typing, focus restoration, interrupted reopening and narrow
+reduced-motion layouts. Captures use the production components with an isolated
+preview backend; live repositories and packaged-app launches were not exercised.
+
+## Initial default choice for new presets, 2026-10-31
+
+When the supported default snapshot has no saved preset, opening the creator
+seeds Use this preset. An existing saved default keeps Keep current selected;
+engines without default support retain their previous behavior. The owner
+captures this initial choice in the fixed draft, and the form retains explicit
+overrides independently of later harness/model edits. Only Create sends the
+existing revision-guarded default write.
+
+Lint, the production build and the full desktop suite pass: 113 desktop, 7 capture-tool and 457
+renderer tests, including TypeScript contracts. The new tests cover first-use
+preselection, writing on Create and opting out without a default write.
+[Default-choice capture](../../artifacts/desktop-capture/first-preset-default/report.json)
+is `verified: true`, with 25 checkpoints and no renderer errors or warnings.
+New PNGs were inspected in both themes, including compact/reduced-motion layouts,
+cancellation, preserved defaults, Undo and using the first preset in a new chat.
+Captures use the production components and isolated preview backend, not live
+provider accounts or a packaged application.
+
+## Custom preset creation from the current configuration, 2026-10-31
+
+Custom now opens the retained preset creator directly with the current harness,
+model, thinking and fast-mode values and a blank name. Editing/cancelling stays
+local; Escape restores the Custom card and preserves the message draft and
+selected agent. The composer agent menu retains its Save as preset action.
+
+[Current-configuration capture](../../artifacts/desktop-capture/custom-preset-current-config/report.json)
+is `verified: true`: 20 checkpoints with no renderer errors/warnings. New light
+and dark PNGs were inspected. The regression covers prefilled values, editing
+then cancelling without applying them, restored focus, retained typing, ordinary
+creation and the agent-menu handoff. It uses production components with an
+isolated preview backend rather than live-provider or packaged-app execution.
+
+Lint, renderer TypeScript checks and the production desktop build pass. The full desktop test retry passed
+113 desktop and 7 capture-tool tests; the renderer run passed 452 tests and timed
+out in three existing workspace tests. All 32 chat/workspace tests, including
+the new prefill/cancellation cases and those three workspace tests, passed when
+rerun together without a concurrent production build. The initial desktop run
+also encountered an unrelated native SSH timeout, which passed on retry.
+
+## Preset cards and modal surfaces, 2026-10-31
+
+The starting grid retains its card columns with an empty catalog instead of
+stretching Custom across the chat. Selected Custom uses the saved-card accent
+ring and raised surface; hover preserves selection and keyboard focus remains
+visible on dashed choices. Empty catalogs omit the empty Default dropdown.
+
+Unanchored dialogs enter over `dur-slow` (280ms) and leave over `dur-base`
+(200ms). A separate decorative dim animates opacity without fading the entire
+overlay, and reversals preserve painted surface/dim values. The preset creator
+scrolls its body while its title and actions stay visible in short windows.
+
+Passed `desktop:lint`, `desktop:test` (113 desktop, 7 capture-tool and 453 renderer
+tests plus TypeScript contracts), and `desktop:build`. No dependencies or
+backend contracts changed. Source review and `git diff --check` pass.
+
+The native reports are `verified: true`, with no renderer errors or warnings:
+
+- [Surface regression](../../artifacts/desktop-capture/preset-ui-final/report.json):
+  20 checkpoints covering empty catalogs, hover/keyboard focus, 0/140/280ms
+  opening frames, interrupted entry, focus restoration, duplicate names and
+  420×360 scrolling in light/dark and reduced motion.
+- [Creation flow](../../artifacts/desktop-capture/preset-ui-creation-final/report.json):
+  18 checkpoints for selection, Option shortcuts, retained typing, saving,
+  Escape, Save as preset handoff and first-message welcome removal.
+- [Catalog states](../../artifacts/desktop-capture/preset-ui-catalogs-final/report.json):
+  14 checkpoints for harness menus, loading/cancellation, retry, retained drafts
+  and compact layouts in both themes.
+- [Shared anchored modals](../../artifacts/desktop-capture/preset-ui-shared-modals-final/report.json):
+  22 checkpoints preserving trigger geometry, interrupted reversals, decorative
+  cleanup and focus restoration in both themes.
+
+New PNGs were inspected. Captures use the production components with an isolated
+preview backend; live-provider and packaged-app behavior were not exercised.
+
+## Editable harness in preset creation, 2026-10-30
+
+The creator now offers a compact Harness dropdown. A scoped, session-independent
+catalog read supplies the chosen harness’s supported model/thinking/fast settings.
+Name/default preferences and per-harness model drafts survive switching. One
+abortable request belongs to the form; cancellation, replacement, scope changes
+and destruction discard late replies. Loading/error states block Create but
+leave harness choice available, with explicit model-cache refresh on retry.
+Cancel leaves the conversation agent untouched. Fresh keyed creator identities
+prevent old catalog/name drafts crossing a rapid reopen or scope replacement.
+
+Create sends the chosen provider separately from the expected original chat
+provider and validates the catalog before saving/applying the mix. The optional
+capability and request field preserve older engine/caller behavior. No new
+packages or migrations. Catalog reads never allocate a session runtime; applying
+on Create uses the existing provider setters.
+
+Passed `desktop:lint`, `desktop:test` (110 main/security, 7 capture-tool and
+443 renderer tests plus TypeScript contracts), `desktop:build`, backend production
+TypeScript and 29 focused catalog/preset/chat tests. Native Electron smoke passes
+the catalog operation through sandboxed preload and scoped HTTP transport, with
+a fixture backend. Source/dependency review and `git diff --check` pass.
+
+[`preset-creator-harness-delivery`](../../artifacts/desktop-capture/preset-creator-harness-delivery/report.json)
+is `verified: true`: 14 checkpoints, no errors/warnings. New PNGs were inspected
+in both themes and compact reduced-motion layouts. The regression covers the
+keyboard menu, delayed/cancelled reads, retry, local edit restoration, Cancel,
+retained chat/name drafts and applying a different harness only on Create.
+These captures use production components and an isolated preview provider;
+live-provider and packaged-app behavior were not exercised.
+
+
+## Compact preset creator without preview, 2026-10-30
+
+Removed the “Your preset” card, its derived view model, import and styling.
+The form now proceeds from agent settings directly to the existing default
+choice. Validation, keyboard operation and submitted/default behavior remain
+covered by the existing tests; capture assertions use the actual controls.
+
+Passed `desktop:lint`, `desktop:test` (109 main/security, 7 capture-tool and
+439 renderer tests plus TypeScript contracts), `desktop:build` and
+`git diff --check`.
+[`preset-creator-no-preview`](../../artifacts/desktop-capture/preset-creator-no-preview/report.json)
+is `verified: true` with 19 checkpoints and no errors/warnings. Newly inspected
+light/dark and 420px PNGs verify the shorter form, keyboard default selection,
+creation, Undo and new-chat defaults using the isolated preview backend.
+This check does not establish live-provider or packaged-app behavior.
+
+
+## Creator default preference, 2026-10-30
+
+Replaced the native checkbox with a SetRow/Segmented setting below the preset
+preview: Keep current / Use this preset, with “Applied on creation” timing.
+The pending choice updates the preview; persistence still occurs only on Create.
+The two button targets support radio arrow navigation, preserve a single tab
+stop, and disable while busy, blocked or closing. No switch is used for this
+confirmation-dependent choice. Existing backend/default contracts are unchanged.
+
+Passed `desktop:lint`, `desktop:test` (109 main/security tests, 7 capture-tool
+tests, 439 renderer tests and TypeScript contracts), `desktop:build` and source
+whitespace review. The focused component regression checks initial selection,
+keyboard focus, no submission while choosing, disabled state and the final
+submitted default flag.
+
+[`preset-default-choice`](../../artifacts/desktop-capture/preset-default-choice/report.json)
+reports `verified: true`, 19 checkpoints, zero errors/warnings. Newly inspected
+PNGs cover both themes, initial and chosen states, 1000px/420px layouts, reduced
+motion, retained input, creation and Undo/new-chat default behavior. Capture uses
+production components and the isolated connected preview backend. This is UI
+verification, not live-provider or packaged-app verification.
+
+
+## Default preset from blank chat, 2026-10-30
+
+The quiet “Default:” dropdown shares the previous section-label space. Its
+radio menu changes the saved default and current blank-chat agent; ordinary
+cards remain session-only. The creator adds an initially unchecked default
+checkbox and live Default marker. A keyed seven-second Toast offers guarded
+Undo without changing the current agent or deleting a newly created preset.
+
+Passed `desktop:lint`, `desktop:test` (109 main/IPC/security tests, 7 capture-tool
+tests, 438 renderer tests and TypeScript contracts), `desktop:build`, backend
+production TypeScript and 85 focused chat/preset/settings tests. Native Electron
+smoke passed with the real sandbox/preload/protocol and a fixture backend;
+packaged-app and live-provider launch were not exercised. No dependencies,
+lockfile changes or migrations.
+
+[`preset-default-verified`](../../artifacts/desktop-capture/preset-default-verified/report.json)
+reports `verified: true`, 15 checkpoints, zero errors and warnings. Newly
+inspected PNGs cover both themes, the keyboard-operated menu, current selection
+versus saved default, retained typing, Undo, creator opt-in, narrow reduced
+motion and a new conversation receiving the saved default. It uses production
+components with the isolated connected preview backend on port 4311. The
+scenario ignores the Toast countdown when awaiting settled surface motion.
+
+Settings writes compare a canonical preset/provider revision inside a bounded
+SQLite transaction; stale Undo cannot overwrite later settings changes. Main
+validates optional snapshots and write receipts against the requested identity
+and revision. Older engines omit the capability and keep existing controls.
+
+
+## Blank-chat presets and creator, 2026-10-30
+
+Passed `desktop:lint`, `desktop:test` (main/preload/security checks, 7 capture
+checks, 436 renderer tests and TypeScript contracts), `desktop:build`, backend
+production TypeScript and 81 focused backend preset/chat/settings tests.
+The native Electron smoke passed with the sandboxed preload, scoped backend,
+protocol, theme and window checks; its backend is a test fixture. This is an
+unpackaged smoke, not packaged-app or live-provider verification. The broader
+backend spec-inclusive TypeScript command has pre-existing errors in unrelated
+tests; the production config and focused Jest tests pass.
+
+[`session-presets-delivery`](../../artifacts/desktop-capture/session-presets-delivery/report.json)
+reports `verified: true`, 18 checkpoints, zero errors and zero warnings. The
+capture uses the real connected chat and isolated preview backend on port 4311
+(4310 was already occupied). New PNGs were inspected in both themes, including
+narrow reduced-motion layouts. The regression verifies one-click selection,
+Option digit shortcuts while typing, retained drafts, duplicate-name validation,
+creator preview and model/thinking controls, saved creation, Escape/focus return,
+Save as preset handoff and the first-message transition. Opening filmstrips use
+live finite modal/background animation objects at 0/140/560ms, avoiding stale
+CDP animation IDs from unrelated completed activity.
+
+Saved presets reuse the backend's existing bounded settings storage and are
+validated before application. No dependencies, lockfile changes or migrations.
+Older engines omit the optional capability and retain the existing composer.
+Preset application is verified with controlled provider adapters, not live
+provider accounts. Final source review and `git diff --check` passed.
+
+
+## AgentPicker reference fidelity, 2026-10-29
+
+Passed `desktop:lint`, `desktop:test` (106 main/preload/security checks,
+7 capture-tool checks, 418 renderer tests and TypeScript contracts), the final
+6 focused AgentPicker tests, `desktop:build` and `git diff --check`. No backend,
+IPC, dependency, lockfile, migration or legacy app changes. Validation used the
+cached repository-pinned pnpm 8.15.4 and Node 24.22.1. Loopback/native capture and
+worker permissions required sandbox escalation.
+
+The original ZIP was rendered independently using its own React implementation
+and CSS, with the same bundled local fonts. Its two inline gallery scripts were
+externalized only in an ignored comparison artifact to preserve the normal CSP;
+no security allowances or production reference-code imports were added.
+[`agent-picker-original-final`](../../artifacts/desktop-capture/agent-picker-original-final/index.html)
+and [`agent-picker-original-usage`](../../artifacts/desktop-capture/agent-picker-original-usage/index.html)
+report `verified: true`. These are comparison baselines, not application evidence.
+
+Application reports all say `verified: true`:
+
+- [`agent-picker-delivery`](../../artifacts/desktop-capture/agent-picker-delivery/index.html):
+  10 reference, usage, busy and narrow/reduced-motion checkpoints in both themes.
+  It asserts 368×211px standard geometry, 36px rows, 84px label columns, 104px value
+  alignment and the 368×419px full usage variant. It also collects window errors
+  explicitly and reports none. Native tests exercise supported/disabled choices,
+  nested Escape, immediate focus restoration, interrupted reopening, local preview
+  actions, busy/disabled states and Angular router teardown of an open portal.
+  Tab and Shift Tab stay on the stable heading when every setting is disabled;
+  Escape and focus restoration also include CDK-owned trap anchors.
+- [`agent-picker-delivery-harness`](../../artifacts/desktop-capture/agent-picker-delivery-harness/index.html):
+  7 connected checks for all advertised harnesses, radio keyboard selection,
+  draft retention, model refresh, narrow layout and locking after the first prompt.
+- [`agent-picker-delivery-composer`](../../artifacts/desktop-capture/agent-picker-delivery-composer/index.html):
+  16 connected checks for settings, Plan/Code, permissions, typing, queue/remove,
+  steer/stop, resize interruption, uncertain delivery and retained drafts.
+- [`agent-picker-motion`](../../artifacts/desktop-capture/agent-picker-motion/index.html):
+  4 native checkpoints including 0/140/340ms entry frames and measured 140ms menu /
+  120ms usage-card exits, matching the source curves and scale. Final focused tests
+  cover a queued entry-completion event racing a close and retained exit data.
+- [`agent-picker-connected-result`](../../artifacts/desktop-capture/agent-picker-connected-result/index.html):
+  2 cropped connected-session menu captures, with the same Low/fast settings as the
+  reviewed screenshot. New reference, usage, connected, narrow and motion PNGs were
+  inspected. The 39 application checkpoints report zero captured errors/warnings.
+
+Final captures used a fresh preview process after development HMR invalidated a
+lazy route chunk. All source changes were complete before the final runs. Captures
+use actual production components with preview-only backend data, not a live
+provider or packaged app. Current live context/tokens are wired; account-plan
+presentation is supplied-data UI, and unavailable Compact/preset/fork operations
+stay gated in the connected owner. Existing transcript-height diagnostics recorded
+in the previous entry are unchanged. Owned validation servers were stopped.
+
+## Connected composer, 2026-10-28
+
+Passed `desktop:lint`, `desktop:test` (106 main/preload/security checks,
+7 capture-tool checks, 413 Angular tests and the contract TypeScript checks),
+`desktop:build`, 17 focused backend chat tests, backend production TypeScript
+(`tsconfig.build.json --noEmit`) and `git diff --check`. Native Electron smoke
+verifies the built app's real sandboxed preload and `app://` protocol.
+No dependencies, lockfiles, migrations or legacy app behavior changed.
+Validation used cached repository-pinned pnpm 8.15.4 and Node 24.22.1; native
+launches, loopback listeners and Angular workers required sandbox escalation.
+
+Native reports
+[`session-composer-verified`](../../artifacts/desktop-capture/session-composer-verified/index.html)
+(16 checkpoints),
+[`composer-harness-verified`](../../artifacts/desktop-capture/composer-harness-verified/index.html)
+(7 checkpoints) and
+[`composer-chat-regression`](../../artifacts/desktop-capture/composer-chat-regression/index.html)
+(16 checkpoints) all report `verified: true`, with zero captured console/network
+errors or warnings. New light/dark, narrow, agent settings and queued-message
+PNGs were inspected. The regressions cover nested-menu Escape/focus restoration,
+harness switching and locking, supported/disabled thinking levels, fast mode,
+Plan/Code shortcuts, permission changes, newline/send/queue/steer/stop,
+continuous typing during queue growth, interrupted textarea resizing,
+retained uncertain drafts, reduced motion, history and existing chat decisions.
+Real-time rectangle samples record input resizing; they are host diagnostics,
+not a portable FPS guarantee. Capability and action tests cover older-engine
+omissions, bounded metadata, unsupported values and archived settings.
+
+An additional disposable probe listening directly to window error events found
+8 `ResizeObserver loop completed with undelivered notifications` events during
+transcript resets and viewport changes. The standard runner does not collect
+these handled window events. Disabling only the new composer's height observer
+leaves all 8; disabling the existing, unchanged `Turn.answer` height observer
+removes all 8. The source trace and isolation reports live under
+`artifacts/desktop-capture/composer-resize-owner` and `composer-answer-isolation`.
+The isolated run is diagnostic only, not product visual evidence. No notification
+suppression or workaround was added to product code. The existing transcript
+answer-height feedback remains a separate motion limitation.
+
+A broader backend `tsc --noEmit` also includes legacy spec fixtures and still
+reports existing fixture/type errors; the production backend typecheck and
+focused Jest suite above pass. The owned preview server was stopped. Captures
+use real production components with isolated preview provider data; no packaged
+app, live-provider or cross-platform launch is claimed. Attachments, dictation,
+mentions, preset persistence and fork integration remain hidden until their
+platform operations are implemented.
+
+
 ## Hide empty archives, 2026-10-27
 
 Passed `desktop:lint`, `desktop:test` (347 Angular tests plus the existing main,
@@ -1223,3 +1664,456 @@ macOS production smoke also passes. These are unpackaged Electron measurements
 with controlled backend replies, not packaged-app, live remote-agent or other OS
 benchmarks. The shared bottleneck is fixed; the audit is not a universal FPS
 guarantee. Dependencies, production security settings and backend APIs are unchanged.
+
+## Connected session chat — October 28
+
+Selected sessions now mount the production chat adapter. Its contracts, scoped
+transport, transcript projection, command dispatch, draft ownership and original
+content reader are documented in
+[src/app/session-chat/README.md](src/app/session-chat/README.md).
+
+Validation passed:
+
+- Desktop lint, production build and TypeScript IPC contracts, including negative
+  assertions for unscoped reads, arbitrary commands and unsupported decisions.
+- Full desktop suite: 104 main-process tests, seven capture-tool tests and 397
+  renderer tests. Existing composer cases remain intact alongside the controlled
+  draft-recovery regression.
+- Twelve focused backend chat tests and the backend production TypeScript check.
+  They cover ownership, bounded windows, hydration races, incremental replacements,
+  cancellation, failed attachment cleanup, archived history, decisions, native
+  multi-select answers and original-content paging with surrogate boundaries.
+- Native macOS Electron smoke after building, using the actual sandboxed preload,
+  app protocol, scope validation and lifecycle. Its backend is a disposable fixture.
+
+`artifacts/desktop-capture/run-U9rrpK/report.json` is **verified: true**, with 16
+chat checkpoints and no errors or warnings. It covers light/dark chat, expanded
+input/output, one-shot approval, questions, native keyboard submission, typing
+while streaming, retained navigation drafts, delivery uncertainty, original-output
+pages and modal focus restoration, bounded history, narrow errors and reduced
+motion. Light chat, dark narrow failure, decisions, original content and uncertain
+send PNGs were inspected. History navigation was also inspected in the focused
+verified report `artifacts/desktop-capture/run-bTniv9/report.json`.
+
+The existing connected-workspace scenario also passes: the report at
+`artifacts/desktop-capture/run-k25drM/report.json` is **verified: true**, with 20
+checkpoints and no errors. It includes panels/takeover/focus, settings, task and
+project creation, first-project onboarding and both themes. It records eight
+identity-tracking warnings of the kind documented in prior workspace checks.
+The chat-only report records none. Reproduce with the saved `session-chat.mjs`
+and `connected-workspace.mjs` scenarios against `pnpm desktop:preview`.
+
+These are controlled-provider visual/integration checks and an unpackaged native
+smoke, not authenticated Claude/Codex/Pi/OpenCode execution, packaged-app launch,
+remote-network performance measurements or other-OS verification. Attachment/media
+resolution, forks, side chats, subagent transcript navigation and richer MCP
+schemas remain outside this integration; unavailable controls are hidden. Existing
+app commands, dependencies, lockfile and production security policy are unchanged.
+
+## Pre-start harness selection — October 28
+
+The connected composer now exposes registered harness choices with their runtime
+labels. Selection persists through the existing session provider operation,
+retains the draft, refreshes model/permission choices and rejects late reads from
+the previous provider. Started conversations retain the existing harness lock.
+Cold chat reads skip attachment/prewarming, and OpenCode supports an optional
+non-initializing state read; existing callers keep their initialization defaults.
+
+Desktop lint, production build, IPC TypeScript checks and backend production
+TypeScript checks pass. The full desktop suite passes 105 main-process, seven
+capture-tool and 399 renderer tests. Ninety targeted backend tests pass across
+chat, OpenCode runtime and session behavior, including persisted routing of the
+first prompt, cold-read behavior, stale choices and started/queued guards.
+The native macOS Electron smoke also passes after building.
+
+`artifacts/desktop-capture/run-b4xYux/report.json` is **verified: true**, with seven
+checkpoints and no errors/warnings. It verifies Claude Code/Codex/Pi/OpenCode
+choices, keyboard navigation, changes back and forth, retained text, model
+refresh, started-session locking, both themes and narrow layouts. The light open
+menu and dark narrow composer PNGs were inspected.
+The existing chat regression at
+`artifacts/desktop-capture/run-mBzGOb/report.json` is also **verified: true**:
+16 checkpoints and no errors/warnings. These captures use the real production
+components with preview-only provider fixtures; live authenticated harnesses and
+packaged-app execution were not exercised. The owned preview process was stopped.
+
+## Reply visibility and cursor ownership — October 28
+
+Final replies now stay outside collapsed work when trailing tool/system records
+follow them. Early runtime output belongs to its pending prompt until the durable
+user receipt arrives; late receipts are ordered ahead of output already received.
+Queue submissions retain independent feedback and cannot replace that active
+boundary. Reply streaming is separate from live tool work, and retained thinking
+lines stop their cursor when the active step changes. Markdown renders one cursor
+in the current code block or prose. The welcome/loading states use the projected
+conversation, including the optimistic first send.
+
+Desktop lint, production build, TypeScript contracts and the full desktop suite
+pass: 105 main-process, seven capture-tool and 409 renderer tests. New regression
+coverage exercises trailing records, early output/late receipt ordering, queued
+follow-ups before receipt, immediate welcome removal, code/prose cursors and the
+thinking-line handoff. Existing tests and previous uncommitted work were retained.
+
+`artifacts/desktop-capture/run-HWEpdg/report.json` is **verified: true**, with six
+checkpoints and no errors/warnings. It reproduces the reported completed replies
+and delayed user receipts in light/dark, proves only the current answer streams,
+and checks the first response and a narrow reduced-motion layout. The light
+completed replies, dark current reply and first-response PNGs were inspected.
+The existing chat regression at
+`artifacts/desktop-capture/run-FZhPU9/report.json` also passes **verified: true**,
+with 16 checkpoints and no errors/warnings. These are real renderer interactions
+with controlled provider data; authenticated live harnesses were not launched.
+
+## Agent menu retention — October 30
+
+Harness changes keep the same agent settings surface open through command
+completion and catalog reconciliation. Controls and sending remain blocked until
+the new provider is confirmed; focus stays inside settings and drafts are retained.
+Escape still dismisses the menu and restores its opener. Regression tests cover
+success, rejection, delayed catalogs, stale reads and navigation during an update.
+
+Desktop lint, production build and the full desktop suite pass: 106 main-process,
+seven capture-tool and 427 renderer tests, including TypeScript contract checks.
+Checks used the existing `scripts/desktop-shell.mjs` entry directly because the
+pnpm launcher could not fetch its selected version in this environment.
+
+Both `artifacts/desktop-capture/agent-menu-retention/report.json` (seven checkpoints)
+and `artifacts/desktop-capture/agent-picker-retention-settled/report.json`
+(ten checkpoints) are **verified: true**, with no errors or warnings. They cover
+successive harness/model changes, refreshed settings, keyboard focus, nested
+Escape, busy/disabled controls, interrupted dismissal, both themes and narrow
+reduced-motion layouts. Connected light/dark and standalone narrow/busy PNGs were
+inspected. The narrow check awaits CDK viewport repositioning before measuring.
+These runs use real Angular components with preview-only provider data;
+authenticated harnesses and packaged-app execution were not exercised.
+
+## Connected subscription quota — October 30
+
+The selected chat now receives optional provider-reported Codex/Claude subscription
+allowance over its existing scope-bound feed. Backend projection requires matching
+OAuth subscription metadata, caps the data at eight windows and strips provider
+payloads. Main validates provider identity, finite percentages, dates and unique
+window IDs. API-key sessions and older engines omit the quota display.
+
+The agent chip, delayed hover/focus card and settings menu show actual remaining
+allowance and reset times, including weekly-only/model-specific windows. Composer
+notices follow the designed quota/context priority; low warnings are dismissible,
+exhausted/critical states persist, dismissal restores composer focus and retained
+exits are inert. Reset passage waits for provider facts. No dependency changes.
+
+Desktop lint and production build pass. The full desktop suite passed 107 main,
+seven capture-tool and 431 renderer tests, including TypeScript contracts; later
+focused chat/composer checks passed 49 tests, and the final notice accessibility
+check passed both tests. The 20 focused backend chat tests and production backend
+TypeScript check pass. An exploratory all-source backend typecheck encounters
+existing errors in unrelated test files; it is not a clean repository-wide check.
+The installed Electron smoke passes with its fixture backend and secure preload.
+
+`artifacts/desktop-capture/session-quota-final/report.json` is **verified: true**:
+12 checkpoints, no errors/warnings. It covers both themes, healthy/low/exhausted
+allowance, hover/menu disclosure, tighter weekly/model limits, dismissal and focus,
+quota removal, expired reset timestamps and narrow reduced-motion layouts. Final
+dark exhausted and light narrow PNGs were inspected, alongside the preceding
+verified light warning/dark menu/narrow captures. This exercises the real renderer
+with preview-only provider data; authenticated quota accounts and packaged-app
+execution were not exercised. Automatic account-wide pause/resume, send-at-reset,
+cross-agent forks and quota island events remain outside this display integration.
+
+
+## Connected reply changes — October 30
+
+Completed replies now carry bounded change summaries into their designed file
+chips and Review action. The Changes panel reads the selected reply's recorded
+diffs through a named scoped operation. Persisted shell captures survive history
+reloads; successful native edits are a fallback. Captured reverted paths and
+out-of-scope edits reconcile through the existing domain operation. File and line
+windows, three concurrent reads, cancellation, stale-selection/revision guards,
+and a short-lived prepared-reply cache bound the integration.
+
+`pnpm desktop:lint`, `pnpm desktop:test` and `pnpm desktop:build` pass. The suite
+includes 108 desktop, seven capture-tool and 438 renderer tests, plus the IPC
+TypeScript assertions. Production backend TypeScript and 32 focused chat/change
+regressions pass. The installed Electron smoke passes with the actual sandboxed
+preload, `app://`, scoped review HTTP read and malformed-argument rejection using
+its fixture backend. Dependencies and lockfile are unchanged.
+
+`artifacts/desktop-capture/run-fKue99/report.json` is **verified: true** with
+14 checkpoints and no errors/warnings. The real production composition with
+preview-only provider data covers both themes, created-file outcomes, file-chip
+selection, keyboard Review, wide/compact panels, 1,001-file counts, forward/back
+content windows, errors and narrow reduced motion. The dark review and light
+narrow PNGs were inspected. This verifies the renderer and fixture-backed IPC;
+authenticated agent execution and packaged-app launch were not exercised.
+Full-file reading, Code opening and review comments remain unavailable for this
+recorded-diff source and their controls are hidden.
+
+### Startup error details (2026-10-31)
+
+Failed machine menus now expose retained diagnostics in a selectable, scrollable
+plain-text dialog. Startup supervision retains bounded stderr/stdout tails and
+waits for pipe drainage before publishing an early exit. The local development
+failure was a missing SQLite native binding; the backend-scoped pnpm rebuild
+under Node 24.22.1 repaired it, and the actual staged backend reached readiness
+with disposable data.
+
+Lint, production build, TypeScript contract checks, 110 desktop tests and seven
+capture-tool tests pass; the final focused backend rerun passes all 12 tests.
+All 441 renderer tests pass on rerun (the earlier full run hit two workspace
+timeouts). The real Electron preload/protocol smoke also passes with its fixture
+backend. No dependency or lockfile changes were needed.
+
+`artifacts/desktop-capture/startup-error-details-final/report.json` reports
+**verified: true**, four checkpoints and no errors/warnings. Native captures of
+the production composition with its preview provider cover light/dark themes,
+narrow layout, reduced motion, menu keyboard activation, Escape/focus return and
+retained output after recovery. The PNGs were inspected. This is unpackaged
+verification; no packaged launch was attempted.
+
+### Agent picker usage dismissal (2026-10-31)
+
+Opening agent settings consumes the current usage hover/focus. Restoring the
+opener's focus or uncovering it when the backdrop leaves does not reopen the
+quota tooltip; a fresh mouse movement or keyboard focus still discloses usage.
+Regression tests cover Escape, backdrop, trigger and owner-driven dismissal.
+
+Lint, renderer TypeScript checks, all 461 renderer tests and the production
+desktop build pass. The broader desktop suite passes 108 of 113 tests; five
+backend/remote process tests fail with local Node stack/startup errors. Validation
+used temporary larger-stack Node/Electron launchers outside the source tree
+because the default runtimes also overflowed during built-in module loading.
+No dependency or lockfile changes were needed.
+
+`artifacts/desktop-capture/agent-usage-dismissal-final/report.json` is
+**verified: true**, with 12 checkpoints and no errors/warnings. Native preview
+coverage includes light/dark usage dismissal with retained opener focus, fresh
+hover disclosure and dismissal, settings changes, interrupted reopening, busy
+controls, narrow layouts and reduced motion. The light/dark dismissed-state PNGs
+were inspected. This checks the real components with preview data; no packaged
+launch was attempted.
+
+### Commit popover motion (2026-10-31)
+
+File-preview replies can grow the surface during entry. The anchored morph now
+updates its surface/shadow geometry on the existing animation clock. Completed
+exits hide the retained layer before releasing their filled animation frames,
+preventing the natural full-size surface from flashing before Angular removes it.
+
+`artifacts/desktop-capture/commit-motion-final-verified/report.json` is **verified: true**
+with 12 checkpoints and no errors/warnings. Native Electron captures exercise
+the real connected components with preview data in both themes, including entry
+and exit endpoints, draft-preserving reversal, hidden visibility during animation
+cancellation, focus restoration, and narrow reduced-motion layouts. Opening and
+narrow PNGs were inspected. This is unpackaged visual verification.
+The existing `commit-behavior-fixed/report.json` run also verifies 20 task-screen
+checkpoints, including filtering, secret inclusion, staged-only and submission.
+
+`pnpm desktop:lint`, `pnpm desktop:test` (113 desktop, 7 capture-tool and 463
+renderer tests, including TypeScript contracts) and `pnpm desktop:build` pass.
+Tests and build needed an unsandboxed run for local sockets/processes and Angular
+compilation. No dependency or lockfile changes were made.
+
+
+### Structured session tools (2026-11-01)
+
+The connected transcript now presents all 21 normalized tool families through
+bounded typed evidence: semantic verbs, command purpose/directory/output/exit
+facts, file content, proposed or applied diffs/patches, searches, sources, plans,
+agents, questions, workspace/symbol/skill fields and generic/MCP results.
+Original data remains a separate lazy disclosure. Unknown completion is neutral;
+orphan receipts use the same parsed renderer. Live tool identity changes release
+keyboard focus to the turn's work control before hiding the old surface.
+
+Final checks passed: pnpm desktop:lint, pnpm desktop:test (114 desktop, seven
+capture-tool and 500 renderer tests, including TypeScript contract checks), and
+pnpm desktop:build. The focused backend projection/history suite passed 36 tests
+and its production TypeScript check passed. A prior full test rerun hit an
+unrelated remote bootstrap timing assertion; the final full rerun passed.
+Loopback tests/native launches and the production build required unsandboxed
+execution. No dependency or lockfile changes were made.
+
+Native Electron reports are verified: true with no errors or warnings:
+
+- artifacts/desktop-capture/run-uqvNYP/report.json: 32 tool-family checkpoints,
+  including light/dark, code whitespace, diff signs, structured/MCP results,
+  failure/truncation, keyboard disclosure, inert closure, live-tool focus return,
+  unknown completion and narrow reduced motion.
+- artifacts/desktop-capture/run-nnqsrB/report.json: 16 connected-chat checkpoints,
+  including the updated approval evidence, decisions, streaming, draft retention,
+  bounded original content/history and uncertain delivery.
+- artifacts/desktop-capture/run-SscpHc/report.json: four unobstructed running and
+  unknown-completion card captures in both themes using the same tool scenario.
+
+The relevant new PNGs were inspected. The built app's real Electron smoke passed
+sandbox, bridge validation, deferred workspace, events, native theme, multiple
+windows and app:// history/CSP checks with its fixture backend. These are native
+unpackaged and preview-provider checks; a packaged app was not launched.
+
+
+### Concise tool evidence (2026-11-01)
+
+Tool cards now lead with at most two short, chosen result blocks. Parameters,
+working directories, technical IDs, routine receipts and repeated paths stay in
+Details. Commands show an output tail, edits show a small diff, plans prioritize
+unfinished steps, and generic/MCP results favor a title and meaningful state.
+Full parsed blocks and original data mount only on explicit disclosure. The
+shared internal ToolBlock renderer keeps preview and expanded rendering identical
+for whitespace, diff signs and inert content.
+
+Final desktop lint, TypeScript checks, desktop:test (114 desktop, seven capture
+runner and 509 renderer tests), and production build passed. No dependencies or
+lockfile changed. Native preview reports have verified: true, no errors and no
+warnings: artifacts/desktop-capture/run-MK73l1/report.json (34 checkpoints) and
+artifacts/desktop-capture/run-Oj20vG/report.json (two compact approval checkpoints).
+The full tool scenario covers all normalized families, compact default content,
+full Details access, nested original data, keyboard/focus, inert closing, live and
+unknown completion, both themes and narrow reduced motion. Captured primary
+bodies measured 52–180px; the sample command card is 108px overall. The relevant
+new PNGs were inspected, including dark/narrow layout and approval evidence.
+These are native unpackaged preview-provider checks, not a packaged-app launch.
+
+
+### Native Codex file additions and deletions (2026-11-01)
+
+Fixed the live/history payload variant missed by the original preview: a Codex
+addition can carry a complete file in `diff` without any patch prefixes. Known
+whole-file additions/deletions now use colored before/after rows; actual unified
+updates retain hunk rendering. Native history retains content identity through an
+additive format marker, leaving existing diff text intact. Empty files, missing
+content, literal +/- prefixes, meaningful whitespace and CRLF are covered. Patch
+header coloring respects hunk ranges so literal +++/--- source lines stay colored.
+
+Final lint, desktop:test (114 desktop, seven capture-tool and 514 renderer tests),
+production build, backend production TypeScript and 34 focused backend history
+regressions passed. No dependencies or lockfile changes. The new native scenario
+session-codex-patches.mjs uses the exact Hello sentence with the real payload
+shapes, plus deletion, unified update, empty addition and rename-only cases.
+artifacts/desktop-capture/run-pov3yX/report.json is verified: true with 32
+light/dark, narrow/reduced-motion, primary/Details, keyboard and inert checkpoints,
+and no errors or warnings. Added, deleted and updated PNGs were inspected. This
+verifies the unpackaged renderer with provider-shaped preview data; no packaged
+launch was attempted. Unrelated concurrent composer-note edits were preserved.
+
+### Session opening scroll (2026-11-01)
+
+Selected sessions jump directly to the transcript end after initial history
+renders, before paint. Switching and reopening reset bottom following; refresh
+preserves the position of a reader who scrolled up. Focused tests cover delayed
+history as well as initial hydration and reopening.
+
+Desktop lint, production build and desktop:test passed (115 desktop, seven
+capture-tool and 524 renderer tests). The native session-opening-scroll.mjs
+scenario verified the first rendered frame across repeated session switches,
+reopening and refresh, in both themes and narrow/reduced-motion layouts.
+artifacts/desktop-capture/run-vHE2cH/report.json reports verified: true, four
+checkpoints and no errors or warnings. All four PNGs were inspected. These are
+unpackaged preview-provider checks; no packaged-app launch was attempted.
+
+
+### Message selector in short sessions (2026-11-01)
+
+TurnNav now appears from the first turn instead of requiring five. Empty sessions
+retain no navigation targets. Regression tests cover one, two, four, five and
+eight turns, selection, active state and switching to short/empty sessions.
+
+Desktop lint, production build and desktop tests passed (115 desktop, seven
+capture-tool and 533 renderer tests, plus TypeScript checks). Native preview
+verification at artifacts/desktop-capture/turn-nav-final/report.json reports
+verified: true, ten checkpoints and no errors or warnings. It covers session
+length changes, keyboard selection, both themes and narrow/reduced-motion layout.
+The light single-turn and dark narrow PNGs were inspected. The isolated preview
+disabled HMR/live reload to avoid the development server's CSP-blocked blob worker;
+production security settings were unchanged. This was an unpackaged component
+preview, not a packaged-app launch.
+
+## Session file attachments — 2026-11-01
+
+- Added a dedicated paperclip/native multiple-file picker, Cmd/Ctrl U, file
+  paste, conversation-wide drop, controlled attachment cards and files-only sends.
+- The connected owner uses sequential 512 KiB uploads, selection-scoped
+  cancellation, retained per-session drafts, explicit retry/removal and existing
+  uncertain-send reconciliation. Image inputs use the native provider slot;
+  videos/documents retain durable local paths outside the checkout.
+- Sent media uses a responsive grid, existing image viewer and recording player;
+  documents have named cards and Copy path. Both themes, narrow layouts and
+  reduced motion were inspected. Preview data remains outside the product graph.
+- `session-attachments.mjs`: **verified: true**, 10 checkpoints, zero errors or
+  warnings, in `artifacts/desktop-capture/run-nJfLar/report.json`. Inspected PNGs
+  include light selection, sent image/video cards, viewer, failure/retry and both
+  narrow theme states. File selection uses native browser input; paste/drop use
+  DOM file-transfer events without modifying the operating-system clipboard.
+- Desktop lint/build passed; desktop tests passed (116 native/adapter tests,
+  7 capture-tool tests, IPC TypeScript assertions and 539 Angular tests).
+  Backend production TypeScript and 35 focused attachment/media/chat tests passed.
+  Native Electron smoke passed, including a real sandboxed upload bridge call.
+- Broad backend spec typechecking still reports pre-existing errors outside this
+  feature (including agent-generation, runtime, speech and todo test types).
+  These checks do not claim a paid provider turn, remote-machine execution or a
+  packaged-app launch. Upload limits and draft/storage lifetimes are documented
+  in the session-chat guide.
+
+### Compact message navigation (2026-11-01)
+
+TurnNav uses a virtual scroll window of up to seven 24px targets, capped at 40%
+of the conversation height. Idle navigation follows the current prompt; pointer
+and keyboard browsing hold their position until the user leaves or history is
+replaced. Browsing does not select a message until click, Enter or Space. Fades,
+hover/focus position counts, prompt/status tooltips and a native scrollbar retain
+orientation. Arrow/Page/Home/End navigation keeps focus on one stable listbox.
+Content-only streaming changes do not trigger rail recentering.
+
+Desktop lint, production build and the complete desktop test command passed
+(116 desktop tests, seven capture-tool tests, IPC TypeScript assertions and 539
+renderer tests). Seven focused rail regressions cover short and 10,000-turn
+histories, selection, stable targets, focused session changes and observer cleanup.
+The workspace tests also passed independently after a full-suite timing failure;
+the final full run passed. Concurrent attachment edits were preserved.
+
+`artifacts/desktop-capture/turn-navigation-verified/report.json` reports
+`verified: true`, 13 checkpoints and no errors or warnings. The native scenario
+checks both themes, 1/10,000 targets, keyboard navigation, trusted local wheel
+scrolling, pointer stability, narrow/reduced-motion and an 80px container, plus
+completed first/latest jumps through the real Chat owner. With 10,000 targets,
+the 360px example container held a 144px rail and only 13 rendered controls.
+Light keyboard and dark chat PNGs were inspected, along with narrow/short states
+from the preceding identical-layout capture. The isolated preview disabled
+live reload; production security settings were unchanged. These checks verify
+the unpackaged component preview, not a packaged-app launch.
+
+## Compact attachment presentation — 2026-11-01
+
+- Drafts now use single-line chips with filename, size/progress and removal.
+  Repeated Ready/type labels and large icon tiles are removed; errors retain
+  their status, Retry and Remove actions. The tray remains bounded and wraps.
+- Sent messages put text first, followed by 148px media previews, one filename
+  per preview and content-sized document chips. Compact video uses one set of
+  native controls, with its accessible name retained independently of caption
+  visibility. Fullscreen video and full-size image viewers retain their sizing.
+  Ordinary Markdown keeps its existing recording toolbar.
+- `session-attachments.mjs`: **verified: true**, 10 checkpoints, no errors or
+  warnings, in `artifacts/desktop-capture/run-AsfbuF/report.json`. Inspected light
+  and dark images, narrow/reduced-motion layouts, failures, retry, removal and
+  viewer focus. The regression asserts ready chips are at most 40px tall and
+  sent media cards at most 180px; trusted keyboard input verifies video playback,
+  followed by seeking before the sent-media capture.
+- Desktop lint/build and the full desktop suite passed (541 Angular tests plus
+  native/adapter/capture suites and IPC type assertions). After the final native
+  control refinement, 41 focused media/composer/connected-chat tests passed and
+  the production build passed again. The owned preview server was stopped.
+
+
+## Nine-marker message navigation — 2026-11-01
+
+Raised the rail limit to nine 24px targets (224px including padding), retaining
+the 40% conversation-height cap. Preview controls and usage guides match the
+new limit. Hover previews now respond to pointer movement: a virtual row
+appearing under a stationary pointer cannot override a Home/End keyboard choice.
+
+Desktop lint, production build and the full desktop test command passed,
+including 543 Angular tests and nine focused navigation regressions.
+artifacts/desktop-capture/turn-navigation-nine-final/report.json reports
+verified: true, 15 checkpoints and no errors or warnings. In both themes a
+640px example contains a 224px rail with nine fully visible markers; 360px and
+80px examples retain the 40% cap. Native keyboard/pointer selection, 10,000
+targets, narrow/reduced-motion layouts and real Chat jumps also passed. The
+light/dark nine-marker and dark short-layout PNGs were inspected. This is an
+unpackaged preview check; no packaged-app launch was attempted.

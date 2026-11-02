@@ -13,3 +13,7 @@ ex-skeleton { width: min(100%, 360px); }
 @keyframes project-depart { to { opacity: 0; transform: translateY(calc(-1 * var(--space-2))) scale(.98); } }
 @media (max-height: 640px) { .onboarding-layer { padding-top: var(--space-6); } }
 @media (prefers-reduced-motion: reduce) { .workspace-frame.onboarding { transform: none; } .onboarding-layer.flying ex-workspace-onboarding { animation: none; opacity: 0; } }
+
+.review-hint { margin: var(--space-6); color: var(--ink-muted); font-size: var(--text-body-size); }
+
+.review-content { display: flex; flex: 1; min-height: 0; min-width: 0; }

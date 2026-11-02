@@ -1,0 +1,366 @@
+<header class="session-bar">
+  @if (store.state(); as state) {
+    <span class="provider">{{ providerLabel() }}</span>
+    <span class="status" role="status"
+      ><ex-status-glyph [status]="status()" [size]="12" />{{
+        statusLabel()
+      }}</span
+    >
+    @if (status() === "attention") {
+      <button exButton variant="ghost" size="sm" (click)="focusDecision()">
+        View request
+      </button>
+    }
+    @if (state.reasoning) {
+      <span class="metadata">{{ state.reasoning }} thinking</span>
+    }
+    <span class="grow"></span>
+    @if (state.context; as context) {
+      <ex-context-meter
+        [used]="context.percentage / 100"
+        [tokens]="context.tokens + ' of ' + context.limit"
+      />
+    }
+    @if (state.activity.length) {
+      <details class="activity">
+        <summary>
+          Activity <span>{{ state.activity.length }}</span>
+        </summary>
+        <div class="activity-content">
+          @for (item of state.activity; track $index) {
+            <p>
+              <strong>{{ item.label }}</strong
+              ><span>{{ item.detail }}</span>
+            </p>
+          }
+        </div>
+      </details>
+    }
+  } @else {
+    <span class="metadata">Connecting to conversation…</span>
+  }
+  @if (archived()) {
+    <span class="metadata">Archived · Read only</span>
+  }
+</header>
+<ex-chat
+  [resolve]="media.resolve"
+  [exchanges]="store.exchanges()"
+  [centerComposer]="showWelcome()"
+  [actions]="['copy']"
+  [stoppable]="!archived() && !!store.state()?.canInterrupt"
+  [retryable]="!blocked()"
+  [copiedCode]="copiedCode()"
+  (stop)="store.perform({ type: 'stop' })"
+  (retry)="continue()"
+  (turnAction)="turnAction($event)"
+  (copyCode)="copy($event, true)"
+  (openLink)="openLink($event)"
+  (openPage)="openFile($event)"
+  (fileReview)="review($event.id, $event.path)"
+  (review)="review($event)"
+  (contentRequested)="contentId.set($event)"
+>
+  <div chatHistory class="history-controls">
+    @if (store.before()) {
+      <button
+        exButton
+        variant="ghost"
+        size="sm"
+        [disabled]="store.loading()"
+        (click)="store.older()"
+      >
+        {{ store.loading() ? "Loading…" : "Earlier messages" }}
+      </button>
+    }
+    @if (store.historical()) {
+      <span>Viewing earlier messages</span
+      ><button exButton variant="secondary" size="sm" (click)="store.refresh()">
+        Back to latest
+      </button>
+    }
+  </div>
+  <div chatContent>
+    @if (store.loading() && !store.exchanges().length) {
+      <ex-skeleton variant="message" [count]="3" />
+    }
+    @if (store.state()?.permission; as request) {
+      <ex-approval-card
+        #request
+        kind="tool"
+        [tool]="request.title"
+        [reason]="request.description"
+        [allowAlways]="request.allowAlways"
+        [disabled]="blocked()"
+        (resolve)="
+          store.perform({
+            type: 'permission',
+            id: request.id,
+            decision: $event,
+          })
+        "
+      >
+        @if (permissionEvidence(); as evidence) {
+          <ex-tool-content [presentation]="evidence" [original]="request.input" />
+        }
+      </ex-approval-card>
+    }
+    @for (
+      request of store.state()?.question ? [store.state()!.question!] : [];
+      track request.id
+    ) {
+      <section class="question" #request tabindex="-1">
+        @if (request.message) {
+          <p>{{ request.message }}</p>
+        }
+        @if (request.url) {
+          <button exButton variant="secondary" (click)="openLink(request.url!)">
+            Open request
+          </button>
+        }
+        @if (questions().length) {
+          <ex-question-card
+            [questions]="questions()"
+            [disabled]="blocked()"
+            (submitted)="answer($event)"
+          />
+        }
+        <button
+          exButton
+          variant="ghost"
+          size="sm"
+          [disabled]="blocked()"
+          (click)="
+            store.perform({
+              type: 'answer',
+              id: request.id,
+              answers: {},
+              decline: true,
+            })
+          "
+        >
+          Decline
+        </button>
+      </section>
+    }
+  </div>
+  <div chatComposer>
+    @if (showWelcome()) {
+      <section class="start">
+        <h1>What should we work on?</h1>
+        @if (store.state()?.presets !== undefined) {
+          <div class="preset-heading">
+            @if (presetFlow.defaultPreset() && presetFlow.presets().length) {
+              <ex-dropdown
+                class="default-preset"
+                label="Default preset for new chats"
+                prefix="Default:"
+                appearance="quiet"
+                [options]="presetFlow.defaultOptions()"
+                [value]="presetFlow.defaultPreset()?.id || ''"
+                placeholder="Choose preset"
+                [disabled]="blocked() || store.loading()"
+                (changed)="presetFlow.setDefault($event)"
+              />
+            } @else {
+              <span>{{ presetFlow.presets().length ? 'Start with a preset' : 'Agent setup' }}</span>
+            }
+            <button
+              exButton
+              variant="ghost"
+              size="sm"
+              [disabled]="blocked() || presetFlow.presets().length >= 24"
+              [title]="
+                presetFlow.presets().length >= 24
+                  ? 'You can save up to 24 presets'
+                  : 'Save a starting configuration'
+              "
+              (click)="presetFlow.openPresetCreator()"
+            >
+              <ex-icon name="plus" [size]="13" />New preset
+            </button>
+          </div>
+          <ex-preset-picker
+            [presets]="presetFlow.visiblePresets()"
+            [value]="presetFlow.selectedPreset()?.id || 'custom'"
+            [disabled]="blocked() || store.loading()"
+            (selected)="presetFlow.selectPreset($event)"
+          />
+          @if (!presetFlow.presets().length) {
+            <p>Choose your agent below, or save your own starting point.</p>
+          }
+        } @else {
+          <p>Choose an agent below, then send your first message.</p>
+        }
+      </section>
+    }
+
+    @if (message()) {
+      <div class="feedback error" role="alert">
+        <span>{{ message() }}</span
+        ><button
+          exButton
+          variant="ghost"
+          size="sm"
+          [disabled]="store.loading()"
+          (click)="store.refresh()"
+        >
+          {{ store.uncertain() ? "Check delivery" : "Reconnect" }}
+        </button>
+      </div>
+    }
+    @if (store.uncertain()) {
+      <div class="feedback">
+        <span
+          >Check the conversation before sending again. Your draft is
+          retained.</span
+        >
+        @if (store.checked()) {
+          <button
+            exButton
+            variant="ghost"
+            size="sm"
+            (click)="store.acknowledgeUncertain()"
+          >
+            I checked · Keep draft
+          </button>
+        }
+      </div>
+    }
+    @if (store.state()?.queuePaused && store.queue().length) {
+      <div class="feedback">
+        <span>Queue paused</span
+        ><button
+          exButton
+          variant="secondary"
+          size="sm"
+          [disabled]="blocked()"
+          (click)="store.perform({ type: 'resume-queue' })"
+        >
+          Resume queue
+        </button>
+      </div>
+    }
+    @if (!archived() && !store.historical()) {
+      <ex-agent-usage-notice
+        [agent]="agent()"
+        [identity]="identity()"
+        (dismissed)="focusComposer()"
+      />
+    }
+    @if (attachments.error()) { <p class="feedback error" role="alert">{{ attachments.error() }}</p> }
+    <ex-composer
+      [clearOnSubmit]="false"
+      [draft]="store.draft()"
+      (draftChange)="store.setDraft($event)"
+      [running]="store.running()"
+      [disabled]="archived() || store.historical()"
+      [sending]="!!store.busy() || !!store.uncertain() || !store.state()"
+      [stoppable]="!!store.state()?.canInterrupt"
+      [mode]="store.state()?.plan ? 'plan' : 'code'"
+      [modeAvailable]="store.state()?.controls?.plan !== false"
+      [agent]="agent()"
+      [harnesses]="harnesses()"
+      [agentLocked]="store.state()?.providerLocked !== false"
+      [settingsDisabled]="
+        !!store.uncertain() || !store.state() || store.historical()
+      "
+      [settingsBusy]="!!store.busy() || store.loading()"
+      [showFork]="false"
+      [showSavePreset]="
+        store.state()?.presets !== undefined &&
+        store.state()?.providerLocked === false &&
+        presetFlow.presets().length < 24
+      "
+      (savePreset)="presetFlow.createPresetFromAgent($event)"
+      [reasoningAvailable]="!!store.state()?.controls?.reasoning"
+      [fastAvailable]="fastAvailable()"
+      [permission]="store.state()?.permissionMode || ''"
+      [permissionChoices]="permissions()"
+      (modeChanged)="
+        store.perform({ type: 'plan', enabled: $event === 'plan' })
+      "
+      (agentChanged)="agentChanged($event)"
+      (permissionChanged)="
+        store.perform({ type: 'permission-mode', mode: $event })
+      "
+      [showTools]="false"
+      [attachmentsEnabled]="!!store.state()?.attachments"
+      [attachments]="attachments.files()"
+      (filesAttached)="attachments.add($event)"
+      (attachmentRemoved)="attachments.remove($event); focusComposer()"
+      (attachmentRetry)="attachments.retry($event); focusComposer()"
+      [showDictation]="false"
+      [mentionsEnabled]="false"
+      [queueEditable]="false"
+      [queueReorderable]="false"
+      [queue]="store.queue()"
+      [placeholder]="
+        archived()
+          ? 'Restore this session to send messages'
+          : store.historical()
+            ? 'Return to latest messages to reply'
+            : store.running()
+              ? 'Add a follow-up · Alt Enter to steer'
+              : 'Message the agent…'
+      "
+      (submitted)="store.submit($event)"
+      (stop)="store.perform({ type: 'stop' })"
+      (focusLastMessage)="chat()?.focusLastMessage()"
+      (queueSteer)="queueAction('steer-queued', $event)"
+      (queueRemove)="queueAction('cancel-queued', $event)"
+    >
+    </ex-composer>
+  </div>
+</ex-chat>
+@if (contentId(); as id) {
+  <ex-session-chat-content
+    [selection]="selection()"
+    [itemId]="id"
+    (closed)="contentId.set(null)"
+    [part]="contentPart()"
+    (copyRequested)="copy($event)"
+  />
+}
+
+@for (
+  draft of presetFlow.presetDraft() ? [presetFlow.presetDraft()!] : [];
+  track draft.id
+) {
+  <ex-preset-creator
+    [initial]="draft.initial"
+    [harnesses]="draft.harnesses"
+    [harnessLocked]="!draft.catalogProvider"
+    [catalogProvider]="draft.catalogProvider"
+    [names]="presetFlow.presetNames()"
+    [defaultAvailable]="!!presetFlow.defaultPreset()"
+    [open]="presetFlow.creatorOpen()"
+    [busy]="presetFlow.presetSaving()"
+    [blocked]="!!store.uncertain() || draft.identity !== identity()"
+    [reasoningAvailable]="!!store.state()?.controls?.reasoning"
+    [fastAvailable]="!!store.state()?.controls?.fast"
+    [error]="presetFlow.presetError()"
+    (submitted)="presetFlow.savePreset($event)"
+    (closeRequested)="presetFlow.creatorOpen.set(false)"
+    (closed)="presetFlow.presetDraft.set(null)"
+  />
+}
+
+<ex-presence [show]="presetFlow.defaultNoticeOpen()">
+  @for (
+    undo of presetFlow.defaultUndo() ? [presetFlow.defaultUndo()!] : [];
+    track undo.afterRevision
+  ) {
+    <div class="preset-toast">
+      <ex-toast
+        [title]="'Default changed to ' + undo.label"
+        action="Undo"
+        [duration]="7000"
+        [dismissOnAction]="false"
+        [busy]="presetFlow.undoBusy() || blocked()"
+        (actionSelected)="presetFlow.undoDefault()"
+        (dismissed)="presetFlow.defaultNoticeOpen.set(false)"
+      />
+    </div>
+  }
+</ex-presence>

@@ -303,7 +303,25 @@ scrubbing. Drive their state explicitly, or record live behavior using CDP.
 No MP4 encoder is included; screenshot sequences are cheap, directly inspectable
 filmstrips. Screenshots capture web content, excluding native OS title-bar buttons.
 
+`scenarios/commit-panel-motion.mjs` runs against the connected workspace preview.
+It checks file-preview growth on the existing morph clock, late entry/exit
+frames, interrupted reopening with retained draft, focus return, and hidden
+visibility at animation cancellation before Angular removes the panel. It
+includes both themes and narrow reduced-motion states.
+
+`scenarios/commit-panel-preload.mjs` holds the connected preview's file check
+after its initial preload. It verifies recent-cache opening without a round trip,
+five-second expiry, immediately visible cached rows, counts
+and secret warnings, disabled submission until revalidation, retained typing,
+focus restoration and narrow reduced-motion layouts in both themes.
+
 ## Output and failures
+
+`scenarios/turn-navigation.mjs` checks the compact message rail with 1 and 10,000
+targets: bounded height/DOM, keyboard browsing and jumps, stable pointer targets,
+local wheel scrolling, both themes, narrow/short/reduced-motion layouts and real
+Chat selection. Run it against the component preview URL, with live reload
+disabled if the development server's blob worker is rejected by the capture CSP.
 
 Every checkpoint yields a numbered PNG plus `.json` (layout/state/focus) and
 `.a11y.json`. `index.html` compares images, links to snapshots, and shows errors;
@@ -399,6 +417,12 @@ stable header/title/filter/task-list geometry, and removal of other projects,
 with no selection and with another project selected,
 in both themes and a narrow reduced-motion layout.
 
+`scenarios/sidebar-project-switching.mjs` samples frame geometry from before
+trusted rail input through loading and cleanup. It checks exits and entries
+between distinct projects and All projects in both directions, retained shared
+rows, interrupted returns, stale reads and a narrow reduced-motion layout in
+both themes. Run against the connected-workspace preview.
+
 `scenarios/sidebar-session-cap.mjs` measures the replacement cap scroll in both
 themes: five-row opening and ten-row closing from before trusted input through
 cleanup, revealed selection DOM identity, muted title movement, selected-session
@@ -411,3 +435,84 @@ stable action/Ticker identities, cleanup and narrow reduced motion. Use
 `--url http://127.0.0.1:4310/connected-workspace`. It freezes the containing
 scroll and seeks only live label animation objects to avoid stale debugger IDs
 from timer-driven ticker cleanup elsewhere.
+
+`scenarios/session-chat.mjs` exercises the production session chat through its
+preview-only provider adapter: both themes, tool input/output, approvals and
+questions, keyboard sending, editable drafts while streaming, navigation retention,
+uncertain delivery, paged original content, bounded history and narrow reduced
+motion states. It uses the connected workspace at the same preview URL.
+
+`scenarios/session-opening-scroll.mjs` checks that switching and reopening long
+sessions starts at the end on the first rendered frame. It also checks reading
+position through refresh, both themes, narrow layouts and reduced motion using
+the connected workspace preview.
+
+`scenarios/chat-scroll-return.mjs` checks the floating return control without
+incoming content, scrubbed entrance frames, native smooth scrolling, keyboard
+focus handoff, interrupted exits and unread indicators on the arrow-only button.
+It covers both themes and narrow reduced-motion layouts against the same
+connected preview.
+
+`scenarios/session-harness.mjs` verifies the connected composer's pre-start harness
+choice, registry labels, keyboard operation, draft retention, model refresh,
+started-session locking and narrow layouts in both themes. Use the same preview
+URL as the connected workspace scenarios.
+
+`scenarios/session-reply-boundaries.mjs` verifies final replies outside collapsed
+work, output arriving before its user receipt, one current reply cursor, immediate
+first-send welcome removal, and narrow/reduced-motion rendering in both themes.
+
+
+`scenarios/session-presets.mjs` checks the connected blank-chat cards, one-command
+selection, Custom opening the creator with the current mix, cancellation without
+changing the chat, Option shortcuts from the composer, retained typing, duplicate names,
+the compact creator form, model/thinking controls, native form submission, Escape and
+focus restoration, both themes and narrow reduced-motion layouts. It also
+captures the modal opening at 0/140/280ms and verifies starting choices disappear
+after the first message. Use the connected workspace preview URL.
+
+`scenarios/session-preset-surfaces.mjs` covers the first-use empty catalog,
+stable card widths and selection on hover, visible Custom keyboard focus,
+independent dim/surface opening at 0/140/280ms, focus trapping/restoration,
+Escape during entry, duplicate-name validation, and a scrollable 420×360 dialog
+with its actions visible. It checks both themes and reduced motion against the
+same connected workspace preview.
+
+
+`scenarios/session-preset-default.mjs` verifies the quiet default selector and its
+keyboard menu, persisted default versus current selection, Undo, creator opt-in,
+retained drafts and new-session defaults in both themes. It includes narrow,
+reduced-motion checkpoints using the connected workspace preview backend, and
+checks Use this preset is initially selected when no default exists, respects
+cancellation, and becomes the default for a new session only after Create.
+
+
+`scenarios/preset-creator-harness.mjs` checks the creator Harness dropdown,
+keyboard choice, delayed/cancelled model reads, retry, per-harness draft recovery,
+Cancel isolation and applying a chosen harness only on Create. It covers both
+themes, narrow/compact reduced-motion layouts and retained message/name drafts.
+Run it against the connected-workspace preview URL.
+
+
+`scenarios/session-changes.mjs` exercises the production reply outcome and its
+connected Changes panel using preview-only backend data: file chips and counts,
+mouse/keyboard Review, exact file selection, wide/compact panels, 1,001-file
+summaries, bounded line paging, errors and narrow reduced-motion states in both
+themes. Run against the same preview URL, sequentially with native captures.
+
+
+`scenarios/session-tools.mjs` covers every normalized tool family through the
+connected production chat, plus generic/MCP nested results, running inputs, failed
+commands, shortened output and unknown completion. It checks parsed content
+separately from original data, keyboard disclosure, inert closing, proposed diffs,
+plan statuses, both themes and narrow reduced-motion layouts. Use
+`--url http://127.0.0.1:4310/connected-workspace` with the preview server.
+
+
+`scenarios/session-codex-patches.mjs` regresses actual Codex raw add/delete
+contents, unified updates, empty additions and rename-only receipts. It checks
+primary/full diff signs and token colors, whitespace/CRLF/blank lines, neutral
+headers versus literal triple-prefix hunk content, lazy Details, keyboard/inert
+behavior and both themes/narrow reduced motion. Use the connected-workspace
+preview URL. Its added-file fixture reproduces the Hello sentence that exposed
+the original raw-content-versus-patch bug.

@@ -18,6 +18,7 @@ import { safeMediaSource } from "./markdown-parser";
   templateUrl: "./markdown-recording.component.html",
   styleUrl: "./markdown-recording.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { "[class.compact]": "compact()" },
 })
 export class MarkdownRecordingComponent {
   readonly knownDuration = input(0);
@@ -27,6 +28,8 @@ export class MarkdownRecordingComponent {
   readonly source = input.required<string>();
   readonly poster = input("");
   readonly caption = input("");
+  readonly showCaption = input(true);
+  readonly compact = input(false);
   readonly width = input(640);
   readonly height = input(360);
   readonly marks = input<

@@ -1,3 +1,7 @@
+import type { SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
+export type * from './session-chat';
+import type { ChatAttachmentUpload, ChatAttachmentReceipt } from './chat-attachments';
+export type * from './chat-attachments';
 import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-commit';
 import type { WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
 export type * from './workspace';
@@ -28,6 +32,14 @@ export interface GitStatus {
 }
 
 export interface InvokeContracts {
+  'session-chat:upload': { args: [scopeId: string, input: ChatAttachmentUpload]; result: BackendResult<ChatAttachmentReceipt> };
+  'session-chat:catalog': { args: [scopeId: string, input: SessionChatCatalogRead]; result: BackendResult<SessionChatCatalog> };
+  'session-chat:changes': { args: [scopeId: string, input: SessionChatChangesRead]; result: BackendResult<SessionChatChangesPage> };
+  'session-chat:read': { args: [scopeId: string, input: SessionChatRead]; result: BackendResult<SessionChatPage> };
+  'session-chat:command': { args: [scopeId: string, input: SessionChatCommand]; result: BackendResult<SessionChatCommandReply> };
+  'session-chat:cancel': { args: [scopeId: string, requestId: string]; result: void };
+  'session-chat:media': { args: [scopeId: string, input: SessionChatMediaRead]; result: BackendResult<SessionChatMedia> };
+  'session-chat:content': { args: [scopeId: string, input: SessionChatContentRead]; result: BackendResult<SessionChatContent> };
   'machines:state': { args: []; result: MachineState };
   'machines:opened': { args: [selection: EnvironmentSelection]; result: MachineState };
   'machines:new-window': { args: [selection: EnvironmentSelection | null]; result: void };
@@ -110,6 +122,14 @@ export type Subscribe = <C extends keyof EventContracts>(
 
 /** The entire public preload API; raw IPC and Electron events stay private. */
 export interface ElevenexBridge {
+  sessionChatUpload(scopeId: string, input: ChatAttachmentUpload): Promise<BackendResult<ChatAttachmentReceipt>>;
+  sessionChatCatalog(scopeId: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>>;
+  sessionChatChanges(scopeId: string, input: SessionChatChangesRead): Promise<BackendResult<SessionChatChangesPage>>;
+  sessionChatRead(scopeId: string, input: SessionChatRead): Promise<BackendResult<SessionChatPage>>;
+  sessionChatCommand(scopeId: string, input: SessionChatCommand): Promise<BackendResult<SessionChatCommandReply>>;
+  sessionChatCancel(scopeId: string, requestId: string): Promise<void>;
+  sessionChatMedia(scopeId: string, input: SessionChatMediaRead): Promise<BackendResult<SessionChatMedia>>;
+  sessionChatContent(scopeId: string, input: SessionChatContentRead): Promise<BackendResult<SessionChatContent>>;
   readonly platform: DesktopPlatform;
   machineState(): Promise<MachineState>;
   editMachine(selection: EnvironmentSelection, input: MachineEditInput): Promise<MachineState>;

@@ -187,7 +187,12 @@ function gitSummary(value: unknown): WorkspaceGitSummary {
     deletions: count(raw['deletions']),
     conflicted: boolean(raw['conflicted']),
     ...(raw['commitPhase'] === undefined ? {} : { commitPhase: commitPhase(raw['commitPhase']) }),
+    ...(raw['changesRevision'] === undefined ? {} : { changesRevision: changesRevision(raw['changesRevision']) }),
   };
+}
+function changesRevision(value: unknown): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw invalidResponse();
+  return value;
 }
 function commitPhase(value: unknown): 'writing' | 'committing' | 'pushing' {
   if (value !== 'writing' && value !== 'committing' && value !== 'pushing') throw invalidResponse();

@@ -1,0 +1,83 @@
+@let block = view();
+<section class="tool-block" [attr.aria-label]="block.title || null">
+  @if (block.title) {
+    <h4>{{ block.title }}</h4>
+  }
+  @switch (block.kind) {
+    @case ("fields") {
+      <dl class="fields">
+        @for (field of block.fields; track $index) {
+          <div>
+            <dt>{{ field.label }}</dt>
+            <dd>{{ field.value }}</dd>
+          </div>
+        }
+      </dl>
+    }
+    @case ("code") {
+      <pre
+        tabindex="0"
+        [attr.aria-label]="block.title || 'Code'"
+      ><code>{{ block.text }}</code></pre>
+    }
+    @case ("text") {
+      <p class="tool-text">{{ block.text }}</p>
+    }
+    @case ("diff") {
+      <div
+        class="diff"
+        tabindex="0"
+        [attr.aria-label]="block.title || 'Proposed change'"
+      >
+        @for (line of block.removed; track $index) {
+          <div class="diff-line removed">
+            <span class="sign">−</span><code>{{ line || " " }}</code>
+          </div>
+        }
+        @for (line of block.added; track $index) {
+          <div class="diff-line added">
+            <span class="sign">+</span><code>{{ line || " " }}</code>
+          </div>
+        }
+      </div>
+    }
+    @case ("patch") {
+      <div
+        class="diff patch"
+        tabindex="0"
+        [attr.aria-label]="block.title || 'Patch'"
+      >
+        @for (line of block.lines; track $index) {
+          <div
+            class="diff-line"
+            [class.added]="line.tone === 'added'"
+            [class.removed]="line.tone === 'removed'"
+            [class.context]="line.tone === 'context'"
+          >
+            <code>{{ line.text || " " }}</code>
+          </div>
+        }
+      </div>
+    }
+    @case ("list") {
+      <ul class="tool-rows">
+        @for (row of block.items; track $index) {
+          <li>
+            @if (row.status) {
+              <ex-status-glyph
+                [status]="row.status === 'pending' ? 'queued' : row.status"
+                [size]="14"
+              />
+            }
+            <div>
+              <span class="row-label">{{ row.label }}</span>
+              @if (row.detail) {
+                <span class="row-detail">{{ row.detail }}</span>
+              }
+            </div>
+          </li>
+        }
+      </ul>
+    }
+  }
+</section>

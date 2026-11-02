@@ -160,12 +160,14 @@ export class CodexAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options?: { waitForCompletion?: boolean },
   ) {
     return this.runtimeService.submitPrompt(
       sessionId,
       prompt,
       titlePrompt,
       images,
+      options,
     );
   }
 

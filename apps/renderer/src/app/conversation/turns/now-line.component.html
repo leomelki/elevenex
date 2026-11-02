@@ -1,18 +1,30 @@
-<div class="row" role="status">
-  <ex-status-glyph status="running" [size]="14" /><span class="verb">{{
-    verb()
-  }}</span
-  ><span class="target" [class.mono]="step().kind !== 'think'">{{
-    step().title || step().detail
-  }}</span
-  ><span class="grow"></span><span class="meta">{{ step().meta }}</span>
-  @if (step().elapsed) {
-    <span class="time">{{ time() }}</span>
-  }
-</div>
+@if (step().presentation; as presentation) {
+  <ex-tool-step
+    [icon]="icon()"
+    [verb]="verb()"
+    [detail]="step().title || step().detail || ''"
+    [status]="step().status || 'running'"
+    [meta]="step().meta || ''"
+    [presentation]="presentation"
+    [output]="step().output || ''"
+  />
+} @else {
+  <div class="row" role="status">
+    <ex-status-glyph status="running" [size]="14" /><span class="verb">{{
+      verb()
+    }}</span
+    ><span class="target" [class.mono]="step().kind !== 'think'">{{
+      step().title || step().detail
+    }}</span
+    ><span class="grow"></span><span class="meta">{{ step().meta }}</span>
+    @if (step().elapsed) {
+      <span class="time">{{ time() }}</span>
+    }
+  </div>
+}
 @if (step().kind === "think" && step().text) {
   <div class="reasoning">
-    <ex-stream-text [text]="step().text || ''" [streaming]="true" />
+    <ex-stream-text [text]="step().text || ''" [streaming]="streaming()" />
   </div>
 }
 @if (step().progress !== undefined) {

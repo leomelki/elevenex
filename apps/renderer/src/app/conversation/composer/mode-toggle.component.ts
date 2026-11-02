@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   input,
   output,
 } from "@angular/core";
@@ -12,7 +13,7 @@ import type { ConversationMode } from "../conversation.models";
   template: `<ex-segmented
     label="Agent mode"
     size="sm"
-    [options]="options"
+    [options]="options()"
     [value]="value()"
     (changed)="select($event)"
   />`,
@@ -26,12 +27,26 @@ import type { ConversationMode } from "../conversation.models";
 })
 export class ModeToggleComponent {
   readonly value = input<ConversationMode>("code");
+  readonly disabled = input(false);
   readonly changed = output<ConversationMode>();
-  readonly options: readonly SegmentOption[] = [
-    { id: "plan", label: "Plan", icon: "plan", title: "Plan · Shift Tab" },
-    { id: "code", label: "Code", icon: "code", title: "Code · Shift Tab" },
-  ];
+  readonly options = computed<readonly SegmentOption[]>(() => [
+    {
+      id: "plan",
+      label: "Plan",
+      icon: "plan",
+      title: "Plan · Shift Tab",
+      disabled: this.disabled(),
+    },
+    {
+      id: "code",
+      label: "Code",
+      icon: "code",
+      title: "Code · Shift Tab",
+      disabled: this.disabled(),
+    },
+  ]);
   select(value: string): void {
-    if (value === "plan" || value === "code") this.changed.emit(value);
+    if (!this.disabled() && (value === "plan" || value === "code"))
+      this.changed.emit(value);
   }
 }

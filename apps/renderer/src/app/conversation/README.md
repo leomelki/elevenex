@@ -8,15 +8,46 @@ These standalone OnPush components consume renderer view models and emit typed i
 - `TurnComponent` owns only expanded evidence and a 700ms current-step hold. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
 - `WorkTimeline` groups adjacent successful discovery steps. Failed work stays visible. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
 - `ComposerComponent` owns the draft (`[(draft)]` is optional), mention query, local overlay state and file-drop feedback. It emits `ComposerSubmission` with `send`, `queue` or `steer`. Queue mutations, context additions/removals, recording and all agent settings are controlled by the owner. File attachment outputs contain user-selected browser `File` objects, which the integration must resolve through the permitted platform boundary.
+- `AgentPicker.openPicker()` opens from a feature-owned action; `closePicker()` synchronously restores its opener before handing off to a modal such as PresetCreator.
 - `AgentPicker` consumes supported harness/model/thinking capabilities, never inventing provider options. A session locks its harness by default. Unsupported thinking levels remain disabled.
 - `QuestionCard` owns unfinished answers and navigation. Listed single choices answer immediately; multiple questions emit one answer map only when complete. Custom answers remain selected as they are edited. Pass `answers` to render a resolved result. `ApprovalCard` remains controlled and emits the exact resolution intent.
+- `Chat.centerComposer` centers its existing composer region for an empty session, preserving the composer instance, draft and focus when the first turn starts. Keep it false when decisions or history need to be visible.
+- `PresetPicker` accepts stable optional `AgentConfig.id` identities, display-only `modelLabel`/`harnessLabel`, controlled `value`, `disabled` and `compact`. `AgentConfig.default` adds a quiet Default label, independently of the selected ring. Without IDs it retains name/model selection compatibility. Option+1–9 uses physical digit keys so macOS Option characters work; selection stays within the supplied window. The owner supplies at most six starting choices. The grid retains its card columns with one choice or an incomplete last row; selected Custom uses the same raised accent ring as saved choices. Hover preserves selection, and keyboard focus remains visible on both selected and dashed choices. New cards enter after first paint, and the grid height eases through the shared AutoHeight owner.
+- `PresetCreator` is a retained modal draft: provide a fixed `initial` agent and current `harnesses`, saved `names`, `open`, `busy`, `blocked`, `error` and thinking/fast capabilities. `defaultAvailable` adds a “Default for new chats” setting with Keep current / Use this preset choices; `initial.default` seeds Use this preset (otherwise Keep current); `submitted.default` requests the persisted default. It emits `submitted(AgentConfig)` with a trimmed `preset` name, `closeRequested` and `closed`. With `harnessLocked=false` and a `catalogProvider(harnessId, signal, refresh?)`, the form offers a Harness dropdown and loads scoped, session-independent model capabilities on demand. Switching preserves a local draft per harness; failed reads are retryable, and closing/superseding a read aborts it and discards late results. Model controls and Create stay disabled until the chosen catalog is ready. The form edits harness/model/thinking/fast locally, checks duplicate names; it never saves on its own. Retain it through exit, deactivate children as closing begins and create a fresh identity for each draft. `ModalLayer` owns focus and recession; AutoHeight owns error-driven size changes.
 - `SessionStart` selects the provided or first preset, offers task/branch rename intents, and accepts a projected composer. Workspace preparation never disables typing by itself. Readiness and deferred first-message delivery belong to the future session controller.
 - `SideThread` is reusable panel content. When hosted in an overlay, set `trapFocus` to true and own dismissal through `closed`; the CDK restores focus to its originating element. The host owns popover placement. Promote is an intent, never a hidden fork operation.
 - `JobBriefComponent` renders the supplied opening brief of a git-helper session. Inputs are `title`, `time`, and `id`; project the brief as text with inline `code`. It never inserts messages in sessions or starts a helper. The owner supplies what happened, what judgement is needed, and when to stop.
 
 ## Scrolling and performance
 
+`TurnNav` shows the right-edge message selector from the first turn, regardless
+of session length. Empty sessions have no navigation targets and hide it.
+The rail is a small scrollable window: at most nine 24px targets, further capped
+at 40% of the chat height. CDK virtual scrolling keeps only a small buffered set
+of markers mounted, even with thousands of supplied turns. Faded edges indicate
+more history; hovering or focusing reveals a position count and scrollbar, and
+marker tooltips include the prompt, ordinal and status. It follows the current
+message when idle, but holds its position during pointer/keyboard browsing.
+Changing the history window releases that hold. Arrow keys, Page Up/Down and
+Home/End browse without moving the chat; Enter/Space selects. There is one Tab
+stop, with focus retained on the viewport while virtual rows change. Resize and
+range subscriptions are released with the rail. The `/conversation` preview has
+1/9/1,000/10,000-message controls for this behavior.
+
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
+
+`ChatScroll.scrollToEnd(behavior)` defaults to smooth scrolling and accepts
+`"instant"` for opening history before paint. Reduced motion always jumps directly.
+The connected session owner jumps once after each selected session has loaded;
+subsequent updates preserve the reader's position when they scroll up.
+The floating arrow-only return control appears whenever the reader is more than
+40px from the end, even without incoming content. Growth adds a small unread dot;
+the tooltip and accessible label describe its action. It stays present during
+native smooth scrolling, becomes inert
+as it fades out at the end, and hands keyboard focus to the transcript on
+activation. Its reversible opacity/transform transitions use the
+shared motion tokens; reduced motion settles immediately. Observing both the
+content and viewport also reconciles the control after layout changes.
 
 ## Markdown and security
 
@@ -29,3 +60,209 @@ The production desktop forbids frame embedding and remote media. HTML documents 
 ## Motion and accessibility
 
 Components use the supplied design tokens, native controls, CDK overlays/focus traps and shared folds/height motion. Existing history renders without entry motion; `Message.isNew` explicitly opts a newly sent message into arrival motion. `StreamText` preserves existing chunks and animates only appended live content. Respect reduced motion throughout. Keyboard shortcuts are scoped to the composer, focused message, decision card or preset picker; there are no document-level listeners.
+
+## Connected adapter and capability controls
+
+The shared agent settings render only the selected model's advertised thinking
+levels, preserving their IDs and catalog progression. There are no placeholder
+Off/Max choices for models that do not support them. Missing or empty metadata
+hides the thinking row. Live settings and the preset creator use the same control;
+busy/loading states disable every advertised choice.
+
+The production [session chat adapter](../session-chat/README.md) owns transport,
+selection, drafts, decisions and feedback. `Chat` accepts a `chatHistory` slot,
+controlled `actions`, `stoppable`, `retryable`, and `copiedCode`. A
+`ChatExchange.isNew` opts only fresh prompts into motion; `overflow` entries emit
+`contentRequested` to the bounded original-content reader. Empty prompts support
+partial history windows without inventing user text. `Turn` forwards the action
+allowlist and retry capability, including keyboard shortcuts. Unknown duration
+shows Worked/Working without an invented zero-second measurement.
+
+`Composer.clearOnSubmit=false` lets a controlled owner clear the draft only after
+accepting an intent, avoiding a child reset overtaking failure recovery.
+`Composer.sending` disables submission/queue operations while keeping the draft
+editable; `stoppable` controls stop availability. `showSettings`, `showTools`,
+`showDictation` and `mentionsEnabled` default to true for existing consumers.
+The `composerSettings` slot accepts integration-owned capability controls.
+`queueEditable`/`queueReorderable` hide unsupported queue mutations.
+`ComposerQueue` exposes the corresponding `editable`, `reorderable` and
+`disabled` inputs. `ApprovalCard.disabled` guards decisions and shortcuts;
+`allowAlways=false` omits unsupported permanent approval. `QuestionCard.disabled`
+blocks submissions and disables its native answer fieldset while a reply is pending.
+
+`ChatExchange.streaming` can control the reply cursor independently of a turn's
+live tool activity; omitted values retain the status-based default for existing
+consumers. Markdown gives the cursor to the current unfinished code block or to
+prose, including nested lists/quotes. `NowLine.streaming=false` keeps a held
+thinking line visible without keeping its cursor alive during the handoff to
+assistant text.
+
+`ChatExchange.answerBeforeStepId` (also accepted by `Turn`) places the latest
+reply before that work step. Omit it when all work precedes the answer. Both
+timeline sections follow the same work disclosure; individual tools retain
+their output disclosures. This keeps commentary before tools that follow it,
+including during streaming, while keeping the latest answer visible on collapse.
+Only the last preceding running step uses `NowLine`; overlapping running tools
+stay in their original timeline positions. Hover/focus facts include completed
+edits, searches, listings, web requests and generic tools as well as reads and
+commands, and remain available during live work.
+
+
+## Connected composer controls
+
+`Composer` keeps one toolbar row at narrow widths using its named `composer`
+container. Thinking metadata, mode labels, then permission labels yield space;
+accessible names remain. `settingsDisabled` prevents editing; `settingsBusy`
+disables choices while keeping the agent popover mounted during reconciliation.
+Neither locks the draft. `modeAvailable`, `agentLocked`, `showFork`,
+`showSavePreset`, `reasoningAvailable`, `fastAvailable` and `canCompact` gate
+operations supplied by the owner. `permissionChoices` accepts bounded,
+harness-native IDs, labels and descriptions. Omission retains the design defaults.
+
+### AgentPicker: reference and ownership
+
+The standalone ZIP's `project/components/bundle.js` (`AgentPicker`, `UsageBlock`,
+`UsageCard`, `PlanMeter`) and its CSS define the actual visual reference. The
+[AgentPicker specification](../../../../../docs/design-system/project/components/AgentPicker/README.md)
+and [usage specification](../../../../../docs/design-system/project/components/PlanMeter/README.md)
+describe its interaction. A dedicated `/agent-picker` preview supplies identical
+reference values, optional context/plan data, editable harnesses and busy states.
+
+- `AgentPicker` owns the chip, 400ms pointer/focus disclosure, CDK portals,
+  positioning, focus trapping/restoration and their lifetimes. It preserves
+  `open` and `openPicker()` for the composer shortcut. Its settings portal stays
+  mounted through exit, immediately becomes inert and releases its backdrop's
+  pointer handling. Reopening interrupts that exit. Nested model-menu Escape
+  closes that menu first. Focus initially reads the settings heading and returns
+  to the opener on close. Opening settings consumes the current usage hover/focus;
+  restored focus does not reopen usage until a fresh hover or focus interaction.
+  Harness, model, thinking and fast-mode changes keep
+  the settings menu open so users can finish adjusting the agent.
+  A compaction intent focuses stable content before its
+  initiating button can disappear. When no settings are enabled, Tab/Shift Tab
+  stay on the heading and Escape remains available through the whole owned pane.
+- Internal `AgentSettings` owns capability-derived choices and controlled config
+  intents. The source's fixed label column, harness mark/segment, compact model
+  dropdown, thinking segment, fast switch/hint and separated footer are retained.
+  Busy state keeps those controls and their data mounted. Unsupported thinking
+  choices remain disabled. Provider-specific variants are appended using their
+  exact IDs. An absent thinking value stays unselected rather than claiming Off.
+- Internal `AgentUsage` renders the same context/plan block in the menu and the
+  read-only hover card. Internal `AgentPlanMeter` shows the tighter account limit
+  as a clock ring. `AgentConfig.tokens` is display text. Optional `plan` follows
+  the supplied `{ win, week, resetWin, resetWeek, name, tier }` API: fractions are
+  **remaining**, independently of the session's context fraction **used**.
+  A supplied `windows` list takes precedence over that shorthand and carries
+  actual provider IDs, labels, remaining fractions, optional `weekly`, `reset`
+  and compact `resetShort` text. A weekly-only snapshot never invents a 5-hour
+  allowance. Optional `exhausted` also reflects a provider-declared limit.
+  Missing plan data is omitted. No account catalog, provider or transport reads
+  originate in these components.
+- Internal `PopoverPresence` retains the two portaled surfaces and their
+  readonly data snapshots through their token-based exit and owns reduced-motion subscriptions/fallback timers. It
+  exists because removing a CDK portal immediately would bypass child leave
+  animation. The owner cancels hover timers, releases focus and lets CDK dispose
+  its traps, portals and listeners on destruction. No component-family helper is
+  added to the public barrel solely for this implementation.
+
+`AgentConfig.thinking` and `AgentModel.thinking` accept provider-reported strings.
+Model labels come from `AgentModel.label`. Settings emit a config intent, never a
+platform operation. Fork, Save as preset and Compact emit their existing typed
+intents only when enabled by the integrating owner. The connected session owner
+supplies live context, token usage and provider-reported subscription limits.
+`AgentUsageNotice` accepts `agent` and a session `identity`; it chooses one line
+in order: exhausted plan, critical context, low plan, high context. Only the low
+plan/high context lines can be dismissed; `dismissed` lets the owner restore focus.
+It does not schedule prompts or change an agent's execution. Unimplemented platform actions
+remain hidden there. Preview actions are local examples, outside the product graph.
+
+The reference's content-box dimensions are translated explicitly to the renderer's
+global border-box model: the standard menu is 368px overall (360px plus two 4px
+insets), rows are 36px including padding, the label column is 84px, the footer is
+24px, and the hover card is 288px overall. Under a constrained viewport the portal
+stays confined, long choice tracks scroll horizontally, and the footer can wrap.
+The original tokens remain authoritative. Menu entry uses `dur-glide/ease-glide`;
+exit uses `dur-fast/ease-in`; reduced motion removes movement.
+
+The locked CDK version treats numeric zero as an omitted pixel minimum. Popover
+minimum dimensions use CSS `"0px"` strings so flexible connected positioning can
+confine the source layout to a narrow viewport without a custom position engine.
+Harness changes clear transient usage metadata; each harness owns its account and
+context. Closing surfaces retain the prior snapshot until exit completes.
+
+
+`ChatExchange.filesTotal` (and `Turn`/`OutcomeBar.filesTotal`) can carry the full
+count when `files` is a bounded metadata window. Overflow uses that total;
+work facts omit partial aggregate line counts. `Chat.fileReview` carries
+`{ id, path }` for file chips and Markdown file links, so connected owners can
+open the correct reply even when several replies edit the same file. The existing
+`openFile` path output remains available for other consumers.
+
+
+`WorkStep.presentation` accepts a readonly `ToolPresentation` with a short summary,
+optional meta/notice and bounded fields, code, text, diff, patch or list blocks.
+`ToolStep` and live `NowLine` render these through `ToolContentComponent`; the
+legacy string output API remains supported. Optional `preview` blocks supply the
+concise primary result; `previewNotice` carries an actual omitted line/item count.
+Full `blocks` mount only when the native Details disclosure opens. Original data
+is a second, nested disclosure. The internal `ToolBlock` renderer is shared by
+those two views and keeps all content inert. `ToolContent` is also available for
+approval evidence using `[presentation]` and optional `[original]`. Original text
+is mounted only when its nested native disclosure opens. Closing Details releases
+its full parsed and original content while retaining the short primary result. All tool data stays inert text;
+these components never fetch URLs or load returned images. The supplying adapter
+owns parsing and limits. Closed Fold content remains inert, and running-to-result
+updates retain the tool disclosure. The `/connected-workspace` tools preview and
+`session-tools.mjs` capture scenario exercise every normalized family.
+`WorkStep.status='unknown'` means no completion receipt was received: it uses a
+neutral clock, stays outside discovery groups and completed-work facts, and does
+not imply failure or success. A live tool's focus returns to the turn's work
+control before replacement/completion hides it; each new tool starts with its
+own disclosure state.
+
+Image `MarkdownAsset` values may carry `loading` or `error` for an asynchronous
+owner-supplied resolver. Media shows those states without claiming that a file is
+outside the workspace. Failed browser decoding also has a readable status.
+Zero/unknown image dimensions omit the native width/height attributes until the
+image's intrinsic dimensions are available.
+
+Image previews retain their source and thumbnail origin through a shared
+`ModalLayer` entry/exit. The viewer grows from the thumbnail and returns focus
+after closing. Escape, the close control, the outer backdrop and empty canvas
+all dismiss it; image and toolbar interaction stay inside.
+Initial focus lands on the labelled viewer, so opening it does not summon a
+control tooltip. Tab reaches Close first; deliberate control focus and hover
+retain their tooltips, which disappear on blur or pointer exit.
+The header shows only its title and the shared icon-only close control; the
+centered zoom readout also resets to Fit, without duplicate controls or metadata.
+Zoom controls and `+`/`−`/`0` support up to 300%, with pinch zoom and
+drag/arrow-key/two-finger panning.
+Each viewer owns its resize observer and non-passive wheel listener. Reduced
+motion uses the same immediate modal boundary without movement. The Conversation
+preview includes landscape, portrait and small-image examples.
+
+
+### File attachments
+
+`Composer.attachmentsEnabled` adds a dedicated file input/paperclip independent of
+`showTools`. `attachments` is a readonly `ConversationAttachment[]`; removals and
+retries emit IDs. `filesAttached` handles picker, drop and paste selections.
+The owner supplies uploading/ready/error state and progress; unfinished uploads
+block sending. Ready attachments permit an empty text submission. `ChatExchange`
+accepts the same attachment view models, rendered by `AttachmentsComponent` with
+the existing confined asset resolver. This component emits `removed`, `retry` and
+`copyPath`; it does not read or upload files. Draft previews must be raster data
+sources supplied by the trusted feature owner. The connected owner handles
+limits, retention, selection changes, send failures and uncertain delivery.
+`MarkdownMedia.showCaption=false` omits a repeated caption when a surrounding
+attachment card already labels the media; viewer naming remains available.
+
+
+Attachment cards keep filenames once, omit redundant type/ready labels, and show
+size or upload progress inline. Draft chips wrap in a bounded tray; sent media
+uses compact, fixed-height previews with the message text above them. File cards
+fit their contents. `MarkdownMedia.compact` opts into this thumbnail presentation
+without changing the full-size image viewer. Its compact video adapter passes
+`MarkdownRecording.compact` and uses native playback controls; ordinary Markdown
+keeps the existing recording toolbar. `MarkdownRecording.showCaption` only controls
+the visible caption, independently of the video's accessible name.

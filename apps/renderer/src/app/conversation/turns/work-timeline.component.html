@@ -32,6 +32,8 @@
                 [detail]="step.detail || ''"
                 [status]="step.status || 'done'"
                 [output]="step.output || ''"
+                [presentation]="step.presentation"
+                [meta]="step.meta || ''"
               />
             }</div
         ></ex-fold>
@@ -67,6 +69,7 @@
                 ? entry.text || ''
                 : entry.output || entry.hunk?.join('\n') || ''
             "
+            [presentation]="entry.presentation"
           />
         </div>
       }

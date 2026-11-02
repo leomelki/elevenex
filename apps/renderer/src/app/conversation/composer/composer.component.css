@@ -4,6 +4,7 @@
   max-width: var(--chat-max);
 }
 .composer {
+  container: composer / inline-size;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -17,8 +18,30 @@
     inset 0 0 0 1px var(--line);
   transition: box-shadow var(--dur-fast) var(--ease-out);
 }
+.input-height {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.contents {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.contents ex-composer-queue:empty {
+  display: none;
+}
+.send {
+  height: var(--control-height);
+}
+.send span {
+  font-size: var(--text-caption-size);
+}
 .composer:focus-within {
-  box-shadow: var(--focus-ring);
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px var(--line-strong);
 }
 textarea {
   width: 100%;
@@ -97,5 +120,10 @@ textarea::placeholder {
 @media (prefers-reduced-motion: reduce) {
   .composer {
     transition: none;
+  }
+}
+@container composer (max-width: 340px) {
+  .send span {
+    display: none;
   }
 }

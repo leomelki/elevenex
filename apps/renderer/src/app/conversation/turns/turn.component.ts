@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  type OnChanges,
   afterRenderEffect,
   computed,
   effect,
@@ -49,12 +50,14 @@ import { formatDuration, isProse, summarizeWork } from "./work-summary";
     "(keydown)": "onKey($event)",
   },
 })
-export class TurnComponent {
+export class TurnComponent implements OnChanges {
   readonly status = input<TurnStatus>("done");
   readonly steps = input<readonly WorkStep[]>([]);
+  readonly answerBeforeStepId = input<string>();
   readonly duration = input(0);
   readonly elapsed = input(0);
   readonly files = input<readonly ChangedFile[]>([]);
+  readonly filesTotal = input<number>();
   readonly error = input("");
   readonly open = input(false);
   readonly maxVisible = input(4);
@@ -62,6 +65,12 @@ export class TurnComponent {
   readonly mark = input("EX");
   readonly time = input("");
   readonly stoppable = input(true);
+  readonly retryable = input(true);
+  readonly actions = input<readonly TurnAction[]>([
+    "side-chat",
+    "fork",
+    "copy",
+  ]);
   readonly stop = output<void>();
   readonly retry = output<void>();
   readonly action = output<TurnAction>();
@@ -71,27 +80,58 @@ export class TurnComponent {
   readonly expanded = computed(
     () => this.toggled() ?? (this.status() === "live" || this.open()),
   );
-  readonly activeStep = computed(() =>
-    this.status() === "live"
-      ? ([...this.steps()]
-          .reverse()
-          .find((step) => step.status === "running") ?? null)
-      : null,
+  private readonly answerBoundary = computed(() => {
+    const boundary = this.answerBeforeStepId();
+    const index = this.steps().findIndex((step) => step.id === boundary);
+    return index < 0 ? this.steps().length : index;
+  });
+  readonly precedingSteps = computed(() =>
+    this.steps().slice(0, this.answerBoundary()),
   );
+  readonly followingSteps = computed(() =>
+    this.steps().slice(this.answerBoundary()),
+  );
+  readonly activeStep = computed(() => {
+    const last = this.precedingSteps().at(-1);
+    return this.status() === "live" && last?.status === "running" ? last : null;
+  });
   readonly heldStep = signal<WorkStep | null>(null);
-  readonly completedSteps = computed(() =>
-    this.steps().filter((step) => step.status !== "running"),
+  readonly timelineSteps = computed(() =>
+    this.precedingSteps().filter((step) => step.id !== this.activeStep()?.id),
   );
-  readonly workLabel = computed(
-    () =>
-      `${this.status() === "live" ? "Working" : this.status() === "stopped" ? "Stopped after" : this.status() === "failed" ? "Failed after" : "Worked"} ${formatDuration(this.status() === "live" ? this.elapsed() : this.duration())}`,
-  );
+  readonly workLabel = computed(() => {
+    const seconds = this.status() === "live" ? this.elapsed() : this.duration();
+    const label =
+      this.status() === "live"
+        ? "Working"
+        : this.status() === "stopped"
+          ? "Stopped"
+          : this.status() === "failed"
+            ? "Failed"
+            : "Worked";
+    return seconds > 0
+      ? `${label}${this.status() === "stopped" || this.status() === "failed" ? " after" : ""} ${formatDuration(seconds)}`
+      : label;
+  });
   readonly stepCount = computed(
     () => this.steps().filter((step) => !isProse(step)).length,
   );
-  readonly facts = computed(() => summarizeWork(this.steps(), this.files()));
+  readonly facts = computed(() =>
+    summarizeWork(
+      this.steps().filter((step) => step.status !== "running"),
+      this.files(),
+      this.filesTotal() ?? this.files().length,
+    ),
+  );
   protected readonly factsElement =
     viewChild<ElementRef<HTMLElement>>("factsRegion");
+  private readonly workButton =
+    viewChild<ElementRef<HTMLButtonElement>>("workButton");
+  private readonly nowRegion = viewChild<unknown, ElementRef<HTMLElement>>(
+    "nowRegion",
+    { read: ElementRef },
+  );
+  private currentStepId: string | undefined;
   protected readonly factsClipped = signal(false);
   constructor() {
     afterRenderEffect((cleanup) => {
@@ -119,6 +159,18 @@ export class TurnComponent {
       cleanup(() => clearTimeout(timer));
     });
   }
+  ngOnChanges(): void {
+    // Run before the template updates: hiding or replacing a focused live tool
+    // would otherwise move focus to the document and hide it from accessibility.
+    const region = this.nowRegion()?.nativeElement;
+    const nextId = this.activeStep()?.id;
+    if (
+      region?.contains(region.ownerDocument.activeElement) &&
+      nextId !== this.currentStepId
+    )
+      this.workButton()?.nativeElement.focus();
+    this.currentStepId = nextId;
+  }
   onKey(event: KeyboardEvent): void {
     if (
       event.target !== event.currentTarget ||
@@ -135,7 +187,7 @@ export class TurnComponent {
           : event.key.toLowerCase() === "c"
             ? "copy"
             : undefined;
-    if (action) {
+    if (action && this.actions().includes(action)) {
       event.preventDefault();
       this.action.emit(action);
     }

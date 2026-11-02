@@ -9,15 +9,22 @@ import {
   viewChild,
   type ElementRef,
 } from "@angular/core";
-import { ButtonComponent, IconButtonComponent, IconComponent } from "../../ui";
+import {
+  AutoHeightDirective,
+  ButtonComponent,
+  IconButtonComponent,
+  IconComponent,
+  PresenceComponent,
+} from "../../ui";
 import type {
   AgentConfig,
   AgentHarness,
   ComposerSubmission,
   ConversationMention,
+  ConversationAttachment,
   ConversationMode,
   McpServer,
-  PermissionLevel,
+  PermissionChoice,
   QueuedMessage,
   RecordingState,
 } from "../conversation.models";
@@ -27,11 +34,14 @@ import { MentionComponent } from "./mention.component";
 import { MentionMenuComponent } from "./mention-menu.component";
 import { ModeToggleComponent } from "./mode-toggle.component";
 import { PermissionPickerComponent } from "./permission-picker.component";
+import { AttachmentsComponent } from "../chat/attachments.component";
 import { ToolsMenuComponent } from "./tools-menu.component";
 @Component({
   selector: "ex-composer",
   imports: [
     OverlayModule,
+    AutoHeightDirective,
+    PresenceComponent,
     ButtonComponent,
     IconButtonComponent,
     IconComponent,
@@ -42,6 +52,7 @@ import { ToolsMenuComponent } from "./tools-menu.component";
     ModeToggleComponent,
     PermissionPickerComponent,
     ToolsMenuComponent,
+    AttachmentsComponent,
   ],
   templateUrl: "./composer.component.html",
   styleUrl: "./composer.component.css",
@@ -59,13 +70,55 @@ export class ComposerComponent {
   readonly agent = input<AgentConfig>();
   readonly harnesses = input<readonly AgentHarness[]>([]);
   readonly hideAgent = input(false);
-  readonly permission = input<PermissionLevel>("ask");
+  readonly agentLocked = input(true);
+  readonly settingsDisabled = input(false);
+  readonly settingsBusy = input(false);
+  readonly modeAvailable = input(true);
+  readonly showFork = input(true);
+  readonly showSavePreset = input(true);
+  readonly reasoningAvailable = input(true);
+  readonly fastAvailable = input(true);
+  readonly canCompact = input(false);
+  readonly showSettings = input(true);
+  readonly showTools = input(true);
+  readonly attachmentsEnabled = input(false);
+  readonly attachments = input<readonly ConversationAttachment[]>([]);
+  readonly attachmentRemoved = output<string>();
+  readonly attachmentRetry = output<string>();
+  readonly fileInput = viewChild<ElementRef<HTMLInputElement>>("fileInput");
+  chooseFiles(): void {
+    if (!this.disabled() && !this.sending())
+      this.fileInput()?.nativeElement.click();
+  }
+  filesChosen(event: Event): void {
+    if (!(event.target instanceof HTMLInputElement)) return;
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length && !this.disabled() && !this.sending())
+      this.filesAttached.emit(files);
+    this.textarea()?.nativeElement.focus();
+  }
+  canSend(): boolean {
+    return (
+      (!!this.draft().trim() || !!this.attachments().length) &&
+      this.attachments().every((file) => file.status === "ready")
+    );
+  }
+  readonly showDictation = input(true);
+  readonly mentionsEnabled = input(true);
+  readonly queueEditable = input(true);
+  readonly queueReorderable = input(true);
+  readonly permission = input<string>("ask");
+  readonly permissionChoices = input<readonly PermissionChoice[]>();
   readonly servers = input<readonly McpServer[]>([]);
   readonly context = input<readonly ConversationMention[]>([]);
   readonly queue = input<readonly QueuedMessage[]>([]);
   readonly mentionItems = input<readonly ConversationMention[]>([]);
   readonly running = input(false);
   readonly disabled = input(false);
+  readonly sending = input(false);
+  readonly clearOnSubmit = input(true);
+  readonly stoppable = input(true);
   readonly recording = input<RecordingState | false>(false);
   readonly placeholder = input("Ask anything, or @ to mention");
   readonly dropping = signal(false);
@@ -74,7 +127,7 @@ export class ComposerComponent {
   readonly stop = output<void>();
   readonly modeChanged = output<ConversationMode>();
   readonly agentChanged = output<AgentConfig>();
-  readonly permissionChanged = output<PermissionLevel>();
+  readonly permissionChanged = output<string>();
   readonly attach = output<void>();
   readonly filesAttached = output<readonly File[]>();
   readonly mentionInserted = output<ConversationMention>();
@@ -91,6 +144,7 @@ export class ComposerComponent {
   readonly focusLastMessage = output<void>();
   readonly forkAgent = output<void>();
   readonly savePreset = output<AgentConfig>();
+  readonly compactRequested = output<void>();
   readonly textarea = viewChild<ElementRef<HTMLTextAreaElement>>("textarea");
   readonly agentPicker = viewChild(AgentPickerComponent);
   readonly mentions = viewChild(MentionMenuComponent);
@@ -99,18 +153,25 @@ export class ComposerComponent {
     this.draft.set(event.target.value);
     const before = event.target.value.slice(0, event.target.selectionStart);
     const match = /(?:^|\s)@([^\s@]*)$/.exec(before);
-    this.mentionQuery.set(match?.[1] ?? null);
+    this.mentionQuery.set(this.mentionsEnabled() ? (match?.[1] ?? null) : null);
   }
   send(steer = false): void {
     const text = this.draft().trim();
-    if (!text || this.disabled() || this.recording()) return;
+    if (
+      !this.canSend() ||
+      this.disabled() ||
+      this.sending() ||
+      this.recording()
+    )
+      return;
     this.submitted.emit({
       text,
       intent: this.running() ? (steer ? "steer" : "queue") : "send",
       context: this.context(),
     });
-    this.draft.set("");
+    if (this.clearOnSubmit()) this.draft.set("");
     this.mentionQuery.set(null);
+    this.textarea()?.nativeElement.focus({ preventScroll: true });
   }
   insertMention(mention: ConversationMention): void {
     const element = this.textarea()?.nativeElement;
@@ -145,22 +206,38 @@ export class ComposerComponent {
       this.mentions()?.onKey(event);
       return;
     }
-    if (event.shiftKey && event.key === "Tab") {
+    if (
+      this.showSettings() &&
+      this.modeAvailable() &&
+      !this.settingsDisabled() &&
+      !this.settingsBusy() &&
+      event.shiftKey &&
+      event.key === "Tab"
+    ) {
       event.preventDefault();
       this.modeChanged.emit(this.mode() === "plan" ? "code" : "plan");
       return;
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
       event.preventDefault();
-      this.agentPicker()?.open.set(true);
+      this.agentPicker()?.openPicker();
       return;
     }
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "u") {
+    if (
+      (this.showTools() || this.attachmentsEnabled()) &&
+      (event.metaKey || event.ctrlKey) &&
+      event.key.toLowerCase() === "u"
+    ) {
       event.preventDefault();
-      this.attach.emit();
+      if (this.attachmentsEnabled()) this.chooseFiles();
+      else this.attach.emit();
       return;
     }
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d") {
+    if (
+      this.showDictation() &&
+      (event.metaKey || event.ctrlKey) &&
+      event.key.toLowerCase() === "d"
+    ) {
       event.preventDefault();
       this.dictate.emit();
       return;
@@ -168,7 +245,8 @@ export class ComposerComponent {
     if (
       (event.metaKey || event.ctrlKey) &&
       event.key === "." &&
-      this.running()
+      this.running() &&
+      this.stoppable()
     ) {
       event.preventDefault();
       this.stop.emit();
@@ -178,13 +256,23 @@ export class ComposerComponent {
       event.preventDefault();
       this.send(event.altKey);
     }
-    if (event.key === "ArrowUp" && !this.draft()) {
+    if (
+      event.key === "ArrowUp" &&
+      !this.draft() &&
+      !this.attachments().length
+    ) {
       event.preventDefault();
       this.focusLastMessage.emit();
     }
   }
   dragOver(event: DragEvent): void {
-    if (!event.dataTransfer?.types.includes("Files") || this.disabled()) return;
+    if (
+      (!this.showTools() && !this.attachmentsEnabled()) ||
+      !event.dataTransfer?.types.includes("Files") ||
+      this.disabled() ||
+      this.sending()
+    )
+      return;
     event.preventDefault();
     this.dropping.set(true);
     event.dataTransfer.dropEffect = "copy";
@@ -200,12 +288,26 @@ export class ComposerComponent {
   }
   drop(event: DragEvent): void {
     this.dropping.set(false);
-    if (!event.dataTransfer?.files.length || this.disabled()) return;
+    if (
+      (!this.showTools() && !this.attachmentsEnabled()) ||
+      !event.dataTransfer?.files.length ||
+      this.disabled() ||
+      this.sending()
+    )
+      return;
     event.preventDefault();
+    const entries = Array.from(event.dataTransfer.items ?? []);
+    if (entries.some((item) => item.webkitGetAsEntry?.()?.isDirectory)) return;
     this.filesAttached.emit(Array.from(event.dataTransfer.files));
   }
   paste(event: ClipboardEvent): void {
-    if (!event.clipboardData?.files.length || this.disabled()) return;
+    if (
+      (!this.showTools() && !this.attachmentsEnabled()) ||
+      !event.clipboardData?.files.length ||
+      this.disabled() ||
+      this.sending()
+    )
+      return;
     event.preventDefault();
     this.filesAttached.emit(Array.from(event.clipboardData.files));
   }

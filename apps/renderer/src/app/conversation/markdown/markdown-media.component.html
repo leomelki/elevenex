@@ -1,43 +1,34 @@
 @if (asset(); as file) {
   @switch (file.kind) {
     @case ("image") {
-      @if (safeSource()) {
+      @if (file.loading) {
+        <p role="status">Loading image…</p>
+      } @else if (file.error) {
+        <p role="status">{{ file.error }}</p>
+      } @else if (safeSource() && failedSource() === safeSource()) {
+        <p role="status">Could not display this image.</p>
+      } @else if (safeSource()) {
         <figure>
           <button
+            #imageTrigger
             type="button"
             class="image"
-            (click)="showViewer()"
+            (click)="showViewer(imageTrigger)"
             [attr.aria-label]="'Enlarge ' + (caption() || path())"
           >
             <img
               [src]="safeSource()"
               [alt]="caption()"
-              [width]="file.w"
-              [height]="file.h"
+              [attr.width]="file.w || null"
+              [attr.height]="file.h || null"
               loading="lazy"
+              (error)="failedSource.set(safeSource())"
             />
           </button>
-          <figcaption>{{ caption() }}</figcaption>
+          @if (showCaption()) {
+            <figcaption>{{ caption() }}</figcaption>
+          }
         </figure>
-        <dialog
-          #viewer
-          [attr.aria-label]="caption() || path()"
-          (close)="viewerOpen.set(false)"
-        >
-          <div
-            [cdkTrapFocus]="viewerOpen()"
-            [cdkTrapFocusAutoCapture]="viewerOpen()"
-          >
-            <button
-              type="button"
-              class="close"
-              (click)="closeViewer()"
-              aria-label="Close image"
-            >
-              ×</button
-            ><img [src]="safeSource()" [alt]="caption()" />
-          </div>
-        </dialog>
       } @else {
         <button type="button" (click)="openFile.emit(path())">
           Open {{ caption() || path() }}
@@ -45,16 +36,24 @@
       }
     }
     @case ("video") {
-      <ex-markdown-recording
-        [source]="file.src || ''"
-        [knownDuration]="file.dur || 0"
-        [poster]="file.poster || ''"
-        [width]="file.w"
-        [height]="file.h"
-        [caption]="caption()"
-        [marks]="file.marks || []"
-        (openFile)="openFile.emit(path())"
-      />
+      @if (file.loading) {
+        <p role="status">Loading video…</p>
+      } @else if (file.error) {
+        <p role="status">{{ file.error }}</p>
+      } @else {
+        <ex-markdown-recording
+          [source]="file.src || ''"
+          [knownDuration]="file.dur || 0"
+          [poster]="file.poster || ''"
+          [width]="file.w"
+          [height]="file.h"
+          [caption]="caption()"
+          [showCaption]="showCaption()"
+          [compact]="compact()"
+          [marks]="file.marks || []"
+          (openFile)="openFile.emit(path())"
+        />
+      }
     }
     @case ("page") {
       <section class="page">
@@ -70,6 +69,16 @@
   }
 } @else {
   <button type="button" class="missing" (click)="openFile.emit(path())">
-    {{ path() }} isn't in the workspace
+    Image unavailable: {{ caption() || path() }}
   </button>
+}
+@if (viewer(); as preview) {
+  <ex-image-viewer
+    [source]="preview.source"
+    [label]="preview.label"
+    [from]="preview.from"
+    [open]="viewerOpen()"
+    (closeRequested)="viewerOpen.set(false)"
+    (closed)="viewer.set(null)"
+  />
 }

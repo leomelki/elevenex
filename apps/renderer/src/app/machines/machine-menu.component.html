@@ -1,4 +1,7 @@
 <ex-dropdown-menu [label]="machine().name">
+  @if (machine().error && machine().last) {
+    <button exDropdownItem [disabled]="disabled()" (triggered)="action.emit('details')"><ex-icon name="terminal" [size]="15" /><span>View error details…</span></button>
+  }
   <button exDropdownItem [disabled]="disabled()" (triggered)="action.emit('edit')"><ex-icon name="pencil" [size]="15" /><span>Edit…</span></button>
   <button exDropdownItem [disabled]="disabled()" (triggered)="action.emit('new-window')"><ex-icon name="window" [size]="15" /><span>Open in a new window</span><ex-kbd>⌘↵</ex-kbd></button>
   @if (machine().kind !== 'local') {

@@ -1,4 +1,11 @@
-<div #viewport class="viewport" (scroll)="onScroll()">
+<div
+  #viewport
+  class="viewport"
+  tabindex="-1"
+  role="region"
+  aria-label="Conversation"
+  (scroll)="onScroll()"
+>
   <div #content class="content"><ng-content /></div>
 </div>
 @if (pin(); as pin) {
@@ -14,8 +21,23 @@
     </button>
   </aside>
 }
-@if (unread() && !atEnd()) {
-  <button type="button" class="new" (click)="scrollToEnd()">
-    <ex-icon name="arrow-down" [size]="13" />New messages
+<div
+  class="return"
+  [class.visible]="!atEnd()"
+  [attr.inert]="atEnd() ? '' : null"
+  [attr.aria-hidden]="atEnd()"
+>
+  <button
+    exButton
+    variant="secondary"
+    class="return-button"
+    [attr.aria-label]="returnLabel()"
+    [exTooltip]="returnLabel()"
+    (click)="returnToEnd()"
+  >
+    <ex-icon name="arrow-down" [size]="16" />
+    @if (unread()) {
+      <span class="unread-dot" aria-hidden="true"></span>
+    }
   </button>
-}
+</div>

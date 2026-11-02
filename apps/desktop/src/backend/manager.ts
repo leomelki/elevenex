@@ -72,7 +72,7 @@ export class BackendManager {
   private run(work: () => Promise<void>): Promise<BackendStatus> {
     const operation = Promise.resolve().then(work).catch((error: unknown) => {
       if (!this.lifetime.signal.aborted) {
-        this.publish({ phase: 'failed', version: this.status.version, message: error instanceof Error ? error.message.slice(0, 2048) : 'Local backend failed' });
+        this.publish({ phase: 'failed', version: this.status.version, message: error instanceof Error ? error.message.slice(0, 12_288) : 'Local backend failed' });
       }
     }).then(() => this.snapshot());
     this.operation = operation;

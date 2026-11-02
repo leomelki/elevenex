@@ -80,6 +80,7 @@ export class DesktopWorkspaceGitService {
       deletions: status.total.deletions,
       ...(this.phases.has(id) ? { commitPhase: this.phases.get(id) } : {}),
       conflicted: status.files.some((file) => file.status === 'conflicted'),
+      ...(status.changesRevision ? { changesRevision: status.changesRevision } : {}),
     };
   }
   async closePreview(id: number) {

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, afterNextRender, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, afterNextRender, computed, inject, linkedSignal } from '@angular/core';
 import { CdkMenuTrigger } from '@angular/cdk/menu';
 import { ProjectMenuComponent, type ProjectMenuAction } from '../projects';
 import { StatusSummaryComponent, TaskGroupComponent, TaskListComponent, type TaskSession } from '../tasks';
@@ -23,6 +23,12 @@ export class WorkspaceNavigationComponent {
   }
   protected readonly preferences = inject(SidebarPreferencesService);
   protected readonly store = inject(WorkspaceStore);
+  // Mount initial history after its first read, then let the outline own exits
+  // even when a project switch temporarily has no matching tasks.
+  protected readonly taskListMounted = linkedSignal({
+    source: () => ({ scope: this.store.scopeId(), closed: this.store.closed(), loading: this.store.loading(), count: this.store.tasks().length }),
+    computation: (state, previous): boolean => !state.closed && (!state.loading || state.count > 0 || (previous?.source.scope === state.scope && previous.value)),
+  });
   // The main setup surface owns this actionable failure; avoid announcing it twice.
   protected readonly visibleError = computed(() => (this.store.pendingTask()?.setupIssue?.message === this.store.error() ? null : this.store.error()) ?? this.store.resumeError());
   protected readonly label = computed(() => this.store.selectedProject()?.name ?? 'All projects');

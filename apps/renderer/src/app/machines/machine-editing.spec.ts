@@ -37,6 +37,18 @@ describe('Machine editing controls', () => {
     expect(fixture.nativeElement.textContent).not.toContain('Disconnect'); expect(fixture.nativeElement.textContent).not.toContain('Remove…');
   });
 
+  it('offers error details only for a failed machine with a diagnostic', () => {
+    const fixture = TestBed.createComponent(MachineMenuComponent), action = vi.fn();
+    fixture.componentInstance.action.subscribe(action);
+    fixture.componentRef.setInput('machine', { ...server, conn: 'fail', last: 'Bootstrap failed', error: { step: 'Bootstrap failed' } });
+    fixture.detectChanges();
+    const details = fixture.nativeElement.querySelector('button');
+    expect(details.textContent).toContain('View error details');
+    details.click(); expect(action).toHaveBeenCalledWith('details');
+    fixture.componentRef.setInput('machine', server); fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).not.toContain('View error details');
+  });
+
   it('waits for a held right-click to finish and releases its pending listener on disposal', async () => {
     vi.useFakeTimers();
     const fixture = TestBed.createComponent(MachineCardComponent), menu = vi.fn();

@@ -1,3 +1,4 @@
+/* Shared permission/tools popovers. Agent configuration owns dedicated styles. */
 :host {
   display: inline-flex;
   min-width: 0;
@@ -8,6 +9,7 @@
   gap: var(--space-1);
   height: var(--control-height);
   max-width: 100%;
+  min-width: 0;
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
@@ -21,6 +23,13 @@
 .trigger:hover {
   background: var(--surface-sunken);
   color: var(--ink);
+}
+.trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.trigger > ex-icon {
+  flex: none;
 }
 .trigger:focus-visible,
 .choice:focus-visible,
@@ -41,6 +50,12 @@ input:focus-visible {
   font-family: var(--font-sans);
   transform-origin: bottom;
   animation: arrive var(--dur-base) var(--ease-glide) both;
+}
+.field {
+  min-width: 0;
+}
+.field > span {
+  color: var(--ink-muted);
 }
 .choice {
   display: flex;
@@ -105,27 +120,10 @@ select {
 input[type="checkbox"] {
   accent-color: var(--accent);
 }
-.mark {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-xs);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-  font-size: var(--text-overline-size);
-}
-.sub {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--ink-muted);
-}
-.name {
-  color: var(--ink);
-}
-.trigger ex-icon[name="bolt"] {
-  color: var(--accent);
+@container composer (max-width: 440px) {
+  .permission-label {
+    display: none;
+  }
 }
 .error {
   color: var(--danger);

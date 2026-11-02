@@ -244,6 +244,64 @@ function createService(options?: {
 }
 
 describe('PiRuntimeService lifecycle', () => {
+  it('does not restart a disposed runtime for an effort capability read', async () => {
+    const { service } = createService();
+    mockSpawn.mockReturnValue(createPiProcess('/tmp/pi-thinking-cleanup.jsonl') as never);
+    await service.submitPrompt(1, 'Hello');
+    const models = createDeferred<{ models: unknown[] }>();
+    const send = jest.spyOn(PiSessionRuntime.prototype, 'send')
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ model: { provider: 'local', id: 'model' }, thinkingLevel: 'high' })
+      .mockImplementationOnce(() => models.promise);
+    try {
+      const updating = service.setReasoningEffort(1, 'high');
+      for (let i = 0; i < 20 && send.mock.calls.length < 3; i++) await Promise.resolve();
+      expect(send).toHaveBeenCalledTimes(3);
+      await service.cleanupSession(1);
+      models.resolve({ models: [] });
+      await updating;
+      expect(send.mock.calls.map(([command]) => command.type)).toEqual(['set_thinking_level', 'get_state', 'get_available_models']);
+    } finally {
+      models.resolve({ models: [] });
+      send.mockRestore();
+      await service.onModuleDestroy();
+    }
+  });
+  it('retains a cold effort without spawning, applies it through native RPC, and rejects failed changes', async () => {
+    const { service } = createService();
+    const child = createPiProcess('/tmp/pi-thinking.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    await service.setReasoningEffort(1, 'minimal');
+    expect(mockSpawn).not.toHaveBeenCalled();
+    await service.submitPrompt(1, 'Hello');
+    const commands = child.stdin.writes.map(
+      (line) => JSON.parse(line) as Record<string, unknown>,
+    );
+    const set = commands.findIndex(
+      (command) => command.type === 'set_thinking_level',
+    );
+    const prompt = commands.findIndex((command) => command.type === 'prompt');
+    expect(commands[set]).toMatchObject({ level: 'minimal' });
+    expect(set).toBeLessThan(prompt);
+    expect(commands[prompt]).not.toHaveProperty('reasoningEffort');
+    await service.setReasoningEffort(1, 'high');
+    expect(
+      child.stdin.writes.some(
+        (line) =>
+          JSON.parse(line).type === 'set_thinking_level' &&
+          JSON.parse(line).level === 'high',
+      ),
+    ).toBe(true);
+    const send = jest
+      .spyOn(PiSessionRuntime.prototype, 'send')
+      .mockRejectedValueOnce(new Error('unsupported'));
+    await expect(service.setReasoningEffort(1, 'max')).rejects.toThrow(
+      'unsupported',
+    );
+    send.mockRestore();
+    expect((await service.getRuntimeState(1)).reasoningEffort).toBe('high');
+    await service.onModuleDestroy();
+  });
   const originalIdleMs = process.env.PI_RUNTIME_IDLE_MS;
   const originalIdleCap = process.env.PI_RUNTIME_IDLE_CAP;
 
@@ -468,9 +526,7 @@ describe('PiRuntimeService lifecycle', () => {
   it('ignores an old exit after cleanup and reopen without touching the replacement run', async () => {
     jest.useRealTimers();
     const { service } = createService();
-    mockSpawn.mockImplementation(
-      () => createPiProcess('/tmp/pi-session.jsonl') as never,
-    );
+    mockSpawn.mockImplementation(() => createPiProcess('/tmp/pi-session.jsonl') as never);
     const old = await (service as any).ensureRuntime(1);
     await service.cleanupSession(1);
     await (service as any).ensureRuntime(1);
@@ -491,7 +547,9 @@ describe('PiRuntimeService lifecycle', () => {
   it('keeps socket ownership across cleanup and only schedules idle shutdown after the last tab detaches', async () => {
     jest.useRealTimers();
     const { service } = createService();
-    mockSpawn.mockImplementation(() => createPiProcess('/tmp/pi-session.jsonl') as never);
+    mockSpawn.mockImplementation(
+      () => createPiProcess('/tmp/pi-session.jsonl') as never,
+    );
     service.onClientAttached(1);
     service.onClientAttached(1);
     await (service as any).ensureRuntime(1);

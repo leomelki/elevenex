@@ -97,6 +97,12 @@ machine's last status; the card uses its first sentence. Failed preparation no
 longer duplicates the card with a global toast. Unavailable window/IPC operations
 still report their owning operation's error.
 
+Failed cards with a diagnostic expose **View error details…** in their menu.
+`MachineActions` snapshots the selected message without retrying the connection,
+and retains it through the modal's exit even if the machine recovers. The dialog
+renders plain selectable text in a bounded scroll area; ModalLayer owns focus
+trapping, Escape, interrupted transitions and return to the menu trigger.
+
 On Home, the island prioritizes failures and preparation and points at the
 relevant card. After Change, a still-connected current machine supplies Back;
 clicking runs the normal ready-machine launch again. Rest opens Find, or points

@@ -5,3 +5,5 @@
 .panel-body[hidden] { display: none; }
 h2 { margin: var(--space-4) 0 var(--space-2); color: var(--ink); font-size: var(--text-title-size); line-height: var(--text-title-line); font-weight: var(--text-title-weight); }
 p { margin: 0; font-size: var(--text-caption-size); line-height: var(--text-caption-line); }
+
+.panel-body.has-content { align-items: stretch; justify-content: flex-start; padding: 0; text-align: start; }

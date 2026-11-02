@@ -17,7 +17,9 @@
       [title]="viewed() ? 'Mark as not viewed (V)' : 'Mark as viewed (V)'" (click)="markViewed()">
       <span class="check" [class.on]="viewed()">@if (viewed()) { <ex-icon name="check" [size]="11" /> }</span><span class="viewed-label">Viewed</span>
     </button>
+    @if (openFilesAvailable()) {
     <ex-icon-button icon="code" [label]="'Open ' + file().path + ' in Code'" size="sm" (pressed)="openRequested.emit(file().id)" />
+    }
   </header>
   <ex-fold [open]="open()"><div class="body">
     @if (file().oldPath) { <p class="notice">Renamed from <code>{{ file().oldPath }}</code></p> }
@@ -26,6 +28,7 @@
     @else if (currentContent()?.state === 'error') { <div class="load" role="status"><p>{{ currentContent()?.error || 'This file could not be loaded.' }}</p><button exButton variant="secondary" size="sm" (click)="request('retry')">Try again</button></div> }
     @else if (currentContent()?.state !== 'ready') { <div class="loading" role="status" aria-label="Loading file"><ex-skeleton [count]="skeletonRows()" variant="rows" /></div> }
     @else {
+      @if (currentContent()?.hasPreviousLines) { <div class="load"><button exButton size="sm" variant="secondary" (click)="request('previous')">Previous lines</button></div> }
       @if (!totalLines()) { <p class="notice">{{ file().status === 'D' ? 'File deleted' : 'No text changes' }}</p> }
       @if (linePages() > 1) { <div class="line-pages"><button exButton variant="ghost" size="sm" [disabled]="page() === 0" (click)="stepLines(-1)">Previous lines</button><span>Page {{ page() + 1 }} of {{ linePages() }}</span><button exButton variant="ghost" size="sm" [disabled]="page() >= linePages() - 1" (click)="stepLines(1)">Next lines</button></div> }
       @for (hunk of hunks(); track hunk.id) {
@@ -37,7 +40,7 @@
         }</div>
         @if (hunk.after) { <div class="hunk"><button exButton variant="ghost" size="sm" [attr.aria-label]="'Show ' + (hunk.after < 20 ? hunk.after : 20) + ' lines below'" (click)="context(hunk.id, 'after', hunk.after)"><ex-icon name="expand-down" [size]="13" />{{ hunk.after < 20 ? hunk.after : 20 }} below</button></div> }
       }
-      @if (currentContent()?.remainingLines) { <div class="load"><p>{{ currentContent()?.remainingLines }} more lines</p><button exButton size="sm" variant="secondary" (click)="request('more')">Load more lines</button></div> }
+      @if (currentContent()?.remainingLines || currentContent()?.hasMoreLines) { <div class="load"><p>{{ currentContent()?.remainingLines ? currentContent()?.remainingLines + ' more lines' : 'More lines available' }}</p><button exButton size="sm" variant="secondary" (click)="request('more')">Load more lines</button></div> }
     }
   </div></ex-fold>
 </article>

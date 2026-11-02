@@ -1,0 +1,26 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+ex-diff-review {
+  flex: 1;
+  min-height: 0;
+}
+.feedback {
+  padding: var(--space-4);
+  color: var(--ink-muted);
+  font: var(--text-body-size)/var(--text-body-line) var(--font-sans);
+}
+.pages {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}

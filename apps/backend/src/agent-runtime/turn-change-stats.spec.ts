@@ -152,3 +152,17 @@ describe('turn changes reconcile native events and observations', () => {
     expect(details?.filesChanged[1].diffUnavailable).toBeTruthy();
   });
 });
+
+describe('native file-change metadata', () => {
+  it.each([
+    { kind: 'add', diff: 'hello\n', status: 'created', additions: 1, deletions: 0 },
+    { kind: 'update', diff: '@@ -1 +1 @@\n-old\n+new', status: 'modified', additions: 1, deletions: 1 },
+    { kind: { type: 'delete' }, diff: 'old\n', status: 'deleted', additions: 0, deletions: 1 },
+  ])('preserves native $status status and counts', ({ kind, diff, ...expected }) => {
+    const details = computeTurnChangeDetailsFromItems([
+      item('call', 'tool_use', { toolUseId: 'c', toolKind: 'file_changes', toolInput: { changes: [{ path: 'test.txt', kind, diff }] } }),
+      item('result', 'tool_result', { toolUseId: 'c' }),
+    ]);
+    expect(details?.filesChanged[0]).toMatchObject(expected);
+  });
+});

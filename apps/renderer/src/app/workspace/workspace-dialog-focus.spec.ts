@@ -42,7 +42,7 @@ describe('workspace dialog focus and native submission', () => {
       error: signal<string | null>(null), commitPanelAvailable: () => true,
     };
     const git = {
-      summary: () => ({ branch: 'work', behind: 0 }), state: () => undefined,
+      summary: () => ({ branch: 'work', behind: 0 }), commitPreview: () => null, state: () => undefined,
       loading: () => false, busy: signal<string | null>(null), error: signal<string | null>(null),
       perform: vi.fn(async () => true),
     };
@@ -75,7 +75,7 @@ for (const uncommitted of [0, 2]) it(`checks authoritative work before ${uncommi
     projects: () => [], selectedTaskStage: () => 'active', busy: () => false, error: signal<string | null>(null), commitPanelAvailable: () => true, closeTask: vi.fn(async () => {}),
   };
   const bridge = { workspaceClosePreview: vi.fn(async () => ({ ok: true, value: { taskId: 1, sessions: 1, running: 0, unpushed: 0, uncommitted, terminals: 0, actions: 0 } })) };
-  const git = { summary: () => undefined, state: () => undefined, loading: () => false, busy: () => null, error: () => null };
+  const git = { summary: () => undefined, commitPreview: () => null, state: () => undefined, loading: () => false, busy: () => null, error: () => null };
   TestBed.configureTestingModule({ providers: [{ provide: WorkspaceStore, useValue: store }, { provide: ELEVENEX_BRIDGE, useValue: bridge }] });
   TestBed.overrideComponent(WorkspaceTaskHeaderComponent, { set: { providers: [{ provide: WorkspaceTaskGitService, useValue: git }] } });
   const fixture = TestBed.createComponent(WorkspaceTaskHeaderComponent); fixture.detectChanges();

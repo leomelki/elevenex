@@ -37,6 +37,9 @@
   @if (launcher.error()) { <ex-toast class="error-toast" title="Machine needs attention" [detail]="launcher.error()" tone="danger" glyph="failed" [duration]="0" (dismissed)="launcher.error.set('')" /> }
  </div>
 <ex-machine-menu-popup [request]="actions.menu()" (closed)="actions.menu.set(null)" (action)="actions.act($event)" />
+<ex-modal-layer [open]="actions.detailsOpen()" [from]="actions.details()?.from ?? null" (closeRequested)="actions.detailsOpen.set(false)">
+  @if (actions.details(); as details) { <ex-machine-error-dialog [name]="details.name" [message]="details.message" [active]="actions.detailsOpen()" [attr.inert]="actions.detailsOpen() ? null : ''" (closed)="actions.detailsOpen.set(false)" /> }
+</ex-modal-layer>
 <ex-toast-stack [notices]="actions.notices()" (actionSelected)="actions.undo($event)" (dismissed)="actions.dismiss($event)" />
 <ex-modal-layer [open]="actions.editOpen()" [from]="actions.draft()?.from ?? null" (closeRequested)="actions.cancel()">
   @for (draft of actions.draft() ? [actions.draft()!] : []; track draft.id) { <ex-edit-machine [machine]="draft.machine" [step]="draft.step" [disabled]="!actions.editOpen()" [saving]="actions.saving()" [error]="actions.error()" [identityLabel]="actions.identityLabel()" (identityRequested)="actions.chooseIdentity()" (saved)="actions.save($event)" (removeRequested)="actions.removeDraft()" (cancelled)="actions.cancel()" /> }

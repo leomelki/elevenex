@@ -9,6 +9,7 @@ import { SshSetupService } from './ssh-setup.service';
 import { machineHomeStatus } from '../machine-home-status';
 import { remotePresentation, parseSshDestination } from './machine-presentation';
 import { RemoteChallengeDialogComponent } from './remote-challenge-dialog.component';
+import { MachineErrorDialogComponent } from './machine-error-dialog.component';
 
 async function flush(): Promise<void> { await Promise.resolve(); await Promise.resolve(); TestBed.tick(); }
 function setup() {
@@ -19,6 +20,32 @@ function setup() {
 describe('Production machine application', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => { TestBed.resetTestingModule(); vi.useRealTimers(); });
+
+  it('opens retained error details without retrying and ignores a stale error menu after recovery', async () => {
+    const { platform } = setup(), actions = TestBed.inject(MachineActionsService); await flush();
+    const message = 'Backend stopped during startup (1).\n\nstderr:\nCould not load better-sqlite3';
+    platform.setLocal({ phase: 'failed', version: null, message }); await flush();
+    const retry = vi.spyOn(platform, 'retryBackend');
+    const event = { machine: actions.machines()[0]!, card: document.createElement('button'), x: 0, y: 0, fromButton: true };
+    await actions.act({ event, action: 'details' });
+    expect(actions.detailsOpen()).toBe(true); expect(actions.details()?.message).toBe(message);
+    platform.ready(); await flush(); actions.detailsOpen.set(false);
+    expect(actions.details()?.message).toBe(message);
+    await actions.act({ event, action: 'details' });
+    expect(actions.detailsOpen()).toBe(false); expect(retry).not.toHaveBeenCalled();
+  });
+
+  it('renders diagnostics as selectable text without interpreting HTML and disables Close during exit', () => {
+    const fixture = TestBed.createComponent(MachineErrorDialogComponent), close = vi.fn();
+    const message = '<img src=x onerror=alert(1)>\nBackend failed';
+    fixture.componentRef.setInput('name', 'This Mac'); fixture.componentRef.setInput('message', message);
+    fixture.componentInstance.closed.subscribe(close); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('pre').textContent).toBe(message);
+    expect(fixture.nativeElement.querySelector('img')).toBeNull();
+    fixture.nativeElement.querySelector('button').click(); expect(close).toHaveBeenCalledOnce();
+    fixture.componentRef.setInput('active', false); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('button').disabled).toBe(true);
+  });
 
   for (const fromMenu of [false, true]) it(`cancels a settling launch when disconnected ${fromMenu ? 'through its menu' : 'by another window'}`, async () => {
     const { platform, launcher, connection } = setup(), actions = TestBed.inject(MachineActionsService); await flush();

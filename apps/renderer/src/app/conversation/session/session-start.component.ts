@@ -38,6 +38,7 @@ export class SessionStartComponent {
   readonly selected = computed(
     () =>
       this.localSelection() ??
+      this.visiblePresets()[0]?.id ??
       this.visiblePresets()[0]?.preset ??
       this.visiblePresets()[0]?.model ??
       "custom",
@@ -53,13 +54,20 @@ export class SessionStartComponent {
       event.metaKey ||
       event.ctrlKey ||
       !event.altKey ||
-      !/^[1-9]$/.test(event.key)
+      !/^[1-9]$/.test(
+        /^Digit[1-9]$/.test(event.code) ? event.code.slice(-1) : event.key,
+      )
     )
       return;
-    const preset = this.visiblePresets()[Number(event.key) - 1];
+    const preset =
+      this.visiblePresets()[
+        Number(
+          /^Digit[1-9]$/.test(event.code) ? event.code.slice(-1) : event.key,
+        ) - 1
+      ];
     if (preset) {
       event.preventDefault();
-      this.select(preset.preset || preset.model);
+      this.select(preset.id || preset.preset || preset.model);
     }
   }
 }

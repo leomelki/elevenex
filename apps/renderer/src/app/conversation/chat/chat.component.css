@@ -18,6 +18,7 @@ ex-turn-nav {
   top: 50%;
   right: var(--space-2);
   transform: translateY(-50%);
+  max-height: min(calc(7 * var(--space-8)), 40%);
 }
 .composer {
   width: 100%;
@@ -25,3 +26,7 @@ ex-turn-nav {
   margin: 0 auto;
   padding: var(--space-3) var(--space-4) var(--space-4);
 }
+
+:host.center-composer { justify-content: center; overflow-y: auto; }
+:host.center-composer .conversation { display: none; }
+:host.center-composer .composer { margin: auto; }

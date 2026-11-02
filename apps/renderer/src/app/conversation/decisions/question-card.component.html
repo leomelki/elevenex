@@ -21,7 +21,7 @@
           }
         </nav>
       }
-      <fieldset>
+      <fieldset [disabled]="disabled()">
         <legend>{{ question.question }}</legend>
         @for (option of question.options; track option.label; let i = $index) {
           <label [class.selected]="selected().includes(option.label)"
@@ -87,7 +87,7 @@
             variant="primary"
             size="sm"
             [disabled]="
-              !selected().length ||
+              disabled() || !selected().length ||
               (index() === items().length - 1 && !complete())
             "
             (click)="next()"

@@ -18,9 +18,13 @@ import { TurnComponent } from "../turns/turn.component";
 import { TurnNavComponent } from "../turns/turn-nav.component";
 import { ChatScrollComponent } from "./chat-scroll.component";
 import { MessageComponent } from "./message.component";
+import { AttachmentsComponent } from "./attachments.component";
+import { ButtonComponent } from '../../ui';
 @Component({
   selector: "ex-chat",
   imports: [
+    ButtonComponent,
+    AttachmentsComponent,
     MarkdownComponent,
     TurnComponent,
     TurnNavComponent,
@@ -29,13 +33,21 @@ import { MessageComponent } from "./message.component";
   ],
   templateUrl: "./chat.component.html",
   styleUrl: "./chat.component.css",
+  host: { "[class.center-composer]": "centerComposer()" },
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ChatComponent {
+  readonly centerComposer = input(false);
   readonly exchanges = input<readonly ChatExchange[]>([]);
+  readonly actions = input<readonly TurnAction[]>(['side-chat', 'fork', 'copy']);
+  readonly stoppable = input(true);
+  readonly retryable = input(true);
+  readonly copiedCode = input<string | null>(null);
+  readonly contentRequested = output<string>();
   readonly resolve = input<MarkdownAssetResolver>();
   readonly turnAction = output<{ id: string; action: TurnAction }>();
   readonly openFile = output<string>();
+  readonly fileReview = output<{ readonly id: string; readonly path: string }>();
   readonly openLink = output<string>();
   readonly openPage = output<string>();
   readonly copyCode = output<string>();

@@ -58,18 +58,13 @@ export class CommitPanelComponent implements OnChanges {
   readonly running = input<readonly string[]>([]);
   readonly push = input(false);
   readonly fileProvider = input<CommitFileProvider>();
+  /** Default first page for immediate display on opening; the provider still validates it. */
+  readonly initialWindow = input<CommitFileWindow | null>(null);
   readonly pushChange = output<boolean>();
   readonly closeRequested = output<void>();
   readonly commitRequested = output<CommitIntent>();
   protected readonly retained = signal(false);
   protected readonly presenting = signal(false);
-  protected readonly pending = computed(
-    () =>
-      !!this.fileProvider() &&
-      !this.remote() &&
-      !this.error() &&
-      !this.presenting(),
-  );
   protected readonly message = signal("");
   protected readonly list = signal(false);
   protected readonly query = signal("");
@@ -215,7 +210,7 @@ export class CommitPanelComponent implements OnChanges {
             (result) => {
               if (!abort.signal.aborted) {
                 this.remote.set(result);
-                if (!this.secretFile())
+                if (!this.secretFile() || (!query.query && !query.cursor))
                   this.secretFile.set(
                     result.items.find((file) => file.flag) ?? null,
                   );
@@ -246,15 +241,6 @@ export class CommitPanelComponent implements OnChanges {
       if (!layer) return;
       if (!this.open() && !this.mode) {
         this.retained.set(false);
-        this.opener?.setAttribute("aria-busy", "false");
-        return;
-      }
-      if (this.open() && this.pending()) {
-        this.opener =
-          this.root
-            .closest("ex-git-bar")
-            ?.querySelector<HTMLElement>(".primary") ?? undefined;
-        this.opener?.setAttribute("aria-busy", "true");
         return;
       }
       if (this.open() && this.mode !== "open") {
@@ -263,7 +249,7 @@ export class CommitPanelComponent implements OnChanges {
             .closest("ex-git-bar")
             ?.querySelector<HTMLElement>(".primary") ?? undefined;
         this.presenting.set(true);
-        this.opener?.setAttribute("aria-busy", "false");
+        layer.style.visibility = "visible";
         this.opener?.setAttribute("aria-expanded", "true");
         this.opener?.setAttribute("aria-haspopup", "dialog");
         this.fit();
@@ -302,6 +288,10 @@ export class CommitPanelComponent implements OnChanges {
           this.motion?.retarget(false, this.opener) ?? Promise.resolve(true)
         ).then((done) => {
           if (done && !this.open() && !this.destroy.destroyed) {
+            // Signal rendering removes the view later. Hide it before cancelling
+            // the filled exit frame so the natural, full-size box cannot flash.
+            layer.style.visibility = "hidden";
+            this.presenting.set(false);
             this.retained.set(false);
             this.motion?.dispose();
             this.motion = undefined;
@@ -354,8 +344,10 @@ export class CommitPanelComponent implements OnChanges {
       this.includeUnstaged.set(true);
       this.excluded.set([]);
       this.includedSecrets.set([]);
-      this.remote.set(null);
-      this.secretFile.set(null);
+      const initial = this.fileProvider() ? this.initialWindow() : null;
+      this.remote.set(initial);
+      this.secretFile.set(initial?.items.find((file) => file.flag) ?? null);
+      this.loading.set(!!this.fileProvider());
       this.error.set(null);
     }
   }

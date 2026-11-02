@@ -1,3 +1,4 @@
+import { codexImageResult } from './codex-image-result.js';
 import {
   BadRequestException,
   Inject,
@@ -9,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { codexWebSearchInput } from './codex-web-search.js';
+import { codexHistoryTools } from './codex-history-tools.js';
 import { codexAgentMessage } from './codex-agent-message.js';
 import { promises as fs } from 'fs';
 import { createReadStream } from 'fs';
@@ -591,6 +593,7 @@ export class CodexHistoryService {
 
   private normalizeRecords(records: JsonRecord[]): ClaudeTranscriptItem[] {
     const items: ClaudeTranscriptItem[] = [];
+    const { native, nativeToolIds, wrappers } = codexHistoryTools(records);
     const asyncQuestions = new Map<string, ClaudeTranscriptItem>();
     const answeredQuestions = new Map<string, ClaudeTranscriptItem>();
     const responseMessageIds = new Set(
@@ -607,6 +610,11 @@ export class CodexHistoryService {
     for (const [index, record] of records.entries()) {
       const timestamp =
         stringValue(record.timestamp) ?? new Date().toISOString();
+      const nativeTools = native.get(index);
+      if (nativeTools) {
+        items.push(...nativeTools);
+        continue;
+      }
       if (this.isVisibleUserMessage(record)) {
         const content = this.extractUserMessageText(record);
         if (content) {
@@ -701,6 +709,12 @@ export class CodexHistoryService {
       if (!payloadItem) {
         continue;
       }
+      // Native receipts use the live stream's IDs, arguments, output and exit
+      // status. Do not duplicate them with raw calls or their exec envelopes.
+      const toolId =
+        stringValue(payloadItem.call_id) ?? stringValue(payloadItem.id);
+      if (toolId && (nativeToolIds.has(toolId) || wrappers.has(toolId)))
+        continue;
       if (payloadItem.type === 'web_search_call') {
         const id =
           stringValue(payloadItem.id) ??
@@ -792,13 +806,18 @@ export class CodexHistoryService {
           }
         : null;
     }
+    if (type === 'image_generation_call') {
+      return { id: `${id}:tool_result`, kind: 'tool_result', toolUseId: id,
+        providerToolResult: codexImageResult(item), isError: item.status === 'failed', timestamp };
+    }
     if (type === 'message' && item.role === 'assistant') {
       const content = this.contentToText(item.content);
-      return content
+      return content || Array.isArray(item.content)
         ? {
             id,
             kind: 'assistant',
             content,
+            providerToolResult: item.content,
             sourceMessageId: id,
             transcriptMessageId,
             timestamp,
@@ -875,6 +894,7 @@ export class CodexHistoryService {
         toolUseId: stringValue(item.call_id) ?? id,
         content:
           this.contentToText(item.output) || JSON.stringify(item.output ?? ''),
+        providerToolResult: item.output,
         isError: Boolean(item.error),
         sourceMessageId: id,
         transcriptMessageId,
@@ -1029,6 +1049,8 @@ export class CodexHistoryService {
       const commandActions =
         arrayValue(args?.commandActions) ?? arrayValue(args?.command_actions);
       return {
+        ...(typeof args?.cwd === 'string' ? { cwd: args.cwd } : {}),
+        ...(typeof args?.workdir === 'string' ? { workdir: args.workdir } : {}),
         command:
           stringValue(args?.command) ??
           stringValue(args?.cmd) ??

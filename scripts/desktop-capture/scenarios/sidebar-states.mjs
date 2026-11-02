@@ -17,9 +17,20 @@ export default async function* (capture) {
     await finish();
   };
   const inspect = ['ex-workspace-navigation', 'ex-workspace-navigation header', 'ex-workspace-navigation ex-task-list', 'ex-workspace-navigation footer'];
+  const checkHorizontalScroll = async () => {
+    const point = await capture.evaluate(() => {
+      const list = document.querySelector('ex-workspace-navigation ex-task-list');
+      const box = list.getBoundingClientRect();
+      return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    });
+    await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 120, deltaY: 0 });
+    await capture.settle();
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-workspace-navigation ex-task-list').scrollLeft), 0, 'Sidebar must not scroll horizontally');
+  };
   for (const theme of ['light', 'dark']) {
     await capture.viewport(1440, 900); await capture.theme(theme);
     await state('single');
+    await checkHorizontalScroll();
     assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-workspace-navigation ex-repo-tag').length), 0);
     const attention = '[data-task-id="11"] ex-session-row button.attention';
     const idleColor = await capture.evaluate(selector => getComputedStyle(document.querySelector(selector)).backgroundColor, attention);
@@ -120,6 +131,7 @@ export default async function* (capture) {
     });
     assert.equal(geometry.scrollable, true);
     assert.ok(geometry.footerBottom <= geometry.windowHeight);
+    await checkHorizontalScroll();
     await capture.evaluate(() => { const list = document.querySelector('ex-workspace-navigation ex-task-list'); list.scrollTop = list.scrollHeight; });
     await finish();
     assert.equal(await capture.evaluate(() => document.querySelector('ex-workspace-navigation header').getBoundingClientRect().top), geometry.headerTop);

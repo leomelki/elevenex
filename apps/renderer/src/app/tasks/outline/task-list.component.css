@@ -37,7 +37,8 @@ h3 span {
   color: var(--attention);
   opacity: 1;
 }
-.empty {
+.empty,
+.loading {
   margin: var(--space-4) var(--space-2);
   font-size: var(--text-caption-size);
   line-height: var(--text-caption-line);

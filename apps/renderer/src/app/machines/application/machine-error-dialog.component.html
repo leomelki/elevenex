@@ -1,0 +1,3 @@
+<header><ex-status-glyph status="failed" [size]="20" /><h2 id="machine-error-title">{{ name() }} · error details</h2></header>
+<pre tabindex="0" aria-label="Error details">{{ message() }}</pre>
+<footer><button exButton [disabled]="!active()" (click)="closed.emit()">Close</button></footer>

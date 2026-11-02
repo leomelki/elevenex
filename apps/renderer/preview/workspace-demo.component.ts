@@ -38,7 +38,6 @@ import type {
   AgentConfig,
   ComposerSubmission,
   ConversationMode,
-  PermissionLevel,
   WorkStep,
 } from "../src/app/conversation/conversation.models";
 import type { Machine } from "../src/app/machines/machine.models";
@@ -207,7 +206,7 @@ export class WorkspaceDemoComponent {
   readonly wizard = signal(false);
   readonly machineOpen = signal(false);
   readonly mode = signal<ConversationMode>("code");
-  readonly permission = signal<PermissionLevel>("edits");
+  readonly permission = signal<string>("edits");
   readonly running = signal(true);
   readonly messages = signal<readonly string[]>([]);
   readonly agent = signal<AgentConfig>({

@@ -1,52 +1,124 @@
 :host {
-  display: block;
-}
-nav {
   display: flex;
   flex-direction: column;
+  /* Nine comfortable targets, independent of the transcript's length. */
+  height: calc(min(var(--turn-count), 9) * var(--space-6) + var(--space-2));
+  max-height: calc(7 * var(--space-8));
+  min-height: 0;
+  width: calc(var(--space-8) + var(--space-2));
+}
+nav {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
   padding: var(--space-1);
-  gap: var(--space-1);
+}
+.window {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+}
+.markers {
+  height: 100%;
+  width: 100%;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  border-radius: var(--radius-xs);
+}
+nav:hover .markers,
+nav:focus-within .markers {
+  scrollbar-color: var(--line-strong) transparent;
+}
+.markers:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.window::before,
+.window::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  right: var(--space-2);
+  height: var(--space-3);
+  pointer-events: none;
+  opacity: 0;
+}
+.window::before {
+  top: 0;
+  background: linear-gradient(var(--surface), transparent);
+}
+.window::after {
+  bottom: 0;
+  background: linear-gradient(transparent, var(--surface));
+}
+.window.above::before,
+.window.below::after {
+  opacity: 1;
+}
+.position {
+  position: absolute;
+  right: var(--space-1);
+  bottom: 100%;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--ink-muted);
+  box-shadow: var(--shadow-raised);
+  font: var(--text-caption-size)/var(--text-caption-line) var(--font-mono);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+nav:hover .position,
+nav:focus-within .position {
+  opacity: 1;
 }
 button {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  width: var(--space-6);
-  height: var(--space-3);
-  padding: 0;
+  width: 100%;
+  height: var(--space-6);
+  padding: 0 var(--space-1);
   border: 0;
   background: transparent;
   cursor: pointer;
   border-radius: var(--radius-xs);
 }
-button:focus-visible {
-  outline: 2px solid transparent;
-  box-shadow: var(--focus-ring);
-}
-span {
+.bar {
   display: block;
   width: 10px;
   height: 3px;
+  flex: none;
   border-radius: var(--radius-full);
   background: var(--line-strong);
   transition: transform var(--dur-glide) var(--ease-glide);
   transform-origin: right;
 }
-button:hover span,
-button[aria-current] span {
+button:hover .bar,
+button[aria-current] .bar,
+.markers:focus-visible button[aria-selected="true"] .bar {
   transform: scaleX(2);
 }
-button[data-state="changes"] span {
+.markers:focus-visible button[aria-selected="true"] {
+  background: var(--accent-soft);
+}
+button[data-state="changes"] .bar {
   background: var(--review);
 }
-button[data-state="attention"] span {
+button[data-state="attention"] .bar {
   background: var(--attention);
 }
-button[data-state="live"] span {
+button[data-state="live"] .bar {
   background: var(--running);
 }
 @media (prefers-reduced-motion: reduce) {
-  span {
+  .bar,
+  .position {
     transition: none;
   }
 }

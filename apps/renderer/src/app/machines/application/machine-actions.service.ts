@@ -13,6 +13,8 @@ export class MachineActionsService {
   private readonly destroy = inject(DestroyRef);
   readonly menu = signal<MachineMenuEvent | null>(null);
   readonly editOpen = signal(false);
+  readonly detailsOpen = signal(false);
+  readonly details = signal<{ readonly name: string; readonly message: string; readonly from: HTMLElement } | null>(null);
   readonly draft = signal<{ readonly machine: Machine; readonly from: HTMLElement; readonly step: 'edit' | 'remove'; readonly id: number } | null>(null);
   readonly saving = signal(false);
   readonly error = signal('');
@@ -28,7 +30,12 @@ export class MachineActionsService {
     this.menu.set(null);
     const machine = this.machines().find(machine => machine.id === event.machine.id);
     if (!machine) return;
-    if (action === 'edit' || action === 'remove' && machine.windows) {
+    if (action === 'details') {
+      if (machine.error && machine.last) {
+        this.details.set({ name: machine.name, message: machine.last, from: event.card });
+        this.detailsOpen.set(true);
+      }
+    } else if (action === 'edit' || action === 'remove' && machine.windows) {
       this.draft.set({ machine, from: event.card, step: action === 'remove' ? 'remove' : 'edit', id: ++this.nextDraft });
       this.error.set(''); this.identity.set(undefined); this.editOpen.set(true);
     } else if (action === 'remove') await this.remove(machine, false);

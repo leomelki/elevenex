@@ -52,7 +52,7 @@ snapshot before releasing the workspace owner.
 
 Compose the exported `WorkspaceProjectRailComponent` in `shellRail`,
 `WorkspaceNavigationComponent` in `shellSidebar`, `WorkspaceTaskHeaderComponent`
-above the selected session’s empty main region, and `WorkspaceDialogsComponent` beside the
+above the selected session’s streaming chat, and `WorkspaceDialogsComponent` beside the
 shell. `WorkspaceOnboardingComponent` is the first-project card. It emits
 `projectSubmitted(CreateProjectIntent)` before dispatching creation and accepts
 `launching`; the machine container owns source retention and the existing
@@ -97,6 +97,10 @@ session `active` is not an indication that an agent is running.
   removes only tasks outside the destination view before loading its replacement.
   All matching tasks and their sessions stay mounted throughout loading and on
   read failure, preserving row identity and local folds independently of selection.
+  After initial history loads, the active outline also stays mounted when no
+  tasks overlap the destination project. Its outgoing rows fold away while a
+  folding loading status bridges the read; incoming rows then grow in. Empty
+  state is reserved for completed reads. Backend scope changes reset retention.
   A matching selected task also keeps its main view mounted. Closed history
   clears the previous view before loading its replacement.
 - Optional `WorkspaceTask.projectRepositoryCount` arrives with task summaries;
@@ -191,6 +195,20 @@ generator. A private index freezes selected changes before generation; excluded
 staged entries and edits made later by running sessions remain outside the commit.
 `WorkspaceTaskGitService` observes writing/committing/pushing phases only while
 its own operation is pending. Timers and replies belong to the selected task/scope.
+The visible selected task preloads one default 100-file commit page. The optional
+`changesRevision` from Git status covers local HEAD/index/worktree state, so
+unchanged polls and incoming upstream commits do not reload the file preview.
+Engines without the token retain bounded periodic reads. One pending default
+read is shared by preloading and panel opening; searches, exceptions and pages
+always use their exact query. A preload less than five seconds old opens without
+another read; older or locally invalidated data remains visible while the panel
+checks again. The backend's existing commit revision guard remains authoritative
+at submission. Cache metadata (including running-session warnings) expires after
+five seconds even when the local-change token stays the same.
+The header supplies cached data as `initialWindow`. Task/scope changes, Git
+mutations and teardown invalidate the cache and late replies. Failed background
+reads retain the previous page for display; they never mark it fresh. Background
+input updates do not replace an open panel's selection or page.
 No write is replayed on reconnect. Refresh status after an uncertain outcome.
 
 Close checks authoritative uncommitted, unpushed and process counts. A clean,

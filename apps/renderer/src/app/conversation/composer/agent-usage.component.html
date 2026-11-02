@@ -1,0 +1,54 @@
+@if (agent().context !== undefined) {
+  <div class="context" [class.with-action]="canCompact() && context() >= 0.75">
+    <ex-context-meter [used]="context()" [tokens]="agent().tokens || ''" /><span
+      >Context</span
+    >
+    @if (agent().tokens) {
+      <span class="dim">{{ agent().tokens }}</span>
+    }
+    @if (canCompact() && context() >= 0.75) {
+      <button
+        type="button"
+        class="compact"
+        [disabled]="disabled()"
+        (click)="compactRequested.emit()"
+      >
+        Compact
+      </button>
+    }
+  </div>
+}
+@if (agent().plan; as plan) {
+  <div class="plan-heading">
+    <span>{{ plan.name || "Plan" }}</span>
+    @if (plan.tier) {
+      <span class="dim">{{ plan.tier }}</span>
+    }
+  </div>
+  @for (limit of limits(); track limit.id) {
+    <div
+      class="limit"
+      [class.tight]="limit.tight"
+      [attr.data-tone]="
+        limit.left <= 0 ? 'danger' : limit.left <= 0.2 ? 'attention' : 'normal'
+      "
+    >
+      <span class="limit-label">{{ limit.label }}</span
+      ><span class="limit-value">{{
+        limit.left <= 0 ? "Used up" : percent(limit.left) + " left"
+      }}</span>
+      <span
+        class="limit-bar"
+        role="meter"
+        [attr.aria-label]="limit.label + ' remaining'"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        [attr.aria-valuenow]="limit.left * 100"
+        ><i [style.width.%]="limit.left * 100"></i
+      ></span>
+      @if (limit.reset) {
+        <span class="reset">{{ resetLabel(limit.reset!) }}</span>
+      }
+    </div>
+  }
+}

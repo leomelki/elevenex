@@ -83,12 +83,15 @@ export interface DiffFileContent {
   readonly error?: string;
   /** When a full file was paginated, ask its owner for the next bounded page. */
   readonly remainingLines?: number;
+  /** A paged source may know there is another page without its total line count. */
+  readonly hasMoreLines?: boolean;
+  readonly hasPreviousLines?: boolean;
 }
 export interface DiffFileRequest {
   readonly fileId: string;
   readonly rev?: string | number;
   readonly mode: ReviewMode;
-  readonly reason: 'visible' | 'selected' | 'retry' | 'large' | 'deleted' | 'more';
+  readonly reason: 'visible' | 'selected' | 'retry' | 'large' | 'deleted' | 'more' | 'previous';
 }
 export interface DiffContextRequest {
   readonly fileId: string;

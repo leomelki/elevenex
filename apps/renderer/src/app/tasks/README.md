@@ -142,6 +142,13 @@ retains one page; **Next files** replaces it inside the same six-row scroll area
 The owner must honor abort/stale scope checks. Paged owners commit the explicit
 `selection` and `revision`; `intent.files` is complete only for supplied-data use.
 Exceptions are limited to 1,000 paths and 64 KiB per list by the platform boundary.
+The panel opens immediately while the provider checks files. The message stays
+editable during loading; submission remains disabled until the check succeeds.
+Owners may supply `initialWindow` with the default first page (all unstaged files
+included, no filter or exceptions). It seeds counts, rows and warnings on a fresh
+opening while the provider resolves the current window. The provider may reuse
+a recent validated window; expired data must be checked before submission. Later input updates do not overwrite an
+open panel’s selection, filter or page; interrupted reopening retains its draft.
 
 The panel owns draft/filter/disclosures, focus trapping, Escape/outside dismissal,
 resize observation and its retained exit. Its content stays frozen while closing.
@@ -151,12 +158,16 @@ The connected preview demonstrates the production composition. Run
 `task-screen-update.mjs` through the desktop capture tool for both themes,
 keyboard/focus, filtering, secret opt-in, staged-only, motion and narrow layouts.
 
-For a remote `fileProvider`, the initial window resolves before measuring entry,
-so summary/notices cannot change the morph's target mid-flight. The opener stays
-available for a second click/Escape and announces busy while that read is pending.
-Subsequent queries keep the panel mounted, disable confirmation and show Checking
-files in its footer. Reopening during a retained exit preserves the current draft;
-a fresh open after the exit resets it.
+For a remote `fileProvider`, entry begins before the initial window resolves.
+The morph observes the surface while moving and updates its geometry and shadow
+on the existing animation clock when summary/notices arrive. The opener stays
+available for a second click/Escape during the read. Subsequent queries keep the
+panel mounted and disable confirmation. A completed exit hides its retained
+layer before cancelling the filled animation, preventing a full-size flash before
+Angular removes it. Reopening during an exit preserves the current draft; a
+fresh open after the exit resets it. `commit-panel-motion.mjs` verifies arriving
+content, entry/exit boundaries, reversals, focus and narrow reduced-motion states
+in both themes.
 
 ## Session archiving and working window
 
@@ -168,6 +179,12 @@ Sub-task rows forward the same intent. Consumers resolve the session's owning ta
 when integrating a hierarchy. The connected workspace validates task/session
 ownership and current activity again in main/backend, retains history and edits,
 then removes the row and offers Undo. Restoring a stopped turn never restarts it.
+
+`TaskList.loading` folds in a loading status when the supplied task window is
+empty and suppresses the settled empty message during reads. Keep the TaskList
+mounted across project reads so its outgoing rows can fold away and returning
+identities can reverse their exit. The workspace mounts initial history after
+the first read, then retains the outline through subsequent active-project reads.
 
 `TaskGroup.cap` / `TaskList.sessionCap` show the newest five normal sessions in
 supplied chronological order, plus attention/failed, selected and fresh rows.

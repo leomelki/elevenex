@@ -1,0 +1,52 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+.tool-content {
+  margin: 0 var(--space-2) var(--space-2) var(--space-6);
+  padding: var(--space-2);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font: var(--text-caption-size)/var(--text-caption-line) var(--font-sans);
+}
+.tool-preview ex-tool-block + ex-tool-block {
+  margin-top: var(--space-1);
+}
+.tool-details ex-tool-block + ex-tool-block {
+  margin-top: var(--space-3);
+}
+.more-details {
+  margin-top: var(--space-1);
+  color: var(--ink-muted);
+}
+summary {
+  cursor: pointer;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: var(--radius-xs);
+}
+.detail-count {
+  color: var(--ink-muted);
+}
+.tool-details {
+  padding-top: var(--space-3);
+  color: var(--ink);
+}
+.notice {
+  margin: var(--space-2) 0;
+  color: var(--ink-muted);
+}
+.raw-details {
+  margin-top: var(--space-2);
+  color: var(--ink-muted);
+}
+pre {
+  max-height: calc(var(--row-height) * 10);
+  overflow: auto;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  background: var(--surface);
+  border-radius: var(--radius-xs);
+  font: var(--text-code-size)/var(--text-code-line) var(--font-mono);
+}

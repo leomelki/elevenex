@@ -32,10 +32,10 @@ export class WorkspaceTaskHeaderComponent {
     const scopeId = selected.scopeId, taskId = selected.taskId, available = this.store.commitPanelAvailable();
     return async (query, signal) => {
       if (!available) throw new Error('Update this machine’s engine to use the commit panel.');
-      const result = await this.bridge.workspaceCommitPreview(scopeId, { taskId, ...query });
+      if (signal.aborted) throw new Error('The file check was cancelled.');
+      const result = await this.git.readCommitPreview(scopeId, { taskId, ...query });
       if (signal.aborted || this.store.selected()?.scopeId !== scopeId || this.store.selected()?.taskId !== taskId) throw new Error('The selected task changed.');
-      if (!result.ok) throw new Error(result.error.message);
-      return result.value;
+      return result;
     };
   });
   protected readonly gitDialogOpen = signal(false);

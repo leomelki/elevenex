@@ -138,8 +138,10 @@ the sidebar. Session pages supply authoritative activity for the visible window.
 
 The side views currently contain shells only. The implementation does not
 introduce direct renderer networking, generic IPC, a second backend or a
-replacement persistence framework. Selected sessions retain their task header
-with an empty main region. See the [workspace guide](../apps/renderer/src/app/workspace/README.md)
+replacement persistence framework. Selected sessions compose the
+[connected chat adapter](../apps/renderer/src/app/session-chat/README.md) with
+bounded history, streamed work, decisions and draft recovery. See the
+[workspace guide](../apps/renderer/src/app/workspace/README.md)
 for the supported actions, limits and ownership.
 
 Failed-task DTOs may include optional bounded `setupIssue` display data.
@@ -275,6 +277,14 @@ client integration does not authorize data loss or destructive migrations.
 
 ## Validation and current limits
 
+Session chat optionally includes bounded `planUsage` on its existing state
+reply. The backend projects subscription-only Codex/Claude OAuth snapshots;
+main validates the provider identity, status, dates, up to eight unique windows
+and finite remaining percentages before forwarding them. Older engines can omit
+the field. Existing feed invalidations carry allowance changes without replaying
+prompts or reloading transcript history. This is a display capability; it does
+not implement scheduled sending or automatic pause/resume.
+
 Run `pnpm desktop:lint`, `pnpm desktop:test`, and `pnpm desktop:build` from the
 root. Tests include real loopback HTTP, malformed/oversized responses, deadlines,
 coalescing, lifecycle invalidation, remote capability routing, trusted IPC and
@@ -307,6 +317,14 @@ and index changes before publication, and holds the real index lock only through
 commit/publication. Excluded staged entries remain staged; later working edits
 remain uncommitted. Temporary files and owned locks are released on success and
 failure. Failures after a saved commit retain an unknown outcome for reconciliation.
+The Git status reply may additionally supply an optional `changesRevision`: a
+64-character opaque digest of the local HEAD/index/worktree versions already
+collected by Git status. Remote tracking changes do not invalidate it. Main
+validates it; older engines omit it. The selected renderer uses this token to
+skip unchanged background commit previews and retains one bounded default page.
+Recent pages are reused for five seconds, with expired reads coalesced and the
+existing submission revision guard unchanged. This token is a cache validator,
+not a replacement for commit authorization or the frozen-index revision.
 The existing git status operation may carry an optional commit phase; the feature
 polls it only during its pending commit, with selection/epoch/cleanup guards.
 
@@ -320,3 +338,11 @@ reply lifecycle/task identity. The renderer loads archived windows lazily, keeps
 them separate from normal-session activity and pagination, and reuses the named
 restore operation without requiring an Undo notification. No additional channel,
 generic transport, migration or unbounded history response is introduced.
+
+The chat media slice adds optional attachment references to transcript items and
+`sessionChatMedia(scope, { taskId, sessionId, itemId, mediaId, requestId })`.
+References, rather than filesystem paths, cross IPC. The backend rechecks session
+membership and confines referenced raster files to the task or Codex's generated
+image directory. Main validates matching identities and bounded raster data URLs;
+transport and cancellation use the existing window lease. Image bytes are fetched
+separately from bounded transcript pages, with no renderer networking or CSP change.

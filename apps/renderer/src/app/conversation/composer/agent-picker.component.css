@@ -1,0 +1,171 @@
+:host {
+  display: inline-flex;
+  min-width: 0;
+}
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+  height: calc(var(--control-height) - var(--space-1));
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 var(--space-2) 0 calc(var(--space-1) * 1.5);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-code-size);
+  font-weight: var(--text-ui-weight);
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-instant) var(--ease-out),
+    color var(--dur-instant) var(--ease-out);
+}
+.trigger:hover,
+.trigger[aria-expanded="true"] {
+  background: var(--surface-sunken);
+}
+.trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.name,
+.sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sub {
+  color: var(--ink-muted);
+  font-weight: var(--text-body-weight);
+}
+.trigger > ex-icon,
+.meters {
+  flex: none;
+}
+.fast {
+  color: var(--accent);
+}
+.meters {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.25);
+}
+/* Geometry is copied from the standalone AgentPicker: 360px content + two 4px insets. */
+.agent-settings {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  max-height: min(100%, calc(100dvh - var(--space-8)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  box-shadow:
+    var(--shadow-pop),
+    inset 0 0 0 1px var(--line);
+  transform-origin: bottom left;
+  animation: menu-enter var(--dur-glide) var(--ease-glide) both;
+}
+.agent-settings.below {
+  transform-origin: top left;
+  --menu-y: -4px;
+}
+.menu-usage {
+  padding: calc(var(--space-1) * 1.5) var(--space-2) var(--space-1);
+}
+.separator {
+  height: 1px;
+  background: var(--line);
+  margin: var(--space-1) 0;
+}
+.usage-card {
+  width: 100%;
+  max-width: 100%;
+  max-height: min(100%, calc(100dvh - var(--space-8)));
+  overflow-y: auto;
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  box-shadow:
+    var(--shadow-pop),
+    inset 0 0 0 1px var(--line);
+  transform-origin: 18px 100%;
+  pointer-events: none;
+  animation: usage-enter var(--dur-fast) var(--ease-out) both;
+}
+.usage-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: calc(var(--space-1) * 2.5);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  color: var(--ink-muted);
+  font-size: var(--text-mono-meta-size);
+}
+.agent-settings.leaving,
+.usage-card.leaving {
+  pointer-events: none;
+}
+.agent-settings.leaving {
+  animation: popover-leave var(--dur-fast) var(--ease-in) both;
+}
+/* The source usage card exits in 120ms, expressed with the supplied tokens. */
+.usage-card.leaving {
+  animation: usage-leave calc(var(--dur-base) - var(--dur-instant))
+    var(--ease-in) both;
+}
+@keyframes menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--menu-y, 4px)) scale(0.94);
+  }
+}
+@keyframes usage-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px) scale(0.98);
+  }
+}
+@keyframes popover-leave {
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@container composer (max-width: 600px) {
+  .trigger .sub {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trigger {
+    transition: none;
+  }
+  .agent-settings,
+  .usage-card,
+  .agent-settings.leaving,
+  .usage-card.leaving {
+    animation: none;
+  }
+}
+
+@keyframes usage-leave {
+  to {
+    opacity: 0;
+    transform: translateY(3px) scale(0.98);
+  }
+}

@@ -59,12 +59,12 @@ test('startup is shared across windows, status is replayable and listeners unsub
 test('failed downloads can be retried and errors remain bounded', async t => {
   let attempt = 0;
   const { manager } = await setup(t, { install: async () => {
-    if (!attempt++) throw new Error('offline'.repeat(1000));
+    if (!attempt++) throw new Error('offline'.repeat(3000));
     return { directory: '', executable: '', entry: '' };
   } });
   const failed = await manager.start();
   assert.equal(failed.phase, 'failed');
-  assert.equal(failed.message.length, 2048);
+  assert.equal(failed.message.length, 12_288);
   assert.equal((await manager.start()).phase, 'ready');
 });
 

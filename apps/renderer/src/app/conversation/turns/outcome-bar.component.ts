@@ -47,6 +47,7 @@ import { FileChipComponent } from "./file-chip.component";
 })
 export class OutcomeBarComponent {
   readonly files = input<readonly ChangedFile[]>([]);
+  readonly filesTotal = input<number>();
   readonly max = input(3);
   readonly action = input("Review");
   readonly actionIcon = input("changes");
@@ -56,6 +57,6 @@ export class OutcomeBarComponent {
     this.files().slice(0, Math.max(0, this.max())),
   );
   readonly remaining = computed(() =>
-    Math.max(0, this.files().length - this.visible().length),
+    Math.max(0, (this.filesTotal() ?? this.files().length) - this.visible().length),
   );
 }

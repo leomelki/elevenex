@@ -1,3 +1,4 @@
+import { codexImageResult } from './codex-image-result.js';
 import {
   elevenexMcpUrl,
   SESSION_TOOL_INSTRUCTIONS,
@@ -33,7 +34,6 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
-import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
 import type {
   AgentForkConversationRequest,
   AgentForkConversationResult,
@@ -289,9 +289,7 @@ export class CodexRuntimeService
 
     return {
       models,
-      reasoningEfforts: reported.size
-        ? orderReasoningEfforts([...reported])
-        : [...AGENT_REASONING_EFFORTS],
+      reasoningEfforts: orderReasoningEfforts([...reported]),
       providerDefaultModelId: this.codexDefaultModel,
       supportsModelSelection: true,
       unavailableReason: this.modelRefreshError,
@@ -1512,6 +1510,42 @@ export class CodexRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options: { waitForCompletion?: boolean } = {},
+  ): Promise<void> {
+    if (options.waitForCompletion !== false)
+      return this.runPrompt(sessionId, prompt, titlePrompt, images);
+    let owned = false;
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
+    let accepted!: () => void;
+    const receipt = new Promise<void>((resolve) => { accepted = resolve; });
+    const completion = this.runPrompt(sessionId, prompt, titlePrompt, images, () => {
+      owned = true;
+      accepted();
+    });
+    // Keep runtime ownership and stop/cleanup intact after HTTP acknowledges the send.
+    // In particular a late turn-change cleanup failure must still reach the live UI.
+    void completion.catch((error: unknown) => {
+      if (!owned || this.invalidatedSessions.has(sessionId) ||
+          generation !== (this.sessionGenerations.get(sessionId) ?? 0)) return;
+      const state = this.ensureRuntimeState(sessionId);
+      const message = error instanceof Error ? error.message : String(error);
+      state.lastError = message;
+      state.runPhase = 'error';
+      state.sessionState = 'idle';
+      state.canInterrupt = false;
+      this.emitEvent({ type: 'error', payload: { sessionId, message } });
+      this.emitRunState(sessionId);
+      this.logger.error(`Codex run failed session=${sessionId}: ${message}`);
+    });
+    await Promise.race([receipt, completion]);
+  }
+
+  private async runPrompt(
+    sessionId: number,
+    prompt: string,
+    titlePrompt?: string,
+    images?: AgentImageInput[],
+    onAccepted?: () => void,
   ): Promise<void> {
     const generation = this.sessionGenerations.get(sessionId) ?? 0;
     this.assertNotRewinding(sessionId);
@@ -1656,6 +1690,7 @@ export class CodexRuntimeService
       userInputRequests: new Map(),
     });
 
+    onAccepted?.();
     let stagedImageDir: string | null = null;
     let changeCapture: TurnChangeCapture | undefined;
     try {
@@ -2456,6 +2491,7 @@ export class CodexRuntimeService
       const commandActions = commandActionsFrom(item);
       const providerToolInput = {
         command: item.command,
+        ...(typeof record(item).cwd === 'string' ? { cwd: record(item).cwd } : {}),
         ...(commandActions ? { commandActions } : {}),
       };
       const canonicalTool = canonicalizeAgentTool('Bash', providerToolInput);
@@ -2607,6 +2643,10 @@ export class CodexRuntimeService
         kind: 'tool_result',
         toolUseId: item.id,
         content: item.aggregated_output,
+        providerToolResult: {
+          ...(typeof item.exit_code === 'number' ? { exitCode: item.exit_code } : {}),
+          ...(typeof record(item).interrupted === 'boolean' ? { interrupted: record(item).interrupted } : {}),
+        },
         isError: item.status === 'failed' || (item.exit_code ?? 0) !== 0,
         timestamp,
         authoredAt: timestamp,
@@ -2631,6 +2671,7 @@ export class CodexRuntimeService
         kind: 'tool_result',
         toolUseId: item.id,
         content: item.error?.message ?? JSON.stringify(item.result ?? {}),
+        providerToolResult: item.result,
         isError: item.status === 'failed',
         timestamp,
         authoredAt: timestamp,
@@ -3341,17 +3382,19 @@ export class CodexRuntimeService
         ? model.description.trim()
         : 'Codex model.';
     const reasoningEfforts = Array.isArray(model.supportedReasoningEfforts)
-      ? orderReasoningEfforts(
-          model.supportedReasoningEfforts
-            .map((effort): string => {
-              if (typeof effort === 'string') return effort.trim();
-              if (!effort || typeof effort !== 'object') return '';
-              const value = (effort as CodexReasoningEffortDescriptor)
-                .reasoningEffort;
-              return typeof value === 'string' ? value.trim() : '';
-            })
-            .filter((effort) => effort.length > 0),
-        )
+      ? [
+          ...new Set(
+            model.supportedReasoningEfforts
+              .map((effort): string => {
+                if (typeof effort === 'string') return effort.trim();
+                if (!effort || typeof effort !== 'object') return '';
+                const value = (effort as CodexReasoningEffortDescriptor)
+                  .reasoningEffort;
+                return typeof value === 'string' ? value.trim() : '';
+              })
+              .filter((effort) => effort.length > 0),
+          ),
+        ]
       : [];
     const supportsEffort = reasoningEfforts.length > 0;
     const supportsFastMode =
@@ -4612,6 +4655,8 @@ export class CodexRuntimeService
           id,
           type: 'command_execution',
           command: typeof raw.command === 'string' ? raw.command : '',
+          ...(typeof raw.cwd === 'string' ? { cwd: raw.cwd } : {}),
+          ...(typeof raw.interrupted === 'boolean' ? { interrupted: raw.interrupted } : {}),
           ...(commandActions ? { command_actions: commandActions } : {}),
           aggregated_output:
             typeof raw.aggregatedOutput === 'string'
@@ -4629,6 +4674,20 @@ export class CodexRuntimeService
           type: 'file_change',
           changes: Array.isArray(raw.changes) ? raw.changes : [],
           status: status === 'in_progress' ? 'completed' : status,
+        };
+      case 'imageGeneration':
+        return {
+          id, type: 'mcp_tool_call', server: 'codex', tool: 'image_generation',
+          arguments: {}, result: { content: [{ type: 'text', text: JSON.stringify(codexImageResult(raw)) }], structured_content: null },
+          ...(raw.failure ? { error: { message: 'Image generation failed.' } } : {}),
+          status,
+        };
+      case 'dynamicToolCall':
+        return {
+          id, type: 'mcp_tool_call', server: typeof raw.namespace === 'string' ? raw.namespace : 'codex',
+          tool: typeof raw.tool === 'string' ? raw.tool : 'Tool', arguments: raw.arguments ?? {},
+          result: { content: [{ type: 'text', text: JSON.stringify(raw.contentItems ?? []) }], structured_content: null },
+          ...(raw.success === false ? { error: { message: 'Tool failed.' } } : {}), status,
         };
       case 'mcpToolCall':
         return {

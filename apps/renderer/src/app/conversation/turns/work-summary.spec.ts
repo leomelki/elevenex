@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { formatDuration, groupWorkSteps, summarizeWork } from "./work-summary";
 
 describe("work timeline grouping", () => {
+  it('keeps unknown completion visible without counting it as completed work', () => {
+    const steps = [
+      { id: 'a', kind: 'read', status: 'done' },
+      { id: 'b', kind: 'read', status: 'unknown' },
+      { id: 'c', kind: 'read', status: 'done' },
+    ] as const;
+    expect(groupWorkSteps(steps).map(step => step.id)).toEqual(['a', 'b', 'c']);
+    expect(summarizeWork(steps, [])).toEqual([{ kind: 'reads', icon: 'file', label: 'Read 2 files' }]);
+  });
   it("groups adjacent discoveries while preserving failure evidence and stable keys", () => {
     const groups = groupWorkSteps([
       { id: "a", kind: "read", status: "done" },
@@ -71,5 +80,13 @@ describe("work timeline grouping", () => {
     expect(entries[0]?.kind === "group" && entries[0].label).toBe(
       "Read 2 files · Searched 1 time",
     );
+  });
+  it("provides hover facts for edits, searches, listings, web and unknown tools", () => {
+    for (const [kind, label] of [
+      ["edit", "1 edit"], ["create", "1 edit"], ["search", "1 search"],
+      ["list", "1 listing"], ["web", "1 web request"], ["tool", "1 tool call"],
+    ] as const) {
+      expect(summarizeWork([{ id: kind, kind }], [])[0]?.label).toBe(label);
+    }
   });
 });

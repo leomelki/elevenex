@@ -3,9 +3,11 @@ import { copyModalFace, measureModalOrigin, ModalBox, modalMorphFrames, MODAL_LA
 /** Owns modal animation handles and decorative copies. The component owns focus and presence. */
 export class ModalMotion {
   private animations: Animation[] = [];
+  private resize?: ResizeObserver;
   private readonly media = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : undefined;
   private readonly reducedChanged = () => { if (this.media?.matches) this.animations.forEach(animation => animation.finish()); };
   private readonly surface: HTMLElement | null;
+  private readonly dim: HTMLElement;
   private window: Element | null;
   private origin?: ModalBox;
   private face?: HTMLElement;
@@ -22,6 +24,8 @@ export class ModalMotion {
     this.returnElement = from;
     this.media?.addEventListener('change', this.reducedChanged);
     this.surface = layer.firstElementChild instanceof HTMLElement ? layer.firstElementChild : null;
+    // Imperative popovers use the same motion owner without a modal backdrop.
+    this.dim = layer.querySelector<HTMLElement>(':scope > .ex-modal-dim') ?? layer;
     this.window = from?.closest('[data-modal-window], .ex-window, ex-app-shell') ?? null;
     if (!this.media?.matches && from?.isConnected && this.surface?.animate) {
       const origin = measureModalOrigin(layer, from);
@@ -46,7 +50,7 @@ export class ModalMotion {
     // Snapshot painted values before cancelling: rapid reversals start at exactly this frame.
     const layerStyle = getComputedStyle(this.layer), surfaceStyle = getComputedStyle(surface);
     const painted = { opacity: surfaceStyle.opacity, transform: surfaceStyle.transform, clipPath: surfaceStyle.clipPath };
-    const dim = layerStyle.backgroundColor, opacity = layerStyle.opacity;
+    const dimOpacity = getComputedStyle(this.dim).opacity;
     const content = Array.from(surface.children).filter((child): child is HTMLElement => child instanceof HTMLElement);
     const contentOpacity = content.map(child => getComputedStyle(child).opacity);
     const copyPose = (element?: HTMLElement) => {
@@ -105,6 +109,29 @@ export class ModalMotion {
       Object.assign(this.shadow.style, { position: 'absolute', margin: '0', transformOrigin: '0 0', pointerEvents: 'none', left: `${dialog.left}px`, top: `${dialog.top}px`, width: `${dialog.width}px`, height: `${dialog.height}px`, borderRadius: `${dialog.radius}px`, boxShadow: surfaceStyle.boxShadow });
       this.layer.append(this.shadow);
       this.animations = [surface.animate(frames.surface, options), this.shadow.animate(frames.shadow, options)];
+      if (this.options.noFace && typeof ResizeObserver !== 'undefined') {
+        // File previews can arrive during entry. Update geometry on the same
+        // animation clock; restarting the morph on each resize would delay it.
+        const surfaceEffect = this.animations[0]?.effect;
+        const shadowEffect = this.animations[1]?.effect;
+        let measured = dialog;
+        this.resize = new ResizeObserver(() => {
+          if (generation !== this.generation) return;
+          const resized = { ...dialog, width: surface.offsetWidth, height: surface.offsetHeight };
+          if (!resized.width || !resized.height || !this.origin) return;
+          if (resized.width === measured.width && resized.height === measured.height) return;
+          measured = resized;
+          const next = modalMorphFrames(this.origin, resized, value, open ? 1 : 0, this.options.fadeIn);
+          if (timing != null) {
+            next.surface[0] = frames.surface[0]!;
+            next.shadow[0] = frames.shadow[0]!;
+          }
+          if (surfaceEffect instanceof KeyframeEffect) surfaceEffect.setKeyframes(next.surface);
+          if (shadowEffect instanceof KeyframeEffect) shadowEffect.setKeyframes(next.shadow);
+          if (this.shadow) Object.assign(this.shadow.style, { width: `${resized.width}px`, height: `${resized.height}px` });
+        });
+        this.resize.observe(surface);
+      }
       content.forEach((child, index) => this.animations.push(child.animate(timing == null ? frames.content : [{ offset: 0, opacity: contentOpacity[index] }, ...frames.content.slice(1)], options)));
       if (this.face) {
         Object.assign(this.face.style, { left: `${this.origin.left}px`, top: `${this.origin.top}px`, width: `${this.origin.width}px`, height: `${this.origin.height}px` });
@@ -118,13 +145,13 @@ export class ModalMotion {
         }
         this.animations.push(this.face.animate(frames.face, options));
       }
-      if (!this.options.noFace) this.animations.push(this.layer.animate([{ backgroundColor: timing == null && open ? 'transparent' : dim }, { backgroundColor: open ? 'color-mix(in srgb, #08101c 22%, transparent)' : 'transparent' }], options));
+      if (!this.options.noFace) this.animations.push(this.dim.animate([{ opacity: timing == null && open ? '0' : dimOpacity }, { opacity: open ? '1' : '0' }], options));
     } else {
-      const duration = parseFloat(layerStyle.getPropertyValue(open ? '--dur-glide' : '--dur-base')) || (open ? 340 : 200);
+      const duration = parseFloat(layerStyle.getPropertyValue(open ? '--dur-slow' : '--dur-base')) || (open ? 280 : 200);
       const easing = layerStyle.getPropertyValue(open ? '--ease-out' : '--ease-in').trim();
       this.animations = [
-        surface.animate([painted, { opacity: open ? '1' : '0', transform: open ? 'none' : 'translateY(-8px) scale(.985)' }], { duration: open ? 560 : duration, easing: open ? MODAL_LAUNCH_EASING : easing, fill: 'both' }),
-        this.layer.animate([{ opacity }, { opacity: open ? '1' : '0' }], { duration, easing, fill: 'both' }),
+        surface.animate([painted, { opacity: open ? '1' : '0', transform: open ? 'none' : 'translateY(-8px) scale(.985)' }], { duration, easing, fill: 'both' }),
+        this.dim.animate([{ opacity: dimOpacity }, { opacity: open ? '1' : '0' }], { duration, easing, fill: 'both' }),
       ];
     }
     try { await Promise.all(this.animations.map(animation => animation.finished)); }
@@ -164,6 +191,7 @@ export class ModalMotion {
   }
 
   private cancelAnimations(): void {
+    this.resize?.disconnect(); this.resize = undefined;
     this.generation++;
     for (const animation of this.animations.splice(0)) animation.cancel();
   }

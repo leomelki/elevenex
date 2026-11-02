@@ -1,0 +1,42 @@
+<ex-modal-layer [open]="open()" [from]="from()" (closeRequested)="closeRequested.emit()" (closed)="closed.emit()">
+  <section class="image-viewer" role="dialog" aria-modal="true" tabindex="-1" cdkFocusInitial [attr.aria-label]="label()"
+    aria-description="Use plus and minus to zoom, arrow keys to pan, and 0 to fit. Escape closes the preview."
+    (keydown)="onKey($event)">
+    <header>
+      <h2 [title]="label()">{{ label() }}</h2>
+      <ex-icon-button class="close" icon="x" label="Close image preview" (pressed)="closeRequested.emit()" />
+    </header>
+    <div #viewport class="viewport" [attr.aria-busy]="loading()">
+      <button class="canvas-dismiss" type="button" tabindex="-1" aria-label="Close image preview background" (click)="closeRequested.emit()"></button>
+      @if (loading()) {
+        <div class="status" role="status">Loading image…</div>
+      }
+      @if (failed()) {
+        <div class="status" role="status">
+          <strong>Image unavailable</strong>
+          <span>The file may have been moved or deleted.</span>
+        </div>
+      } @else {
+        <button class="picture" type="button" [class.ready]="!loading()" [class.enlarged]="enlarged()" [class.dragging]="dragging()"
+          [attr.aria-label]="enlarged() ? 'Fit image to window' : 'Zoom into image'"
+          [disabled]="unavailable()" [style.width.px]="naturalSize().width || null" [style.height.px]="naturalSize().height || null"
+          [style.transform]="transform()" (click)="toggleZoom()"
+          (pointerdown)="pointerDown($event)" (pointermove)="pointerMove($event)"
+          (pointerup)="pointerEnd($event)" (pointercancel)="pointerEnd($event)" (lostpointercapture)="pointerEnd($event)">
+          <img [src]="source()" [alt]="label()" draggable="false"
+            (load)="loaded($event)" (error)="loading.set(false); failed.set(true)" />
+        </button>
+      }
+    </div>
+    <footer>
+      <div class="zoom" role="group" aria-label="Image zoom">
+        <ex-icon-button icon="minus" label="Zoom out" [disabled]="unavailable() || !enlarged()" (pressed)="changeZoom(-1)" />
+        <button exButton variant="ghost" size="sm" class="zoom-value" [disabled]="unavailable()"
+          aria-label="Fit image to window" exTooltip="Fit image to window" tooltipShortcut="0" (click)="fit()">
+          <span aria-live="polite">{{ zoomLabel() }}</span>
+        </button>
+        <ex-icon-button icon="plus" label="Zoom in" [disabled]="unavailable() || scale() >= 3" (pressed)="changeZoom(1)" />
+      </div>
+    </footer>
+  </section>
+</ex-modal-layer>

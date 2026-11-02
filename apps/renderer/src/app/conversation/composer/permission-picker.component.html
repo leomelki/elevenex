@@ -5,14 +5,21 @@
   #origin="cdkOverlayOrigin"
   [attr.aria-expanded]="open()"
   aria-haspopup="dialog"
+  [disabled]="disabled()"
+  [attr.aria-label]="'Permissions: ' + label()"
+  [title]="'Permissions: ' + label()"
   (click)="open.set(!open())"
 >
-  <ex-icon name="shield" [size]="14" /><span>{{ label() }}</span>
+  <ex-icon name="shield" [size]="14" /><span class="permission-label">{{
+    label()
+  }}</span>
 </button>
 <ng-template
   cdkConnectedOverlay
   [cdkConnectedOverlayOrigin]="origin"
-  [cdkConnectedOverlayOpen]="open()"
+  [cdkConnectedOverlayOpen]="open() && !disabled()"
+  [cdkConnectedOverlayViewportMargin]="16"
+  [cdkConnectedOverlayPush]="true"
   [cdkConnectedOverlayHasBackdrop]="true"
   cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
   [cdkConnectedOverlayPositions]="[
@@ -33,7 +40,7 @@
     cdkTrapFocus
     [cdkTrapFocusAutoCapture]="true"
   >
-    @for (choice of choices; track choice.id) {
+    @for (choice of choices(); track choice.id) {
       <button
         type="button"
         class="choice"

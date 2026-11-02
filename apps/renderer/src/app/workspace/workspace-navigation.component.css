@@ -8,7 +8,7 @@ header > h1 { padding-inline: var(--space-1); }
 .project-title:disabled { opacity: 0.45; cursor: default; }
 .project-title ex-icon { color: var(--ink-muted); flex: none; }
 h2 { margin: 0; font-size: var(--text-caption-size); color: var(--ink-muted); font-weight: var(--text-title-weight); }
-ex-task-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding: var(--space-1); }
+ex-task-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding: var(--space-1); }
 ex-status-summary { flex: none; }
 .notice { display: grid; gap: var(--space-2); padding: var(--space-3); color: var(--danger); font-size: var(--text-caption-size); }
 .notice button { justify-self: start; }

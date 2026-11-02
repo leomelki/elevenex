@@ -1,3 +1,4 @@
+import { Component, signal, viewChild } from "@angular/core";
 import { TestBed, type ComponentFixture } from "@angular/core/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComposerSubmission } from "../conversation.models";
@@ -45,6 +46,18 @@ describe("Composer public interactions", () => {
     );
     fixture.detectChanges();
   }
+  it("allows ready attachments without text and blocks unfinished uploads", () => {
+    fixture.componentRef.setInput('attachmentsEnabled', true);
+    fixture.componentRef.setInput('attachments', [{ id: 'file', path: '/file', name: 'clip.webm', kind: 'video', status: 'uploading' }]);
+    fixture.detectChanges();
+    press(type(''));
+    expect(sent).toEqual([]);
+    fixture.componentRef.setInput('attachments', [{ id: 'file', path: '/file', name: 'clip.webm', kind: 'video', status: 'ready' }]);
+    fixture.detectChanges();
+    press(type(''));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.text).toBe('');
+  });
   it("sends, queues and steers with the correct intent and clears accepted drafts", () => {
     press(type("  Explain the retry policy  "));
     expect(sent[0]?.intent).toBe("send");
@@ -154,5 +167,29 @@ describe("Composer public interactions", () => {
     expect(textarea.getAttribute("aria-activedescendant")).toBe(selected?.id);
     press(textarea);
     expect(fixture.componentInstance.draft()).toBe("@retry.ts ");
+  });
+});
+
+@Component({
+  imports: [ComposerComponent],
+  template: `<ex-composer [draft]="draft()" (draftChange)="draft.set($event)" [clearOnSubmit]="false" (submitted)="reject($event)" />`,
+})
+class ControlledComposer {
+  readonly draft = signal('Retain this message');
+  readonly composer = viewChild(ComposerComponent);
+  reject(submission: ComposerSubmission): void {
+    this.draft.set('');
+    this.draft.set(submission.text);
+  }
+}
+describe('controlled composer delivery', () => {
+  it('lets the owner restore a rejected message without a child reset overtaking it', async () => {
+    const fixture = TestBed.createComponent(ControlledComposer);
+    fixture.detectChanges(); await fixture.whenStable();
+    fixture.componentInstance.composer()?.send();
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(fixture.componentInstance.draft()).toBe('Retain this message');
+    expect((fixture.nativeElement as HTMLElement).querySelector('textarea')?.value).toBe('Retain this message');
+    fixture.destroy();
   });
 });

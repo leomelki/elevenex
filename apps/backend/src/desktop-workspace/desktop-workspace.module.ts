@@ -1,4 +1,8 @@
+import { DesktopChatAttachments } from './desktop-chat-attachments.js';
+import { SettingsModule } from '../settings/settings.module.js';
 import { AgentRuntimeModule } from '../agent-runtime/agent-runtime.module.js';
+import { DesktopChatController } from './desktop-chat.controller.js';
+import { DesktopChatService } from './desktop-chat.service.js';
 import { ClaudeHooksModule } from '../claude-hooks/claude-hooks.module.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
 import { NavigationEventsModule } from '../navigation/navigation-events.module.js';
@@ -15,6 +19,7 @@ import { DesktopWorkspaceService } from './desktop-workspace.service.js';
 import { DesktopProjectDeletionService } from './desktop-project-deletion.service.js';
 @Module({
   imports: [
+    SettingsModule,
     GitModule,
     AgentRuntimeModule,
     ClaudeHooksModule,
@@ -25,8 +30,10 @@ import { DesktopProjectDeletionService } from './desktop-project-deletion.servic
     SessionsModule,
     BranchesModule,
   ],
-  controllers: [DesktopWorkspaceController],
+  controllers: [DesktopWorkspaceController, DesktopChatController],
   providers: [
+    DesktopChatAttachments,
+    DesktopChatService,
     DesktopWorkspaceService,
     DesktopWorkspaceGitService,
     DesktopWorkspaceActivityService,

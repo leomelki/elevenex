@@ -78,6 +78,12 @@ export interface AgentProviderDefaults {
   fastMode?: boolean;
 }
 
+/** A recent choice, kept separately from explicitly configured defaults. */
+export interface LastUsedAgentConfig extends AgentProviderDefaults {
+  provider: DefaultAgentProvider;
+  fastMode: boolean;
+}
+
 /** Keys must look like provider ids; values are provider-defined identifiers. */
 export const AGENT_PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
 export const MAX_AGENT_PREFERENCE_VALUE_LENGTH = 200;

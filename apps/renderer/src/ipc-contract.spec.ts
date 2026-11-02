@@ -4,6 +4,8 @@ import type { BackendClientState, BackendInfo, BackendResult, MachineState } fro
 
 describe('IPC bridge contract', () => {
   it('keeps the public API arguments and replies typed', () => {
+    expectTypeOf<Parameters<ElevenexBridge['sessionChatCatalog']>>().toEqualTypeOf<[scopeId: string, input: import('@elevenex/shared').SessionChatCatalogRead]>();
+    expectTypeOf<ReturnType<ElevenexBridge['sessionChatCatalog']>>().toEqualTypeOf<Promise<BackendResult<import('@elevenex/shared').SessionChatCatalog>>>();
     expectTypeOf<Parameters<ElevenexBridge['gitStatus']>>().toEqualTypeOf<[path: string]>();
     expectTypeOf<ReturnType<ElevenexBridge['gitStatus']>>().toEqualTypeOf<Promise<GitStatus>>();
     expectTypeOf<ReturnType<ElevenexBridge['appVersion']>>().toEqualTypeOf<Promise<string>>();
@@ -32,6 +34,17 @@ describe('IPC bridge contract', () => {
 // These negative assertions are checked by tsc in pnpm test. Vitest alone only
 // transpiles tests, which would silently miss an accidentally weakened contract.
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  void invoke('session-chat:changes', 'scope', { taskId: 1, sessionId: 2, requestId: 'review', turnId: 'reply', offset: 0 });
+  // @ts-expect-error Review reads require the selected task and session, never an arbitrary filesystem path.
+  void invoke('session-chat:changes', 'scope', { path: '/etc/passwd', offset: 0 });
+  // @ts-expect-error Chat reads must identify the expected backend scope.
+  void invoke('session-chat:read', { taskId: 1, sessionId: 2, requestId: 'read' });
+  // @ts-expect-error The conversation bridge never accepts generic shell actions.
+  void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'shell', command: 'anything' } });
+  // @ts-expect-error Permission decisions are an explicit union.
+  void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'permission', id: 'request', decision: 'yes' } });
+  // @ts-expect-error Original content is a bounded named read, never an arbitrary path.
+  void invoke('session-chat:content', 'scope', { path: '/private/file' });
   // @ts-expect-error Name checks must identify the expected backend scope.
   void invoke('workspace:project-name-availability', 'Project');
   // @ts-expect-error First-run completion requires an expected selected machine.
@@ -107,3 +120,8 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   subscribe('theme:changed', (event: { sender: unknown }) => void event);
 }
 void checkContract;
+function checkUpload(invoke: <K extends keyof import('@elevenex/shared').InvokeContracts>(channel: K, ...args: import('@elevenex/shared').InvokeContracts[K]['args']) => unknown) {
+  // @ts-expect-error File system paths are not accepted as an upload payload.
+  invoke('session-chat:upload', 'scope', '/Users/private/file.png');
+}
+void checkUpload;

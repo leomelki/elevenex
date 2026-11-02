@@ -28,12 +28,22 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
   start: async () => {
     const http = createServer((request, response) => {
       const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+      if (request.method === 'POST' && pathname === '/api/desktop-workspace/tasks/1/sessions/2/chat/attachments') {
+        request.resume();
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ id: '11111111-1111-4111-8111-111111111111', offset: 3, path: '/private/chat-attachments/2/11111111-1111-4111-8111-111111111111/notes.txt' }));
+        return;
+      }
       const responses = {
         '/api/info': { backendSha: revision },
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/media': { itemId: 'image', mediaId: '0', source: 'data:image/png;base64,iVBORw0KGgo=' },
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/catalog': { provider: 'claude', label: 'Claude Code', models: [{ id: 'sonnet', label: 'Sonnet', reasoningEfforts: ['high'], supportsFastMode: false }], model: 'sonnet', reasoning: 'high', fast: false, reasoningAvailable: true, fastAvailable: false, error: null },
         '/api/desktop-workspace/revision': { revision: 0, version: 1 },
         '/api/desktop-workspace/projects': { items: [], nextCursor: null },
         '/api/desktop-workspace/tasks': { items: [], nextCursor: null },
+        '/api/desktop-workspace/tasks/1/git': { taskId: 1, branch: 'work', upstream: null, ahead: 0, behind: 0, files: 1, additions: 3, deletions: 1, conflicted: false, changesRevision: 'b'.repeat(64) },
         '/api/desktop-workspace/folders': [],
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/changes': { turnId: 'reply', revision: 'a'.repeat(64), offset: 0, files: [], total: 0, nextOffset: null, content: null },
       };
       assert.equal(request.method, 'GET');
       assert.ok(Object.hasOwn(responses, pathname), `Unexpected smoke endpoint: ${pathname}`);
@@ -78,7 +88,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -104,10 +114,23 @@ void (async () => {
   assert.equal(await window.webContents.executeJavaScript('window.elevenex.openMachineWindow({kind:"remote",hostId:"unknown"}).then(()=>false,()=>true)'), true);
   const firstScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.equal(firstScope.scope.environment.kind, 'local');
+  const gitSummary = await window.webContents.executeJavaScript(`window.elevenex.workspaceGit('${firstScope.scope.id}', 1)`);
+  assert.equal(gitSummary.ok, true); assert.equal(gitSummary.value.changesRevision, 'b'.repeat(64));
   assert.deepEqual(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('${firstScope.scope.id}')`), {
     ok: true, value: { backendSha: revision },
   });
+  const uploadedFile = await window.webContents.executeJavaScript(`window.elevenex.sessionChatUpload('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'smoke-upload', id: '11111111-1111-4111-8111-111111111111', name: 'notes.txt', size: 3, offset: 0, data: 'YWJj' })`);
+  assert.equal(uploadedFile.ok, true);
+  assert.equal(uploadedFile.value.offset, 3);
+  const chatImage = await window.webContents.executeJavaScript(`window.elevenex.sessionChatMedia('${firstScope.scope.id}', { taskId: 1, sessionId: 2, itemId: 'image', mediaId: '0', requestId: 'smoke-media' })`);
+  assert.equal(chatImage.ok, true); assert.equal(chatImage.value.source, 'data:image/png;base64,iVBORw0KGgo=');
+  const presetCatalog = await window.webContents.executeJavaScript(`window.elevenex.sessionChatCatalog('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'smoke-catalog', provider: 'claude' })`);
+  assert.equal(presetCatalog.ok, true);
+  assert.equal(presetCatalog.value.models[0].id, 'sonnet');
   assert.equal(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('').then(() => false, () => true)`), true);
+  const changes = await window.webContents.executeJavaScript(`window.elevenex.sessionChatChanges('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'smoke-review', turnId: 'reply', offset: 0 })`);
+  assert.equal(changes.ok, true); assert.equal(changes.value.turnId, 'reply'); assert.equal(changes.value.total, 0);
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.sessionChatChanges('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'invalid-review', turnId: 'reply', offset: -1 }).then(() => false, () => true)`), true);
   // Exercise the production deferred workspace through app://, real IPC and HTTP.
   // This also catches missing style nonces when its lazy components are mounted.
   await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {

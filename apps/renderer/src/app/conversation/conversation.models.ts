@@ -1,3 +1,5 @@
+import type { ToolPresentation } from './tool-presentation';
+
 /** Renderer-owned view models. IDs are stable across streamed and incremental updates. */
 export type ConversationStatus =
   | "running"
@@ -10,18 +12,52 @@ export type ConversationMode = "plan" | "code";
 export type PermissionLevel = "ask" | "edits" | "auto";
 export type ThinkingLevel = "Off" | "Low" | "Medium" | "High" | "Max";
 export interface AgentConfig {
+  readonly id?: string;
   readonly preset?: string;
+  /** Saved default; also seeds the creator's local choice and carries its submission. */
+  readonly default?: boolean;
   readonly mark: string;
   readonly harness: string;
   readonly model: string;
-  readonly thinking?: ThinkingLevel;
+  readonly modelLabel?: string;
+  readonly harnessLabel?: string;
+  readonly thinking?: string;
   readonly fast?: boolean;
   readonly context?: number;
+  /** Human-readable token usage supplied by the session owner. */
+  readonly tokens?: string;
+  /** Account plan limits, when the provider reports them. Fractions are remaining. */
+  readonly plan?: AgentPlanUsage;
+}
+export interface AgentPlanUsage {
+  readonly name?: string;
+  readonly tier?: string;
+  readonly win?: number;
+  readonly week?: number;
+  readonly resetWin?: string;
+  readonly resetWeek?: string;
+  /** Actual provider windows take precedence over the legacy two-window shorthand. */
+  readonly windows?: readonly AgentPlanLimit[];
+  readonly exhausted?: boolean;
+}
+export interface AgentPlanLimit {
+  readonly id: string;
+  readonly label: string;
+  readonly left: number;
+  readonly reset?: string;
+  readonly resetShort?: string;
+  readonly weekly?: boolean;
 }
 export interface AgentModel {
   readonly id: string;
   readonly label: string;
-  readonly thinking: readonly ThinkingLevel[];
+  readonly thinking: readonly string[];
+  readonly supportsFastMode?: boolean;
+}
+export interface PermissionChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly detail: string;
 }
 export interface AgentHarness {
   readonly id: string;
@@ -46,6 +82,17 @@ export interface ConversationMention {
 export interface QueuedMessage {
   readonly id: string;
   readonly text: string;
+}
+export interface ConversationAttachment {
+  readonly id: string;
+  readonly path: string;
+  readonly name: string;
+  readonly kind: "image" | "video" | "file";
+  readonly size?: number;
+  readonly preview?: string;
+  readonly status?: "uploading" | "ready" | "error";
+  readonly progress?: number;
+  readonly error?: string;
 }
 export interface ComposerSubmission {
   readonly text: string;
@@ -81,12 +128,14 @@ export interface WorkStep {
   readonly kind: StepKind;
   readonly detail?: string;
   readonly verb?: string;
-  readonly status?: "running" | "done" | "failed";
+  readonly status?: "running" | "done" | "failed" | "unknown";
   readonly meta?: string;
   readonly result?: string;
   readonly duration?: number;
   readonly diff?: { readonly add: number; readonly del: number };
   readonly output?: string;
+  /** Parsed, bounded evidence. Original output stays separately inspectable. */
+  readonly presentation?: ToolPresentation;
   readonly hunk?: readonly string[];
   readonly recovered?: boolean | string;
   readonly expected?: boolean | string;
@@ -140,16 +189,27 @@ export interface SessionTask {
   };
 }
 export interface ChatExchange {
+  /** Whether this reply is currently receiving text, independently of tool work. */
+  readonly streaming?: boolean;
+  readonly isNew?: boolean;
+  readonly overflow?: readonly {
+    readonly id: string;
+    readonly label: string;
+  }[];
   readonly id: string;
   readonly prompt: string;
+  readonly attachments?: readonly ConversationAttachment[];
   readonly time?: string;
   readonly author?: string;
   readonly mark?: string;
   readonly status: TurnStatus;
   readonly steps: readonly WorkStep[];
+  /** Keep work after the latest reply in source order; omitted means all work precedes it. */
+  readonly answerBeforeStepId?: string;
   readonly answer: string;
   readonly duration?: number;
   readonly elapsed?: number;
   readonly files?: readonly ChangedFile[];
+  readonly filesTotal?: number;
   readonly error?: string;
 }

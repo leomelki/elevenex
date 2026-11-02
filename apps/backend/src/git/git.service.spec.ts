@@ -2,7 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFile, execFileSync, execSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   GitService,
   isValidGitRef,
@@ -575,6 +576,28 @@ describe('GitService', () => {
   });
 
   describe('getStatusSummary', () => {
+    it('versions local HEAD, index and same-count worktree edits independently of remote refs', async () => {
+      const execute = promisify(execFile);
+      const run = (...args: string[]) => execute('git', args, { cwd: repoPath });
+      const file = path.join(repoPath, 'initial.txt');
+      await fs.promises.writeFile(file, 'first replacement\n');
+      const first = await service.getStatusSummary(repoPath);
+      expect(first.changesRevision).toMatch(/^[a-f0-9]{64}$/);
+      expect((await service.getStatusSummary(repoPath)).changesRevision).toBe(first.changesRevision);
+      await fs.promises.writeFile(file, 'other replacement\n');
+      const second = await service.getStatusSummary(repoPath);
+      expect(second.total).toEqual(first.total);
+      expect(second.changesRevision).not.toBe(first.changesRevision);
+      await service.stageFiles(repoPath, ['initial.txt']);
+      const staged = await service.getStatusSummary(repoPath);
+      expect(staged.changesRevision).not.toBe(second.changesRevision);
+      await run('commit', '-m', 'Save changes');
+      const committed = await service.getStatusSummary(repoPath);
+      expect(committed.changesRevision).not.toBe(staged.changesRevision);
+      await run('update-ref', 'refs/remotes/origin/other', 'HEAD');
+      expect((await service.getStatusSummary(repoPath)).changesRevision).toBe(committed.changesRevision);
+    });
+
     it.each(['stage', 'unstage', 'commit'] as const)(
       'does not reuse a pre-%s summary that is still waiting for remote metadata',
       async (mutation) => {

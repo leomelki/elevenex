@@ -13,7 +13,7 @@ pnpm desktop:preview
 ```
 
 Open `http://127.0.0.1:4310`. The workspace preview composes real components;
-Foundations, Tasks, Projects, Settings, Sub-tasks, Git helpers, Conversation, Machines and views, and Machine flow exercise their public
+Foundations, Tasks, Projects, Settings, Sub-tasks, Git helpers, Conversation, Agent picker, Machines and views, and Machine flow exercise their public
 APIs. Example data lives only in `preview/`, under a separate Angular build
 configuration. It is absent from the production entry graph and packaged app.
 
@@ -97,8 +97,8 @@ The connected workspace code prefetches during idle time. Only the selected
 candidate mounts, behind inert Home, before launch; its first render crosses a
 paint boundary before opening starts. Its scoped feature
 stores supply the existing presentational components; they never import the
-legacy renderer or contact the backend directly. The five side views currently
-provide tabs, close and expansion behavior with placeholder contents. Expansion
+legacy renderer or contact the backend directly. The side views provide tabs, close and expansion behavior. Changes reviews the
+selected agent reply; the other four views retain placeholder contents. Expansion
 is available on every view and stays active when switching tabs.
 `/connected-workspace` exercises this production composition with a typed,
 preview-only backend adapter. Its fixture never enters the production build.
@@ -178,3 +178,15 @@ Toast defaults still dismiss after an action. For asynchronous Undo, use
 `dismissOnAction=false`, bind `busy` to disable duplicate actions, and remove the
 toast after confirmed success. The session archive owner retains a dismissible
 notification (`duration=0`) so a failed/uncertain restore remains reviewable.
+
+The `/agent-picker` preview compares the supplied AgentPicker layout and usage
+variants. `Switch` accepts `size="sm"` for its reference 28×16 agent-setting form;
+its default size remains unchanged. Both sizes expose native switch semantics,
+visible focus and reduced-motion behavior.
+
+
+`WorkspacePanels` accepts `[workspaceChanges]` projected content with a
+`#workspaceChanges` template reference. The owner retains panel navigation and
+supplies the connected review inside that slot; inactive panels are hidden and
+inert. `MachineWorkspace` mounts its review only while Changes is open/active,
+which owns cancellation of any pending diff reads.

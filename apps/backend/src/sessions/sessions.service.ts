@@ -723,7 +723,8 @@ export class SessionsService extends EventEmitter {
     return started;
   }
 
-  private hasStartedAgentRuntime(session: SessionProviderColumns): boolean {
+  /** A native conversation identity locks harness selection across all clients. */
+  hasStartedAgentRuntime(session: SessionProviderColumns): boolean {
     return this.startedProviders(session).size > 0;
   }
 
@@ -1310,7 +1311,8 @@ export class SessionsService extends EventEmitter {
       return explicit;
     }
 
-    return (await this.settingsService.findOne()).defaultAgentProvider;
+    const settings = await this.settingsService.findOne();
+    return this.settingsService.getInitialAgentProvider(settings.defaultAgentProvider);
   }
 
   private visibleWhere(

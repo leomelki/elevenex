@@ -86,7 +86,7 @@ test('backend client IPC validates scope/arity, isolates window ownership and un
   });
   const clientExports = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/ipc'), 'utf8'), {
-    exports: clientExports, require: name => name === '../ipc' ? ipcExports : { registerWorkspaceIpc: () => () => {} },
+    exports: clientExports, require: name => name === '../ipc' ? ipcExports : { registerWorkspaceIpc: () => () => {}, registerSessionChatIpc: () => () => {} },
   });
   const frame = {}; const sender = { id: 42 };
   const client = { state: id => calls.push(['state', id]), info: (...args) => calls.push(['info', ...args]) };

@@ -87,7 +87,7 @@ function createWindow(launchSelection?: EnvironmentSelection | null): BrowserWin
     frame: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     ...(process.platform === 'darwin'
-      ? { trafficLightPosition: { x: 18, y: 18 } }
+      ? { trafficLightPosition: { x: 12, y: 10 } }
       : { titleBarOverlay: { height: 48 } }),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),

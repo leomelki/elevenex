@@ -431,7 +431,7 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
   const url = await server(context, (request, response) => {
     let body = ''; request.setEncoding('utf8'); request.on('data', chunk => { body += chunk; });
     request.on('end', () => {
-      requests.push({ method: request.method, path: request.url, body: JSON.parse(body) });
+      requests.push({ method: request.method, path: request.url, body: body ? JSON.parse(body) : null });
       response.writeHead(200, json); response.end(JSON.stringify(reply));
     });
   });
@@ -453,6 +453,12 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
   const committed = await handlers.get('workspace:git-action')(event, scope, { taskId: 1, type: 'commit', message: '', selection, revision: preview.revision, push: true });
   assert.equal(committed.ok, true);
   assert.deepEqual(requests.at(-1).body, { type: 'commit', message: '', selection, revision: preview.revision, push: true });
+  reply = { ...summary, changesRevision: 'b'.repeat(64) };
+  assert.equal((await handlers.get('workspace:git')(event, scope, 1)).value.changesRevision, reply.changesRevision);
+  for (const changesRevision of ['', 'x'.repeat(64), 123, 'a'.repeat(65)]) {
+    reply = { ...summary, changesRevision };
+    assert.equal((await handlers.get('workspace:git')(event, scope, 1)).error.code, 'invalid-response');
+  }
   const count = requests.length; client.reset(42); assert.equal((await read()).error.code, 'stale-scope'); assert.equal(requests.length, count);
 });
 
@@ -504,4 +510,201 @@ test('session archive and Undo validate task ownership, consent, trusted input a
   assert.equal((await archive(scope,{taskId:1,sessionId:2,confirmStop:false})).error.code,'stale-scope');
   assert.equal(requests.length,7);
   stop(); assert.equal(handlers.size,0);
+});
+
+test('conversation cancellation is scoped to its owning window and request, and aborts transport', async context => {
+  let arrived;
+  const ready = new Promise(resolve => { arrived = resolve; });
+  const url = await server(context, () => arrived());
+  const client = new BackendClient(() => local(url), () => {});
+  context.after(() => client.dispose()); client.attach(1); client.attach(2);
+  const scope = client.state(1).scope.id;
+  const pending = client.execute(1, scope, 'session-chat:request:1:2', false, async (endpoint, signal) => {
+    await fetch(endpoint.url, { signal }); return true;
+  });
+  await ready;
+  client.cancel(2, scope, 'session-chat:request');
+  client.cancel(1, client.state(2).scope.id, 'session-chat:request');
+  client.cancel(1, scope, 'session-chat:request');
+  assert.equal((await pending).ok, false);
+});
+
+test('conversation replies validate resource identity, bounded fields and supported action unions', () => {
+  const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  assert.deepEqual(parseChatAction({ type: 'send', text: 'hello', queue: true, private: 'drop' }), { type: 'send', text: 'hello', queue: true });
+  for (const invalid of [{ type: 'shell', command: 'anything' }, { type: 'send', text: '', queue: false }, { type: 'send', text: 'x'.repeat(64001), queue: false }, { type: 'permission', id: 'id', decision: 'yes' }, { type: 'answer', id: 'id', answers: { q: ['x'.repeat(4001)] } }]) assert.throws(() => parseChatAction(invalid));
+  assert.throws(() => parseChatPage({ taskId: 3, sessionId: 2 }, 1, 2));
+  assert.throws(() => parseChatPage({ taskId: 1, sessionId: 2, cursor: 'x'.repeat(201) }, 1, 2));
+});
+
+test('harness selection requires a known action shape and an expected current provider', () => {
+  const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  assert.deepEqual(parseChatAction({ type: 'provider', provider: 'claude', expectedProvider: 'codex', private: 'discard' }), { type: 'provider', provider: 'claude', expectedProvider: 'codex' });
+  for (const input of [{ type: 'provider', provider: 'claude' }, { type: 'provider', provider: '', expectedProvider: 'codex' }, { type: 'provider', provider: 'claude', expectedProvider: 1 }]) assert.throws(() => parseChatAction(input));
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  assert.equal(parseChatPage(page, 1, 2).state.providerLocked, undefined);
+  const parsed = parseChatPage({ ...page, state: { ...state, providers: [{ id: 'claude', label: 'Claude Code', private: 'discard' }], providerLocked: false } }, 1, 2);
+  assert.deepEqual(parsed.state.providers, [{ id: 'claude', label: 'Claude Code' }]); assert.equal(parsed.state.providerLocked, false);
+  assert.throws(() => parseChatPage({ ...page, state: { ...state, providers: Array(33).fill({ id: 'x', label: 'x' }) } }, 1, 2));
+  assert.throws(() => parseChatPage({ ...page, state: { ...state, providerLocked: 'false' } }, 1, 2));
+});
+
+
+test('composer capability metadata is optional, bounded and validated before crossing the bridge', () => {
+  const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: 'gpt', models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  assert.equal(parseChatPage(page, 1, 2).state.controls, undefined);
+  const controls = { plan: true, reasoning: true, fast: true };
+  const model = { id: 'gpt', label: 'GPT', reasoningEfforts: ['low', 'high'], supportsFastMode: true };
+  const result = parseChatPage({ ...page, state: { ...state, controls: { ...controls, private: 'discard' }, fast: true, models: [{ ...model, private: 'discard' }] } }, 1, 2);
+  assert.deepEqual(result.state.controls, controls);
+  assert.deepEqual(result.state.models, [model]);
+  assert.deepEqual(parseChatAction({ type: 'reasoning', effort: null }), { type: 'reasoning', effort: null });
+  assert.deepEqual(parseChatAction({ type: 'fast', enabled: true }), { type: 'fast', enabled: true });
+  for (const input of [{ type: 'reasoning', effort: 1 }, { type: 'fast', enabled: 'true' }]) assert.throws(() => parseChatAction(input));
+  for (const extra of [{ controls: { ...controls, fast: 'yes' } }, { fast: 1 }, { models: [{ ...model, reasoningEfforts: Array(21).fill('high') }] }, { models: [{ ...model, supportsFastMode: 'yes' }] }]) {
+    assert.throws(() => parseChatPage({ ...page, state: { ...state, ...extra } }, 1, 2));
+  }
+});
+
+test('subscription usage stays optional, scoped to its provider and bounded at the bridge', () => {
+  const { parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  const usage = { provider: 'codex', planName: 'Plus', status: 'warning', updatedAt: '2026-10-30T10:00:00Z', windows: [{ id: 'primary', label: '5-hour limit', remainingPercentage: 12, resetsAt: 1793368800 }] };
+  const parse = planUsage => parseChatPage({ ...page, state: { ...state, planUsage } }, 1, 2).state.planUsage;
+  assert.equal(parseChatPage(page, 1, 2).state.planUsage, undefined);
+  assert.equal(parse(null), null);
+  assert.deepEqual(parse({ ...usage, credential: 'discard' }), usage);
+  for (const extra of [{ provider: 'claude' }, { status: 'unknown' }, { updatedAt: 'invalid' }, { windows: [] }, { windows: Array(9).fill(usage.windows[0]) }, { windows: [usage.windows[0], usage.windows[0]] }]) assert.throws(() => parse({ ...usage, ...extra }));
+  for (const remainingPercentage of [-1, 101, NaN, Infinity, '12']) assert.throws(() => parse({ ...usage, windows: [{ ...usage.windows[0], remainingPercentage }] }));
+  for (const resetsAt of [-1, Infinity, 9e12, 'tomorrow']) assert.throws(() => parse({ ...usage, windows: [{ ...usage.windows[0], resetsAt }] }));
+});
+
+test('starting presets validate bounded state and discard extra action fields', () => {
+  const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const preset = { id: 'deep', name: 'Deep work', provider: 'codex', providerLabel: 'Codex', model: 'gpt', modelLabel: 'GPT', reasoning: 'high', fast: true };
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [], presets: [preset] };
+  const page = { taskId: 1, sessionId: 2, cursor: 'x', reset: true, items: [], events: [], before: null, state };
+  assert.deepEqual(parseChatPage(page, 1, 2).state.presets, [preset]);
+  assert.throws(() => parseChatPage({ ...page, state: { ...state, presets: Array(25).fill(preset) } }, 1, 2));
+  assert.throws(() => parseChatPage({ ...page, state: { ...state, presets: [{ ...preset, fast: 'true' }] } }, 1, 2));
+  const action = { type: 'save-preset', id: 'new', name: 'Quick', expectedProvider: 'codex', model: null, reasoning: null, fast: false };
+  assert.deepEqual(parseChatAction({ ...action, shell: 'discard' }), action);
+  for (const bad of [{ ...action, name: ' ' }, { ...action, name: 'x'.repeat(49) }, { ...action, fast: 'true' }, { ...action, reasoning: 1 }]) assert.throws(() => parseChatAction(bad));
+});
+
+test('default preset snapshots and writes are bounded and revision guarded', () => {
+  const { parseChatAction, parsePresetDefault } = require('../dist/backend-client/session-chat-validation');
+  const revision = 'a'.repeat(64);
+  const snapshot = { id: 'deep', provider: 'codex', defaultIds: ['deep'], revision };
+  assert.deepEqual(parsePresetDefault(snapshot), snapshot);
+  for (const value of [{ ...snapshot, revision: 'bad' }, { ...snapshot, defaultIds: ['deep', 'deep'] }, { ...snapshot, id: 'missing' }]) assert.throws(() => parsePresetDefault(value));
+  const action = { type: 'preset-default', id: 'deep', expectedProvider: 'codex', expectedRevision: revision };
+  assert.deepEqual(parseChatAction({ ...action, private: 'discard' }), action);
+  assert.throws(() => parseChatAction({ ...action, expectedRevision: undefined }));
+  assert.throws(() => parseChatAction({ type: 'save-preset', id: 'new', name: 'New', model: null, reasoning: null, fast: false, expectedProvider: 'codex', makeDefault: true }));
+  assert.throws(() => parseChatAction({ type: 'preset-default-restore', provider: 'codex', defaultIds: Array(25).fill('deep'), expectedRevision: revision }));
+});
+
+test('preset catalogs reject mismatched identities and unsupported configurations', () => {
+  const { parseChatCatalog, parseChatAction } = require('../dist/backend-client/session-chat-validation');
+  const catalog = { provider: 'claude', label: 'Claude Code', models: [{ id: 'sonnet', label: 'Sonnet', reasoningEfforts: ['high'], supportsFastMode: false }], model: 'sonnet', reasoning: 'high', fast: false, reasoningAvailable: true, fastAvailable: false, error: null };
+  assert.deepEqual(parseChatCatalog(catalog, 'claude'), catalog);
+  for (const bad of [{ ...catalog, provider: 'codex' }, { ...catalog, model: 'missing' }, { ...catalog, fast: true }, { ...catalog, reasoning: 'invented' }, { ...catalog, models: Array(101).fill(catalog.models[0]) }]) assert.throws(() => parseChatCatalog(bad, 'claude'));
+  const action = { type: 'save-preset', id: 'new', name: 'Claude', expectedProvider: 'codex', provider: 'claude', model: 'sonnet', reasoning: 'high', fast: false };
+  assert.deepEqual(parseChatAction(action), action);
+});
+
+test('reply changes validate bounded metadata, revisions and text-only diff lines', () => {
+  const { parseChangesPage, parseChangeSummary } = require('../dist/backend-client/session-chat-changes');
+  const file = { path: 'new.txt', status: 'A', add: 1, del: 0 };
+  const page = { turnId: 'reply', revision: 'a'.repeat(64), offset: 0, total: 1, files: [file], nextOffset: null, content: { path: 'new.txt', lines: [{ id: 'line', kind: 'add', newNumber: 1, text: '<script>inert</script>' }], nextOffset: null } };
+  assert.deepEqual(parseChangesPage(page, 'reply', 'new.txt'), page);
+  assert.throws(() => parseChangesPage(page, 'other', 'new.txt'));
+  assert.throws(() => parseChangesPage(page, 'reply', 'other.txt'));
+  for (const extra of [{ revision: 'invalid' }, { files: Array(101).fill(file), total: 101 }, { nextOffset: 0 }, { content: { ...page.content, lines: Array(401).fill(page.content.lines[0]) } }, { content: { ...page.content, lines: [{ id: 'line', kind: 'html', text: 'no' }] } }]) assert.throws(() => parseChangesPage({ ...page, ...extra }, 'reply', 'new.txt'));
+  assert.deepEqual(parseChangeSummary({ total: 5000, files: [file], secret: 'discard' }), { total: 5000, files: [file] });
+  assert.throws(() => parseChangeSummary({ total: 1, files: [{ ...file, add: -1 }] }));
+});
+
+test('command facts remain optional, bounded and allowlisted across the bridge', () => {
+  const { parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const item = { id: 'r', kind: 'tool_result', text: 'output', timestamp: '2026-11-01T12:00:00Z', toolId: 'c', toolName: null, toolKind: null, input: '', error: false, truncated: false };
+  const parse = extra => parseChatPage({ taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [{ ...item, ...extra }], events: [], state }, 1, 2).items[0];
+  assert.equal(parse({}).execution, undefined);
+  assert.deepEqual(parse({ execution: { cwd: '/repo', exitCode: -1, interrupted: true, private: 'discard' } }).execution, { cwd: '/repo', exitCode: -1, interrupted: true });
+  for (const execution of [null, [], { exitCode: 0.5 }, { exitCode: Infinity }, { exitCode: '0' }, { cwd: 'x'.repeat(4001) }, { interrupted: 'false' }]) assert.throws(() => parse({ execution }));
+});
+
+test('chat media IPC uses scoped attachment identities, validates bytes and cleans up its handler', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  let reply = { itemId: 'image', mediaId: '0', source: 'data:image/png;base64,iVBORw0KGgo=' };
+  let calls = 0;
+  const url = await server(context, (request, response) => {
+    calls++;
+    assert.equal(request.url, '/api/desktop-workspace/tasks/1/sessions/2/chat/media?itemId=image&mediaId=0');
+    response.writeHead(200, json); response.end(JSON.stringify(reply));
+  });
+  const client = new BackendClient(() => local(url), () => undefined);
+  context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id;
+  const handlers = new Map(), ipc = {}, media = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/session-chat-media'), 'utf8'), { exports: media, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/' + name.slice(2)) });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = media.registerSessionChatMedia(client, (candidate, contents) => candidate === frame && contents === sender);
+  context.after(stop);
+  const read = handlers.get('session-chat:media');
+  const input = { taskId: 1, sessionId: 2, requestId: 'media', itemId: 'image', mediaId: '0' };
+  assert.equal((await read(event, scope, input)).value.source, reply.source);
+  assert.throws(() => read({ senderFrame: {}, sender }, scope, input), /Untrusted/);
+  assert.throws(() => read(event, scope, { ...input, mediaId: '../private.png' }), /incompatible|Invalid/);
+  assert.equal((await read(event, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', input)).error.code, 'stale-scope');
+  assert.equal(calls, 1);
+  for (const bad of [{ ...reply, itemId: 'other' }, { ...reply, mediaId: '1' }, { ...reply, source: 'file:///private/secret.png' }, { ...reply, source: 'data:image/svg+xml;base64,PHN2Zz4=' }]) {
+    reply = bad;
+    assert.equal((await read(event, scope, input)).error.code, 'invalid-response');
+  }
+  stop(); assert.equal(handlers.size, 0);
+});
+
+test('file uploads are named, bounded, scoped and validate each chunk receipt', async context => {
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  const id = '11111111-1111-4111-8111-111111111111';
+  let reply = { id, offset: 3, path: `/private/chat-attachments/2/${id}/notes.txt` }, calls = 0;
+  const url = await server(context, async (request, response) => {
+    calls++;
+    assert.equal(request.method, 'POST');
+    assert.equal(request.url, '/api/desktop-workspace/tasks/1/sessions/2/chat/attachments');
+    let body = ''; for await (const chunk of request) body += chunk;
+    assert.deepEqual(JSON.parse(body), { id, name: 'notes.txt', size: 3, offset: 0, data: 'YWJj' });
+    response.writeHead(200, json); response.end(JSON.stringify(reply));
+  });
+  const client = new BackendClient(() => local(url), () => undefined);
+  context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id;
+  const handlers = new Map(), ipc = {}, adapter = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/session-chat-attachments'), 'utf8'), { exports: adapter, Buffer, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/' + name.slice(2)) });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = adapter.registerChatAttachments(client, (candidate, contents) => candidate === frame && contents === sender);
+  context.after(stop);
+  const upload = handlers.get('session-chat:upload');
+  const input = { taskId: 1, sessionId: 2, requestId: 'upload', id, name: 'notes.txt', size: 3, offset: 0, data: 'YWJj' };
+  assert.equal((await upload(event, scope, input)).value.path, reply.path);
+  assert.throws(() => upload({ senderFrame: {}, sender }, scope, input), /Untrusted/);
+  for (const bad of [{ ...input, size: 21 * 1024 * 1024 }, { ...input, offset: -1 }, { ...input, data: '!' }, { ...input, data: 'A'.repeat(700000) }])
+    assert.throws(() => upload(event, scope, bad));
+  assert.equal((await upload(event, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', input)).error.code, 'stale-scope');
+  assert.equal(calls, 1);
+  reply = { ...reply, offset: 2 };
+  assert.equal((await upload(event, scope, input)).error.code, 'invalid-response');
+  stop(); assert.equal(handlers.size, 0);
 });

@@ -1,4 +1,5 @@
 import type { PiMcpStatus } from './pi-mcp-bridge.js';
+import { piThinkingLevels } from './pi-thinking-levels.js';
 import type { ClaudeMcpSnapshot } from '../claude-runtime/claude-runtime.types.js';
 import { elevenexMcpUrl } from '../mcp/session-tool-context.js';
 import { contextPercentage } from '../agent-runtime/context-usage.js';
@@ -26,9 +27,11 @@ import type {
   AgentForkConversationResult,
   AgentImageInput,
 } from '../agent-runtime/agent-runtime.types.js';
-import { AGENT_REASONING_EFFORTS } from '../agent-runtime/agent-runtime.types.js';
 import type { AgentProviderModelCatalogPayload } from '../agent-runtime/agent-runtime.types.js';
-import { resolveAgentStartupSelection } from '../agent-runtime/agent-model-defaults.js';
+import {
+  orderReasoningEfforts,
+  resolveAgentStartupSelection,
+} from '../agent-runtime/agent-model-defaults.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import { SettingsService } from '../settings/settings.service.js';
 import {
@@ -151,7 +154,9 @@ export class PiRuntimeService
     const models = this.modelsCache ? [...this.modelsCache] : [];
     return {
       models,
-      reasoningEfforts: [...AGENT_REASONING_EFFORTS],
+      reasoningEfforts: orderReasoningEfforts(
+        models.flatMap((model) => model.reasoningEfforts ?? []),
+      ),
       providerDefaultModelId: null,
       supportsModelSelection: true,
       unavailableReason:
@@ -469,7 +474,14 @@ export class PiRuntimeService
   ): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const entry = this.runtimes.get(sessionId);
+    if (effort !== null && entry) {
+      await entry.runtime.send({ type: 'set_thinking_level', level: effort });
+      if (this.runtimes.get(sessionId) !== entry)
+        throw new Error('Pi runtime was replaced.');
+    }
     state.reasoningEffort = effort;
+    if (entry) await this.refreshStateFromRpc(sessionId);
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
   }
@@ -645,9 +657,6 @@ export class PiRuntimeService
         await runtime.send({
           type: 'prompt',
           message: trimmedPrompt,
-          ...(state.reasoningEffort
-            ? { reasoningEffort: state.reasoningEffort }
-            : {}),
           ...(state.fastMode ? { fastMode: true } : {}),
           ...(normalizedImages.length ? { images: normalizedImages } : {}),
         });
@@ -1066,6 +1075,15 @@ export class PiRuntimeService
       this.assertSessionOwner(sessionId, generation);
       if (this.runtimes.get(sessionId) !== entry)
         throw new Error('Pi runtime was replaced.');
+      if (state.reasoningEffort !== null) {
+        await runtime.send({
+          type: 'set_thinking_level',
+          level: state.reasoningEffort,
+        });
+        this.assertSessionOwner(sessionId, generation);
+        if (this.runtimes.get(sessionId) !== entry)
+          throw new Error('Pi runtime was replaced.');
+      }
       await this.refreshStateFromRpc(sessionId);
       this.assertSessionOwner(sessionId, generation);
       if (this.runtimes.get(sessionId) !== entry)
@@ -1150,10 +1168,33 @@ export class PiRuntimeService
     }
     const model = this.modelRefFromModelObject(rpcState.model);
     if (model) state.selectedModel = model;
+    if (typeof rpcState.thinkingLevel === 'string')
+      state.reasoningEffort = rpcState.thinkingLevel;
     state.authStatus = await this.authService.getStatus();
     if (this.runtimes.get(sessionId) !== entry) return;
     this.emitSessionMetadata(sessionId);
     await this.refreshModels(sessionId);
+    if (this.runtimes.get(sessionId) !== entry) return;
+    // Older Pi CLIs may not implement this read. Retain model metadata then.
+    const thinking = await runtime
+      .send<{ levels?: unknown }>({ type: 'get_available_thinking_levels' })
+      .catch(() => null);
+    if (this.runtimes.get(sessionId) !== entry) return;
+    if (model && Array.isArray(thinking?.levels)) {
+      const levels = thinking.levels.filter(
+        (level): level is string =>
+          typeof level === 'string' && level.length > 0,
+      );
+      state.availableModels = state.availableModels.map((option) =>
+        option.id === model
+          ? {
+              ...option,
+              reasoningEfforts: levels,
+              supportsEffort: levels.length > 0,
+            }
+          : option,
+      );
+    }
   }
 
   private async generateAndSaveSessionTitle(
@@ -2362,7 +2403,8 @@ export class PiRuntimeService
           ? record.name
           : modelRef,
       description: `${provider} model`,
-      supportsEffort: Boolean(record.reasoning),
+      supportsEffort: record.reasoning === true,
+      reasoningEfforts: piThinkingLevels(record),
     };
   }
 

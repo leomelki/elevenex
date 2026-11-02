@@ -9,12 +9,13 @@ import { engineSteps, remoteEngineSteps } from './machine-presentation';
 import { RemoteChallengeDialogComponent } from './remote-challenge-dialog.component';
 import { MachineActionsService } from './machine-actions.service';
 import { MachineWorkspaceComponent } from './machine-workspace.component';
+import { MachineErrorDialogComponent } from './machine-error-dialog.component';
 
 /** Production composition. Presentational families remain supplied-data APIs. */
 @Component({
   selector: 'ex-machine-app',
   providers: [MachineConnectionService, MachineLauncherService, SshSetupService, MachineActionsService],
-  imports: [ButtonComponent, IconComponent, ModalLayerComponent, ToastComponent, ToastStackComponent, EditMachineComponent, MachineMenuPopupComponent, AddMachineComponent, GettingReadyComponent, IslandNameComponent, MachineHomeComponent, MachineLaunchComponent, MachinePanelComponent, TitleBarComponent, TitleIslandComponent, RemoteChallengeDialogComponent, MachineWorkspaceComponent],
+  imports: [ButtonComponent, IconComponent, ModalLayerComponent, ToastComponent, ToastStackComponent, EditMachineComponent, MachineMenuPopupComponent, AddMachineComponent, GettingReadyComponent, IslandNameComponent, MachineHomeComponent, MachineLaunchComponent, MachinePanelComponent, TitleBarComponent, TitleIslandComponent, RemoteChallengeDialogComponent, MachineWorkspaceComponent, MachineErrorDialogComponent],
   templateUrl: './machine-app.component.html',
   styleUrl: './machine-app.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -96,7 +97,7 @@ export class MachineAppComponent {
   }
   private pointAt(id: string): void { this.ping.update(previous => ({ id, at: (previous?.at ?? 0) + 1 })); }
   shortcut(event: KeyboardEvent): void {
-    if (!event.defaultPrevented && !event.isComposing && !this.launcher.open() && !this.ssh.open() && !this.challenge() && !this.pairingOpen() && !this.actions.editOpen() && !this.actions.menu() && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); this.find(); }
+    if (!event.defaultPrevented && !event.isComposing && !this.launcher.open() && !this.ssh.open() && !this.challenge() && !this.pairingOpen() && !this.actions.editOpen() && !this.actions.detailsOpen() && !this.actions.menu() && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); this.find(); }
   }
   home(): void { this.panelOpen.set(false); this.launcher.home(); }
   pair(from: HTMLElement): void { this.pairingFrom.set(from); this.pairingOpen.set(true); }

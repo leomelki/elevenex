@@ -1,0 +1,96 @@
+<div class="attachments" [class.editing]="editing()" aria-label="Attachments">
+  @for (file of files(); track file.id) {
+    <article
+      class="attachment"
+      [class.document]="file.kind === 'file' && !editing()"
+      [class.media]="file.kind !== 'file' && !editing()"
+      [class.failed]="file.status === 'error'"
+    >
+      @if (!editing() && file.kind !== "file") {
+        <ex-markdown-media
+          [showCaption]="false"
+          [compact]="true"
+          [path]="file.path"
+          [caption]="file.name"
+          [asset]="
+            file.preview
+              ? { kind: 'image', src: preview(file.preview), w: 0, h: 0 }
+              : resolve()?.(file.path)
+          "
+        />
+      }
+      <div class="file-row">
+        @if (editing() && file.preview) {
+          <img class="thumbnail" [src]="preview(file.preview)" alt="" />
+        } @else if (editing() || file.kind === "file") {
+          <span class="file-icon"
+            ><ex-icon
+              [name]="
+                file.kind === 'video'
+                  ? 'play'
+                  : file.kind === 'image'
+                    ? 'attach'
+                    : 'file'
+              "
+              [size]="18"
+          /></span>
+        }
+        <div class="description">
+          <span class="name" [title]="file.name">{{ file.name }}</span>
+          @if (
+            file.status === "uploading" ||
+            file.status === "error" ||
+            file.size !== undefined
+          ) {
+            <span
+              class="detail"
+              [attr.role]="file.status === 'error' ? 'status' : null"
+            >
+              @if (file.status === "uploading") {
+                {{ file.progress || 0 }}%
+              } @else if (file.status === "error") {
+                {{ file.error || "Upload failed" }}
+              } @else if (file.size !== undefined) {
+                {{ size(file.size) }}
+              }
+            </span>
+          }
+        </div>
+        @if (editing()) {
+          @if (file.status === "error") {
+            <button
+              exButton
+              variant="ghost"
+              size="sm"
+              [disabled]="disabled()"
+              (click)="retry.emit(file.id)"
+            >
+              Retry
+            </button>
+          }
+          <ex-icon-button
+            icon="x"
+            [label]="'Remove ' + file.name"
+            size="sm"
+            [disabled]="disabled()"
+            (pressed)="removed.emit(file.id)"
+          />
+        } @else if (file.kind === "file") {
+          <ex-icon-button
+            icon="copy"
+            [label]="'Copy path to ' + file.name"
+            size="sm"
+            (pressed)="copyPath.emit(file.path)"
+          />
+        }
+      </div>
+      @if (file.status === "uploading") {
+        <progress
+          [value]="file.progress || 0"
+          max="100"
+          [attr.aria-label]="'Uploading ' + file.name"
+        ></progress>
+      }
+    </article>
+  }
+</div>

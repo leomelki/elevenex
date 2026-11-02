@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input, model, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, contentChild, input, model, output } from '@angular/core';
 import { PanelTabsComponent, type PanelTab } from '../tasks';
 import { IconButtonComponent, IconComponent } from '../ui';
 
@@ -11,6 +11,7 @@ import { IconButtonComponent, IconComponent } from '../ui';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class WorkspacePanelsComponent {
+  readonly changesContent = contentChild('workspaceChanges');
   readonly panel = model('changes');
   readonly wide = input(false);
   readonly closed = output<void>();

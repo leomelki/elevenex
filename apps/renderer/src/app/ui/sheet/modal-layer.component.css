@@ -1,10 +1,13 @@
 ex-modal-layer { display: contents; }
-.ex-modal-layer { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; background: color-mix(in srgb, #08101c 22%, transparent); animation: ex-modal-layer-fade var(--dur-glide) var(--ease-out) both; outline: 0; -webkit-app-region: no-drag; }
+.ex-modal-layer { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; isolation: isolate; outline: 0; -webkit-app-region: no-drag; }
 .ex-modal-layer.top { align-items: flex-start; padding-top: 52px; }
-.ex-modal-layer > * { animation: ex-modal-layer-pop 560ms cubic-bezier(.32, .72, 0, 1) both; }
-.ex-modal-layer.top > * { animation-name: ex-modal-layer-enter; }
-.ex-modal-layer.leaving { animation: ex-modal-layer-away var(--dur-base) var(--ease-in) both; pointer-events: none; }
-.ex-modal-layer.leaving > * { animation: ex-modal-layer-surface-away var(--dur-base) var(--ease-in) both; pointer-events: none; }
+.ex-modal-layer > :where(:not(.ex-modal-dim)) { animation: ex-modal-layer-pop var(--dur-slow) var(--ease-out) both; }
+.ex-modal-layer.top > :where(:not(.ex-modal-dim)) { animation-name: ex-modal-layer-enter; }
+/* Its own compositor layer keeps the dim from fading the dialog a second time. */
+.ex-modal-layer > .ex-modal-dim { position: absolute; inset: 0; z-index: -1; pointer-events: none; background: color-mix(in srgb, #08101c 22%, transparent); animation: ex-modal-layer-fade var(--dur-slow) var(--ease-out) both; }
+.ex-modal-layer.leaving { pointer-events: none; }
+.ex-modal-layer.leaving > :where(:not(.ex-modal-dim)) { animation: ex-modal-layer-surface-away var(--dur-base) var(--ease-in) both; pointer-events: none; }
+.ex-modal-layer.leaving > :where(.ex-modal-dim) { animation: ex-modal-layer-away var(--dur-base) var(--ease-in) both; }
 .ex-modal-layer.ex-modal-has-from, .ex-modal-layer.ex-modal-has-from > * { animation: none; }
 .ex-modal-layer > .ex-modal-face, .ex-modal-layer > .ex-modal-shadow { position: absolute; margin: 0; box-sizing: border-box; transform-origin: 0 0; pointer-events: none; transition: none; }
 .ex-modal-layer > .ex-modal-face { z-index: 2; visibility: visible; }

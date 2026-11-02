@@ -1,34 +1,57 @@
 <div class="conversation">
   <ex-chat-scroll (activeExchange)="active.set($event)">
+    <ng-content select="[chatHistory]" />
     @for (exchange of exchanges(); track exchange.id) {
-      <ex-message
-        role="user"
-        [messageId]="exchange.id"
-        [time]="exchange.time || ''"
-        >{{ exchange.prompt }}</ex-message
-      ><ex-turn
+      @if (exchange.prompt || exchange.attachments?.length) {
+        <ex-message
+          role="user"
+          [messageId]="exchange.id"
+          [isNew]="exchange.isNew || false"
+          [time]="exchange.time || ''"
+          >{{ exchange.prompt }}@if (exchange.attachments?.length) {
+            <ex-attachments [files]="exchange.attachments || []" [resolve]="resolve()" (copyPath)="copyCode.emit($event)" />
+          }</ex-message
+        >
+      }
+      <ex-turn
         [status]="exchange.status"
+        [actions]="actions()"
+        [stoppable]="stoppable()"
+        [retryable]="retryable()"
         [steps]="exchange.steps"
+        [answerBeforeStepId]="exchange.answerBeforeStepId"
         [duration]="exchange.duration || 0"
         [elapsed]="exchange.elapsed || 0"
         [files]="exchange.files || []"
+        [filesTotal]="exchange.filesTotal"
         [error]="exchange.error || ''"
         [author]="exchange.author || 'Agent'"
         [mark]="exchange.mark || 'EX'"
         (action)="turnAction.emit({ id: exchange.id, action: $event })"
-        (openFile)="openFile.emit($event)"
+        (openFile)="openFile.emit($event); fileReview.emit({ id: exchange.id, path: $event })"
         (review)="review.emit(exchange.id)"
         (stop)="stop.emit(exchange.id)"
         (retry)="retry.emit(exchange.id)"
         ><ex-markdown
           [source]="exchange.answer"
-          [streaming]="exchange.status === 'live'"
+          [copiedCode]="copiedCode()"
+          [streaming]="exchange.streaming ?? (exchange.status === 'live')"
           [resolve]="resolve()"
-          (openFile)="openFile.emit($event)"
+          (openFile)="openFile.emit($event); fileReview.emit({ id: exchange.id, path: $event })"
           (openLink)="openLink.emit($event)"
           (openPage)="openPage.emit($event)"
           (copyCode)="copyCode.emit($event)"
       /></ex-turn>
+      @for (content of exchange.overflow || []; track content.id) {
+        <button
+          exButton
+          variant="ghost"
+          size="sm"
+          (click)="contentRequested.emit(content.id)"
+        >
+          Read full {{ content.label }}
+        </button>
+      }
     }
     <ng-content select="[chatContent]" /></ex-chat-scroll
   ><ex-turn-nav

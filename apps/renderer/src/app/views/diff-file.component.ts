@@ -20,6 +20,7 @@ export class DiffFileComponent {
   readonly wide = input(false);
   readonly stuck = input(false);
   readonly commentsEnabled = input(true);
+  readonly openFilesAvailable = input(true);
   readonly largeAt = input(400);
   readonly viewedChange = output<{ fileId: string; rev?: string | number; viewed: boolean }>();
   readonly fileRequested = output<DiffFileRequest>();

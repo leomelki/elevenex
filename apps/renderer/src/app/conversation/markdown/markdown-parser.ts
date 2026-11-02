@@ -53,12 +53,16 @@ export type MarkdownBlock =
 export type MarkdownAsset =
   | {
       readonly kind: "image";
+      readonly loading?: boolean;
+      readonly error?: string;
       readonly src: string;
       readonly w: number;
       readonly h: number;
     }
   | {
       readonly kind: "video";
+      readonly loading?: boolean;
+      readonly error?: string;
       readonly src?: string;
       readonly dur?: number;
       readonly poster?: string;
@@ -327,7 +331,7 @@ export function safeMediaSource(source: string): string {
   )
     return "";
   if (
-    /^data:image\/(?:png|jpeg|webp|gif|avif);base64,[a-z\d+/=\s]+$/i.test(
+    /^data:(?:image\/(?:png|jpeg|webp|gif|avif)|video\/(?:mp4|webm|ogg));base64,[a-z\d+/=\s]+$/i.test(
       source,
     )
   )
