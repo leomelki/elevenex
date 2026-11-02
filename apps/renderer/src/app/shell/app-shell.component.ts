@@ -1,6 +1,9 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
+  DestroyRef,
+  signal,
   ElementRef,
   afterRenderEffect,
   inject,
@@ -17,7 +20,7 @@ import { TitleBarComponent } from "../machines/title-bar.component";
   host: {
     "[class.embedded]": "!titleBar()",
     "[class.panel-open]": "panelOpen()",
-    "[class.wide-review]": "panelOpen() && wideReview()",
+    "[class.wide-review]": "takingOver()",
     "(keydown.escape)": "leaveReview()",
     "(focusin)": "rememberFocus($event)",
   },
@@ -31,6 +34,9 @@ export class AppShellComponent {
   readonly wideReview = input(false);
   readonly panelLabel = input("Side panel");
   readonly reviewExited = output<void>();
+  readonly panelCloseRequested = output<void>();
+  private readonly compact = signal(false);
+  protected readonly takingOver = computed(() => this.panelOpen() && (this.wideReview() || this.compact()));
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private returnFocus?: HTMLElement;
@@ -38,9 +44,13 @@ export class AppShellComponent {
   private wasWide?: boolean;
 
   constructor() {
+    const media = matchMedia('(max-width: 700px)');
+    const changed = () => this.compact.set(media.matches);
+    changed(); media.addEventListener('change', changed);
+    inject(DestroyRef).onDestroy(() => media.removeEventListener('change', changed));
     afterRenderEffect(() => {
       const open = this.panelOpen();
-      const wide = open && this.wideReview();
+      const wide = this.takingOver();
       const panel = this.root.querySelector<HTMLElement>(".panel");
       const active = document.activeElement;
       // A restored wide panel can already be open on its first render.
@@ -72,5 +82,6 @@ export class AppShellComponent {
   }
   protected leaveReview(): void {
     if (this.wideReview()) this.reviewExited.emit();
+    else if (this.compact() && this.panelOpen()) this.panelCloseRequested.emit();
   }
 }

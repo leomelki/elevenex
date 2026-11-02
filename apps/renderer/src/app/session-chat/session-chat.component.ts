@@ -1,3 +1,4 @@
+import { OpensWhenBackComponent } from '../machines';
 import { SessionChatAttachments } from './session-chat-attachments';
 import { SessionChatMedia } from './session-chat-media';
 import {
@@ -54,6 +55,7 @@ import { presentSessionTool } from './session-chat-tools';
   selector: "ex-session-chat",
   providers: [SessionChatStore, SessionChatMedia, SessionChatAttachments],
   imports: [
+    OpensWhenBackComponent,
     SessionChatContentComponent,
     ChatComponent,
     ComposerComponent,
@@ -85,6 +87,11 @@ import { presentSessionTool } from './session-chat-tools';
 export class SessionChatComponent {
   readonly selection = input.required<ChatSelection>();
   readonly archived = input(false);
+  readonly active = input(true);
+  readonly machineName = input('the machine');
+  readonly reconnectAction = input('Try now');
+  readonly outageSince = input<number | null>(null);
+  readonly reconnectRequested = output<void>();
   readonly mentionItems = input<readonly ConversationMention[]>([]);
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
@@ -143,6 +150,7 @@ export class SessionChatComponent {
   );
   readonly blocked = computed(
     () =>
+      (this.store.offline() && !this.store.outbox) ||
       !!this.store.busy() ||
       !!this.store.uncertain() ||
       this.archived() ||
@@ -315,19 +323,20 @@ export class SessionChatComponent {
   constructor() {
     effect(() => {
       const selection = this.selection();
+      this.store.setActive(this.active());
       this.store.open(selection, this.archived());
       untracked(() => this.attachments.open(selection));
       this.media.update(selection, this.store.items());
     });
     effect(() => {
       this.identity();
-      this.contentId.set(null);
       this.presetFlow.reset();
     });
-    let scrollIdentity = "";
+    effect(() => { this.store.viewRevision(); this.contentId.set(null); });
+    let scrollIdentity = -1;
     let opening = true;
     afterRenderEffect(() => {
-      const identity = this.identity();
+      const identity = this.store.viewRevision();
       if (identity !== scrollIdentity) {
         scrollIdentity = identity;
         opening = true;

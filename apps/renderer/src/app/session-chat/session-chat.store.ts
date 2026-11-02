@@ -1,5 +1,7 @@
 import {
   DestroyRef,
+  effect,
+  untracked,
   Injectable,
   computed,
   inject,
@@ -13,8 +15,10 @@ import type {
   SessionChatState,
   SessionChatTarget,
 } from "@elevenex/shared";
+import { BackendClientService } from '../backend/backend-client.service';
+import { SessionChatOutbox } from './session-chat-outbox';
 import { SessionChatClient } from "../backend/session-chat-client.service";
-import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage } from "../conversation";
+import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
 import { SessionChatDrafts, type AttachmentDraft } from "./session-chat-drafts";
 import {
   chatExchanges,
@@ -36,8 +40,20 @@ export interface ChatSelection extends SessionChatTarget {
 export class SessionChatStore {
   private readonly client = inject(SessionChatClient);
   private readonly drafts = inject(SessionChatDrafts);
+  private readonly backend = inject(BackendClientService);
+  readonly outbox = inject(SessionChatOutbox, { optional: true });
+  private readonly active = signal(true);
+  setActive(active: boolean): void { this.active.set(active); }
+  private readonly selectedScope = signal<string | null>(null);
+  readonly offline = computed(() => !!this.selectedScope() && this.backend.state().scope?.id !== this.selectedScope());
+  readonly waiting = computed(() => { const target = this.selectedTarget(); return this.outbox?.items().filter(item => `${item.target.taskId}/${item.target.sessionId}` === target) ?? []; });
+  readonly waitingMessages = computed<readonly WaitingMessage[]>(() => this.waiting().filter(item => item.status === 'waiting' || item.status === 'sending').map(item => ({ id: item.id, text: item.label, kind: item.action.type === 'send' ? 'message' : 'action', state: item.status === 'sending' ? 'sending' : 'waiting', editable: item.action.type === 'send' && item.status === 'waiting', removable: item.status === 'waiting' })));
+  readonly waitingPending = computed(() => this.waiting().some(item => item.status === 'waiting' || item.status === 'sending'));
+  readonly waitingUncertain = computed(() => this.waiting().some(item => item.status === 'unknown'));
   private selection: ChatSelection | null = null;
+  private readonly selectedTarget = signal<string>('');
   private entry = { text: signal(""), uncertain: signal(""), files: signal<readonly AttachmentDraft[]>([]), mentions: signal<readonly ConversationMention[]>([]) };
+  private readonly activeEntry = signal(this.entry);
   private epoch = 0;
   private readEpoch = 0;
   private cursor: string | undefined;
@@ -49,6 +65,8 @@ export class SessionChatStore {
   readonly items = signal<readonly SessionChatItem[]>([]);
   readonly fresh = signal<ReadonlySet<string>>(new Set());
   readonly loading = signal(true);
+  /** UI lifetime survives a verified same-machine scope rebind. */
+  readonly viewRevision = signal(0);
   readonly error = signal("");
   readonly defaultChange =
     signal<SessionChatCommandReply["defaultChange"]>(undefined);
@@ -57,20 +75,18 @@ export class SessionChatStore {
   readonly readOnly = signal(false);
   readonly historical = signal(false);
   readonly before = signal<string | null>(null);
-  readonly draft = signal("");
-  readonly mentions = signal<readonly ConversationMention[]>([]);
+  readonly draft = computed(() => this.activeEntry().text());
+  readonly mentions = computed(() => this.activeEntry().mentions());
   addMention(mention: ConversationMention): void {
     if (!this.state()?.sessionMentions || mention.kind !== 'session' || this.readOnly() || this.historical() || this.busy() || this.uncertain()) return;
     const id = Number(mention.id);
     if (!Number.isSafeInteger(id) || id <= 0 || this.mentions().length >= 8 || this.mentions().some(item => item.id === mention.id)) return;
-    this.mentions.update(items => [...items, mention]);
-    this.entry.mentions.set(this.mentions());
+    this.entry.mentions.update(items => [...items, mention]);
   }
   removeMention(id: string): void {
-    this.mentions.update(items => items.filter(item => item.id !== id));
-    this.entry.mentions.set(this.mentions());
+    this.entry.mentions.update(items => items.filter(item => item.id !== id));
   }
-  readonly uncertain = signal("");
+  readonly uncertain = computed(() => this.busy() ? "" : this.activeEntry().uncertain());
   readonly checked = signal(false);
   private readonly pending = signal<PendingSubmission | null>(null);
   private readonly pendingQueue = signal<PendingSubmission | null>(null);
@@ -117,12 +133,21 @@ export class SessionChatStore {
   readonly empty = computed(() => !this.exchanges().length && !this.running());
 
   constructor() {
+    let wasPaused: boolean | undefined;
+    effect(() => {
+      const paused = this.offline() || !this.active();
+      const resumed = wasPaused === true && !paused;
+      wasPaused = paused;
+      untracked(() => { if (paused) { this.stopRead(); this.loading.set(false); } else if (resumed && this.selection && !this.request && !this.historical()) void this.load(false); });
+    });
     const visible = () => {
       if (document.hidden) this.stopRead();
       else if (this.selection && !this.historical()) void this.load(false);
     };
     document.addEventListener("visibilitychange", visible);
     inject(DestroyRef).onDestroy(() => {
+      this.outbox?.setEditing(null);
+      this.remember();
       this.disposed = true;
       this.epoch++;
       this.stopRead();
@@ -144,33 +169,42 @@ export class SessionChatStore {
       }
       return;
     }
+    this.outbox?.setEditing(null);
+    this.remember();
+    const sameSession = this.selection?.taskId === selection.taskId && this.selection.sessionId === selection.sessionId;
+    const previousEntry = this.entry, previousCursor = this.cursor, previousBefore = this.before(), historical = this.historical();
     this.stopRead();
     this.epoch++;
     this.selection = selection;
+    this.selectedTarget.set(`${selection.taskId}/${selection.sessionId}`);
+    this.selectedScope.set(selection.scopeId);
     this.entry = this.drafts.entry(selection.scopeId, selection.sessionId);
+    this.activeEntry.set(this.entry);
+    const recovery = sameSession && previousEntry === this.entry;
     this.readOnly.set(readOnly);
-    this.draft.set(this.entry.text());
-    this.mentions.set(this.entry.mentions());
-    this.uncertain.set(this.entry.uncertain());
     this.pending.set(null);
     this.pendingQueue.set(null);
-    this.turnArrivals.set(new Map());
-    this.queueRenderIds.set(new Map());
-    this.items.set([]);
-    this.state.set(null);
-    this.fresh.set(new Set());
+    if (!recovery) { this.viewRevision.update(value => value + 1); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); }
+    const cached = this.drafts.snapshot(selection.sessionId);
+    if (!recovery) { this.items.set(cached?.items ?? []); this.state.set(cached?.state ?? null); }
+    this.before.set(recovery ? previousBefore : cached?.before ?? null);
+    if (!recovery) this.fresh.set(new Set());
     this.error.set("");
     this.notice.set("");
     this.defaultChange.set(undefined);
     this.commands.clear();
     this.busy.set("");
-    this.historical.set(false);
+    this.historical.set(recovery && historical);
     this.checked.set(false);
-    this.cursor = undefined;
-    void this.load(true);
+    this.cursor = recovery ? previousCursor : undefined;
+    if (recovery && historical) this.loading.set(false);
+    else void this.load(!recovery);
+  }
+  private remember(): void {
+    const state = this.state();
+    if (this.selection && state) this.drafts.remember(this.selection.sessionId, { items: this.items(), state, cursor: this.cursor, before: this.before() });
   }
   setDraft(value: string): void {
-    this.draft.set(value);
     this.entry.text.set(value);
   }
   private stopRead(): void {
@@ -194,7 +228,7 @@ export class SessionChatStore {
   }
   private async load(reset: boolean, before?: string): Promise<void> {
     const selection = this.selection;
-    if (!selection || this.disposed || document.hidden) return;
+    if (!selection || this.disposed || document.hidden || this.offline() || !this.active()) return;
     const epoch = this.epoch,
       readEpoch = ++this.readEpoch,
       requestId = crypto.randomUUID();
@@ -358,7 +392,7 @@ export class SessionChatStore {
       this.busy() ||
       this.readOnly() ||
       this.historical() ||
-      this.uncertain() ||
+      this.uncertain() || this.waitingUncertain() || (!this.offline() && this.waitingPending()) ||
       (!submission.text.trim() && !this.entry.files().length) ||
       this.entry.files().some(file => file.status !== "ready")
     )
@@ -378,6 +412,12 @@ export class SessionChatStore {
     }
     const text = [submission.text.trim(), ...files.map(file => `[${file.name.replace(/[[\]\r\n]/g, '_')}](<${file.path}>)`)].filter(Boolean).join('\n\n');
     if (text.length > 64000) { this.error.set('Message and attachments exceed 64,000 characters.'); return; }
+    if (this.offline() && this.outbox && this.selection) {
+      if (this.outbox.enqueue(this.selection, { type: 'send', text, queue: false, ...(mentions.length ? { sessionIds: mentions.map(mention => Number(mention.id)) } : {}) }, text, null)) {
+        this.setDraft(''); this.entry.files.set([]); this.entry.mentions.set([]); this.error.set('');
+      } else this.error.set('Up to 20 actions can wait in this window. Remove one before adding another.');
+      return;
+    }
     const pending = {
       sendOrigin: submission.intent === "send" && !files.length && !mentions.length ? submission.sendOrigin : undefined,
       attachments: files,
@@ -398,7 +438,6 @@ export class SessionChatStore {
     this.setDraft("");
     entry.files.set([]);
     entry.mentions.set([]);
-    this.mentions.set([]);
     const success = await this.perform({
       type: "send",
       text,
@@ -417,7 +456,6 @@ export class SessionChatStore {
       return;
     }
     if (!success && pendingChannel()?.id === pending.id) {
-      this.mentions.set(entry.mentions());
       pendingChannel.set(null);
       this.setDraft(
         this.draft()
@@ -444,6 +482,13 @@ export class SessionChatStore {
         ))
     )
       return false;
+    if (this.offline()) {
+      if (!this.outbox || !['stop', 'answer', 'permission'].includes(action.type)) { this.error.set('This action needs the machine. Nothing was sent.'); return false; }
+      const label = action.type === 'stop' ? 'Stop this turn' : action.type === 'answer' ? 'Answer the request' : 'Respond to approval';
+      const queued = this.outbox.enqueue(selection, action, label, [...this.items()].reverse().find(item => item.kind === 'user')?.id ?? null);
+      if (!queued) this.error.set('The waiting list is full. Nothing was sent.');
+      return queued;
+    }
     const epoch = this.epoch,
       entry = this.entry,
       commandId = crypto.randomUUID();
@@ -504,7 +549,6 @@ export class SessionChatStore {
         result.error.code === "outcome-unknown" ||
         result.error.code === "stale-scope"
       ) {
-        this.uncertain.set(result.error.message);
         this.entry.uncertain.set(result.error.message);
         this.checked.set(false);
       }
@@ -549,7 +593,6 @@ export class SessionChatStore {
   }
   acknowledgeUncertain(): void {
     if (this.checked()) {
-      this.uncertain.set("");
       this.entry.uncertain.set("");
       this.error.set("");
       this.notice.set(

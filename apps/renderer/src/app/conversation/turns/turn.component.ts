@@ -72,6 +72,8 @@ export class TurnComponent implements OnChanges {
   readonly author = input("Agent");
   readonly mark = input("EX");
   readonly time = input("");
+  readonly reach = input<{ readonly machine: string; readonly since: number }>();
+  protected readonly reachTime = computed(() => { const since = this.reach()?.since; return since ? new Date(since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'the connection was lost'; });
   readonly stoppable = input(true);
   readonly retryable = input(true);
   readonly actions = input<readonly TurnAction[]>([

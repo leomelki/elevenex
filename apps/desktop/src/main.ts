@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
+import { app, BrowserWindow, Menu, net, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
 import { readFile, realpath } from 'node:fs/promises';
 import { extname, join, relative, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -7,6 +7,8 @@ import { APP_ORIGIN, contentSecurityPolicy, isAppUrl, isExternalUrl, rendererPat
 import { WindowStateStore } from './window-state';
 import { createApplicationBackend } from './backend/application';
 import { registerBackendIpc } from './backend/ipc';
+import { notifyRecovery } from './remote/recovery-notifications';
+import { monitorNetwork } from './remote/network-monitor';
 import { RemoteManager } from './remote/manager';
 import { registerRemoteIpc } from './remote/ipc';
 import { readBackendRelease } from './backend/release';
@@ -201,9 +203,11 @@ void app.whenReady().then(async () => {
   app.once('will-quit', unregisterMachines);
   const unsubscribeRemote = remote.subscribe((windowId, snapshot) => sendToWindow(windowId, 'environment:changed', snapshot));
   const resumed = () => remote.networkChanged();
+  const stopRecoveryNotifications = notifyRecovery(remote);
+  const stopNetwork = monitorNetwork(() => net.isOnline(), resumed);
   powerMonitor.on('resume', resumed);
   powerMonitor.on('unlock-screen', resumed);
-  app.once('will-quit', () => { unregisterRemote(); unsubscribeRemote(); powerMonitor.removeListener('resume', resumed); powerMonitor.removeListener('unlock-screen', resumed); });
+  app.once('will-quit', () => { stopRecoveryNotifications(); stopNetwork(); unregisterRemote(); unsubscribeRemote(); powerMonitor.removeListener('resume', resumed); powerMonitor.removeListener('unlock-screen', resumed); });
   handle('git:status', trusted, (path) => {
     if (typeof path !== 'string' || !path.trim() || path.length > 4096 || path.includes('\0')) {
       throw new Error('A nonempty workspace path is required');

@@ -1,14 +1,28 @@
-<div class="window" data-modal-window>
+<div class="window" [class.ex-offline]="unreachable()" data-modal-window>
  <div class="window-content" data-modal-background>
   <ex-title-bar>
-    <ex-title-island [contentKey]="island()?.key ?? (launcher.open() ? (islandMachine()?.id ?? 'home') : backMachine()?.id ? 'back-' + backMachine()!.id : 'home')" [tone]="island()?.tone ?? 'rest'" [progress]="island()?.progress" [open]="panelOpen()" [panel]="machinePanel" controls="machine-panel" [label]="island()?.text ?? (launcher.open() ? 'Machine details' : backMachine() ? 'Back to ' + backMachine()!.name : 'Machines')" (pressed)="pressIsland()" (dismissed)="panelOpen.set(false)">
-      @if (island(); as news) { <span class="island-news" role="status"><ex-icon [name]="news.icon" [size]="13" />{{ news.text }}</span> }
+    <ex-title-island [contentKey]="island()?.key ?? (launcher.open() ? (islandMachine()?.id ?? 'home') : backMachine()?.id ? 'back-' + backMachine()!.id : 'home')" [tone]="island()?.tone ?? 'rest'" [tall]="!!reach()?.fresh && (!!challenge() || reach()?.tone === 'danger')" [progress]="island()?.progress" [open]="panelOpen()" [panel]="machinePanel" controls="machine-panel" [label]="island()?.text ?? (launcher.open() ? 'Machine details' : backMachine() ? 'Back to ' + backMachine()!.name : 'Machines')" (pressed)="pressIsland()" (dismissed)="panelOpen.set(false)">
+      @if (island(); as news) { <span class="island-news" role="status"><ex-icon [name]="news.icon" [size]="13" />{{ news.text }}@if (reach()?.fresh && (challenge() || reach()?.tone === 'danger')) { <small>{{ reach()?.detail }}</small> }</span> }
       @else if (launcher.open() && launcher.current(); as machine) { <ex-island-name [machine]="machine" /> }
       @else if (backMachine(); as machine) { <ex-island-name [machine]="machine" [back]="true" /> }
       @else { <span class="island-news"><ex-icon name="grid" [size]="13" />Machines</span> }
     </ex-title-island>
     <ng-template #machinePanel>
-      @if (islandMachine(); as machine) { <ex-machine-panel id="machine-panel" [machine]="machine" (changeRequested)="home()" (disconnectRequested)="panelOpen.set(false); launcher.disconnect()" (newWindow)="panelOpen.set(false); launcher.newWindow()" /> }
+      @if (islandMachine(); as machine) { <ex-machine-panel id="machine-panel" [machine]="machine" (changeRequested)="home()" (disconnectRequested)="panelOpen.set(false); launcher.disconnect()" (newWindow)="panelOpen.set(false); launcher.newWindow()">
+        @if (unreachable()) {
+          <div machineRecovery class="reach-panel">
+            <p role="status">{{ reach()?.detail || 'Reconnecting…' }}</p>
+            @if (challenge(); as prompt) {
+              @if (prompt.kind === 'trust') { <button exButton size="sm" (click)="reviewTrust.set(true)">Check the host key…</button> }
+              @else { <ex-remote-challenge-dialog [compact]="true" [challenge]="prompt" [machineName]="machine.name" [busy]="challengeBusy()" [error]="challengeError()" (answered)="answer($event)" /> }
+            } @else {
+              @if (connection.state()?.environment.connection?.failure?.code === 'host-trust') { <p>Check the fingerprint with your administrator and repair your OpenSSH known_hosts file. Elevenex cannot safely accept a replacement key here.</p> }
+              <button exButton size="sm" [disabled]="connection.state()?.environment.connection?.phase === 'awaiting-input'" (click)="retry()">{{ connection.state()?.environment.connection?.phase === 'paused' ? 'Try again' : 'Try now' }}</button>
+            }
+            <p class="reach-foot">Every window on {{ machine.name }} shares this connection. Answer once.</p>
+          </div>
+        }
+      </ex-machine-panel> }
     </ng-template>
   </ex-title-bar>
   <div class="stage">
@@ -21,9 +35,9 @@
         <div machineView class="machine-view">
          @defer (when launcher.workspace(); prefetch on idle) {
           @for (machine of [launcher.workspace()]; track machine?.id) { @if (machine) {
-            @if (connectionNotice(); as notice) { <div class="connection-notice" role="status"><ex-icon name="server" [size]="14" /><span>{{ notice.text }}</span>@if (notice.retry) { <button exButton size="sm" variant="ghost" (click)="retry()">Retry</button> }<button exButton size="sm" variant="ghost" (click)="home()">Change machine</button></div> }
+
             <div class="workspace" [hidden]="!!update()">
-              <ex-machine-workspace [machine]="machine" [generation]="launcher.workspaceGeneration()" [active]="launcher.open() && !update()" [preparing]="launcher.pendingId() === machine.id" (prepared)="launcher.workspacePrepared($event.machineId, $event.generation)" (changeRequested)="home()" />
+              <ex-machine-workspace [reconnectAction]="recoveryAction()" [machine]="machine" [generation]="launcher.workspaceGeneration()" [active]="launcher.open()" [preparing]="launcher.pendingId() === machine.id" (prepared)="launcher.workspacePrepared($event.machineId, $event.generation)" (changeRequested)="home()" (reconnectRequested)="reconnect()" />
             </div>
             @if (update()) { <div class="update"><ex-getting-ready [icon]="machine.kind === 'local' ? 'laptop' : 'server'" [title]="'Getting ' + machine.name + ' ready'" sub="Your projects and files stay on this machine." [steps]="steps()" /></div> }
           } }
@@ -47,8 +61,8 @@
 <ex-modal-layer [open]="ssh.open()" [from]="ssh.from()" (closeRequested)="ssh.cancel()">
   <ex-add-machine kind="ssh" [query]="ssh.query()" [picked]="ssh.picked()" [hosts]="ssh.hosts()" [loading]="ssh.saving()" [disabled]="!ssh.open()" [error]="ssh.error()" [notice]="ssh.suggestionError()" (queryChange)="ssh.setQuery($event)" (hostSelected)="ssh.pick($event.name, true)" (hostSubmitted)="ssh.pick($event)" (keyRequested)="ssh.connect()" (cancelled)="ssh.cancel()" />
 </ex-modal-layer>
-<ex-modal-layer [open]="!!challenge()" (closeRequested)="cancelChallenge()">
-  @for (prompt of retainedChallenge() ? [retainedChallenge()!] : []; track prompt.id) { <ex-remote-challenge-dialog [challenge]="prompt" [machineName]="islandMachine()?.name ?? 'server'" [active]="!!challenge()" [busy]="challengeBusy()" [error]="challengeError()" (answered)="answer($event)" /> }
+<ex-modal-layer [open]="!!challenge() && (!launcher.open() || reviewTrust())" (closeRequested)="launcher.open() ? reviewTrust.set(false) : cancelChallenge()">
+  @for (prompt of retainedChallenge() ? [retainedChallenge()!] : []; track prompt.id) { <ex-remote-challenge-dialog [challenge]="prompt" [machineName]="islandMachine()?.name ?? 'server'" [active]="!!challenge() && (!launcher.open() || reviewTrust())" [busy]="challengeBusy()" [error]="challengeError()" (answered)="answer($event)" /> }
 </ex-modal-layer>
 <ex-modal-layer [open]="pairingOpen()" [from]="pairingFrom()" (closeRequested)="pairingOpen.set(false)">
   <section class="pairing" role="dialog" aria-labelledby="pairing-title" [attr.inert]="pairingOpen() ? null : ''"><ex-icon name="peer" [size]="24" /><h2 id="pairing-title">Pair another computer</h2><p>Computer pairing is not available in this desktop version. You can run agents on this computer or connect to a server over SSH.</p><button exButton variant="primary" (click)="pairingOpen.set(false)">Back to machines</button></section>

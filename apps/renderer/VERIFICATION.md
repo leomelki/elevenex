@@ -2273,3 +2273,63 @@ verified: true, 15 checkpoints and no errors or warnings. In both themes a
 targets, narrow/reduced-motion layouts and real Chat jumps also passed. The
 light/dark nine-marker and dark short-layout PNGs were inspected. This is an
 unpackaged preview check; no packaged-app launch was attempted.
+
+
+## Disconnected/reconnect implementation — 2026-11-02
+
+Implemented on `feat/desktop-reconnect`, preserving the existing app and the base
+message/Working motion. Same-machine outages retain loaded navigation, dialogs,
+conversation windows and drafts; live indicators freeze through inherited
+component-owned motion state. The elapsed island, real SSH asks, unreachable
+git feedback and unavailable-content boundaries use the supplied tokens and
+reference instructions. TitleIsland already had its intrinsic ResizeObserver.
+
+Waiting messages, answers, approvals, Stop, task creates and new-session requests
+are bounded and journaled privately by main across relaunch. A durable sending
+claim precedes dispatch; interrupted claims restore as unknown. Editing holds
+dispatch and late edits are re-read after preflight. Queued task creates retain
+stable request identities; the additive indexed task-request read resolves their
+uncertain outcomes without replay. Unsupported authentication methods are not
+advertised. SSH credentials are excluded from journal validation.
+
+Validation passed:
+
+- `pnpm desktop:lint`, `pnpm desktop:test` (119 desktop/transport tests, 7 capture
+  harness tests, 604 renderer tests; negative contracts also checked by tsc), and
+  `pnpm desktop:build`.
+- Focused backend service + real Nest HTTP tests: 24 passing, including bounded
+  request-identity lookup, argument rejection and unchanged navigation revision.
+- Native Electron smoke: actual sandboxed preload, named IPC validation, private
+  waiting storage, scope/window isolation, lifecycle events and app:// CSP/history.
+  Its backend is a fixture; this is an unpackaged launch, not packaged verification.
+- Real loopback OpenSSH regressions, including encrypted keys, dropped transports,
+  daemon recovery, shared ownership and cleanup; no personal/WAN host was used.
+
+Native captures used actual Angular production components with preview-only
+SSH/backend data. All reports have `verified: true`, with zero recorded errors,
+and new PNGs were inspected:
+
+- [18 reconnect checkpoints](../../artifacts/desktop-capture/run-vp4swy/index.html):
+  retained views/drafts, frozen live indicators, local edit/removal and task/session
+  creation, git blocking, elapsed escalation, explicit credential focus/clearing,
+  once-only recovery, both themes, narrow/reduced-motion panels and host safety.
+- [88 git-motion checkpoints](../../artifacts/desktop-capture/run-hint4Y/index.html):
+  stable edges, widths, interruptions and reduced motion. A launch-scale label
+  clipping issue was corrected using untransformed CSS-pixel measurements.
+- [18 original bottom-send checkpoints](../../artifacts/desktop-capture/run-KbGTzn/index.html):
+  base bubble/Working reveal, long/short messages, wheel takeover and reduced motion
+  remain intact in both themes.
+
+- [Four reconnect reading checkpoints](../../artifacts/desktop-capture/run-0gB502/index.html)
+  also passed with `verified: true`: latest-window scroll positions stayed within
+  two pixels while recovered output produced unread feedback, and earlier-history
+  windows retained their items and UI lifetime in light and dark. Recovery keeps
+  the consumed transcript cursor instead of reopening the conversation at the end.
+
+
+The UI captures simulate transport. They do not establish a real WAN connection,
+OS notification delivery, a physical security-key interaction or a packaged app
+launch. Restored interrupted prompts without a receipt baseline and interrupted
+new-session creates require explicit conversation/task inspection; they never
+retry automatically. Waiting records are bounded to 20 chat actions, 10 tasks and
+10 sessions per window/machine; loading/saving errors remain visible.

@@ -16,7 +16,7 @@ import {
 })
 export class TitleIslandComponent {
   readonly contentKey = input('');
-  readonly tone = input<'rest' | 'info' | 'warn' | 'ok'>('rest');
+  readonly tone = input<'rest' | 'info' | 'warn' | 'ok' | 'danger'>('rest');
   readonly tall = input(false);
   readonly open = input(false);
   readonly label = input('Machine details');

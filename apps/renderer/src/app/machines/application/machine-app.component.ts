@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, linkedSignal, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, linkedSignal, signal, untracked } from '@angular/core';
 import type { RemoteChallenge } from '@elevenex/shared';
 import { ButtonComponent, IconComponent, ModalLayerComponent, ToastComponent, ToastStackComponent } from '../../ui';
 import { AddMachineComponent, GettingReadyComponent, IslandNameComponent, MachineHomeComponent, MachineLaunchComponent, MachinePanelComponent, TitleBarComponent, TitleIslandComponent, machineHomeStatus, EditMachineComponent, MachineMenuPopupComponent } from '../index';
@@ -9,6 +9,7 @@ import { engineSteps, remoteEngineSteps } from './machine-presentation';
 import { RemoteChallengeDialogComponent } from './remote-challenge-dialog.component';
 import { MachineActionsService } from './machine-actions.service';
 import { MachineWorkspaceComponent } from './machine-workspace.component';
+import { machineReach } from './machine-reach';
 import { MachineErrorDialogComponent } from './machine-error-dialog.component';
 
 /** Production composition. Presentational families remain supplied-data APIs. */
@@ -34,6 +35,8 @@ export class MachineAppComponent {
   readonly pairingOpen = signal(false);
   readonly pairingFrom = signal<HTMLElement | null>(null);
   readonly challengeBusy = signal(false);
+  readonly reviewTrust = signal(false);
+  readonly backOnline = signal(false);
   readonly challengeError = signal('');
   readonly challenge = computed(() => this.connection.state()?.environment.challenge ?? null);
   // Keep the last dialog and its data mounted throughout ModalLayer's exit.
@@ -46,17 +49,43 @@ export class MachineAppComponent {
     const id = this.launcher.open() ? this.launcher.currentId() : this.launcher.pendingId() ?? this.launcher.selectedId();
     return this.launcher.machines().find(machine => machine.id === id) ?? this.launcher.machines()[0] ?? null;
   });
-  readonly update = computed(() => {
-    if (!this.launcher.open()) return false;
-    const state = this.connection.state();
-    return this.launcher.currentId() === 'local'
-      ? !!state && ['checking', 'downloading', 'extracting', 'starting'].includes(state.localBackend.phase)
-      : state?.environment.connection?.phase === 'setting-up';
+  readonly update = linkedSignal({
+    source: () => {
+      const state = this.connection.state(), machineId = this.launcher.currentId();
+      const local = state?.localBackend.phase, remote = state?.environment.connection;
+      return { machineId, open: this.launcher.open(),
+        installing: machineId === 'local' ? !!local && ['checking', 'downloading', 'extracting'].includes(local)
+          : remote?.phase === 'setting-up' && ['download', 'installation'].includes(remote.stage),
+        starting: machineId === 'local' ? local === 'starting' : remote?.phase === 'setting-up' };
+    },
+    // Retain a real engine update through startup, while an ordinary crash or
+    // warm SSH reconnect keeps the already loaded workspace on screen.
+    computation: (state, previous): boolean => state.open && (state.installing || state.starting && !!previous && previous.source.machineId === state.machineId && previous.value),
   });
   readonly steps = computed(() => {
     const state = this.connection.state();
     if (!state || !this.update()) return [];
     return this.launcher.currentId() === 'local' ? engineSteps(state.localBackend) : state.environment.connection ? remoteEngineSteps(state.environment.connection) : [];
+  });
+  readonly unreachable = computed(() => this.launcher.open() && !!this.launcher.current() && this.launcher.current()?.conn !== 'live' && !this.update());
+  readonly outageSince = linkedSignal<{ readonly id: string | null; readonly offline: boolean }, number | null>({
+    source: () => ({ id: this.launcher.currentId(), offline: this.unreachable() }),
+    computation: (value, previous) => value.offline ? previous?.source.id === value.id && previous.source.offline ? previous.value : Date.now() : null,
+  });
+  readonly askSince = linkedSignal({
+    source: () => this.challenge()?.id ?? (this.connection.state()?.environment.connection?.phase === 'paused' ? this.connection.state()?.environment.connection?.failure?.code : null),
+    computation: identity => identity ? Date.now() : null,
+  });
+  readonly recoveryAction = computed(() => {
+    const challenge = this.challenge();
+    if (this.connection.state()?.environment.connection?.failure?.code === 'host-trust' || challenge?.kind === 'trust') return 'Check';
+    if (!challenge) return 'Try now';
+    if (challenge.kind !== 'credential') return 'Show';
+    return /passphrase/i.test(challenge.prompt) ? 'Unlock' : /password/i.test(challenge.prompt) ? 'Sign in' : 'Continue';
+  });
+  readonly reach = computed(() => {
+    const since = this.outageSince();
+    return since === null ? null : machineReach(this.launcher.current()?.name ?? 'The machine', since, this.now(), this.connection.state()?.environment.connection ?? null, this.challenge(), this.askSince() ?? since);
   });
   readonly connectionNotice = computed(() => {
     if (!this.launcher.open() || this.update()) return null;
@@ -68,8 +97,10 @@ export class MachineAppComponent {
       retry: !machine.busy || remote?.phase === 'paused' };
   });
   readonly island = computed(() => {
-    const notice = this.connectionNotice();
-    if (notice) return { key: 'connection', text: notice.text, icon: 'server', tone: 'warn' as const, progress: undefined };
+    const reach = this.reach();
+    if (reach) return { key: reach.key, text: reach.text, icon: 'server', tone: reach.tone, progress: undefined };
+    if (this.unreachable()) return null;
+    if (this.backOnline()) return { key: 'back', text: 'Back online · checking your work', icon: 'check', tone: 'ok' as const, progress: undefined };
     if (!this.launcher.open()) return machineHomeStatus(this.launcher.machines(), this.launcher.pendingId());
     const machine = this.islandMachine();
     if (!machine?.busy) return null;
@@ -78,11 +109,22 @@ export class MachineAppComponent {
 
   constructor() {
     effect(onCleanup => {
-      if (!this.launcher.open() || !this.connection.state()?.environment.connection?.retryAt) return;
+      if (!this.unreachable()) return;
+      this.now.set(Date.now());
       const timer = setInterval(() => this.now.set(Date.now()), 1000);
       onCleanup(() => clearInterval(timer));
     });
-    effect(() => { this.challenge(); this.challengeBusy.set(false); this.challengeError.set(''); });
+    effect(() => { this.challenge(); this.challengeBusy.set(false); this.challengeError.set(''); this.reviewTrust.set(false); });
+    let wasOffline = false;
+    effect(onCleanup => {
+      const offline = this.unreachable();
+      if (wasOffline && !offline && this.launcher.open()) {
+        untracked(() => this.backOnline.set(true));
+        const timer = setTimeout(() => this.backOnline.set(false), 4000);
+        onCleanup(() => clearTimeout(timer));
+      } else if (offline) untracked(() => this.backOnline.set(false));
+      wasOffline = offline;
+    });
   }
   pressIsland(): void {
     if (this.launcher.open()) { this.panelOpen.set(!this.panelOpen()); return; }
@@ -114,6 +156,7 @@ export class MachineAppComponent {
       if (!this.destroy.destroyed && this.challenge()?.id === event.id) this.challengeError.set('The sign-in response could not be sent. Cancel and try again.');
     } finally { if (!this.destroy.destroyed && this.challenge()?.id === event.id) this.challengeBusy.set(false); }
   }
+  reconnect(): void { this.panelOpen.set(true); if (!this.challenge()) void this.retry(); }
   async retry(): Promise<void> {
     try { await this.connection.retry(); }
     catch { if (!this.destroy.destroyed) this.launcher.error.set('The connection could not be retried. Try opening the machine again.'); }

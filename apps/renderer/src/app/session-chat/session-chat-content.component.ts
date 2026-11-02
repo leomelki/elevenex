@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   effect,
   inject,
@@ -9,6 +10,7 @@ import {
   output,
   signal,
 } from "@angular/core";
+import { OpensWhenBackComponent } from '../machines';
 import type { SessionChatContent } from "@elevenex/shared";
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import {
@@ -21,7 +23,7 @@ import type { ChatSelection } from "./session-chat.store";
 /** A bounded original-content reader; output is always text, including tool-generated HTML. */
 @Component({
   selector: "ex-session-chat-content",
-  imports: [ModalLayerComponent, ButtonComponent, IconButtonComponent],
+  imports: [OpensWhenBackComponent, ModalLayerComponent, ButtonComponent, IconButtonComponent],
   templateUrl: "./session-chat-content.component.html",
   styleUrl: "./session-chat-content.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -29,6 +31,8 @@ import type { ChatSelection } from "./session-chat.store";
 export class SessionChatContentComponent {
   readonly selection = input.required<ChatSelection>();
   readonly itemId = input.required<string>();
+  readonly unreachable = input<string>();
+  readonly reconnectRequested = output<void>();
   readonly closed = output<void>();
   readonly copyRequested = output<string>();
   readonly open = signal(true);
@@ -36,6 +40,7 @@ export class SessionChatContentComponent {
   readonly previousOffsets = signal<readonly number[]>([]);
   readonly offset = signal(0);
   readonly page = signal<SessionChatContent | null>(null);
+  readonly visiblePage = computed(() => { const page = this.page(); return page?.itemId === this.itemId() && page.part === this.part() && page.offset === this.offset() ? page : null; });
   readonly busy = signal(true);
   readonly error = signal("");
   private readonly client = inject(SessionChatClient);
@@ -81,6 +86,7 @@ export class SessionChatContentComponent {
       this.previousOffsets.set(offsets.slice(0, -1));
     }
   }
+  returnToLoaded(): void { const page = this.page(); if (page?.itemId === this.itemId()) { this.part.set(page.part); this.offset.set(page.offset); } }
   reload(): void {
     void this.load(this.selection(), this.itemId(), this.part(), this.offset());
   }
@@ -91,6 +97,7 @@ export class SessionChatContentComponent {
     offset: number,
   ): Promise<void> {
     this.cancel();
+    if (!this.open() || this.unreachable()) { this.busy.set(false); return; }
     const generation = this.generation,
       requestId = crypto.randomUUID();
     this.request = { scope: target.scopeId, id: requestId };

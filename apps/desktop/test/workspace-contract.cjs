@@ -12,6 +12,7 @@ const calls = [
   ['workspaceProjectNameAvailability', 'workspace:project-name-availability', [scope, 'Example']],
   ['workspaceProject', 'workspace:project', [scope, 1]],
   ['workspaceTasks', 'workspace:tasks', [scope, { projectId: 1 }]],
+  ['workspaceTaskRequest', 'workspace:task-request', [scope, { repoId: 1, requestId: 'create-1' }]],
   ['workspaceTask', 'workspace:task', [scope, 1]],
   ['workspaceSessions', 'workspace:sessions', [scope, { taskId: 1 }]],
   ['workspaceCreateProject', 'workspace:create-project', [scope, { name: 'Example', path: '/example' }]],

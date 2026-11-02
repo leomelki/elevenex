@@ -421,3 +421,48 @@ The preview adapter and `session-attachments.mjs` exercise native file selection
 DOM paste/drop, files-only sends, retry/removal, viewer focus, playback and both
 themes/narrow reduced-motion states. Provider execution is covered by backend
 regressions rather than sending a paid prompt during visual verification.
+
+## Disconnected writing
+
+Workspace-owned `SessionChatOutbox` keeps up to twenty unsent messages, answers,
+approval responses and Stop intents with a main-owned journal (512,000 serialized action
+characters total, 128,000 per action). Local waiting rows are separate from the
+backend-accepted queue. Messages remain editable/removable before dispatch;
+actionable decisions can be removed. A fresh membership/state read precedes each
+first dispatch. Expired question/permission IDs and Stop for a different or
+unidentified turn are rejected with “Nothing was sent.” Sending while a turn is
+still active enters the backend's ordinary accepted queue.
+
+Each action is claimed before IPC dispatch. Lost replies become visibly
+unconfirmed and block following writing in that conversation, never re-entering
+the waiting queue. Check delivery reads the current bounded conversation and
+compares new durable user/queue receipts with the pre-dispatch snapshot; it sends
+nothing. Without a matching receipt, the person inspects and explicitly
+acknowledges the uncertainty. Confirmed backend queue controls keep their existing
+semantics and are not blindly replayed. Changing machine or destroying the owner releases its in-memory requests. Waiting
+writing is retained per window and configured machine across app restarts. The
+main process validates and atomically journals a sending claim before IPC
+dispatch; interrupted claims restore as unconfirmed, never as waiting. SSH
+credential prompts cannot enter this journal. Restored interrupted prompts without
+a retained receipt baseline require explicit conversation inspection.
+
+Draft text, files, mentions and in-flight uncertainty share the retained entry
+through a same-machine scope rebind. Late command results update their original
+draft entry without overwriting another session. Up to five transcript snapshots
+of one million serialized characters each retain loaded conversations for offline
+navigation, alongside the existing 320-item live window and ordinary twenty-draft
+cache. Unresolved draft uncertainty keeps its existing preservation policy.
+Session reads pause on outage, Home, document hiding and disposal. Reconnect does
+not replay prompts, upload mutations, settings or accepted queue operations.
+
+A verified same-machine scope rebind keeps the conversation's `viewRevision`,
+render identities and consumed cursor. The fresh request resumes incrementally
+when that cursor remains valid; a backend reset can still request a bounded
+replacement window. Earlier-history views stay on their loaded page until the
+person chooses latest. Backend scopes continue to gate every platform operation;
+they are not used as the UI's scroll/open lifetime. `session-reconnect-reading.mjs`
+checks actual reading position and unread feedback through recovery.
+
+During recovery, earlier local writing drains before a new direct submission can
+overtake it. The input remains editable. A paused backend queue stays paused;
+automatic delivery joins that queue instead of restarting the agent.

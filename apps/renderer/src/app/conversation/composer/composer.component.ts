@@ -3,6 +3,7 @@ import { SESSION_DRAG_TYPE, readSessionDrag } from '../../tasks';
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   inject,
   input,
@@ -30,6 +31,7 @@ import type {
   McpServer,
   PermissionChoice,
   QueuedMessage,
+  WaitingMessage,
   RecordingState,
 } from "../conversation.models";
 import { AgentPickerComponent } from "./agent-picker.component";
@@ -125,6 +127,15 @@ export class ComposerComponent implements OnChanges {
   readonly mentionsEnabled = input(true);
   /** Drops must belong to the same connected backend generation. */
   readonly sessionMentionScope = input<string>();
+  readonly waitingFor = input<string>();
+  readonly waitingAction = input('Try now');
+  readonly waitingNoun = computed(() => this.waiting().length && this.waiting().every(item => item.kind === 'message') ? 'message' : 'action');
+  readonly waiting = input<readonly WaitingMessage[]>([]);
+  readonly waitingRemoved = output<string>();
+  readonly waitingEdited = output<QueuedMessage>();
+  readonly waitingEditing = output<string | null>();
+  readonly reconnectRequested = output<void>();
+  readonly waitingSending = computed(() => this.waiting().some(item => item.state === 'sending'));
   readonly queueEditable = input(true);
   readonly queueReorderable = input(true);
   readonly permission = input<string>("ask");
@@ -191,7 +202,7 @@ export class ComposerComponent implements OnChanges {
       return;
     const textarea = this.textarea()?.nativeElement;
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const intent = this.running() ? (steer ? "steer" : "queue") : "send";
+    const intent = this.waitingFor() ? "queue" : this.running() ? (steer ? "steer" : "queue") : "send";
     // A textarea has no text Range. Its content origin includes padding and its
     // internal scroll offset; long/scrolled drafts use the message rise instead.
     const rect = textarea?.getBoundingClientRect();

@@ -246,3 +246,10 @@ removed history rows retain their exit before disposal. `archiveDisabled`
 disables the TaskGroup archive controls during mutations; TaskList forwards its
 `disabled` input. `SessionRow.archived` uses the archive glyph and suppresses
 archive actions; `allowRestore` exposes the separate restore intent.
+
+`GitBar.unreachable` names the machine. Primary and menu actions explain that
+nothing was sent instead of emitting a git mutation; the note expires after
+seven seconds or the next action. `TaskHeader.unreachable` forwards the value.
+`NewTask.waitingFor` names the offline machine, and `[taskWaiting]` projects the
+owner's local waiting drafts above the form. Platform dispatch and exact request
+identity reconciliation belong to the workspace owner.

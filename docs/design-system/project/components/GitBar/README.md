@@ -43,3 +43,5 @@ The chevron holds the combinations for the current step. On Commit: Commit and p
 - Cancel stops the job and puts the branches back as they were.
 
 **Provide (job):** `{ verb, noun, title, steps: [{ status, label, detail, short, session }], waiting, open, note, onOpen, onCancel }`.
+
+**Out of reach** (`unreachable`: the machine's name): git never waits, because things may change before the machine is back. The button stays. A click shows a small note under it, "**Push needs dev-box.** Nothing was sent. Do it again once it's back: things may have changed by then.", and does nothing. The note fades after a few seconds or at the next click.

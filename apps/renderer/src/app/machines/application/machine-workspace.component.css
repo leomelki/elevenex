@@ -17,3 +17,11 @@ ex-skeleton { width: min(100%, 360px); }
 .review-hint { margin: var(--space-6); color: var(--ink-muted); font-size: var(--text-body-size); }
 
 .review-content { display: flex; flex: 1; min-height: 0; min-width: 0; }
+
+.waiting-task { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); background: var(--attention-soft); font-size: var(--text-caption-size); }
+.waiting-task span { flex: 1; overflow-wrap: anywhere; }
+.as-of { margin: 0; padding: var(--space-1) var(--space-4); color: var(--ink-muted); font-size: var(--text-caption-size); }
+
+.waiting-region, .snapshot-region { flex: none; }
+.waiting-creations { max-height: 160px; overflow: auto; overscroll-behavior: contain; }
+.as-of { max-width: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: var(--text-ui-line); }

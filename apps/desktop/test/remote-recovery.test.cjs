@@ -230,3 +230,48 @@ test('host progress and draft updates notify only windows in their scope', async
   await manager.saveContext(3, { ...emptyContext(), draft: 'local input' }, { kind: 'local' });
   assert.deepEqual(notified, [3]);
 });
+
+test('transient recovery stops its clock, resumes on network change, and never wakes authentication failures', async t => {
+  let now = 0, attempts = 0;
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'clock', name: 'clock', host: 'clock' },
+    release: async () => release, changed: () => undefined, backoff: 1, retryWindow: 10, now: () => now,
+    connect: async () => { attempts++; now += 11; throw failure('transport', 'unavailable', 'Offline', 'retry', true); },
+  });
+  t.after(() => connection.dispose()); connection.acquire(1, false);
+  await until(() => connection.snapshot().retryStoppedAt !== undefined);
+  assert.equal(connection.snapshot().phase, 'paused'); const stopped = attempts;
+  await delay(20); assert.equal(attempts, stopped);
+  connection.networkChanged(); await until(() => attempts > stopped);
+  await until(() => connection.snapshot().phase === 'paused');
+  await connection.release(1); const released = attempts; connection.networkChanged(); await delay(10); assert.equal(attempts, released);
+
+  let signIns = 0;
+  const auth = new RemoteConnection({ root: '', helper: '', host: { id: 'auth', name: 'auth', host: 'auth' }, release: async () => release,
+    changed: () => undefined, connect: async () => { signIns++; throw failure('authentication', 'authentication', 'Needs you', 'authenticate'); } });
+  t.after(() => auth.dispose()); auth.acquire(2, false); await until(() => auth.snapshot().phase === 'paused');
+  auth.networkChanged(); await delay(20); assert.equal(signIns, 1); assert.equal(auth.snapshot().retryStoppedAt, undefined);
+});
+
+test('waiting writing survives relaunch in a private sidecar without changing legacy settings or storing SSH challenges', async t => {
+  const { stat } = require('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'elevenex-waiting-writing-')), path = join(root, 'settings.json');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const options = { root, helper: '', settingsPath: path, release: async () => release };
+  const manager = new RemoteManager(options); t.after(() => manager.dispose()); await manager.load(); manager.attach(1, null);
+  const initial = manager.waitingRead(1, { kind: 'local' });
+  const input = { chat: [{ id: 'local-writing', taskId: 1, sessionId: 2, action: { type: 'send', text: 'A saved waiting message', queue: false }, label: 'A saved waiting message', turnId: null, status: 'waiting' }], tasks: [] };
+  await manager.waitingSave(1, { kind: 'local' }, initial.identity, input);
+  assert.equal((await stat(`${path}.waiting-writing.json`)).mode & 0o777, 0o600);
+  const legacy = JSON.parse(await readFile(path, 'utf8')); assert.equal(legacy.windows[0].waiting, undefined);
+  assert.equal((await new RemoteSettingsStore(path).load()).windows.length, 1);
+  await assert.rejects(manager.waitingSave(1, { kind: 'local' }, 'old-configuration', input));
+  await assert.rejects(manager.waitingSave(1, { kind: 'local' }, initial.identity, { chat: [{ ...input.chat[0], action: { type: 'credential', answer: 'must never persist' } }], tasks: [] }));
+  await manager.dispose();
+  const restored = new RemoteManager(options); t.after(() => restored.dispose()); await restored.load(); restored.attach(2, null); restored.attach(3, null);
+  assert.equal(restored.waitingRead(2, { kind: 'local' }).chat[0].action.text, 'A saved waiting message');
+  assert.equal(restored.waitingRead(3, { kind: 'local' }).chat.length, 0);
+  const malformed = require('../dist/remote/waiting-writing').waitingWriting;
+  assert.throws(() => malformed({ chat: Array(21).fill(input.chat[0]), tasks: [] }));
+  assert.throws(() => malformed({ chat: input.chat, tasks: [], credential: 'forbidden' }));
+  await restored.dispose();
+});

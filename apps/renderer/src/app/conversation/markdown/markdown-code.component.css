@@ -89,3 +89,5 @@ button:focus-visible {
     transition: none;
   }
 }
+
+.caret { visibility: var(--ex-live-caret-visibility, visible); animation-play-state: var(--ex-live-play-state, running); }

@@ -11,8 +11,8 @@
   <div class="workspace">
     <main
       class="main surface"
-      [attr.inert]="panelOpen() && wideReview() ? '' : null"
-      [attr.aria-hidden]="panelOpen() && wideReview() ? 'true' : null"
+      [attr.inert]="takingOver() ? '' : null"
+      [attr.aria-hidden]="takingOver() ? 'true' : null"
     >
       <ng-content select="[shellMain]" />
     </main>

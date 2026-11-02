@@ -1,4 +1,9 @@
 import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import { WorkspaceSessionOutbox } from './workspace-session-outbox';
+import { WorkspaceWritingJournal } from './workspace-writing-journal';
+import { WorkspaceTaskOutbox, type WaitingTask } from './workspace-task-outbox';
+import { SessionChatDrafts } from '../session-chat/session-chat-drafts';
+import { SessionChatOutbox } from '../session-chat/session-chat-outbox';
 import { DOCUMENT } from '@angular/common';
 import type { BackendResult, EnvironmentContext, EnvironmentSelection, WorkspacePage, WorkspaceViewState, WorkspaceCreateProject, WorkspaceBranch, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRepository, WorkspaceSession, WorkspaceTask, WorkspaceTaskRecovery } from '@elevenex/shared';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../backend/backend-client.service';
@@ -35,6 +40,7 @@ export class WorkspaceStore {
   readonly wideReview = signal(false);
   private resumeContext: EnvironmentContext | null = null;
   private resumeLoaded = false;
+  readonly taskRequestsAvailable = signal(false);
   readonly commitPanelAvailable = signal(false);
   readonly sessionArchiveAvailable = signal(false);
   readonly sessionArchiveHistoryAvailable = signal(false);
@@ -42,6 +48,24 @@ export class WorkspaceStore {
   readonly sessionDisclosures = signal<ReadonlyMap<string, TaskSessionDisclosure>>(new Map());
   readonly sessionArchiveUndo = signal<{ readonly scopeId: string; readonly session: WorkspaceSession } | null>(null);
   readonly scopeId = signal<string | null>(null);
+  readonly offline = computed(() => !!this.scopeId() && (this.backend.state().scope?.id !== this.scopeId() || this.restoring() && !!this.chosen() && this.chosen()?.scopeId !== this.scopeId()));
+  readonly asOf = signal<number | null>(null);
+  readonly asOfLabel = computed(() => { const at = this.asOf(); return at ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''; });
+  private readonly journal = inject(WorkspaceWritingJournal, { optional: true });
+  private readonly taskOutbox = new WorkspaceTaskOutbox(this.bridge, scope => this.valid(scope), () => this.busy() ? Promise.resolve() : this.loadTasks(this.currentTaskCursor), this.journal);
+  readonly waitingTasks = this.taskOutbox.items;
+  private readonly sessionOutbox = new WorkspaceSessionOutbox(this.bridge, scope => this.valid(scope), () => this.busy() ? Promise.resolve() : this.loadTasks(this.currentTaskCursor), this.journal);
+  readonly waitingSessions = this.sessionOutbox.items;
+  removeWaitingSession(id: string): void { this.sessionOutbox.remove(id); }
+  readonly editingTask = signal<CreatedTask | null>(null);
+  private uncertainTaskRequest: string | null = null;
+  private machineIdentity = '';
+  private inFlightMutations = 0;
+  private editingWaitingTask: WaitingTask | null = null;
+  private outageTasks: readonly WorkspaceTask[] | null = null;
+  private suspended = false;
+  private readonly drafts = inject(SessionChatDrafts, { optional: true });
+  private readonly outbox = inject(SessionChatOutbox, { optional: true });
   readonly activeProject = signal('all');
   readonly filter = signal<SummaryStatus | null>(null);
   readonly closed = signal(false);
@@ -136,23 +160,28 @@ export class WorkspaceStore {
   private preparationTimer?: ReturnType<typeof setTimeout>;
   private branchTimer?: ReturnType<typeof setTimeout>;
   private branchRevision = 0;
-  private taskRequestId = crypto.randomUUID();
+  private taskRequestId: string = crypto.randomUUID();
   private observer?: WorkspaceNavigationObserver;
   private capable = false;
   private projectCompletion: { readonly scope: string; readonly projectId: number } | null = null;
 
   constructor() {
+    effect(() => { const saved = this.journal?.restored(); if (saved) untracked(() => { this.taskOutbox.restore(saved.tasks); this.sessionOutbox.restore(saved.sessions ?? []); }); });
     effect(() => {
       const scope = this.backend.state().scope;
       const machine = this.machineState();
       const matches = machine && scope && (machine.kind === 'local' ? scope.environment.kind === 'local' : scope.environment.kind === 'remote' && scope.environment.hostId === machine.id);
       const next = this.enabled() && matches ? scope.id : null;
       untracked(() => {
-        if (next === this.scopeId()) return;
-        this.reset(next);
+        if (next === this.scopeId() && !this.suspended) return;
+        if (!next && this.scopeId() && (!scope || !this.enabled())) {
+          this.suspend(); return;
+        }
+        if (next && this.suspended) this.recover(next);
+        else this.reset(next);
         if (next) {
           this.loading.set(true);
-          this.observer = new WorkspaceNavigationObserver(this.document, async () => { const result = await this.bridge.workspaceRevision(next); if (this.valid(next) && result.ok) { this.commitPanelAvailable.set(result.value.commitPanel === true); this.sessionArchiveAvailable.set(result.value.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(result.value.sessionArchiveHistory === true); } return result; }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask(), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } });
+          this.observer = new WorkspaceNavigationObserver(this.document, async () => { const result = await this.bridge.workspaceRevision(next); if (this.valid(next) && result.ok) { this.taskRequestsAvailable.set(result.value.taskRequests === true); this.commitPanelAvailable.set(result.value.commitPanel === true); this.sessionArchiveAvailable.set(result.value.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(result.value.sessionArchiveHistory === true); } return result; }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask(), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } });
         }
       });
     });
@@ -161,11 +190,37 @@ export class WorkspaceStore {
       if (!scope || !environment || this.restoring() || this.loading() || this.busy()) return;
       this.saveView(scope, environment);
     });
-    inject(DestroyRef).onDestroy(() => { this.saveBeforeExit(); this.disposed = true; this.archives.reset(); this.revision++; this.listRevision++; this.stopPreparation(); clearTimeout(this.branchTimer); this.branchRevision++; this.observer?.dispose(); });
+    inject(DestroyRef).onDestroy(() => { this.saveBeforeExit(); this.taskOutbox.dispose(); this.sessionOutbox.dispose(); this.disposed = true; this.archives.reset(); this.revision++; this.listRevision++; this.stopPreparation(); clearTimeout(this.branchTimer); this.branchRevision++; this.observer?.dispose(); });
+  }
+
+  private suspend(): void {
+    if (this.suspended) return;
+    this.suspended = true; this.asOf.set(Date.now()); this.outageTasks = this.taskRecords();
+    this.outbox?.connect(null); this.taskOutbox.connect(null); this.sessionOutbox.connect(null);
+    this.closeUndo.set(null); this.archiveUndo.set(null); this.sessionArchiveUndo.set(null);
+    this.revision++; this.listRevision++; this.preparationRevision++; this.branchRevision++;
+    clearTimeout(this.preparationTimer); clearTimeout(this.branchTimer);
+    this.observer?.dispose(); this.observer = undefined;
+    if (this.inFlightMutations) { this.mutationUncertain.set(true); this.error.set('The last change is unconfirmed. Check its outcome when the machine is back.'); }
+    this.busy.set(false); this.loading.set(false); this.branchLoading.set(false);
+  }
+  private recover(scope: string): void {
+    const previous = this.scopeId()!;
+    const selection = this.chosen(), pending = this.pendingTask();
+    this.resumeContext = { projectId: this.activeProject() === 'all' ? null : Number(this.activeProject()), taskId: selection?.taskId ?? pending?.id ?? null,
+      sessionId: selection?.sessionId ?? null, draft: '', cursor: null, workspace: { panel: this.panel(), panelOpen: this.panelOpen(), wideReview: this.wideReview(), closed: this.closed(), focused: this.focused(), filter: this.filter(), projectCursor: this.currentProjectCursor ?? null, taskCursor: this.currentTaskCursor ?? null } };
+    this.suspended = false; this.capable = false; this.archives.reset();
+    this.resume.reset(); this.resumeLoaded = true; this.restoring.set(true);
+    this.drafts?.rebind(previous, scope);
+    this.scopeId.set(scope);
   }
 
   connect(machine: Machine, active: boolean): void {
     if (!active || this.machineState()?.id !== machine.id) this.saveBeforeExit();
+    const identity = JSON.stringify([machine.id, machine.address, machine.key]);
+    if (this.machineIdentity && this.machineIdentity !== identity) { this.reset(null); this.outbox?.clear(); this.taskOutbox.clear(); this.sessionOutbox.clear(); }
+    if (this.machineIdentity !== identity) void this.journal?.open(machine.kind === 'local' ? { kind: 'local' } : { kind: 'remote', hostId: machine.id });
+    this.machineIdentity = identity;
     this.machineState.set(machine); this.enabled.set(active);
   }
 
@@ -196,7 +251,7 @@ export class WorkspaceStore {
     }
     if (!this.capable) {
       const capability = await this.read(scope, () => this.bridge.workspaceRevision(scope));
-      if (this.valid(scope)) { this.commitPanelAvailable.set(capability?.commitPanel === true); this.sessionArchiveAvailable.set(capability?.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(capability?.sessionArchiveHistory === true); }
+      if (this.valid(scope)) { this.taskRequestsAvailable.set(capability?.taskRequests === true); this.commitPanelAvailable.set(capability?.commitPanel === true); this.sessionArchiveAvailable.set(capability?.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(capability?.sessionArchiveHistory === true); }
       if (!this.current(scope, revision)) return;
       if (!capability || capability.version !== 1) { this.loading.set(false); this.error.set(this.error() ?? 'This backend needs an update before it can open the workspace.'); return; }
       this.capable = true;
@@ -220,7 +275,7 @@ export class WorkspaceStore {
       if (this.activeProject() !== 'all' && !projects.items.some(project => String(project.id) === this.activeProject())) this.activeProject.set('all');
       if (saved) await this.restoreTasks(scope, revision, saved);
       else await this.loadTasks();
-      if (this.current(scope, revision) && !this.error()) { this.resumeContext = null; this.restoring.set(false); }
+      if (this.current(scope, revision) && !this.error()) { this.resumeContext = null; this.restoring.set(false); this.asOf.set(null); this.outbox?.connect(scope); this.taskOutbox.connect(scope); this.sessionOutbox.connect(scope); }
       if (this.current(scope, revision) && !this.error()) { this.mutationUncertain.set(false); this.uncertainSetup = null; }
     }
     if (this.current(scope, revision)) this.loading.set(false);
@@ -267,6 +322,7 @@ export class WorkspaceStore {
   }
 
   private async refreshVisible(): Promise<void> {
+    if (this.restoring()) { await this.refresh(); return; }
     // Keep later page cursors stable until the user explicitly returns to page one.
     if (this.projectPage() || this.taskPage()) {
       const scope = this.scopeId();
@@ -291,6 +347,11 @@ export class WorkspaceStore {
 
   async selectProject(id: string): Promise<void> {
     if (id !== 'all' && !this.projects().some(project => project.id === id)) return;
+    if (this.offline() && this.outageTasks) {
+      this.activeProject.set(id); this.taskRecords.set(this.outageTasks.filter(task => id === 'all' || String(task.projectId) === id));
+      if (!this.taskRecords().some(task => task.id === this.chosen()?.taskId)) this.chosen.set(null);
+      return;
+    }
     this.leaveResume();
     const task = this.selectedTask();
     const retainedTask = task && workspaceTaskStage(task) !== 'closed' && (id === 'all' || String(task.projectId) === id) ? task : null;
@@ -364,6 +425,13 @@ export class WorkspaceStore {
     const scope = this.scopeId(), taskId = Number(id), revision = this.listRevision;
     if (!scope || this.busy() || !this.taskRecords().some(task => task.id === taskId)) return;
     this.busy.set(true);
+    if (this.offline()) {
+      this.busy.set(false);
+      if (this.journal && !this.journal.restored()) { this.error.set('Restoring waiting writing. Try again in a moment.'); return; }
+      const task = this.taskRecords().find(task => task.id === taskId)!;
+      if (!this.sessionOutbox.enqueue(taskId, task.name)) this.error.set('Up to 10 sessions can wait in this window. Remove one first.');
+      return;
+    }
     const session = await this.mutate(scope, () => this.bridge.workspaceCreateSession(scope, { taskId }));
     if (session && revision === this.listRevision) {
       this.sessionRecords.update(records => new Map(records).set(taskId, [...(records.get(taskId) ?? []).slice(-19), session]));
@@ -451,12 +519,18 @@ export class WorkspaceStore {
     this.dialogKey.update(value => value + 1); this.dialog.set('project'); this.dialogOpen.set(true);
   }
   async openNewTask(projectId?: string): Promise<void> {
+    if (this.editingWaitingTask) { this.taskOutbox.enqueue(this.editingWaitingTask); this.editingWaitingTask = null; this.editingTask.set(null); }
     const project = (projectId ? this.projectRecords().find(item => String(item.id) === projectId) : this.selectedProject()) ?? this.projectRecords()[0];
     const scope = this.scopeId();
     const selectionRevision = this.listRevision;
     if (!scope || !project || this.busy()) return;
     this.projectCompletion = null; this.projectCreated.set(null); this.dialogFrom.set(null);
-    this.error.set(null); this.busy.set(true);
+    this.error.set(null);
+    if (this.offline()) {
+      if (this.detail()?.project.id !== project.id || !this.repositories().length) { this.error.set(`New task opens when ${this.machine()?.name ?? 'the machine'} is back. Repository choices have not loaded yet.`); return; }
+      this.taskRequestId = crypto.randomUUID(); this.editingTask.set(null); this.dialogKey.update(value => value + 1); this.dialog.set('task'); this.dialogOpen.set(true); return;
+    }
+    this.busy.set(true);
     const detail = await this.read(scope, () => this.bridge.workspaceProject(scope, project.id));
     if (detail && selectionRevision === this.listRevision) {
       this.detail.set(detail);
@@ -521,18 +595,39 @@ export class WorkspaceStore {
   }
   readonly draftProject = computed(() => this.detail()?.project ?? this.selectedProject());
   readonly draftProjectMark = computed(() => { const project = this.draftProject(); return projectFace({ name: project?.name ?? '', ...project?.appearance }); });
-  closeDialog(): void { if (!this.busy()) { this.projectCompletion = null; this.dialogOpen.set(false); } }
+  closeDialog(): void { if (!this.busy()) { if (this.editingWaitingTask) { this.taskOutbox.enqueue(this.editingWaitingTask); this.editingWaitingTask = null; this.taskOutbox.connect(this.offline() ? null : this.scopeId()); } this.projectCompletion = null; this.dialogOpen.set(false); } }
   dialogClosed(): void {
     const completed = this.projectCompletion;
     this.projectCompletion = null;
     if (completed && this.valid(completed.scope) && !this.dialogOpen() && this.activeProject() === String(completed.projectId)) this.projectCreated.set(completed.projectId);
   }
 
+  async checkWaitingTask(id: string): Promise<void> { const scope = this.scopeId(); if (scope && this.taskRequestsAvailable() && await this.taskOutbox.check(scope, id) && this.uncertainTaskRequest === id) { this.mutationUncertain.set(false); this.error.set(null); this.uncertainTaskRequest = null; } }
+  removeWaitingTask(id: string): void { this.taskOutbox.remove(id); }
+  editWaitingTask(id: string): void {
+    if (this.busy()) return;
+    const waiting = this.waitingTasks().find(item => item.id === id);
+    if (waiting && !this.repositories().some(repo => repo.id === waiting.repoId)) { this.error.set('Open this task’s repository when the machine is back to edit it.'); return; }
+    const item = this.taskOutbox.take(id);
+    if (!item) return;
+    this.editingWaitingTask = item; this.editingTask.set(item.draft); this.taskRequestId = item.id;
+    this.dialogKey.update(value => value + 1); this.dialog.set('task'); this.dialogOpen.set(true);
+  }
+
   async createTask(draft: CreatedTask, planned = false): Promise<void> {
-    const scope = this.scopeId(), repo = this.repositories().find(repo => String(repo.id) === draft.repo) ?? this.repositories()[0], selectionRevision = this.listRevision;
+    if (this.journal && !this.journal.restored()) { this.error.set('Restoring waiting writing. Keep this draft here until it is ready.'); return; }
+    planned ||= this.editingWaitingTask?.planned ?? false;
+    const scope = this.scopeId(), repo = draft.repo ? this.repositories().find(repo => String(repo.id) === draft.repo) : this.repositories()[0], selectionRevision = this.listRevision;
     if (!scope || !repo || this.busy()) return;
+    if (this.offline() || this.editingWaitingTask) {
+      if (this.waitingTasks().length >= 10) { this.error.set('Up to 10 tasks can wait in this window. Remove one first.'); return; }
+      if (!this.taskOutbox.enqueue({ id: this.taskRequestId, draft, repoId: repo.id, projectId: repo.projectId, planned })) return;
+      this.taskRequestId = crypto.randomUUID(); this.editingWaitingTask = null; this.editingTask.set(null); this.dialogOpen.set(false); this.taskOutbox.connect(this.offline() ? null : scope); return;
+    }
+    this.editingWaitingTask = null;
     this.busy.set(true);
     const task = await this.mutate(scope, () => this.bridge.workspaceCreateTask(scope, { repoId: repo.id, name: draft.title, branchName: draft.branch, mode: draft.existing ? 'existing' : 'new', ...(draft.base ? { baseRef: draft.base } : {}), requestId: this.taskRequestId }));
+    if (!task && this.mutationUncertain()) { this.uncertainTaskRequest = this.taskRequestId; this.taskOutbox.rememberUnknown({ id: this.taskRequestId, draft, repoId: repo.id, projectId: repo.projectId, planned }); }
     if (task && selectionRevision === this.listRevision) {
       if (planned) await this.mutate(scope, () => this.bridge.workspaceSetStage(scope, { taskId: task.id, stage: 'planned' }));
       this.dialogOpen.set(false); this.activeProject.set(String(task.projectId)); this.closed.set(false);
@@ -750,8 +845,10 @@ export class WorkspaceStore {
     return null;
   }
   private async mutate<T>(scope: string, operation: () => Promise<BackendResult<T>>): Promise<T | null> {
-    if (!this.valid(scope) || !this.capable || this.mutationUncertain()) return null;
+    if (!this.valid(scope) || this.restoring()) { this.error.set(`This action needs ${this.machine()?.name ?? 'the machine'}. Nothing was sent. Try again once it is back.`); return null; }
+    if (!this.capable || this.mutationUncertain()) return null;
     this.error.set(null);
+    this.inFlightMutations++;
     try {
       const result = await operation();
       if (!this.valid(scope)) return null;
@@ -760,16 +857,19 @@ export class WorkspaceStore {
         this.mutationUncertain.set(true); this.error.set('The change could not be confirmed. Refresh to check its outcome before trying again.');
       } else this.error.set(result.error.message);
     } catch { if (this.valid(scope)) { this.mutationUncertain.set(true); this.error.set('The change could not be confirmed. Refresh to check its outcome before trying again.'); } }
+    finally { this.inFlightMutations--; }
     return null;
   }
   private valid(scope: string): boolean { return !this.disposed && this.scopeId() === scope && this.backend.state().scope?.id === scope; }
   private current(scope: string, revision: number): boolean { return this.valid(scope) && this.revision === revision; }
   private reset(scope: string | null): void {
+    this.uncertainTaskRequest = null; this.editingWaitingTask = null; this.outageTasks = null;
+    this.suspended = false; this.asOf.set(null); this.outbox?.connect(null); this.taskOutbox.connect(null); this.sessionOutbox.connect(null);
     this.resume.reset(); this.resumeLoaded = false; this.resumeContext = null; this.restoring.set(scope !== null);
     this.panelOpen.set(false); this.panel.set('changes'); this.wideReview.set(false); this.closed.set(false); this.filter.set(null);
     this.projectCompletion = null; this.projectCreated.set(null); this.dialogFrom.set(null);
     this.sessionDisclosures.set(new Map());
-    this.capable = false; this.archives.reset(); this.sessionArchiveHistoryAvailable.set(false); this.commitPanelAvailable.set(false); this.sessionArchiveAvailable.set(false); this.sessionArchiveUndo.set(null); this.closeUndo.set(null);
+    this.capable = false; this.archives.reset(); this.sessionArchiveHistoryAvailable.set(false); this.taskRequestsAvailable.set(false); this.commitPanelAvailable.set(false); this.sessionArchiveAvailable.set(false); this.sessionArchiveUndo.set(null); this.closeUndo.set(null);
     this.observer?.dispose(); this.observer = undefined; this.projectPage.set(false); this.currentTaskCursor = undefined; this.currentProjectCursor = undefined;
     this.stopPreparation();
     this.archiveUndo.set(null);

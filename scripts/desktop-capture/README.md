@@ -562,3 +562,17 @@ return-control stability. Short and long drafts, both themes, native wheel
 takeover, scrubbed reveal frames and narrow reduced motion are covered. It uses
 rAF timestamps for movement-rate checks; completion has its own regression. Run
 against the preview URL, sequentially with other native captures.
+
+`scenarios/desktop-reconnect.mjs` uses `/reconnect` to exercise the production
+window with preview-controlled SSH/backend replies. It checks retained views and
+drafts, message edit/removal, waiting task/session creates, git blocking, elapsed
+outage escalation, explicit credential opening, Escape/focus/secret clearing,
+once-only recovery, narrow panel takeover and host-trust safety in both themes
+and reduced motion. The scenario also checks that git labels fit after the
+workspace's scaled launch. Disk persistence and real SSH recovery are verified
+separately by desktop regressions and the sandboxed preload smoke.
+
+`scenarios/session-reconnect-reading.mjs` checks same-machine scope recovery while
+reading above the end and inside an earlier-history window. It asserts retained
+scroll position, unread feedback for recovered output, stable history items and
+view identity in both themes through the production window with controlled transport.

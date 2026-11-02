@@ -37,7 +37,7 @@ export class DesktopWorkspaceController {
     private readonly projectDeletion: DesktopProjectDeletionService,
   ) {}
   @Get('revision') revision() {
-    return { revision: this.navigation.revision, version: 1, commitPanel: true, sessionArchive: true, sessionArchiveHistory: true };
+    return { revision: this.navigation.revision, version: 1, taskRequests: true, commitPanel: true, sessionArchive: true, sessionArchiveHistory: true };
   }
   private async changed<T>(operation: Promise<T>): Promise<T> {
     const value = await operation;
@@ -115,6 +115,9 @@ export class DesktopWorkspaceController {
     @Query() query: PageQuery & { projectId?: string; state?: string },
   ) {
     return this.workspace.listTasks(query);
+  }
+  @Get('task-requests') taskRequest(@Query('repoId') repoId: unknown, @Query('requestId') requestId: unknown) {
+    return this.workspace.taskRequest(resourceId(repoId), requestId);
   }
   @Get('tasks/:id') task(@Param('id') id: string) {
     return this.workspace.task(resourceId(id));

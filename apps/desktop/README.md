@@ -308,3 +308,20 @@ Angular 22.2.3 bundles an encoder that imports `encodeRangeMappings`, but its
 wide source-map dependency range can reuse the legacy app's older encoder.
 The root override scopes `@jridgewell/sourcemap-codec` **1.6.0** to this compiler
 version so it can load without changing the legacy Angular compiler.
+
+## Waiting writing
+
+The disconnected workspace retains loaded views and local writing. Main stores
+validated, bounded chat/task/session outboxes in the private
+`remote-settings.json.waiting-writing.json` sidecar beside its existing settings.
+The original settings format remains readable by older desktop releases. Writes
+use atomic private files and fsync, sharing the existing settings writer's
+one-active/one-pending ownership. Every queued action's sending claim is saved
+before dispatch; interrupted claims restore as unconfirmed and never replay.
+SSH responses remain transient and are rejected by this storage boundary.
+
+The named `workspaceWaitingRead` and `workspaceWaitingSave` bridge operations use
+the sending window's selected machine and a main-issued configuration identity,
+so offline persistence needs no live backend scope. Backend dispatch still uses
+its ordinary current-scope and resource validation. Task creation reconciliation
+uses the additive, capability-gated `workspaceTaskRequest` read.

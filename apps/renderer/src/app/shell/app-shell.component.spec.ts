@@ -2,6 +2,19 @@ import { TestBed } from "@angular/core/testing";
 import { AppShellComponent } from "./app-shell.component";
 
 describe("Desktop region ownership", () => {
+  beforeEach(() => vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+  afterEach(() => { TestBed.resetTestingModule(); vi.unstubAllGlobals(); });
+  it('takes over a narrow main region instead of squeezing its content and returns Escape intent', () => {
+    const remove = vi.fn();
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: remove }));
+    const fixture = TestBed.createComponent(AppShellComponent), closed = vi.fn();
+    fixture.componentInstance.panelCloseRequested.subscribe(closed);
+    fixture.componentRef.setInput('panelOpen', true); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('main').hasAttribute('inert')).toBe(true);
+    expect(fixture.nativeElement.classList.contains('wide-review')).toBe(true);
+    fixture.nativeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(closed).toHaveBeenCalledOnce(); fixture.destroy(); expect(remove).toHaveBeenCalledOnce();
+  });
   it("uses the enclosing machine's title bar when embedded", () => {
     const fixture = TestBed.createComponent(AppShellComponent);
     fixture.componentRef.setInput("titleBar", false);

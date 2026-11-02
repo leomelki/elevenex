@@ -23,6 +23,14 @@ describe('DesktopWorkspaceService', () => {
   const activityStatus = jest.fn<string | undefined, []>();
   const archiveSession = jest.fn();
   const restoreSession = jest.fn();
+  it('reconciles a creation by its indexed request identity without replaying setup', async () => {
+    await database.db.update(schema.workspaces).set({ taskRequestId: 'desktop-stable-request' }).where(eq(schema.workspaces.id, taskId));
+    expect((await service.taskRequest(repoId, 'desktop-stable-request')).task?.id).toBe(taskId);
+    expect(await service.taskRequest(repoId + 1, 'desktop-stable-request')).toEqual({ task: null });
+    expect(await service.taskRequest(repoId, 'never-dispatched')).toEqual({ task: null });
+    await expect(service.taskRequest(repoId, 'x'.repeat(101))).rejects.toThrow(BadRequestException);
+    expect(retryTask).not.toHaveBeenCalled();
+  });
   beforeEach(async () => {
     activityStatus.mockReset();
     archiveSession.mockReset(); restoreSession.mockReset();

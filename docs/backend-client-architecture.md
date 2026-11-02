@@ -359,3 +359,27 @@ membership and confines referenced raster files to the task or Codex's generated
 image directory. Main validates matching identities and bounded raster data URLs;
 transport and cancellation use the existing window lease. Image bytes are fetched
 separately from bounded transcript pages, with no renderer networking or CSP change.
+
+## Disconnected workspace recovery
+
+The renderer retains same-machine display state while scope-bound operations
+remain invalid. It reconciles bounded durable windows before rebinding resource
+IDs, and only never-dispatched local writing leaves its bounded outboxes. Main journals waiting writing through two named,
+trusted-window operations, independent of backend readiness. A configuration
+identity rejects stale saves after SSH destination changes. It writes a private
+`remote-settings.json.waiting-writing.json` sidecar so earlier desktop releases
+retain their unchanged settings format. A durable sending claim precedes
+dispatch; relaunch restores such claims as unknown. No renderer storage or
+credential persistence is introduced.
+Dispatched prompts and mutations never replay on connection recovery. Unknown
+prompt outcomes use a read-only durable-receipt check plus explicit inspection.
+New backend `taskRequests: true` capability adds `workspaceTaskRequest(scope,
+{repoId, requestId})`, mapped to GET `desktop-workspace/task-requests`. Main checks
+the trusted sender, current scope, bounded request ID, repository ID and response
+ownership. The backend uses the existing unique task-request index, returning a
+single task or null without performing setup. Older engines omit the capability.
+
+Automatic SSH retries stop after ten minutes of transient outage. Wake and
+bounded main-owned network-interface/online-state observation resume that stop;
+authentication and host-trust failures always require a person. Existing
+main-owned transport credentials, CSP and the named bridge remain unchanged.

@@ -84,3 +84,6 @@
   transition: transform var(--dur-base) linear;
 }
 @media (prefers-reduced-motion: reduce) { .island, .trigger, .progress { transition: none; } }
+
+.island[data-tone="danger"] { --icon-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in oklab, var(--danger) 45%, transparent), 0 4px 14px -6px rgb(0 0 0 / .35); }
+.island[data-tone="ok"] { --icon-color: var(--accent); }

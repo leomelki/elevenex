@@ -34,3 +34,6 @@ textarea { resize: vertical; }
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; transition-delay: 0s !important; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
+
+/* Live-motion state is inherited; each component owns the visuals it freezes. */
+.ex-offline { --ex-live-play-state: paused; --ex-live-caret-visibility: hidden; }

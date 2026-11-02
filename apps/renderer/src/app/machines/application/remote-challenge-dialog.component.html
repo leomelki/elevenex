@@ -10,5 +10,5 @@
   }
   @if (expired()) { <p class="error" role="alert">This sign-in request expired. Cancel and open the machine to try again.</p> }
   @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
-  <footer><button exButton type="button" variant="ghost" [disabled]="busy()" (click)="cancel()">Cancel</button><button exButton type="submit" variant="primary" [disabled]="!canAnswer()">{{ busy() ? 'Continuing…' : challenge().kind === 'trust' ? 'Trust and connect' : 'Continue' }}</button></footer>
+  <footer><button exButton type="button" variant="ghost" [disabled]="busy()" (click)="cancel()">Cancel</button>@if (challenge().kind !== 'notification') { <button exButton type="submit" variant="primary" [disabled]="!canAnswer()">{{ busy() ? 'Continuing…' : challenge().kind === 'trust' ? 'Trust and connect' : 'Continue' }}</button> } @else { <span role="status">Waiting for SSH…</span> }</footer>
 </form>

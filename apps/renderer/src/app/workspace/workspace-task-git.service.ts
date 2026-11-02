@@ -37,7 +37,17 @@ export class WorkspaceTaskGitService {
   private previewRequest?: Promise<WorkspaceCommitPreview>;
 
   constructor() {
-    effect(() => { const key = this.key(); untracked(() => { this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); this.summary.set(null); this.clearCommitPreview(); this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
+    let previousTask: number | undefined;
+    effect(() => { const key = this.key(), task = this.store.selected()?.taskId; untracked(() => { this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); if (previousTask !== task) this.summary.set(null); previousTask = task; this.clearCommitPreview(); this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
+    effect(() => {
+      const selected = this.store.selected(), scope = this.backend.state().scope?.id;
+      if (selected && selected.scopeId !== scope) untracked(() => {
+        this.revision++; this.previewGeneration++; this.loading.set(false);
+        clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer);
+        if (this.busy()) { this.uncertain.set(true); this.error.set('The git operation is unconfirmed. Check its status when the machine is back.'); }
+        this.busy.set(null); this.phase.set(null);
+      });
+    });
     const refreshVisible = () => { if (!this.document.hidden) void this.refresh(); };
     this.document.addEventListener('visibilitychange', refreshVisible);
     this.document.defaultView?.addEventListener('focus', refreshVisible);
@@ -61,6 +71,7 @@ export class WorkspaceTaskGitService {
 
   async perform(input: GitCommand): Promise<boolean> {
     const selected = this.store.selected();
+    if (this.store.offline()) { this.error.set(`This git action needs ${this.store.machine()?.name ?? 'the machine'}. Nothing was sent. Try again once it’s back.`); return false; }
     if (!selected || this.busy() || this.uncertain() || !this.current(selected.scopeId, selected.taskId)) return false;
     const epoch = this.selectionEpoch;
     this.revision++; this.loading.set(false);
@@ -143,7 +154,7 @@ export class WorkspaceTaskGitService {
   private current(scope: string, taskId: number): boolean { return !this.disposed && !!this.key() && this.backend.state().scope?.id === scope && this.store.selected()?.scopeId === scope && this.store.selected()?.taskId === taskId; }
   private schedule(): void {
     clearTimeout(this.pollTimer);
-    if (this.disposed || this.document.hidden || !this.store.selected()) return;
+    if (this.disposed || this.document.hidden || !this.store.selected() || this.store.offline()) return;
     this.pollTimer = setTimeout(() => { this.pollTimer = undefined; if (!this.document.hidden) void this.refresh(); }, 5000);
   }
 }

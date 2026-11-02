@@ -85,6 +85,17 @@ describe("GitBar motion ownership", () => {
         return new DOMRect(0, 0, width, 30);
       },
     );
+    // JSDOM has no used-value layout. Supply CSS-pixel widths from the same
+    // geometry fixture, including interrupted animated widths.
+    const computedStyle = getComputedStyle;
+    vi.stubGlobal('getComputedStyle', (element: Element, pseudo?: string | null) => {
+      const style = computedStyle(element, pseudo);
+      return new Proxy(style, { get(target, property) {
+        if (property === 'width') return `${element.getBoundingClientRect().width}px`;
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+    });
   });
   afterEach(() => {
     vi.restoreAllMocks();

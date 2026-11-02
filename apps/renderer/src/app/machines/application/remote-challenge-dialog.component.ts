@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal } from '@angular/core';
 import type { RemoteChallenge } from '@elevenex/shared';
 import { ButtonComponent, IconComponent } from '../../ui';
 import { HostKeyCheckComponent } from '../index';
@@ -10,12 +10,13 @@ import { HostKeyCheckComponent } from '../index';
   templateUrl: './remote-challenge-dialog.component.html',
   styleUrl: './remote-challenge-dialog.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { role: 'dialog', 'aria-labelledby': 'remote-challenge-title' },
+  host: { '[class.compact]': 'compact()', '[attr.role]': 'compact() ? "group" : "dialog"', 'aria-labelledby': 'remote-challenge-title' },
 })
 export class RemoteChallengeDialogComponent {
   readonly challenge = input.required<RemoteChallenge>();
   readonly machineName = input.required<string>();
   readonly active = input(true);
+  readonly compact = input(false);
   readonly busy = input(false);
   readonly error = input('');
   readonly answered = output<{ readonly id: string; readonly answer: string | null }>();
@@ -23,9 +24,10 @@ export class RemoteChallengeDialogComponent {
   protected readonly expired = signal(false);
   protected readonly fingerprint = computed(() => /(?:SHA256:[A-Za-z0-9+/]+|MD5:(?:[a-f0-9]{2}:){15}[a-f0-9]{2})/i.exec(this.challenge().prompt)?.[0] ?? '');
   protected readonly keyType = computed(() => /\b(ED25519|ECDSA|RSA|DSA)\b/i.exec(this.challenge().prompt)?.[1]?.toUpperCase() ?? 'SSH');
-  protected readonly canAnswer = computed(() => this.active() && !this.busy() && !this.expired() && (this.challenge().kind === 'credential' ? !!this.secret() : this.challenge().kind !== 'trust' || !!this.fingerprint()));
+  protected readonly canAnswer = computed(() => this.challenge().kind !== 'notification' && this.active() && !this.busy() && !this.expired() && (this.challenge().kind === 'credential' ? !!this.secret() : this.challenge().kind !== 'trust' || !!this.fingerprint()));
 
   constructor() {
+    inject(DestroyRef).onDestroy(() => this.secret.set(''));
     effect(onCleanup => {
       const challenge = this.challenge();
       this.secret.set(''); this.expired.set(challenge.expiresAt <= Date.now());

@@ -154,7 +154,7 @@ describe('Workspace resume', () => {
     complete(ok(task)); await settle(); TestBed.tick(); await settle();
     expect(store.activeProject()).toBe('all'); expect(store.selected()).toBeNull();
     emit({ revision: 2, scope: null }); TestBed.tick(); await settle();
-    expect(store.projects()).toEqual([]); expect(store.panelOpen()).toBe(false);
+    expect(store.projects()).toHaveLength(1); expect(store.offline()).toBe(true);
   });
 
   it('reports failed saves and retries on the next layout change', async () => {
@@ -334,7 +334,7 @@ describe('WorkspaceStore', () => {
     await store.createSession('3'); expect(store.sessionDisclosures()).toBe(disclosures);
     await store.archiveSession({taskId:'3',session:{id:'5',status:'queued'}}); expect(store.sessionDisclosures()).toBe(disclosures);
     await store.refresh(); expect(store.sessionDisclosures()).toBe(disclosures);
-    emit({revision:2,scope:null}); TestBed.tick(); expect(store.sessionDisclosures().size).toBe(0);
+    emit({revision:2,scope:null}); TestBed.tick(); expect(store.sessionDisclosures().size).toBe(1); expect(store.offline()).toBe(true);
   });
 
   it('loads bounded task/session windows and selects a session', async () => {
@@ -674,7 +674,7 @@ describe('workspace session archive', () => {
     bridge.workspaceArchiveSession.mockImplementationOnce(()=>new Promise(resolve=>{complete=resolve;}));
     const pending=store.archiveSession({taskId:'3',session:{id:'5',status:'queued'}});
     emit({revision:2,scope:null}); TestBed.tick(); complete(ok({accepted:true})); await pending;
-    expect(store.sessionArchiveUndo()).toBeNull(); expect(store.tasks()).toEqual([]);
+    expect(store.sessionArchiveUndo()).toBeNull(); expect(store.tasks()).toHaveLength(1); expect(store.offline()).toBe(true);
     await store.undoSessionArchive(); expect(bridge.workspaceRestoreSession).not.toHaveBeenCalled();
   });
 });
@@ -743,5 +743,32 @@ describe('workspace archived history', () => {
     await store.loadArchivedSessions({taskId:'3',page:'latest'});
     expect(store.tasks()[0]?.archive).toBeUndefined();
     expect(bridge.workspaceSessions).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe('Workspace outages', () => {
+  it('retains loaded selection and dialog draft through loss, then reconciles resources before rebinding', async () => {
+    const { store, bridge, start, emit } = setup(); await start();
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    await store.openNewTask(); const dialog = store.dialogKey();
+    emit({ revision: 2, scope: null }); TestBed.tick(); await settle();
+    expect(store.offline()).toBe(true); expect(store.tasks()).toHaveLength(1);
+    expect(store.selected()).toEqual({ scopeId: 'scope', taskId: 3, sessionId: 5 });
+    expect(store.dialogOpen()).toBe(true); expect(store.dialogKey()).toBe(dialog);
+    await store.deleteProject(); expect(bridge.workspaceDeleteProject).not.toHaveBeenCalled();
+    emit({ revision: 3, scope: { id: 'recovered', environment: { kind: 'local' } } }); TestBed.tick();
+    for (let i = 0; i < 80; i++) await Promise.resolve(); TestBed.tick();
+    expect(store.selected()).toEqual({ scopeId: 'recovered', taskId: 3, sessionId: 5 });
+    expect(store.dialogKey()).toBe(dialog); expect(bridge.workspaceCreateTask).not.toHaveBeenCalled();
+  });
+  it('queues cached task drafts once and allows removal before reconnection', async () => {
+    const { store, bridge, start, emit } = setup(); await start(); await store.openNewTask();
+    emit({ revision: 2, scope: null }); TestBed.tick();
+    await store.createTask({ title: 'Wait here', repo: '2', branch: 'wait-here', existing: false, workspace: 'auto', base: 'main' });
+    expect(store.waitingTasks()).toHaveLength(1); expect(bridge.workspaceCreateTask).not.toHaveBeenCalled();
+    store.removeWaitingTask(store.waitingTasks()[0]!.id);
+    emit({ revision: 3, scope: { id: 'recovered', environment: { kind: 'local' } } }); TestBed.tick(); await settle();
+    expect(bridge.workspaceCreateTask).not.toHaveBeenCalled();
   });
 });

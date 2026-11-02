@@ -263,3 +263,9 @@ footer ex-turn-acts {
     transform: none;
   }
 }
+
+.reach-line { color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-ui-line); padding: var(--space-2) 0; }
+.reach-line b { font-weight: 500; color: var(--attention); }
+
+:host(.live) .mark { animation-play-state: var(--ex-live-play-state, running); }
+:host(.live.arriving) .mark { animation-play-state: running, var(--ex-live-play-state, running); }

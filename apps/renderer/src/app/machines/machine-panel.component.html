@@ -20,6 +20,7 @@
       </div>
     </div>
   }
+  <ng-content select="[machineRecovery]" />
   @if (guests().length) {
     <div class="section">
       <h3>Also using {{ machine().kind === 'local' ? 'this Mac' : machine().name }}</h3>

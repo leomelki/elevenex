@@ -717,3 +717,30 @@ test('file uploads are named, bounded, scoped and validate each chunk receipt', 
   assert.equal((await upload(event, scope, input)).error.code, 'invalid-response');
   stop(); assert.equal(handlers.size, 0);
 });
+
+test('task request reconciliation is scoped, read-only and validates repository ownership', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  let reply = { task: null }, requests = 0;
+  const url = await server(context, (request, response) => {
+    requests++; assert.match(request.url, /^\/api\/desktop-workspace\/task-requests\?repoId=2&requestId=stable/);
+    assert.equal(request.method, 'GET'); response.writeHead(200, json); response.end(JSON.stringify(reply));
+  });
+  const client = new BackendClient(() => local(url), () => undefined);
+  context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, workspace = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender); context.after(stop);
+  const read = input => handlers.get('workspace:task-request')(event, scope, input);
+  assert.throws(() => read({ repoId: 0, requestId: 'stable' }));
+  assert.throws(() => read({ repoId: 2, requestId: 'x'.repeat(101) }));
+  assert.throws(() => handlers.get('workspace:task-request')({ senderFrame: {}, sender }, scope, { repoId: 2, requestId: 'stable' }));
+  assert.equal((await read({ repoId: 2, requestId: 'stable' })).value.task, null);
+  reply = { task: { id: 3, projectId: 1, repoId: 2, name: 'Task', branchName: 'task', stage: 'active', state: 'preparing', archivedAt: null, updatedAt: '', private: 'discard' } };
+  const found = await read({ repoId: 2, requestId: 'stable' }); assert.equal(found.value.task.id, 3); assert.equal(found.value.task.private, undefined);
+  reply.task.repoId = 9; assert.equal((await read({ repoId: 2, requestId: 'stable' })).error.code, 'invalid-response');
+  client.reset(42); assert.equal((await read({ repoId: 2, requestId: 'stable' })).error.code, 'stale-scope'); assert.equal(requests, 3);
+});

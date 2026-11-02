@@ -10,8 +10,17 @@
   @if (!store.closed()) {
     <ex-status-summary [counts]="store.counts()" [active]="store.filter()" (selectStatus)="store.filter.set($event)" />
   }
+  @if (store.offline()) { <p class="last-seen">As of {{ store.asOfLabel() }}</p> }
   @if (visibleError(); as error) {
     <div class="notice" role="alert"><span>{{ error }}</span><button exButton size="sm" [disabled]="store.loading()" (click)="store.refresh()">Refresh</button></div>
+  }
+  @if (store.waitingTasks().length || store.waitingSessions().length) {
+    <section class="waiting-tasks" aria-label="Tasks waiting for the machine">
+      @for (item of store.waitingTasks(); track item.id) {
+        <button type="button" [disabled]="item.status !== 'waiting'" [exTooltip]="item.draft.title" (click)="store.editWaitingTask(item.id)"><ex-icon name="layers" [size]="13" /><span>{{ item.draft.title }}</span><small>{{ item.status === 'waiting' ? 'when back' : item.status === 'sending' ? 'creating' : 'check' }}</small></button>
+      }
+      @for (item of store.waitingSessions(); track item.id) { <button type="button" disabled><ex-icon name="chat" [size]="13" /><span>New session · {{ item.taskName }}</span><small>{{ item.status === 'waiting' ? 'when back' : item.status === 'sending' ? 'creating' : 'check' }}</small></button> }
+    </section>
   }
   @if (!taskListMounted() && store.loading() && !store.tasks().length) {
     <p class="loading" role="status">Loading tasks…</p>

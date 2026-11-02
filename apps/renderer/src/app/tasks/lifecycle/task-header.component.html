@@ -69,7 +69,7 @@
     </div>
     <span class="grow"></span>
     @if (git(); as state) {
-      <ex-git-bar
+      <ex-git-bar [unreachable]="unreachable()"
         [files]="state.files ?? 0"
         [add]="state.add ?? 0"
         [del]="state.del ?? 0"

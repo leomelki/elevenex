@@ -787,3 +787,25 @@ describe("provider-neutral transcript presentation", () => {
     ).toBe(false);
   });
 });
+
+
+it('keeps the visible chat lifetime and incremental cursor across same-machine recovery', async () => {
+  const { store, bridge, scope } = setup(); await settle();
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('kept', 'user', 'Keep my reading position')] })));
+  await store.refresh(); const view = store.viewRevision();
+  TestBed.inject(SessionChatDrafts).rebind('scope', 'recovered');
+  scope.set({ revision: 2, scope: { id: 'recovered', environment: { kind: 'local' } } });
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: false, items: [], events: [] })));
+  store.open({ scopeId: 'recovered', taskId: 1, sessionId: 2 }, false); await settle();
+  expect(store.viewRevision()).toBe(view); expect(store.items()[0]?.id).toBe('kept');
+  expect(bridge.sessionChatRead).toHaveBeenLastCalledWith('recovered', expect.objectContaining({ after: 'cursor' }));
+});
+it('keeps an earlier-history window on screen instead of jumping to latest after recovery', async () => {
+  const { store, bridge, scope } = setup(); await settle();
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: 'earlier', items: [item('latest', 'user', 'Latest')] }))); await store.refresh();
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('older', 'user', 'Reading history')] }))); await store.older();
+  const calls = bridge.sessionChatRead.mock.calls.length, view = store.viewRevision();
+  TestBed.inject(SessionChatDrafts).rebind('scope', 'recovered'); scope.set({ revision: 2, scope: { id: 'recovered', environment: { kind: 'local' } } });
+  store.open({ scopeId: 'recovered', taskId: 1, sessionId: 2 }, false); await settle();
+  expect(store.historical()).toBe(true); expect(store.items()[0]?.id).toBe('older'); expect(store.viewRevision()).toBe(view); expect(bridge.sessionChatRead).toHaveBeenCalledTimes(calls);
+});

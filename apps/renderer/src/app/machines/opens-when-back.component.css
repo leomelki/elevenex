@@ -1,0 +1,7 @@
+:host { display: grid; place-items: center; min-height: 220px; padding: var(--space-6); }
+section { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); max-width: 360px; text-align: center; }
+.machine-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: var(--radius-lg); color: var(--ink-muted); background: var(--surface-sunken); }
+h2 { margin: 0; font-size: var(--text-body-size); font-weight: 600; }
+p { margin: 0; color: var(--ink-muted); font-size: var(--text-ui-size); line-height: var(--text-ui-line); }
+section > div { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+:host.compact { padding: var(--space-4); }

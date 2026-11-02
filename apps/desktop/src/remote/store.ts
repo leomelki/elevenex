@@ -1,7 +1,7 @@
-import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { readFile, stat } from 'node:fs/promises';
+import { AtomicJsonFile } from '../atomic-json-file';
 import type { EnvironmentContext, EnvironmentSelection, RemoteForwardInput, RemoteHost } from '@elevenex/shared';
+import type { WaitingWriting } from '@elevenex/shared';
 import * as validate from './validation';
 
 export interface SavedWindow {
@@ -9,6 +9,7 @@ export interface SavedWindow {
   contexts: Record<string, EnvironmentContext>;
   /** Intentional disconnect remains disconnected after relaunch. */
   connect: boolean;
+  waiting?: Record<string, WaitingWriting>;
   forwards: Record<string, (RemoteForwardInput & { id: string })[]>;
 }
 export interface RemoteSettings { hosts: RemoteHost[]; windows: SavedWindow[] }
@@ -18,9 +19,8 @@ export const environmentKey = (value: EnvironmentSelection): string => value.kin
 
 /** One application owner serializes atomic writes. Never stores challenge replies. */
 export class RemoteSettingsStore {
-  private pending: { body: string; promise: Promise<void>; resolve(): void; reject(error: unknown): void } | undefined;
-  private writing = false;
-  constructor(private readonly path: string) {}
+  private readonly writer: AtomicJsonFile;
+  constructor(private readonly path: string) { this.writer = new AtomicJsonFile(path, 16 * 1024 * 1024); }
 
   async load(): Promise<RemoteSettings> {
     try {
@@ -62,31 +62,7 @@ export class RemoteSettingsStore {
   }
 
   save(settings: RemoteSettings): Promise<void> {
-    const body = JSON.stringify({ version: 1, ...settings });
-    if (Buffer.byteLength(body) > 16 * 1024 * 1024) return Promise.reject(new Error('Remote settings exceed their size limit'));
-    if (this.pending) { this.pending.body = body; return this.pending.promise; }
-    let resolve!: () => void;
-    let reject!: (error: unknown) => void;
-    const promise = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
-    this.pending = { body, promise, resolve, reject };
-    if (!this.writing) { this.writing = true; queueMicrotask(() => { void this.flush(); }); }
-    return promise;
-  }
-
-  private async flush(): Promise<void> {
-    // At most one active snapshot and one latest pending snapshot are retained,
-    // even if several windows type faster than the filesystem can fsync.
-    while (this.pending) {
-      const job = this.pending; this.pending = undefined;
-      const temporary = `${this.path}.${randomUUID()}.tmp`;
-      try {
-        await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-        const file = await open(temporary, 'wx', 0o600);
-        try { await file.writeFile(job.body); await file.sync(); } finally { await file.close(); }
-        await rename(temporary, this.path); job.resolve();
-      } catch (error) { job.reject(error); }
-      finally { await rm(temporary, { force: true }).catch(() => undefined); }
-    }
-    this.writing = false;
+    const windows = settings.windows.map(window => ({ selection: window.selection, contexts: window.contexts, connect: window.connect, forwards: window.forwards }));
+    return this.writer.write(JSON.stringify({ version: 1, hosts: settings.hosts, windows }));
   }
 }

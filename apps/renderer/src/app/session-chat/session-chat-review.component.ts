@@ -13,6 +13,7 @@ import {
 } from "@angular/core";
 import type { SessionChatChangesPage } from "@elevenex/shared";
 import { SessionChatClient } from "../backend/session-chat-client.service";
+import { OpensWhenBackComponent } from '../machines';
 import { ButtonComponent } from "../ui";
 import {
   DiffReviewComponent,
@@ -30,7 +31,7 @@ export type ChatReviewTarget = ChatSelection & {
 /** One selected reply, with bounded file/content windows and owned cancellation. */
 @Component({
   selector: "ex-session-chat-review",
-  imports: [DiffReviewComponent, ButtonComponent],
+  imports: [DiffReviewComponent, ButtonComponent, OpensWhenBackComponent],
   templateUrl: "./session-chat-review.component.html",
   styleUrl: "./session-chat-review.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -38,6 +39,8 @@ export type ChatReviewTarget = ChatSelection & {
 export class SessionChatReviewComponent {
   readonly target = input.required<ChatReviewTarget>();
   readonly wide = input(false);
+  readonly unreachable = input<string>();
+  readonly reconnectRequested = output<void>();
   readonly wideChange = output<boolean>();
   readonly exitRequested = output<void>();
   readonly page = signal<SessionChatChangesPage | null>(null);
@@ -69,7 +72,9 @@ export class SessionChatReviewComponent {
 
   constructor() {
     effect(() => {
-      void this.load(this.target(), 0, this.target().path);
+      const target = this.target();
+      if (this.unreachable()) { this.cancel(); this.busy.set(false); }
+      else void this.load(target, 0, target.path);
     });
     afterRenderEffect(() => {
       const fileId = this.linePending();
@@ -96,6 +101,7 @@ export class SessionChatReviewComponent {
     this.queue = [];
   }
   async load(target = this.target(), offset = 0, path?: string): Promise<void> {
+    if (this.unreachable()) { this.reconnectRequested.emit(); return; }
     this.cancel();
     const generation = this.generation,
       requestId = crypto.randomUUID();
@@ -158,6 +164,7 @@ export class SessionChatReviewComponent {
     );
   }
   request(request: DiffFileRequest): void {
+    if (this.unreachable()) { if (request.reason === 'retry' || request.reason === 'more' || request.reason === 'previous') this.reconnectRequested.emit(); return; }
     if (
       request.mode !== "changes" ||
       request.rev !== this.page()?.revision ||

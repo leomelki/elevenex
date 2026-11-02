@@ -75,6 +75,9 @@ export class GitBarComponent {
   readonly compact = input(false);
   readonly allowedActions = input<readonly GitAction[]>();
   readonly quietLabel = input('Up to date');
+  readonly unreachable = input<string>();
+  protected readonly unreachableNote = signal('');
+  private noteTimer?: ReturnType<typeof setTimeout>;
   readonly action = output<GitAction>();
   readonly changesRequested = output<void>();
   readonly jobSessionRequested = output<string>();
@@ -257,7 +260,7 @@ export class GitBarComponent {
       });
       this.ready.set(true);
     });
-    inject(DestroyRef).onDestroy(() => this.motion.destroy());
+    inject(DestroyRef).onDestroy(() => { clearTimeout(this.noteTimer); this.motion.destroy(); });
   }
 
   protected leaveInk(event: AnimationCallbackEvent): void {
@@ -272,6 +275,16 @@ export class GitBarComponent {
     });
   }
 
+  protected request(action: GitAction): void {
+    clearTimeout(this.noteTimer); this.unreachableNote.set('');
+    const machine = this.unreachable();
+    if (machine) {
+      const verb = action.startsWith('commit') ? 'Commit' : action.startsWith('push') ? 'Push' : action === 'sync' ? 'Sync' : 'Merge';
+      this.unreachableNote.set(`${verb} needs ${machine}. Nothing was sent. Do it again once it’s back: things may have changed by then.`);
+      this.noteTimer = setTimeout(() => this.unreachableNote.set(''), 7000); return;
+    }
+    this.action.emit(action);
+  }
   protected primary(): void {
     const step = this.step();
     if (this.busy()) return;
@@ -284,7 +297,7 @@ export class GitBarComponent {
           ?.session;
       if (job?.waiting && session) this.jobSessionRequested.emit(session.id);
       else this.toggleJob();
-    } else if (step) this.action.emit(step);
+    } else if (step) this.request(step);
   }
 
   protected toggleJob(): void {

@@ -99,3 +99,5 @@ pre {
     animation: none;
   }
 }
+
+.running::after { animation-play-state: var(--ex-live-play-state, running); }

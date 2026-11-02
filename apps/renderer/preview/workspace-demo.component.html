@@ -1,7 +1,7 @@
 <ex-app-shell
   [panelOpen]="panelOpen()"
   [wideReview]="wide()"
-  (reviewExited)="wide.set(false)"
+  (panelCloseRequested)="panelOpen.set(false); wide.set(false)" (reviewExited)="wide.set(false)"
 >
   <ex-title-island shellTitle controls="workspace-machine-details" [open]="machineOpen()" [panel]="machineDetails" (pressed)="machineOpen.set(true)" (dismissed)="machineOpen.set(false)"><ex-island-name [machine]="machine" /></ex-title-island>
   <ng-template #machineDetails><ex-machine-panel [machine]="machine" /></ng-template>
