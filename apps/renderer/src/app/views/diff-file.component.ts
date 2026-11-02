@@ -41,7 +41,7 @@ export class DiffFileComponent {
   protected readonly identity = computed(() => JSON.stringify([this.file().id, this.file().rev, this.mode()]));
   protected readonly viewed = computed(() => !!this.file().viewed && !this.file().changedSinceViewed);
   protected readonly open = computed(() => this.collapsedIdentity() !== this.identity() && (!this.viewed() || this.expandedIdentity() === this.identity()));
-  protected readonly allowed = computed(() => (this.file().status !== 'D' && this.file().add + this.file().del <= this.largeAt()) || this.allowedIdentity() === this.identity());
+  protected readonly allowed = computed(() => (!this.file().large && this.file().status !== 'D' && this.file().add + this.file().del <= this.largeAt()) || this.allowedIdentity() === this.identity());
   protected readonly currentContent = computed(() => {
     const content = this.content();
     return content && content.fileId === this.file().id && content.rev === this.file().rev && content.mode === this.mode() ? content : undefined;

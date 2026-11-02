@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
+const { URLSearchParams } = require('node:url');
 const { BackendClient } = require('../dist/backend-client/client');
 const { createBackendClient } = require('../dist/backend-client/application');
 const { readBackendInfo } = require('../dist/backend-client/transport');
@@ -743,4 +744,46 @@ test('task request reconciliation is scoped, read-only and validates repository 
   const found = await read({ repoId: 2, requestId: 'stable' }); assert.equal(found.value.task.id, 3); assert.equal(found.value.task.private, undefined);
   reply.task.repoId = 9; assert.equal((await read({ repoId: 2, requestId: 'stable' })).error.code, 'invalid-response');
   client.reset(42); assert.equal((await read({ repoId: 2, requestId: 'stable' })).error.code, 'stale-scope'); assert.equal(requests, 3);
+});
+
+
+test('repository reviews validate source, revision, modes, bounds and text-only spans', () => {
+  const { parseReviewQuery, parseReviewPage } = require('../dist/backend-client/repository-review');
+  const digest = 'a'.repeat(64), sha = 'a'.repeat(40);
+  const input = { taskId: 7, requestId: 'read', source: 'branch', baseRef: 'refs/heads/trunk' };
+  assert.deepEqual(parseReviewQuery(input), input);
+  for (const patch of [{ source: 'reply' }, { taskId: 0 }, { offset: -1 }, { context: 201 }, { baseRef: '--output=bad' }, { revision: 'HEAD' }, { arbitrary: true }]) assert.throws(() => parseReviewQuery({ ...input, ...patch }));
+  const file = { id: 'committed:a.ts', path: 'a.ts', rev: digest, status: 'M', layer: 'committed', add: 1, del: 1, binary: false, large: false, countsExact: true, oldRevision: sha, newRevision: sha, oldMode: '100644', newMode: '100644' };
+  const page = { taskId: 7, source: 'branch', revision: digest, headSha: sha, baseSha: sha, baseRef: 'refs/heads/trunk', targetSha: sha, fingerprint: null, explanation: 'Merge-base to HEAD', total: 1, matched: 1, offset: 0, nextOffset: null, additions: 1, deletions: 1, countsExact: true, files: [file], content: null };
+  assert.equal(parseReviewPage(page, input).files[0].path, 'a.ts');
+  for (const patch of [{ taskId: 8 }, { source: 'uncommitted' }, { revision: 'HEAD' }, { files: Array(101).fill(file) }, { matched: 0 }, { nextOffset: 1 }, { baseRef: 'refs/heads/wrong' }, { files: [{ ...file, path: '../escape' }] }, { files: [{ ...file, oldPath: '../escape' }] }]) assert.throws(() => parseReviewPage({ ...page, ...patch }, input));
+  const contentInput = { ...input, revision: digest, fileId: file.id, fileRev: digest, mode: 'changes' };
+  const content = { fileId: file.id, rev: digest, mode: 'changes', offset: 0, nextOffset: null, hunks: [{ id: 'hunk', heading: '@@', lines: [{ id: 'line', kind: 'add', newNumber: 1, text: '<script>text</script>', spans: [{ text: '<script>text</script>' }] }] }] };
+  assert.equal(parseReviewPage({ ...page, content }, contentInput).content.hunks[0].lines[0].text, '<script>text</script>');
+  for (const patch of [{ mode: 'full' }, { rev: 'b'.repeat(64) }, { fileId: 'other' }, { offset: 400 }, { hunks: [{ id: 'h', heading: 'h', lines: Array(401).fill(content.hunks[0].lines[0]) }] }, { hunks: [{ id: 'h', heading: 'h', lines: [{ id: 'x', kind: 'add', text: 'wrong', spans: [{text:'different'}], newNumber: 1 }] }] }]) assert.throws(() => parseReviewPage({ ...page, content: { ...content, ...patch } }, contentInput));
+});
+
+test('repository IPC is task scoped, read only, cancellable and removes its trusted handlers', async context => {
+  const vm = require('node:vm'); const { readFile } = require('node:fs/promises');
+  const digest = 'a'.repeat(64);
+  let reply = { taskId: 7, source: 'uncommitted', revision: digest, headSha: null, baseSha: null, baseRef: null, targetSha: null, fingerprint: digest, explanation: 'Staged / unstaged', total: 0, matched: 0, offset: 0, nextOffset: null, additions: 0, deletions: 0, countsExact: true, files: [], content: null };
+  let requests = 0;
+  const url = await server(context, (request, response) => {
+    requests++; assert.equal(request.url, '/api/desktop-workspace/tasks/7/review'); assert.equal(request.method, 'POST');
+    request.resume(); response.writeHead(200, json); response.end(JSON.stringify(reply));
+  });
+  const client = new BackendClient(() => local(url), () => {}); context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, adapter = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/repository-review'), 'utf8'), { exports: adapter, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/' + name.slice(2)) });
+  const sender = { id: 42 }, frame = {}, event = { sender, senderFrame: frame };
+  const stop = adapter.registerRepositoryReviewIpc(client, (candidate, contents) => candidate === frame && contents === sender);
+  const read = handlers.get('repository-review:read'), input = { taskId: 7, requestId: 'read', source: 'uncommitted' };
+  assert.throws(() => read({ senderFrame: {}, sender }, scope, input), /Untrusted/);
+  assert.throws(() => read(event, scope, { ...input, command: 'bad' }));
+  assert.equal((await read(event, scope, input)).ok, true);
+  reply = { ...reply, taskId: 8 }; assert.equal((await read(event, scope, input)).error.code, 'invalid-response');
+  assert.equal((await read(event, 'f'.repeat(36), input)).error.code, 'stale-scope'); assert.equal(requests, 2);
+  handlers.get('repository-review:cancel')(event, scope, 'read');
+  stop(); assert.equal(handlers.size, 0);
 });

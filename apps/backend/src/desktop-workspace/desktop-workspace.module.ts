@@ -1,3 +1,5 @@
+import { DesktopRepositoryReviewService } from './desktop-repository-review.service.js';
+import { DesktopRepositoryReviewController } from './desktop-repository-review.controller.js';
 import { DesktopChatAttachments } from './desktop-chat-attachments.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { AgentRuntimeModule } from '../agent-runtime/agent-runtime.module.js';
@@ -30,8 +32,9 @@ import { DesktopProjectDeletionService } from './desktop-project-deletion.servic
     SessionsModule,
     BranchesModule,
   ],
-  controllers: [DesktopWorkspaceController, DesktopChatController],
+  controllers: [DesktopRepositoryReviewController, DesktopWorkspaceController, DesktopChatController],
   providers: [
+    DesktopRepositoryReviewService,
     DesktopChatAttachments,
     DesktopChatService,
     DesktopWorkspaceService,

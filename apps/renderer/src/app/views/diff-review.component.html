@@ -1,10 +1,10 @@
-<section class="review" [class.wide]="wide()" aria-label="Changes review" tabindex="0" (keydown)="keydown($event)">
+<section class="review" [class.wide]="wide()" [class.compact-toolbar]="compactToolbar()" aria-label="Changes review" tabindex="0" (keydown)="keydown($event)">
   <div class="toolbar">
     <div class="file-navigation">
       <button class="jump" type="button" cdkOverlayOrigin #filesOrigin="cdkOverlayOrigin"
         [attr.aria-expanded]="listOpen()" [title]="current()?.path ?? 'Changed files'"
-        [disabled]="!files().length" aria-haspopup="dialog" (click)="listOpen.set(!listOpen())">
-        <ex-icon name="changes" [size]="14" />
+        [disabled]="!files().length && !fileFilterActive()" aria-haspopup="dialog" (click)="listOpen.set(!listOpen())">
+        <ex-icon [name]="fileFilterActive() ? 'search' : 'changes'" [size]="14" />
         <span>{{ current() ? names(current()!.path) : 'Changed files' }}</span>
         <small>{{ files().length ? selectedIndex() + 1 : 0 }} of {{ files().length }}</small>
         <ex-icon name="chevron-down" [size]="12" />
@@ -13,9 +13,11 @@
         [disabled]="selectedIndex() === 0" (pressed)="step(-1)" />
       <ex-icon-button icon="chevron-down" label="Next file (⌥↓)" size="sm"
         [disabled]="selectedIndex() >= files().length - 1" (pressed)="step(1)" />
+      @if (!compactToolbar()) {
       <span class="viewed-count" [class.complete]="files().length && viewedCount() === files().length" role="status">
         {{ viewedCount() }}/{{ files().length }} viewed
       </span>
+      }
     </div>
     <div class="review-tools">
       <div class="modes" role="group" aria-label="Review mode">
@@ -70,7 +72,8 @@
   [cdkConnectedOverlayHasBackdrop]="true" cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
   (backdropClick)="listOpen.set(false)" (overlayKeydown)="$event.key === 'Escape' && listOpen.set(false)">
   <div class="file-menu" role="dialog" aria-label="Jump to a changed file" cdkTrapFocus [cdkTrapFocusAutoCapture]="true">
-    <h3>Changed files <small>{{ files().length }}</small></h3>
+    <h3>Changed files <small>{{ files().length }}</small><span class="picker-viewed">{{ viewedCount() }}/{{ files().length }} viewed</span></h3>
+    <ng-content select="[reviewFileSearch]" />
     <ex-change-list [items]="files()" [active]="current()?.id" (selected)="goTo($event, false)" (activated)="listOpen.set(false)" />
   </div>
 </ng-template>

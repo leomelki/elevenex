@@ -1,3 +1,4 @@
+import { SessionChatDrafts } from '../../session-chat/session-chat-drafts';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { ConnectedWorkspaceFixture } from '../../../../preview/connected-workspace-fixture';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
@@ -23,6 +24,25 @@ describe('Connected workspace composition', () => {
     vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} });
   });
   afterEach(() => { TestBed.resetTestingModule(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it('prepares a revision-bound line question in the existing draft without sending, returning focus from review', async () => {
+    const { fixture, component, platform, root } = setup(); await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
+    const selected = component.store.selected()!;
+    const draft = fixture.debugElement.injector.get(SessionChatDrafts).entry(selected.scopeId, selected.sessionId);
+    draft.text.set('Existing writing'); component.panelOpen.set(true); component.wideReview.set(true); await settle(fixture);
+    const sent = platform.sentChatActions.length;
+    component.prepareReviewQuestion({ text: 'Why this change?', location: { scopeId: selected.scopeId, taskId: 11, source: 'last-commit', revision: 'a'.repeat(64), fileRev: 'b'.repeat(64), fileId: 'committed:src/file.ts', path: 'src/file.ts', side: 'old', line: 12, headSha: 'c'.repeat(40), baseSha: 'd'.repeat(40), contentRevision: 'e'.repeat(40) } });
+    await settle(fixture);
+    expect(draft.text()).toContain('Existing writing'); expect(draft.text()).toContain('Why this change?'); expect(draft.text()).toContain('b'.repeat(64)); expect(draft.text()).toContain('src/file.ts:12, old side');
+    expect(platform.sentChatActions.length).toBe(sent); expect(component.panelOpen()).toBe(false); expect(component.wideReview()).toBe(false);
+    expect(document.activeElement).toBe(root.querySelector('ex-composer textarea'));
+    const writing = draft.text();
+    vi.spyOn(component.store, 'selectedSession').mockReturnValue({ ...component.store.selectedSession()!, status: 'archived' });
+    component.prepareReviewQuestion({ text: 'Read-only question', location: { scopeId: selected.scopeId, taskId: 11, source: 'last-commit', revision: 'a'.repeat(64), fileRev: 'b'.repeat(64), fileId: 'committed:src/file.ts', path: 'src/file.ts', side: 'old', line: 12, headSha: null, baseSha: null, contentRevision: null } });
+    expect(draft.text()).toBe(writing); expect(component.reviewFeedback()).toContain('active conversation');
+    expect(platform.sentChatActions.length).toBe(sent);
+  });
 
   it('loads navigation and the task header, retaining a read-only view behind Home', async () => {
     const { fixture, component, root } = setup();

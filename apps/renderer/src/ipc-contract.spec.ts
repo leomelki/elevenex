@@ -34,6 +34,11 @@ describe('IPC bridge contract', () => {
 // These negative assertions are checked by tsc in pnpm test. Vitest alone only
 // transpiles tests, which would silently miss an accidentally weakened contract.
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  void invoke('repository-review:read', 'scope', { taskId: 1, requestId: 'read', source: 'branch', baseRef: 'refs/heads/trunk' });
+  // @ts-expect-error Repository review belongs to a task; it never accepts arbitrary paths.
+  void invoke('repository-review:read', 'scope', { path: '/repo', source: 'uncommitted' });
+  // @ts-expect-error Repository sources do not include recorded reply patches.
+  void invoke('repository-review:read', 'scope', { taskId: 1, requestId: 'read', source: 'reply' });
   void invoke('session-chat:changes', 'scope', { taskId: 1, sessionId: 2, requestId: 'review', turnId: 'reply', offset: 0 });
   // @ts-expect-error Review reads require the selected task and session, never an arbitrary filesystem path.
   void invoke('session-chat:changes', 'scope', { path: '/etc/passwd', offset: 0 });

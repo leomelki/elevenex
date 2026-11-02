@@ -97,8 +97,11 @@ The connected workspace code prefetches during idle time. Only the selected
 candidate mounts, behind inert Home, before launch; its first render crosses a
 paint boundary before opening starts. Its scoped feature
 stores supply the existing presentational components; they never import the
-legacy renderer or contact the backend directly. The side views provide tabs, close and expansion behavior. Changes reviews the
-selected agent reply; the other four views retain placeholder contents. Expansion
+legacy renderer or contact the backend directly. The side views provide tabs, close and expansion behavior. Changes reviews Uncommitted, Last commit and committed Branch changes for the
+selected task, with selected agent replies retained as a separate recorded-patch
+source. Its [owner guide](src/app/repository-review/README.md) documents pinned
+revisions, bounded reads, refresh and intent handling. The other four views
+retain their existing contents. Expansion
 is available on every view and stays active when switching tabs.
 `/connected-workspace` exercises this production composition with a typed,
 preview-only backend adapter. Its fixture never enters the production build.

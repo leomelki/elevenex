@@ -21,6 +21,9 @@ export class DiffReviewComponent {
   readonly activeFileId = input<string>();
   readonly mode = input<ReviewMode>('changes');
   readonly fullFilesAvailable = input(true);
+  readonly compactToolbar = input(false);
+  readonly active = input(true);
+  readonly fileFilterActive = input(false);
   readonly wide = input(false);
   readonly showWideToggle = input(true);
   readonly wrap = input(true);
@@ -70,6 +73,7 @@ export class DiffReviewComponent {
   private previousWrap?: boolean;
 
   constructor() {
+    afterRenderEffect(() => { if (!this.active()) this.listOpen.set(false); });
     inject(DestroyRef).onDestroy(() => { this.observer?.disconnect(); this.layoutObserver?.disconnect(); if (this.scrollFrame !== undefined) cancelAnimationFrame(this.scrollFrame); });
     afterRenderEffect(() => {
       const root = this.scroller()?.nativeElement;
@@ -248,7 +252,7 @@ export class DiffReviewComponent {
   }
 
   private requestVisible(file: ChangeFile, mode = this.mode(), reason: 'visible' | 'selected' = 'visible'): void {
-    if (file.binary || file.status === 'D' || (file.viewed && !file.changedSinceViewed) || file.add + file.del > this.largeAt()) return;
+    if (file.binary || file.large || file.status === 'D' || (file.viewed && !file.changedSinceViewed) || file.add + file.del > this.largeAt()) return;
     const content = this.contentMap().get(file.id);
     if (content && content.mode === mode && content.rev === file.rev) return;
     const key = JSON.stringify([file.rev, mode]);

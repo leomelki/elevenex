@@ -1,3 +1,4 @@
+import { registerRepositoryReviewIpc } from './repository-review';
 import { registerWorkspaceIpc } from './workspace';
 import { registerSessionChatIpc } from './session-chat';
 import { handleForWindow, type TrustedSender } from '../ipc';
@@ -15,6 +16,7 @@ export function registerBackendClientIpc(client: BackendClient, trusted: Trusted
     return client.info(windowId, args[0]);
   });
   const stopWorkspace = registerWorkspaceIpc(client, trusted);
+  const stopReview = registerRepositoryReviewIpc(client, trusted);
   const stopChat = registerSessionChatIpc(client, trusted);
-  return () => { stopState(); stopInfo(); stopWorkspace(); stopChat(); };
+  return () => { stopState(); stopInfo(); stopWorkspace(); stopChat(); stopReview(); };
 }

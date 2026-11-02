@@ -383,3 +383,29 @@ Automatic SSH retries stop after ten minutes of transient outage. Wake and
 bounded main-owned network-interface/online-state observation resume that stop;
 authentication and host-trust failures always require a person. Existing
 main-owned transport credentials, CSP and the named bridge remain unchanged.
+
+## Task repository review
+
+The additive `repositoryReview`, `repositoryReviewBranches` and
+`repositoryReviewCancel` operations use the existing per-window backend lease.
+They map to bounded task-owned `desktop-workspace/tasks/:id/review` reads. The
+read-only POST supports bounded filters/context windows without URL-size limits;
+no session or agent reply is required. Recorded reply patches retain their
+existing `sessionChatChanges` operation and remain a separate source.
+
+Main validates source/task/revision/file/mode identity, counts, 100-entry windows,
+400-line pages and text-only lexical spans. Named branch search returns at most
+50 refs and advertises more matches. The backend resolves the workspace from the
+task, never from a renderer-supplied path. Its scheduler shares existing global
+and per-repository budgets; cancellation releases the caller while coalesced
+builds retain their bounded lifetime. Application shutdown aborts owned git work.
+
+The backend pins committed/index reads to blob IDs and rejects working-file
+reads whose inode/ctime/nanosecond version changed after metadata capture. The
+metadata revision includes HEAD, base/target SHA and an index/worktree digest.
+Index bytes are read without changing the index. Changes are offered during
+reading, and an explicit refresh retains unchanged file revisions and Viewed
+state. Reconnection reconciles read state; these operations never fetch, stage,
+commit, send prompts or replay mutations. See the
+[review owner guide](../apps/renderer/src/app/repository-review/README.md) for
+comparison semantics, limits and typed Code/question owner intents.

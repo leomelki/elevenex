@@ -48,6 +48,11 @@ export interface ChangeFile {
   readonly add: number;
   readonly del: number;
   readonly oldPath?: string;
+  /** Optional repository source/layer and mode metadata. */
+  readonly detail?: string;
+  readonly layerLabel?: string;
+  readonly large?: boolean;
+  readonly countsExact?: boolean;
   readonly binary?: boolean;
   readonly viewed?: boolean;
   readonly changedSinceViewed?: boolean;
@@ -81,6 +86,7 @@ export interface DiffFileContent {
   readonly state: 'loading' | 'ready' | 'error';
   readonly hunks?: readonly DiffHunk[];
   readonly error?: string;
+  readonly notice?: string;
   /** When a full file was paginated, ask its owner for the next bounded page. */
   readonly remainingLines?: number;
   /** A paged source may know there is another page without its total line count. */

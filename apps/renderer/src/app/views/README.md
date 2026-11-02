@@ -96,3 +96,18 @@ For replacement content windows, set `hasPreviousLines` to expose Previous lines
 on that file. It emits `reason: 'previous'`; the owner supplies that earlier page
 with the same file/revision/mode identity. This keeps line paging attached to the
 file while scroll-based selection moves between its neighbours.
+
+Repository review integration lives in [the task review owner](../repository-review/README.md).
+`ChangeFile.layerLabel` distinguishes index/working layers in compact headers,
+including collapsed files. `ChangeFile.detail` can label mode metadata; `large=true` requires
+explicit loading even with a small changed-line count. `countsExact=false` shows
+an unknown additions count, and `DiffFileContent.notice` carries source feedback.
+These optional inputs preserve existing reply/preview consumers.
+
+
+`compactToolbar=true` keeps navigation and display tools in one row, preserving
+one-click Changes/Full files switching. Viewed totals move to the
+file picker. Project bounded search/pagination controls through `[reviewFileSearch]`;
+they are mounted with that dialog and inherit its focus trap. `fileFilterActive`
+marks the jump trigger with a search glyph and keeps it enabled for zero results.
+Set `active=false` when hiding a retained review to close its portaled picker. Defaults preserve the existing expanded toolbar consumers.

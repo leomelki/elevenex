@@ -19,7 +19,9 @@ tasks and sessions through scope-bound named bridge operations. It includes
 project creation/settings, task creation/preparation/recovery, task stages, safe
 git operations and close/reopen flows. Selected sessions render streaming chat
 with tool activity, decisions, queue controls and retained drafts. Completed
-replies expose their changed files and a paginated Changes review; other side
+replies expose their changed files and a paginated Changes review. The task-owned
+Changes panel also reviews Uncommitted, Last commit and Branch changes through
+[the repository review owner](../renderer/src/app/repository-review/README.md); other side
 views provide their frames only. See [chat ownership](../renderer/src/app/session-chat/README.md)
 and the [workspace guide](../renderer/src/app/workspace/README.md).
 The backend gains additive `desktop-workspace` routes;

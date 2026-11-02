@@ -1,3 +1,5 @@
+import type { RepositoryReviewLocation } from '@elevenex/shared';
+import { RepositoryReviewComponent, type RepositoryLineQuestion } from '../../repository-review';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal } from '@angular/core';
 import { jumpHome, settleMark, type CreateProjectIntent } from '../../projects';
 import { AppShellComponent } from '../../shell/app-shell.component';
@@ -5,7 +7,7 @@ import { AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, Ske
 import { WorkspacePanelsComponent } from '../../workbench/workspace-panels.component';
 import { WorkspaceDialogsComponent, WorkspaceNavigationComponent, WorkspaceOnboardingComponent, WorkspaceProjectRailComponent, WorkspaceStore, WorkspaceTaskSetupComponent, WorkspaceTaskHeaderComponent } from '../../workspace';
 import { OpensWhenBackComponent, type Machine } from '../index';
-import { SessionChatReviewComponent, type ChatReviewTarget } from '../../session-chat/session-chat-review.component';
+import { type ChatReviewTarget } from '../../session-chat/session-chat-review.component';
 import { SessionChatComponent } from '../../session-chat/session-chat.component';
 import { WorkspaceWritingJournal } from '../../workspace/workspace-writing-journal';
 import { SessionChatOutbox } from '../../session-chat/session-chat-outbox';
@@ -16,7 +18,7 @@ import { SessionChatClient } from '../../backend/session-chat-client.service';
 @Component({
   selector: 'ex-machine-workspace',
   providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient, SessionChatOutbox, WorkspaceWritingJournal],
-  imports: [AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  imports: [AutoHeightDirective, FoldComponent, OpensWhenBackComponent, RepositoryReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
   templateUrl: './machine-workspace.component.html',
   styleUrl: './machine-workspace.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -38,13 +40,35 @@ export class MachineWorkspaceComponent {
   readonly panelOpen = this.store.panelOpen;
   readonly panel = this.store.panel;
   readonly wideReview = this.store.wideReview;
+  private readonly reviewDrafts = inject(SessionChatDrafts);
+  private readonly questionFocus = signal<ReturnType<WorkspaceStore['selected']>>(null);
+  readonly reviewFeedback = signal('');
+  readonly repositoryTarget = computed(() => {
+    const selected = this.store.selected(), task = this.store.pendingTask();
+    const taskId = selected?.taskId ?? task?.id, scopeId = selected?.scopeId ?? this.store.scopeId();
+    return taskId && scopeId ? { scopeId, taskId } : null;
+  });
+  openReviewCode(location: RepositoryReviewLocation): void {
+    if (location.scopeId !== this.repositoryTarget()?.scopeId || location.taskId !== this.repositoryTarget()?.taskId) return;
+    this.reviewFeedback.set(`Code navigation is unavailable in this build. ${location.path}:${location.line} · ${location.side} side · revision ${location.fileRev.slice(0, 12)}.`);
+  }
+  prepareReviewQuestion(question: RepositoryLineQuestion): void {
+    const selected = this.store.selected(), location = question.location;
+    if (!selected || selected.taskId !== location.taskId || selected.scopeId !== location.scopeId || this.store.offline()) { this.reviewFeedback.set('Select a live conversation in this task to prepare this question. Nothing was sent.'); return; }
+    if (this.store.selectedSession()?.status === 'archived' || this.store.selectedTask()?.state === 'finished') { this.reviewFeedback.set('Choose an active conversation in this task to prepare this question. Nothing was sent.'); return; }
+    const draft = this.reviewDrafts.entry(selected.scopeId, selected.sessionId);
+    const context = `[${location.path}:${location.line}, ${location.side} side, ${location.source}]\nReview ${location.revision} · file ${location.fileRev} · content ${location.contentRevision ?? 'empty'}\nHEAD ${location.headSha ?? 'unborn'} · base ${location.baseSha ?? 'empty'}\n${question.text}`;
+    draft.text.update(text => [text, context].filter(Boolean).join('\n\n'));
+    this.reviewFeedback.set('Question added to your conversation draft. Nothing was sent.');
+    this.closePanel(); this.questionFocus.set(selected);
+  }
   readonly reviewTarget = signal<ChatReviewTarget | null>(null);
   readonly selectedReview = computed(() => {
     const target = this.reviewTarget(), selected = this.store.selected();
     return target && selected && target.scopeId === selected.scopeId && target.taskId === selected.taskId && target.sessionId === selected.sessionId ? target : null;
   });
   review(target: ChatReviewTarget): void {
-    this.reviewTarget.set(target); this.store.selectPanel('changes'); this.panelOpen.set(true);
+    this.reviewFeedback.set(''); this.reviewTarget.set(target); this.store.selectPanel('changes'); this.panelOpen.set(true);
   }
   readonly launch = signal<'idle' | 'creating' | 'flying'>('idle');
   private readonly setupStarted = signal(false);
@@ -57,6 +81,12 @@ export class MachineWorkspaceComponent {
   private readonly preparationMachineId = computed(() => this.machine().id);
 
   constructor() {
+    afterRenderEffect(() => {
+      const pending = this.questionFocus(), selected = this.store.selected();
+      if (!pending || this.panelOpen()) return;
+      this.questionFocus.set(null);
+      if (selected?.scopeId === pending.scopeId && selected.taskId === pending.taskId && selected.sessionId === pending.sessionId) this.focusWriting();
+    });
     effect(() => {
       const selected = this.store.selected(), target = this.reviewTarget();
       if (selected && target && selected.taskId === target.taskId && selected.sessionId === target.sessionId && selected.scopeId !== target.scopeId && !this.store.offline() && !this.store.restoring()) this.reviewTarget.set({ ...target, scopeId: selected.scopeId });

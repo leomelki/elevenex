@@ -13,6 +13,9 @@ const subscribe: Subscribe = (channel, listener) => {
 
 const bridge = Object.freeze<ElevenexBridge>({
   sessionChatCatalog: (scope, input) => invoke('session-chat:catalog', scope, input),
+  repositoryReview: (scope, input) => invoke('repository-review:read', scope, input),
+  repositoryReviewBranches: (scope, input) => invoke('repository-review:branches', scope, input),
+  repositoryReviewCancel: (scope, requestId) => invoke('repository-review:cancel', scope, requestId),
   sessionChatChanges: (scope, input) => invoke('session-chat:changes', scope, input),
   sessionChatRead: (scope, input) => invoke('session-chat:read', scope, input),
   sessionChatCommand: (scope, input) => invoke('session-chat:command', scope, input),

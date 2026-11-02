@@ -2385,3 +2385,59 @@ build and diff checks pass. [Four native captures](../../artifacts/desktop-captu
 verify passphrase/password titles in both themes, with narrow/reduced-motion and
 focused input coverage. Report `verified: true`; all PNGs inspected. These use
 preview-controlled challenges rather than a live SSH password server.
+
+## Task repository Changes — 2026-11-02
+
+The production task panel now offers Uncommitted (separate index/worktree/untracked
+entries), Last commit (first parent/empty tree) and committed Branch changes
+(merge-base), retaining selected reply patches as a distinct fourth source.
+The owner guide records source/base semantics, pinning, pagination, limits,
+refresh, lifecycle and revision-bound question/Code intents.
+
+- [28 native live-repository checkpoints](../../artifacts/desktop-capture/repository-review-final-design/index.html)
+  have `verified: true`, zero errors and zero warnings. They cover both themes,
+  440px and expanded review, the source menu, source motion at 0/140/280ms,
+  interrupted switching, base chooser/focus return, Full files/wrap reading-line
+  anchoring, new-change offers, explicit refresh, empty/retry/disconnect and narrow
+  reduced motion. Key new PNGs were inspected. This uses real disposable Git,
+  the backend review reader, HTTP, and production main/preload/Angular components;
+  the capture supplies an isolated task transport lease, not a full agent runtime.
+- [14 connected reply-review checkpoints](../../artifacts/desktop-capture/reply-review-preserved/index.html)
+  also have `verified: true`, zero errors/warnings, covering existing reply
+  outcomes, review focus, wide takeover, 1,001-file summaries, line paging, errors,
+  keyboard and reduced motion in both themes. Their transcript transport is
+  preview-controlled, as in the existing reply regression.
+- Desktop lint, test (136 desktop Node tests, 7 capture-tool tests, 624 renderer
+  tests and TypeScript contracts), and production build pass with Node 24.22.1.
+  Validation used `NG_BUILD_MAX_WORKERS=1` and `VITEST_MAX_WORKERS=1` to bound
+  concurrent work on the shared host; earlier unrestricted runs timed out.
+- Four focused backend suites pass 27 tests, including disposable repos, 1,005
+  changed paths, root/merge/rename/delete/mode/binary cases, staged plus unstaged
+  edits, EOL/color rules, symlink confinement, changing/unrelated/deleted bases,
+  context identity, file bounds, read-only index checks, actual HTTP task routing
+  a bounded search over 125 branches, task-isolated snapshot identities and
+  explicit unavailable-source feedback for unmerged index entries, and SHA-1/SHA-256
+  empty-tree handling. Backend TypeScript compilation passes.
+- The native Electron smoke passes for sandboxed preload/IPC, trusted senders,
+  protocol/CSP, scoped transport and cleanup. It uses its existing engine fixture.
+
+Code navigation remains capability-gated until a platform owner consumes its
+precise intent. Line questions prepare the current conversation's existing draft
+without sending it. Packaging and other operating systems were not verified.
+
+## Compact repository review header — 2026-11-02
+
+Repository review now uses two persistent toolbar rows (70px measured in both
+themes). Source/base and aggregate counts share the first row; file navigation,
+one-click Changes/Full files and wrap share the second. Comparison SHAs and
+read-only context are available through Comparison details; search, pagination
+and Viewed totals are inside the file picker. Zero-result filters remain
+reopenable, Clear filter restores input focus, and hidden reviews close overlays.
+
+Desktop lint, full tests (625 renderer tests plus desktop/capture/type checks)
+and production build passed with bounded workers. The
+[32 native Git review checkpoints](../../artifacts/desktop-capture/compact-review-final/index.html)
+report `verified: true`, zero errors and zero warnings. New light/dark PNGs were
+inspected; the scenario retains source switching, interrupted motion, wide review,
+reading anchors, focus return, no-match search recovery, disconnect/retry and
+reduced-motion coverage. Backend and bridge behavior are unchanged by this UI edit.

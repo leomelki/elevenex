@@ -10,6 +10,7 @@ void bootstrapApplication(PreviewComponent, {
       [
         { path: "agent-picker", loadComponent: () => import("./agent-picker-demo.component").then(module => module.AgentPickerDemoComponent) },
         { path: 'reconnect', loadComponent: () => import('./reconnect-demo.component').then(module => module.ReconnectDemoComponent) },
+        { path: 'repository-review', loadComponent: () => import('./repository-review-demo.component').then(module => module.RepositoryReviewDemoComponent) },
         { path: 'connected-workspace', loadComponent: () => import('./connected-workspace-demo.component').then(module => module.ConnectedWorkspaceDemoComponent) },
         { path: 'machine-startup', loadComponent: () => import('./machine-startup-demo.component').then(module => module.MachineStartupDemoComponent) },
         { path: 'machine-flow', loadComponent: () => import('./machine-flow-demo.component').then(module => module.MachineFlowDemoComponent) },

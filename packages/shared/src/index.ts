@@ -1,3 +1,5 @@
+import type { RepositoryReviewQuery, RepositoryReviewPage, RepositoryReviewBranchesQuery, RepositoryReviewBranches } from './repository-review';
+export type * from './repository-review';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
 import type { SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
@@ -34,6 +36,9 @@ export interface GitStatus {
 }
 
 export interface InvokeContracts {
+  'repository-review:read': { args: [scopeId: string, input: RepositoryReviewQuery]; result: BackendResult<RepositoryReviewPage> };
+  'repository-review:branches': { args: [scopeId: string, input: RepositoryReviewBranchesQuery]; result: BackendResult<RepositoryReviewBranches> };
+  'repository-review:cancel': { args: [scopeId: string, requestId: string]; result: void };
   'session-chat:upload': { args: [scopeId: string, input: ChatAttachmentUpload]; result: BackendResult<ChatAttachmentReceipt> };
   'session-chat:catalog': { args: [scopeId: string, input: SessionChatCatalogRead]; result: BackendResult<SessionChatCatalog> };
   'session-chat:changes': { args: [scopeId: string, input: SessionChatChangesRead]; result: BackendResult<SessionChatChangesPage> };
@@ -127,6 +132,9 @@ export type Subscribe = <C extends keyof EventContracts>(
 
 /** The entire public preload API; raw IPC and Electron events stay private. */
 export interface ElevenexBridge {
+  repositoryReview(scopeId: string, input: RepositoryReviewQuery): Promise<BackendResult<RepositoryReviewPage>>;
+  repositoryReviewBranches(scopeId: string, input: RepositoryReviewBranchesQuery): Promise<BackendResult<RepositoryReviewBranches>>;
+  repositoryReviewCancel(scopeId: string, requestId: string): Promise<void>;
   sessionChatUpload(scopeId: string, input: ChatAttachmentUpload): Promise<BackendResult<ChatAttachmentReceipt>>;
   sessionChatCatalog(scopeId: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>>;
   sessionChatChanges(scopeId: string, input: SessionChatChangesRead): Promise<BackendResult<SessionChatChangesPage>>;

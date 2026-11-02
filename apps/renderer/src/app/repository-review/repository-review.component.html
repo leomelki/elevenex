@@ -1,0 +1,70 @@
+<div class="source-bar">
+  <ex-dropdown label="Review source" appearance="quiet" icon="changes" [options]="options()" [value]="source()" [active]="active()" (changed)="choose($event)" />
+  @if (source() === 'branch') {
+    <button exButton variant="ghost" size="sm" class="base" [disabled]="!!unreachable() || !target()" title="Choose the target branch used to resolve the merge-base" (click)="openBase()"><span class="versus">vs</span><span>{{ baseLabel() }}</span><ex-icon name="chevron-down" [size]="11" /></button>
+  }
+  @if (source() !== 'reply' && store.page(); as page) {
+    <div class="summary" [attr.aria-label]="page.total + ' changed file entries, ' + page.additions + ' additions, ' + page.deletions + ' deletions'">
+      <ex-ease-swap [value]="page.total + ' entries'" />
+      <span class="add">{{ page.countsExact ? '+' : '≥ +' }}{{ page.additions }}</span><span class="del">−{{ page.deletions }}</span>
+    </div>
+  }
+  <div class="source-actions">
+    <ex-icon-button icon="more" label="Comparison details" size="sm" (pressed)="showDetails()" />
+    @if (source() !== 'reply') {
+      <ex-icon-button icon="refresh" label="Refresh repository review" size="sm" [disabled]="store.busy() || !!unreachable() || !target()" (pressed)="refreshReview()" />
+    }
+  </div>
+</div>
+@if (source() === 'reply') {
+  @if (active()) { @if (reply(); as reply) { <ex-session-chat-review [target]="reply" [wide]="wide()" [unreachable]="unreachable()" (wideChange)="wideChange.emit($event)" (exitRequested)="exitRequested.emit()" (reconnectRequested)="reconnectRequested.emit()" /> } }
+} @else {
+  @if (!target()) { <div class="feedback"><ex-icon name="changes" [size]="24" /><p>Select a task to review its repository.</p></div> }
+  @else {
+    <ex-fold [open]="!!unreachable()"><div class="update" role="status">Snapshot · {{ unreachable() }} is disconnected.<button exButton size="sm" variant="ghost" (click)="reconnect()">Try now</button></div></ex-fold>
+    <ex-fold [open]="!!store.pending()"><div class="update" role="status"><span>New changes are available. Your review is pinned.</span><button exButton size="sm" variant="secondary" (click)="refreshReview()">Update review</button></div></ex-fold>
+    @if (store.error()) { <div class="error" role="alert"><span>{{ store.error() }}</span><button exButton size="sm" variant="ghost" [disabled]="store.busy() || !!unreachable()" (click)="store.load()">Retry</button></div> }
+    @if (feedback()) { <p class="intent-feedback" role="status">{{ feedback() }}</p> }
+    @if (!store.page() && store.busy()) { <p class="feedback" role="status">Reading repository changes…</p> }
+    @if (store.page(); as page) {
+    <ex-diff-review [files]="store.files()" [contents]="store.contents()" [activeFileId]="store.selected()" [mode]="store.mode()" [wide]="wide()" [showWideToggle]="false" [compactToolbar]="true" [active]="active()" [fileFilterActive]="!!store.query()" [wrap]="store.wrap()" [commentsEnabled]="questionsAvailable() && !unreachable()" [openFilesAvailable]="codeAvailable()"
+      (fileSelected)="store.selected.set($event)" (modeChange)="store.setMode($event)" (wrapChange)="store.wrap.set($event)" (fileRequested)="store.request($event)" (contextRequested)="store.context($event)" (viewedChange)="store.viewed($event)" (wideChange)="wideChange.emit($event)" (exitRequested)="exitRequested.emit()" (commented)="question($event)" (openFileRequested)="openCode($event)">
+      <div reviewFileSearch class="file-finder">
+        <label class="search"><ex-icon name="search" [size]="13" /><input #fileSearch aria-label="Search all changed files" placeholder="Find a changed file…" maxlength="1000" [value]="store.query()" (input)="store.filter(fileSearch.value)" /></label>
+        @if (store.query()) { <button exButton variant="ghost" size="sm" (click)="clearFilter(fileSearch)">Clear filter</button> }
+        @if (page.matched > 100 || page.offset) {
+          <nav aria-label="Repository file pages"><button exButton variant="ghost" size="sm" [disabled]="store.busy() || !page.offset" (click)="store.pageFiles(-1)">Previous</button><span>{{ page.offset + 1 }}–{{ page.offset + page.files.length }} / {{ page.matched }}</span><button exButton variant="ghost" size="sm" [disabled]="store.busy() || page.nextOffset === null" (click)="store.pageFiles(1)">Next</button></nav>
+        }
+      </div>
+    </ex-diff-review>
+    }
+  }
+}
+<ex-modal-layer [open]="picker() && active()" (closeRequested)="picker.set(false)">
+  <section class="base-picker" role="dialog" aria-label="Choose review base" [attr.inert]="!picker() ? '' : null">
+    <header><h2>Compare branch changes</h2><ex-icon-button icon="x" label="Close base chooser" (pressed)="picker.set(false)" /></header>
+    <p>Compare the task’s committed HEAD with its common ancestor with this target. Working changes are excluded.</p>
+    <label>Target branch or commit<input #baseSearch aria-label="Search target branches or enter commit" maxlength="240" [value]="baseDraft()" (input)="searchBase(baseSearch.value)" (keydown.enter)="baseDraft().trim() && selectBase(baseDraft().trim())" /></label>
+    @if (store.branchBusy()) { <p role="status">Finding branches…</p> }
+    @if (store.branchError()) { <p role="alert">{{ store.branchError() }}</p><button exButton size="sm" (click)="store.searchBranches(branchQuery())">Retry</button> }
+    <div class="refs">@for (ref of store.refs(); track ref) { <button type="button" (click)="selectBase(ref)"><ex-icon name="branch" [size]="13" /><span>{{ ref.replace('refs/heads/', '').replace('refs/remotes/', '') }}</span></button> }</div>
+    @if (store.moreRefs()) { <p>Showing 50 matches. Refine your search to find any branch.</p> }
+    @if (!store.branchBusy() && !store.refs().length && !store.branchError()) { <p>No matching branches. You can use a full commit ID.</p> }
+    <footer><button exButton variant="ghost" (click)="picker.set(false)">Cancel</button><button exButton variant="primary" [disabled]="!baseDraft().trim()" (click)="selectBase(baseDraft().trim())">Use target</button></footer>
+  </section>
+</ex-modal-layer>
+
+<ex-modal-layer [open]="detailsOpen() && active()" (closeRequested)="detailsOpen.set(false)">
+  @if (details(); as details) {
+    <section class="comparison-details" role="dialog" aria-label="Comparison details" [attr.inert]="!detailsOpen() ? '' : null">
+      <header><h2>Comparison details</h2><ex-icon-button icon="x" label="Close comparison details" (pressed)="detailsOpen.set(false)" /></header>
+      <p class="comparison">{{ details.comparison }}</p>
+      @if (details.page; as page) {
+        <p>{{ page.explanation }}</p>
+        <dl>@if (page.baseRef) { <div><dt>Target</dt><dd>{{ page.baseRef }}</dd></div> }<div><dt>Base</dt><dd>{{ page.baseSha ?? 'Empty tree' }}</dd></div><div><dt>HEAD</dt><dd>{{ page.headSha ?? 'No commits' }}</dd></div></dl>
+        <p class="read-only">Read-only repository comparison</p>
+      } @else if (details.reply) { <p>This is the recorded patch from the selected agent reply. It does not describe the repository’s current state.</p> }
+      <footer><button exButton variant="secondary" (click)="detailsOpen.set(false)">Done</button></footer>
+    </section>
+  }
+</ex-modal-layer>

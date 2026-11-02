@@ -38,3 +38,12 @@ aside ex-change-list { width: 248px; padding: var(--space-2); box-sizing: border
   .modes { margin-right: auto; }
 }
 @media (prefers-reduced-motion: reduce) { aside { transition: none; } }
+
+/* The repository owner already supplies source context; keep its file tools in one row. */
+.compact-toolbar .toolbar { flex-wrap: nowrap; min-height: calc(var(--row-height) + var(--space-1)); }
+.compact-toolbar .file-navigation { flex: 1; flex-basis: auto; }
+.compact-toolbar .review-tools { flex: none; }
+.compact-toolbar .jump { height: var(--space-6); }
+.picker-viewed { margin-left: auto; color: var(--ink-muted); font-weight: var(--text-caption-weight); font-size: var(--text-caption-size); }
+
+.compact-toolbar .modes { padding: calc(var(--space-1) / 2); gap: 0; }
