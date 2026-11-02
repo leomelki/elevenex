@@ -15,7 +15,7 @@
       <h3>Connection</h3>
       <div class="row">
         <span class="avatar"><ex-icon name="server" [size]="13" /></span>
-        <span class="identity"><b>{{ machine().conn === 'live' || machine().conn === 'kept' ? 'Connected over SSH' : machine().busy?.step ?? 'Not connected' }}</b><small>Shared by its windows; drops when none uses it</small></span>
+        <span class="identity"><b>{{ machine().conn === 'live' || machine().conn === 'kept' ? 'Connected over SSH' : machine().busy?.step ?? 'Not connected' }}</b></span>
         <button class="island-action quiet" type="button" [disabled]="disabled()" (click)="disconnectRequested.emit()">Disconnect</button>
       </div>
     </div>

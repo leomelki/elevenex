@@ -2333,3 +2333,29 @@ launch. Restored interrupted prompts without a receipt baseline and interrupted
 new-session creates require explicit conversation/task inspection; they never
 retry automatically. Waiting records are bounded to 20 chat actions, 10 tasks and
 10 sessions per window/machine; loading/saving errors remain visible.
+
+
+## Credential field wording — 2026-11-02
+
+The SSH challenge field names an explicitly requested Passphrase, Password,
+Verification code or PIN, with Response for unfamiliar prompts. Submission,
+masking, expiration and secret clearing are unchanged. Desktop lint, test
+(604 renderer tests plus the existing desktop suite), build and diff checks pass.
+[Two native light/dark captures](../../artifacts/desktop-capture/run-yfN12h/index.html)
+verify Passphrase in the actual reconnect panel with preview transport; the report
+has `verified: true`, and both PNGs were inspected.
+
+Reconnect copy was then reduced to one heading and credential label: no shared
+connection explanations, repeated machine name or generic passphrase instruction.
+Specific server instructions remain visible and connected to the field for
+assistive technology. Desktop lint, test (605 renderer tests), build and diff
+checks pass. [Light/dark native captures](../../artifacts/desktop-capture/run-4k5f1G/index.html)
+include narrow/reduced-motion and focused input, with `verified: true` and inspected
+PNGs. Transport is preview-controlled.
+
+Credential titles now identify the request: Unlock SSH key, Enter password,
+Enter verification code or Enter PIN. Lint, desktop tests (605 renderer tests),
+build and diff checks pass. [Four native captures](../../artifacts/desktop-capture/run-7s1MDI/index.html)
+verify passphrase/password titles in both themes, with narrow/reduced-motion and
+focused input coverage. Report `verified: true`; all PNGs inspected. These use
+preview-controlled challenges rather than a live SSH password server.

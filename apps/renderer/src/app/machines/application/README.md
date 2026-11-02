@@ -162,6 +162,13 @@ advertised as capabilities. Another window's challenge is identified as already
 open elsewhere. One answer resumes the shared connection. Background challenges
 create a bounded native notification without prompt text or credentials.
 
+Keep reconnect copy limited to the action: one sign-in heading and a named
+credential field. Omit connection-sharing explanations, repeated machine names
+and generic instructions already expressed by the label. Preserve specific
+server instructions and key identities when they add context.
+Use the requested action for recognized credential titles: Unlock SSH key,
+Enter password, Enter verification code or Enter PIN.
+
 Main retains jittered exponential recovery (up to thirty seconds), stopping its
 timed loop after ten minutes of transient failure. Wake/unlock and OS interface
 or online-state changes restart only that clock stop. Interface changes, including

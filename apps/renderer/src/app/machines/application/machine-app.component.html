@@ -11,7 +11,7 @@
       @if (islandMachine(); as machine) { <ex-machine-panel id="machine-panel" [machine]="machine" (changeRequested)="home()" (disconnectRequested)="panelOpen.set(false); launcher.disconnect()" (newWindow)="panelOpen.set(false); launcher.newWindow()">
         @if (unreachable()) {
           <div machineRecovery class="reach-panel">
-            <p role="status">{{ reach()?.detail || 'Reconnecting…' }}</p>
+            @if (!challenge()) { <p role="status">{{ reach()?.detail || 'Reconnecting…' }}</p> }
             @if (challenge(); as prompt) {
               @if (prompt.kind === 'trust') { <button exButton size="sm" (click)="reviewTrust.set(true)">Check the host key…</button> }
               @else { <ex-remote-challenge-dialog [compact]="true" [challenge]="prompt" [machineName]="machine.name" [busy]="challengeBusy()" [error]="challengeError()" (answered)="answer($event)" /> }
@@ -19,7 +19,6 @@
               @if (connection.state()?.environment.connection?.failure?.code === 'host-trust') { <p>Check the fingerprint with your administrator and repair your OpenSSH known_hosts file. Elevenex cannot safely accept a replacement key here.</p> }
               <button exButton size="sm" [disabled]="connection.state()?.environment.connection?.phase === 'awaiting-input'" (click)="retry()">{{ connection.state()?.environment.connection?.phase === 'paused' ? 'Try again' : 'Try now' }}</button>
             }
-            <p class="reach-foot">Every window on {{ machine.name }} shares this connection. Answer once.</p>
           </div>
         }
       </ex-machine-panel> }

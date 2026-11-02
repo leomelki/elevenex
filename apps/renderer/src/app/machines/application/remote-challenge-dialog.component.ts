@@ -22,6 +22,33 @@ export class RemoteChallengeDialogComponent {
   readonly answered = output<{ readonly id: string; readonly answer: string | null }>();
   protected readonly secret = signal('');
   protected readonly expired = signal(false);
+  protected readonly credentialLabel = computed(() => {
+    const prompt = this.challenge().prompt;
+    if (/\bpassphrase(?=\s|:|$)/i.test(prompt)) return 'Passphrase';
+    if (/\b(?:verification|authentication|security|one[- ]time)\s+(?:code|password)\b|\b(?:otp|code)\s*:/i.test(prompt)) return 'Verification code';
+    if (/\bpassword(?=\s|:|$)/i.test(prompt)) return 'Password';
+    if (/\bpin(?=\s|:|$)/i.test(prompt)) return 'PIN';
+    return 'Response';
+  });
+  protected readonly title = computed(() => {
+    if (this.challenge().kind === 'trust') return 'Check the server’s identity';
+    if (this.challenge().kind === 'credential') {
+      switch (this.credentialLabel()) {
+        case 'Passphrase': return 'Unlock SSH key';
+        case 'Password': return 'Enter password';
+        case 'Verification code': return 'Enter verification code';
+        case 'PIN': return 'Enter PIN';
+      }
+    }
+    return 'Sign in to ' + this.machineName();
+  });
+  protected readonly promptDescription = computed(() => {
+    const challenge = this.challenge();
+    // Omit instructions already conveyed by the field; retain host-specific
+    // instructions, key identities and unfamiliar authentication challenges.
+    const redundant = /^(?:enter\s+)?(?:(?:the|your)\s+)?(?:passphrase(?:\s+for\s+your\s+SSH\s+key)?|password|(?:verification|authentication|security|one[- ]time)\s+code|code|OTP|PIN)\s*[:?]?$/i;
+    return challenge.kind === 'credential' && redundant.test(challenge.prompt.trim()) ? '' : challenge.prompt;
+  });
   protected readonly fingerprint = computed(() => /(?:SHA256:[A-Za-z0-9+/]+|MD5:(?:[a-f0-9]{2}:){15}[a-f0-9]{2})/i.exec(this.challenge().prompt)?.[0] ?? '');
   protected readonly keyType = computed(() => /\b(ED25519|ECDSA|RSA|DSA)\b/i.exec(this.challenge().prompt)?.[1]?.toUpperCase() ?? 'SSH');
   protected readonly canAnswer = computed(() => this.challenge().kind !== 'notification' && this.active() && !this.busy() && !this.expired() && (this.challenge().kind === 'credential' ? !!this.secret() : this.challenge().kind !== 'trust' || !!this.fingerprint()));
