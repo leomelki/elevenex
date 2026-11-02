@@ -68,6 +68,18 @@ it does not fetch a GitHub release. The development runtime is assembled under
 dependencies, migrations and assets. Mutable data remains under
 `~/.elevenex/desktop/data/`. Install dependencies for the Node version used to
 launch development (including the `better-sqlite3` and `node-pty` native modules).
+The launcher also attempts to assemble a standalone SSH archive with bundled
+Node and validated native dependencies. In development, a matching server receives
+that custom build over SSH, without trying GitHub. This currently requires the
+client and server to have the same OS and architecture; a Mac build cannot run
+on Linux. Failed archive assembly leaves local development available and reports
+the reason in the terminal. A remote connection then reports the missing target
+instead of installing an unrelated release.
+
+Development revisions include dirty/untracked backend sources. Remote development
+data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.
+A running daemon from a different build is rejected; disconnect and stop that
+development daemon before switching builds. Production remote data is untouched.
 Restart `pnpm desktop:dev` after backend edits to rebuild the bundle. Renderer
 HMR and main/preload restarts continue to work during the run.
 

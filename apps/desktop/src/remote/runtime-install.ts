@@ -6,7 +6,8 @@ import type { BackendRelease } from '../backend/release';
 import { shellQuote } from './ssh';
 
 /** All script substitutions are application-owned revisions, source and nonces. */
-export async function bootstrapScript(release: BackendRelease, nonce: string, serverDownload = true): Promise<string> {
+export async function bootstrapScript(release: BackendRelease, nonce: string, serverDownload = true, developmentNamespace?: string): Promise<string> {
+  if (developmentNamespace !== undefined && !/^[a-f0-9]{32}$/.test(developmentNamespace)) throw new Error('Invalid development runtime namespace');
   const modules = ['wire', 'runtime', 'runtime-control', 'agent-proxy', 'host', 'process-tree'];
   const sources = await Promise.all(modules.map(name => readFile(join(__dirname, name === 'host' || name === 'process-tree' ? `../backend/${name}.js` : `${name}.js`), 'utf8')));
   const clientId = createHash('sha256').update(sources.join('\n')).digest('hex');
@@ -20,7 +21,7 @@ for tool in uname git tar head mktemp; do command -v "$tool" >/dev/null 2>&1 || 
 command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail COMPATIBILITY 'Install sha256sum or shasum'
 case "$(uname -s)" in Linux) os=linux;; Darwin) os=darwin;; *) fail COMPATIBILITY 'This remote platform is unsupported; use Linux or macOS';; esac
 case "$(uname -m)" in x86_64|amd64) arch=x64;; arm64|aarch64) arch=arm64;; *) fail COMPATIBILITY 'Use an x64 or arm64 remote host';; esac
-root="$HOME/.elevenex/desktop-remote"
+root="$HOME/.elevenex/${developmentNamespace ? `desktop-remote-dev/${developmentNamespace}` : 'desktop-remote'}"
 mkdir -p "$root/runtimes" "$root/clients"
 case "$os" in darwin) target=macos-$arch;; *) target=linux-$arch;; esac
 cache="$root/runtimes/${release.tag}-$target"

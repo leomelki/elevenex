@@ -51,7 +51,8 @@ test('cancellation during server retry backoff cleans up and stops subsequent at
   await assert.rejects(operation, /abort/i); assert.equal(attempts, 1); assert.deepEqual(await readdir(root), []);
 });
 
-for (const fails of [false, true]) test(`native bootstrap ${fails ? 'falls back to SSH transfer after three server failures' : 'downloads on the server without requesting client bytes'}`, async t => {
+for (const mode of ['server', 'fallback', 'development']) test(`native bootstrap uses ${mode} installation`, async t => {
+  const fails = mode === 'fallback'; const development = mode === 'development';
   if (process.platform === 'win32') return t.skip('POSIX remote bootstrap');
   const home = await temporary(t); const bin = join(home, 'bin'); await mkdir(bin);
   // This preload is confined to the test's node wrapper. Production URLs and
@@ -66,7 +67,8 @@ for (const fails of [false, true]) test(`native bootstrap ${fails ? 'falls back 
   await writeFile(preload, `globalThis.fetch=async url=>{require('fs').appendFileSync(${JSON.stringify(calls)},'1');if(${fails})throw Error('offline');return String(url).endsWith('.sha256')?new Response('${digest}  ${release.archiveName}'):new Response(Buffer.from('${bytes.toString('base64')}','base64'));};`);
   await writeFile(join(bin, 'node'), `#!/bin/sh\nexec ${shellQuote(process.execPath)} --require ${shellQuote(preload)} "$@"\n`, { mode: 0o700 });
   const nonce = randomBytes(16).toString('hex');
-  const child = spawn('sh', ['-c', await bootstrapScript(release, nonce)], { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const namespace = development ? 'd'.repeat(32) : undefined;
+  const child = spawn('sh', ['-c', await bootstrapScript(release, nonce, !development, namespace)], { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` }, stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = new Promise(resolve => child.once('close', resolve));
   t.after(() => child.kill('SIGTERM'));
   let output = ''; let diagnostics = ''; let sent = false;
@@ -77,9 +79,10 @@ for (const fails of [false, true]) test(`native bootstrap ${fails ? 'falls back 
       sent = true; child.stdin.end(Buffer.concat([Buffer.from(`${bytes.length} ${digest}\n`), bytes]));
     }
   });
-  assert.equal(await exited, 0, diagnostics); assert.equal(sent, fails);
-  assert.equal((await readFile(calls, 'utf8')).length, fails ? 3 : 2);
-  const root = join(home, '.elevenex/desktop-remote/runtimes');
+  assert.equal(await exited, 0, diagnostics); assert.equal(sent, fails || development);
+  if (development) await assert.rejects(readFile(calls), { code: 'ENOENT' });
+  else assert.equal((await readFile(calls, 'utf8')).length, fails ? 3 : 2);
+  const root = join(home, '.elevenex', development ? `desktop-remote-dev/${namespace}` : 'desktop-remote', 'runtimes');
   assert.deepEqual(await readdir(root), [`${release.tag}-${release.target}`]);
   assert.equal(await readFile(join(root, `${release.tag}-${release.target}`, 'installation.sha256'), 'utf8'), digest);
   assert.match(output, /installation:start/); assert.match(output, /runtime:start/);

@@ -121,6 +121,39 @@ SIGKILL/power loss can leave harmless `.install-*` directories for later manual
 cleanup. Damaged published caches require moving that version aside, rather
 than risking replacement of code another client may be running.
 
+### Checkout development builds
+
+`pnpm desktop:dev` compiles the checkout backend and attempts the existing curated
+runtime assembly (bundled Node, native module validation, approved assets and
+dependencies). The launcher stores a host-platform archive and checksum beside
+its local development backend. Only unpackaged launches with the development
+backend setting use it. Main validates the source revision, target, archive hash
+and safe extraction before transferring it; packaged launches ignore the setting.
+Custom builds skip server/client release downloads entirely.
+
+The current build supports the launcher's OS and architecture. A different
+remote target gets an explicit compatibility error. There is no implicit cross
+compilation or copying of macOS native binaries to Linux. Local development still
+works if archive assembly is unavailable; the terminal reports why.
+
+Dirty and untracked backend sources contribute to the development revision;
+the generated revision file itself does not. Development runtime caches, daemon
+ownership, sockets and data use `~/.elevenex/desktop-remote-dev/<checkout-id>/`,
+separate from release data. Identical builds reuse their installation. The existing
+revision guard refuses a daemon from another build, preserving its active sessions;
+disconnect and stop that development daemon before switching builds.
+
+Validation on 2026-11-02: desktop lint, build, type checks, 129 desktop tests,
+7 capture-tool tests and 605 renderer tests passed (two Vitest workers), together
+with native Electron smoke. A real macOS ARM64 development archive was assembled,
+validated, transferred through the native bootstrap in an isolated local server
+environment, and started with bundled Node; authenticated HTTP reported the
+expected development revision. Its daemon and temporary data were cleaned up.
+Server-download regressions use controlled HTTPS responses with the real
+validators; separate loopback OpenSSH regressions cover the transport. This is
+not a live customer server, external GitHub download, packaged-app launch or
+cross-platform runtime certification. No renderer UI changed in this work.
+
 The new remote data root is `~/.elevenex/desktop-remote/`, separate from both
 legacy remote data and local desktop data:
 
