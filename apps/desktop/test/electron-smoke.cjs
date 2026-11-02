@@ -207,6 +207,13 @@ void (async () => {
   assert.equal((await second.webContents.executeJavaScript(`window.elevenex.backendInfo('${restartedScope.scope.id}')`)).error.code, 'stale-scope');
   second.destroy();
 
+  const journal = await window.webContents.executeJavaScript('window.elevenex.workspaceWaitingRead({kind:"local"})');
+  assert.match(journal.identity, /^[a-f0-9]{64}$/);
+  await window.webContents.executeJavaScript(`window.elevenex.workspaceWaitingSave({kind:"local"}, '${journal.identity}', { chat: [{ id: 'smoke-waiting', taskId: 1, sessionId: 2, action: { type: 'send', text: 'Saved, not sent', queue: false }, label: 'Saved, not sent', turnId: null, status: 'waiting' }], tasks: [] })`);
+  assert.equal((await window.webContents.executeJavaScript('window.elevenex.workspaceWaitingRead({kind:"local"})')).chat[0].status, 'waiting');
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.workspaceWaitingSave({kind:"local"}, '${journal.identity}', { chat: [{ id: 'bad', taskId: 1, sessionId: 2, action: { type: 'credential', answer: 'forbidden' }, label: '', turnId: null, status: 'waiting' }], tasks: [] }).then(() => false, () => true)`), true);
+  await window.webContents.executeJavaScript(`window.elevenex.workspaceWaitingSave({kind:"local"}, '${journal.identity}', { chat: [], tasks: [] })`);
+
   await window.loadURL('app://elevenex/smoke/history');
   assert.equal(window.webContents.getURL(), 'app://elevenex/smoke/history');
   assert.equal(await window.webContents.executeJavaScript('typeof window.elevenex.gitStatus'), 'function');

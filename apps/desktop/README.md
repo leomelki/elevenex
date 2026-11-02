@@ -68,6 +68,18 @@ it does not fetch a GitHub release. The development runtime is assembled under
 dependencies, migrations and assets. Mutable data remains under
 `~/.elevenex/desktop/data/`. Install dependencies for the Node version used to
 launch development (including the `better-sqlite3` and `node-pty` native modules).
+The launcher also attempts to assemble a standalone SSH archive with bundled
+Node and validated native dependencies. In development, a matching server receives
+that custom build over SSH, without trying GitHub. This currently requires the
+client and server to have the same OS and architecture; a Mac build cannot run
+on Linux. Failed archive assembly leaves local development available and reports
+the reason in the terminal. A remote connection then reports the missing target
+instead of installing an unrelated release.
+
+Development revisions include dirty/untracked backend sources. Remote development
+data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.
+A running daemon from a different build is rejected; disconnect and stop that
+development daemon before switching builds. Production remote data is untouched.
 Restart `pnpm desktop:dev` after backend edits to rebuild the bundle. Renderer
 HMR and main/preload restarts continue to work during the run.
 
@@ -308,3 +320,27 @@ Angular 22.2.3 bundles an encoder that imports `encodeRangeMappings`, but its
 wide source-map dependency range can reuse the legacy app's older encoder.
 The root override scopes `@jridgewell/sourcemap-codec` **1.6.0** to this compiler
 version so it can load without changing the legacy Angular compiler.
+
+## Waiting writing
+
+The disconnected workspace retains loaded views and local writing. Main stores
+validated, bounded chat/task/session outboxes in the private
+`remote-settings.json.waiting-writing.json` sidecar beside its existing settings.
+The original settings format remains readable by older desktop releases. Writes
+use atomic private files and fsync, sharing the existing settings writer's
+one-active/one-pending ownership. Every queued action's sending claim is saved
+before dispatch; interrupted claims restore as unconfirmed and never replay.
+SSH responses remain transient and are rejected by this storage boundary.
+
+Version 2 of the sidecar saves each queue and its SSH configuration identity in
+the same atomic snapshot. Both host-edit APIs clear writing when the destination
+changes. If a crash leaves settings and writing from different destinations,
+the writing remains available as unconfirmed and cannot dispatch automatically.
+Version 1 journals are accepted; their unbound remote writing also requires
+inspection, while local writing retains its waiting state.
+
+The named `workspaceWaitingRead` and `workspaceWaitingSave` bridge operations use
+the sending window's selected machine and a main-issued configuration identity,
+so offline persistence needs no live backend scope. Backend dispatch still uses
+its ordinary current-scope and resource validation. Task creation reconciliation
+uses the additive, capability-gated `workspaceTaskRequest` read.

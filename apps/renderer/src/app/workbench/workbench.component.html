@@ -1,4 +1,4 @@
-<ex-app-shell [panelOpen]="panelOpen()" [wideReview]="wideReview()" (reviewExited)="wideReview.set(false)">
+<ex-app-shell [panelOpen]="panelOpen()" [wideReview]="wideReview()" (panelCloseRequested)="panelOpen.set(false); wideReview.set(false)" (reviewExited)="wideReview.set(false)">
   <ex-title-island
     shellTitle
     label="Choose a machine"

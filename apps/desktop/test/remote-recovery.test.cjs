@@ -14,6 +14,7 @@ const { RemoteArchiveCache } = require('../dist/remote/archives');
 const { getEventListeners } = require('node:events');
 const { ForwardedAgentProxy } = require('../dist/remote/agent-proxy');
 const { RemoteManager } = require('../dist/remote/manager');
+const { WaitingWritingStore } = require('../dist/remote/waiting-writing-store');
 const { createServer: createSocketServer, connect: connectSocket } = require('node:net');
 const version = 'a'.repeat(40);
 const release = backendRelease({ version, tag: `runtime-${version}` }, process.platform, process.arch);
@@ -229,4 +230,127 @@ test('host progress and draft updates notify only windows in their scope', async
   assert.deepEqual(notified, [1]); notified.length = 0;
   await manager.saveContext(3, { ...emptyContext(), draft: 'local input' }, { kind: 'local' });
   assert.deepEqual(notified, [3]);
+});
+
+test('transient recovery stops its clock, resumes on network change, and never wakes authentication failures', async t => {
+  let now = 0, attempts = 0;
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'clock', name: 'clock', host: 'clock' },
+    release: async () => release, changed: () => undefined, backoff: 1, retryWindow: 10, now: () => now,
+    connect: async () => { attempts++; now += 11; throw failure('transport', 'unavailable', 'Offline', 'retry', true); },
+  });
+  t.after(() => connection.dispose()); connection.acquire(1, false);
+  await until(() => connection.snapshot().retryStoppedAt !== undefined);
+  assert.equal(connection.snapshot().phase, 'paused'); const stopped = attempts;
+  await delay(20); assert.equal(attempts, stopped);
+  connection.networkChanged(); await until(() => attempts > stopped);
+  await until(() => connection.snapshot().phase === 'paused');
+  await connection.release(1); const released = attempts; connection.networkChanged(); await delay(10); assert.equal(attempts, released);
+
+  let signIns = 0;
+  const auth = new RemoteConnection({ root: '', helper: '', host: { id: 'auth', name: 'auth', host: 'auth' }, release: async () => release,
+    changed: () => undefined, connect: async () => { signIns++; throw failure('authentication', 'authentication', 'Needs you', 'authenticate'); } });
+  t.after(() => auth.dispose()); auth.acquire(2, false); await until(() => auth.snapshot().phase === 'paused');
+  auth.networkChanged(); await delay(20); assert.equal(signIns, 1); assert.equal(auth.snapshot().retryStoppedAt, undefined);
+});
+
+test('waiting writing survives relaunch in a private sidecar without changing legacy settings or storing SSH challenges', async t => {
+  const { stat } = require('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'elevenex-waiting-writing-')), path = join(root, 'settings.json');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const options = { root, helper: '', settingsPath: path, release: async () => release };
+  const manager = new RemoteManager(options); t.after(() => manager.dispose()); await manager.load(); manager.attach(1, null);
+  const initial = manager.waitingRead(1, { kind: 'local' });
+  const input = { chat: [{ id: 'local-writing', taskId: 1, sessionId: 2, action: { type: 'send', text: 'A saved waiting message', queue: false }, label: 'A saved waiting message', turnId: null, status: 'waiting' }], tasks: [] };
+  await manager.waitingSave(1, { kind: 'local' }, initial.identity, input);
+  assert.equal((await stat(`${path}.waiting-writing.json`)).mode & 0o777, 0o600);
+  const legacy = JSON.parse(await readFile(path, 'utf8')); assert.equal(legacy.windows[0].waiting, undefined);
+  assert.equal((await new RemoteSettingsStore(path).load()).windows.length, 1);
+  await assert.rejects(manager.waitingSave(1, { kind: 'local' }, 'old-configuration', input));
+  await assert.rejects(manager.waitingSave(1, { kind: 'local' }, initial.identity, { chat: [{ ...input.chat[0], action: { type: 'credential', answer: 'must never persist' } }], tasks: [] }));
+  await manager.dispose();
+  const restored = new RemoteManager(options); t.after(() => restored.dispose()); await restored.load(); restored.attach(2, null); restored.attach(3, null);
+  assert.equal(restored.waitingRead(2, { kind: 'local' }).chat[0].action.text, 'A saved waiting message');
+  assert.equal(restored.waitingRead(3, { kind: 'local' }).chat.length, 0);
+  const malformed = require('../dist/remote/waiting-writing').waitingWriting;
+  assert.throws(() => malformed({ chat: Array(21).fill(input.chat[0]), tasks: [] }));
+  assert.throws(() => malformed({ chat: input.chat, tasks: [], credential: 'forbidden' }));
+  await restored.dispose();
+});
+
+function waitingFixture() {
+  return {
+    chat: [{ id: 'message', taskId: 1, sessionId: 2, action: { type: 'send', text: 'Only for the original server', queue: false }, label: 'Original message', turnId: null, status: 'waiting' }],
+    tasks: [{ id: 'task', projectId: 1, planned: false, input: { repoId: 1, name: 'Task', branchName: 'task', mode: 'new', requestId: 'task' }, status: 'waiting' }],
+    sessions: [{ id: 'session', taskId: 1, taskName: 'Task', status: 'waiting' }],
+  };
+}
+
+test('legacy host edits retain writing for a rename and invalidate every window on a destination change', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ex-waiting-host-edit-')), path = join(root, 'settings.json');
+  const manager = new RemoteManager({ root, helper: '', settingsPath: path, release: async () => release });
+  t.after(async () => { await manager.dispose(); await rm(root, { recursive: true, force: true }); });
+  await manager.load(); const host = await manager.saveHost({ name: 'Original', host: 'server-a' }, null);
+  const selection = { kind: 'remote', hostId: host.id };
+  for (const id of [1, 2]) {
+    manager.attach(id, selection);
+    await manager.waitingSave(id, selection, manager.waitingRead(id, selection).identity, waitingFixture());
+  }
+  await manager.saveHost({ name: 'Renamed', host: 'server-a' }, host.id);
+  assert.equal(manager.waitingRead(1, selection).chat[0].status, 'waiting');
+  await manager.saveHost({ name: 'Replacement', host: 'server-b' }, host.id);
+  for (const id of [1, 2]) assert.deepEqual(manager.waitingRead(id, selection).chat, []);
+});
+
+for (const changedDestination of [false, true]) test(`persisted writing verifies its destination after relaunch (changed: ${changedDestination})`, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ex-waiting-binding-')), path = join(root, 'settings.json');
+  const options = { root, helper: '', settingsPath: path, release: async () => release };
+  const manager = new RemoteManager(options);
+  const managers = [manager];
+  t.after(async () => { await Promise.all(managers.map(manager => manager.dispose())); await rm(root, { recursive: true, force: true }); });
+  await manager.load(); const host = await manager.saveHost({ name: 'Original', host: 'server-a' }, null);
+  const selection = { kind: 'remote', hostId: host.id }; manager.attach(1, selection);
+  const identity = manager.waitingRead(1, selection).identity;
+  await manager.waitingSave(1, selection, identity, waitingFixture()); await manager.dispose();
+  const disk = JSON.parse(await readFile(`${path}.waiting-writing.json`, 'utf8'));
+  assert.equal(disk.version, 2); assert.equal(disk.windows[0][host.id].identity, identity);
+  if (changedDestination) {
+    // Simulate a crash after host settings were committed, before old writing
+    // could be removed. The sidecar still carries the original binding.
+    const settings = new RemoteSettingsStore(path), saved = await settings.load();
+    saved.hosts[0].host = 'server-b'; await settings.save(saved);
+  }
+  const restored = new RemoteManager(options); managers.push(restored); await restored.load(); restored.attach(2, selection);
+  const writing = restored.waitingRead(2, selection);
+  assert.equal(writing.chat[0].action.text, waitingFixture().chat[0].action.text);
+  for (const item of [...writing.chat, ...writing.tasks, ...writing.sessions]) {
+    assert.equal(item.status, changedDestination ? 'unknown' : 'waiting');
+    if (changedDestination) assert.match(item.error, /destination could not be verified/);
+  }
+  if (changedDestination) await assert.rejects(restored.waitingSave(2, selection, identity, waitingFixture()), /machine changed/);
+  await restored.dispose();
+});
+
+test('version-1 remote writing requires inspection while local writing remains dispatchable', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ex-waiting-migration-')), path = join(root, 'settings.json');
+  const options = { root, helper: '', settingsPath: path, release: async () => release };
+  const manager = new RemoteManager(options); await manager.load();
+  const host = await manager.saveHost({ name: 'Original', host: 'server-a' }, null); manager.attach(1, null); await manager.dispose();
+  await writeFile(`${path}.waiting-writing.json`, JSON.stringify({ version: 1, windows: [{ local: waitingFixture(), [host.id]: waitingFixture() }] }));
+  const restored = new RemoteManager(options);
+  t.after(async () => { await restored.dispose(); await rm(root, { recursive: true, force: true }); });
+  await restored.load(); restored.attach(2, null);
+  assert.equal(restored.waitingRead(2, { kind: 'local' }).chat[0].status, 'waiting');
+  const selection = { kind: 'remote', hostId: host.id };
+  await restored.detach(2); restored.attach(3, selection);
+  const writing = restored.waitingRead(3, selection);
+  for (const item of [...writing.chat, ...writing.tasks, ...writing.sessions]) assert.equal(item.status, 'unknown');
+});
+
+test('malformed persisted destination bindings fail closed', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ex-waiting-invalid-')), path = join(root, 'waiting.json');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const identity of [undefined, 'short', 'x'.repeat(64)]) {
+    await writeFile(path, JSON.stringify({ version: 2, windows: [{ local: { identity, writing: waitingFixture() } }] }));
+    await assert.rejects(new WaitingWritingStore(path).load([]), /could not be read/);
+  }
 });

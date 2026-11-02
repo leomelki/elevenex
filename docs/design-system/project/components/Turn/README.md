@@ -22,3 +22,5 @@ settles the entrance immediately.
 - Do give each thought a short title; it's what the now line and the thread show.
 - Do keep unrecovered failures visible in `danger`; recovered ones live only in the thread, struck through with “fixed”.
 - Don't render the turn somewhere else when it finishes; it folds in place.
+
+**Out of reach** (`reach: { machine, since }`): while its machine can't be reached, a live turn stops moving (in an `.ex-offline` window) and one line folds open under it: "**Out of reach since 14:02.** It keeps running on dev-box; what it did shows up when it's back." When it's back, the steps it took meanwhile grow in.

@@ -6,12 +6,12 @@
     [cdkDropListDisabled]="disabled() || !reorderable()"
     (cdkDropListDropped)="drop($event)"
   >
-    <header>
+    @if (!waitingFor()) { <header>
       <ex-icon name="layers" [size]="13" /><ex-ticker
         [value]="items().length"
       />
-      queued <span>· after this turn</span>
-    </header>
+      {{ waitingFor() ? 'waiting locally' : 'queued' }} <span>· {{ waitingFor() ? 'for ' + waitingFor() : 'after this turn' }}</span>
+    </header> }
     <div class="items">
       @for (item of items(); track item.renderId ?? item.id; let index = $index) {
         <div
@@ -29,7 +29,7 @@
                 [value]="editText()"
                 [disabled]="disabled()"
                 (input)="update($event)"
-                (keydown.escape)="editing.set(null)"
+                (keydown.escape)="cancelEdit()"
               ></textarea
               ><button
                 exButton
@@ -43,7 +43,7 @@
                 exButton
                 variant="ghost"
                 size="sm"
-                (click)="editing.set(null)"
+                (click)="cancelEdit()"
               >
                 Cancel
               </button>
@@ -65,13 +65,13 @@
             <span class="number">{{ index + 1 }}</span>
             <span class="text" [title]="item.text">{{ item.text }}</span>
             <span class="actions"
-              ><ex-icon-button
+              >@if (!waitingFor()) { <ex-icon-button
                 icon="steer"
                 label="Steer now"
                 size="sm"
                 [disabled]="disabled()"
-                (pressed)="steer.emit(item.id)" />
-              @if (editable()) {
+                (pressed)="steer.emit(item.id)" /> }
+              @if (editable() && item.editable !== false) {
                 <ex-icon-button
                   icon="pencil"
                   label="Edit queued message"
@@ -84,7 +84,7 @@
                 icon="x"
                 label="Remove queued message"
                 size="sm"
-                [disabled]="disabled()"
+                [disabled]="disabled() || item.removable === false"
                 (pressed)="remove.emit(item.id)"
             /></span>
           }

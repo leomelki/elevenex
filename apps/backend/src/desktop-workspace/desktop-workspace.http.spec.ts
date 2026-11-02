@@ -392,4 +392,18 @@ describe('desktop workspace HTTP resource slice', () => {
       ).status,
     ).toBe(400);
   });
+  it('reconciles an exact create request through an additive read without scheduling another task', async () => {
+    const [project] = await database.db.insert(schema.projects).values({ name: 'Request recovery' }).returning();
+    const [repo] = await database.db.insert(schema.repos).values({ projectId: project.id, name: 'requests', path: join(root, 'request-check') }).returning();
+    const [task] = await database.db.insert(schema.workspaces).values({ repoId: repo.id, name: 'Waiting task', path: '', taskState: 'preparing', taskRequestId: 'stable-http-request', taskBranch: 'waiting' }).returning();
+    const before = object(await (await request('/revision')).json());
+    expect(before.taskRequests).toBe(true);
+    const response = await request(`/task-requests?repoId=${repo.id}&requestId=stable-http-request`);
+    expect(response.status).toBe(200); expect(object(object(await response.json()).task).id).toBe(task.id);
+    expect(await (await request(`/task-requests?repoId=${repo.id}&requestId=unknown-request`)).json()).toEqual({ task: null });
+    expect((await request('/task-requests?repoId=0&requestId=stable-http-request')).status).toBe(400);
+    expect((await request(`/task-requests?repoId=${repo.id}&requestId=${'x'.repeat(101)}`)).status).toBe(400);
+    expect(object(await (await request('/revision')).json()).revision).toBe(before.revision);
+  });
+
 });

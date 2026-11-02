@@ -363,8 +363,9 @@ export function registerWorkspaceIpc(
           throw invalidResponse();
         if (response['sessionArchiveHistory'] !== undefined && response['sessionArchiveHistory'] !== true) throw invalidResponse();
         if (response['sessionArchive'] !== undefined && response['sessionArchive'] !== true) throw invalidResponse();
+        if (response['taskRequests'] !== undefined && response['taskRequests'] !== true) throw invalidResponse();
         if (response['commitPanel'] !== undefined && response['commitPanel'] !== true) throw invalidResponse();
-        return { revision, version: 1 as const, ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true as const } : {}), ...(response['sessionArchive'] === true ? { sessionArchive: true as const } : {}), ...(response['commitPanel'] === true ? { commitPanel: true as const } : {}) };
+        return { revision, version: 1 as const, ...(response['taskRequests'] === true ? { taskRequests: true as const } : {}), ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true as const } : {}), ...(response['sessionArchive'] === true ? { sessionArchive: true as const } : {}), ...(response['commitPanel'] === true ? { commitPanel: true as const } : {}) };
       });
     }),
   );
@@ -511,6 +512,14 @@ export function registerWorkspaceIpc(
         return result;
       },
     );
+  });
+  register('workspace:task-request', (window, scope, input) => {
+    const raw = object(input), repoId = id(raw['repoId']), requestId = required(raw['requestId'], 100);
+    return read(window, scope, `${base}/task-requests?${new URLSearchParams({ repoId: String(repoId), requestId })}`, value => {
+      const raw = object(value), task = raw['task'] === null ? null : parseWorkspaceTask(raw['task']);
+      if (task && task.repoId !== repoId) throw invalidResponse();
+      return { task };
+    });
   });
   register('workspace:task', (window, scope, input) => {
     const taskId = id(input);

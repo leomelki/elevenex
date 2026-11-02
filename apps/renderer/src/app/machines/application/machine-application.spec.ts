@@ -231,6 +231,20 @@ describe('Production machine application', () => {
     expect(launcher.open()).toBe(true); expect(launcher.currentId()).toBe(host.id);
   });
 
+  it('omits redundant credential instructions but retains specific server context accessibly', () => {
+    const fixture = TestBed.createComponent(RemoteChallengeDialogComponent);
+    const challenge = { id: 'credential', kind: 'credential', prompt: 'Enter the passphrase for your SSH key:', expiresAt: Date.now() + 1000 };
+    fixture.componentRef.setInput('machineName', 'Dev'); fixture.componentRef.setInput('challenge', challenge); fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('label')?.textContent?.trim()).toBe('Passphrase');
+    expect(root.querySelector('.prompt')).toBeNull();
+    expect(root.querySelector('input')?.hasAttribute('aria-describedby')).toBe(false);
+    const prompt = 'Enter passphrase for key /Users/leo/.ssh/work:';
+    fixture.componentRef.setInput('challenge', { ...challenge, prompt }); fixture.detectChanges();
+    expect(root.querySelector('.prompt')?.textContent).toBe(prompt);
+    expect(root.querySelector('input')?.getAttribute('aria-describedby')).toBe('remote-challenge-prompt');
+  });
+
   it('clears a credential after submitting, rejects expired prompts and renders no raw HTML', async () => {
     const fixture = TestBed.createComponent(RemoteChallengeDialogComponent);
     const challenge = { id: 'credential', kind: 'credential', prompt: '<b>Passphrase</b>', expiresAt: Date.now() + 1000 };

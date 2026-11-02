@@ -86,6 +86,7 @@
       }
     </ex-fold>
   }
+  <ex-fold [open]="status() === 'live' && !!reach()"><div class="reach-line" role="status"><b>Out of reach since {{ reachTime() }}.</b> It may still be running on {{ reach()?.machine }}; what it did shows up when it’s back.</div></ex-fold>
   <div class="answer" exAutoHeight>
     <div><ng-content /></div>
   </div>

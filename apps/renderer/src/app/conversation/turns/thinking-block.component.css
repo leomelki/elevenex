@@ -45,3 +45,5 @@ button > span:last-child {
     animation: none;
   }
 }
+
+.active { animation-play-state: var(--ex-live-play-state, running); }

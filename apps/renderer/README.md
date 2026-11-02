@@ -190,3 +190,10 @@ visible focus and reduced-motion behavior.
 supplies the connected review inside that slot; inactive panels are hidden and
 inert. `MachineWorkspace` mounts its review only while Changes is open/active,
 which owns cancellation of any pending diff reads.
+
+At widths up to 700px, an open AppShell side panel takes over the main region
+instead of squeezing chat into an unusable column. The covered main is inert,
+focus moves into the panel and returns when it closes. Bind `panelCloseRequested`
+to the owner's close action for Escape in this compact mode; `reviewExited`
+retains its wider-review meaning. `Workbench` and production MachineWorkspace
+provide both bindings. Ordinary desktop widths keep the existing panel motion.

@@ -2,6 +2,7 @@ import { DragDropModule, type CdkDragDrop } from "@angular/cdk/drag-drop";
 import {
   ChangeDetectionStrategy,
   Component,
+  type OnChanges,
   input,
   output,
   signal,
@@ -26,22 +27,27 @@ import type { QueuedMessage } from "../conversation.models";
   styleUrl: "./composer-queue.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class ComposerQueueComponent {
+export class ComposerQueueComponent implements OnChanges {
   readonly items = input<readonly QueuedMessage[]>([]);
+  readonly waitingFor = input<string>();
   readonly editable = input(true);
   readonly reorderable = input(true);
   readonly disabled = input(false);
   readonly steer = output<string>();
   readonly remove = output<string>();
   readonly edited = output<QueuedMessage>();
+  readonly editingChanged = output<string | null>();
   readonly reordered = output<readonly string[]>();
   readonly editing = signal<string | null>(null);
   readonly editText = signal("");
   beginEdit(item: QueuedMessage): void {
-    if (this.disabled() || !this.editable()) return;
+    if (this.disabled() || !this.editable() || item.editable === false) return;
     this.editing.set(item.id);
+    this.editingChanged.emit(item.id);
     this.editText.set(item.text);
   }
+  ngOnChanges(): void { const id = this.editing(); if (id && !this.items().some(item => item.id === id)) this.cancelEdit(); }
+  cancelEdit(): void { this.editing.set(null); this.editingChanged.emit(null); }
   update(event: Event): void {
     if (event.target instanceof HTMLTextAreaElement)
       this.editText.set(event.target.value);
@@ -49,7 +55,7 @@ export class ComposerQueueComponent {
   save(id: string): void {
     if (this.disabled() || !this.editable() || !this.editText().trim()) return;
     this.edited.emit({ id, text: this.editText().trim() });
-    this.editing.set(null);
+    this.cancelEdit();
   }
   drop(event: CdkDragDrop<readonly QueuedMessage[]>): void {
     if (this.disabled() || !this.reorderable()) return;

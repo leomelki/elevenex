@@ -179,7 +179,7 @@
       <button
         type="button"
         exDropdownItem
-        (triggered)="action.emit(item.action)"
+        (triggered)="request(item.action)"
       >
         {{ item.label }}
       </button>
@@ -218,3 +218,5 @@
     />
   }
 </ng-template>
+
+@if (unreachableNote()) { <p class="unreachable-note" role="status">{{ unreachableNote() }}</p> }

@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BackendClientState, BackendResult, ElevenexBridge, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceTask, WorkspaceTaskRecovery } from '@elevenex/shared';
+import type { BackendClientState, BackendResult, ElevenexBridge, WorkspaceCreateTask, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceTask, WorkspaceTaskRecovery } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { WorkspaceStore } from './workspace.store';
 import { WorkspaceDialogsComponent } from './workspace-dialogs.component';
@@ -30,7 +30,7 @@ function setup(history = false) {
     workspaceCreateProject: vi.fn(async () => ok(detail)),
     workspaceFolders: vi.fn(async (): Promise<BackendResult<readonly import('@elevenex/shared').WorkspaceFolder[]>> => ok([])),
     workspaceBranches: vi.fn(async () => ok([{ name: 'main', current: false, isDefault: true, defaultBase: 'main', heldTaskName: null }])),
-    workspaceCreateTask: vi.fn(async () => ok({ ...task, state: 'preparing' as const })),
+    workspaceCreateTask: vi.fn<(scope: string, input: WorkspaceCreateTask) => Promise<BackendResult<WorkspaceTask>>>(async () => ok({ ...task, state: 'preparing' })),
     workspaceTask: vi.fn(async (): Promise<BackendResult<WorkspaceTask>> => ok(task)),
     workspaceRetryTask: vi.fn<(scope: string, taskId: number, recovery?: WorkspaceTaskRecovery) => Promise<BackendResult<WorkspaceTask>>>(async () => ok(task)),
     workspaceArchiveSession: vi.fn(async (): Promise<BackendResult<{readonly accepted: true}>> => ok({accepted: true})),
@@ -154,7 +154,7 @@ describe('Workspace resume', () => {
     complete(ok(task)); await settle(); TestBed.tick(); await settle();
     expect(store.activeProject()).toBe('all'); expect(store.selected()).toBeNull();
     emit({ revision: 2, scope: null }); TestBed.tick(); await settle();
-    expect(store.projects()).toEqual([]); expect(store.panelOpen()).toBe(false);
+    expect(store.projects()).toHaveLength(1); expect(store.offline()).toBe(true);
   });
 
   it('reports failed saves and retries on the next layout change', async () => {
@@ -334,7 +334,7 @@ describe('WorkspaceStore', () => {
     await store.createSession('3'); expect(store.sessionDisclosures()).toBe(disclosures);
     await store.archiveSession({taskId:'3',session:{id:'5',status:'queued'}}); expect(store.sessionDisclosures()).toBe(disclosures);
     await store.refresh(); expect(store.sessionDisclosures()).toBe(disclosures);
-    emit({revision:2,scope:null}); TestBed.tick(); expect(store.sessionDisclosures().size).toBe(0);
+    emit({revision:2,scope:null}); TestBed.tick(); expect(store.sessionDisclosures().size).toBe(1); expect(store.offline()).toBe(true);
   });
 
   it('loads bounded task/session windows and selects a session', async () => {
@@ -674,7 +674,7 @@ describe('workspace session archive', () => {
     bridge.workspaceArchiveSession.mockImplementationOnce(()=>new Promise(resolve=>{complete=resolve;}));
     const pending=store.archiveSession({taskId:'3',session:{id:'5',status:'queued'}});
     emit({revision:2,scope:null}); TestBed.tick(); complete(ok({accepted:true})); await pending;
-    expect(store.sessionArchiveUndo()).toBeNull(); expect(store.tasks()).toEqual([]);
+    expect(store.sessionArchiveUndo()).toBeNull(); expect(store.tasks()).toHaveLength(1); expect(store.offline()).toBe(true);
     await store.undoSessionArchive(); expect(bridge.workspaceRestoreSession).not.toHaveBeenCalled();
   });
 });
@@ -743,5 +743,75 @@ describe('workspace archived history', () => {
     await store.loadArchivedSessions({taskId:'3',page:'latest'});
     expect(store.tasks()[0]?.archive).toBeUndefined();
     expect(bridge.workspaceSessions).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe('Workspace outages', () => {
+  it.each([false, true])('keeps an interrupted create request ID after another draft opens (recovered: %s)', async recovered => {
+    const { store, bridge, start, emit } = setup(); await start(); await store.openNewTask();
+    let finish!: (value: BackendResult<WorkspaceTask>) => void;
+    bridge.workspaceCreateTask.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const creating = store.createTask({ title: 'Original', repo: '2', branch: 'original', existing: false, workspace: 'auto', base: 'main' });
+    const requestId = bridge.workspaceCreateTask.mock.calls[0]![1].requestId;
+    emit({ revision: 2, scope: null }); TestBed.tick();
+    await store.openNewTask();
+    await store.createTask({ title: 'Later offline task', repo: '2', branch: 'later', existing: false, workspace: 'auto', base: 'main' });
+    if (recovered) {
+      emit({ revision: 3, scope: { id: 'recovered', environment: { kind: 'local' } } }); TestBed.tick();
+      for (let i = 0; i < 150; i++) await Promise.resolve(); TestBed.tick();
+      expect(store.mutationUncertain()).toBe(false);
+    }
+    finish({ ok: false, error: { code: 'outcome-unknown', message: 'Lost reply' } }); await creating;
+    expect(store.waitingTasks().find(item => item.draft.title === 'Original')).toMatchObject({ id: requestId, status: 'unknown' });
+  });
+
+  it('does not put a late task result in a different machine’s outbox', async () => {
+    const { store, bridge, start, emit } = setup(); await start(); await store.openNewTask();
+    let finish!: (value: BackendResult<WorkspaceTask>) => void;
+    bridge.workspaceCreateTask.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const creating = store.createTask({ title: 'Original', repo: '2', branch: 'original', existing: false, workspace: 'auto', base: 'main' });
+    emit({ revision: 2, scope: null }); TestBed.tick();
+    store.connect({ id: 'other', name: 'Other server', kind: 'ssh', conn: 'idle' }, true); TestBed.tick();
+    finish({ ok: false, error: { code: 'outcome-unknown', message: 'Lost reply' } }); await creating;
+    expect(store.waitingTasks()).toEqual([]);
+  });
+
+  it('returns a cancelled edit to the queue and opens a clean task form after recovery', async () => {
+    const { store, start, emit } = setup(); await start(); await store.openNewTask();
+    emit({ revision: 2, scope: null }); TestBed.tick();
+    await store.createTask({ title: 'Queued original', repo: '2', branch: 'queued', existing: false, workspace: 'auto', base: 'main' });
+    const id = store.waitingTasks()[0]!.id;
+    store.editWaitingTask(id); store.closeDialog();
+    expect(store.waitingTasks()[0]).toMatchObject({ id, status: 'waiting', draft: { title: 'Queued original' } });
+    expect(store.editingTask()).toBeNull();
+    emit({ revision: 3, scope: { id: 'recovered', environment: { kind: 'local' } } }); TestBed.tick();
+    for (let i = 0; i < 150; i++) await Promise.resolve(); TestBed.tick();
+    await store.openNewTask();
+    expect(store.dialogOpen()).toBe(true); expect(store.editingTask()).toBeNull();
+  });
+
+  it('retains loaded selection and dialog draft through loss, then reconciles resources before rebinding', async () => {
+    const { store, bridge, start, emit } = setup(); await start();
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    await store.openNewTask(); const dialog = store.dialogKey();
+    emit({ revision: 2, scope: null }); TestBed.tick(); await settle();
+    expect(store.offline()).toBe(true); expect(store.tasks()).toHaveLength(1);
+    expect(store.selected()).toEqual({ scopeId: 'scope', taskId: 3, sessionId: 5 });
+    expect(store.dialogOpen()).toBe(true); expect(store.dialogKey()).toBe(dialog);
+    await store.deleteProject(); expect(bridge.workspaceDeleteProject).not.toHaveBeenCalled();
+    emit({ revision: 3, scope: { id: 'recovered', environment: { kind: 'local' } } }); TestBed.tick();
+    for (let i = 0; i < 80; i++) await Promise.resolve(); TestBed.tick();
+    expect(store.selected()).toEqual({ scopeId: 'recovered', taskId: 3, sessionId: 5 });
+    expect(store.dialogKey()).toBe(dialog); expect(bridge.workspaceCreateTask).not.toHaveBeenCalled();
+  });
+  it('queues cached task drafts once and allows removal before reconnection', async () => {
+    const { store, bridge, start, emit } = setup(); await start(); await store.openNewTask();
+    emit({ revision: 2, scope: null }); TestBed.tick();
+    await store.createTask({ title: 'Wait here', repo: '2', branch: 'wait-here', existing: false, workspace: 'auto', base: 'main' });
+    expect(store.waitingTasks()).toHaveLength(1); expect(bridge.workspaceCreateTask).not.toHaveBeenCalled();
+    store.removeWaitingTask(store.waitingTasks()[0]!.id);
+    emit({ revision: 3, scope: { id: 'recovered', environment: { kind: 'local' } } }); TestBed.tick(); await settle();
+    expect(bridge.workspaceCreateTask).not.toHaveBeenCalled();
   });
 });

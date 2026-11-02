@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
+import { app, BrowserWindow, Menu, net, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
 import { readFile, realpath } from 'node:fs/promises';
 import { extname, join, relative, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -7,9 +7,12 @@ import { APP_ORIGIN, contentSecurityPolicy, isAppUrl, isExternalUrl, rendererPat
 import { WindowStateStore } from './window-state';
 import { createApplicationBackend } from './backend/application';
 import { registerBackendIpc } from './backend/ipc';
+import { notifyRecovery } from './remote/recovery-notifications';
+import { monitorNetwork } from './remote/network-monitor';
 import { RemoteManager } from './remote/manager';
 import { registerRemoteIpc } from './remote/ipc';
 import { readBackendRelease } from './backend/release';
+import { developmentRemote } from './remote/development';
 import { homedir } from 'node:os';
 import { RemoteArchiveCache } from './remote/archives';
 import { createBackendClient } from './backend-client/application';
@@ -43,13 +46,15 @@ const backend = createApplicationBackend(app.isPackaged
   ? join(process.resourcesPath, 'app.asar.unpacked/dist/backend/host.js')
   : join(__dirname, 'backend/host.js'), app.isPackaged);
 const remoteRoot = join(homedir(), '.elevenex', 'desktop');
-const remoteArchives = new RemoteArchiveCache(remoteRoot);
+const remoteDevelopment = developmentRemote(app.isPackaged);
+const remoteArchives = new RemoteArchiveCache(remoteRoot, remoteDevelopment?.archive);
 const remote = new RemoteManager({
   root: remoteRoot,
   prepareArchive: (release, signal, progress) => remoteArchives.prepare(release, signal, progress),
   settingsPath: join(app.getPath('userData'), 'remote-settings.json'),
   helper: app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked/dist/remote/askpass-helper.js') : join(__dirname, 'remote/askpass-helper.js'),
-  release: () => readBackendRelease(__dirname),
+  release: remoteDevelopment?.release ?? (() => readBackendRelease(__dirname)),
+  developmentNamespace: remoteDevelopment?.namespace,
 });
 const backendClient = createBackendClient(backend, remote,
   (windowId, snapshot) => sendToWindow(windowId, 'backend-client:changed', snapshot));
@@ -201,9 +206,11 @@ void app.whenReady().then(async () => {
   app.once('will-quit', unregisterMachines);
   const unsubscribeRemote = remote.subscribe((windowId, snapshot) => sendToWindow(windowId, 'environment:changed', snapshot));
   const resumed = () => remote.networkChanged();
+  const stopRecoveryNotifications = notifyRecovery(remote);
+  const stopNetwork = monitorNetwork(() => net.isOnline(), resumed);
   powerMonitor.on('resume', resumed);
   powerMonitor.on('unlock-screen', resumed);
-  app.once('will-quit', () => { unregisterRemote(); unsubscribeRemote(); powerMonitor.removeListener('resume', resumed); powerMonitor.removeListener('unlock-screen', resumed); });
+  app.once('will-quit', () => { stopRecoveryNotifications(); stopNetwork(); unregisterRemote(); unsubscribeRemote(); powerMonitor.removeListener('resume', resumed); powerMonitor.removeListener('unlock-screen', resumed); });
   handle('git:status', trusted, (path) => {
     if (typeof path !== 'string' || !path.trim() || path.length > 4096 || path.includes('\0')) {
       throw new Error('A nonempty workspace path is required');

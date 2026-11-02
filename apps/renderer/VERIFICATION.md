@@ -1,5 +1,31 @@
 # Component system verification
 
+## Offline queue review fixes, 2026-11-02
+
+Queued writing now carries its original SSH configuration identity in the
+atomic version-2 journal. Legacy host edits invalidate old writing; relaunch
+rejects automatic dispatch from mismatched or unbound remote journals while
+retaining it for inspection. Local version-1 writing remains available. Late
+task creates retain their dispatched request ID across new drafts and recovery,
+and cannot populate a different machine's outbox. Cancelling a queued-task edit
+restores its original request and clears the next form. Creation queues refresh
+navigation once per drained burst, without replaying accepted creates when a
+refresh fails.
+
+The full suite passed: 133 desktop, seven capture-tool and 613 renderer tests,
+including TypeScript contract checks. The final strict-binding and migration
+coverage passed in the focused 18-test remote recovery suite. Lint, production
+build and the installed Electron smoke test passed; the smoke backend is a
+test fixture, not a deployed SSH runtime.
+
+The extended `desktop-reconnect.mjs` scenario passed 20 native checkpoints in
+light/dark themes, including keyboard focus, cancellation, the clean new-task
+form, one-time queue delivery, narrow layouts and reduced motion. The report is
+`artifacts/desktop-capture/run-puQoBt/report.json` (`verified: true`, no errors).
+Both clean-form PNGs were inspected. The run also reported eight Angular
+`NG0956` collection-tracking warnings. An initial attempt was interrupted by a
+preview HMR reload; the completed run used the settled server.
+
 ## Bottom-of-history send reveal, 2026-11-02
 
 Replaced snap-to-end plus row transforms with one owned 340ms viewport scroll
@@ -2273,3 +2299,89 @@ verified: true, 15 checkpoints and no errors or warnings. In both themes a
 targets, narrow/reduced-motion layouts and real Chat jumps also passed. The
 light/dark nine-marker and dark short-layout PNGs were inspected. This is an
 unpackaged preview check; no packaged-app launch was attempted.
+
+
+## Disconnected/reconnect implementation — 2026-11-02
+
+Implemented on `feat/desktop-reconnect`, preserving the existing app and the base
+message/Working motion. Same-machine outages retain loaded navigation, dialogs,
+conversation windows and drafts; live indicators freeze through inherited
+component-owned motion state. The elapsed island, real SSH asks, unreachable
+git feedback and unavailable-content boundaries use the supplied tokens and
+reference instructions. TitleIsland already had its intrinsic ResizeObserver.
+
+Waiting messages, answers, approvals, Stop, task creates and new-session requests
+are bounded and journaled privately by main across relaunch. A durable sending
+claim precedes dispatch; interrupted claims restore as unknown. Editing holds
+dispatch and late edits are re-read after preflight. Queued task creates retain
+stable request identities; the additive indexed task-request read resolves their
+uncertain outcomes without replay. Unsupported authentication methods are not
+advertised. SSH credentials are excluded from journal validation.
+
+Validation passed:
+
+- `pnpm desktop:lint`, `pnpm desktop:test` (119 desktop/transport tests, 7 capture
+  harness tests, 604 renderer tests; negative contracts also checked by tsc), and
+  `pnpm desktop:build`.
+- Focused backend service + real Nest HTTP tests: 24 passing, including bounded
+  request-identity lookup, argument rejection and unchanged navigation revision.
+- Native Electron smoke: actual sandboxed preload, named IPC validation, private
+  waiting storage, scope/window isolation, lifecycle events and app:// CSP/history.
+  Its backend is a fixture; this is an unpackaged launch, not packaged verification.
+- Real loopback OpenSSH regressions, including encrypted keys, dropped transports,
+  daemon recovery, shared ownership and cleanup; no personal/WAN host was used.
+
+Native captures used actual Angular production components with preview-only
+SSH/backend data. All reports have `verified: true`, with zero recorded errors,
+and new PNGs were inspected:
+
+- [18 reconnect checkpoints](../../artifacts/desktop-capture/run-vp4swy/index.html):
+  retained views/drafts, frozen live indicators, local edit/removal and task/session
+  creation, git blocking, elapsed escalation, explicit credential focus/clearing,
+  once-only recovery, both themes, narrow/reduced-motion panels and host safety.
+- [88 git-motion checkpoints](../../artifacts/desktop-capture/run-hint4Y/index.html):
+  stable edges, widths, interruptions and reduced motion. A launch-scale label
+  clipping issue was corrected using untransformed CSS-pixel measurements.
+- [18 original bottom-send checkpoints](../../artifacts/desktop-capture/run-KbGTzn/index.html):
+  base bubble/Working reveal, long/short messages, wheel takeover and reduced motion
+  remain intact in both themes.
+
+- [Four reconnect reading checkpoints](../../artifacts/desktop-capture/run-0gB502/index.html)
+  also passed with `verified: true`: latest-window scroll positions stayed within
+  two pixels while recovered output produced unread feedback, and earlier-history
+  windows retained their items and UI lifetime in light and dark. Recovery keeps
+  the consumed transcript cursor instead of reopening the conversation at the end.
+
+
+The UI captures simulate transport. They do not establish a real WAN connection,
+OS notification delivery, a physical security-key interaction or a packaged app
+launch. Restored interrupted prompts without a receipt baseline and interrupted
+new-session creates require explicit conversation/task inspection; they never
+retry automatically. Waiting records are bounded to 20 chat actions, 10 tasks and
+10 sessions per window/machine; loading/saving errors remain visible.
+
+
+## Credential field wording — 2026-11-02
+
+The SSH challenge field names an explicitly requested Passphrase, Password,
+Verification code or PIN, with Response for unfamiliar prompts. Submission,
+masking, expiration and secret clearing are unchanged. Desktop lint, test
+(604 renderer tests plus the existing desktop suite), build and diff checks pass.
+[Two native light/dark captures](../../artifacts/desktop-capture/run-yfN12h/index.html)
+verify Passphrase in the actual reconnect panel with preview transport; the report
+has `verified: true`, and both PNGs were inspected.
+
+Reconnect copy was then reduced to one heading and credential label: no shared
+connection explanations, repeated machine name or generic passphrase instruction.
+Specific server instructions remain visible and connected to the field for
+assistive technology. Desktop lint, test (605 renderer tests), build and diff
+checks pass. [Light/dark native captures](../../artifacts/desktop-capture/run-4k5f1G/index.html)
+include narrow/reduced-motion and focused input, with `verified: true` and inspected
+PNGs. Transport is preview-controlled.
+
+Credential titles now identify the request: Unlock SSH key, Enter password,
+Enter verification code or Enter PIN. Lint, desktop tests (605 renderer tests),
+build and diff checks pass. [Four native captures](../../artifacts/desktop-capture/run-7s1MDI/index.html)
+verify passphrase/password titles in both themes, with narrow/reduced-motion and
+focused input coverage. Report `verified: true`; all PNGs inspected. These use
+preview-controlled challenges rather than a live SSH password server.

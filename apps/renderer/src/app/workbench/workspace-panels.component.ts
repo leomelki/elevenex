@@ -1,11 +1,12 @@
 import { ChangeDetectionStrategy, Component, computed, contentChild, input, model, output } from '@angular/core';
 import { PanelTabsComponent, type PanelTab } from '../tasks';
+import { OpensWhenBackComponent } from '../machines';
 import { IconButtonComponent, IconComponent } from '../ui';
 
 /** Side-view navigation only. Platform-backed panel contents are a separate slice. */
 @Component({
   selector: 'ex-workspace-panels',
-  imports: [PanelTabsComponent, IconButtonComponent, IconComponent],
+  imports: [PanelTabsComponent, IconButtonComponent, IconComponent, OpensWhenBackComponent],
   templateUrl: './workspace-panels.component.html',
   styleUrl: './workspace-panels.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -13,6 +14,8 @@ import { IconButtonComponent, IconComponent } from '../ui';
 export class WorkspacePanelsComponent {
   readonly changesContent = contentChild('workspaceChanges');
   readonly panel = model('changes');
+  readonly unreachable = input<string>();
+  readonly reconnectRequested = output<void>();
   readonly wide = input(false);
   readonly closed = output<void>();
   readonly wideChange = output<boolean>();

@@ -55,6 +55,9 @@ export interface RemoteConnectionStatus {
   readonly application: 'unknown' | 'starting' | 'ready' | 'unavailable';
   readonly attempt: number;
   readonly retryAt: number | null;
+  /** Outage/clock-stop timestamps; omitted by older clients. Secrets never enter snapshots. */
+  readonly unreachableSince?: number;
+  readonly retryStoppedAt?: number;
   readonly failure: RemoteFailure | null;
   readonly progress: { readonly receivedBytes: number; readonly totalBytes: number | null } | null;
   /** Changes after every successful reconnection. Reject work from older generations. */

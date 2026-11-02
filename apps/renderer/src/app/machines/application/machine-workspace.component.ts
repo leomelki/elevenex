@@ -1,20 +1,22 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal } from '@angular/core';
 import { jumpHome, settleMark, type CreateProjectIntent } from '../../projects';
 import { AppShellComponent } from '../../shell/app-shell.component';
-import { ButtonComponent, IconComponent, SkeletonComponent } from '../../ui';
+import { AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent } from '../../ui';
 import { WorkspacePanelsComponent } from '../../workbench/workspace-panels.component';
 import { WorkspaceDialogsComponent, WorkspaceNavigationComponent, WorkspaceOnboardingComponent, WorkspaceProjectRailComponent, WorkspaceStore, WorkspaceTaskSetupComponent, WorkspaceTaskHeaderComponent } from '../../workspace';
-import type { Machine } from '../index';
+import { OpensWhenBackComponent, type Machine } from '../index';
 import { SessionChatReviewComponent, type ChatReviewTarget } from '../../session-chat/session-chat-review.component';
 import { SessionChatComponent } from '../../session-chat/session-chat.component';
+import { WorkspaceWritingJournal } from '../../workspace/workspace-writing-journal';
+import { SessionChatOutbox } from '../../session-chat/session-chat-outbox';
 import { SessionChatDrafts } from '../../session-chat/session-chat-drafts';
 import { SessionChatClient } from '../../backend/session-chat-client.service';
 
 /** Connected workspace lifetime. The machine owner retains chrome and transport recovery. */
 @Component({
   selector: 'ex-machine-workspace',
-  providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient],
-  imports: [SessionChatReviewComponent, SessionChatComponent, AppShellComponent, ButtonComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient, SessionChatOutbox, WorkspaceWritingJournal],
+  imports: [AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
   templateUrl: './machine-workspace.component.html',
   styleUrl: './machine-workspace.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -23,12 +25,16 @@ import { SessionChatClient } from '../../backend/session-chat-client.service';
 export class MachineWorkspaceComponent {
   readonly machine = input.required<Machine>();
   readonly active = input(false);
+  readonly reconnectAction = input('Try now');
   /** Prepare scoped reads behind inert Home while the selected machine gets ready. */
   readonly preparing = input(false);
   readonly generation = input(0);
   readonly prepared = output<{ readonly machineId: string; readonly generation: number }>();
   readonly changeRequested = output<void>();
+  readonly reconnectRequested = output<void>();
   readonly store = inject(WorkspaceStore);
+  readonly outbox = inject(SessionChatOutbox);
+  readonly writingJournal = inject(WorkspaceWritingJournal);
   readonly panelOpen = this.store.panelOpen;
   readonly panel = this.store.panel;
   readonly wideReview = this.store.wideReview;
@@ -51,6 +57,10 @@ export class MachineWorkspaceComponent {
   private readonly preparationMachineId = computed(() => this.machine().id);
 
   constructor() {
+    effect(() => {
+      const selected = this.store.selected(), target = this.reviewTarget();
+      if (selected && target && selected.taskId === target.taskId && selected.sessionId === target.sessionId && selected.scopeId !== target.scopeId && !this.store.offline() && !this.store.restoring()) this.reviewTarget.set({ ...target, scopeId: selected.scopeId });
+    });
     effect(() => this.store.connect(this.machine(), this.active() || this.preparing()));
     afterRenderEffect(onCleanup => {
       const machineId = this.preparationMachineId(), generation = this.generation();
@@ -115,11 +125,12 @@ export class MachineWorkspaceComponent {
     this.flights = []; this.disposers = []; this.source = null; this.launch.set('idle'); this.setupStarted.set(false);
   }
 
+  focusWriting(): void { this.root.querySelector<HTMLTextAreaElement>('ex-composer textarea')?.focus({ preventScroll: true }); }
   closePanel(): void { this.panelOpen.set(false); this.wideReview.set(false); }
   togglePanel(): void { if (this.panelOpen()) this.closePanel(); else this.panelOpen.set(true); }
 
   shortcut(event: KeyboardEvent): void {
-    if (!this.active() || event.defaultPrevented || event.isComposing || !(event.metaKey || event.ctrlKey) || this.store.dialogOpen() || document.querySelector('.cdk-overlay-container [role="dialog"], ex-commit-panel [role="dialog"]')) return;
+    if (!this.active() || this.root.closest('[hidden]') || event.defaultPrevented || event.isComposing || !(event.metaKey || event.ctrlKey) || this.store.dialogOpen() || document.querySelector('.cdk-overlay-container [role="dialog"], ex-commit-panel [role="dialog"]')) return;
     const key = event.key.toLowerCase();
     if ((key === 'n' || event.code === 'KeyN') && event.altKey && !event.shiftKey && this.store.selected() && !this.store.busy() && this.store.selectedTask()?.state === 'ready') {
       event.preventDefault(); void this.store.createSession(String(this.store.selected()!.taskId));

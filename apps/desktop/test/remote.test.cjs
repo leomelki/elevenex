@@ -413,7 +413,7 @@ test('an interrupted runtime transfer removes only its staging files and preserv
   if (process.platform === 'win32') return t.skip('POSIX remote runtime');
   const home = await mkdtemp('/tmp/ex-remote-interrupt-'); const root = join(home, '.elevenex/desktop-remote');
   const old = join(root, 'runtimes/older-working-release'); await mkdir(old, { recursive: true }); await writeFile(join(old, 'keep'), 'working');
-  const command = await bootstrapScript(release, 'transfer-test');
+  const command = await bootstrapScript(release, 'transfer-test', false);
   const child = spawn('sh', ['-c', command], { env: { ...process.env, HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
   t.after(async () => { child.kill('SIGTERM'); await rm(home, { recursive: true, force: true }); });
   let output = ''; child.stdout.on('data', bytes => { output += bytes; }); child.stderr.resume();

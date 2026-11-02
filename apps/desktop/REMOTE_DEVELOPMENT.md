@@ -100,19 +100,59 @@ that compiler; agent-only background restoration does not compile it. Windows/Li
 verification and release-platform certification remain outstanding.
 
 The selected desktop release's `elevenex-backend-<target>.tar.gz` and checksum are
-downloaded **locally**, using the existing GitHub allowlist, redirect, checksum
-and archive validators. An application-owned archive cache coalesces concurrent
-downloads, hashing and extraction across hosts. Cancelling one host only releases
-its own lease; preparation aborts after its last owner leaves. A verified local
-archive cache avoids repeat downloads.
-The archive streams over the already authenticated SSH channel into a private
-remote staging directory. The remote independently checks its checksum, tests
-bundled Node, and atomically publishes the immutable installation. A healthy
-remote cache skips download/upload entirely. No previous version or user data
-is removed during an update. Interrupted uploads clean their own staging files;
+first downloaded on the **server**, when its PATH provides Node 22+. This optional
+installer receives the same HTTPS host/redirect allowlist, bounded download and
+safe archive validators as the client. It tries three times, each bounded to 45
+seconds, with one- and two-second backoff. It validates checksums, paths, entry
+types and expanded size before publishing anything. No download errors or signed
+release URLs are copied into diagnostics. A host without compatible Node skips
+direct downloads; bundled Node is still included in every installed runtime.
+
+After three failures (or without compatible Node), the client downloads and
+validates the archive, then streams it over the authenticated SSH channel into a
+private remote staging directory. An application-owned client archive cache
+coalesces downloads, hashing and extraction across hosts. Cancelling one host
+only releases its own lease; preparation aborts after its last owner leaves.
+The remote independently verifies transferred bytes, tests bundled Node, and
+atomically publishes the immutable installation. A healthy remote cache skips
+both paths. No previous version or user data is removed during an update.
+Interrupted downloads/uploads clean their own staging files;
 SIGKILL/power loss can leave harmless `.install-*` directories for later manual
 cleanup. Damaged published caches require moving that version aside, rather
 than risking replacement of code another client may be running.
+
+### Checkout development builds
+
+`pnpm desktop:dev` compiles the checkout backend and attempts the existing curated
+runtime assembly (bundled Node, native module validation, approved assets and
+dependencies). The launcher stores a host-platform archive and checksum beside
+its local development backend. Only unpackaged launches with the development
+backend setting use it. Main validates the source revision, target, archive hash
+and safe extraction before transferring it; packaged launches ignore the setting.
+Custom builds skip server/client release downloads entirely.
+
+The current build supports the launcher's OS and architecture. A different
+remote target gets an explicit compatibility error. There is no implicit cross
+compilation or copying of macOS native binaries to Linux. Local development still
+works if archive assembly is unavailable; the terminal reports why.
+
+Dirty and untracked backend sources contribute to the development revision;
+the generated revision file itself does not. Development runtime caches, daemon
+ownership, sockets and data use `~/.elevenex/desktop-remote-dev/<checkout-id>/`,
+separate from release data. Identical builds reuse their installation. The existing
+revision guard refuses a daemon from another build, preserving its active sessions;
+disconnect and stop that development daemon before switching builds.
+
+Validation on 2026-11-02: desktop lint, build, type checks, 129 desktop tests,
+7 capture-tool tests and 605 renderer tests passed (two Vitest workers), together
+with native Electron smoke. A real macOS ARM64 development archive was assembled,
+validated, transferred through the native bootstrap in an isolated local server
+environment, and started with bundled Node; authenticated HTTP reported the
+expected development revision. Its daemon and temporary data were cleaned up.
+Server-download regressions use controlled HTTPS responses with the real
+validators; separate loopback OpenSSH regressions cover the transport. This is
+not a live customer server, external GitHub download, packaged-app launch or
+cross-platform runtime certification. No renderer UI changed in this work.
 
 The new remote data root is `~/.elevenex/desktop-remote/`, separate from both
 legacy remote data and local desktop data:
@@ -277,7 +317,9 @@ remote Git and the selected release's platform prerequisites in a terminal.
 
 ## Verification and limits
 
-`pnpm desktop:test` includes native subprocess bootstrap/cache reuse, interrupted
+`pnpm desktop:test` includes server download retries, checksum/path rejection,
+retry cancellation, native shell direct-install/client-transfer fallback, and
+native subprocess bootstrap/cache reuse, interrupted
 upload cleanup, binary tunneling/backpressure, OpenSSH config evaluation,
 authentication/trust failure classification, stale replies, cancellation,
 concurrent-window leases/challenges, forward conflicts and restore/draft tests.

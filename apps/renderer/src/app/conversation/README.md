@@ -330,3 +330,25 @@ without changing the full-size image viewer. Its compact video adapter passes
 `MarkdownRecording.compact` and uses native playback controls; ordinary Markdown
 keeps the existing recording toolbar. `MarkdownRecording.showCaption` only controls
 the visible caption, independently of the video's accessible name.
+
+## Waiting for a machine
+
+`Composer.waitingFor` names the unreachable machine; Enter emits a queue intent
+without a bubble flight. `waiting` supplies readonly `WaitingMessage[]` with
+`id`, `text`, optional `kind` (`message`/`action`), `state` (`waiting`/`sending`) and per-row `editable` / `removable`
+flags. `waitingAction` supplies the current recovery action label. Handle `waitingEdited`, `waitingRemoved`, `waitingEditing` and `reconnectRequested` in the
+owner. Sending and backend-accepted queues are distinct supplied states.
+`ComposerQueue.waitingFor` changes its local-waiting presentation and hides Steer;
+ordinary accepted queues keep their original controls.
+
+`Chat.reach` passes `{ machine, since }` to live turns. `Turn.reach` folds in the
+last-connected explanation without moving the turn elsewhere. `.ex-offline` on
+the window freezes live status, thinking, tool sweep and answer cursors while
+leaving interactive entrance/exit motion intact. Reduced motion still uses the
+existing global and component policies. The new controls do not change message
+flight or coordinated message/Working scrolling.
+
+Forward `waitingEditing` to the outbox owner to hold first dispatch while an edit
+is open. Save/Cancel releases the hold; navigation cancels the local edit while
+preserving the original queued request. `ComposerQueue.editingChanged` supplies
+the same lifecycle for direct consumers.

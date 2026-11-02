@@ -48,3 +48,5 @@ svg {
     animation: none;
   }
 }
+
+:host(.spin) { animation-play-state: var(--ex-live-play-state, running); }

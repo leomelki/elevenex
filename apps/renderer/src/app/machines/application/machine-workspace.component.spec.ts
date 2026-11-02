@@ -18,13 +18,13 @@ function setup() {
 
 describe('Connected workspace composition', () => {
   beforeEach(() => {
-    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn() }));
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: !query.includes('max-width'), addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn() }));
     vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
     vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} });
   });
   afterEach(() => { TestBed.resetTestingModule(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-  it('loads navigation and the task header, and clears scoped selection on exit', async () => {
+  it('loads navigation and the task header, retaining a read-only view behind Home', async () => {
     const { fixture, component, root } = setup();
     await settle(fixture);
     expect(component.store.projects()).toHaveLength(2);
@@ -38,8 +38,8 @@ describe('Connected workspace composition', () => {
     expect(root.querySelector('ex-session-chat .provider')?.textContent).toContain('Codex');
     fixture.componentRef.setInput('active', false);
     await settle(fixture);
-    expect(component.store.selected()).toBeNull();
-    expect(component.store.projects()).toEqual([]);
+    expect(component.store.selected()?.sessionId).toBe(101);
+    expect(component.store.projects()).toHaveLength(2);
     expect(root.hasAttribute('inert')).toBe(true);
   });
 

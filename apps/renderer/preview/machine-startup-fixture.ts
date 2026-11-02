@@ -1,6 +1,8 @@
+import type { WaitingWriting, WaitingWritingSnapshot } from '@elevenex/shared';
 import { Injectable } from '@angular/core';
 import type { BackendClientState, BackendResult, BackendStatus, EnvironmentContext, EnvironmentSelection, EnvironmentSnapshot, MachineEditInput, MachineState, RemoteChallenge, RemoteHost, RemoteHostInput, WorkspaceFolder, WorkspacePage, WorkspaceProject, WorkspaceSession, WorkspaceSessionQuery, WorkspaceTask, WorkspaceTaskQuery } from '@elevenex/shared';
 
+const key = (selection: EnvironmentSelection) => selection.kind === 'local' ? 'local' : selection.hostId;
 const emptyEnvironment = (): EnvironmentSnapshot => ({ selection: { kind: 'local' }, context: { projectId: null, taskId: null, sessionId: null, draft: '', cursor: null }, connection: null, challenge: null, forwards: [] });
 
 /** Deterministic platform fixture for the production composition, outside its entry graph. */
@@ -21,11 +23,20 @@ export class MachineStartupFixture {
   machineState = async () => this.state;
   environmentStatus = async () => this.state.environment;
   saveEnvironmentContext = async (context: EnvironmentContext, expected: EnvironmentSelection) => {
-    const key = (selection: EnvironmentSelection) => selection.kind === 'local' ? 'local' : selection.hostId;
     if (key(expected) !== key(this.state.environment.selection)) throw new Error('Stale environment');
     this.contexts.set(key(expected), structuredClone(context));
     this.state = { ...this.state, environment: { ...this.state.environment, context: structuredClone(context) } };
     return this.state.environment;
+  };
+  private readonly waitingSnapshots = new Map<string, WaitingWriting>();
+  workspaceWaitingRead = async (expected: EnvironmentSelection): Promise<WaitingWritingSnapshot> => {
+    const identity = key(expected);
+    if (identity !== key(this.state.environment.selection)) throw new Error('Stale machine');
+    return structuredClone({ identity, ...(this.waitingSnapshots.get(identity) ?? { chat: [], tasks: [] }) });
+  };
+  workspaceWaitingSave = async (expected: EnvironmentSelection, identity: string, input: WaitingWriting): Promise<void> => {
+    if (identity !== key(expected) || identity !== key(this.state.environment.selection)) throw new Error('Stale machine');
+    this.waitingSnapshots.set(identity, structuredClone(input));
   };
   backendClientState = async () => this.scope;
   backendInfo = async () => ({ ok: true as const, value: { backendSha: 'a'.repeat(40) } });
@@ -100,7 +111,7 @@ export class MachineStartupFixture {
   setLocal(status: BackendStatus): void { this.publish({ localBackend: status }); }
   ready(): void {
     const environment = this.state.environment;
-    if (environment.connection) this.publish({ environment: { ...environment, challenge: null, connection: { ...environment.connection, phase: 'ready', transport: 'healthy', application: 'ready', authenticated: true, generation: 1, instanceId: 'test' } } });
+    if (environment.connection) this.publish({ environment: { ...environment, challenge: null, connection: { ...environment.connection, phase: 'ready', transport: 'healthy', application: 'ready', authenticated: true, generation: environment.connection.generation + 1, instanceId: 'test', retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined, failure: null } } });
     else this.setLocal({ phase: 'ready', version: 'a'.repeat(40), url: 'http://127.0.0.1:11111' });
   }
   challenge(kind: RemoteChallenge['kind'] = 'trust'): void {
@@ -116,9 +127,13 @@ export class MachineStartupFixture {
     if (environment.connection) this.publish({ environment: { ...environment, challenge: null, connection: { ...environment.connection, phase: 'paused', failure: { stage: 'authentication', code: safety ? 'host-trust' : 'authentication', message: safety ? 'The host key changed. Check it before connecting.' : 'Sign-in was refused. Check your SSH key and try again.', action: safety ? 'verify-host' : 'authenticate', transient: false } } } });
     else this.setLocal({ phase: 'failed', version: null, message: 'The engine download was interrupted. Open this machine to try again.' });
   }
+  stopRetries(): void {
+    const environment = this.state.environment;
+    if (environment.connection) this.publish({ environment: { ...environment, challenge: null, connection: { ...environment.connection, phase: 'paused', retryAt: null, retryStoppedAt: Date.now(), unreachableSince: Date.now() - 600000, failure: { stage: 'transport', code: 'unavailable', message: 'Timed retries stopped.', action: 'retry', transient: true } } } });
+  }
   recover(): void {
     const environment = this.state.environment;
-    if (environment.connection) this.publish({ environment: { ...environment, connection: { ...environment.connection, phase: 'recovering', retryAt: Date.now() + 4000, transport: 'closed', application: 'unavailable' } } });
+    if (environment.connection) this.publish({ environment: { ...environment, connection: { ...environment.connection, phase: 'recovering', retryAt: Date.now() + 4000, retryStoppedAt: undefined, unreachableSince: Date.now(), failure: null, transport: 'closed', application: 'unavailable' } } });
   }
   reset(opened = false): void { this.removed.clear(); this.publish({ hasOpenedMachine: opened, localAppearance: undefined, environment: emptyEnvironment(), remoteMachines: [], hosts: [], localBackend: { phase: 'downloading', version: 'a'.repeat(40), receivedBytes: 0, totalBytes: null } }); }
 

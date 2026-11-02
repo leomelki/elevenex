@@ -275,3 +275,45 @@ name starts a new check; stale scope/cancelled replies are rejected. Creation al
 before repository setup, while the database constraint remains the final guard
 against concurrent creates. This check needs a backend exposing the new endpoint;
 an unavailable check leaves the draft intact and blocked.
+
+## Outages
+
+Losing readiness suspends observers, reads and preparation timers without clearing
+loaded navigation, selected sessions, dialogs or panel layout. The retained task
+window remains browsable locally. Recovery reconciles bounded saved project,
+task and session windows (including later pages) before rebinding IDs to the new
+scope. A changed configured machine clears the retained state. Home suspends the
+workspace while retaining it for a warm return.
+
+`WorkspaceTaskOutbox` owns up to ten local task drafts. Their original repository,
+project and stable request IDs travel together; a repository read precedes each
+first dispatch. Editing/removal is local until dispatch. Cancelling an edit
+restores the original waiting task. Dispatched creates never retry automatically.
+The existing backend request-ID uniqueness protects explicit create retries;
+new engines advertise `taskRequests` and supply the named `workspaceTaskRequest`
+read for exact uncertain-creation reconciliation. It queries the indexed request
+ID and expected repository, never enumerates tasks or creates a workspace.
+Older engines retain manual inspection with no unsupported requests.
+
+Git keeps its last loaded summary through an outage. Both the presentational
+GitBar and the integrating service block offline writes and state that nothing
+was sent. An interrupted git write remains unconfirmed until a fresh status read;
+it never enters either outbox. Close, delete, stage/settings changes and other
+nonqueued mutations retain pre-dispatch scope guards and explicit reconciliation.
+
+`WorkspaceSessionOutbox` similarly retains up to ten requests for a new session
+in an existing task. It checks that the task is still ready, journals its claim,
+and dispatches once. Accepted sessions appear in refreshed navigation without
+stealing the current conversation. An interrupted session create requires
+inspecting that task; it is not offered as a retryable mutation. Waiting task and
+session entries are marked “when back” in the sidebar and remain cancellable.
+Each creation outbox refreshes navigation once after its waiting burst drains,
+including requests added while that refresh is pending. Accepted creates are
+not reclassified or replayed if refreshing their rows fails.
+
+`WorkspaceWritingJournal` merges chat/task/session writing snapshots and sends
+saves immediately to main, where `AtomicJsonFile` coalesces disk work to one
+active and one latest pending write. The private sidecar is bounded to 16 MiB,
+with one MiB per window/machine snapshot. Saving failures are visible and block
+queued dispatch. Restored sending claims become unknown. Opaque backend scopes,
+SSH credentials and authentication challenges are never saved with writing.

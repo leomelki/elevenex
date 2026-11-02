@@ -30,6 +30,8 @@ export interface ConnectOptions {
   readonly ask: Ask;
   readonly progress: (stage: RemoteStage, progress?: DownloadProgress) => void;
   readonly prepareArchive?: PrepareRemoteArchive;
+  /** Unpackaged launcher only; isolates custom runtimes and their mutable data. */
+  readonly developmentNamespace?: string;
   /** Process boundary injection for native failure-path tests; never exposed over IPC. */
   readonly spawn?: typeof spawnSsh;
 }
@@ -39,7 +41,7 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
   const signal = AbortSignal.any([options.signal, cancellation.signal]);
   const { progress } = options;
   const nonce = randomBytes(16).toString('hex');
-  const ssh = await (options.spawn ?? spawnSsh)(options.host, await bootstrapScript(options.release, nonce), options.ask, options.interactive, signal, options.helper).catch((error: unknown) => {
+  const ssh = await (options.spawn ?? spawnSsh)(options.host, await bootstrapScript(options.release, nonce, !options.developmentNamespace, options.developmentNamespace), options.ask, options.interactive, signal, options.helper).catch((error: unknown) => {
     if (error instanceof RemoteError) throw error;
     throw sshFailure(error instanceof Error ? error.message : '', 'authentication');
   });
@@ -47,6 +49,9 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
   ssh.child.stdin.on('error', () => undefined);
   const transportEnded = ssh.exited.then(() => {
     const stderr = ssh.diagnostics();
+    if (options.developmentNamespace && /EX11_COMPATIBILITY: (?:another desktop revision owns|remote backend revision differs)/.test(stderr)) {
+      throw failure('runtime', 'compatibility', 'A different development build is running on this server. Disconnect its windows and stop its development daemon before switching builds.', 'edit');
+    }
     if (/EX11_COMPATIBILITY/.test(stderr)) throw failure(stage, 'compatibility', 'Remote prerequisites or runtime compatibility need attention. Verify Git, tar, head, sha256sum/shasum, and a supported Linux glibc or macOS host.', 'install-prerequisites');
     if (/EX11_CONFIGURATION/.test(stderr)) throw failure(stage, 'configuration', 'Remote setup could not safely continue. Check disk space, permissions, runtime cache integrity, and the daemon control-port conflict described in the remote development guide.', 'edit');
     if (/EX11_RUNTIME/.test(stderr)) throw failure('runtime', 'compatibility', 'The remote backend did not become ready. Check OS/libc compatibility and the backend prerequisites.', 'install-prerequisites');
@@ -74,12 +79,24 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
             stage = 'discovery'; progress(stage);
             try { remoteRelease = backendRelease(options.release, fields[3] ?? '', fields[4] ?? ''); }
             catch { reject(failure('discovery', 'compatibility', 'The SSH host reported an unsupported runtime target.', 'install-prerequisites')); return; }
+          } else if (fields[2] === 'download') {
+            stage = 'download'; progress(stage);
+          } else if (fields[2] === 'download-progress') {
+            const receivedBytes = Number(fields[3]);
+            const totalBytes = fields[4] ? Number(fields[4]) : null;
+            if (Number.isSafeInteger(receivedBytes) && receivedBytes >= 0 && receivedBytes <= 1073741824
+              && (totalBytes === null || (Number.isSafeInteger(totalBytes) && totalBytes >= receivedBytes && totalBytes <= 1073741824))) {
+              progress('download', { receivedBytes, totalBytes });
+            }
+          } else if (fields[2] === 'installation') {
+            stage = 'installation'; progress(stage);
           } else if (fields[2] === 'cache' && fields[3] === 'no') {
             if (!remoteRelease) { reject(new Error('Missing remote platform')); return; }
             const release = remoteRelease;
             work = (async () => {
-              stage = 'download'; progress(stage);
-              const downloadProgress = (value: DownloadProgress) => progress('download', value);
+              const preparationStage = options.developmentNamespace ? 'installation' : 'download';
+              stage = preparationStage; progress(stage);
+              const downloadProgress = (value: DownloadProgress) => progress(preparationStage, value);
               const archive = options.prepareArchive ? await options.prepareArchive(release, signal, downloadProgress) : await archiveFor(options.root, release, signal, downloadProgress);
               signal.throwIfAborted(); stage = 'installation'; progress(stage);
               ssh.child.stdin.write(`${archive.bytes} ${archive.digest}\n`);

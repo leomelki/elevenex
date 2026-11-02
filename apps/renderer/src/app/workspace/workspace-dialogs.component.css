@@ -5,3 +5,6 @@
 p { padding: var(--space-3) var(--space-6); margin: 0; color: var(--ink-muted); font-size: var(--text-caption-size); }
 .error { color: var(--danger); }
 .toast { position: fixed; bottom: var(--space-6); left: 50%; transform: translateX(-50%); z-index: 80; width: min(440px, calc(100vw - var(--space-8))); }
+
+.task-waiting > div { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); border-radius: var(--radius-sm); background: var(--attention-soft); color: var(--attention); font-size: var(--text-caption-size); }
+.task-waiting span { flex: 1; }

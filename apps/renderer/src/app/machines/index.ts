@@ -18,3 +18,4 @@ export * from './machine-home-status';
 export * from './machine-menu.component';
 export * from './machine-menu-popup.component';
 export * from './edit-machine.component';
+export * from './opens-when-back.component';

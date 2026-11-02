@@ -12,10 +12,13 @@ export interface ConnectionOptions {
   readonly release: () => Promise<BackendRelease>;
   readonly connect?: (options: ConnectOptions) => Promise<RemoteTransport>;
   readonly prepareArchive?: ConnectOptions['prepareArchive'];
+  readonly developmentNamespace?: ConnectOptions['developmentNamespace'];
   readonly changed: () => void;
   readonly random?: () => number;
   readonly healthInterval?: number;
   readonly backoff?: number;
+  readonly retryWindow?: number;
+  readonly now?: () => number;
 }
 
 export const disconnected = (hostId: string): RemoteConnectionStatus => ({
@@ -32,6 +35,7 @@ export class RemoteConnection {
   private loop: Promise<void> | undefined;
   private wakeup: AbortController | undefined;
   private paused = false;
+  private outageStarted: number | undefined;
   private interactiveOwner: number | undefined;
   private requestedInteractiveOwner: number | undefined;
   private attemptInteractive = false;
@@ -80,9 +84,20 @@ export class RemoteConnection {
     if (!this.active) this.publish({ ...disconnected(this.options.host.id), generation: this.status.generation });
   }
   retry(windowId: number): void {
+    this.outageStarted = undefined;
+    this.status = { ...this.status, retryStoppedAt: undefined };
     this.acquire(windowId, true); this.wakeup?.abort();
   }
-  networkChanged(): void { if (this.active && !this.paused) this.wakeup?.abort(); }
+  networkChanged(): void {
+    if (!this.active) return;
+    // Only the clock stop resumes automatically. Authentication/trust failures wait for a person.
+    if (this.status.retryStoppedAt !== undefined) {
+      this.paused = false; this.outageStarted = undefined;
+      this.status = { ...this.status, retryStoppedAt: undefined };
+      this.ensureLoop();
+    }
+    if (!this.paused) this.wakeup?.abort();
+  }
   answer(windowId: number, challengeId: string, answer: string | null): void {
     if (!this.challenge || this.challenge.owner !== windowId || this.challenge.value.id !== challengeId || this.challenge.value.expiresAt <= Date.now()) throw new Error('This SSH challenge is no longer active in this window');
     if (this.challenge.value.kind === 'trust' && answer !== null && answer !== 'yes') throw new Error('Host trust requires the explicit answer yes');
@@ -161,7 +176,7 @@ export class RemoteConnection {
         this.log(stage, 'revision', `Expected backend revision ${release.version}; attempt ${attempt}.`);
         setupSignal.throwIfAborted();
         const transport = await (this.options.connect ?? connectRemote)({
-          host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, prepareArchive: this.options.prepareArchive,
+          host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, prepareArchive: this.options.prepareArchive, developmentNamespace: this.options.developmentNamespace,
           progress: (next, value) => {
             if (setupSignal.aborted) return;
             if (stage !== next) { stage = next; resetDeadline(stage); this.log(stage, 'stage', `Remote ${stage} started.`); }
@@ -179,9 +194,10 @@ export class RemoteConnection {
         if (timer) { clearTimeout(timer); timer = undefined; }
         this.interactiveOwner = undefined;
         this.requestedInteractiveOwner = undefined;
+        this.outageStarted = undefined;
         this.log('application', 'ready', 'Remote application readiness verified.');
         this.publish({ ...this.status, phase: 'ready', stage: 'application', authenticated: true, transport: 'healthy', application: 'ready',
-          generation: this.status.generation + 1, instanceId: ready.instance, failure: null, progress: null, retryAt: null });
+          generation: this.status.generation + 1, instanceId: ready.instance, failure: null, progress: null, retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined });
         const connectedAt = Date.now();
         const transportLost = transport.exited.then(() => { throw failure('transport', 'unavailable', 'The SSH transport closed. Reconnecting to the existing remote work.', 'retry', true); });
         void transportLost.catch(() => undefined);
@@ -201,9 +217,12 @@ export class RemoteConnection {
         const problem = asFailure(deadline.signal.aborted ? deadline.signal.reason : error, stage);
         this.log(problem.stage, problem.code, problem.message);
         this.interactiveOwner = undefined;
-        this.paused = !problem.transient && this.requestedInteractiveOwner === undefined;
+        const now = (this.options.now ?? Date.now)();
+        this.outageStarted ??= now;
+        const stopped = problem.transient && now - this.outageStarted >= (this.options.retryWindow ?? 600_000);
+        this.paused = stopped || !problem.transient && this.requestedInteractiveOwner === undefined;
         this.publish({ ...this.status, phase: this.paused ? 'paused' : 'recovering', stage: problem.stage,
-          transport: 'unresponsive', application: 'unavailable', failure: problem, progress: null, retryAt: null });
+          transport: 'unresponsive', application: 'unavailable', failure: problem, progress: null, retryAt: null, unreachableSince: this.outageStarted, retryStoppedAt: stopped ? now : undefined });
       } finally {
         if (timer) clearTimeout(timer);
         this.wakeup?.abort();

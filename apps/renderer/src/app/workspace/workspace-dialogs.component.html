@@ -20,7 +20,9 @@
           </ex-dropdown-menu>
         </ng-template>
         <div [attr.inert]="store.busy() || store.mutationUncertain() || !store.dialogOpen() ? '' : null" [attr.aria-busy]="store.busy()">
-          <ex-new-task [project]="store.draftProjectMark()" [projectMenu]="projectMenu" [active]="store.dialogOpen() && !store.busy() && !store.mutationUncertain()" [repos]="store.taskRepositories()" [branchesFor]="store.branchesFor" [basesFor]="store.basesFor" [branchesLoading]="store.branchLoading()" [autoFocus]="false" [canLink]="false" [canManageWorkspaces]="false" (addRepository)="addRepository()" (branchQueryRequested)="store.searchBranches($event)" (create)="store.createTask($event)" (plan)="store.planTask($event)" (cancelled)="store.closeDialog()" />
+          <ex-new-task [title]="store.editingTask()?.title || ''" [repo]="store.editingTask()?.repo" [branchQuery]="store.editingTask()?.branch" [base]="store.editingTask()?.base || 'main'" [waitingFor]="store.offline() ? store.machine()?.name : undefined" [project]="store.draftProjectMark()" [projectMenu]="projectMenu" [active]="store.dialogOpen() && !store.busy() && !store.mutationUncertain()" [repos]="store.taskRepositories()" [branchesFor]="store.branchesFor" [basesFor]="store.basesFor" [branchesLoading]="store.branchLoading()" [autoFocus]="false" [canLink]="false" [canManageWorkspaces]="false" (addRepository)="addRepository()" (branchQueryRequested)="store.searchBranches($event)" (create)="store.createTask($event)" (plan)="store.planTask($event)" (cancelled)="store.closeDialog()">
+            <div taskWaiting class="task-waiting">@for (item of store.waitingTasks(); track item.id) { <div><span>{{ item.draft.title }} · {{ item.status === 'waiting' ? 'waits for ' + store.machine()?.name : item.status }}</span><button exButton size="sm" variant="ghost" [disabled]="item.status === 'sending'" (click)="store.removeWaitingTask(item.id)">Remove</button></div> }</div>
+          </ex-new-task>
         </div>
         @if (store.busy()) { <p role="status">Creating task…</p> }
       }

@@ -3,7 +3,7 @@ import { WorkbenchComponent } from './workbench.component';
 
 describe('Workbench composition', () => {
   beforeEach(() => {
-    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn() }));
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: !query.includes('max-width'), addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn() }));
   });
   afterEach(() => {
     TestBed.resetTestingModule();

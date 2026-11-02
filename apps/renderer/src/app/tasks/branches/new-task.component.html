@@ -22,6 +22,8 @@
       <ex-kbd>Esc</ex-kbd>
     </button>
   </header>
+  @if (waitingFor()) { <p class="waiting-note" role="status">This task will wait for {{ waitingFor() }}. Nothing is created until it’s back.</p> }
+  <ng-content select="[taskWaiting]" />
   <div class="card-height" exAutoHeight>
     <div class="stack">
       <div class="rows">

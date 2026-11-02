@@ -387,3 +387,5 @@ header .new-label {
 .repo-choices .repos {
   padding-top: 0;
 }
+
+.waiting-note { margin: var(--space-3) 0; color: var(--attention); font-size: var(--text-caption-size); }

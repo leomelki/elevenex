@@ -79,7 +79,13 @@ export interface ConversationMention {
   readonly status?: ConversationStatus;
   readonly meta?: string;
 }
+export interface WaitingMessage extends QueuedMessage {
+  readonly kind?: 'message' | 'action';
+  readonly state: 'waiting' | 'sending';
+}
 export interface QueuedMessage {
+  readonly editable?: boolean;
+  readonly removable?: boolean;
   readonly id: string;
   /** Retain the mounted row when an optimistic message receives its durable ID. */
   readonly renderId?: string;

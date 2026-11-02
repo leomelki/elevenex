@@ -60,6 +60,7 @@ export class WorkspaceTaskHeaderComponent {
 
   protected stage(stage: TaskStage): void { if (stage === 'closed') this.close(); else void this.store.setStage(stage); }
   protected async close(): Promise<void> {
+    if (this.store.offline()) { this.store.error.set(`Close task needs ${this.store.machine()?.name ?? 'the machine'}. Nothing was sent. Try again once it’s back.`); return; }
     const task = this.store.selectedTask(), selection = this.store.selected(), epoch = this.epoch;
     if (!task || !selection || this.store.busy() || this.closeLoading()) return;
     this.closeLoading.set(true); this.closeError.set(null);
@@ -93,6 +94,7 @@ export class WorkspaceTaskHeaderComponent {
     } catch { if (epoch === this.epoch) this.store.error.set('The branch name could not be copied.'); }
   }
   protected gitAction(action: GitAction): void {
+    if (this.store.offline()) { this.git.error.set(`This git action needs ${this.store.machine()?.name ?? 'the machine'}. Nothing was sent.`); return; }
     if (action === 'commit' || action === 'commit-push') { if (action === 'commit-push') this.pushAfter.set(true); this.commitOpen.update(open => !open); }
     else if (action === 'push' || action === 'sync') void this.git.perform({ type: action });
   }

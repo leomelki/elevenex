@@ -7,6 +7,10 @@
 >
   <div class="input-height" exAutoHeight>
     <div class="contents">
+      @if (waitingFor() || waiting().length) {
+        <div class="waiting-line" role="status"><ex-icon name="server" [size]="13" /><span>@if (waitingSending()) { Sending waiting actions… } @else if (!waitingFor() && waiting().length) { Checking waiting writing… } @else { {{ waiting().length ? waiting().length + (waiting().length === 1 ? ' ' + waitingNoun() + ' waits' : ' ' + waitingNoun() + 's wait') : 'Writing waits' }} for {{ waitingFor() || 'the machine' }} · nothing sent yet }</span>@if (waitingFor()) { <button exButton size="sm" variant="ghost" (click)="reconnectRequested.emit()">{{ waitingAction() }}</button> }</div>
+        <ex-composer-queue [items]="waiting()" (editingChanged)="waitingEditing.emit($event)" [waitingFor]="waitingFor() || 'the machine'" [reorderable]="false" (remove)="waitingRemoved.emit($event)" (edited)="waitingEdited.emit($event)" />
+      }
       <ex-composer-queue
         [items]="queue()"
         [editable]="queueEditable()"
@@ -45,7 +49,7 @@
         [attr.aria-activedescendant]="mentions()?.activeOptionId() || null"
         rows="2"
         [disabled]="disabled()"
-        [placeholder]="placeholder()"
+        [placeholder]="waitingFor() ? 'Write now, it sends when ' + waitingFor() + ' is back…' : placeholder()"
         [value]="draft()"
         (input)="update($event)"
         (keydown)="onKey($event)"

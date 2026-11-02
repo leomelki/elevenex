@@ -42,6 +42,7 @@ export class ChatComponent {
   readonly centerComposer = input(false);
   readonly exchanges = input<readonly ChatExchange[]>([]);
   readonly actions = input<readonly TurnAction[]>(['side-chat', 'fork', 'copy']);
+  readonly reach = input<{ readonly machine: string; readonly since: number }>();
   readonly stoppable = input(true);
   readonly retryable = input(true);
   readonly copiedCode = input<string | null>(null);

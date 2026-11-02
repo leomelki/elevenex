@@ -1,16 +1,28 @@
-<div class="workspace-frame" [class.onboarding]="onboarding() && launch() !== 'flying'" [attr.inert]="onboarding() && launch() !== 'flying' ? '' : null" [attr.aria-hidden]="onboarding() && launch() !== 'flying' ? 'true' : null">
-  <ex-app-shell [titleBar]="false" [panelOpen]="panelOpen()" [wideReview]="wideReview()" [panelLabel]="panel() + ' panel'" (reviewExited)="wideReview.set(false)">
+<div class="workspace-frame" [class.ex-offline]="store.offline() || !active()" [class.onboarding]="onboarding() && launch() !== 'flying'" [attr.inert]="onboarding() && launch() !== 'flying' ? '' : null" [attr.aria-hidden]="onboarding() && launch() !== 'flying' ? 'true' : null">
+  <ex-app-shell [titleBar]="false" [panelOpen]="panelOpen()" [wideReview]="wideReview()" [panelLabel]="panel() + ' panel'" (panelCloseRequested)="panelOpen.set(false); wideReview.set(false)" (reviewExited)="wideReview.set(false)">
     <ex-workspace-project-rail shellRail />
     <ex-workspace-navigation shellSidebar />
     <div shellMain class="main-content">
+      @if (writingJournal.error()) { <div class="waiting-task" role="alert">{{ writingJournal.error() }}<button exButton size="sm" (click)="writingJournal.retry()">Try again</button></div> }
+      <ex-fold class="waiting-region" [open]="store.waitingSessions().length + store.waitingTasks().length > 0"><div class="waiting-creations"><div exAutoHeight><div>
+      @for (item of store.waitingSessions(); track item.id) {
+        <div class="waiting-task" role="status"><ex-icon name="chat" [size]="13" /><span>New session in {{ item.taskName }} · {{ item.status === 'waiting' ? 'when ' + machine().name + ' is back' : item.error || 'Creating…' }}</span><button exButton size="sm" variant="ghost" [disabled]="item.status === 'sending'" (click)="focusWriting(); store.removeWaitingSession(item.id)">{{ item.status === 'unknown' ? 'I checked · dismiss' : 'Remove' }}</button></div>
+      }
+      @for (item of store.waitingTasks(); track item.id) {
+        <div class="waiting-task" role="status"><ex-icon name="layers" [size]="13" /><span><b>{{ item.draft.title }}</b> · {{ item.status === 'waiting' ? 'waits for ' + machine().name + ' · nothing created yet' : item.status === 'sending' ? 'Creating…' : item.error }}</span>@if (item.status === 'unknown' && store.taskRequestsAvailable()) { <button exButton size="sm" variant="ghost" [disabled]="store.offline()" (click)="store.checkWaitingTask(item.id)">Check creation</button> }@if (item.status === 'waiting') { <button exButton size="sm" variant="ghost" (click)="focusWriting(); store.editWaitingTask(item.id)">Edit</button> }<button exButton size="sm" variant="ghost" [disabled]="item.status === 'sending'" (click)="focusWriting(); store.removeWaitingTask(item.id)">{{ item.status === 'unknown' ? 'I checked · dismiss' : 'Remove' }}</button></div>
+      }
+      </div></div></div></ex-fold>
+      <ex-fold class="snapshot-region" [open]="store.offline()"><p class="as-of" role="status">As of {{ store.asOfLabel() }} · updates resume when {{ machine().name }} is back</p></ex-fold>
       @if (store.selected()) {
         <ex-workspace-task-header [panelOpen]="panelOpen()" (panelToggle)="togglePanel()" />
-        <ex-session-chat [mentionItems]="store.sessionMentionItems()" [selection]="store.selected()!" [archived]="store.selectedSession()?.status === 'archived' || store.selectedTask()?.state === 'finished'" (reviewRequested)="review($event)" />
+        <ex-session-chat [reconnectAction]="reconnectAction()" [active]="active()" [machineName]="machine().name" [outageSince]="store.asOf()" (reconnectRequested)="reconnectRequested.emit()" [mentionItems]="store.sessionMentionItems()" [selection]="store.selected()!" [archived]="store.selectedSession()?.status === 'archived' || store.selectedTask()?.state === 'finished'" (reviewRequested)="review($event)" />
       } @else if (store.pendingTask(); as task) {
         <ex-workspace-task-setup [task]="task" [busy]="store.busy()" [paused]="store.preparationPaused()" [uncertain]="store.mutationUncertain()" [error]="store.error()" (retryRequested)="store.retryPreparation($event)" (refreshRequested)="store.reconcilePreparation()" />
       } @else {
         <section class="empty-state">
-          @if (store.loading()) {
+          @if (store.offline()) {
+            <ex-opens-when-back [machine]="machine().name" what="This conversation" (tryRequested)="reconnectRequested.emit()" />
+          } @else if (store.loading()) {
             <ex-skeleton variant="message" [count]="3" />
             <p role="status">Loading workspace…</p>
           } @else if (!store.scopeId()) {
@@ -32,11 +44,11 @@
         </section>
       }
     </div>
-    <ex-workspace-panels shellPanel [panel]="panel()" (panelChange)="store.selectPanel($event)" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (closed)="closePanel()">
+    <ex-workspace-panels [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" shellPanel [panel]="panel()" (panelChange)="store.selectPanel($event)" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (closed)="closePanel()">
       <div workspaceChanges #workspaceChanges class="review-content">
         @if (selectedReview(); as target) {
           @if (panelOpen() && panel() === 'changes' && active()) {
-            <ex-session-chat-review [target]="target" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (exitRequested)="wideReview.set(false)" />
+            <ex-session-chat-review [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" [target]="target" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (exitRequested)="wideReview.set(false)" />
           }
         } @else {
           <p class="review-hint">Choose Review beneath an agent reply to see its changes.</p>

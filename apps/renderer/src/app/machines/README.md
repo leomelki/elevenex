@@ -202,3 +202,16 @@ an isolated platform fixture. The saved native regression is
 fade and subsequent neighbour travel, with keyboard, context-menu, modal-origin,
 Undo, local/server, narrow, theme and reduced-motion coverage. See also the
 production ownership and trust boundaries in [application/README.md](application/README.md).
+
+## Disconnected content
+
+`OpensWhenBackComponent` accepts `machine`, `what`, `compact` and an optional
+`backLabel`, emitting `tryRequested` / `backRequested`. Use it when the selected
+content is absent from the owner's bounded cache. Retained content stays readable
+with its last-connected time; this component does not fetch or retry.
+
+`TitleIsland` also accepts the safety-only `danger` tone. Its existing
+ResizeObserver follows intrinsic changes, including countdowns and recovery forms.
+`MachinePanel` accepts `[machineRecovery]` content before the guest section. The
+production machine owner supplies elapsed outage escalation and real SSH asks;
+these components do not authenticate or infer working transport capabilities.

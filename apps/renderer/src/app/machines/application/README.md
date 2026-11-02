@@ -141,3 +141,44 @@ uses native OpenSSH trust and has no separate application-pinned key to remove;
 it preserves the user's SSH config and known_hosts. The confirmation therefore
 names only the card and connection. Peer presentation includes Edit/Unpair and
 pairing metadata, but peer transport remains outside this production slice.
+
+## Disconnection and recovery
+
+An open window keeps its workspace mounted through transport loss and local
+engine restarts. The island stays quiet for two seconds, then counts down,
+becomes explicit after thirty seconds, and shows the transport's clock stop.
+A newly actionable challenge grows once for four seconds. It never opens a panel
+or focuses a credential field automatically. Escape closes the panel and clears
+its transient secret; it does not cancel the SSH connection. Home's initial
+connection continues to use its explicit sign-in/trust modal.
+
+The inline SSH ask uses the actual expiring askpass challenge. Credential,
+confirmation and notification prompts are supported; notifications expose no
+reply button. Native trust prompts open the existing fingerprint dialog.
+Changed-host-key failures explain administrator verification/known_hosts repair;
+they cannot be accepted using an invented replacement fingerprint. Touch ID,
+Keychain storage, six-digit auto-submit, VPN diagnosis and peer pairing are not
+advertised as capabilities. Another window's challenge is identified as already
+open elsewhere. One answer resumes the shared connection. Background challenges
+create a bounded native notification without prompt text or credentials.
+
+Keep reconnect copy limited to the action: one sign-in heading and a named
+credential field. Omit connection-sharing explanations, repeated machine names
+and generic instructions already expressed by the label. Preserve specific
+server instructions and key identities when they add context.
+Use the requested action for recognized credential titles: Unlock SSH key,
+Enter password, Enter verification code or Enter PIN.
+
+Main retains jittered exponential recovery (up to thirty seconds), stopping its
+timed loop after ten minutes of transient failure. Wake/unlock and OS interface
+or online-state changes restart only that clock stop. Interface changes, including
+VPN interfaces, are observed every five seconds. Authentication, configuration
+and trust failures wait for an explicit retry. All timers, notifications, native
+listeners, HTTP reads and SSH resources retain their owning cleanup paths.
+
+`/reconnect` composes the production window with preview-only backend/transport
+replies. `desktop-reconnect.mjs` checks retained state, waiting/edit/removal,
+git blocking, credential focus/clearing, host trust, elapsed escalation and
+one-time recovery across both themes and narrow reduced-motion layouts. These
+captures verify actual renderer behavior with mocked transport; native SSH
+regressions separately verify real loopback network/process recovery.

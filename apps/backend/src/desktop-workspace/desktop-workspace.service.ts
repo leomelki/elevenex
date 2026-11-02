@@ -305,6 +305,13 @@ export class DesktopWorkspaceService {
       limit,
     );
   }
+  async taskRequest(repoId: number, value: unknown) {
+    const requestId = text(value, 100);
+    // task_request_id already has a unique index. Checking delivery never enumerates tasks.
+    const [row] = await this.db.select({ id: schema.workspaces.id }).from(schema.workspaces)
+      .where(and(eq(schema.workspaces.taskRequestId, requestId), eq(schema.workspaces.repoId, repoId))).limit(1);
+    return { task: row ? await this.task(row.id) : null };
+  }
   async task(id: number) {
     const task = await this.tasks.record(id);
     const repo = await this.tasks.repo(task.repoId);

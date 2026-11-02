@@ -44,6 +44,7 @@
   }
 </header>
 <ex-chat
+  [reach]="store.offline() ? { machine: machineName(), since: outageSince() ?? 0 } : undefined"
   [resolve]="media.resolve"
   [exchanges]="store.exchanges()"
   [centerComposer]="showWelcome()"
@@ -81,6 +82,7 @@
     }
   </div>
   <div chatContent>
+    @if (store.offline() && !store.state()) { <ex-opens-when-back [machine]="machineName()" what="This conversation" (tryRequested)="reconnectRequested.emit()" /> }
     @if (store.loading() && !store.exchanges().length) {
       <ex-skeleton variant="message" [count]="3" />
     }
@@ -195,7 +197,7 @@
       </section>
     }
 
-    @if (message()) {
+    @if (message() && !store.offline()) {
       <div class="feedback error" role="alert">
         <span>{{ message() }}</span
         ><button
@@ -249,13 +251,25 @@
       />
     }
     @if (attachments.error()) { <p class="feedback error" role="alert">{{ attachments.error() }}</p> }
+    @for (item of store.waiting(); track item.id) {
+      @if (item.status === 'unknown' || item.status === 'failed') {
+        <div class="feedback error" role="alert"><span>{{ item.label }} · {{ item.error }}</span>@if (item.status === 'unknown' && item.action.type === 'send') { <button exButton variant="ghost" size="sm" [disabled]="store.offline()" (click)="store.outbox?.check(item.id)">Check delivery</button> }<button exButton variant="ghost" size="sm" (click)="store.outbox?.remove(item.id); focusComposer()">{{ item.status === 'unknown' ? 'I checked delivery · dismiss' : 'Dismiss' }}</button></div>
+      }
+    }
     <ex-composer
       [clearOnSubmit]="false"
       [draft]="store.draft()"
       (draftChange)="store.setDraft($event)"
       [running]="store.running()"
       [disabled]="archived() || store.historical()"
-      [sending]="!!store.busy() || !!store.uncertain() || !store.state()"
+      [sending]="!!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
+      [waitingAction]="reconnectAction()"
+      [waitingFor]="store.offline() ? machineName() : undefined"
+      [waiting]="store.waitingMessages()"
+      (waitingRemoved)="store.outbox?.remove($event); focusComposer()"
+      (waitingEdited)="store.outbox?.edit($event.id, $event.text); focusComposer()"
+      (waitingEditing)="store.outbox?.setEditing($event)"
+      (reconnectRequested)="reconnectRequested.emit()"
       [stoppable]="!!store.state()?.canInterrupt"
       [mode]="store.state()?.plan ? 'plan' : 'code'"
       [modeAvailable]="store.state()?.controls?.plan !== false"
@@ -263,7 +277,7 @@
       [harnesses]="harnesses()"
       [agentLocked]="store.state()?.providerLocked !== false"
       [settingsDisabled]="
-        !!store.uncertain() || !store.state() || store.historical()
+        store.offline() || store.waitingPending() || !!store.uncertain() || !store.state() || store.historical()
       "
       [settingsBusy]="!!store.busy() || store.loading()"
       [showFork]="false"
@@ -322,6 +336,8 @@
 </ex-chat>
 @if (contentId(); as id) {
   <ex-session-chat-content
+    [unreachable]="store.offline() ? machineName() : undefined"
+    (reconnectRequested)="reconnectRequested.emit()"
     [selection]="selection()"
     [itemId]="id"
     (closed)="contentId.set(null)"

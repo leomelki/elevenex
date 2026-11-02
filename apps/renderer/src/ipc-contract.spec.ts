@@ -45,6 +45,11 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'permission', id: 'request', decision: 'yes' } });
   // @ts-expect-error Original content is a bounded named read, never an arbitrary path.
   void invoke('session-chat:content', 'scope', { path: '/private/file' });
+  void invoke('workspace:task-request', 'scope', { repoId: 1, requestId: 'stable' });
+  // @ts-expect-error Creation reconciliation requires a repository identity, never an arbitrary path.
+  void invoke('workspace:task-request', 'scope', { path: '/repo', requestId: 'stable' });
+  // @ts-expect-error Creation reconciliation must identify the expected backend scope.
+  void invoke('workspace:task-request', { repoId: 1, requestId: 'stable' });
   // @ts-expect-error Name checks must identify the expected backend scope.
   void invoke('workspace:project-name-availability', 'Project');
   // @ts-expect-error First-run completion requires an expected selected machine.

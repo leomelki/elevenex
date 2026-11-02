@@ -30,14 +30,15 @@
         Tool input
       </button>
     </nav>
+    @if (unreachable() && !visiblePage()) { <ex-opens-when-back [machine]="unreachable()!" what="This transcript page" [backLabel]="page()?.itemId === itemId() ? 'Back to loaded page' : ''" (tryRequested)="reconnectRequested.emit()" (backRequested)="returnToLoaded()" /> }
     @if (busy()) {
       <p role="status">Loading content…</p>
     }
-    @if (error()) {
+    @if (error() && !unreachable()) {
       <p role="alert">{{ error() }}</p>
       <button exButton (click)="reload()">Retry</button>
     }
-    @if (page(); as page) {
+    @if (visiblePage(); as page) {
       <pre [attr.aria-busy]="busy()">{{
         page.text || "No content supplied."
       }}</pre>

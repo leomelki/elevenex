@@ -1,4 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { WaitingWritingStore, type SavedWaitingWriting } from './waiting-writing-store';
+import { waitingWriting } from './waiting-writing';
+import type { WaitingWriting, WaitingWritingSnapshot } from '@elevenex/shared';
 import type { BackendStatus, EnvironmentContext, EnvironmentSelection, EnvironmentSnapshot, RemoteForward, RemoteForwardInput, RemoteHost, RemoteHostInput, RemoteMachineSummary } from '@elevenex/shared';
 import { RemoteConnection, disconnected, type ConnectionOptions } from './connection';
 import { RemoteSettingsStore, emptyContext, emptyWindow, environmentKey, type RemoteSettings, type SavedWindow } from './store';
@@ -29,16 +32,19 @@ export class RemoteManager {
   private readonly listeners = new Set<(windowId: number, snapshot: EnvironmentSnapshot) => void>();
   private readonly directoryListeners = new Set<() => void>();
   private readonly store: RemoteSettingsStore;
+  private readonly waitingStore: WaitingWritingStore;
+  private waitingError = false;
   private readonly fileGrants = { identity: new Set<string>(), config: new Set<string>() };
   private error: Error | undefined;
   private disposed = false;
   private shutdown: Promise<void> | undefined;
   private readonly changingMachines = new Set<string>();
-  constructor(private readonly options: RemoteManagerOptions) { this.store = new RemoteSettingsStore(options.settingsPath); }
+  constructor(private readonly options: RemoteManagerOptions) { this.store = new RemoteSettingsStore(options.settingsPath); this.waitingStore = new WaitingWritingStore(`${options.settingsPath}.waiting-writing.json`); }
 
   async load(): Promise<void> {
     try {
       this.settings = await this.store.load();
+      try { const saved = await this.waitingStore.load(this.settings.hosts.map(host => host.id)); this.settings.windows.forEach((window, index) => { window.waiting = saved[index]; }); } catch { this.waitingError = true; }
       for (const host of this.settings.hosts) {
         if (host.identityFile) this.fileGrants.identity.add(host.identityFile);
         if (host.configFile) this.fileGrants.config.add(host.configFile);
@@ -132,8 +138,12 @@ export class RemoteManager {
     if (current && this.hostInUse(current.id)) throw new Error('Disconnect this host in every window before editing its shared settings');
     if (!current && this.settings.hosts.length >= 100) throw new Error('Saved host limit reached');
     const host = { ...validated, id: current?.id ?? randomUUID() };
+    const previousIdentity = current ? this.writingIdentity({ kind: 'remote', hostId: current.id }) : null;
     if (current) {
       this.settings.hosts.splice(this.settings.hosts.indexOf(current), 1, host);
+      if (previousIdentity !== this.writingIdentity({ kind: 'remote', hostId: host.id })) {
+        for (const window of this.settings.windows) if (window.waiting) delete window.waiting[host.id];
+      }
       await this.retireConnection(host.id);
     }
     else this.settings.hosts.push(host);
@@ -147,7 +157,7 @@ export class RemoteManager {
     this.settings.hosts = this.settings.hosts.filter(host => host.id !== hostId);
     const retirement = this.retireConnection(hostId);
     for (const window of this.settings.windows) {
-      delete window.contexts[hostId]; delete window.forwards[hostId];
+      delete window.contexts[hostId]; delete window.forwards[hostId]; if (window.waiting) delete window.waiting[hostId];
       if (window.selection.kind === 'remote' && window.selection.hostId === hostId) { window.selection = { kind: 'local' }; window.connect = false; }
     }
     await retirement;
@@ -168,6 +178,8 @@ export class RemoteManager {
       try { await this.save(); }
       catch (error) { this.settings.hosts = this.settings.hosts.map(host => host.id === hostId ? before : host); throw error; }
       if (moved) {
+        for (const saved of this.settings.windows) if (saved.waiting) delete saved.waiting[hostId];
+        await this.save();
         // Invalidate in-flight selects before retiring the old shared connection.
         const attached = [...this.windows.entries()].filter(([, window]) => window.saved.selection.kind === 'remote' && window.saved.selection.hostId === hostId);
         for (const [, window] of attached) { ++window.revision; window.pendingHost = undefined; }
@@ -207,7 +219,7 @@ export class RemoteManager {
         context: window.contexts[hostId], forwards: window.forwards[hostId] }));
       this.settings.hosts = this.settings.hosts.filter(value => value.id !== hostId);
       for (const { window } of savedWindows) {
-        delete window.contexts[hostId]; delete window.forwards[hostId];
+        delete window.contexts[hostId]; delete window.forwards[hostId]; if (window.waiting) delete window.waiting[hostId];
         if (window.selection.kind === 'remote' && window.selection.hostId === hostId) { window.selection = { kind: 'local' }; window.connect = false; }
       }
       try { await this.save(); }
@@ -272,6 +284,34 @@ export class RemoteManager {
       }
       throw error;
     } finally { if (window.revision === revision) window.pendingHost = undefined; }
+  }
+  private writingIdentity(selection: EnvironmentSelection): string {
+    const host = selection.kind === 'remote' ? this.settings.hosts.find(host => host.id === selection.hostId) : null;
+    if (selection.kind === 'remote' && !host) throw new Error('Unknown machine');
+    return createHash('sha256').update(JSON.stringify(host ? [host.id, host.host, host.user, host.port, host.identityFile, host.configFile] : ['local'])).digest('hex');
+  }
+  waitingRead(windowId: number, expected: EnvironmentSelection): WaitingWritingSnapshot {
+    this.assertWritable(); if (this.waitingError) throw new Error('Waiting writing needs repair.'); const window = this.window(windowId), selection = validate.selection(expected);
+    if (environmentKey(selection) !== environmentKey(window.saved.selection)) throw new Error('The selected machine changed.');
+    const saved: SavedWaitingWriting = window.saved.waiting?.[environmentKey(selection)] ?? { chat: [], tasks: [] };
+    const identity = this.writingIdentity(selection);
+    if (selection.kind === 'remote' && saved.identity !== identity) {
+      // Never give unbound/old-destination writing a new identity while it can
+      // still dispatch. Retain it for inspection, including version-1 journals.
+      const unverified = <T extends { readonly status: string }>(item: T): T => item.status === 'waiting' || item.status === 'sending'
+        ? { ...item, status: 'unknown', error: 'The saved SSH destination could not be verified. Inspect the original machine before creating or sending this again. Nothing will be retried.' } : item;
+      return structuredClone({ identity, chat: saved.chat.map(unverified), tasks: saved.tasks.map(unverified), ...(saved.sessions ? { sessions: saved.sessions.map(unverified) } : {}) });
+    }
+    return structuredClone({ ...saved, identity });
+  }
+  async waitingSave(windowId: number, expected: EnvironmentSelection, identity: string, input: WaitingWriting): Promise<void> {
+    this.assertWritable(); if (this.waitingError) throw new Error('Waiting writing needs repair.'); const window = this.window(windowId), selection = validate.selection(expected), key = environmentKey(selection);
+    if (key !== environmentKey(window.saved.selection) || identity !== this.writingIdentity(selection)) throw new Error('The selected machine changed.');
+    const saved = { ...waitingWriting(input), identity }, previous = window.saved.waiting?.[key];
+    window.saved.waiting ??= {}; window.saved.waiting[key] = saved;
+    try { await this.save(); }
+    catch { if (window.saved.waiting[key] === saved) { if (previous) window.saved.waiting[key] = previous; else delete window.saved.waiting[key]; } throw new Error('Waiting writing could not be saved.'); }
+    if (this.windows.get(windowId) !== window || key !== environmentKey(window.saved.selection) || identity !== this.writingIdentity(selection)) throw new Error('The selected machine changed.');
   }
   async saveContext(windowId: number, input: EnvironmentContext, expected: EnvironmentSelection): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.window(windowId);
@@ -381,7 +421,7 @@ export class RemoteManager {
     return !!this.connections.get(hostId)?.active || [...this.windows.values()].some(window => window.pendingHost === hostId
       || window.intent === 'connected' && window.saved.selection.kind === 'remote' && window.saved.selection.hostId === hostId);
   }
-  private save(): Promise<void> { return this.store.save(this.settings); }
+  private async save(): Promise<void> { await Promise.all([this.store.save(this.settings), ...(this.waitingError ? [] : [this.waitingStore.save(this.settings.windows.map(window => window.waiting ?? {}))])]); }
   private forwardInputs(window: WindowState) { return window.saved.selection.kind === 'remote' ? window.saved.forwards[window.saved.selection.hostId] ?? [] : []; }
   private async closeForwards(window: WindowState): Promise<void> {
     const values = [...window.forwards.values()]; window.forwards.clear();

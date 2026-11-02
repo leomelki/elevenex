@@ -56,6 +56,7 @@ export class TaskHeaderComponent {
   readonly canLink = input(true);
   readonly gitAllowedActions = input<readonly GitAction[]>();
   readonly gitQuietLabel = input('Up to date');
+  readonly unreachable = input<string>();
   readonly stageChange = output<TaskStage>();
   readonly closeRequested = output<void>();
   readonly panelToggle = output<void>();

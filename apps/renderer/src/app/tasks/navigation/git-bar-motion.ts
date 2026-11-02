@@ -1,5 +1,11 @@
 import type { AnimationCallbackEvent } from "@angular/core";
 
+/** Launch ancestors scale the whole workspace. Layout measurements must remain
+ * in the control's own CSS pixels, including fractional animated widths. */
+function layoutWidth(element: HTMLElement): number {
+  return parseFloat(getComputedStyle(element).width) || element.offsetWidth;
+}
+
 interface GitBarVisibility {
   readonly action: boolean;
   readonly stat: boolean;
@@ -91,7 +97,7 @@ export class GitBarMotion {
       const content = element.querySelector<HTMLElement>("span:not(.leaving)");
       const countStyle = getComputedStyle(element);
       const width =
-        (content?.getBoundingClientRect().width ?? 0) +
+        (content ? layoutWidth(content) : 0) +
         [
           countStyle.paddingLeft,
           countStyle.paddingRight,
@@ -102,13 +108,13 @@ export class GitBarMotion {
         element,
         width,
         from: this.widths.has(element)
-          ? element.getBoundingClientRect().width
+          ? layoutWidth(element)
           : (this.countWidths.get(element) ?? width),
         initialized: this.countWidths.has(element),
       };
     });
     const primaryWidth =
-      actionMeasure.getBoundingClientRect().width +
+      layoutWidth(actionMeasure) +
       [
         style.paddingLeft,
         style.paddingRight,
@@ -117,7 +123,7 @@ export class GitBarMotion {
       ].reduce((sum, value) => sum + (parseFloat(value) || 0), 0);
     const showAction = this.visibility.action;
     const showStat = this.visibility.stat;
-    const actionWidth = actionSlot.getBoundingClientRect().width;
+    const actionWidth = layoutWidth(actionSlot);
     const targets = [
       {
         element: primary,
@@ -129,7 +135,7 @@ export class GitBarMotion {
       {
         element: actionSlot,
         width: showAction
-          ? primaryWidth + more.getBoundingClientRect().width
+          ? primaryWidth + layoutWidth(more)
           : 0,
         moving: true,
         closing: !showAction,
@@ -137,7 +143,7 @@ export class GitBarMotion {
       {
         element: statSlot,
         width: showStat
-          ? statMeasure.getBoundingClientRect().width +
+          ? layoutWidth(statMeasure) +
             (showAction
               ? parseFloat(style.getPropertyValue("--space-2")) || 0
               : 0)
@@ -147,7 +153,7 @@ export class GitBarMotion {
       },
     ].map((target) => ({
       ...target,
-      from: target.element.getBoundingClientRect().width,
+      from: layoutWidth(target.element),
     }));
     for (const target of countTargets) {
       this.countWidths.set(target.element, target.width);

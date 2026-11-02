@@ -74,6 +74,7 @@ export class NewTaskComponent implements OnInit {
   /** Owner-supplied choices anchored to the existing project button. */
   readonly projectMenu = input<TemplateRef<unknown> | null>(null);
   readonly active = input(true);
+  readonly waitingFor = input<string>();
   readonly repos = input<readonly TaskRepository[]>([]);
   /** Initial repository, usually the current task's or the last used one. */
   readonly repo = input<string>();

@@ -11,10 +11,14 @@ const page = <T>(items: readonly T[]): WorkspacePage<T> => ({ items, nextCursor:
 @Injectable()
 export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   readonly chat = new SessionChatFixture(inject(DestroyRef));
+  readonly sentChatActions: import('@elevenex/shared').SessionChatCommand[] = [];
+  readonly sentTaskCreates: WorkspaceCreateTask[] = [];
+  readonly sentSessionCreates: WorkspaceCreateSession[] = [];
+  readonly sentGitActions: WorkspaceGitAction[] = [];
   sessionChatCatalog = (_scope: string, input: import('@elevenex/shared').SessionChatCatalogRead) => this.chat.catalog(input);
   sessionChatChanges = (_scope: string, input: import('@elevenex/shared').SessionChatChangesRead) => this.chat.changes(input);
   sessionChatRead = (_scope: string, input: import('@elevenex/shared').SessionChatRead) => this.chat.read(input);
-  sessionChatCommand = (_scope: string, input: import('@elevenex/shared').SessionChatCommand) => this.chat.command(input);
+  sessionChatCommand = (_scope: string, input: import('@elevenex/shared').SessionChatCommand) => { this.sentChatActions.push(input); return this.chat.command(input); };
   sessionChatUpload = (_scope: string, input: import("@elevenex/shared").ChatAttachmentUpload) => this.chat.upload(input);
   sessionChatMedia = (_scope: string, input: import('@elevenex/shared').SessionChatMediaRead) => this.chat.media(input);
   sessionChatContent = (_scope: string, input: import('@elevenex/shared').SessionChatContentRead) => this.chat.content(input);
@@ -84,7 +88,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
   recoverWorkspace(): void { this.failReads = false; this.ready(); }
-  override workspaceRevision = async () => success({ revision: 0, version: 1 as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const });
+  override workspaceRevision = async () => success({ revision: 0, version: 1 as const, taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const });
   override workspaceProjects = async () => this.failReads
     ? { ok: false as const, error: { code: 'transport' as const, message: 'The workspace could not be loaded.' } }
     : success(page(this.projectRows));
@@ -140,7 +144,9 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     const project = { id: Math.max(0, ...this.projectRows.map(project => project.id)) + 1, name: input.name, appearance: input.appearance, agentInstructions: '' };
     this.projectRows = [...this.projectRows, project]; return success(this.detail(project.id));
   };
+  workspaceTaskRequest = async (_scope: string, input: { readonly requestId: string; readonly repoId: number }) => { const request = this.sentTaskCreates.findIndex(item => item.requestId === input.requestId && item.repoId === input.repoId); return success({ task: request < 0 ? null : this.taskRows.find(task => task.name === this.sentTaskCreates[request]?.name) ?? null }); };
   workspaceCreateTask = async (_scope: string, input: WorkspaceCreateTask) => {
+    this.sentTaskCreates.push(input);
     let task: WorkspaceTask = { id: Math.max(0, ...this.taskRows.map(task => task.id)) + 1, projectId: input.repoId, repoId: input.repoId, name: input.name, branchName: input.branchName ?? 'task/new-task', stage: 'active', state: 'ready', archivedAt: null, updatedAt: stamp };
     if (this.taskSetupFailure === 'worktree-limit') {
       task = { ...task, state: 'failed', setupIssue: { code: 'other', message: 'This repository has 23 workspaces, meeting or exceeding the configured limit of 5. Your task has been saved. Free a workspace and retry, or create one above the limit for this task.', canUseSnapshot: false, canExceedWorktreeLimit: true } };
@@ -171,6 +177,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     })));
   }
   workspaceCreateSession = async (_scope: string, input: WorkspaceCreateSession) => {
+    this.sentSessionCreates.push(input);
     const task = this.taskRows.find(task => task.id === input.taskId)!;
     const session: WorkspaceSession = { id: Math.max(0, ...this.sessionRows.map(session => session.id)) + 1, taskId: task.id, repoId: task.repoId, name: input.name ?? 'Explore the task', provider: 'codex', status: 'idle', updatedAt: stamp };
     this.sessionRows = [...this.sessionRows, session]; return success(session);
@@ -204,6 +211,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     return success({ taskId: query.taskId, revision: 'a'.repeat(64), items: matches, nextCursor: null, total: files.length, matches: matches.length, unstaged: 34, selected: { files: selected.length, add: selected.reduce((n,file) => n + file.add,0), del: selected.reduce((n,file) => n + file.del,0), staged: selected.filter(file=>file.staged).length, unstaged: selected.filter(file=>!file.staged).length }, running: ['Guard concurrent requests'] });
   };
   workspaceGitAction = async (scope: string, input: WorkspaceGitAction) => {
+    this.sentGitActions.push(input);
     const previous = (await this.workspaceGit(scope, input.taskId));
     if (!previous.ok) return previous;
     const summary = { ...previous.value, ...(input.type === 'commit' ? { files: input.selection?.includedSecrets.includes('.env.local') ? 0 : 1, additions: 31, deletions: 0, ahead: input.push ? 0 : 1 } : {}), ...(input.type === 'push' ? { ahead: 0 } : {}), ...(input.type === 'sync' ? { behind: 0 } : {}), ...(input.type === 'rename-branch' ? { branch: input.branchName } : {}) };

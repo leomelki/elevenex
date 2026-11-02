@@ -6,10 +6,13 @@ import type { BackendRelease } from '../backend/release';
 import { shellQuote } from './ssh';
 
 /** All script substitutions are application-owned revisions, source and nonces. */
-export async function bootstrapScript(release: BackendRelease, nonce: string): Promise<string> {
+export async function bootstrapScript(release: BackendRelease, nonce: string, serverDownload = true, developmentNamespace?: string): Promise<string> {
+  if (developmentNamespace !== undefined && !/^[a-f0-9]{32}$/.test(developmentNamespace)) throw new Error('Invalid development runtime namespace');
   const modules = ['wire', 'runtime', 'runtime-control', 'agent-proxy', 'host', 'process-tree'];
   const sources = await Promise.all(modules.map(name => readFile(join(__dirname, name === 'host' || name === 'process-tree' ? `../backend/${name}.js` : `${name}.js`), 'utf8')));
   const clientId = createHash('sha256').update(sources.join('\n')).digest('hex');
+  const installerFiles = ['backend/download', 'backend/archive', 'backend/release', 'remote/server-install'];
+  const installerSources = await Promise.all(installerFiles.map(name => readFile(join(__dirname, `../${name}.js`), 'utf8')));
   const script = `set -eu
 umask 077
 unset NODE_OPTIONS NODE_PATH ELECTRON_RUN_AS_NODE
@@ -18,7 +21,7 @@ for tool in uname git tar head mktemp; do command -v "$tool" >/dev/null 2>&1 || 
 command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail COMPATIBILITY 'Install sha256sum or shasum'
 case "$(uname -s)" in Linux) os=linux;; Darwin) os=darwin;; *) fail COMPATIBILITY 'This remote platform is unsupported; use Linux or macOS';; esac
 case "$(uname -m)" in x86_64|amd64) arch=x64;; arm64|aarch64) arch=arm64;; *) fail COMPATIBILITY 'Use an x64 or arm64 remote host';; esac
-root="$HOME/.elevenex/desktop-remote"
+root="$HOME/.elevenex/${developmentNamespace ? `desktop-remote-dev/${developmentNamespace}` : 'desktop-remote'}"
 mkdir -p "$root/runtimes" "$root/clients"
 case "$os" in darwin) target=macos-$arch;; *) target=linux-$arch;; esac
 cache="$root/runtimes/${release.tag}-$target"
@@ -29,13 +32,22 @@ trap cleanup EXIT HUP INT TERM
 if [ -x "$cache/backend/node/bin/node" ] && [ -s "$cache/backend/main.cjs" ] && [ -s "$cache/installation.sha256" ]; then
   printf 'EX11:${nonce}:cache:yes\\n'
 else
+  stage=$(mktemp -d "$root/runtimes/.install-XXXXXXXX")
+  fetched=no
+  ${serverDownload ? `if command -v node >/dev/null 2>&1 && node -e 'if(Number(process.versions.node.split(".")[0])<22)process.exit(1)' >/dev/null 2>&1; then
+    printf 'EX11:${nonce}:download:server\\n'
+    mkdir -p "$stage/installer/backend" "$stage/installer/remote"
+${installerSources.map((source, index) => `cat > "$stage/installer/${installerFiles[index]}.js" <<'EX11_INSTALL_${nonce}'\n${source}\nEX11_INSTALL_${nonce}`).join('\n')}
+    if node "$stage/installer/remote/server-install.js" "$stage" "$os" "$arch" '${release.version}' '${release.tag}' '${nonce}'; then fetched=yes; fi
+    rm -rf "$stage/installer"
+  fi` : ''}
+  if [ "$fetched" != yes ]; then
   printf 'EX11:${nonce}:cache:no\\n'
   read -r size digest
   case "$size" in ''|*[!0-9]*) fail CONFIGURATION 'Invalid archive size';; esac
   [ "$size" -gt 0 ] && [ "$size" -le 1073741824 ] || fail CONFIGURATION 'Invalid archive size'
   [ "\${#digest}" -eq 64 ] || fail CONFIGURATION 'Invalid checksum'
   case "$digest" in *[!a-f0-9]*) fail CONFIGURATION 'Invalid checksum';; esac
-  stage=$(mktemp -d "$root/runtimes/.install-XXXXXXXX")
   head -c "$size" > "$stage/archive.tar.gz"
   if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$stage/archive.tar.gz");
   elif command -v shasum >/dev/null 2>&1; then actual=$(shasum -a 256 "$stage/archive.tar.gz");
@@ -43,8 +55,10 @@ else
   [ "\${actual%% *}" = "$digest" ] || fail CONFIGURATION 'Transferred runtime checksum mismatch'
   tar -xzf "$stage/archive.tar.gz" -C "$stage" || fail COMPATIBILITY 'Runtime extraction failed; check disk space and tar support'
   rm "$stage/archive.tar.gz"
-  "$stage/backend/node/bin/node" -e 'if(Number(process.versions.node.split(".")[0])<22)process.exit(1)' || fail COMPATIBILITY 'Bundled Node cannot run on this host; check OS and libc compatibility'
   printf '%s' "$digest" > "$stage/installation.sha256"
+  fi
+  printf 'EX11:${nonce}:installation:start\\n'
+  "$stage/backend/node/bin/node" -e 'if(Number(process.versions.node.split(".")[0])<22)process.exit(1)' || fail COMPATIBILITY 'Bundled Node cannot run on this host; check OS and libc compatibility'
   "$stage/backend/node/bin/node" -e 'const fs=require("fs");try{fs.renameSync(process.argv[1],process.argv[2])}catch(e){if(!["EEXIST","ENOTEMPTY"].includes(e.code))throw e;if(!fs.existsSync(process.argv[2]+"/installation.sha256"))throw Error("Damaged runtime cache; move it aside before retrying")}' "$stage" "$cache" || fail CONFIGURATION 'Cannot publish runtime; check permissions or move the damaged version cache aside'
   cleanup
   stage=''
