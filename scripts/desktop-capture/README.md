@@ -322,6 +322,8 @@ drops against the connected workspace preview, with drop-entry frames, duplicate
 prevention, focus handoff, draft navigation, keyboard insertion and narrow
 reduced-motion layouts in both themes. Source `dragstart` is dispatched through
 the row's DOM boundary; drop input is trusted CDP. Use the preview URL above.
+It also sends session context and verifies read-only chips inside the saved user
+message, including after leaving and reopening the conversation.
 
 `scenarios/turn-navigation.mjs` checks the compact message rail with 1 and 10,000
 targets: bounded height/DOM, keyboard browsing and jumps, stable pointer targets,

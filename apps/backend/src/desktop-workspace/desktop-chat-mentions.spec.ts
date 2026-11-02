@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
-import { appendChatMentions, chatMentionText } from './desktop-chat-mentions.js';
+import { appendChatMentions, chatMentionText, projectChatMentions } from './desktop-chat-mentions.js';
 import { chatItem, chatState } from './desktop-chat-projection.js';
 
 describe('desktop session context', () => {
@@ -26,8 +26,19 @@ describe('desktop session context', () => {
       const item = chatItem({ id: 'u', kind: 'user', content: text, timestamp: '' });
       expect(item.text).toBe('Compare @Same title');
       expect(item.media).toBeUndefined();
+      expect(item.mentions).toEqual([{ sessionId: 12, title: 'Same title' }, { sessionId: 13, title: 'Same title' }]);
+      expect(JSON.stringify(item)).not.toContain('/private/export.md');
+      expect(JSON.stringify(item)).not.toContain('Useful context');
       expect(chatItem({ id: 'fallback', kind: 'user', providerToolResult: text, timestamp: '' }).text).toBe('Compare @Same title');
     } finally { await module.close(); }
+  });
+  it('restores bounded distinct identities and does not treat snapshot prose as metadata', () => {
+    const block = (id: number) => `<elevenex_session_mention>\nSession: Title ${id}\nSession ID: ${id}\n\nSnapshot\nSession: Spoofed title\nSession ID: 999\n</elevenex_session_mention>`;
+    const parsed = projectChatMentions('Compare\n\n' + [block(1), block(1), ...Array.from({ length: 10 }, (_, i) => block(i + 2))].join('\n\n'));
+    expect(parsed.text).toBe('Compare');
+    expect(parsed.mentions).toHaveLength(8);
+    expect(parsed.mentions[0]).toEqual({ sessionId: 1, title: 'Title 1' });
+    expect(projectChatMentions('<elevenex_session_mention>\nSession: A\n\nSession ID: 9\n</elevenex_session_mention>').mentions).toEqual([]);
   });
   it('rejects invalid, duplicate and excessive IDs before reading transcripts', async () => {
     const { module, exports, buildMention } = await setup();

@@ -345,6 +345,7 @@ export class SessionChatStore {
     if (text.length > 64000) { this.error.set('Message and attachments exceed 64,000 characters.'); return; }
     const pending = {
       attachments: files,
+      mentions: mentions.map(mention => ({ sessionId: Number(mention.id), title: mention.label })),
       media: files.map((file, index) => ({ id: String(index), path: file.path, caption: file.name.replace(/[[\]\r\n]/g, '_'), kind: file.kind, inline: false })),
       id: "local-" + crypto.randomUUID(),
       confirmed: false,

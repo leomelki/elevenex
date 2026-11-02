@@ -8,6 +8,11 @@ export interface SessionChatRead extends SessionChatTarget {
   readonly after?: string;
   readonly before?: string;
 }
+/** Display metadata from a durable session-context snapshot; never includes its contents or path. */
+export interface SessionChatMention {
+  readonly sessionId: number;
+  readonly title: string;
+}
 export interface SessionChatItem {
   readonly id: string;
   readonly kind:
@@ -20,6 +25,7 @@ export interface SessionChatItem {
     | "error";
   /** Attachment references only; bytes are fetched separately for the selected chat. */
   readonly media?: readonly SessionChatMediaReference[];
+  readonly mentions?: readonly SessionChatMention[];
   readonly text: string;
   readonly timestamp: string;
   readonly toolId: string | null;

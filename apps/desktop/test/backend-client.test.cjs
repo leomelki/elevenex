@@ -546,6 +546,12 @@ test('harness selection requires a known action shape and an expected current pr
   for (const input of [{ type: 'provider', provider: 'claude' }, { type: 'provider', provider: '', expectedProvider: 'codex' }, { type: 'provider', provider: 'claude', expectedProvider: 1 }]) assert.throws(() => parseChatAction(input));
   const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
   const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  const message = { id: 'u', kind: 'user', text: 'Compare', timestamp: '', toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false };
+  const mentions = [{ sessionId: 12, title: 'Other work', snapshot: 'must not cross IPC', path: '/private/export.md' }];
+  assert.deepEqual(parseChatPage({ ...page, items: [{ ...message, mentions }] }, 1, 2).items[0].mentions, [{ sessionId: 12, title: 'Other work' }]);
+  for (const invalid of [[{ sessionId: 0, title: 'A' }], [{ sessionId: '12', title: 'A' }], [{ sessionId: 12, title: '' }], [{ sessionId: 12, title: 'x'.repeat(1001) }], [...mentions, ...mentions], Array(9).fill(mentions[0])])
+    assert.throws(() => parseChatPage({ ...page, items: [{ ...message, mentions: invalid }] }, 1, 2));
+  assert.throws(() => parseChatPage({ ...page, items: [{ ...message, kind: 'assistant', mentions }] }, 1, 2));
   assert.equal(parseChatPage(page, 1, 2).state.providerLocked, undefined);
   const parsed = parseChatPage({ ...page, state: { ...state, providers: [{ id: 'claude', label: 'Claude Code', private: 'discard' }], providerLocked: false } }, 1, 2);
   assert.deepEqual(parsed.state.providers, [{ id: 'claude', label: 'Claude Code' }]); assert.equal(parsed.state.providerLocked, false);

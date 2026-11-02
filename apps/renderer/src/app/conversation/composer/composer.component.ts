@@ -184,15 +184,10 @@ export class ComposerComponent implements OnChanges {
     this.mentionQuery.set(null);
     this.textarea()?.nativeElement.focus({ preventScroll: true });
   }
-  insertMention(mention: ConversationMention): void {
+  insertMention(mention: ConversationMention, source: 'picker' | 'drop' = 'picker'): void {
     if (!this.mentionsEnabled() || this.disabled() || this.sending()) return;
-    if (mention.kind === 'session' && this.context().some(item => item.kind === mention.kind && item.id === mention.id)) {
-      this.dropAnnouncement.set(`${mention.label} is already mentioned.`);
-      this.mentionQuery.set(null);
-      this.textarea()?.nativeElement.focus({ preventScroll: true });
-      return;
-    }
-    if (mention.kind === 'session' && this.context().filter(item => item.kind === 'session').length >= 8) {
+    const duplicate = mention.kind === 'session' && this.context().some(item => item.kind === mention.kind && item.id === mention.id);
+    if (!duplicate && mention.kind === 'session' && this.context().filter(item => item.kind === 'session').length >= 8) {
       this.dropAnnouncement.set('You can mention up to 8 sessions in a message.'); return;
     }
     const element = this.textarea()?.nativeElement;
@@ -200,19 +195,23 @@ export class ComposerComponent implements OnChanges {
       const before = this.draft().slice(0, element.selectionStart);
       const after = this.draft().slice(element.selectionEnd);
       const query = /(?:^|\s)@[^\s@]*$/.exec(before);
-      const prefix = query
-        ? before.slice(0, before.lastIndexOf("@"))
-        : before + (before && !/\s$/.test(before) ? " " : "");
-      const inserted = `${prefix}@${mention.label} `;
-      const draft = inserted + after;
-      this.draft.set(draft);
-      // Set the value before the selection: a later value binding would move the caret.
-      element.value = draft;
-      element.focus();
-      element.setSelectionRange(inserted.length, inserted.length);
+      // Session context lives only in its controlled chip. A picker consumes its
+      // active query; a drop never rewrites the draft or the selected text.
+      if (mention.kind !== 'session' || (source === 'picker' && this.mentionQuery() !== null && query)) {
+        const prefix = query
+          ? before.slice(0, before.lastIndexOf("@"))
+          : before + (before && !/\s$/.test(before) ? " " : "");
+        const inserted = mention.kind === 'session' ? prefix : `${prefix}@${mention.label} `;
+        const draft = inserted + after;
+        this.draft.set(draft);
+        // Set the value before the selection: a later binding would move the caret.
+        element.value = draft;
+        element.setSelectionRange(inserted.length, inserted.length);
+      }
+      element.focus({ preventScroll: true });
     }
-    this.mentionInserted.emit(mention);
-    this.dropAnnouncement.set(`Added ${mention.label} to message context.`);
+    if (!duplicate) this.mentionInserted.emit(mention);
+    this.dropAnnouncement.set(duplicate ? `${mention.label} is already mentioned.` : `Added ${mention.label} to message context.`);
     this.mentionQuery.set(null);
   }
   openMentions(): void {
@@ -327,7 +326,7 @@ export class ComposerComponent implements OnChanges {
       const reference = readSessionDrag(event.dataTransfer, this.sessionMentionScope());
       if (!reference) { this.dropAnnouncement.set('This session cannot be mentioned here.'); return; }
       this.insertMention(this.mentionItems().find(item => item.kind === 'session' && item.id === reference.id)
-        ?? { id: reference.id, kind: 'session', label: reference.title });
+        ?? { id: reference.id, kind: 'session', label: reference.title }, 'drop');
       return;
     }
     if (

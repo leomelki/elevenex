@@ -1,5 +1,5 @@
 import { chatMedia } from './desktop-chat-media.js';
-import { chatMentionText } from './desktop-chat-mentions.js';
+import { chatMentionText, projectChatMentions } from './desktop-chat-mentions.js';
 import { capturedChangeSummary, changeSummary, toolChanges } from './desktop-chat-changes.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 
@@ -49,8 +49,8 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
   const execution = commandExecution(item, call);
   const input = display(item.toolInput);
   const original = item.content ?? item.providerToolResult ?? item.agentMessage?.body;
-  const projected = mediaCache?.get(item) ?? chatMedia(item.kind === 'user' && typeof original === 'string'
-    ? { ...item, content: chatMentionText(original) } : item);
+  const context = item.kind === 'user' && typeof original === 'string' ? projectChatMentions(original) : null;
+  const projected = mediaCache?.get(item) ?? chatMedia(context ? { ...item, content: context.text } : item);
   mediaCache?.set(item, projected);
   const text = display(projected.text);
   let changes = changeSummary(item.turnChanges);
@@ -61,6 +61,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
     cache?.set(call, { result: item, fingerprint, changes });
   }
   return {
+    ...(context?.mentions.length ? { mentions: context.mentions } : {}),
     ...(projected.media.length ? { media: projected.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
     ...(execution ? { execution } : {}),
     ...(changes ? { changes } : {}),

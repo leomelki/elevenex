@@ -30,7 +30,24 @@ export async function appendChatMentions(text: string, value: unknown, exports: 
 
 /** Keep context snapshots out of the ordinary message/queue preview and its receipt identity. */
 export function chatMentionText(text: string): string {
-  if (!text.includes('<elevenex_session_mention>')) return text;
-  return text.replace(/<elevenex_session_mention>([\s\S]*?)<\/elevenex_session_mention>/g,
-    (block: string, body: string) => /^Session ID: [1-9]\d*\s*$/m.test(body) ? '' : block).trim();
+  return projectChatMentions(text).text;
+}
+
+/** Restore bounded chip identities from saved prompts without exposing context snapshots. */
+export function projectChatMentions(text: string) {
+  const mentions: { sessionId: number; title: string }[] = [];
+  if (!text.includes('<elevenex_session_mention>')) return { text, mentions };
+  const seen = new Set<number>();
+  const visible = text.replace(/<elevenex_session_mention>([\s\S]*?)<\/elevenex_session_mention>/g,
+    (block: string, body: string) => {
+      // Only the metadata header identifies a reference; snapshot prose is untrusted.
+      const header = body.trimStart().split(/\r?\n\r?\n/, 1)[0];
+      const id = /^Session ID: ([1-9]\d*)\s*$/m.exec(header)?.[1];
+      const sessionId = Number(id);
+      if (!id || !Number.isSafeInteger(sessionId)) return block;
+      const title = /^Session: ([^\r\n]*)/m.exec(header)?.[1].trim().slice(0, 1000) || `Session ${sessionId}`;
+      if (!seen.has(sessionId) && mentions.length < 8) { seen.add(sessionId); mentions.push({ sessionId, title }); }
+      return '';
+    });
+  return { text: visible.trim(), mentions };
 }

@@ -9,7 +9,8 @@ so nested/preview backend scopes resolve consistently.
 The optional `state.sessionMentions` capability enables sidebar drops and the
 @ picker. Workspace supplies at most 50 candidates from already-loaded session
 windows; drag payloads retain their backend generation. The composer owns drag
-feedback, caret insertion and focus; the store owns deduplicated context (up to
+feedback, query consumption and focus. Session references have a single chip-only
+representation and never add an editable @title copy. The store owns deduplicated context (up to
 eight sessions), retained drafts and delivery recovery. Mentions clear with an
 accepted send and return to their original draft after rejection/uncertainty,
 including when navigation overtakes the reply. Send carries optional numeric
@@ -18,6 +19,11 @@ identities through its existing conversation exporter only on explicit send,
 adds at most 4,000 snapshot characters per reference and retains the full export
 for agent lookup. Unresolvable references prevent submission. Ordinary message
 and queue projections omit snapshot blocks, preserving receipt reconciliation.
+User transcript items also carry up to eight `mentions` with only a session ID
+and title, recovered from saved snapshot headers. Main validates these optional
+fields and strips extras. The store includes them in optimistic prompts; both
+pending and saved references become read-only chips inside the sent message.
+History reload reconstructs them without re-exporting referenced sessions.
 Older engines omit the capability and retain their original send contract.
 
 - `SessionChatClient` calls only named, scope-bound bridge operations. Main owns

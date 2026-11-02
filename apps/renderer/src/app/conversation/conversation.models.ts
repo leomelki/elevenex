@@ -198,6 +198,7 @@ export interface ChatExchange {
   }[];
   readonly id: string;
   readonly prompt: string;
+  readonly mentions?: readonly ConversationMention[];
   readonly attachments?: readonly ConversationAttachment[];
   readonly time?: string;
   readonly author?: string;

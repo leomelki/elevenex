@@ -10,6 +10,13 @@
   min-height: 0;
   flex: 1;
 }
+.message-mentions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  white-space: normal;
+}
 ex-chat-scroll {
   height: 100%;
 }

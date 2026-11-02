@@ -132,6 +132,13 @@ function item(value: unknown): SessionChatItem {
     kind !== "error"
   )
     throw invalid();
+  const mentions = raw['mentions'] === undefined ? undefined : array(raw['mentions'], 8, value => {
+    const mention = chatObject(value), sessionId = mention['sessionId'];
+    const title = chatText(mention['title'], 1000);
+    if (kind !== 'user' || typeof sessionId !== 'number' || !Number.isSafeInteger(sessionId) || sessionId <= 0 || !title.trim()) throw invalid();
+    return { sessionId, title };
+  });
+  if (mentions && new Set(mentions.map(mention => mention.sessionId)).size !== mentions.length) throw invalid();
   return {
     id: chatText(raw["id"]),
     kind,
@@ -143,6 +150,7 @@ function item(value: unknown): SessionChatItem {
     input: chatText(raw["input"], 16100),
     error: bool(raw["error"]),
     truncated: bool(raw["truncated"]),
+    ...(mentions === undefined ? {} : { mentions }),
     ...(raw["media"] !== undefined ? { media: array(raw["media"], 12, value => {
       const media = chatObject(value);
       const id = chatText(media["id"], 2);

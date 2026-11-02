@@ -576,7 +576,8 @@ export class SessionChatFixture {
         };
       else {
         const refs = [...action.text.matchAll(/^\[([^\]]+)\]\(<([^>]+)>\)/gm)].map((match, index) => ({ id: String(index), path: match[2]!, caption: match[1]!, inline: false, kind: /\.(png|jpe?g|gif|webp)$/i.test(match[2]!) ? 'image' as const : /\.(mp4|webm|mov)$/i.test(match[2]!) ? 'video' as const : 'file' as const }));
-        const receipt = item(`sent-${this.version}`, "user", action.text, { media: refs });
+        const mentions = action.sessionIds?.map(sessionId => ({ sessionId, title: sessionId === 102 ? 'Review the race condition' : `Session ${sessionId}` }));
+        const receipt = item(`sent-${this.version}`, "user", action.text, { media: refs, mentions });
         const delayed = this.delayedReceipts;
         if (!delayed) session.items.push(receipt);
         session.items.push(item(`reply-${this.version}`, "assistant", ""));

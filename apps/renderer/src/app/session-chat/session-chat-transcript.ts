@@ -12,6 +12,7 @@ export interface PendingChatPrompt {
   readonly timestamp: string;
   readonly knownIds: ReadonlySet<string>;
   readonly media?: SessionChatItem["media"];
+  readonly mentions?: SessionChatItem['mentions'];
   readonly attachments?: ChatExchange["attachments"];
 }
 
@@ -25,6 +26,7 @@ function withPendingPrompt(
     kind: "user",
     text: pending.text,
     media: pending.media,
+    mentions: pending.mentions,
     timestamp: pending.timestamp,
     toolId: null,
     toolName: null,
@@ -49,6 +51,7 @@ export function chatExchanges(
   const groups: {
     id: string;
     prompt: string;
+    mentions?: ChatExchange['mentions'];
     attachments?: ChatExchange["attachments"];
     time: string;
     items: SessionChatItem[];
@@ -58,6 +61,7 @@ export function chatExchanges(
       groups.push({
         id: item.id,
         prompt: item.text.split('\n').filter(line => !line.startsWith('[') || !item.media?.some(media => line.endsWith(`](<${media.path}>)`))).join('\n').trim(),
+        mentions: item.mentions?.map(mention => ({ id: String(mention.sessionId), kind: 'session', label: mention.title })),
         attachments: item.media?.map(media => ({ id: media.id, path: media.path, name: media.caption, kind: media.kind ?? 'image' })),
         time: new Date(item.timestamp).toLocaleTimeString([], {
           hour: "2-digit",
@@ -219,6 +223,7 @@ export function chatExchanges(
         })),
       id: group.id,
       prompt: group.prompt,
+      mentions: group.mentions,
       attachments: group.id === pending?.id ? pending.attachments : group.attachments,
       time: group.time,
       isNew: fresh.has(group.id),

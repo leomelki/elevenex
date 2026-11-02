@@ -43,7 +43,7 @@ describe('session drag to composer', () => {
     drag(button, 'dragstart', data);
     return { composer, row, textarea, data, mentions, activated: () => activated };
   }
-  it('copies a session identity, inserts at the caret and focuses without navigating or sending', () => {
+  it('copies a session reference without rewriting the draft and focuses without navigating or sending', () => {
     const { composer, row, textarea, data, mentions, activated } = setup();
     let sends = 0; composer.componentInstance.submitted.subscribe(() => sends++);
     expect(data.types).toEqual([SESSION_DRAG_TYPE]);
@@ -53,12 +53,42 @@ describe('session drag to composer', () => {
     expect(composer.nativeElement.querySelector('.drop-label.visible')?.textContent).toContain('Drop to mention session');
     drag(textarea, 'drop', data); composer.detectChanges();
     expect(mentions).toEqual([{ id: '12', kind: 'session', label: 'Retry work' }]);
-    expect(textarea.value).toBe('Review @Retry work then test');
-    expect(textarea.selectionStart).toBe(19);
+    expect(textarea.value).toBe('Review then test');
+    expect(textarea.selectionStart).toBe(7);
     expect(document.activeElement).toBe(textarea);
     expect(composer.componentInstance.dropping()).toBeNull();
     expect(activated()).toBe(0); expect(sends).toBe(0);
     drag(row.nativeElement.querySelector('.select'), 'dragend', data);
+  });
+  it('preserves a selected range and an unfinished @ query when dropping a session', () => {
+    const { composer, textarea, data, mentions } = setup();
+    textarea.value = 'Review @retry then test';
+    textarea.setSelectionRange(7, 13);
+    textarea.dispatchEvent(new Event('input', { bubbles: true })); composer.detectChanges();
+    drag(textarea, 'drop', data); composer.detectChanges();
+    expect(mentions).toHaveLength(1);
+    expect(textarea.value).toBe('Review @retry then test');
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([7, 13]);
+  });
+  it('consumes the picker query and keeps the chip as the only session reference', () => {
+    const { composer, textarea, mentions } = setup();
+    const mention: ConversationMention = { id: '12', kind: 'session', label: 'Retry work' };
+    composer.componentInstance.mentionInserted.subscribe(value => composer.componentRef.setInput('context', [value]));
+    composer.componentInstance.contextRemoved.subscribe(() => composer.componentRef.setInput('context', []));
+    const pick = () => {
+      textarea.value = 'Review @retry after'; textarea.setSelectionRange(13, 13);
+      textarea.dispatchEvent(new Event('input', { bubbles: true })); composer.detectChanges();
+      composer.componentInstance.insertMention(mention); composer.detectChanges();
+    };
+    pick();
+    expect(textarea.value).toBe('Review  after');
+    expect(textarea.selectionStart).toBe(7);
+    expect(composer.nativeElement.querySelectorAll('ex-mention')).toHaveLength(1);
+    pick(); expect(mentions).toHaveLength(1); expect(textarea.value).toBe('Review  after');
+    composer.nativeElement.querySelector('ex-mention button').click(); composer.detectChanges();
+    expect(composer.nativeElement.querySelector('ex-mention')).toBeNull();
+    expect(textarea.value).toBe('Review  after');
+    expect(composer.componentInstance.context()).toEqual([]);
   });
   it('rejects foreign scopes, malformed references and disabled/busy drops', () => {
     const { composer, textarea, data, mentions } = setup();

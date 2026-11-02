@@ -111,6 +111,26 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("session chat ownership", () => {
+  it('shows session mentions optimistically and restores their durable identities after reopening history', async () => {
+    const { store, bridge } = setup(); await settle();
+    store.state.update(value => value && ({ ...value, sessionMentions: true }));
+    const mention = { id: '12', kind: 'session' as const, label: 'Other work' };
+    store.addMention(mention); store.setDraft('Compare');
+    const reply = deferred<BackendResult<{ accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(reply.promise);
+    const sending = store.submit({ text: 'Compare', intent: 'send', context: [mention] });
+    expect(store.exchanges()[0]?.mentions).toEqual([mention]);
+    expect(store.mentions()).toEqual([]);
+    bridge.sessionChatRead.mockImplementation(async (_scope, input) => ok(page(input.sessionId, {
+      items: input.sessionId === 2 ? [item('receipt', 'user', 'Compare', { mentions: [{ sessionId: 12, title: 'Other work' }] })] : [],
+    })));
+    reply.resolve(ok({ accepted: true })); await sending; await settle();
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false); await settle();
+    expect(store.exchanges()).toEqual([]);
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 2 }, false); await settle();
+    expect(store.exchanges()[0]?.mentions).toEqual([mention]);
+    expect(store.exchanges()[0]?.prompt).toBe('Compare');
+  });
   it('retains session context on navigation, sends stable identities and restores rejected context to its original draft', async () => {
     const { store, bridge } = setup(); await settle();
     store.state.update(value => value && ({ ...value, sessionMentions: true }));

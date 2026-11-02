@@ -8,6 +8,10 @@ renderer-supplied transcript/path. Snapshots remain in durable prompt history;
 ordinary desktop message/queue projections hide the context blocks so pending
 receipts still match the original text. No new transport, unrestricted read or
 automatic retry is introduced; omitted IDs preserve existing callers.
+User transcript items may also contain bounded `mentions` (session ID/title
+only) derived from saved prompt headers. Main validates these optional fields;
+older engines omit them. Snapshot contents and export paths remain outside this
+metadata. Saved history and incremental item events use the same projection.
 
 The new desktop supports the backend incrementally as frontend features are
 implemented. Build complete vertical slices for those features rather than

@@ -2,13 +2,19 @@
   <ex-chat-scroll (activeExchange)="active.set($event)">
     <ng-content select="[chatHistory]" />
     @for (exchange of exchanges(); track exchange.id) {
-      @if (exchange.prompt || exchange.attachments?.length) {
+      @if (exchange.prompt || exchange.attachments?.length || exchange.mentions?.length) {
         <ex-message
           role="user"
           [messageId]="exchange.id"
           [isNew]="exchange.isNew || false"
           [time]="exchange.time || ''"
-          >{{ exchange.prompt }}@if (exchange.attachments?.length) {
+          >{{ exchange.prompt }}@if (exchange.mentions?.length) {
+            <div class="message-mentions" role="list" aria-label="Mentioned sessions">
+              @for (mention of exchange.mentions; track mention.kind + ':' + mention.id) {
+                <ex-mention role="listitem" [mention]="mention" />
+              }
+            </div>
+          }@if (exchange.attachments?.length) {
             <ex-attachments [files]="exchange.attachments || []" [resolve]="resolve()" (copyPath)="copyCode.emit($event)" />
           }</ex-message
         >

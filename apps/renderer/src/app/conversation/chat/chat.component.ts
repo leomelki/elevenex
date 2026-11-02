@@ -20,6 +20,7 @@ import { ChatScrollComponent } from "./chat-scroll.component";
 import { MessageComponent } from "./message.component";
 import { AttachmentsComponent } from "./attachments.component";
 import { ButtonComponent } from '../../ui';
+import { MentionComponent } from '../composer/mention.component';
 @Component({
   selector: "ex-chat",
   imports: [
@@ -30,6 +31,7 @@ import { ButtonComponent } from '../../ui';
     TurnNavComponent,
     ChatScrollComponent,
     MessageComponent,
+    MentionComponent,
   ],
   templateUrl: "./chat.component.html",
   styleUrl: "./chat.component.css",

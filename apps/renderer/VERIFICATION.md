@@ -1,5 +1,40 @@
 # Component system verification
 
+## Mentions in sent chat messages, 2026-11-02
+
+Sent user messages show read-only session chips from both optimistic prompts
+and durable transcript metadata. The backend extracts bounded IDs/titles from
+saved context headers; main validates them and strips extras. Snapshot prose,
+export paths and tool/assistant content do not become mention display metadata.
+No new endpoint or database migration is needed.
+
+Desktop lint, production build, the full desktop suite (556 Angular tests),
+backend build TypeScript checking, 39 focused backend tests and the installed
+Electron smoke passed. An earlier concurrent validation run hit renderer test
+timeouts; the isolated rerun passed all 81 files without changing timeouts.
+`artifacts/desktop-capture/run-mL3fnJ/report.json` reports `verified: true`,
+16 checkpoints and no errors/warnings. Light sent-message and dark reopened
+message PNGs were inspected. The preview scenario covers saved chips after
+session navigation in both themes, plus existing draft/keyboard/narrow/reduced
+motion cases. The backend is the isolated preview adapter; the smoke uses its
+backend fixture. No packaged-app launch or live agent send was claimed.
+
+## Session mention representation, 2026-11-02
+
+Session references now have one controlled chip representation. Drops preserve
+the draft and selection; picker selection consumes its @ query, including when
+the selected session is already attached. Removing a chip removes that context
+reference without leaving an automatically inserted @title behind. File/task
+text insertion retains its existing behavior.
+
+Desktop lint, production build and the full desktop suite passed, including
+554 Angular tests. `artifacts/desktop-capture/run-7yikiX/report.json` reports
+`verified: true`, 12 checkpoints and no errors/warnings. Both themes cover
+unchanged draft text, chip removal, consumed picker queries, navigation retention,
+focus, duplicate handling, long labels and narrow reduced motion. The light drop
+result and dark keyboard-result PNGs were inspected. This uses the isolated
+preview backend and the scenario's documented source/drop event boundaries.
+
 ## Session drag mentions, 2026-11-02
 
 `pnpm desktop:lint`, `pnpm desktop:test` (116 desktop, seven capture-tool and
