@@ -100,16 +100,23 @@ that compiler; agent-only background restoration does not compile it. Windows/Li
 verification and release-platform certification remain outstanding.
 
 The selected desktop release's `elevenex-backend-<target>.tar.gz` and checksum are
-downloaded **locally**, using the existing GitHub allowlist, redirect, checksum
-and archive validators. An application-owned archive cache coalesces concurrent
-downloads, hashing and extraction across hosts. Cancelling one host only releases
-its own lease; preparation aborts after its last owner leaves. A verified local
-archive cache avoids repeat downloads.
-The archive streams over the already authenticated SSH channel into a private
-remote staging directory. The remote independently checks its checksum, tests
-bundled Node, and atomically publishes the immutable installation. A healthy
-remote cache skips download/upload entirely. No previous version or user data
-is removed during an update. Interrupted uploads clean their own staging files;
+first downloaded on the **server**, when its PATH provides Node 22+. This optional
+installer receives the same HTTPS host/redirect allowlist, bounded download and
+safe archive validators as the client. It tries three times, each bounded to 45
+seconds, with one- and two-second backoff. It validates checksums, paths, entry
+types and expanded size before publishing anything. No download errors or signed
+release URLs are copied into diagnostics. A host without compatible Node skips
+direct downloads; bundled Node is still included in every installed runtime.
+
+After three failures (or without compatible Node), the client downloads and
+validates the archive, then streams it over the authenticated SSH channel into a
+private remote staging directory. An application-owned client archive cache
+coalesces downloads, hashing and extraction across hosts. Cancelling one host
+only releases its own lease; preparation aborts after its last owner leaves.
+The remote independently verifies transferred bytes, tests bundled Node, and
+atomically publishes the immutable installation. A healthy remote cache skips
+both paths. No previous version or user data is removed during an update.
+Interrupted downloads/uploads clean their own staging files;
 SIGKILL/power loss can leave harmless `.install-*` directories for later manual
 cleanup. Damaged published caches require moving that version aside, rather
 than risking replacement of code another client may be running.
@@ -277,7 +284,9 @@ remote Git and the selected release's platform prerequisites in a terminal.
 
 ## Verification and limits
 
-`pnpm desktop:test` includes native subprocess bootstrap/cache reuse, interrupted
+`pnpm desktop:test` includes server download retries, checksum/path rejection,
+retry cancellation, native shell direct-install/client-transfer fallback, and
+native subprocess bootstrap/cache reuse, interrupted
 upload cleanup, binary tunneling/backpressure, OpenSSH config evaluation,
 authentication/trust failure classification, stale replies, cancellation,
 concurrent-window leases/challenges, forward conflicts and restore/draft tests.

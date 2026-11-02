@@ -74,6 +74,17 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
             stage = 'discovery'; progress(stage);
             try { remoteRelease = backendRelease(options.release, fields[3] ?? '', fields[4] ?? ''); }
             catch { reject(failure('discovery', 'compatibility', 'The SSH host reported an unsupported runtime target.', 'install-prerequisites')); return; }
+          } else if (fields[2] === 'download') {
+            stage = 'download'; progress(stage);
+          } else if (fields[2] === 'download-progress') {
+            const receivedBytes = Number(fields[3]);
+            const totalBytes = fields[4] ? Number(fields[4]) : null;
+            if (Number.isSafeInteger(receivedBytes) && receivedBytes >= 0 && receivedBytes <= 1073741824
+              && (totalBytes === null || (Number.isSafeInteger(totalBytes) && totalBytes >= receivedBytes && totalBytes <= 1073741824))) {
+              progress('download', { receivedBytes, totalBytes });
+            }
+          } else if (fields[2] === 'installation') {
+            stage = 'installation'; progress(stage);
           } else if (fields[2] === 'cache' && fields[3] === 'no') {
             if (!remoteRelease) { reject(new Error('Missing remote platform')); return; }
             const release = remoteRelease;
