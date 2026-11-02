@@ -1,6 +1,98 @@
+import { Component, signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TurnStatus, WorkStep } from "../conversation.models";
 import { TurnComponent } from "./turn.component";
+
+@Component({
+  imports: [TurnComponent],
+  template: `<ex-turn [status]="status()" [steps]="steps()" [duration]="12">
+    <p>Hi. How can I help?</p>
+  </ex-turn>`,
+})
+class ReplyHostComponent {
+  readonly status = signal<TurnStatus>("done");
+  readonly steps = signal<readonly WorkStep[]>([]);
+}
+
+describe("turn work disclosure", () => {
+  it.each(["done", "failed", "stopped"] as const)(
+    "shows the answer directly without empty work for a %s turn",
+    (status) => {
+      const fixture = TestBed.createComponent(ReplyHostComponent);
+      fixture.componentInstance.status.set(status);
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      expect(host.querySelector(".work-row")).toBeNull();
+      expect(host.querySelector("ex-work-timeline")).toBeNull();
+      expect(host.querySelector(".body")?.firstElementChild).toBe(
+        host.querySelector(".answer"),
+      );
+      expect(host.querySelector(".answer")?.textContent).toContain(
+        "Hi. How can I help?",
+      );
+      if (status !== "done") {
+        expect(host.querySelector(".error")?.textContent).toContain(
+          status === "failed" ? "Retry" : "Continue",
+        );
+      }
+      fixture.destroy();
+    },
+  );
+
+  it("keeps live status and Stop until a reply without steps completes", () => {
+    const fixture = TestBed.createComponent(ReplyHostComponent);
+    fixture.componentInstance.status.set("live");
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    expect(host.querySelector(".work-row")?.textContent).toContain("Working");
+    const stop = host.querySelector<HTMLButtonElement>(".work-row button[exButton]")!;
+    const turn = host.querySelector("ex-turn")!;
+    expect(stop.textContent).toContain("Stop");
+    fixture.componentInstance.status.set("done");
+    fixture.detectChanges();
+    expect(host.querySelector("ex-turn")).toBe(turn);
+    expect(host.querySelector(".work-row")).toBeNull();
+    expect(host.querySelector(".answer")?.textContent).toContain("Hi.");
+    fixture.destroy();
+  });
+
+  it("does not count commentary and completion notes as work", () => {
+    const fixture = TestBed.createComponent(ReplyHostComponent);
+    fixture.componentInstance.steps.set([
+      { id: "say", kind: "say", text: "Checking the details." },
+      { id: "completed", kind: "note", text: "Turn completed" },
+    ]);
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    expect(host.querySelector(".work-row")).toBeNull();
+    expect(host.querySelector("ex-work-timeline")).toBeNull();
+    expect(host.querySelector(".answer")?.textContent).toContain("Hi.");
+    fixture.destroy();
+  });
+
+  it("retains the work disclosure for tool and thinking steps", () => {
+    const fixture = TestBed.createComponent(ReplyHostComponent);
+    const host: HTMLElement = fixture.nativeElement;
+    for (const step of [
+      { id: "read", kind: "read", status: "done", detail: "README.md" },
+      { id: "think", kind: "think", text: "Checking the details." },
+    ] as const) {
+      fixture.componentInstance.steps.set([step]);
+      fixture.detectChanges();
+      const work = host.querySelector<HTMLButtonElement>(".work")!;
+      expect(work.textContent).toContain("Worked 12s");
+      expect(work.getAttribute("aria-expanded")).toBe("false");
+      work.click();
+      fixture.detectChanges();
+      expect(work.getAttribute("aria-expanded")).toBe("true");
+      expect(host.querySelector("ex-work-timeline ex-tool-step")).not.toBeNull();
+      work.click();
+      fixture.detectChanges();
+    }
+    fixture.destroy();
+  });
+});
 
 interface EvidenceObservation {
   target?: Element;
@@ -72,6 +164,9 @@ describe("turn evidence", () => {
       },
     );
     const fixture = TestBed.createComponent(TurnComponent);
+    fixture.componentRef.setInput("steps", [
+      { id: "think", kind: "think", text: "Checking the styles." },
+    ]);
     fixture.componentRef.setInput("files", [
       { path: "turn.css", add: 83, del: 12 },
     ]);

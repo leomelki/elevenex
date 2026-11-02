@@ -78,7 +78,10 @@ controlled `actions`, `stoppable`, `retryable`, and `copiedCode`. A
 `contentRequested` to the bounded original-content reader. Empty prompts support
 partial history windows without inventing user text. `Turn` forwards the action
 allowlist and retry capability, including keyboard shortcuts. Unknown duration
-shows Worked/Working without an invented zero-second measurement.
+shows Worked/Working without an invented zero-second measurement. Finished turns
+with no work steps (excluding commentary and system notes) omit the work header
+and timeline so the answer appears directly; live turns retain their status and
+Stop control before the first step.
 
 `Composer.clearOnSubmit=false` lets a controlled owner clear the draft only after
 accepting an intent, avoiding a child reset overtaking failure recovery.

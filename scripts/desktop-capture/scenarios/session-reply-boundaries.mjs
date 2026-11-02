@@ -12,9 +12,14 @@ export default async function* (capture) {
     await capture.component('ex-connected-workspace-demo', c => c.fixture.chat.scenario('reply-boundaries'));
     await capture.waitFor(() => document.querySelectorAll('ex-turn').length === 2 && document.querySelectorAll('ex-turn .answer')[1]?.textContent.includes('Created the test file'));
     await finish();
-    assert.deepEqual(await capture.evaluate(() => [...document.querySelectorAll('ex-turn .work')].map(b => b.getAttribute('aria-expanded'))), ['false', 'false']);
+    assert.deepEqual(await capture.evaluate(() => [...document.querySelectorAll('ex-turn')].map(turn => turn.querySelector('.work')?.getAttribute('aria-expanded') ?? null)), [null, 'false']);
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-turn .body')?.firstElementChild === document.querySelector('ex-turn .answer')), true);
     assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-turn .answer .caret').length), 0);
     yield { name: theme + '-visible-final-replies', inspect: ['ex-turn .answer', 'ex-turn .work'] };
+    await capture.viewport(1000, 760); await capture.reducedMotion(true); await finish();
+    assert.equal(await capture.evaluate(() => !!document.querySelector('ex-turn')?.querySelector('.work-row')), false);
+    yield { name: theme + '-narrow-direct-reply', inspect: ['ex-turn', 'ex-turn .answer'] };
+    await capture.viewport(1440, 960); await capture.reducedMotion(false); await finish();
     await capture.fill('ex-composer textarea', 'Check another file'); await capture.press('Enter');
     await capture.waitFor(() => document.querySelectorAll('ex-turn').length === 3 && document.querySelectorAll('ex-turn .answer')[2]?.textContent.includes('I’ll check'));
     const turns = await capture.component('ex-session-chat', c => c.store.exchanges().map(e => ({ prompt: e.prompt, answer: e.answer, streaming: e.streaming })));

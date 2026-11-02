@@ -287,7 +287,7 @@ describe("connected chat reply rendering", () => {
       expect(answer.closest("[inert]")).toBeNull();
     });
   }
-  it("shows final text outside collapsed work even when a system record follows it", async () => {
+  it("shows final text directly when only a system record follows it", async () => {
     const { fixture, root } = setup([
       item("u", "user", "Hi"),
       item("a", "assistant", "Here is the final reply."),
@@ -295,9 +295,8 @@ describe("connected chat reply rendering", () => {
     ]);
     await settle(fixture);
     fixture.detectChanges();
-    expect(
-      root.querySelector("ex-turn .work")?.getAttribute("aria-expanded"),
-    ).toBe("false");
+    expect(root.querySelector("ex-turn .work")).toBeNull();
+    expect(root.querySelector("ex-turn ex-work-timeline")).toBeNull();
     expect(root.querySelector("ex-turn .answer")?.textContent).toContain(
       "Here is the final reply.",
     );
