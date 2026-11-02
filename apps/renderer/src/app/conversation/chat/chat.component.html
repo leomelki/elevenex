@@ -1,7 +1,7 @@
 <div class="conversation">
   <ex-chat-scroll (activeExchange)="active.set($event)">
     <ng-content select="[chatHistory]" />
-    @for (exchange of exchanges(); track exchange.id) {
+    @for (exchange of exchanges(); track exchange.renderId ?? exchange.id) {
       @if (exchange.prompt || exchange.attachments?.length || exchange.mentions?.length) {
         <ex-message
           role="user"

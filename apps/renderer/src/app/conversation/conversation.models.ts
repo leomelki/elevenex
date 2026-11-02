@@ -189,6 +189,8 @@ export interface SessionTask {
   };
 }
 export interface ChatExchange {
+  /** Stable mounted identity across prompt receipt reconciliation; id stays canonical. */
+  readonly renderId?: string;
   /** Whether this reply is currently receiving text, independently of tool work. */
   readonly streaming?: boolean;
   readonly isNew?: boolean;

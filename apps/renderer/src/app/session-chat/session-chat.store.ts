@@ -73,6 +73,7 @@ export class SessionChatStore {
   readonly checked = signal(false);
   private readonly pending = signal<PendingSubmission | null>(null);
   private readonly pendingQueue = signal<PendingSubmission | null>(null);
+  private readonly turnRenderIds = signal<ReadonlyMap<string, string>>(new Map());
   readonly running = computed(
     () =>
       this.state()?.phase === "running" ||
@@ -91,15 +92,16 @@ export class SessionChatStore {
       this.state(),
       this.fresh(),
       pending && !pending.queue ? pending : undefined,
-    ).map((exchange) =>
-      exchange.id === pending?.id
-        ? {
-            ...exchange,
-            isNew: true,
-            status: this.running() ? "live" : exchange.status,
-          }
-        : exchange,
-    );
+    ).map((exchange): ChatExchange => {
+      const renderId = this.turnRenderIds().get(exchange.id);
+      if (exchange.id === pending?.id)
+        return {
+          ...exchange,
+          isNew: true,
+          status: this.running() ? "live" : exchange.status,
+        };
+      return renderId ? { ...exchange, renderId } : exchange;
+    });
   });
   readonly empty = computed(() => !this.exchanges().length && !this.running());
 
@@ -141,6 +143,7 @@ export class SessionChatStore {
     this.uncertain.set(this.entry.uncertain());
     this.pending.set(null);
     this.pendingQueue.set(null);
+    this.turnRenderIds.set(new Map());
     this.items.set([]);
     this.state.set(null);
     this.fresh.set(new Set());
@@ -264,6 +267,16 @@ export class SessionChatStore {
           ]
         : [...next.values()];
     const items = all.slice(-320);
+    if (delivered || this.turnRenderIds().size) {
+      // Receipts can arrive with completion. Keep Angular's mounted turn key
+      // through that handoff while actions/reviews keep using the durable ID.
+      const renderIds = new Map(this.turnRenderIds());
+      if (delivered && pending) renderIds.set(delivered.id, pending.id);
+      const retained = new Set(items.map(item => item.id));
+      for (const id of renderIds.keys())
+        if (!retained.has(id)) renderIds.delete(id);
+      this.turnRenderIds.set(renderIds);
+    }
     if (!older && wasLoaded) {
       const known = new Set(previous.map((item) => item.id));
       this.fresh.set(

@@ -5,6 +5,15 @@ export default async function* (capture) {
   await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
   const select = id => capture.component('ex-machine-workspace', (c, id) => c.store.selectSession({ taskId: '11', sessionId: id }), id);
   const finish = async () => { await capture.settle(); await capture.waitFor(() => document.getAnimations().every(a => !Number.isFinite(a.effect?.getComputedTiming().endTime) || a.playState !== 'running')); };
+  const assertWorkGap = async () => {
+    const spacing = await capture.evaluate(() => {
+      const turn = [...document.querySelectorAll('ex-turn')].find(turn => turn.querySelector('.work-row'));
+      const row = turn.querySelector('.work').getBoundingClientRect();
+      const answer = turn.querySelector('.answer').getBoundingClientRect();
+      return { gap: answer.top - row.bottom, expected: parseFloat(getComputedStyle(turn).getPropertyValue('--space-2')) };
+    });
+    assert.ok(Math.abs(spacing.gap - spacing.expected) < 1, JSON.stringify(spacing));
+  };
   await select('101');
   await capture.component('ex-connected-workspace-demo', c => c.fixture.chat.deferUserReceipts(true));
   for (const theme of ['light', 'dark']) {
@@ -13,11 +22,19 @@ export default async function* (capture) {
     await capture.waitFor(() => document.querySelectorAll('ex-turn').length === 2 && document.querySelectorAll('ex-turn .answer')[1]?.textContent.includes('Created the test file'));
     await finish();
     assert.deepEqual(await capture.evaluate(() => [...document.querySelectorAll('ex-turn')].map(turn => turn.querySelector('.work')?.getAttribute('aria-expanded') ?? null)), [null, 'false']);
-    assert.equal(await capture.evaluate(() => document.querySelector('ex-turn .body')?.firstElementChild === document.querySelector('ex-turn .answer')), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-turn .work-region').getBoundingClientRect().height), 0);
     assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-turn .answer .caret').length), 0);
+    await assertWorkGap();
     yield { name: theme + '-visible-final-replies', inspect: ['ex-turn .answer', 'ex-turn .work'] };
+    await capture.click('ex-turn .work'); await finish();
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-turn .work')?.getAttribute('aria-expanded')), 'true');
+    yield { name: theme + '-expanded-work', inspect: ['ex-turn .answer', 'ex-turn ex-work-timeline'] };
+    await capture.press('Enter'); await finish();
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-turn .work')?.getAttribute('aria-expanded')), 'false');
+    await assertWorkGap();
     await capture.viewport(1000, 760); await capture.reducedMotion(true); await finish();
     assert.equal(await capture.evaluate(() => !!document.querySelector('ex-turn')?.querySelector('.work-row')), false);
+    await assertWorkGap();
     yield { name: theme + '-narrow-direct-reply', inspect: ['ex-turn', 'ex-turn .answer'] };
     await capture.viewport(1440, 960); await capture.reducedMotion(false); await finish();
     await capture.fill('ex-composer textarea', 'Check another file'); await capture.press('Enter');

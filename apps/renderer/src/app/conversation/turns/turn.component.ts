@@ -6,6 +6,7 @@ import {
   afterRenderEffect,
   computed,
   effect,
+  inject,
   input,
   output,
   signal,
@@ -116,6 +117,15 @@ export class TurnComponent implements OnChanges {
   readonly stepCount = computed(
     () => this.steps().filter((step) => !isProse(step)).length,
   );
+  protected readonly showWork = computed(
+    () => this.status() === "live" || this.stepCount() > 0,
+  );
+  // Retain the last visible heading through Fold's exit and interrupted reopen.
+  // History without work never mounts a heading or invents a Worked label.
+  protected readonly workHeader = signal<{
+    readonly label: string;
+    readonly live: boolean;
+  } | null>(null);
   readonly facts = computed(() =>
     summarizeWork(
       this.steps().filter((step) => step.status !== "running"),
@@ -127,6 +137,11 @@ export class TurnComponent implements OnChanges {
     viewChild<ElementRef<HTMLElement>>("factsRegion");
   private readonly workButton =
     viewChild<ElementRef<HTMLButtonElement>>("workButton");
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly workRegion = viewChild<unknown, ElementRef<HTMLElement>>(
+    "workRegion",
+    { read: ElementRef },
+  );
   private readonly nowRegion = viewChild<unknown, ElementRef<HTMLElement>>(
     "nowRegion",
     { read: ElementRef },
@@ -160,11 +175,24 @@ export class TurnComponent implements OnChanges {
     });
   }
   ngOnChanges(): void {
+    if (this.showWork()) {
+      this.workHeader.set({
+        label: this.workLabel(),
+        live: this.status() === "live",
+      });
+    }
     // Run before the template updates: hiding or replacing a focused live tool
     // would otherwise move focus to the document and hide it from accessibility.
     const region = this.nowRegion()?.nativeElement;
     const nextId = this.activeStep()?.id;
+    const focused = this.host.nativeElement.ownerDocument.activeElement;
     if (
+      !this.showWork() &&
+      (this.workRegion()?.nativeElement.contains(focused) ||
+        region?.contains(focused))
+    ) {
+      this.host.nativeElement.focus({ preventScroll: true });
+    } else if (
       region?.contains(region.ownerDocument.activeElement) &&
       nextId !== this.currentStepId
     )

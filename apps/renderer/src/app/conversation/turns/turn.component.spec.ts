@@ -25,9 +25,7 @@ describe("turn work disclosure", () => {
       const host: HTMLElement = fixture.nativeElement;
       expect(host.querySelector(".work-row")).toBeNull();
       expect(host.querySelector("ex-work-timeline")).toBeNull();
-      expect(host.querySelector(".body")?.firstElementChild).toBe(
-        host.querySelector(".answer"),
-      );
+      expect(host.querySelector(".work-region")?.hasAttribute("inert")).toBe(true);
       expect(host.querySelector(".answer")?.textContent).toContain(
         "Hi. How can I help?",
       );
@@ -40,7 +38,7 @@ describe("turn work disclosure", () => {
     },
   );
 
-  it("keeps live status and Stop until a reply without steps completes", () => {
+  it("retains an inert live heading through completion and an interrupted reopen", () => {
     const fixture = TestBed.createComponent(ReplyHostComponent);
     fixture.componentInstance.status.set("live");
     fixture.detectChanges();
@@ -48,13 +46,49 @@ describe("turn work disclosure", () => {
     expect(host.querySelector(".work-row")?.textContent).toContain("Working");
     const stop = host.querySelector<HTMLButtonElement>(".work-row button[exButton]")!;
     const turn = host.querySelector("ex-turn")!;
+    const answer = host.querySelector(".answer");
+    const row = host.querySelector(".work-row");
     expect(stop.textContent).toContain("Stop");
     fixture.componentInstance.status.set("done");
     fixture.detectChanges();
     expect(host.querySelector("ex-turn")).toBe(turn);
-    expect(host.querySelector(".work-row")).toBeNull();
+    expect(host.querySelector(".work-row")).toBe(row);
+    expect(row?.textContent).toContain("Working");
+    expect(row?.textContent).not.toContain("Worked");
+    expect(host.querySelector(".work-region")?.hasAttribute("inert")).toBe(true);
+    expect(stop.disabled).toBe(true);
+    expect(host.querySelector(".answer")).toBe(answer);
     expect(host.querySelector(".answer")?.textContent).toContain("Hi.");
+    fixture.componentInstance.status.set("live");
+    fixture.detectChanges();
+    expect(host.querySelectorAll(".work-row")).toHaveLength(1);
+    expect(host.querySelector(".work-row")).toBe(row);
+    expect(host.querySelector(".work-region")?.hasAttribute("inert")).toBe(false);
+    expect(stop.disabled).toBe(false);
     fixture.destroy();
+  });
+
+  it("moves focus out of closing work without stealing focus from other controls", () => {
+    const fixture = TestBed.createComponent(ReplyHostComponent);
+    const host: HTMLElement = fixture.nativeElement;
+    const other = document.createElement("button");
+    document.body.append(host, other);
+    fixture.componentInstance.status.set("live");
+    fixture.detectChanges();
+    const turn = host.querySelector<HTMLElement>("ex-turn")!;
+    host.querySelector<HTMLButtonElement>(".work-row button[exButton]")!.focus();
+    fixture.componentInstance.status.set("done");
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(turn);
+    fixture.componentInstance.status.set("live");
+    fixture.detectChanges();
+    other.focus();
+    fixture.componentInstance.status.set("done");
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(other);
+    fixture.destroy();
+    host.remove();
+    other.remove();
   });
 
   it("does not count commentary and completion notes as work", () => {

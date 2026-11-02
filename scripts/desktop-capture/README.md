@@ -470,6 +470,14 @@ URL as the connected workspace scenarios.
 work, output arriving before its user receipt, one current reply cursor, immediate
 first-send welcome removal, and narrow/reduced-motion rendering in both themes.
 
+`scenarios/session-work-completion.mjs` checks the empty live heading's fade and
+height collapse with frozen frames and real-time answer geometry. It covers
+retained DOM, no first-frame jump, interrupted reopening, composer draft/focus,
+closing-control focus handoff, both themes and narrow reduced-motion layouts.
+It also submits through the real composer and delivers the durable prompt receipt
+with completion, ensuring reconciliation preserves the animated turn.
+Run against the connected-workspace preview URL.
+
 
 `scenarios/session-presets.mjs` checks the connected blank-chat cards, one-command
 selection, Custom opening the creator with the current mix, cancellation without

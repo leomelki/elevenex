@@ -6,80 +6,98 @@
   {{ mark() }}
 </div>
 <div class="body">
-  @if (status() === "live" || stepCount()) {
-    <div class="work-row">
-      <button
-        #workButton
-        type="button"
-        class="work"
-        [attr.aria-expanded]="expanded()"
-        (click)="toggled.set(!expanded())"
-      >
-        <span class="work-label" [class.failed]="status() === 'failed'">{{
-          workLabel()
-        }}</span>
-        @if (status() === "live") {
-          <span
-            >{{ stepCount() }} {{ stepCount() === 1 ? "step" : "steps" }}</span
-          >
-        }
-        @if (facts().length) {
-          <span #factsRegion class="facts" [class.clipped]="factsClipped()">
-            @for (fact of facts(); track fact.kind; let i = $index) {
-              <span
-                class="work-item fact"
-                [class.failure]="fact.tone === 'danger'"
-                [class.ok]="fact.tone === 'ok'"
-                [style.--fact-index]="i"
-              >
-                <ex-icon [name]="fact.icon" [size]="12" />
-                {{ fact.label }}
-                @if (fact.diff; as diff) {
-                  <span class="diff">
-                    @if (diff.add) {
-                      <span class="add">+{{ diff.add }}</span>
-                    }
-                    @if (diff.del) {
-                      <span class="del">−{{ diff.del }}</span>
-                    }
-                  </span>
-                }
-              </span>
-            }
+  <ex-fold #workRegion class="work-region" [open]="showWork()">
+    @if (workHeader(); as header) {
+      <div class="work-row">
+        <button
+          #workButton
+          type="button"
+          class="work"
+          [disabled]="!showWork()"
+          [attr.aria-expanded]="expanded()"
+          (click)="toggled.set(!expanded())"
+        >
+          <span class="work-label" [class.failed]="status() === 'failed'">{{
+            header.label
+          }}</span>
+          @if (header.live) {
+            <span
+              >{{ stepCount() }} {{ stepCount() === 1 ? "step" : "steps" }}</span
+            >
+          }
+          @if (facts().length) {
+            <span #factsRegion class="facts" [class.clipped]="factsClipped()">
+              @for (fact of facts(); track fact.kind; let i = $index) {
+                <span
+                  class="work-item fact"
+                  [class.failure]="fact.tone === 'danger'"
+                  [class.ok]="fact.tone === 'ok'"
+                  [style.--fact-index]="i"
+                >
+                  <ex-icon [name]="fact.icon" [size]="12" />
+                  {{ fact.label }}
+                  @if (fact.diff; as diff) {
+                    <span class="diff">
+                      @if (diff.add) {
+                        <span class="add">+{{ diff.add }}</span>
+                      }
+                      @if (diff.del) {
+                        <span class="del">−{{ diff.del }}</span>
+                      }
+                    </span>
+                  }
+                </span>
+              }
+            </span>
+          }
+          <span class="work-item chevron" [style.--fact-index]="facts().length">
+            <ex-icon name="chevron-right" [size]="12" />
           </span>
-        }
-        <span class="work-item chevron" [style.--fact-index]="facts().length">
-          <ex-icon name="chevron-right" [size]="12" />
-        </span>
-      </button>
-      @if (status() === "live" && stoppable()) {
-        <button exButton variant="secondary" size="sm" (click)="stop.emit()">
-          <ex-icon name="stop" [size]="12" />Stop
         </button>
-      }
-    </div>
-    <ex-fold [open]="expanded()"
-      ><ex-work-timeline
-        [steps]="timelineSteps()"
-        [live]="status() === 'live'"
-        [maxVisible]="maxVisible()"
-    /></ex-fold>
+        @if (header.live && stoppable()) {
+          <button
+            exButton
+            variant="secondary"
+            size="sm"
+            [disabled]="!showWork()"
+            (click)="stop.emit()"
+          >
+            <ex-icon name="stop" [size]="12" />Stop
+          </button>
+        }
+      </div>
+    }
+  </ex-fold>
+  @if (showWork()) {
+    <ex-fold [open]="expanded() && timelineSteps().length > 0">
+      <div class="preceding-work">
+        <ex-work-timeline
+          [steps]="timelineSteps()"
+          [live]="status() === 'live'"
+          [maxVisible]="maxVisible()"
+        />
+      </div>
+    </ex-fold>
     <ex-fold #nowRegion [open]="status() === 'live' && heldStep() !== null">
       @for (step of heldStep() ? [heldStep()!] : []; track step.id) {
-        <ex-now-line [step]="step" [streaming]="activeStep()?.id === step.id" />
+        <div class="preceding-work">
+          <ex-now-line [step]="step" [streaming]="activeStep()?.id === step.id" />
+        </div>
       }
     </ex-fold>
   }
   <div class="answer" exAutoHeight>
     <div><ng-content /></div>
   </div>
-  @if (followingSteps().length && (status() === "live" || stepCount())) {
+  @if (followingSteps().length && showWork()) {
     <ex-fold [open]="expanded()">
-      <ex-work-timeline
-        [steps]="followingSteps()"
-        [live]="status() === 'live'"
-        [maxVisible]="maxVisible()"
-      />
+      <div class="following-work">
+        <ex-work-timeline
+          [steps]="followingSteps()"
+          [live]="status() === 'live'"
+          [maxVisible]="maxVisible()"
+        />
+      </div>
     </ex-fold>
   }
   @if (status() === "failed" || status() === "stopped") {

@@ -82,6 +82,16 @@ shows Worked/Working without an invented zero-second measurement. Finished turns
 with no work steps (excluding commentary and system notes) omit the work header
 and timeline so the answer appears directly; live turns retain their status and
 Stop control before the first step.
+Turn spacing lives inside each folding section so closed work and live-step
+sections leave no extra gaps between the work header and answer.
+The work heading uses a retained Fold: a reply that finishes without steps fades
+and collapses its last Working heading instead of removing it in one frame.
+Closing controls become inert immediately, focus returns to the turn only when
+it was inside the heading, and reopening reverses the same fold. Reduced motion
+settles immediately; opening existing history never animates.
+`ChatExchange.renderId` optionally preserves a turn's mounted identity while a
+temporary prompt becomes a durable receipt. The canonical `id` still drives
+navigation, copy, changes review and other intents.
 
 `Composer.clearOnSubmit=false` lets a controlled owner clear the draft only after
 accepting an intent, avoiding a child reset overtaking failure recovery.

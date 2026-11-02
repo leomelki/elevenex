@@ -42,6 +42,10 @@ Older engines omit the capability and retain their original send contract.
   pairing tools/results by tool ID and preserving commentary, reasoning,
   unknown tools, orphan results and explicit failures. Fresh prompts alone opt
   into entry motion; initial history stays still.
+- The store keeps a bounded mapping from durable prompt IDs to their temporary
+  render IDs for the current transcript window. Receipt reconciliation retains
+  the mounted turn and its completion animation; domain intents keep the durable
+  ID. Paging prunes this mapping and session/backend navigation clears it.
 - `session-chat-tools` selects semantic verbs and bounded presentation blocks for all
   normalized tool kinds. Commands separate purpose, working directory, stdout/stderr
   and reported exit/interruption facts; file tools preserve code whitespace and

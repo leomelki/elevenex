@@ -182,8 +182,8 @@ export class SessionChatFixture {
     if (state !== 'held') for (const done of [...this.waiting.values()]) done();
   }
   private commandFailure = false;
-  private delayedReceipts = false;
-  deferUserReceipts(value: boolean): void {
+  private delayedReceipts: boolean | 'completion' = false;
+  deferUserReceipts(value: boolean | 'completion'): void {
     this.delayedReceipts = value;
   }
   constructor(destroy: DestroyRef) {
@@ -227,6 +227,8 @@ export class SessionChatFixture {
       | "tools-running"
       | "tools-incomplete"
       | "tools-codex-files"
+      | "reply-only"
+      | "reply-only-running"
       | "reply-boundaries",
     id = 101,
   ): void {
@@ -241,6 +243,17 @@ export class SessionChatFixture {
       }),
     ];
     if (mode === 'tools-codex-files') session.items = sessionCodexFileItems();
+    if (mode === "reply-only" || mode === "reply-only-running") {
+      session.items = [
+        item("reply-prompt", "user", "hi"),
+        item("reply-answer", "assistant", "Hi. How can I help?"),
+      ];
+      session.state = {
+        ...session.state,
+        phase: mode === "reply-only-running" ? "running" : "idle",
+        canInterrupt: mode === "reply-only-running",
+      };
+    }
     if (mode === 'tools' || mode === 'tools-running' || mode === 'tools-incomplete') {
       session.items = sessionToolItems(mode !== 'tools').map(item =>
         mode === 'tools-incomplete' && item.id === 'tools-answer'
@@ -600,7 +613,7 @@ export class SessionChatFixture {
               : item,
           );
           index++;
-          if (delayed && index === 10) {
+          if (delayed && index === (delayed === 'completion' ? words.length : 10)) {
             const replyIndex = session.items.findIndex(
               (item) => item.id === reply.id,
             );

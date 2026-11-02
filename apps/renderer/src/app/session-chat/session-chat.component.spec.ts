@@ -143,6 +143,35 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it("keeps the live turn mounted when its durable prompt receipt arrives with completion", async () => {
+    const { fixture, root, publish, complete } = setup();
+    await settle(fixture);
+    const sending = fixture.componentInstance.store.submit({ text: "Hi", intent: "send", context: [] });
+    fixture.detectChanges();
+    publish({
+      taskId: 1, sessionId: 2, cursor: "streaming", reset: false, before: null, items: [],
+      events: [{ type: "item", item: item("answer", "assistant", "Hello") }],
+      state: { ...state, phase: "running" },
+    });
+    await fixture.componentInstance.store.refresh(); await settle(fixture);
+    const turn = root.querySelector("ex-turn");
+    const answer = root.querySelector("ex-turn .answer");
+    expect(turn?.textContent).toContain("Working");
+    publish({
+      taskId: 1, sessionId: 2, cursor: "completed", reset: false, before: null, items: [],
+      events: [{ type: "item", item: item("durable-prompt", "user", "Hi") }],
+      state,
+    });
+    await fixture.componentInstance.store.refresh(); await settle(fixture);
+    expect(root.querySelector("ex-turn")).toBe(turn);
+    expect(root.querySelector("ex-turn .answer")).toBe(answer);
+    expect(root.querySelector("ex-turn .work-region[inert]")?.textContent).toContain("Working");
+    expect(fixture.componentInstance.store.exchanges().at(-1)?.id).toBe("durable-prompt");
+    expect(root.querySelector("[data-user-message]")?.getAttribute("data-user-message")).toBe("durable-prompt");
+    complete(); await sending;
+    await fixture.componentInstance.store.refresh(); await settle(fixture);
+    expect(root.querySelector("ex-turn")).toBe(turn);
+  });
   it("opens hydrated sessions at the end and preserves reading position on refresh", async () => {
     const { fixture, root } = setup([
       item("prompt", "user", "An existing conversation"),
