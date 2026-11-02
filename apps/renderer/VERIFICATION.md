@@ -1,5 +1,23 @@
 # Component system verification
 
+## Queue receipt height, 2026-11-02
+
+Queued messages retain their mounted row when an optimistic ID becomes a saved
+ID. Receipt reconciliation no longer leaves an exiting copy in the measured
+composer; actions still use saved IDs. Identity mappings follow the bounded
+queue and clear on removal or navigation.
+
+Desktop lint, production build and the full desktop suite passed (116 desktop,
+seven capture-tool and 569 Angular tests). After adding the component identity
+regression, 30 focused queue/store tests passed.
+`artifacts/desktop-capture/run-EU7T9K/report.json` reports `verified: true` with
+16 checkpoints and no errors. Real animation frames showed no extra row, DOM
+replacement or height overshoot across three successive additions, including
+repeated text. Both themes, narrow reduced motion, typing focus and keyboard
+removal passed. Light queue and dark narrow PNGs were inspected. This exercises
+the production chat owner with a delayed preview adapter, not a live agent or
+packaged-app launch.
+
 ## Mentions in sent chat messages, 2026-11-02
 
 Sent user messages show read-only session chips from both optimistic prompts

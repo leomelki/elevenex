@@ -46,6 +46,9 @@ Older engines omit the capability and retain their original send contract.
   render IDs for the current transcript window. Receipt reconciliation retains
   the mounted turn and its completion animation; domain intents keep the durable
   ID. Paging prunes this mapping and session/backend navigation clears it.
+- Queued messages retain their optimistic render IDs through saved receipts, too.
+  The mapping is bounded by the current queue, pruned when messages leave, and
+  cleared on session/backend navigation. Queue actions use the saved ID.
 - `session-chat-tools` selects semantic verbs and bounded presentation blocks for all
   normalized tool kinds. Commands separate purpose, working directory, stdout/stderr
   and reported exit/interruption facts; file tools preserve code whitespace and

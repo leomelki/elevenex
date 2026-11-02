@@ -120,6 +120,12 @@ timeouts or screenshots of replacement HTML.
 
 ## Motion
 
+`scenarios/composer-queue-motion.mjs` checks optimistic queue receipt handoffs
+through the connected workspace preview. It samples each real animation frame
+for excess rows, changing DOM identity and height overshoot, with repeated text,
+keyboard removal, both themes and narrow reduced-motion layouts. Run it with
+`--url http://127.0.0.1:4310`.
+
 The connected workspace regression uses the production composition and its
 isolated typed backend adapter:
 

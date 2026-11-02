@@ -81,6 +81,8 @@ export interface ConversationMention {
 }
 export interface QueuedMessage {
   readonly id: string;
+  /** Retain the mounted row when an optimistic message receives its durable ID. */
+  readonly renderId?: string;
   readonly text: string;
 }
 export interface ConversationAttachment {

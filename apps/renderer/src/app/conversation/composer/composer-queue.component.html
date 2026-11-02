@@ -13,7 +13,7 @@
       queued <span>· after this turn</span>
     </header>
     <div class="items">
-      @for (item of items(); track item.id; let index = $index) {
+      @for (item of items(); track item.renderId ?? item.id; let index = $index) {
         <div
           class="item"
           cdkDrag

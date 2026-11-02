@@ -111,6 +111,50 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("session chat ownership", () => {
+  it("keeps queue render identities through receipts while actions use durable IDs", async () => {
+    const { store, bridge } = setup(); await settle();
+    const existing = { id: "existing", text: "Repeat this" };
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { state: { ...state, queue: [existing] } })));
+    await store.refresh();
+    await store.submit({ text: "Repeat this", intent: "queue", context: [] });
+    const temporaryId = store.queue().at(-1)!.id;
+    const receipt = { id: "durable", text: "Repeat this" };
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { state: { ...state, queue: [existing, receipt] } })));
+    await store.refresh();
+    expect(store.queue()).toEqual([existing, { ...receipt, renderId: temporaryId }]);
+    // Subsequent reads and position changes must retain the same mounted row.
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { state: { ...state, queue: [receipt, existing] } })));
+    await store.refresh();
+    expect(store.queue()[0]?.renderId).toBe(temporaryId);
+    await store.perform({ type: "cancel-queued", id: store.queue()[0]!.id });
+    expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", {
+      taskId: 1, sessionId: 2, action: { type: "cancel-queued", id: "durable" },
+    });
+  });
+
+  it.each(["removal", "navigation"] as const)("releases reconciled queue identities after %s", async boundary => {
+    const { store, bridge } = setup(); await settle();
+    await store.submit({ text: "Follow up", intent: "queue", context: [] });
+    const temporaryId = store.queue()[0]!.id;
+    const receipt = { id: "durable", text: "Follow up" };
+    const received = () => ok(page(2, { state: { ...state, queue: [receipt] } }));
+    bridge.sessionChatRead.mockResolvedValueOnce(received());
+    await store.refresh();
+    expect(store.queue()[0]?.renderId).toBe(temporaryId);
+    if (boundary === "removal") {
+      bridge.sessionChatRead.mockResolvedValueOnce(ok(page()));
+      await store.refresh();
+    } else {
+      store.open({ scopeId: "scope", taskId: 1, sessionId: 3 }, false);
+      await settle();
+      store.open({ scopeId: "scope", taskId: 1, sessionId: 2 }, false);
+      await settle();
+    }
+    bridge.sessionChatRead.mockResolvedValueOnce(received());
+    await store.refresh();
+    expect(store.queue()).toEqual([receipt]);
+  });
+
   it.each(["paging", "navigation"] as const)("releases reconciled turn identities after %s", async boundary => {
     const { store, bridge } = setup(); await settle();
     await store.submit({ text: "Hi", intent: "send", context: [] });

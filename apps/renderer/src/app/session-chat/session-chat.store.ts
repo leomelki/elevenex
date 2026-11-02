@@ -14,7 +14,7 @@ import type {
   SessionChatTarget,
 } from "@elevenex/shared";
 import { SessionChatClient } from "../backend/session-chat-client.service";
-import type { ChatExchange, ComposerSubmission, ConversationMention } from "../conversation";
+import type { ChatExchange, ComposerSubmission, ConversationMention, QueuedMessage } from "../conversation";
 import { SessionChatDrafts, type AttachmentDraft } from "./session-chat-drafts";
 import {
   chatExchanges,
@@ -74,15 +74,19 @@ export class SessionChatStore {
   private readonly pending = signal<PendingSubmission | null>(null);
   private readonly pendingQueue = signal<PendingSubmission | null>(null);
   private readonly turnRenderIds = signal<ReadonlyMap<string, string>>(new Map());
+  private readonly queueRenderIds = signal<ReadonlyMap<string, string>>(new Map());
   readonly running = computed(
     () =>
       this.state()?.phase === "running" ||
       this.state()?.phase === "waiting" ||
       (!!this.pending() && !this.pending()?.queue),
   );
-  readonly queue = computed(() => {
+  readonly queue = computed<readonly QueuedMessage[]>(() => {
     const pending = this.pendingQueue(),
-      queue = this.state()?.queue ?? [];
+      queue = (this.state()?.queue ?? []).map((item): QueuedMessage => {
+        const renderId = this.queueRenderIds().get(item.id);
+        return renderId ? { ...item, renderId } : item;
+      });
     return pending ? [...queue, { id: pending.id, text: pending.text }] : queue;
   });
   readonly exchanges = computed<readonly ChatExchange[]>(() => {
@@ -144,6 +148,7 @@ export class SessionChatStore {
     this.pending.set(null);
     this.pendingQueue.set(null);
     this.turnRenderIds.set(new Map());
+    this.queueRenderIds.set(new Map());
     this.items.set([]);
     this.state.set(null);
     this.fresh.set(new Set());
@@ -313,12 +318,22 @@ export class SessionChatStore {
       this.pending.set(null);
     }
     const queued = this.pendingQueue();
+    const queueReceipt = queued && page.state.queue.find(
+      item => !queued.knownQueueIds.has(item.id) && item.text === queued.text,
+    );
+    if (queueReceipt || this.queueRenderIds().size) {
+      // Keep the optimistic row mounted: an exit plus a new entry would briefly
+      // add an extra row to the composer's measured height.
+      const renderIds = new Map(this.queueRenderIds());
+      if (queueReceipt && queued) renderIds.set(queueReceipt.id, queued.id);
+      const retained = new Set(page.state.queue.map(item => item.id));
+      for (const id of renderIds.keys())
+        if (!retained.has(id)) renderIds.delete(id);
+      this.queueRenderIds.set(renderIds);
+    }
     if (
       queued &&
-      (page.state.queue.some(
-        (item) =>
-          !queued.knownQueueIds.has(item.id) && item.text === queued.text,
-      ) ||
+      (queueReceipt ||
         items.some(
           (item) =>
             item.kind === "user" &&
