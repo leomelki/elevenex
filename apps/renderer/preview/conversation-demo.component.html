@@ -29,6 +29,15 @@
   }}
 </p>
 <div class="gallery">
+  <section class="wide image-preview-demo">
+    <h2>Image viewer</h2>
+    <div class="controls">
+      <button exButton variant="ghost" (click)="imageShape.set('landscape')">Landscape</button>
+      <button exButton variant="ghost" (click)="imageShape.set('portrait')">Portrait</button>
+      <button exButton variant="ghost" (click)="imageShape.set('small')">Small image</button>
+    </div>
+    <ex-markdown source="![Workspace illustration](workspace.png)" [resolve]="resolvePreviewImage" />
+  </section>
   <section>
     <h2>Decisions · approval</h2>
     <ex-approval-card

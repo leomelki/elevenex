@@ -40,6 +40,7 @@ import {
   type TurnNavigationItem,
 } from "../src/app/conversation";
 import { ButtonComponent } from "../src/app/ui";
+import { previewChatImage } from "./session-chat-media-fixture";
 @Component({
   selector: "ex-conversation-demo",
   imports: [
@@ -77,6 +78,13 @@ import { ButtonComponent } from "../src/app/ui";
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ConversationDemoComponent {
+  readonly imageShape = signal<"landscape" | "portrait" | "small">("landscape");
+  private readonly previewImages = {
+    landscape: { kind: "image" as const, src: previewChatImage(1600, 900), w: 1600, h: 900 },
+    portrait: { kind: "image" as const, src: previewChatImage(800, 1400), w: 800, h: 1400 },
+    small: { kind: "image" as const, src: previewChatImage(240, 135), w: 240, h: 135 },
+  };
+  readonly resolvePreviewImage = () => this.previewImages[this.imageShape()];
   readonly navigationTurns = signal<readonly TurnNavigationItem[]>([]);
   readonly navigationActive = signal("navigation-500");
   navigationSize(count: number): void {

@@ -1,9 +1,12 @@
 import { TestBed } from "@angular/core/testing";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownMediaComponent } from "./markdown-media.component";
 
 const source = "data:video/webm;base64,GkXfow==";
-afterEach(() => TestBed.resetTestingModule());
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
+});
+afterEach(() => { TestBed.resetTestingModule(); vi.unstubAllGlobals(); });
 
 describe("media presentation", () => {
   it("retains a video's accessible name when its surrounding card supplies the visible caption", async () => {

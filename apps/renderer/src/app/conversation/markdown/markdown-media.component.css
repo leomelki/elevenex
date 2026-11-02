@@ -28,31 +28,6 @@ figcaption {
   color: var(--ink-muted);
   font-size: var(--text-caption-size);
 }
-dialog {
-  max-width: 92vw;
-  max-height: 92vh;
-  padding: var(--space-3);
-  background: var(--surface-raised);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-pop);
-}
-dialog::backdrop {
-  background: color-mix(in oklab, var(--canvas) 80%, transparent);
-  backdrop-filter: blur(var(--blur-glass));
-}
-dialog img {
-  max-width: 86vw;
-  max-height: 82vh;
-}
-.close {
-  position: absolute;
-  right: var(--space-3);
-  top: var(--space-3);
-  border-radius: var(--radius-full);
-  background: var(--surface-raised);
-}
 button {
   font: inherit;
   font-size: var(--text-caption-size);

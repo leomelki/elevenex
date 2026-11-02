@@ -4,6 +4,7 @@ export const ICON_PATHS: Readonly<Record<string, string>> = {
   subtask: 'M4 3v6.5a1.5 1.5 0 0 0 1.5 1.5H12M9.5 8.5L12 11l-2.5 2.5',
   'chevron-up': 'M4.5 9.5L8 6l3.5 3.5',
   plus: "M8 3v10M3 8h10",
+  minus: "M3 8h10",
   "arrow-up": "M8 13V3M4 7l4-4 4 4",
   terminal:
     "M3.5 3h9A1.5 1.5 0 0 1 14 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7A1.5 1.5 0 0 1 3.5 3zM5 6.5l2 1.5-2 1.5M8.5 10H11",

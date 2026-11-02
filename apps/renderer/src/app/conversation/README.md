@@ -226,6 +226,18 @@ outside the workspace. Failed browser decoding also has a readable status.
 Zero/unknown image dimensions omit the native width/height attributes until the
 image's intrinsic dimensions are available.
 
+Image previews retain their source and thumbnail origin through a shared
+`ModalLayer` entry/exit. The viewer grows from the thumbnail and returns focus
+after closing. Escape, the close control, the outer backdrop and empty canvas
+all dismiss it; image and toolbar interaction stay inside.
+The header shows only its title and the shared icon-only close control; the
+centered zoom readout also resets to Fit, without duplicate controls or metadata.
+Zoom controls and `+`/`−`/`0` support up to 300%, with pinch zoom and
+drag/arrow-key/two-finger panning.
+Each viewer owns its resize observer and non-passive wheel listener. Reduced
+motion uses the same immediate modal boundary without movement. The Conversation
+preview includes landscape, portrait and small-image examples.
+
 
 ### File attachments
 

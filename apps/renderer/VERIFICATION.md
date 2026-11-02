@@ -1,5 +1,23 @@
 # Component system verification
 
+## Image viewer, 2026-11-01
+
+The image viewer uses the shared modal boundary, with thumbnail-origin opening
+and closing, focus restoration, Escape and background dismissal. The retained
+preview supports bounded zoom, pointer/keyboard/trackpad panning, loading and
+unavailable states, narrow windows and reduced motion.
+Its compact title bar uses the shared icon-only close control without an Esc
+label or dimensions. The inset image well and centered, combined zoom/Fit
+control follow the existing modal surfaces and button primitives.
+
+Desktop lint, tests (116 desktop, seven capture-tool and 547 renderer tests),
+TypeScript checks and production build pass. The
+[native capture](../../artifacts/desktop-capture/image-viewer-polish-final/report.json)
+is `verified: true`: 24 checkpoints with no errors or warnings. Inspected PNGs
+include both themes, opening frames, interrupted closing, portrait and small
+images at narrow/short sizes. This is an unpackaged component-preview check.
+Reproduce with `pnpm desktop:capture scripts/desktop-capture/scenarios/image-viewer.mjs --url http://127.0.0.1:4310`.
+
 ## Compact chat return control, 2026-11-01
 
 The return control is now a 36px circular arrow button without visible text.

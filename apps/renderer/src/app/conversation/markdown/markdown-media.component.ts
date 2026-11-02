@@ -1,4 +1,3 @@
-import { A11yModule } from "@angular/cdk/a11y";
 import {
   ChangeDetectionStrategy,
   Component,
@@ -6,14 +5,13 @@ import {
   input,
   output,
   signal,
-  viewChild,
-  type ElementRef,
 } from "@angular/core";
+import { ImageViewerComponent } from "./image-viewer.component";
 import { MarkdownRecordingComponent } from "./markdown-recording.component";
 import { safeMediaSource, type MarkdownAsset } from "./markdown-parser";
 @Component({
   selector: "ex-markdown-media",
-  imports: [A11yModule, MarkdownRecordingComponent],
+  imports: [ImageViewerComponent, MarkdownRecordingComponent],
   templateUrl: "./markdown-media.component.html",
   styleUrl: "./markdown-media.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -29,19 +27,16 @@ export class MarkdownMediaComponent {
   readonly openPage = output<string>();
   readonly viewerOpen = signal(false);
   readonly failedSource = signal<string | null>(null);
-  readonly viewer = viewChild<ElementRef<HTMLDialogElement>>("viewer");
+  // Retain the source and opener through the modal's exit, even if the asset updates.
+  readonly viewer = signal<{ source: string; label: string; from: HTMLElement } | null>(null);
   readonly safeSource = computed(() => {
     const asset = this.asset();
     return asset && asset.kind !== "page"
       ? safeMediaSource(asset.src ?? "")
       : "";
   });
-  showViewer(): void {
+  showViewer(from: HTMLElement): void {
+    this.viewer.set({ source: this.safeSource(), label: this.caption() || this.path(), from });
     this.viewerOpen.set(true);
-    this.viewer()?.nativeElement.showModal();
-  }
-  closeViewer(): void {
-    this.viewer()?.nativeElement.close();
-    this.viewerOpen.set(false);
   }
 }

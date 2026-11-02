@@ -1,10 +1,11 @@
 /** Deterministic bitmap for exercising the media adapter without an agent/account. */
-export function previewChatImage(): string {
+export function previewChatImage(width = 640, height = 360): string {
   const canvas = document.createElement("canvas");
-  canvas.width = 640;
-  canvas.height = 360;
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Preview canvas unavailable.");
+  context.scale(width / 640, height / 360);
   context.fillStyle = "#e6f2f1";
   context.fillRect(0, 0, 640, 360);
   context.fillStyle = "#2d7774";

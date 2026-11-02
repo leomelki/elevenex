@@ -10,9 +10,10 @@
       } @else if (safeSource()) {
         <figure>
           <button
+            #imageTrigger
             type="button"
             class="image"
-            (click)="showViewer()"
+            (click)="showViewer(imageTrigger)"
             [attr.aria-label]="'Enlarge ' + (caption() || path())"
           >
             <img
@@ -28,25 +29,6 @@
             <figcaption>{{ caption() }}</figcaption>
           }
         </figure>
-        <dialog
-          #viewer
-          [attr.aria-label]="caption() || path()"
-          (close)="viewerOpen.set(false)"
-        >
-          <div
-            [cdkTrapFocus]="viewerOpen()"
-            [cdkTrapFocusAutoCapture]="viewerOpen()"
-          >
-            <button
-              type="button"
-              class="close"
-              (click)="closeViewer()"
-              aria-label="Close image"
-            >
-              ×</button
-            ><img [src]="safeSource()" [alt]="caption()" />
-          </div>
-        </dialog>
       } @else {
         <button type="button" (click)="openFile.emit(path())">
           Open {{ caption() || path() }}
@@ -89,4 +71,14 @@
   <button type="button" class="missing" (click)="openFile.emit(path())">
     Image unavailable: {{ caption() || path() }}
   </button>
+}
+@if (viewer(); as preview) {
+  <ex-image-viewer
+    [source]="preview.source"
+    [label]="preview.label"
+    [from]="preview.from"
+    [open]="viewerOpen()"
+    (closeRequested)="viewerOpen.set(false)"
+    (closed)="viewer.set(null)"
+  />
 }
