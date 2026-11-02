@@ -1,5 +1,17 @@
 # Component system verification
 
+## Image viewer initial focus, 2026-11-02
+
+Opening the viewer focuses its labelled dialog rather than the Close control,
+preventing an automatically opened tooltip from lingering over the image.
+The [native regression](../../artifacts/desktop-capture/image-viewer-initial-focus/report.json)
+is `verified: true` across 24 checkpoints with no errors or warnings. It checks
+no tooltip on opening, first-Tab access to Close, tooltip appearance on hover
+and keyboard focus, dismissal on pointer exit/blur, and existing viewer behavior
+in both themes. Initial light/dark PNGs were inspected. This is an unpackaged
+preview check; desktop lint/build, 116 desktop tests and seven capture-tool tests
+pass, along with the renderer suite.
+
 ## Image viewer, 2026-11-01
 
 The image viewer uses the shared modal boundary, with thumbnail-origin opening

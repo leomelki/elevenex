@@ -230,6 +230,9 @@ Image previews retain their source and thumbnail origin through a shared
 `ModalLayer` entry/exit. The viewer grows from the thumbnail and returns focus
 after closing. Escape, the close control, the outer backdrop and empty canvas
 all dismiss it; image and toolbar interaction stay inside.
+Initial focus lands on the labelled viewer, so opening it does not summon a
+control tooltip. Tab reaches Close first; deliberate control focus and hover
+retain their tooltips, which disappear on blur or pointer exit.
 The header shows only its title and the shared icon-only close control; the
 centered zoom readout also resets to Fit, without duplicate controls or metadata.
 Zoom controls and `+`/`−`/`0` support up to 300%, with pinch zoom and

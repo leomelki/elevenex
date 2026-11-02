@@ -1,5 +1,5 @@
 <ex-modal-layer [open]="open()" [from]="from()" (closeRequested)="closeRequested.emit()" (closed)="closed.emit()">
-  <section class="image-viewer" role="dialog" aria-modal="true" tabindex="-1" [attr.aria-label]="label()"
+  <section class="image-viewer" role="dialog" aria-modal="true" tabindex="-1" cdkFocusInitial [attr.aria-label]="label()"
     aria-description="Use plus and minus to zoom, arrow keys to pan, and 0 to fit. Escape closes the preview."
     (keydown)="onKey($event)">
     <header>

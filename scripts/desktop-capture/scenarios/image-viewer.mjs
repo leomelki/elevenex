@@ -36,11 +36,20 @@ export default async function* (capture) {
       yield { name: `${theme}-opening-${time}ms`, inspect: ['.image-viewer'], metadata: { animationTimeMs: time } };
     }
     await capture.motion.finish(); await capture.motion.play(); await settled();
-    assert.equal(await capture.evaluate(() => document.activeElement?.matches('.image-viewer .close button')), true);
+    assert.equal(await capture.evaluate(() => document.activeElement?.matches('.image-viewer')), true);
+    assert.equal(await capture.evaluate(() => !!document.querySelector('ex-tooltip')), false);
     assert.equal(await capture.evaluate(() => document.querySelector('.image-viewer header').textContent.trim()), 'Workspace illustration');
     yield { name: theme + '-fit', inspect: ['.image-viewer', '.picture', '.image-viewer .viewport'] };
+    await capture.hover('.image-viewer .close button');
+    await capture.waitFor(() => document.querySelector('ex-tooltip')?.textContent.includes('Close image preview'));
+    await capture.hover('.image-viewer header h2');
+    await capture.waitFor(() => !document.querySelector('ex-tooltip'));
+    await capture.press('Tab');
+    assert.equal(await capture.evaluate(() => document.activeElement?.matches('.image-viewer .close button')), true);
+    await capture.waitFor(() => document.querySelector('ex-tooltip')?.textContent.includes('Close image preview'));
     await capture.press('Tab');
     assert.equal(await capture.evaluate(() => document.activeElement?.matches('.image-viewer .picture')), true);
+    await capture.waitFor(() => !document.querySelector('ex-tooltip'));
     await capture.press('Enter'); await settled();
     assert.equal(await capture.evaluate(() => document.querySelector('.zoom-value').textContent), '100%');
     for (let index = 0; index < 8; index++) await capture.press('+');
