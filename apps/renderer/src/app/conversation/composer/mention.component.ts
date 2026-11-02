@@ -9,7 +9,7 @@ import type { ConversationMention } from "../conversation.models";
 @Component({
   selector: "ex-mention",
   imports: [IconComponent, StatusGlyphComponent],
-  template: `<span [attr.data-kind]="mention().kind">
+  template: `<span class="mention" [attr.data-kind]="mention().kind">
     @if (mention().kind === "session" && mention().status) {
       <ex-status-glyph [status]="mention().status || 'done'" [size]="12" />
     } @else {
@@ -18,7 +18,7 @@ import type { ConversationMention } from "../conversation.models";
         [size]="12"
       />
     }
-    {{ mention().label }}
+    <span class="label" [title]="mention().label">{{ mention().label }}</span>
     @if (removable()) {
       <button
         type="button"
@@ -34,7 +34,7 @@ import type { ConversationMention } from "../conversation.models";
       display: inline-flex;
       max-width: 100%;
     }
-    span {
+    .mention {
       display: inline-flex;
       align-items: center;
       gap: var(--space-1);
@@ -47,13 +47,15 @@ import type { ConversationMention } from "../conversation.models";
       font-size: var(--text-caption-size);
       font-weight: 500;
     }
-    span[data-kind="task"],
-    span[data-kind="file"] {
+    .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    ex-icon, ex-status-glyph, button { flex: none; }
+    .mention[data-kind="task"],
+    .mention[data-kind="file"] {
       background: var(--surface-sunken);
       color: var(--ink);
       box-shadow: inset 0 0 0 1px var(--line);
     }
-    span[data-kind="file"] {
+    .mention[data-kind="file"] {
       font-family: var(--font-mono);
     }
     button {

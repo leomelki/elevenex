@@ -9,6 +9,8 @@ import type { AgentRuntimeProviderFeatures } from '../agent-runtime/agent-runtim
 import type { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import type { SessionsService } from '../sessions/sessions.service.js';
 import { record } from './desktop-chat-projection.js';
+import type { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
+import { appendChatMentions } from './desktop-chat-mentions.js';
 
 /** Validate durable requests and delegate to the selected harness without replay. */
 export async function executeChatAction(
@@ -17,6 +19,7 @@ export async function executeChatAction(
   sessionId: number,
   session: Awaited<ReturnType<SessionsService['findOne']>>,
   action: Record<string, unknown>,
+  exports?: ConversationExportService,
 ) {
   const provider = registry.getProvider(session.activeAgentProvider);
   if (action.type === 'stop') {
@@ -66,13 +69,14 @@ export async function executeChatAction(
     case 'send': {
       if (typeof action.queue !== 'boolean')
         throw new BadRequestException('Invalid queue option.');
-      if (session.status === 'stopped')
-        await sessions.reactivateRuntime(sessionId);
-      const prompt = text(action.text, 64000);
+      if (action.sessionIds !== undefined && !exports) throw new BadRequestException('Session mentions are unavailable.');
+      const prompt = exports
+        ? await appendChatMentions(text(action.text, 64000), action.sessionIds, exports)
+        : text(action.text, 64000);
       const refs = chatMedia({
         id: 'send',
         kind: 'user',
-        content: prompt,
+        content: text(action.text, 64000),
         timestamp: '',
       }).media.filter(
         (media) =>
@@ -103,6 +107,7 @@ export async function executeChatAction(
           throw new BadRequestException('Unsupported image input.');
         images.push({ mediaType, data });
       }
+      if (session.status === 'stopped') await sessions.reactivateRuntime(sessionId);
       await provider.submitPrompt(
         sessionId,
         prompt,

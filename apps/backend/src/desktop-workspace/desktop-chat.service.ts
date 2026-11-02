@@ -4,6 +4,7 @@ import { SettingsService } from '../settings/settings.service.js';
 import { chatPresets, executePresetAction } from './desktop-chat-presets.js';
 import { prepareTurnChanges, preparedChangesPage, type PreparedTurnChanges } from './desktop-chat-changes.js';
 import { executeChatAction } from './desktop-chat-actions.js';
+import { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
 import {
   BadRequestException,
   ConflictException,
@@ -67,6 +68,7 @@ export class DesktopChatService implements OnModuleDestroy {
     private readonly sessions: SessionsService,
     private readonly registry: AgentRuntimeRegistryService,
     private readonly settings: SettingsService,
+    private readonly conversationExports: ConversationExportService,
   ) {}
 
   onModuleDestroy(): void {
@@ -96,6 +98,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const provider = this.registry.getProvider(session.activeAgentProvider);
     return {
       attachments: true,
+      sessionMentions: true,
       presetCatalogs: true,
       presets: chatPresets(this.settings, this.registry),
       presetDefault: this.settings.getAgentPresetDefault(),
@@ -362,6 +365,7 @@ export class DesktopChatService implements OnModuleDestroy {
             sessionId,
             session,
             action,
+            this.conversationExports,
           );
       if ([
         'provider', 'model', 'reasoning', 'fast', 'preset', 'save-preset',

@@ -111,6 +111,30 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("session chat ownership", () => {
+  it('retains session context on navigation, sends stable identities and restores rejected context to its original draft', async () => {
+    const { store, bridge } = setup(); await settle();
+    store.state.update(value => value && ({ ...value, sessionMentions: true }));
+    const mention = { id: '12', kind: 'session' as const, label: 'Same title' };
+    store.addMention(mention); store.addMention(mention);
+    store.setDraft('Review @Same title');
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false); await settle();
+    expect(store.mentions()).toEqual([]);
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 2 }, false); await settle();
+    store.state.update(value => value && ({ ...value, sessionMentions: true }));
+    expect(store.mentions()).toEqual([mention]);
+    const reply = deferred<BackendResult<{ accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(reply.promise);
+    const sending = store.submit({ text: store.draft(), intent: 'send', context: [mention] });
+    expect(store.mentions()).toEqual([]);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledWith('scope', expect.objectContaining({ action: expect.objectContaining({ type: 'send', sessionIds: [12], text: 'Review @Same title' }) }));
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false); await settle();
+    reply.resolve({ ok: false, error: { code: 'http', message: 'Session was removed' } }); await sending;
+    expect(store.mentions()).toEqual([]);
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 2 }, false); await settle();
+    expect(store.mentions()).toEqual([mention]);
+    expect(store.draft()).toBe('Review @Same title');
+    store.removeMention('12'); expect(store.mentions()).toEqual([]);
+  });
   it("shows files-only prompts immediately and restores attachments to their original session after a rejected send", async () => {
     const { store, bridge } = setup();
     await settle();

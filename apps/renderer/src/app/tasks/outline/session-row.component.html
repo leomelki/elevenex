@@ -2,6 +2,11 @@
 <button
   class="select"
   type="button"
+  [draggable]="!confirming()"
+  [class.dragging]="dragging()"
+  aria-description="Drag into a message to mention this session. You can also use the message box’s @ picker."
+  (dragstart)="startDrag($event)"
+  (dragend)="dragging.set(false)"
   [exTooltip]="session().title"
   [class.attention]="session().status === 'attention' && !selected()"
   [class.failed]="session().status === 'failed' && !selected()"

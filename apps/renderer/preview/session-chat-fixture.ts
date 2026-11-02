@@ -27,6 +27,7 @@ const savedPresets: readonly SessionChatPreset[] = [
 const stamp = "2026-10-28T10:20:00.000Z";
 export const previewChatState = (): SessionChatState => ({
   attachments: true,
+  sessionMentions: true,
   presets: savedPresets,
   presetCatalogs: true,
   provider: "codex",

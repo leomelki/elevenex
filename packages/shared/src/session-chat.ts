@@ -61,6 +61,8 @@ export interface SessionChatPlanUsage {
   readonly updatedAt: string;
 }
 export interface SessionChatState {
+  /** Explicit send can resolve at most eight session identities into context. */
+  readonly sessionMentions?: boolean;
   readonly attachments?: boolean;
   /** Bounded saved starting configurations; omitted by older engines. */
   readonly presets?: readonly SessionChatPreset[];
@@ -185,7 +187,7 @@ export type SessionChatAction =
       readonly provider: string;
       readonly expectedProvider: string;
     }
-  | { readonly type: "send"; readonly text: string; readonly queue: boolean }
+  | { readonly type: "send"; readonly text: string; readonly queue: boolean; readonly sessionIds?: readonly number[] }
   | { readonly type: "stop" }
   | { readonly type: "cancel-queued" | "steer-queued"; readonly id: string }
   | { readonly type: "resume-queue" }

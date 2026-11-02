@@ -1,4 +1,5 @@
 import { OverlayModule } from "@angular/cdk/overlay";
+import { SESSION_DRAG_TYPE, readSessionDrag } from '../../tasks';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -8,6 +9,7 @@ import {
   signal,
   viewChild,
   type ElementRef,
+  type OnChanges,
 } from "@angular/core";
 import {
   AutoHeightDirective,
@@ -59,12 +61,14 @@ import { ToolsMenuComponent } from "./tools-menu.component";
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     "(dragover)": "dragOver($event)",
+    "(dragenter)": "dragOver($event)",
+    "(document:dragend)": "dropping.set(null)",
     "(dragleave)": "dragLeave($event)",
     "(drop)": "drop($event)",
     "(paste)": "paste($event)",
   },
 })
-export class ComposerComponent {
+export class ComposerComponent implements OnChanges {
   readonly draft = model("");
   readonly mode = input<ConversationMode>("code");
   readonly agent = input<AgentConfig>();
@@ -106,6 +110,8 @@ export class ComposerComponent {
   }
   readonly showDictation = input(true);
   readonly mentionsEnabled = input(true);
+  /** Drops must belong to the same connected backend generation. */
+  readonly sessionMentionScope = input<string>();
   readonly queueEditable = input(true);
   readonly queueReorderable = input(true);
   readonly permission = input<string>("ask");
@@ -121,7 +127,8 @@ export class ComposerComponent {
   readonly stoppable = input(true);
   readonly recording = input<RecordingState | false>(false);
   readonly placeholder = input("Ask anything, or @ to mention");
-  readonly dropping = signal(false);
+  readonly dropping = signal<'session' | 'files' | null>(null);
+  readonly dropAnnouncement = signal('');
   readonly mentionQuery = signal<string | null>(null);
   readonly submitted = output<ComposerSubmission>();
   readonly stop = output<void>();
@@ -148,6 +155,10 @@ export class ComposerComponent {
   readonly textarea = viewChild<ElementRef<HTMLTextAreaElement>>("textarea");
   readonly agentPicker = viewChild(AgentPickerComponent);
   readonly mentions = viewChild(MentionMenuComponent);
+  ngOnChanges(): void {
+    if (this.disabled() || this.sending() || !this.mentionsEnabled()) this.mentionQuery.set(null);
+    if (this.disabled() || this.sending() || (!this.mentionsEnabled() && this.dropping() === 'session')) this.dropping.set(null);
+  }
   update(event: Event): void {
     if (!(event.target instanceof HTMLTextAreaElement)) return;
     this.draft.set(event.target.value);
@@ -174,6 +185,16 @@ export class ComposerComponent {
     this.textarea()?.nativeElement.focus({ preventScroll: true });
   }
   insertMention(mention: ConversationMention): void {
+    if (!this.mentionsEnabled() || this.disabled() || this.sending()) return;
+    if (mention.kind === 'session' && this.context().some(item => item.kind === mention.kind && item.id === mention.id)) {
+      this.dropAnnouncement.set(`${mention.label} is already mentioned.`);
+      this.mentionQuery.set(null);
+      this.textarea()?.nativeElement.focus({ preventScroll: true });
+      return;
+    }
+    if (mention.kind === 'session' && this.context().filter(item => item.kind === 'session').length >= 8) {
+      this.dropAnnouncement.set('You can mention up to 8 sessions in a message.'); return;
+    }
     const element = this.textarea()?.nativeElement;
     if (element) {
       const before = this.draft().slice(0, element.selectionStart);
@@ -191,6 +212,7 @@ export class ComposerComponent {
       element.setSelectionRange(inserted.length, inserted.length);
     }
     this.mentionInserted.emit(mention);
+    this.dropAnnouncement.set(`Added ${mention.label} to message context.`);
     this.mentionQuery.set(null);
   }
   openMentions(): void {
@@ -266,6 +288,14 @@ export class ComposerComponent {
     }
   }
   dragOver(event: DragEvent): void {
+    if (event.defaultPrevented) return;
+    if (this.mentionsEnabled() && event.dataTransfer?.types.includes(SESSION_DRAG_TYPE)) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = this.disabled() || this.sending() ? 'none' : 'copy';
+      this.dropping.set(this.disabled() || this.sending() ? null : 'session');
+      return;
+    }
     if (
       (!this.showTools() && !this.attachmentsEnabled()) ||
       !event.dataTransfer?.types.includes("Files") ||
@@ -274,7 +304,8 @@ export class ComposerComponent {
     )
       return;
     event.preventDefault();
-    this.dropping.set(true);
+    event.stopPropagation();
+    this.dropping.set('files');
     event.dataTransfer.dropEffect = "copy";
   }
   dragLeave(event: DragEvent): void {
@@ -284,10 +315,21 @@ export class ComposerComponent {
       event.currentTarget.contains(event.relatedTarget)
     )
       return;
-    this.dropping.set(false);
+    this.dropping.set(null);
   }
   drop(event: DragEvent): void {
-    this.dropping.set(false);
+    this.dropping.set(null);
+    if (event.defaultPrevented) return;
+    if (event.dataTransfer?.types.includes(SESSION_DRAG_TYPE)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!this.mentionsEnabled() || this.disabled() || this.sending()) return;
+      const reference = readSessionDrag(event.dataTransfer, this.sessionMentionScope());
+      if (!reference) { this.dropAnnouncement.set('This session cannot be mentioned here.'); return; }
+      this.insertMention(this.mentionItems().find(item => item.kind === 'session' && item.id === reference.id)
+        ?? { id: reference.id, kind: 'session', label: reference.title });
+      return;
+    }
     if (
       (!this.showTools() && !this.attachmentsEnabled()) ||
       !event.dataTransfer?.files.length ||
@@ -296,6 +338,7 @@ export class ComposerComponent {
     )
       return;
     event.preventDefault();
+    event.stopPropagation();
     const entries = Array.from(event.dataTransfer.items ?? []);
     if (entries.some((item) => item.webkitGetAsEntry?.()?.isDirectory)) return;
     this.filesAttached.emit(Array.from(event.dataTransfer.files));

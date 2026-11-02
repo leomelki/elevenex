@@ -1,4 +1,5 @@
 export * from './task.models';
+export { SESSION_DRAG_TYPE, readSessionDrag, writeSessionDrag } from './session-drag';
 export * from './projects/project-mark.component';
 export * from './projects/project-rail.component';
 export * from './projects/status-summary.component';

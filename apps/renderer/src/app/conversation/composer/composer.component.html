@@ -29,9 +29,12 @@
           }
         </div>
       }
-      @if (dropping()) {
-        <div class="drop-label">Drop files to attach</div>
-      }
+      <div class="drop-label" [class.visible]="!!dropping()" aria-hidden="true">
+        <span class="drop-icon"><ex-icon [name]="dropping() === 'session' ? 'at' : 'attach'" [size]="20" /></span>
+        <strong>{{ dropping() === 'session' ? 'Drop to mention session' : 'Drop files to attach' }}</strong>
+        <span>{{ dropping() === 'session' ? 'Add this conversation as context' : 'Add files to your message' }}</span>
+      </div>
+      <span class="drop-announcement" role="status">{{ dropAnnouncement() }}</span>
       <textarea
         #textarea
         aria-label="Message the agent"

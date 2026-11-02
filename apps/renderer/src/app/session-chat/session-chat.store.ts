@@ -14,7 +14,7 @@ import type {
   SessionChatTarget,
 } from "@elevenex/shared";
 import { SessionChatClient } from "../backend/session-chat-client.service";
-import type { ChatExchange, ComposerSubmission } from "../conversation";
+import type { ChatExchange, ComposerSubmission, ConversationMention } from "../conversation";
 import { SessionChatDrafts, type AttachmentDraft } from "./session-chat-drafts";
 import {
   chatExchanges,
@@ -36,7 +36,7 @@ export class SessionChatStore {
   private readonly client = inject(SessionChatClient);
   private readonly drafts = inject(SessionChatDrafts);
   private selection: ChatSelection | null = null;
-  private entry = { text: signal(""), uncertain: signal(""), files: signal<readonly AttachmentDraft[]>([]) };
+  private entry = { text: signal(""), uncertain: signal(""), files: signal<readonly AttachmentDraft[]>([]), mentions: signal<readonly ConversationMention[]>([]) };
   private epoch = 0;
   private readEpoch = 0;
   private cursor: string | undefined;
@@ -57,6 +57,18 @@ export class SessionChatStore {
   readonly historical = signal(false);
   readonly before = signal<string | null>(null);
   readonly draft = signal("");
+  readonly mentions = signal<readonly ConversationMention[]>([]);
+  addMention(mention: ConversationMention): void {
+    if (!this.state()?.sessionMentions || mention.kind !== 'session' || this.readOnly() || this.historical() || this.busy() || this.uncertain()) return;
+    const id = Number(mention.id);
+    if (!Number.isSafeInteger(id) || id <= 0 || this.mentions().length >= 8 || this.mentions().some(item => item.id === mention.id)) return;
+    this.mentions.update(items => [...items, mention]);
+    this.entry.mentions.set(this.mentions());
+  }
+  removeMention(id: string): void {
+    this.mentions.update(items => items.filter(item => item.id !== id));
+    this.entry.mentions.set(this.mentions());
+  }
   readonly uncertain = signal("");
   readonly checked = signal(false);
   private readonly pending = signal<PendingSubmission | null>(null);
@@ -125,6 +137,7 @@ export class SessionChatStore {
     this.entry = this.drafts.entry(selection.scopeId, selection.sessionId);
     this.readOnly.set(readOnly);
     this.draft.set(this.entry.text());
+    this.mentions.set(this.entry.mentions());
     this.uncertain.set(this.entry.uncertain());
     this.pending.set(null);
     this.pendingQueue.set(null);
@@ -321,6 +334,13 @@ export class SessionChatStore {
       return;
     }
     const files = this.entry.files();
+    const mentions = this.mentions();
+    if (mentions.length > 8) {
+      this.error.set('Keep up to 8 session mentions before sending.'); return;
+    }
+    if (mentions.length && !this.state()?.sessionMentions) {
+      this.error.set('This backend does not support session mentions. Remove the mentions before sending.'); return;
+    }
     const text = [submission.text.trim(), ...files.map(file => `[${file.name.replace(/[[\]\r\n]/g, '_')}](<${file.path}>)`)].filter(Boolean).join('\n\n');
     if (text.length > 64000) { this.error.set('Message and attachments exceed 64,000 characters.'); return; }
     const pending = {
@@ -340,12 +360,16 @@ export class SessionChatStore {
     pendingChannel.set(pending);
     this.setDraft("");
     entry.files.set([]);
+    entry.mentions.set([]);
+    this.mentions.set([]);
     const success = await this.perform({
       type: "send",
       text,
       queue: pending.queue,
+      ...(mentions.length ? { sessionIds: mentions.map(mention => Number(mention.id)) } : {}),
     });
     if (!success) entry.files.update(current => [...files, ...current]);
+    if (!success) entry.mentions.update(current => [...mentions, ...current.filter(item => !mentions.some(mention => mention.id === item.id))]);
     if (epoch !== this.epoch || this.disposed) {
       if (!success)
         entry.text.set(
@@ -356,6 +380,7 @@ export class SessionChatStore {
       return;
     }
     if (!success && pendingChannel()?.id === pending.id) {
+      this.mentions.set(entry.mentions());
       pendingChannel.set(null);
       this.setDraft(
         this.draft()

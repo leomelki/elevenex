@@ -25,6 +25,8 @@
 .row:hover .select {
   background: var(--surface-sunken);
 }
+.select.dragging { opacity: 0.5; }
+.select[draggable="true"]:active { cursor: grabbing; }
 .select[aria-current="true"] {
   background: var(--surface-raised);
   box-shadow: var(--shadow-raised);

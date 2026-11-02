@@ -225,6 +225,7 @@ function state(value: unknown): SessionChatState {
   return {
     provider: chatText(raw["provider"]),
     ...(raw["attachments"] === undefined ? {} : { attachments: bool(raw["attachments"]) }),
+    ...(raw["sessionMentions"] === undefined ? {} : { sessionMentions: bool(raw["sessionMentions"]) }),
     ...(raw["presetCatalogs"] === undefined
       ? {}
       : { presetCatalogs: bool(raw["presetCatalogs"]) }),
@@ -447,7 +448,12 @@ export function parseChatAction(value: unknown): SessionChatAction {
     case "send": {
       const text = chatText(raw["text"], 64000);
       if (!text.trim()) throw invalid();
-      return { type, text, queue: bool(raw["queue"]) };
+      const sessionIds = raw['sessionIds'] === undefined ? undefined : array(raw['sessionIds'], 8, value => {
+        if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) throw invalid();
+        return value;
+      });
+      if (sessionIds && new Set(sessionIds).size !== sessionIds.length) throw invalid();
+      return { type, text, queue: bool(raw["queue"]), ...(sessionIds ? { sessionIds } : {}) };
     }
     case "stop":
     case "resume-queue":

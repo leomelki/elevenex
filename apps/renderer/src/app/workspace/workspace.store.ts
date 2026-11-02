@@ -3,6 +3,7 @@ import { DOCUMENT } from '@angular/common';
 import type { BackendResult, EnvironmentContext, EnvironmentSelection, WorkspacePage, WorkspaceViewState, WorkspaceCreateProject, WorkspaceBranch, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRepository, WorkspaceSession, WorkspaceTask, WorkspaceTaskRecovery } from '@elevenex/shared';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import type { Machine } from '../machines';
+import type { ConversationMention } from '../conversation';
 import { projectFace, type CreateProjectIntent, type FolderProvider, type ProjectNameProvider, type ProjectAppearance } from '../projects';
 import type { BranchInfo, CreatedTask, PlannedTask, Project, StatusCounts, SummaryStatus, TaskOutline, TaskSessionDisclosure, TaskRepository, TaskStage } from '../tasks';
 import { workspaceSessionStatus, workspaceTaskStage, type WorkspaceSelection } from './workspace.models';
@@ -96,7 +97,7 @@ export class WorkspaceStore {
   readonly tasks = computed<readonly TaskOutline[]>(() => this.taskRecords().map(task => ({
     id: String(task.id), title: task.name, stage: workspaceTaskStage(task),
     ...(this.sessionArchiveHistoryAvailable() && !this.closed() && task.state === 'ready' && this.hasArchivedSessions(task.id) ? { archive: {
-      sessions: (this.archives.pages().get(task.id)?.sessions ?? []).map(session => ({ id: String(session.id), title: session.name, status: workspaceSessionStatus(session) })),
+      sessions: (this.archives.pages().get(task.id)?.sessions ?? []).map(session => ({ id: String(session.id), mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session) })),
       loaded: this.archives.pages().get(task.id)?.loaded ?? false,
       loading: this.archives.pages().get(task.id)?.loading ?? false,
       error: this.archives.pages().get(task.id)?.error ?? null,
@@ -109,8 +110,13 @@ export class WorkspaceStore {
     project: this.projects().find(project => project.id === String(task.projectId)) ?? (task.projectName ? projectFace({ name: task.projectName }) : undefined),
     // Unknown cardinality from older runtimes keeps their existing repository hint.
     ...(task.repoName && task.projectRepositoryCount !== 1 ? { repo: task.repoName } : {}),
-    sessions: (this.sessionRecords().get(task.id) ?? []).map(session => ({ id: String(session.id), title: session.name, status: workspaceSessionStatus(session) })),
+    sessions: (this.sessionRecords().get(task.id) ?? []).map(session => ({ id: String(session.id), mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session) })),
   })));
+  /** Only loaded navigation windows participate; mentioning never scans the repository. */
+  readonly sessionMentionItems = computed<readonly ConversationMention[]>(() => this.tasks()
+    .flatMap(task => [...task.sessions, ...(task.archive?.sessions ?? [])].map(session => ({
+      id: session.id, kind: 'session' as const, label: session.title, status: session.status, meta: task.title,
+    }))).slice(0, 50));
   readonly counts = computed<StatusCounts>(() => {
     const counts = { attention: 0, running: 0, review: 0, done: 0 };
     for (const task of this.tasks()) {

@@ -1,6 +1,6 @@
 import { Injectable, signal } from "@angular/core";
 
-import type { ConversationAttachment } from '../conversation';
+import type { ConversationAttachment, ConversationMention } from '../conversation';
 export interface AttachmentDraft extends ConversationAttachment { readonly file: File }
 
 /** Window/workspace-owned drafts. Navigation does not discard unfinished or uncertain sends. */
@@ -11,6 +11,7 @@ export class SessionChatDrafts {
     number,
     {
       readonly files: ReturnType<typeof signal<readonly AttachmentDraft[]>>;
+      readonly mentions: ReturnType<typeof signal<readonly ConversationMention[]>>;
       readonly text: ReturnType<typeof signal<string>>;
       readonly uncertain: ReturnType<typeof signal<string>>;
     }
@@ -26,7 +27,7 @@ export class SessionChatDrafts {
       const evict = [...this.entries].find(([, draft]) => !draft.uncertain());
       if (evict) this.entries.delete(evict[0]);
     }
-    const entry = { text: signal(""), uncertain: signal(""), files: signal<readonly AttachmentDraft[]>([]) };
+    const entry = { text: signal(""), uncertain: signal(""), files: signal<readonly AttachmentDraft[]>([]), mentions: signal<readonly ConversationMention[]>([]) };
     this.entries.set(session, entry);
     return entry;
   }

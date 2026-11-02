@@ -532,6 +532,9 @@ test('conversation cancellation is scoped to its owning window and request, and 
 test('conversation replies validate resource identity, bounded fields and supported action unions', () => {
   const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
   assert.deepEqual(parseChatAction({ type: 'send', text: 'hello', queue: true, private: 'drop' }), { type: 'send', text: 'hello', queue: true });
+  assert.deepEqual(parseChatAction({ type: 'send', text: 'compare', queue: false, sessionIds: [12, 13] }), { type: 'send', text: 'compare', queue: false, sessionIds: [12, 13] });
+  for (const sessionIds of [[0], [-1], [1.2], ['12'], [12, 12], Array.from({ length: 9 }, (_, i) => i + 1)])
+    assert.throws(() => parseChatAction({ type: 'send', text: 'compare', queue: false, sessionIds }));
   for (const invalid of [{ type: 'shell', command: 'anything' }, { type: 'send', text: '', queue: false }, { type: 'send', text: 'x'.repeat(64001), queue: false }, { type: 'permission', id: 'id', decision: 'yes' }, { type: 'answer', id: 'id', answers: { q: ['x'.repeat(4001)] } }]) assert.throws(() => parseChatAction(invalid));
   assert.throws(() => parseChatPage({ taskId: 3, sessionId: 2 }, 1, 2));
   assert.throws(() => parseChatPage({ taskId: 1, sessionId: 2, cursor: 'x'.repeat(201) }, 1, 2));

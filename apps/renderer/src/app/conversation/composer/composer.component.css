@@ -98,14 +98,17 @@ textarea::placeholder {
   flex: 1;
   color: var(--ink-muted);
 }
-.dropping {
+.composer.dropping {
   box-shadow: var(--focus-ring);
 }
 .drop-label {
   position: absolute;
   inset: var(--space-2);
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-1);
   z-index: 2;
   border-radius: var(--radius-md);
   background: var(--accent-soft);
@@ -113,7 +116,17 @@ textarea::placeholder {
   font-size: var(--text-body-size);
   font-weight: 600;
   pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px) scale(0.98);
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-slow) var(--ease-glide), visibility var(--dur-fast);
 }
+.drop-label.visible { opacity: 1; visibility: visible; transform: none; }
+.drop-label > span:last-child { font-size: var(--text-caption-size); font-weight: var(--text-caption-weight); }
+.drop-icon { display: grid; place-items: center; }
+.drop-announcement { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.context ex-mention { animation: mention-arrive var(--dur-slow) var(--ease-glide); }
+@keyframes mention-arrive { from { opacity: 0; transform: translateY(4px) scale(0.96); } to { opacity: 1; transform: none; } }
 .disabled textarea {
   opacity: 0.45;
 }
@@ -121,6 +134,8 @@ textarea::placeholder {
   .composer {
     transition: none;
   }
+  .drop-label { transition: none; transform: none; }
+  .context ex-mention { animation: none; }
 }
 @container composer (max-width: 340px) {
   .send span {

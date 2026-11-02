@@ -9,6 +9,7 @@ import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-regi
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { DesktopChatService } from './desktop-chat.service.js';
+import { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
 import { chatState, display } from './desktop-chat-projection.js';
 
 const item = (id: string, text = id): AgentTranscriptItem => ({
@@ -84,6 +85,7 @@ describe('selected session chat', () => {
     module = await Test.createTestingModule({
       providers: [
         DesktopChatService,
+        { provide: ConversationExportService, useValue: { buildMention: jest.fn() } },
         {
           provide: SettingsService,
           useValue: { rememberAgentConfig, getAgentModelPresets: () => [], getAgentPresetDefault: () => ({ id: null, provider: 'codex', defaultIds: [], revision: 'a'.repeat(64) }) },
@@ -150,6 +152,19 @@ describe('selected session chat', () => {
     rememberAgentConfig.mockClear();
     await expect(chat.command(1, 2, { type: 'reasoning', effort: 'invalid' })).rejects.toThrow('Unsupported thinking');
     expect(rememberAgentConfig).not.toHaveBeenCalled();
+  });
+
+  it('resolves session context for queued sends and never submits a prompt if a reference cannot be resolved', async () => {
+    const buildMention = jest.spyOn(module.get(ConversationExportService), 'buildMention');
+    buildMention.mockResolvedValue({ sessionId: 12, title: 'Other work', provider: 'codex', providerSessionId: null,
+      branch: 'main', status: 'done', transcriptExportPath: '/tmp/export.md', contextMarkdown: 'Context from other work', omittedTurns: 0, generatedAt: '' });
+    await chat.command(1, 2, { type: 'send', text: 'Compare @Other work', queue: true, sessionIds: [12] });
+    expect(runtime.submitPrompt).toHaveBeenCalledWith(2, expect.stringContaining('Context from other work'), undefined, undefined,
+      { human: true, queue: true, waitForCompletion: false });
+    runtime.submitPrompt.mockClear();
+    buildMention.mockRejectedValueOnce(new Error('Session was removed'));
+    await expect(chat.command(1, 2, { type: 'send', text: 'Compare', queue: false, sessionIds: [12] })).rejects.toThrow('Session was removed');
+    expect(runtime.submitPrompt).not.toHaveBeenCalled();
   });
 
   it('does not report an accepted prompt as failed if remembering the fallback fails', async () => {

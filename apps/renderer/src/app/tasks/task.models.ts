@@ -88,6 +88,8 @@ export interface TaskSessionDisclosure {
 }
 export interface TaskSession {
   readonly id: string;
+  /** Backend generation owning a connected session reference. */
+  readonly mentionScope?: string;
   readonly title: string;
   readonly status: SessionStatus;
   readonly kind?: 'main' | 'fork' | 'side' | 'auto';

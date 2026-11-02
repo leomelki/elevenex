@@ -291,7 +291,12 @@
       (attachmentRemoved)="attachments.remove($event); focusComposer()"
       (attachmentRetry)="attachments.retry($event); focusComposer()"
       [showDictation]="false"
-      [mentionsEnabled]="false"
+      [mentionsEnabled]="!!store.state()?.sessionMentions"
+      [sessionMentionScope]="selection().scopeId"
+      [mentionItems]="mentionItems()"
+      [context]="store.mentions()"
+      (mentionInserted)="store.addMention($event)"
+      (contextRemoved)="store.removeMention($event); focusComposer()"
       [queueEditable]="false"
       [queueReorderable]="false"
       [queue]="store.queue()"
@@ -302,7 +307,9 @@
             ? 'Return to latest messages to reply'
             : store.running()
               ? 'Add a follow-up · Alt Enter to steer'
-              : 'Message the agent…'
+              : store.state()?.sessionMentions
+                ? 'Message the agent, or @ to mention a session…'
+                : 'Message the agent…'
       "
       (submitted)="store.submit($event)"
       (stop)="store.perform({ type: 'stop' })"

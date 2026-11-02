@@ -6,6 +6,20 @@ components; those components remain independent of the bridge and providers.
 `MachineWorkspace` provides the chat client and drafts at workspace lifetime,
 so nested/preview backend scopes resolve consistently.
 
+The optional `state.sessionMentions` capability enables sidebar drops and the
+@ picker. Workspace supplies at most 50 candidates from already-loaded session
+windows; drag payloads retain their backend generation. The composer owns drag
+feedback, caret insertion and focus; the store owns deduplicated context (up to
+eight sessions), retained drafts and delivery recovery. Mentions clear with an
+accepted send and return to their original draft after rejection/uncertainty,
+including when navigation overtakes the reply. Send carries optional numeric
+`sessionIds`; main and backend validate the bound. The backend resolves those
+identities through its existing conversation exporter only on explicit send,
+adds at most 4,000 snapshot characters per reference and retains the full export
+for agent lookup. Unresolvable references prevent submission. Ordinary message
+and queue projections omit snapshot blocks, preserving receipt reconciliation.
+Older engines omit the capability and retain their original send contract.
+
 - `SessionChatClient` calls only named, scope-bound bridge operations. Main owns
   HTTP, credentials, validation, coalescing, deadlines and cancellation.
 - `SessionChatStore` owns one visible transcript window, long reads, mutation

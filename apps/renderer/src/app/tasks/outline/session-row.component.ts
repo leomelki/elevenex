@@ -12,6 +12,7 @@ import {
 } from "@angular/core";
 import { IconComponent, StatusGlyphComponent, TickerComponent, TooltipDirective } from "../../ui";
 import type { TaskSession } from "../task.models";
+import { writeSessionDrag } from '../session-drag';
 @Component({
   selector: "ex-session-row",
   imports: [IconComponent, StatusGlyphComponent, TickerComponent, TooltipDirective],
@@ -34,6 +35,12 @@ export class SessionRowComponent implements OnChanges {
   readonly allowArchive = input(false);
   readonly archiveRequested = output<TaskSession>();
   protected readonly confirming = signal(false);
+  protected readonly dragging = signal(false);
+  protected startDrag(event: DragEvent): void {
+    if (!event.dataTransfer || this.confirming()) { event.preventDefault(); return; }
+    writeSessionDrag(event.dataTransfer, this.session());
+    this.dragging.set(true);
+  }
   private readonly document = inject(DOCUMENT);
   private confirmationSession: string | null = null;
   private removeOutsideListener?: () => void;

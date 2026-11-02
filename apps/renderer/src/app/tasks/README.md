@@ -4,6 +4,8 @@ Import public components and readonly view models from `./tasks`. Components use
 
 `projects/` owns project identity and scope navigation. `outline/` owns the task/sub-task/session outline (sub-tasks retain one visual indent at any branch depth). `lifecycle/` owns task context, stages, links and closing. `branches/` owns the new-task form and branch/workspace selection. `navigation/` owns task side views and git actions. `task.models.ts` contains renderer view contracts; it does not replace privileged IPC contracts in `packages/shared`.
 
+`SessionRow` supports copying a session reference into a composer through native drag and drop, including archived/history and attention rows. Its select button alone is draggable; archive/restore controls retain their normal behavior. Dragging never activates the session. Connected owners set `TaskSession.mentionScope` to the backend scope; `SESSION_DRAG_TYPE`, `writeSessionDrag` and `readSessionDrag` are the public renderer-only transfer contract. Payloads contain a bounded ID/title/scope, with no transcript or path. The receiving composer validates scope and shape; the connected backend re-resolves identity on send. The @ picker provides the keyboard alternative.
+
 | Component | Main inputs | Intent outputs |
 | --- | --- | --- |
 | `ProjectMark` | `name`, `logo`, `initials`, `emoji`, `icon`, `hue`, `size`, `decorative` | None; precedence is logo, emoji, icon, letters; broken logos use the supplied face |

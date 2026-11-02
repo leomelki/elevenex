@@ -1,4 +1,5 @@
 import { chatMedia } from './desktop-chat-media.js';
+import { chatMentionText } from './desktop-chat-mentions.js';
 import { capturedChangeSummary, changeSummary, toolChanges } from './desktop-chat-changes.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 
@@ -47,7 +48,9 @@ function commandExecution(item: AgentTranscriptItem, call?: AgentTranscriptItem)
 export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache, mediaCache?: ChatMediaCache) {
   const execution = commandExecution(item, call);
   const input = display(item.toolInput);
-  const projected = mediaCache?.get(item) ?? chatMedia(item);
+  const original = item.content ?? item.providerToolResult ?? item.agentMessage?.body;
+  const projected = mediaCache?.get(item) ?? chatMedia(item.kind === 'user' && typeof original === 'string'
+    ? { ...item, content: chatMentionText(original) } : item);
   mediaCache?.set(item, projected);
   const text = display(projected.text);
   let changes = changeSummary(item.turnChanges);
@@ -228,7 +231,7 @@ export function chatState(
       .slice(0, 50)
       .map((value) => {
         const p = record(value);
-        return { id: display(p.id, 1000), text: display(p.prompt, 16000) };
+        return { id: display(p.id, 1000), text: display(chatMentionText(typeof p.prompt === 'string' ? p.prompt : ''), 16000) };
       }),
     queuePaused: raw.queuePaused === true,
     permission:

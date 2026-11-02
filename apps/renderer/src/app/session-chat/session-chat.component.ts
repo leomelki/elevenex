@@ -31,6 +31,7 @@ import {
   type AgentHarness,
   type AgentModel,
   type PermissionChoice,
+  type ConversationMention,
 } from "../conversation";
 import {
   ButtonComponent,
@@ -84,6 +85,7 @@ import { presentSessionTool } from './session-chat-tools';
 export class SessionChatComponent {
   readonly selection = input.required<ChatSelection>();
   readonly archived = input(false);
+  readonly mentionItems = input<readonly ConversationMention[]>([]);
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
   readonly media = inject(SessionChatMedia);
@@ -305,10 +307,10 @@ export class SessionChatComponent {
   );
 
   dragOver(event: DragEvent): void {
-    if (!event.defaultPrevented && this.store.state()?.attachments) this.composer()?.dragOver(event);
+    if (!event.defaultPrevented && event.dataTransfer?.types.includes('Files') && this.store.state()?.attachments) this.composer()?.dragOver(event);
   }
   dropFiles(event: DragEvent): void {
-    if (!event.defaultPrevented && this.store.state()?.attachments) this.composer()?.drop(event);
+    if (!event.defaultPrevented && event.dataTransfer?.types.includes('Files') && this.store.state()?.attachments) this.composer()?.drop(event);
   }
   constructor() {
     effect(() => {

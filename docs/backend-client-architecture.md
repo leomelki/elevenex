@@ -1,5 +1,14 @@
 # Desktop backend client
 
+Session chat optionally advertises `sessionMentions: true`. Its existing send
+action accepts up to eight distinct positive `sessionIds`. Main validates and
+preserves only those IDs; the backend resolves them through the existing
+conversation exporter before submitting, with bounded inline snapshots and no
+renderer-supplied transcript/path. Snapshots remain in durable prompt history;
+ordinary desktop message/queue projections hide the context blocks so pending
+receipts still match the original text. No new transport, unrestricted read or
+automatic retry is introduced; omitted IDs preserve existing callers.
+
 The new desktop supports the backend incrementally as frontend features are
 implemented. Build complete vertical slices for those features rather than
 mirroring every legacy endpoint in advance. The product model is **project →

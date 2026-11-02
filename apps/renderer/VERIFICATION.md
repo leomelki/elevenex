@@ -1,5 +1,24 @@
 # Component system verification
 
+## Session drag mentions, 2026-11-02
+
+`pnpm desktop:lint`, `pnpm desktop:test` (116 desktop, seven capture-tool and
+552 Angular tests), `pnpm desktop:build`, the backend build TypeScript check and
+38 focused backend tests passed. The installed Electron smoke passed through
+the sandboxed preload and real app protocol with its isolated backend fixture.
+The broader backend TypeScript config also includes existing unrelated test
+errors; production checking used `tsconfig.build.json`.
+
+`artifacts/desktop-capture/run-FuZRjQ/report.json` reports `verified: true`,
+12 checkpoints and no errors/warnings. The production sidebar/composer under
+the preview-only backend passed light/dark drop feedback, sampled entry,
+duplicate rejection, focus, draft navigation, keyboard insertion, narrow reduced
+motion and long-label confinement. Light drop, dark mention and dark long-label
+PNGs were inspected. The scenario uses real DOM `dragstart` handlers and trusted
+Chromium drop events; it does not certify native OS drag-gesture initiation or
+a live agent send. Backend tests cover context resolution, queued submission
+and rejection before prompt delivery. No packaged-app launch was attempted.
+
 ## Image viewer initial focus, 2026-11-02
 
 Opening the viewer focuses its labelled dialog rather than the Close control,
