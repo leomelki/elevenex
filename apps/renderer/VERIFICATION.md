@@ -4,6 +4,23 @@
 > in chat/PR descriptions and keep run artifacts under ignored `artifacts/`, as
 > described in the root `AGENTS.md`. Earlier results do not verify current code.
 
+## Terminal prompt glyph coverage, 2026-11-03
+
+Bundled Symbols Nerd Font Mono v3.5.1 locally, restricted it to symbol/private-use
+ranges and added it to the terminal font stack. Geist Mono still renders ordinary
+text. The adapter waits for the symbol face before xterm measures its cells.
+The upstream font, license, attribution table and SHA-256 provenance are retained
+under `public/fonts/`.
+
+Desktop lint, the complete test suite (629 Angular tests plus main/capture/type
+checks) and the production build passed. The real built app:// Terminal was
+captured in light and dark against the isolated live backend. Chromium's actual
+per-glyph font data confirms custom Symbols Nerd Font Mono for the prompt icons
+and custom Geist Mono for ordinary text. Both PNGs were inspected. The report
+`artifacts/desktop-capture/terminal-prompt-symbols/report.json` is `verified: true`
+with zero errors/warnings. Earlier font probes targeted a container or ran before
+prompt painting; those failed probes are not visual evidence.
+
 ## Production user Terminal, 2026-11-02
 
 The task-owned Terminal now uses the installed xterm 6 adapter, existing user-PTY

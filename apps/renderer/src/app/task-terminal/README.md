@@ -51,6 +51,9 @@ DOM factory after the last surface closes; production CSP is unchanged. Native u
 remain available. Find searches at most the retained 2,000 rows / 1,000 matches;
 Enter/Shift-Enter moves between matches, Escape restores focus. The theme maps
 the specification's ANSI palette to authoritative tokens and local Geist Mono.
+A bundled symbols-only Nerd Font fallback covers Powerline, Git, Node.js and other
+private-use prompt icons; it loads before cell measurement and leaves ordinary
+text in Geist Mono. See the [font provenance and licenses](../../../public/fonts/README.md).
 
 Bash/zsh prompt hooks report command start/completion and exit status. They source
 the normal user rc then explicitly enter the resolved task worktree. Other shells

@@ -181,7 +181,9 @@ export class TaskTerminalComponent {
     const key = `${target.taskId}:${terminal.id}`;
     let entry = this.surfaces.get(key);
     if (!entry) {
-      const { TerminalSurface } = await import("./terminal-surface");
+      const { TerminalSurface, prepareTerminalFonts } =
+        await import("./terminal-surface");
+      await prepareTerminalFonts();
       if (this.disposed || revision !== this.revision) return;
       const surface = new TerminalSurface(
         (data) => {

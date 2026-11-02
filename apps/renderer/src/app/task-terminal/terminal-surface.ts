@@ -204,7 +204,7 @@ export class TerminalSurface {
     const fontSize = Number.parseFloat(token("text-code-size"));
     const lineHeight = Number.parseFloat(token("text-code-line"));
     if (token("font-mono"))
-      this.terminal.options.fontFamily = token("font-mono");
+      this.terminal.options.fontFamily = `"Elevenex Terminal Symbols", ${token("font-mono")}`;
     if (Number.isFinite(fontSize) && fontSize > 0) {
       this.terminal.options.fontSize = fontSize;
       if (Number.isFinite(lineHeight) && lineHeight > 0)
@@ -252,5 +252,20 @@ export class TerminalSurface {
       this.styleLease?.release();
       this.styleLease = undefined;
     }
+  }
+}
+
+/** Load bundled prompt glyphs before xterm measures and caches their cell widths. */
+export async function prepareTerminalFonts(): Promise<void> {
+  const size = getComputedStyle(document.documentElement)
+    .getPropertyValue("--text-code-size")
+    .trim();
+  try {
+    await document.fonts.load(
+      `${size} "Elevenex Terminal Symbols"`,
+      String.fromCodePoint(0xe0a0, 0xe718),
+    );
+  } catch {
+    /* A missing font asset must not prevent shell interaction. */
   }
 }
