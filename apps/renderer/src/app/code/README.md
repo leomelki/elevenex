@@ -64,9 +64,16 @@ Dirty instances stay retained. Shutdown respects backup vetoes.
 The healthy expanded view has one compact task/branch toolbar. Connection status
 shares that row; separate banners appear for lost connections, checkout changes
 and failures. This leaves 752px for the workbench at a 1440 × 900 viewport,
-compared with 696px before the UX pass. Upstream's own tabs, explorer and layout
-controls remain genuine and configurable. Focus and separate-window actions use
+compared with 696px before the UX pass. Upstream's own tabs and Explorer remain
+genuine and configurable. Focus and separate-window actions use
 the existing icon buttons, tooltips and keyboard states.
+
+The redundant upstream “Code” title row is disabled using
+`workbench.layoutControl.enabled: false`, alongside compact menus and the disabled
+command center. Upstream reclaims that row for tabs and Explorer in both embedded
+and separate windows. Layout commands remain available from the workbench menu
+and Command Palette. `window.customTitleBarVisibility` is desktop-only and is not
+used by this web workbench.
 
 The launcher offers expansion and a secondary window action. A CSS query against
 the shell's `workspace` container replaces these with one direct window action

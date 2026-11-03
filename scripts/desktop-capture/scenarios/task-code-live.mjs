@@ -51,6 +51,8 @@ export default async function* (capture) {
   if (ux) await waitMain(async () => liveView.getVisible() && await liveView.webContents.executeJavaScript('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")'), 'Opening Code did not hand focus to the visible native editor');
   const fileDeadline = Date.now() + 45000;
   while (!await liveView.webContents.executeJavaScript('!!document.querySelector(".monaco-editor textarea.inputarea")')) { if (Date.now() > fileDeadline) throw new Error('Actual editor did not paint'); await new Promise(resolve => setTimeout(resolve, 100)); }
+  assert.equal(await liveView.webContents.executeJavaScript('(document.querySelector(".part.titlebar")?.getBoundingClientRect().height ?? 0)'), 0, 'The redundant Code title bar still occupies space');
+  assert.ok(await liveView.webContents.executeJavaScript('(document.querySelector(".part.editor")?.getBoundingClientRect().top ?? Infinity) <= 8'), 'File tabs did not reclaim the title-bar space');
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme); await capture.settle();
     const themeDeadline = Date.now() + 10000;
@@ -137,6 +139,7 @@ export default async function* (capture) {
       }
       assert.equal(await liveView.webContents.executeJavaScript('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")'), true, 'Explorer reconciliation stole editor focus');
       const pixels = await captureWindowPixels(childCapture, { format: 'png', captureBeyondViewport: false });
+      assert.equal(await liveView.webContents.executeJavaScript('(document.querySelector(".part.titlebar")?.getBoundingClientRect().height ?? 0)'), 0);
       await writeFile(join(capture.options.out, 'code-editor-window.png'), pixels.bytes);
       await childCapture.click('ex-title-island button');
       await childCapture.waitFor(() => !!document.querySelector('ex-title-island [role="dialog"]'));

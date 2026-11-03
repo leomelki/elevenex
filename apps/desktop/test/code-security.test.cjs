@@ -75,6 +75,8 @@ test('workbench configuration uses the pinned upstream theme IDs and authoritati
   for (const dark of [false, true]) {
     const { html } = workbenchDocument(workspace, 'code.example.invalid', tokens, dark);
     assert.ok(html.includes(`"workbench.colorTheme":"${dark ? 'Dark' : 'Light'} Modern"`));
+    assert.ok(html.includes('"workbench.layoutControl.enabled":false'));
+    assert.ok(!html.includes('"window.customTitleBarVisibility"'));
     assert.ok(html.includes('"[Dark Modern]":{"editor.background":"#10151b"'));
     assert.ok(html.includes('"[Light Modern]":{"editor.background":"#f7f9fb"'));
     assert.ok(html.includes('"list.activeSelectionBackground":"#0e3532"'));

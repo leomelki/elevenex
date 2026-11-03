@@ -133,6 +133,13 @@ This UI pass does not expand the physical remote/platform coverage below.
 
 ### Platform and recovery coverage
 
+The subsequent title-row removal passed `desktop:lint`, `desktop:test`, and
+`desktop:build`. [New live captures](../../../../../artifacts/desktop-capture/code-no-titlebar/report.json)
+verify 16 states and both themes, with zero renderer errors. The native title-bar
+rectangle has zero height and the editor part starts within 8px of the workbench
+top; the same zero-height assertion passes in the separate window. The new PNGs
+were inspected. This uses upstream layout settings without changing runtime assets.
+
 No physical SSH machine or Windows/Linux host was available. The Code transport
 uses the existing authenticated SSH Unix-socket client, whose local integration
 suite covers loss/reconnect/cleanup; actual remote Code behavior still requires a
