@@ -76,6 +76,35 @@ describe('Desktop terminal process stream', () => {
     stream.input('\x1b[D');
     expect(stream.canRerun).toBe(false);
   });
+  it('captures a single-line bracketed paste, including split paste markers', () => {
+    const stream = new DesktopTerminalStream();
+    stream.append('\x1b]133;D;0\x07');
+    for (const char of '\x1b[200~false\x1b[201~\r') stream.input(char);
+    stream.append('\x1b]133;C\x07\x1b]133;D;1\x07');
+    expect(stream.command).toBe('false');
+    expect(stream.rerunInput()).toBe('false\r');
+  });
+  it('refuses rerun during a paste or after multiline paste and history editing', () => {
+    const stream = new DesktopTerminalStream();
+    stream.append('\x1b]133;D;0\x07');
+    stream.input('false\r');
+    stream.append('\x1b]133;D;1\x07');
+    stream.input('\x1b[200');
+    expect(stream.canRerun).toBe(false);
+    stream.input('~');
+    expect(stream.canRerun).toBe(false);
+    stream.input('false\ntrue\x1b[201~');
+    expect(stream.status).toBe('failed');
+    stream.input('\r');
+    stream.append('\x1b]133;D;1\x07');
+    expect(stream.command).toBe('Shell command');
+    expect(stream.canRerun).toBe(false);
+    stream.input('false\r');
+    stream.append('\x1b]133;D;1\x07');
+    stream.input('\x1b[A\r');
+    stream.append('\x1b]133;D;1\x07');
+    expect(stream.canRerun).toBe(false);
+  });
   it('keeps shell readiness independent from a detected serving indicator', () => {
     const stream = new DesktopTerminalStream();
     stream.append('\x1b]133;D;0\x07Ready http://localhost:3000/\r\n');

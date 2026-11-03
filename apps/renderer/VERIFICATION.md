@@ -2659,3 +2659,20 @@ verify light/dark, narrow layouts, reduced motion, mouse/keyboard close, focus
 restoration and creating another terminal while cleanup is held pending. Report
 `verified: true`; all four PNGs inspected. These captures use the real terminal
 component/store with preview-controlled backend replies, rather than live PTYs.
+
+### Failed-command rerun follow-up (2026-11-03)
+
+Single-line bracketed paste no longer invalidates command capture or disables
+Run again. Split markers are recognized; multiline paste, unfinished input and
+history/cursor editing still cannot cause a guessed command to execute.
+Backend terminal checks pass (46 tests), including real Bash/zsh reruns that
+assert new command output after the action, plus a real zsh pasted-command rerun.
+Backend build and focused ESLint, desktop lint and desktop production build pass.
+The full desktop suite passes (137 desktop, 7 capture-tool, 645 renderer tests).
+
+[Four live native checkpoints](../../artifacts/desktop-capture/terminal-rerun-live-4/index.html)
+exercise the production renderer, typed preload and actual backend/PTYs in an
+isolated database. Trusted hover/click on Run again produces a second execution
+for both typed and pasted failures. Light/dark PNGs inspected; report
+`verified: true`, with no renderer errors or warnings. These are unpackaged
+captures; no packaged-app launch or remote SSH verification is claimed.

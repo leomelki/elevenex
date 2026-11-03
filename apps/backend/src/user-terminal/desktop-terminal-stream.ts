@@ -14,6 +14,8 @@ export class DesktopTerminalStream {
   private pendingLine = '';
   private reliableLine = true;
   private rerunCommand: string | null = null;
+  private pasteMarker = '';
+  private bracketedPaste = false;
   private parserTail = '';
   private processExited = false;
   private promptReady = false;
@@ -87,8 +89,35 @@ export class DesktopTerminalStream {
     if (this.script || this.processExited || !this.promptReady) return;
     for (const char of data) {
       if (!this.promptReady) break;
+      // xterm wraps paste in these markers. They may cross input requests and
+      // are framing, not shell edits. All other escape sequences remain unsafe.
+      if (char === '\x1b' || this.pasteMarker) {
+        this.pasteMarker += char;
+        if (this.pasteMarker === '\x1b[200~') {
+          if (this.bracketedPaste) this.reliableLine = false;
+          this.bracketedPaste = true;
+          this.pasteMarker = '';
+        } else if (this.pasteMarker === '\x1b[201~') {
+          if (!this.bracketedPaste) this.reliableLine = false;
+          this.bracketedPaste = false;
+          this.pasteMarker = '';
+        } else if (
+          !'\x1b[200~'.startsWith(this.pasteMarker) &&
+          !'\x1b[201~'.startsWith(this.pasteMarker)
+        ) {
+          this.reliableLine = false;
+          this.pasteMarker = '';
+        }
+        continue;
+      }
+      // Newlines/controls inside a paste are literal editing-buffer content;
+      // never treat them as submission or guess how the shell interpreted them.
+      if (this.bracketedPaste && (char < ' ' || char === '\x7f')) {
+        this.reliableLine = false;
+        continue;
+      }
       if (char === '\r' || char === '\n') {
-        if (this.pendingLine) {
+        if (this.pendingLine || !this.reliableLine) {
           this.command = this.reliableLine ? this.pendingLine : 'Shell command';
           this.rerunCommand = this.reliableLine ? this.pendingLine : null;
           this.status = 'running';
@@ -124,6 +153,8 @@ export class DesktopTerminalStream {
       (!!this.script ||
         (!this.processExited &&
           this.promptReady &&
+          !this.bracketedPaste &&
+          !this.pasteMarker &&
           !!this.rerunCommand &&
           this.pendingLine.length === 0 &&
           this.reliableLine))

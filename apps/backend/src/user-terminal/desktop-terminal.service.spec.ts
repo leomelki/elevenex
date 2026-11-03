@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import { existsSync } from 'node:fs';
 import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -171,6 +172,46 @@ describe('Desktop task terminals with real PTYs', () => {
     await service.close(task, terminal.id);
     expect(ptys.desktopStream(terminal.id)).toBeUndefined();
   });
+  it.each([
+    { shell: '/bin/bash', paste: false },
+    ...(existsSync('/bin/zsh')
+      ? [
+          { shell: '/bin/zsh', paste: false },
+          { shell: '/bin/zsh', paste: true },
+        ]
+      : []),
+  ])(
+    'actually repeats a failed command in $shell (paste: $paste)',
+    async ({ shell, paste }) => {
+      const terminal = await service.create(task, {});
+      ids.push(terminal.id);
+      await ptys.destroy(terminal.id, true);
+      ptys.forgetDesktop(terminal.id);
+      await ptys.spawnDesktop(terminal.id, root, shell);
+      const stream = ptys.desktopStream(terminal.id)!;
+      await waitFor(() => stream.status === 'idle');
+      const command = "printf 'RERUN_%s\\n' EXECUTED; false";
+      await service.command(task, terminal.id, {
+        type: 'input',
+        generation: stream.generation,
+        data: paste ? '\x1b[200~' + command + '\x1b[201~\r' : command + '\r',
+      });
+      await waitFor(() => stream.status === 'failed');
+      expect(stream.command).toBe(command);
+      const offset = stream.sequence;
+      await service.command(task, terminal.id, {
+        type: 'rerun',
+        generation: stream.generation,
+      });
+      await waitFor(
+        () => stream.status === 'failed' && stream.sequence > offset,
+      );
+      expect(stream.read(stream.generation, offset).data).toContain(
+        'RERUN_EXECUTED',
+      );
+      await service.close(task, terminal.id);
+    },
+  );
   it('rejects task mismatches, stale process identity, oversized input and invalid dimensions', async () => {
     const terminal = await service.create(task, {});
     ids.push(terminal.id);

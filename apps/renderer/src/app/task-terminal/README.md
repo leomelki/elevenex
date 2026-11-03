@@ -74,7 +74,9 @@ Bash/zsh prompt hooks report command start/completion and exit status. They sour
 the normal user rc then explicitly enter the resolved task worktree. Other shells
 remain interactive; per-command status requires their prompt integration. Rerun
 uses only a discovered script ID or a reliably captured plain user input line,
-never a command extracted from output. Foreground-program input, including hidden
+including single-line bracketed paste (even when its markers span input requests),
+never a command extracted from output. Multiline pastes remain unrepeatable rather
+than guessing how the shell interpreted them. Foreground-program input, including hidden
 password prompts, is never captured as a shell command. Complex cursor/history editing disables
 shell rerun rather than guessing. An unfinished prompt line also disables rerun,
 so a repeat cannot concatenate with a person’s unsent input. The failure bar uses Fold; ViewTabs retains
