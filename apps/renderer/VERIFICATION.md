@@ -2544,3 +2544,55 @@ Captures in `artifacts/desktop-capture/reply-mark-tiles` and
 narrow/reduced-motion, connected and standalone PNGs were inspected. Reply
 history still follows the session's current harness, because transcript items
 carry no per-turn provider.
+## Production task Browser — 2026-11-03
+
+The production workspace now projects `TaskBrowserComponent` into the Browser
+panel. Electron owns hardened, per-tab `WebContentsView` instances; the renderer
+owns chrome and explicit composer intents. Ownership, persistence, transport,
+privacy policy and consequential UX decisions are documented in
+[the feature guide](src/app/task-browser/README.md).
+
+Validation on macOS with the installed Electron:
+
+- `pnpm desktop:lint`, `pnpm desktop:test` (140 Node tests, 7 capture-tool tests,
+  618 renderer tests in 91 files, including TypeScript IPC negative assertions),
+  and `pnpm desktop:build` passed.
+- Backend `tsc -p apps/backend/tsconfig.build.json`, backend bundle, and focused
+  Jest suites (`desktop-browser`, MCP tool registry and port forwarding) passed:
+  51 tests in four suites. No new dependency or database migration.
+- `env -u ELECTRON_RUN_AS_NODE …/electron apps/desktop/test/electron-smoke.cjs`
+  passed with real native pages. Browser coverage includes navigation/history,
+  several tabs, task restoration, user/session leases, mouse/keyboard revocation,
+  blocked secret controls, picker coordinates at non-default zoom, crash/reload,
+  destroyed contents, stale presentation epochs, teardown and bounded resources.
+  The remote transport fixture exercises actual HTTP, subresources, WebSockets,
+  discovered/unknown ports, DNS rebinding rejection and network suspension through
+  the private connector; an external SSH host was not exercised.
+- [Live backend/MCP gallery](../../artifacts/desktop-capture/browser-delivery-2/index.html)
+  and [report](../../artifacts/desktop-capture/browser-delivery-2/report.json):
+  `verified: true`, 16 checkpoints, no diagnostic errors/warnings. A disposable
+  real backend, SQLite task/session records and saved dev-server action supplied
+  the page. The real authenticated MCP tool exercised protected user tabs,
+  background agent tabs, explicit handoff, native input and at-most-once expiry
+  races. Captures cover light/dark, phone/full, expanded/narrow, keyboard focus,
+  scrolled picker, errors/retry, overlays, task switching, interrupted motion,
+  reduced motion and panel reopening. Actual root/page PNGs are composed at
+  registered native bounds and retained separately in the report. This is
+  **Electron surface composition**, not an OS-compositor screenshot.
+- [BrowserView design regression gallery](../../artifacts/desktop-capture/browser-chrome-delivery-3/index.html)
+  and [report](../../artifacts/desktop-capture/browser-chrome-delivery-3/report.json):
+  `verified: true`, 16 checkpoints. The existing browser demo/capture scenario
+  verifies both themes, target/cursor retargeting, phone/panel widths, focus
+  restoration, needs-user, picker and reduced motion. Its hand-back assertions
+  now expect the accessible driver control. These are presentation fixtures,
+  separate from the live integration evidence above. PNGs from both successful
+  galleries were inspected.
+- `git diff --check` passed. Validation servers and saved actions were stopped.
+
+Agent DOM/AX snapshots, screenshots, page text, raw logs and typing are withheld
+for arbitrary untrusted pages rather than claiming incomplete secret masking.
+The picker supplies structural selector/viewport metadata; element pixels and
+source locations are explicitly unavailable. Error sharing is bounded counts,
+staged through the selected composer, with optional counts in responses during
+agent ownership. Theme/network tools use narrow main-owned adapters. External
+SSH deployment, packaged-app launch and Windows/Linux runtime remain unverified.

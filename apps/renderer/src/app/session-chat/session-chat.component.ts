@@ -105,6 +105,12 @@ export class SessionChatComponent {
       input: request.input, error: false, truncated: false,
     }) : null;
   });
+  /** Browser context is staged for review; it never submits a prompt automatically. */
+  stageBrowserContext(text: string): void {
+    const previous = this.store.draft();
+    this.store.setDraft((previous ? previous + '\n\n' : '') + text);
+    this.composer()?.textarea()?.nativeElement.focus({ preventScroll: true });
+  }
   readonly composer = viewChild(ComposerComponent);
   readonly chat = viewChild(ChatComponent);
   readonly requestElement = viewChild<unknown, ElementRef<HTMLElement>>(

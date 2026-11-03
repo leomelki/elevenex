@@ -15,7 +15,9 @@ pointer/keyboard input emits `takeOverRequested` immediately while the agent
 drives, and the owner must stop that agent before accepting user input. The UI
 does not promise secret-field masking; the browser integration must enforce it.
 `asked` carries the selected target, text and active tab identity. Screenshot
-capture and source resolution also belong to the future browser integration.
+capture and source resolution remain platform capabilities. The production
+[task browser adapter](../task-browser/README.md) owns the real isolated Electron
+page, task persistence, control leases and privacy policy.
 
 While the agent drives, the active agent tab breathes and an overlay paints the
 accent frame above the projected page. The target ring and cursor follow page
@@ -96,3 +98,17 @@ For replacement content windows, set `hasPreviousLines` to expose Previous lines
 on that file. It emits `reason: 'previous'`; the owner supplies that earlier page
 with the same file/revision/mode identity. This keeps line paging attached to the
 file while scroll-based selection moves between its neighbours.
+
+The optional `addressEditable` input enables an accessible address draft;
+`navigated` emits its value only on Enter. Page updates preserve an unfinished
+draft, and changing tabs resets it. `askLabel` defaults to “Ask”; integrations
+that stage a draft use “Add to composer”. The presentational component still
+performs no platform navigation or prompt submission itself.
+
+Targets use page viewport CSS coordinates in the native adapter. Positions may
+be negative when an element is partly scrolled out of view; widths/heights remain
+nonnegative and the preview clips the ring naturally.
+
+`pageFocusRequested` lets a platform owner focus its actual page from the driver
+pill or Take over. `pageFocusAvailable=false` disables that action for unavailable
+surfaces. The projected HTML preview retains ordinary keyboard focus behavior.

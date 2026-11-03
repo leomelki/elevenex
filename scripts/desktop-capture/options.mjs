@@ -8,6 +8,7 @@ Omit the scenario to read JavaScript from stdin. Use a quoted heredoc.
 
 --out <directory>       Empty output directory (default: unique artifacts/desktop-capture run)
 --url <loopback URL>    Reuse an Angular dev server; never stop it
+--backend-url <URL>    Borrow an isolated running loopback backend; never stop it
 --built                Use the built app:// renderer, without a dev server
 --fixture              Use the isolated Angular verification fixture, not the product shell
 --width <pixels>       Content viewport (default 1440, range 320..4096)
@@ -25,7 +26,7 @@ See scripts/desktop-capture/README.md for state access, input and motion.`;
 export function parseOptions(args) {
   const options = { width: 1440, height: 960, theme: 'light', timeout: 120 };
   const flags = new Map([['--fixture', 'fixture'], ['--built', 'built'], ['--reduced-motion', 'reducedMotion'], ['--serve', 'serve']]);
-  const values = new Set(['out', 'url', 'width', 'height', 'theme', 'timeout', 'port']);
+  const values = new Set(['out', 'url', 'backend-url', 'width', 'height', 'theme', 'timeout', 'port']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--help' || arg === '-h') return { help: true };
@@ -49,6 +50,10 @@ export function parseOptions(args) {
     const url = new URL(options.url);
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password || url.hash) throw new Error('--url must be loopback HTTP at 127.0.0.1');
   }
+  if (options['backend-url']) {
+    const url = new URL(options['backend-url']);
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('--backend-url must be a loopback HTTP origin');
+  }
   if (options.built && (options.url || options.fixture || options.serve)) throw new Error('--built cannot be combined with --url, --fixture or --serve');
   if (options.serve && (options.url || options.scenario)) throw new Error('--serve starts Angular only; omit --url and scenario');
   if (options.url && options.port) throw new Error('--port is only for an owned server');
@@ -58,10 +63,12 @@ export function parseOptions(args) {
 export function checkpoint(value, names) {
   const point = typeof value === 'string' ? { name: value } : value;
   if (!point || typeof point !== 'object' || Array.isArray(point)
-    || Object.keys(point).some(key => !['name', 'selector', 'inspect', 'metadata'].includes(key))
+    || Object.keys(point).some(key => !['name', 'selector', 'inspect', 'metadata', 'native'].includes(key))
     || typeof point.name !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(point.name)) {
     throw new Error('Yield a unique name or {name, selector?, inspect?: string[], metadata?}');
   }
+  if (point.native !== undefined && typeof point.native !== 'boolean') throw new Error('native must be boolean');
+  if (point.native && point.selector) throw new Error('Native composition captures the whole window');
   if (names.has(point.name)) throw new Error(`Duplicate checkpoint: ${point.name}`);
   if (point.selector !== undefined && (typeof point.selector !== 'string' || !point.selector)) throw new Error('selector must be nonempty CSS');
   if (point.inspect !== undefined && (!Array.isArray(point.inspect) || point.inspect.length > 100 || point.inspect.some(s => typeof s !== 'string' || !s))) throw new Error('inspect must contain up to 100 CSS selectors');

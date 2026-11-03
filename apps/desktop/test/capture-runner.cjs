@@ -68,5 +68,21 @@ try {
       await save();
     })().catch(save);
   });
+  if (config.borrowedBackend) {
+    // Capture-only composition boundary. Production has no endpoint override or test bridge.
+    const { BackendManager } = require('../dist/backend/manager');
+    const { backendRelease } = require('../dist/backend/release');
+    const { url, version } = config.borrowedBackend;
+    require('../dist/backend/application').createApplicationBackend = () => new BackendManager({
+      root: config.temporary,
+      release: async () => backendRelease({ version, tag: `runtime-${version}` }, process.platform, process.arch),
+      install: async () => ({ directory: config.temporary, entry: '', executable: '' }),
+      start: async () => {
+        let exit;
+        const exited = new Promise(resolve => { exit = resolve; });
+        return { url, exited, stop: async () => { exit({ code: 0, signal: null }); } };
+      },
+    });
+  }
   require('../dist/main.js');
 } catch (error) { console.error(error); app.exit(1); }

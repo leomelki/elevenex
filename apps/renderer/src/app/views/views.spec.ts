@@ -87,6 +87,19 @@ describe('Side-view interactions', () => {
     expect(portOpened).not.toHaveBeenCalled();
   });
 
+  it('preserves an unfinished address during page updates and navigates only on explicit Enter', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Page', url: 'https://example.com/' }]);
+    fixture.componentRef.setInput('addressEditable', true); fixture.detectChanges();
+    const navigate = vi.fn(); fixture.componentInstance.navigated.subscribe(navigate);
+    const input = fixture.nativeElement.querySelector('.address input') as HTMLInputElement;
+    input.value = 'https://example.com/next'; input.dispatchEvent(new Event('input', { bubbles: true })); fixture.detectChanges();
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Page', url: 'https://example.com/background' }]); fixture.detectChanges();
+    expect(input.value).toBe('https://example.com/next'); expect(navigate).not.toHaveBeenCalled();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); fixture.detectChanges();
+    expect(navigate).toHaveBeenCalledWith('https://example.com/next');
+  });
+
   it('requests immediate takeover for page input only while the agent drives', () => {
     const fixture = TestBed.createComponent(BrowserViewComponent);
     fixture.componentRef.setInput('driver', 'agent');
@@ -100,6 +113,16 @@ describe('Side-view interactions', () => {
     fixture.detectChanges();
     preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
     expect(takeover).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a partly scrolled target in page viewport coordinates', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Page' }]);
+    fixture.componentRef.setInput('picked', { x: -10, y: -20, w: 100, h: 60, label: 'Partly visible element' });
+    fixture.detectChanges();
+    const ring = fixture.nativeElement.querySelector('.target') as HTMLElement;
+    expect(ring.style.transform).toBe('translate(-14px, -24px)');
+    expect(ring.style.width).toBe('108px'); expect(ring.style.height).toBe('68px');
   });
 
   it('clears page chrome and questions when the last browser tab closes', () => {

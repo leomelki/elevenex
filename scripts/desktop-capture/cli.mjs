@@ -63,8 +63,17 @@ async function main() {
   try {
     await compileMain(root, processes);
     const { url } = await prepareRenderer(root, options, processes);
+    let borrowedBackend;
+    if (options['backend-url']) {
+      const response = await fetch(new URL('/api/info', options['backend-url']), { redirect: 'error', signal: AbortSignal.timeout(3000) });
+      const body = await response.text();
+      if (!response.ok || body.length > 32768) throw new Error('Capture backend is unavailable');
+      const info = JSON.parse(body);
+      if (!/^[a-f0-9]{40}$/.test(info.backendSha)) throw new Error('Capture backend has no valid revision');
+      borrowedBackend = { url: options['backend-url'], version: info.backendSha };
+    }
     const config = join(temporary, 'config.json');
-    await writeFile(config, JSON.stringify({ ...options, scenario, root, out, temporary, url, startupMs: Math.round(performance.now() - started) }));
+    await writeFile(config, JSON.stringify({ ...options, borrowedBackend, scenario, root, out, temporary, url, startupMs: Math.round(performance.now() - started) }));
     await processes.start(desktopRequire('electron'), [join(desktop, 'test/capture-runner.cjs'), config], root).done;
     // Electron can quit with code zero before a scenario completes (for example
     // when its window closes). Only a verified native report establishes success.

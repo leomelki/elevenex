@@ -1,3 +1,4 @@
+import { DesktopBrowserModule } from '../desktop-browser/desktop-browser.module.js';
 import { BranchesModule } from '../branches/branches.module.js';
 import { Module } from '@nestjs/common';
 import { TasksModule } from '../tasks/tasks.module.js';
@@ -36,6 +37,7 @@ import { DesktopPortForwardingGateway } from './port-forwarding/desktop-port-for
  */
 @Module({
   imports: [
+    DesktopBrowserModule,
     DatabaseModule,
     TasksModule,
     BranchesModule,

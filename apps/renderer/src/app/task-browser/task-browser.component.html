@@ -1,0 +1,54 @@
+@if (!taskId()) {
+  <div class="no-task"><ex-icon name="globe" [size]="24" /><p>Choose a task to open its browser.</p></div>
+} @else if (!store.state()) {
+  <div class="no-task" [attr.aria-busy]="store.pending() > 0"><ex-icon name="globe" [size]="24" /><p role="status">{{ store.error() || 'Opening task browser…' }}</p>@if (store.error()) { <button exButton (click)="store.read()">Refresh browser</button> }</div>
+} @else {
+  <ex-fold [open]="!!store.error() || !!notice() || !!store.state()?.pickerMessage"><div class="notice" role="status"><span>{{ store.error() || notice() || store.state()?.pickerMessage }}</span>@if (store.error()) { <button exButton size="sm" (click)="store.read()">Refresh</button> }<button exButton size="sm" variant="ghost" (click)="dismissNotice()">Dismiss</button></div></ex-fold>
+  <ex-browser-view [tabs]="tabs()" [active]="store.state()?.active ?? undefined" [addressEditable]="true" [pageFocusAvailable]="!!current()?.url && !current()?.error" askLabel="Add to composer"
+    [driver]="current()?.driver ?? 'you'" [step]="current()?.step" [action]="target()" [agentWaiting]="current()?.waiting ?? false"
+    [picking]="store.state()?.picking ?? false" [picked]="picked()" [width]="current()?.width ?? 'full'"
+    [loading]="current()?.loading ?? false" [canGoBack]="current()?.canGoBack ?? false"
+    [errors]="current()?.errors ?? 0" errorText=" · Details withheld for privacy."
+    needsTitle="The agent needs you here" needsText="Complete sign-in, codes or payment yourself. Agent page text, screenshots and logs are withheld. I’m done explicitly returns control."
+    (selected)="tabCommand('select', $event)" (closed)="tabCommand('close', $event)" (added)="showDialog('new')"
+    (navigated)="navigate($event)" (backRequested)="tabCommand('back')" (reloadRequested)="tabCommand('reload')"
+    (pageFocusRequested)="tabCommand('focus')" (takeOverRequested)="tabCommand('takeover')" (handBackRequested)="tabCommand('handoff')" (widthChange)="setWidth($event)"
+    (pickingChange)="command({kind: 'pick', enabled: $event})" (asked)="ask($event)" (sendErrorsRequested)="sendErrors()" (moreRequested)="showDialog('tools')">
+    <div browserPreview #surface class="native-page" [class.driving]="current()?.driver === 'agent'">
+      @if (current()?.error) {
+        <div class="page-state" role="alert"><ex-icon name="globe" [size]="24" /><p>{{ current()?.error }}</p><button exButton (click)="tabCommand('reload')">Retry page</button></div>
+      } @else if (store.state()?.picked) {
+        <div class="page-state"><ex-icon name="target" [size]="24" /><p>Element selected. Page paused while you write.</p><small>Structural selector and viewport bounds only. Screenshots, page text and source location are unavailable for this untrusted surface.</small></div>
+      } @else if (current()?.loading) {
+        <div class="page-state" role="status"><p>Loading page…</p></div>
+      } @else if (!current()?.url && current()) {
+        <div class="page-state"><ex-icon name="globe" [size]="24" /><p>Enter an address above to open a page.</p><button exButton (click)="showDialog('new')">Open a page</button></div>
+      }
+    </div>
+  </ex-browser-view>
+}
+@if (dialog()) {
+  <ex-modal-layer [open]="dialogOpen()" (closeRequested)="dialogOpen.set(false)" (closed)="dialog.set(null)">
+    <section class="browser-dialog" role="dialog" aria-modal="true" [attr.aria-label]="dialog() === 'new' ? 'New browser tab' : 'Browser tools'" [attr.inert]="dialogOpen() ? null : ''">
+      @if (dialog() === 'new') {
+        <h2>Open a page</h2><p>Tabs belong to this task. Localhost uses the selected machine’s server, including SSH forwarding.</p>
+        @if (store.state()?.ports?.length) {
+          <div class="server-options" aria-label="Task servers">@for (port of store.state()!.ports; track port) { <button exButton size="sm" (click)="address.set('http://localhost:' + port)"><ex-icon name="globe" [size]="14" />localhost:{{ port }}</button> }</div>
+        }
+        @if (store.error()) { <p role="alert">{{ store.error() }}</p> }
+        <form (submit)="$event.preventDefault(); openPage()"><label for="task-browser-url">Address or task server port</label><input #urlInput id="task-browser-url" [value]="address()" (input)="address.set(urlInput.value)" placeholder="http://localhost:3000" /><div class="actions"><button exButton type="button" (click)="dialogOpen.set(false)">Cancel</button><button exButton variant="primary" type="submit" [disabled]="!address().trim() || store.pending() > 0">{{ store.pending() > 0 ? 'Opening…' : 'Open tab' }}</button></div></form>
+      } @else {
+        <h2>Browser tools</h2>
+        @if (store.error()) { <p role="alert">{{ store.error() }}</p> }
+        <p class="privacy"><ex-icon name="shield" [size]="16" />Agent observation is withheld: arbitrary pages cannot guarantee complete secret redaction.</p>
+        <div class="tool-group"><span>Page appearance</span><div class="actions"><button exButton size="sm" [disabled]="!current()?.url || !!current()?.error || current()?.loading || store.pending() > 0" [variant]="current()?.theme === 'light' ? 'primary' : 'secondary'" (click)="theme('light')">Light</button><button exButton size="sm" [disabled]="!current()?.url || !!current()?.error || current()?.loading || store.pending() > 0" [variant]="current()?.theme === 'dark' ? 'primary' : 'secondary'" (click)="theme('dark')">Dark</button><button exButton size="sm" [disabled]="!current()?.url || !!current()?.error || current()?.loading || store.pending() > 0" [variant]="current()?.theme === 'system' ? 'primary' : 'secondary'" (click)="theme('system')">System</button></div></div>
+        <div class="tool-group"><span>Network</span><div class="actions"><button exButton size="sm" [disabled]="!current()?.url || !!current()?.error || current()?.loading || store.pending() > 0" [variant]="current()?.slowNetwork ? 'primary' : 'secondary'" (click)="network(true)">Slow network</button><button exButton size="sm" [disabled]="!current()?.url || !!current()?.error || current()?.loading || store.pending() > 0" [variant]="!current()?.slowNetwork ? 'primary' : 'secondary'" (click)="network(false)">Normal</button></div></div>
+        <label class="feedback"><input type="checkbox" [checked]="store.state()?.feedback" (change)="command({kind: 'feedback', enabled: !store.state()?.feedback})" />Share error counts during agent work</label><small>Opt-in shares counts only while the agent owns a tab. Messages and requests remain private.</small>
+        <button exButton [disabled]="!current() || (current()?.driver !== 'agent' && !sessionId())" (click)="current()?.driver === 'agent' ? tabCommand('takeover') : handToSelected(); dialogOpen.set(false)">{{ current()?.driver === 'agent' ? 'Take over' : 'Allow agent to drive this tab' }}</button>
+        <button exButton [disabled]="!current()?.url" (click)="tabCommand('outside'); dialogOpen.set(false)"><ex-icon name="link" [size]="14" />Open outside</button>
+        <div class="unavailable"><span>Screenshot to chat unavailable</span><small>Pixels can expose sign-in, code and payment secrets. No screenshot is captured or sent.</small></div>
+        <div class="actions"><button exButton variant="primary" (click)="dialogOpen.set(false)">Done</button></div>
+      }
+    </section>
+  </ex-modal-layer>
+}

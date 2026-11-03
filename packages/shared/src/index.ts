@@ -1,5 +1,7 @@
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
+import type { TaskBrowserState, TaskBrowserCommand, TaskBrowserLayout } from './task-browser';
+export type * from './task-browser';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
 import type { SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
@@ -47,6 +49,11 @@ export interface InvokeContracts {
   'code:focus': { args: [target: CodeTarget]; result: void };
   'code:release': { args: [target: CodeTarget]; result: void };
 
+  'task-browser:read': { args: [scopeId: string, taskId: number]; result: BackendResult<TaskBrowserState> };
+  'task-browser:command': { args: [scopeId: string, taskId: number, input: TaskBrowserCommand]; result: BackendResult<TaskBrowserState> };
+  'task-browser:layout': { args: [scopeId: string, taskId: number, input: TaskBrowserLayout]; result: void };
+  'task-browser:hide': { args: [scopeId: string, taskId: number]; result: void };
+  'task-browser:deactivate': { args: [scopeId: string, taskId: number]; result: void };
   'session-chat:upload': { args: [scopeId: string, input: ChatAttachmentUpload]; result: BackendResult<ChatAttachmentReceipt> };
   'session-chat:catalog': { args: [scopeId: string, input: SessionChatCatalogRead]; result: BackendResult<SessionChatCatalog> };
   'session-chat:changes': { args: [scopeId: string, input: SessionChatChangesRead]; result: BackendResult<SessionChatChangesPage> };
@@ -123,6 +130,7 @@ export interface InvokeContracts {
 export interface EventContracts {
   'code:exit-requested': CodeTarget;
   'code:changed': { readonly target: CodeTarget; readonly state: CodeSurfaceState };
+  'task-browser:changed': TaskBrowserState;
   'machines:changed': MachineState;
   'theme:changed': Theme;
   'backend:changed': BackendStatus;
@@ -155,6 +163,12 @@ export interface ElevenexBridge {
   codeFocus(target: CodeTarget): Promise<void>;
   codeRelease(target: CodeTarget): Promise<void>;
 
+  taskBrowserRead(scopeId: string, taskId: number): Promise<BackendResult<TaskBrowserState>>;
+  taskBrowserCommand(scopeId: string, taskId: number, input: TaskBrowserCommand): Promise<BackendResult<TaskBrowserState>>;
+  taskBrowserLayout(scopeId: string, taskId: number, input: TaskBrowserLayout): Promise<void>;
+  taskBrowserHide(scopeId: string, taskId: number): Promise<void>;
+  taskBrowserDeactivate(scopeId: string, taskId: number): Promise<void>;
+  onTaskBrowserChanged(listener: (state: TaskBrowserState) => void): () => void;
   sessionChatUpload(scopeId: string, input: ChatAttachmentUpload): Promise<BackendResult<ChatAttachmentReceipt>>;
   sessionChatCatalog(scopeId: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>>;
   sessionChatChanges(scopeId: string, input: SessionChatChangesRead): Promise<BackendResult<SessionChatChangesPage>>;

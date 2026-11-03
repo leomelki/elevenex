@@ -6,7 +6,7 @@
 .address { display: flex; flex: 1; align-items: center; gap: var(--space-1); min-width: 0; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); background: var(--surface-sunken); font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono); }
 .address > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .server { flex: none; padding: 0 var(--space-1); border-radius: var(--radius-xs); color: var(--accent); background: var(--accent-soft); font-size: var(--text-overline-size); }
-.driver { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); white-space: nowrap; font-size: var(--text-overline-size); font-weight: 600; transition: color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out); }
+.driver { border: 0; font-family: inherit; line-height: var(--text-overline-line); cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-1); flex: none; padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); white-space: nowrap; font-size: var(--text-overline-size); font-weight: 600; transition: color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out); }
 .driver[data-driver="agent"] { color: var(--accent); background: var(--accent-soft); }
 .driver[data-driver="needs"] { color: var(--attention); background: var(--attention-soft); }
 .agent-mark { display: inline-grid; place-items: center; flex: none; width: var(--space-4); height: var(--space-4); border-radius: var(--radius-xs); color: var(--accent); background: var(--accent-soft); font: 600 8px/1 var(--font-sans); }
@@ -73,3 +73,5 @@ footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .driver, .page, .target, .agent-cursor, .step-dots i { transition: none; }
   .cursor-pulse { animation: none; opacity: 0; }
 }
+
+.address > input { width: 100%; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ink); font: inherit; outline-offset: var(--space-1); }

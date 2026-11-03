@@ -117,7 +117,8 @@ candidate mounts, behind inert Home, before launch; its first render crosses a
 paint boundary before opening starts. Its scoped feature
 stores supply the existing presentational components; they never import the
 legacy renderer or contact the backend directly. The side views provide tabs, close and expansion behavior. Changes reviews the
-selected agent reply; Code hosts the genuine task-confined web workbench; the remaining views retain their frames. See [Code ownership and recovery](src/app/code/README.md). Expansion
+selected agent reply; Browser composes the [production task browser](src/app/task-browser/README.md);
+Code hosts the [task-confined web workbench](src/app/code/README.md); the remaining views retain their frames. Expansion
 is available on every view and stays active when switching tabs.
 `/connected-workspace` exercises this production composition with a typed,
 preview-only backend adapter. Its fixture never enters the production build.

@@ -1,3 +1,4 @@
+import { BROWSER_TOOLS } from './browser/index.js';
 import type { ToolDefinition } from '../tool-registry/tool.types.js';
 import { OBSERVE_TOOLS } from './observe/index.js';
 import { DRIVE_TOOLS } from './drive/index.js';
@@ -23,5 +24,6 @@ export const ALL_TOOLS: ToolDefinition[] = [
   ...ASK_TOOLS,
   ...ACTION_TOOLS,
   ...PORT_FORWARDING_TOOLS,
+  ...BROWSER_TOOLS,
   ...HUMAN_TOOLS,
 ];

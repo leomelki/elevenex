@@ -38,6 +38,17 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   void invoke('code:present', {scopeId:'scope',taskId:1}, {visible:true,compact:false});
   // @ts-expect-error Frame presentation carries no arbitrary URL or native geometry.
   void invoke('code:present', {scopeId:'scope',taskId:1}, {url:'https://example.com'});
+  void invoke('task-browser:read', 'scope', 1);
+  void invoke('task-browser:command', 'scope', 1, { kind: 'handoff', tabId: 'tab', sessionId: 2 });
+  // @ts-expect-error Browser operations must capture the expected backend scope.
+  void invoke('task-browser:read', 1);
+  // @ts-expect-error A handoff must explicitly name the receiving conversation.
+  void invoke('task-browser:command', 'scope', 1, { kind: 'handoff', tabId: 'tab' });
+  // @ts-expect-error Task pages never expose arbitrary JavaScript or generic CDP.
+  void invoke('task-browser:command', 'scope', 1, { kind: 'evaluate', script: 'document.body.innerText' });
+  // @ts-expect-error Agent text entry is not a browser capability.
+  void invoke('task-browser:command', 'scope', 1, { kind: 'type', text: 'secret', tabId: 'tab' });
+
   void invoke('session-chat:changes', 'scope', { taskId: 1, sessionId: 2, requestId: 'review', turnId: 'reply', offset: 0 });
   // @ts-expect-error Review reads require the selected task and session, never an arbitrary filesystem path.
   void invoke('session-chat:changes', 'scope', { path: '/etc/passwd', offset: 0 });

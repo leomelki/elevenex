@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const remote = require('./remote-contract.cjs');
 const machines = require('./machine-contract.cjs');
 const workspace = require('./workspace-contract.cjs');
-const chatMethods = ['sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload'];
+const chatMethods = ['sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'];
 
 test('preload exposes only the typed bridge and strips event objects', async () => {
   let bridge;

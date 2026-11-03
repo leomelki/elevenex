@@ -1,6 +1,7 @@
 import { CodeSurfaces } from './code/surfaces';
 import { registerCodeIpc } from './code/ipc';
 import { app, BrowserWindow, Menu, dialog, net, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
+import { registerTaskBrowser } from './browser/application';
 import { readFile, realpath } from 'node:fs/promises';
 import { extname, join, relative, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -63,6 +64,7 @@ const backendClient = createBackendClient(backend, remote,
   (windowId, snapshot) => sendToWindow(windowId, 'backend-client:changed', snapshot));
 const code = new CodeSurfaces(backendClient.client, join(app.getPath('userData'), 'code-runtimes'), join(rendererRoot, 'fonts'), (windowId, target, snapshot) => sendToWindow(windowId, 'code:changed', { target, state: snapshot }), (windowId, target) => sendToWindow(windowId, 'code:exit-requested', target), (context, configurationIdentity) => createWindow(context.selection, context, configurationIdentity), devUrl ? new URL(devUrl).origin : APP_ORIGIN);
 const machinePreferences = new MachinePreferences(join(app.getPath('userData'), 'machine-preferences.json'));
+let taskBrowser: ReturnType<typeof registerTaskBrowser> | undefined;
 const machines = new MachineApplication(backend, remote, machinePreferences,
   (windowId, snapshot) => sendToWindow(windowId, 'machines:changed', snapshot));
 
@@ -221,6 +223,7 @@ void app.whenReady().then(async () => {
   app.once('will-quit', unsubscribeBackend);
   const unregisterCode = registerCodeIpc(code, trusted);
   app.once('will-quit', unregisterCode);
+  taskBrowser = registerTaskBrowser(backendClient.client, remote, join(app.getPath('userData'), 'task-browsers'), trusted);
   const unregisterClient = registerBackendClientIpc(backendClient.client, trusted);
   app.once('will-quit', unregisterClient);
   const unregisterRemote = registerRemoteIpc(remote, backend, trusted);
@@ -287,5 +290,5 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  void code.dispose().then(async () => { disposeIdentity?.(); disposeIdentity = undefined; backendClient.dispose(); machines.dispose(); await Promise.allSettled([state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]); app.quit(); }, async error => { quitting = false; await dialog.showMessageBox({ type: 'warning', message: 'Editor changes are still retained in the open window', detail: error instanceof Error ? error.message : 'Finish backing up your editor changes before quitting.', buttons: ['Keep open'] }); });
+  void code.dispose().then(async () => { disposeIdentity?.(); disposeIdentity = undefined; backendClient.dispose(); machines.dispose(); taskBrowser?.dispose(); await Promise.allSettled([taskBrowser?.flush(), state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]); app.quit(); }, async error => { quitting = false; await dialog.showMessageBox({ type: 'warning', message: 'Editor changes are still retained in the open window', detail: error instanceof Error ? error.message : 'Finish backing up your editor changes before quitting.', buttons: ['Keep open'] }); });
 });

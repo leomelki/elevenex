@@ -7,11 +7,13 @@
   </div>
 </header>
 @for (tab of tabs; track tab.id) {
-  <section class="panel-body" [class.has-content]="(tab.id === 'changes' && !!changesContent()) || (tab.id === 'code' && !!codeContent())" role="tabpanel" [id]="tab.panelId" [attr.aria-label]="tab.label" [hidden]="panel() !== tab.id" [attr.inert]="panel() !== tab.id ? '' : null" tabindex="0">
+  <section class="panel-body" [class.has-content]="(tab.id === 'changes' && !!changesContent()) || (tab.id === 'code' && !!codeContent()) || (tab.id === 'browser' && !!browserContent())" role="tabpanel" [id]="tab.panelId" [attr.aria-label]="tab.label" [hidden]="panel() !== tab.id" [attr.inert]="panel() !== tab.id ? '' : null" tabindex="0">
     @if (tab.id === 'changes' && changesContent()) {
       <ng-content select="[workspaceChanges]" />
     } @else if (tab.id === 'code' && codeContent()) {
       <ng-content select="[workspaceCode]" />
+    } @else if (tab.id === 'browser' && browserContent()) {
+      <ng-content select="[workspaceBrowser]" />
     } @else if (panel() === tab.id && unreachable()) {
       <ex-opens-when-back [machine]="unreachable()!" [what]="current().label" [compact]="true" (tryRequested)="reconnectRequested.emit()" />
     } @else if (panel() === tab.id) {

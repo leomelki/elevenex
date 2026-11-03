@@ -639,3 +639,23 @@ not verify the operating system's picker appearance. Run sequentially with other
 native captures after building. When starting a disposable backend, set both
 `DB_PATH` and `ELEVENEX_DATA_ROOT` explicitly, as well as its runtime/migrations
 directory, to avoid inheriting a running development session's database.
+### Native task browser integration
+
+`--backend-url http://127.0.0.1:<port>` borrows an already running **isolated**
+backend for live product captures. The capture CLI validates its `/api/info`
+revision; only the test runner substitutes the backend lifecycle composition.
+The production app/preload has no endpoint override. The runner never stops or
+modifies the borrowed backend's lifecycle. Scenarios may make normal domain
+mutations, so use a disposable database/repository rather than a personal backend.
+
+Yield `{ name: 'native-browser', native: true }` to capture actual app and
+WebContentsView page surfaces and compose them at their registered native bounds.
+Electron's root/window screenshot omits child views. Each native source PNG and
+its bounds are retained in `report.json`; the gallery explicitly labels the
+composition. This is **not an OS-compositor screenshot**. Ordinary checkpoints retain
+Chromium screenshots. Native checkpoints require the actual window size to match
+the viewport; use `capture.window.setContentSize(width, height)` together with
+`capture.viewport(width, height)`. No crop is supported for native checkpoints.
+Native page assertions remain separate from app accessibility/layout diagnostics,
+which inspect only the trusted app renderer. This capture-only capability does
+not expose screenshot or DOM observation to agents driving task pages.

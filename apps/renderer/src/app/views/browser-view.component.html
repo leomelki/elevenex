@@ -7,13 +7,15 @@
     </div>
     <div class="address" [title]="current()?.url ?? ''">
       @if (current()?.server; as server) { <span class="server" [title]="server + ' · this task’s dev server'">{{ server }}</span> }
-      <span>{{ current()?.url ?? 'No page open' }}</span>
+      @if (addressEditable() && current()) {
+        <input #address aria-label="Page address" placeholder="https://example.com or http://localhost:3000" [value]="addressDraft() ?? current()?.url ?? ''" (input)="addressDraft.set(address.value)" (keydown.enter)="$event.preventDefault(); navigateAddress()" (keydown.escape)="addressDraft.set(null); address.blur()" />
+      } @else { <span>{{ current()?.url ?? 'No page open' }}</span> }
     </div>
-    <span class="driver" [hidden]="!current()" [attr.data-driver]="driver()" role="status">
+    <button #driverControl type="button" class="driver" [attr.aria-label]="driverLabel()" (click)="focusPage()" [disabled]="loading() || !pageFocusAvailable()" [hidden]="!current()" [attr.data-driver]="driver()">
       @if (driver() === 'agent') { <span class="agent-mark" aria-hidden="true">Ag</span> }
       @else { <ex-icon [name]="driver() === 'needs' ? 'hand' : 'cursor'" [size]="12" /> }
       <ex-ease-swap [value]="driver() === 'agent' ? 'Driving' : driver() === 'needs' ? 'Your turn' : 'You'" />
-    </span>
+    </button>
     <div class="tools">
       <ex-icon-button icon="target" label="Point and ask (⇧⌘C)" size="sm" [active]="picking()" [disabled]="!current()" (pressed)="pickingChange.emit(!picking())" />
       <ex-icon-button icon="phone" [label]="width() === 'phone' ? 'Full width' : 'Phone width'" size="sm" [active]="width() === 'phone'" [disabled]="!current()" (pressed)="widthChange.emit(width() === 'phone' ? 'full' : 'phone')" />
@@ -49,8 +51,8 @@
           <div class="target-name"><ex-icon name="target" [size]="12" /><span [title]="picked.label">{{ picked.label }}</span>@if (picked.file) { <small [title]="picked.file">{{ picked.file }}</small> }</div>
           <ex-icon-button icon="x" label="Dismiss question (Esc)" size="sm" (pressed)="pickingChange.emit(false)" />
         </div>
-        <textarea #askInput rows="2" aria-label="What should change here?" placeholder="What should change here?" [value]="askText()" (input)="askText.set(askInput.value)" (keydown)="askKeydown($event)"></textarea>
-        <footer><span>Ask about the selected element</span><button exButton variant="primary" size="sm" type="submit" [disabled]="!askText().trim()">Ask</button></footer>
+        <textarea #askInput rows="2" maxlength="2000" aria-label="What should change here?" placeholder="What should change here?" [value]="askText()" (input)="askText.set(askInput.value)" (keydown)="askKeydown($event)"></textarea>
+        <footer><span>Ask about the selected element</span><button exButton variant="primary" size="sm" type="submit" [disabled]="!askText().trim()">{{ askLabel() }}</button></footer>
       </form>
     }
     @if (!current()) { <div class="empty"><ex-icon name="globe" [size]="24" /><p>Open a page for this task.</p><button exButton variant="secondary" (click)="added.emit()">New tab</button></div> }

@@ -16,6 +16,7 @@ export class WorkspacePanelsComponent {
   readonly codeActions = input<TemplateRef<unknown> | null>(null);
   readonly codeContent = contentChild('workspaceCode');
   readonly changesContent = contentChild('workspaceChanges');
+  readonly browserContent = contentChild('workspaceBrowser');
   readonly panel = model('changes');
   readonly unreachable = input<string>();
   readonly reconnectRequested = output<void>();

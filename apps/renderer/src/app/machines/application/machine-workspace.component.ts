@@ -1,6 +1,7 @@
 import { CodePanelComponent } from '../../code';
 import type { CodeTarget, CodeFileIntent } from '@elevenex/shared';
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
+import { TaskBrowserComponent, type BrowserComposerIntent } from '../../task-browser';
 import { jumpHome, settleMark, type CreateProjectIntent } from '../../projects';
 import { AppShellComponent } from '../../shell/app-shell.component';
 import { AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent } from '../../ui';
@@ -18,7 +19,7 @@ import { SessionChatClient } from '../../backend/session-chat-client.service';
 @Component({
   selector: 'ex-machine-workspace',
   providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient, SessionChatOutbox, WorkspaceWritingJournal],
-  imports: [CodePanelComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  imports: [CodePanelComponent, TaskBrowserComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
   templateUrl: './machine-workspace.component.html',
   styleUrl: './machine-workspace.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -130,6 +131,12 @@ export class MachineWorkspaceComponent {
     this.flights = []; this.disposers = []; this.source = null; this.launch.set('idle'); this.setupStarted.set(false);
   }
 
+  private readonly chat = viewChild(SessionChatComponent);
+  browserContext(intent: BrowserComposerIntent): void {
+    const selected = this.store.selected();
+    if (!selected || selected.scopeId !== intent.scopeId || selected.taskId !== intent.taskId || selected.sessionId !== intent.sessionId) return;
+    this.chat()?.stageBrowserContext(intent.text);
+  }
   focusWriting(): void { this.root.querySelector<HTMLTextAreaElement>('ex-composer textarea')?.focus({ preventScroll: true }); }
   closePanel(): void { this.panelOpen.set(false); this.wideReview.set(false); }
   togglePanel(): void { if (this.panelOpen()) this.closePanel(); else this.panelOpen.set(true); }

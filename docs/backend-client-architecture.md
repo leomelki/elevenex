@@ -149,7 +149,10 @@ model catalogs or read history for unselected sessions. Only semantic activity
 changes invalidate navigation; streamed text and tool progress do not reload
 the sidebar. Session pages supply authoritative activity for the visible window.
 
-The side views currently contain shells only. The implementation does not
+Browser now uses a narrow task-owned native adapter; see the
+[production browser guide](../apps/renderer/src/app/task-browser/README.md) for
+its mailbox, forwarding, ownership, bounded resources and conservative privacy
+policy. Remaining side views keep their existing integration boundaries. The implementation does not
 introduce direct renderer networking, generic IPC, a second backend or a
 replacement persistence framework. Selected sessions compose the
 [connected chat adapter](../apps/renderer/src/app/session-chat/README.md) with

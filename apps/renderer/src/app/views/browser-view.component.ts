@@ -27,10 +27,18 @@ export class BrowserViewComponent {
   readonly needsText = input('Complete the step, then hand control back to the agent.');
   readonly canGoBack = input(false);
   readonly loading = input(false);
+  readonly addressEditable = input(false);
+  readonly pageFocusAvailable = input(true);
+  readonly askLabel = input('Ask');
+  readonly navigated = output<string>();
+  protected readonly addressDraft = signal<string | null>(null);
+  private addressTab?: string;
+  private readonly addressInput = viewChild<ElementRef<HTMLInputElement>>('address');
   readonly selected = output<string>();
   readonly closed = output<string>();
   readonly added = output<void>();
   readonly takeOverRequested = output<void>();
+  readonly pageFocusRequested = output<void>();
   readonly handBackRequested = output<void>();
   readonly pickingChange = output<boolean>();
   readonly asked = output<BrowserQuestion>();
@@ -39,17 +47,18 @@ export class BrowserViewComponent {
   readonly backRequested = output<void>();
   readonly reloadRequested = output<void>();
   readonly moreRequested = output<void>();
+  protected readonly driverLabel = computed(() => (this.driver() === 'agent' ? 'Agent driving. Take over and focus page.' : this.driver() === 'needs' ? 'Your turn. Focus page.' : 'You are driving. Focus page.') + ' Shift+Escape returns to browser controls.');
   protected readonly askText = signal('');
   protected readonly current = computed(() => this.tabs().find(tab => tab.id === this.active()) ?? this.tabs()[0]);
   protected readonly tabItems = computed<readonly ViewTab[]>(() => this.tabs().map(tab => ({ ...tab, icon: 'globe', agent: tab.by === 'agent', agentDriving: this.driver() === 'agent' && tab.id === this.current()?.id })));
   protected readonly target = computed(() => this.picked() ?? (this.driver() === 'agent' ? this.action() : undefined));
   protected readonly targetTransform = computed(() => {
     const target = this.target();
-    return target ? `translate(${this.coordinate(target.x) - 4}px, ${this.coordinate(target.y) - 4}px)` : '';
+    return target ? `translate(${this.position(target.x) - 4}px, ${this.position(target.y) - 4}px)` : '';
   });
   protected readonly cursorTransform = computed(() => {
     const target = this.action();
-    return target ? `translate(${this.coordinate(target.x) + this.coordinate(target.w) * .62}px, ${this.coordinate(target.y) + this.coordinate(target.h) * .55}px)` : '';
+    return target ? `translate(${this.position(target.x) + this.coordinate(target.w) * .62}px, ${this.position(target.y) + this.coordinate(target.h) * .55}px)` : '';
   });
   protected readonly stepDots = computed(() => {
     const step = this.step();
@@ -60,11 +69,16 @@ export class BrowserViewComponent {
     return Array.from({ length: count }, (_, index) => index < current ? 'done' : index === current ? 'now' : 'next');
   });
   private readonly askInput = viewChild<ElementRef<HTMLTextAreaElement>>('askInput');
+  private readonly driverControl = viewChild<ElementRef<HTMLButtonElement>>('driverControl');
   private readonly preview = viewChild<ElementRef<HTMLElement>>('preview');
   private previousAskInput?: HTMLTextAreaElement;
   private returnFocus?: HTMLElement;
 
   constructor() {
+    afterRenderEffect(() => {
+      const id = this.current()?.id;
+      if (id !== this.addressTab) { this.addressTab = id; this.addressDraft.set(null); if (id && !this.current()?.url) this.addressInput()?.nativeElement.focus({ preventScroll: true }); }
+    });
     afterRenderEffect(() => {
       const input = this.askInput()?.nativeElement;
       if (input && input !== this.previousAskInput) {
@@ -77,17 +91,23 @@ export class BrowserViewComponent {
       this.previousAskInput = input;
     });
   }
+  protected position(value: number): number { return Number.isFinite(value) ? value : 0; }
   protected coordinate(value: number): number { return Number.isFinite(value) ? Math.max(0, value) : 0; }
 
   protected takeOver(): void { if (this.driver() === 'agent') this.takeOverRequested.emit(); }
-  protected takeOverFromBar(): void {
-    this.preview()?.nativeElement.focus({ preventScroll: true });
-    this.takeOver();
+  focusControls(): void { this.driverControl()?.nativeElement.focus({ preventScroll: true }); }
+  protected focusPage(): void {
+    this.preview()?.nativeElement.focus({ preventScroll: true }); this.takeOver(); this.pageFocusRequested.emit();
   }
+  protected takeOverFromBar(): void { this.focusPage(); }
   protected handBack(): void {
     // Move focus before the owning control's Fold becomes inert and hidden.
-    this.preview()?.nativeElement.focus({ preventScroll: true });
+    this.driverControl()?.nativeElement.focus({ preventScroll: true });
     this.handBackRequested.emit();
+  }
+  protected navigateAddress(): void {
+    const value = this.addressDraft()?.trim();
+    if (value) { this.navigated.emit(value); this.addressDraft.set(null); }
   }
   protected ask(): void {
     const target = this.picked();

@@ -108,7 +108,7 @@ export default async function* (capture) {
     yield { name: `${theme}-you-drive`, selector: 'ex-browser-demo' };
     await capture.click('ex-browser-demo ex-fold.open .foot:has(ex-icon[name="cursor"]) button');
     await settled();
-    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Page preview');
+    assert.equal(await capture.evaluate(() => document.activeElement?.matches('ex-browser-demo .driver')), true, 'Hand back retains focus in browser controls');
     aligned(await geometry());
 
     await capture.evaluate(() => document.querySelector('ex-browser-demo').style.maxWidth = '440px');
@@ -120,7 +120,7 @@ export default async function* (capture) {
     yield { name: `${theme}-needs-you`, selector: 'ex-browser-demo' };
     await capture.click('ex-browser-demo .needs button');
     await settled();
-    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Page preview');
+    assert.equal(await capture.evaluate(() => document.activeElement?.matches('ex-browser-demo .driver')), true, 'Completing needs-user retains focus in browser controls');
     await capture.click('ex-browser-demo [aria-label="Point and ask (⇧⌘C)"]');
     await capture.waitFor(() => document.activeElement?.tagName === 'TEXTAREA');
     assert.equal(await capture.evaluate(() => !!document.querySelector('ex-browser-demo .target.picked')), true);
