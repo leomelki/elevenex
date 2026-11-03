@@ -26,6 +26,23 @@ export default async function* (capture) {
   BackendManager.prototype.snapshot = () => ready;
   BackendManager.prototype.start = async () => ready;
   BackendManager.prototype.codeAccess = () => token;
+  // A release installation may already be pending when the scenario starts.
+  // Keep its later status events consistent with this external-backend adapter.
+  const ipc = require('../../../apps/desktop/dist/ipc.js');
+  const broadcast = ipc.broadcast;
+  ipc.broadcast = (channel, value) => broadcast(channel, channel === 'backend:changed' ? ready : value);
+  ipc.broadcast('backend:changed', ready);
+  // Hold the real extension bootstrap to inspect the document-loading phase.
+  // This adapter lives only in the disposable capture process.
+  const { CodeProtocol } = require('../../../apps/desktop/dist/code/protocol.js');
+  const handle = CodeProtocol.prototype.handle;
+  let resumeBootstrap;
+  const bootstrap = new Promise(resolve => { resumeBootstrap = resolve; });
+  let holdBootstrap = true;
+  CodeProtocol.prototype.handle = async function(request) {
+    if (holdBootstrap && new URL(request.url).pathname === '/extension/extension.js') await bootstrap;
+    return handle.call(this, request);
+  };
   try {
     await cp(join(process.env.ELEVENEX_CODE_SMOKE_CACHE, '1.144.0'), join(app.getPath('userData'), 'code-runtimes/1.144.0'), { recursive: true });
     const finish = async () => { await capture.settle(); await capture.waitFor(() => document.getAnimations().every(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running')); };
@@ -40,6 +57,11 @@ export default async function* (capture) {
     await capture.click(`[data-session-id="${sessionId}"] button.select`); await finish();
     await capture.click('ex-workspace-task-header [aria-label="Toggle side panel"]'); await finish();
     await capture.click('ex-workspace-panels [role="tab"][aria-label="Code"]'); await finish();
+    await capture.waitFor(() => document.querySelector('ex-code-panel iframe'));
+    assert.equal(await capture.evaluate(() => !!document.querySelector('ex-code-panel .launch-card')), false);
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel')?.getAttribute('aria-busy')), 'true');
+    yield {name:'iframe-loading-without-fallback',inspect:['ex-code-panel','.editor-surface','iframe']};
+    holdBootstrap = false; resumeBootstrap();
     const waitMain = async (predicate, message) => { const deadline = Date.now() + 45000; while (!await predicate()) { if (Date.now() > deadline) throw new Error(message); await new Promise(resolve => setTimeout(resolve, 40)); } };
     await waitMain(() => capture.evaluate(() => !!document.querySelector('ex-workspace-panels .find-file')), 'Compact editor did not open');
     const frame = capture.window.webContents.mainFrame.frames.find(frame => frame.url.includes('code.elevenex.invalid'));
@@ -120,11 +142,53 @@ export default async function* (capture) {
       await waitNative('!document.querySelector(".tab.dirty")');
       yield { name: 'compact-save-confirmed', inspect: ['ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface'] };
     } finally { await writeFile(path, original); }
+    const geometry = async () => {
+      const bounds = await capture.evaluate(() => {
+        const launch = document.querySelector('ex-machine-launch .launch');
+        const shell = document.querySelector('ex-machine-workspace ex-app-shell');
+        const iframe = document.querySelector('ex-code-panel iframe');
+        return {scroll:launch.scrollLeft,launch:launch.getBoundingClientRect().toJSON(),shell:shell.getBoundingClientRect().toJSON(),iframe:iframe.getBoundingClientRect().toJSON(),width:iframe.clientWidth,fallback:!!document.querySelector('ex-code-panel .launch-card')};
+      });
+      assert.equal(bounds.scroll,0,'Focus scrolled the machine launch viewport');
+      assert.ok(Math.abs(bounds.shell.left-bounds.launch.left)<1 && Math.abs(bounds.shell.right-bounds.launch.right)<1,'Workspace shifted and left a blank right margin');
+      assert.equal(bounds.fallback,false,'Launch UI replaced or shared space with the retained iframe');
+      // Chromium notifies the out-of-process frame after the parent’s final
+      // animation frame. Await its actual viewport/layout rather than a timer.
+      await waitMain(async () => {
+        const editor = await frame.executeJavaScript('({width:innerWidth,workbench:document.querySelector(".monaco-workbench").getBoundingClientRect().width})');
+        return Math.abs(editor.width-bounds.width)<=1 && Math.abs(editor.workbench-bounds.width)<=1;
+      }, 'Workbench did not fill the resized iframe: '+JSON.stringify(bounds));
+      assert.equal(capture.window.webContents.mainFrame.frames.find(child=>child.url===frame.url),frame);
+    };
+    for (const theme of ['light','dark']) {
+      await capture.theme(theme);
+      for (let cycle=0;cycle<3;cycle++) {
+        await capture.click('ex-workspace-panels [aria-label="Close side panel"]'); await finish();
+        await capture.click('ex-workspace-task-header [aria-label="Toggle side panel"]'); await finish();
+        await capture.waitFor(()=>document.querySelector('ex-code-panel')?.getAttribute('aria-busy')==='false');
+        await capture.evaluate(target=>window.elevenex.codeFocus(target),target); await finish();
+        await geometry();
+        await capture.click('ex-workspace-panels [aria-label="Expand side panel"]'); await finish(); await geometry();
+        await capture.click('ex-workspace-panels [aria-label="Return to chat"]'); await finish(); await geometry();
+      }
+      yield {name:`${theme}-reopened-without-right-gap`,inspect:['ex-machine-launch .launch','ex-app-shell','.panel','iframe']};
+      await capture.motion.freeze();
+      const previousAnimations = new Set(capture.motion.animations);
+      await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
+      const opening = [...capture.motion.animations].filter(id=>!previousAnimations.has(id));
+      assert.ok(opening.length,'Panel expansion animation did not start');
+      await capture.cdp('Animation.seekAnimations',{animations:opening,currentTime:80});
+      await capture.settle();
+      assert.equal(await capture.evaluate(()=>!!document.querySelector('ex-code-panel .launch-card')),false);
+      yield {name:`${theme}-expansion-interrupted`,inspect:['.panel','ex-code-panel','iframe']};
+      await capture.click('ex-workspace-panels [aria-label="Return to chat"]');
+      await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();
+    }
     await capture.viewport(700, 600); await capture.reducedMotion(true); await finish();
     await capture.waitFor(() => document.querySelector('ex-code-frame iframe')?.getBoundingClientRect().width >= 320);
     yield { name: 'narrow-reduced-motion', inspect: ['ex-code-panel', 'ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface'] };
     await capture.click('ex-workspace-panels [aria-label="Close side panel"]'); await finish();
     assert.equal(await capture.evaluate(() => document.querySelector('ex-code-frame iframe')?.checkVisibility() ?? false), false);
     yield { name: 'closed-panel-focus', inspect: ['ex-app-shell .panel'] };
-  } finally { Object.assign(BackendManager.prototype, previous); }
+  } finally { holdBootstrap=false; resumeBootstrap(); CodeProtocol.prototype.handle=handle; ipc.broadcast=broadcast; Object.assign(BackendManager.prototype, previous); }
 }

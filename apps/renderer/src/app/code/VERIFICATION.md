@@ -1,6 +1,38 @@
 # New Code workbench verification
 
-## Iframe migration — current verification
+## Panel loading and reopen regression — current verification
+
+Verified on 2026-11-03, macOS arm64 / Electron 45.0.0. Document loading and
+editor readiness are now separate UI states: once the frame resource exists,
+only the iframe owns the editor area. The native 320×160 size gate and Expand
+placeholder are removed; layout width is measured without visual transforms.
+
+The right margin reproduced as a **59.5 px horizontal scroll offset** on the
+machine launch wrapper, shifting the entire workspace left. Its enlarged hidden
+Home animation contributed to that scroll area. The wrapper now clips without
+scrolling; Home retains its own scroll container.
+
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`: passed. The
+  renderer suite contains 626 cases in 93 files, including loading/ready frame
+  exclusivity, transient zero/small sizes and reopening a cleared task selection.
+- Production capture `artifacts/desktop-capture/code-panel-layout-confirmed/`
+  contains **19 checkpoints**, with `report.json` reporting `verified: true` and
+  no errors. Inspected loading, reopened, interrupted and narrow PNGs.
+- A capture-only barrier holds real extension bootstrap to verify that loading
+  has no launch card beneath the iframe. The disposable backend adapter keeps
+  readiness events consistent with its external backend throughout the run.
+- Six close/reopen cycles plus expand/collapse and interrupted 80 ms expansions
+  cover both themes. Assertions require the launch scroll offset to remain zero,
+  shell edges to match the launch viewport, iframe/workbench widths to agree
+  after resize and the same frame identity to remain mounted. Existing search,
+  toolbar save, dirty-text retention, modal stacking and narrow/reduced-motion
+  checks still pass.
+
+This is native unpackaged renderer verification, not a new packaged-app or
+Windows/Linux launch. Earlier migration checks below describe that baseline.
+
+
+## Iframe migration baseline
 
 Verified on 2026-11-03 on macOS arm64 with Electron 45.0.0 / Chromium 156,
 using the unmodified pinned Code OSS 1.144.0 web artifact. No dependency or

@@ -25,12 +25,11 @@ export class CodePanelComponent {
   readonly file = input<CodeFileIntent | null>(null);
   readonly store = inject(CodeWorkspaceStore);
   readonly measuredWidth = signal(0);
-  readonly measuredHeight = signal(0);
-  readonly canEmbed = computed(() => this.measuredWidth() >= 320 && this.measuredHeight() >= 160);
   readonly compact = computed(() => this.measuredWidth() < 600);
   readonly launching = computed(() => this.store.busy() || this.store.state()?.phase === 'loading');
   readonly connectionLost = computed(() => !this.connected() || this.store.state()?.phase === 'disconnected' && !this.store.state()?.relocated && !this.store.state()?.detached);
-  readonly hasSurface = computed(() => !!this.store.state() && this.store.state()?.phase !== 'failed' && this.store.state()?.phase !== 'loading' && !this.store.state()?.relocated && !this.store.state()?.detached && this.canEmbed());
+  readonly showFrame = computed(() => !!this.frameResource() && this.store.state()?.phase !== 'failed');
+  readonly hasSurface = computed(() => this.showFrame() && this.store.state()?.phase !== 'loading');
   readonly title = computed(() => this.launching() ? 'Opening your workspace' : this.store.error() || this.store.state()?.phase === 'failed' ? 'Code couldn’t open' : !this.target() ? 'Choose a task to open Code' : this.store.state() ? 'Continue in your editor' : 'Your task, in Code');
   readonly modifier = computed(() => this.bridge.platform === 'darwin' ? '⌘' : 'Ctrl+');
   readonly findShortcut = computed(() => this.modifier() + 'P');
@@ -55,13 +54,13 @@ export class CodePanelComponent {
     inject(DestroyRef).onDestroy(() => stopExit?.());
     effect(() => { const target = this.target(), initial = this.initialState(); untracked(() => { this.focusRequest.set(null); this.store.select(target); if (initial) this.store.adopt(initial); }); });
     effect(() => {
-      const active = this.active(), wide = this.wide(), target = this.target(), connected = this.connected(), standalone = this.standalone(), fits = this.canEmbed();
+      const active = this.active(), wide = this.wide(), target = this.target(), connected = this.connected(), standalone = this.standalone();
       if (active && target && connected) untracked(() => {
         if (this.previousWide === false || standalone && !this.standaloneOpened) this.focusRequest.set(target);
         if (standalone) this.standaloneOpened = true;
-        if (fits && (this.openingSelection?.scopeId !== target.scopeId || this.openingSelection.taskId !== target.taskId)) { this.openingSelection = target; void this.store.open(); }
+        if (this.openingSelection?.scopeId !== target.scopeId || this.openingSelection.taskId !== target.taskId) { this.openingSelection = target; void this.store.open(); }
       });
-      if (!active || !connected || !fits) this.openingSelection = null;
+      if (!active || !connected || !target) this.openingSelection = null;
       this.previousWide = wide;
     });
     effect(() => { const file = this.file(), target = this.target(); if (file && file !== this.consumedFile && target && file.scopeId === target.scopeId && file.taskId === target.taskId && this.active() && this.connected()) untracked(() => { this.consumedFile = file; void this.store.openFile(file.file).then(() => { if (this.file() === file && this.target()?.scopeId === target.scopeId && this.target()?.taskId === target.taskId && !this.store.error()) this.focusRequest.set(target); }); }); });
@@ -69,13 +68,15 @@ export class CodePanelComponent {
     afterRenderEffect(onCleanup => {
       const element = this.surface()?.nativeElement;
       if (!element) return;
-      const measure = () => { const rect = element.getBoundingClientRect(); this.measuredWidth.set(Math.floor(rect.width)); this.measuredHeight.set(Math.floor(rect.height)); };
+      // Layout dimensions ignore the shell’s launch/modal transforms. An
+      // animation must never change editor eligibility or compact preferences.
+      const measure = () => this.measuredWidth.set(element.clientWidth);
       const resize = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure);
       resize?.observe(element); measure(); onCleanup(() => resize?.disconnect());
     });
     afterRenderEffect(onCleanup => {
       const container = this.frameContainer()?.nativeElement, url = this.frameResource();
-      if (!container || !url || !this.active() || !this.canEmbed()) return;
+      if (!container || !url || !this.active()) return;
       onCleanup(this.frames.mount(url, container));
     });
     afterRenderEffect(onCleanup => {
@@ -97,7 +98,6 @@ export class CodePanelComponent {
     });
     inject(DestroyRef).onDestroy(() => { const target = this.target(); if (target) void this.bridge.codePresent?.(target, {visible:false, compact:this.compact()}).catch(() => undefined); });
   }
-  expand(): void { this.focusRequest.set(this.target()); this.wideChange.emit(true); }
   retry(): void { this.focusRequest.set(this.target()); void this.store.open(); }
   focusEditor(): void { this.focusRequest.set(this.target()); }
   recover(): void { this.focusRequest.set(this.target()); void this.store.recover(); }

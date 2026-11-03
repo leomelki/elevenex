@@ -10,9 +10,9 @@
 <ex-fold [open]="connectionLost() && hasSurface() && !store.state()?.recoveryAvailable"><div class="recovery" role="status"><span>Connection lost. Your edits stay here. Reconnect using the machine menu before saving.</span></div></ex-fold>
 <ex-fold [open]="!!store.state()?.recoveryAvailable"><div class="recovery"><span>The checkout changed. Your tabs and unsaved text are retained. Inspect them before saving.</span><button exButton size="sm" [disabled]="launching() || !connected()" (click)="recover()">Open updated workspace</button></div></ex-fold>
 <ex-fold [open]="!!store.error() && hasSurface()"><div class="recovery" role="alert"><span>{{ store.error() }}</span><button exButton size="sm" variant="ghost" (click)="dismissError()">Dismiss</button></div></ex-fold>
-<div #surface class="editor-surface" [class.loaded]="hasSurface()" [attr.aria-label]="hasSurface() ? 'Task Code workbench' : null">
-  <div #frameContainer class="frame-container" [hidden]="!store.state()?.frameUrl || store.state()?.relocated || store.state()?.detached || !active() || !canEmbed() || store.state()?.phase === 'failed'"></div>
-  @if (!hasSurface()) {
+<div #surface class="editor-surface" [class.loaded]="showFrame()" [attr.aria-label]="showFrame() ? 'Task Code workbench' : null">
+  <div #frameContainer class="frame-container" [hidden]="!showFrame() || !active()"></div>
+  @if (!showFrame()) {
     <div class="launch-card">
       <div class="code-mark"><ex-icon [name]="store.error() || store.state()?.phase === 'failed' ? 'plug' : 'code'" [size]="22" /></div>
       <h2>{{ title() }}</h2>
@@ -21,22 +21,15 @@
       @if (target()) {
         <div class="launch-actions">
           @if (store.state()?.relocated) {
-            <button exButton variant="primary" class="expand-here" [disabled]="!connected() || launching()" (click)="recover()">Open editor here</button>
-            <button exButton variant="primary" class="open-window" [disabled]="!connected() || launching()" (click)="store.state()?.detached ? store.focus() : detach()"><ex-icon name="window" />{{ store.state()?.detached ? 'Return to editor window' : 'Open editor window' }}</button>
-            @if (store.state()?.detached) { <button exButton variant="ghost" class="separate-window" (click)="store.focus()">Focus other window</button> }
+            <button exButton variant="primary" [disabled]="!connected() || launching()" (click)="recover()">Open editor here</button>
+            @if (store.state()?.detached) { <button exButton variant="ghost" (click)="store.focus()">Focus other window</button> }
           } @else if (launching()) {
             <button exButton variant="primary" disabled>Opening editor…</button>
-          } @else if (!wide() && !canEmbed()) {
-            <button exButton variant="primary" class="expand-here" [disabled]="launching() || !connected()" (click)="expand()"><ex-icon name="expand" />Expand editor</button>
-            <button exButton variant="primary" class="open-window" [disabled]="launching() || !connected()" (click)="detach()"><ex-icon name="window" />Open editor window</button>
-            <button exButton variant="ghost" class="separate-window" [disabled]="launching() || !connected()" (click)="detach()"><ex-icon name="window" />Open in a window</button>
-          } @else if (!canEmbed()) {
-            <button exButton variant="primary" [disabled]="!connected()" (click)="detach()"><ex-icon name="window" />Open editor window</button>
           } @else {
             <button exButton variant="primary" [disabled]="!connected()" (click)="retry()">Try again</button>
           }
         </div>
-        <p class="launch-note"><span class="expand-note">{{ wide() && !canEmbed() ? 'A separate window gives your files room to work.' : 'Your conversation stays in place.' }}</span><span class="window-note">A separate window gives your files room to work.</span></p>
+        <p class="launch-note">Your conversation stays in place.</p>
         <dl class="shortcuts" aria-label="Editor shortcuts">
           <div><dt>Find a file</dt><dd><ex-kbd>{{ findShortcut() }}</ex-kbd></dd></div>
           <div><dt>Search files</dt><dd><ex-kbd>{{ searchShortcut() }}</ex-kbd></dd></div>

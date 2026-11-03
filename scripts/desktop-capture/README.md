@@ -610,4 +610,7 @@ dirty-file retention through expansion/collapse, narrow/reduced-motion layout
 and hidden iframe focus and actual settings layered over the live editor. Use `--built` after `desktop:build`. Its window debugger
 uses focus emulation and trusted input into the focused cross-origin iframe.
 The scenario checks the absence of native editor views and retains the same
-frame through tab changes and expansion.
+frame through tab changes and expansion. It also holds real extension bootstrap
+to check exclusive loading, repeats close/reopen and resizing in both themes,
+scrubs interrupted expansions and asserts zero launch-viewport scrolling and
+matching iframe/workbench widths.

@@ -67,9 +67,10 @@ workbench. Presentation acknowledgments reject stale completions after hiding,
 changing tasks or moving windows. CSS resizes the iframe directly; IPC runs only
 when visibility or the compact-layout boundary changes.
 
-The editor supports at least 320px usable width and 160px height. Below that,
-the explicit separate-window fallback remains available. Expansion uses the
-existing shell takeover, motion and focus restoration.
+The iframe fills the available panel at every size. There is no native-surface
+minimum-size gate or forced Expand placeholder. Expansion uses the existing
+shell takeover, motion and focus restoration; the separate-window action stays
+available in the panel toolbar.
 That task-only window has its own selected-machine lease and the existing SSH
 challenge UI; closing/changing the original window does not redirect its files.
 One live workbench per task/machine is reused within its owning window. Moving
@@ -95,9 +96,11 @@ and Command Palette. `window.customTitleBarVisibility` is desktop-only and is no
 used by this web workbench.
 
 The workbench has a uniform 4px (`space-1`) gutter on all four sides, in both
-launch and editing states. The shell's `workspace` container offers a direct
-window fallback below 328px (320px plus gutters). Loading and recovery retain
-explicit explanations; short windows scroll their launch actions into reach.
+launch and editing states. The frame remains mounted through transient opening widths and short layouts.
+Artifact preparation and genuine failures retain explicit explanations. Once
+main supplies an editor URL, document loading shows only the iframe and progress
+line: the launch card never occupies space beside or underneath it. Short
+windows scroll launch/recovery actions into reach.
 Shortcuts show only the desktop platform's keys. No redundant task identity row consumes editor height.
 
 Explicit expansion, opening a file and programmatic focus hand off to the current

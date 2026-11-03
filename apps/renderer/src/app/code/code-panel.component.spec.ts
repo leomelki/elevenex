@@ -6,12 +6,13 @@ import { CodePanelComponent } from './code-panel.component';
 
 const target: CodeTarget = { scopeId: 'scope-a', taskId: 1 };
 const loading: CodeSurfaceState = { taskId: 1, identity: 'a'.repeat(64), phase: 'loading', message: 'Opening task workspace…' };
-const ready: CodeSurfaceState = { ...loading, phase: 'ready', message: 'Task connected' };
+const frameUrl = 'https://w-' + 'a'.repeat(32) + '.' + 'b'.repeat(32) + '.code.elevenex.invalid/';
+const ready: CodeSurfaceState = { ...loading, frameUrl, phase: 'ready', message: 'Task connected' };
 
 describe('Code panel launch and iframe focus handoff', () => {
   beforeEach(() => {
     vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(352, 132, 1064, 752));
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1064);
   });
   afterEach(() => { TestBed.resetTestingModule(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   async function settle(fixture: ComponentFixture<CodePanelComponent>) { fixture.detectChanges(); await fixture.whenStable(); fixture.detectChanges(); await fixture.whenStable(); }
@@ -60,13 +61,44 @@ describe('Code panel launch and iframe focus handoff', () => {
   it('keeps the mounted frame and its focus when status or open replies change without changing the resource', async () => {
     const { fixture, publish } = setup(); await settle(fixture);
     const pool = TestBed.inject(CodeFramePool);
-    const frameUrl = 'https://w-' + 'a'.repeat(32) + '.' + 'b'.repeat(32) + '.code.elevenex.invalid/';
     publish({...ready,frameUrl}); await settle(fixture);
     publish({...ready,frameUrl,branch:'renamed'}); await settle(fixture);
     expect(pool.mount).toHaveBeenCalledOnce();
   });
+  it('shows only the iframe while its document is loading and keeps the same mount when ready', async () => {
+    const { fixture, publish } = setup(); await settle(fixture);
+    publish({ ...loading, frameUrl }); await settle(fixture);
+    const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelector('.launch-card')).toBeNull();
+    expect(root.querySelector('.frame-container')?.hasAttribute('hidden')).toBe(false);
+    expect(root.querySelector('ex-progress-line')).not.toBeNull();
+    publish(ready); await settle(fixture);
+    expect(TestBed.inject(CodeFramePool).mount).toHaveBeenCalledOnce();
+  });
+  it('opens without a native size minimum and never replaces a retained iframe with an Expand prompt', async () => {
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(0);
+    const { fixture, bridge, publish } = setup(); await settle(fixture);
+    expect(bridge.codeOpen).toHaveBeenCalledOnce();
+    publish(ready); await settle(fixture);
+    for (const value of [0, 180, 319, 432]) {
+      width.mockReturnValue(value);
+      fixture.componentInstance.measuredWidth.set(value);
+      await settle(fixture);
+      expect(fixture.nativeElement.querySelector('.launch-card')).toBeNull();
+      expect(fixture.nativeElement.querySelector('.frame-container').hidden).toBe(false);
+    }
+    expect(TestBed.inject(CodeFramePool).mount).toHaveBeenCalledOnce();
+    expect(bridge.codeOpen).toHaveBeenCalledOnce();
+  });
+  it('reopens the same task after selection was cleared without waiting for a size change', async () => {
+    const { fixture, bridge, publish } = setup(); await settle(fixture);
+    publish(ready); await settle(fixture);
+    fixture.componentRef.setInput('target', null); await settle(fixture);
+    fixture.componentRef.setInput('target', target); await settle(fixture);
+    expect(bridge.codeOpen).toHaveBeenCalledTimes(2);
+  });
   it('opens at side-panel width, offers direct file/search/save actions and retains it through expansion', async () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(900, 132, 424, 752));
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(424);
     const { fixture, bridge, publish, layouts } = setup();
     fixture.componentRef.setInput('wide', false); await settle(fixture);
     expect(bridge.codeOpen).toHaveBeenCalledExactlyOnceWith(target);
