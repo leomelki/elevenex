@@ -18,6 +18,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   codeDetach: target => invoke('code:detach', target),
   codeWindowContext: () => invoke('code:window-context'),
   codeOpen: target => invoke('code:open', target),
+  codePresent: (target, presentation) => invoke('code:present', target, presentation),
   codeLayout: (target, bounds) => invoke('code:layout', target, bounds),
   codeOpenFile: (target, file) => invoke('code:open-file', target, file),
   codeAction: (target, action) => invoke('code:action', target, action),
@@ -102,4 +103,5 @@ const bridge = Object.freeze<ElevenexBridge>({
   onEnvironmentChanged: listener => subscribe('environment:changed', listener),
 });
 
-contextBridge.exposeInMainWorld('elevenex', bridge);
+// An editor is an unprivileged cross-origin subframe of the app window.
+if (process.isMainFrame) contextBridge.exposeInMainWorld('elevenex', bridge);

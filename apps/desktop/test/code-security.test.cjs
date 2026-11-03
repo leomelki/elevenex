@@ -17,25 +17,22 @@ test('Code controls accept resource identities and bounded file positions, never
   assert.throws(() => validate.file({ path: 'ok', line: 1.2 }));
   for (const action of ['find-file', 'search-text', 'save']) assert.equal(validate.action(action), action);
   for (const action of ['workbench.action.terminal.new', 'raw-shell', null, { action: 'save' }]) assert.throws(() => validate.action(action));
+  assert.deepEqual(validate.presentation({visible:true,compact:false}),{visible:true,compact:false});
+  for (const value of [null,{visible:'yes',compact:false},{visible:true,compact:false,url:'https://example.com'}]) assert.throws(()=>validate.presentation(value));
   assert.throws(() => validate.bounds({ x: -1, y: 50, width: 600, height: 500 }));
   assert.throws(() => validate.reply('directory', { entries: Array(201).fill({ name: 'a', type: 1 }), next: null }));
   assert.throws(() => validate.reply('read', { content: '', revision: 'not a revision' }));
   assert.throws(() => validate.descriptor({ version: 1, taskId: 2, identity: 'a'.repeat(64), storageIdentity: 'a'.repeat(64), name: 'wrong', branch: '' }, 1));
 });
 
-test('Code HTTPS is private to its native session, rejects foreign origins, confines assets and stale scopes', async () => {
+test('Code HTTPS is confined to its task origin, rejects foreign origins, confines assets and stale scopes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'new-code-protocol-'));
-  let handler, filter, permission, exits = 0;
-  const session = { protocol: { handle: async (scheme, fn) => { assert.equal(scheme, 'https'); handler = fn; }, unhandle: () => {} }, setPermissionRequestHandler: fn => { permission = fn; fn(null, 'camera', allowed => assert.equal(allowed, false)); }, setPermissionCheckHandler: fn => assert.equal(fn(), false), setDevicePermissionHandler: fn => assert.equal(fn(), false), webRequest: { onBeforeRequest: fn => { filter = fn; } } };
+  let exits = 0;
   const client = new BackendClient(() => null, () => {}); client.attach(1);
-  const host = new CodeProtocol(session, client, 1, { taskId: 1, scopeId: 'a'.repeat(36) }, { version: 1, taskId: 1, identity: 'a'.repeat(64), storageIdentity: 'a'.repeat(64), name: 'task', branch: 'branch' }, root, root, () => false, () => {}, () => exits++);
-  await host.register();
-  permission({ getURL: () => `https://${host.authority}/`, isFocused: () => true }, 'persistent-storage', allowed => assert.equal(allowed, true), { isMainFrame: true });
-  permission({ getURL: () => 'https://example.com', isFocused: () => true }, 'persistent-storage', allowed => assert.equal(allowed, false), { isMainFrame: true });
+  const host = new CodeProtocol(client, 1, { taskId: 1, scopeId: 'a'.repeat(36) }, { version: 1, taskId: 1, identity: 'a'.repeat(64), storageIdentity: 'a'.repeat(64), name: 'task', branch: 'branch' }, root, root, () => false, () => {}, () => exits++);
   try {
     assert.equal(host.allows('https://example.com'), false); assert.equal(host.allows(`https://user@${host.authority}/`), false);
-    let result; filter({ url: 'https://example.com/exfiltrate' }, value => { result = value; }); assert.equal(result.cancel, true);
-    const request = (path, options = {}) => handler(new globalThis.Request(`https://${host.authority}${path}`, options));
+    const request = (path, options = {}) => host.handle(new globalThis.Request(`https://${host.authority}${path}`, options));
     const returnToChat = (generation = 'a'.repeat(64)) => request('/api/return-to-chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation, transportRevision: 0 }) }).then(response => response.json());
     assert.equal((await returnToChat()).accepted, false);
     host.active = true; assert.equal((await returnToChat('old')).accepted, false); assert.equal(exits, 0);

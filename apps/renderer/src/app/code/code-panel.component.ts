@@ -2,6 +2,7 @@ import { afterRenderEffect, ChangeDetectionStrategy, Component, DestroyRef, Elem
 import type { CodeAction, CodeFileIntent, CodeSurfaceState, CodeTarget } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, KbdComponent, ProgressLineComponent } from '../ui';
+import { CodeFramePool } from './code-frame-pool.service';
 import { CodeWorkspaceStore } from './code-workspace.store';
 @Component({
   selector: 'ex-code-panel', providers: [CodeWorkspaceStore],
@@ -25,8 +26,8 @@ export class CodePanelComponent {
   readonly store = inject(CodeWorkspaceStore);
   readonly measuredWidth = signal(0);
   readonly measuredHeight = signal(0);
-  readonly covered = signal(false);
   readonly canEmbed = computed(() => this.measuredWidth() >= 320 && this.measuredHeight() >= 160);
+  readonly compact = computed(() => this.measuredWidth() < 600);
   readonly launching = computed(() => this.store.busy() || this.store.state()?.phase === 'loading');
   readonly connectionLost = computed(() => !this.connected() || this.store.state()?.phase === 'disconnected' && !this.store.state()?.relocated && !this.store.state()?.detached);
   readonly hasSurface = computed(() => !!this.store.state() && this.store.state()?.phase !== 'failed' && this.store.state()?.phase !== 'loading' && !this.store.state()?.relocated && !this.store.state()?.detached && this.canEmbed());
@@ -36,13 +37,19 @@ export class CodePanelComponent {
   readonly searchShortcut = computed(() => this.bridge.platform === 'darwin' ? '⇧⌘F' : 'Ctrl+Shift+F');
   readonly returnShortcut = computed(() => this.bridge.platform === 'darwin' ? '⇧⌘R' : 'Ctrl+Shift+R');
   private readonly bridge = inject(ELEVENEX_BRIDGE);
+  private readonly frames = inject(CodeFramePool);
+  private readonly frameResource = computed(() => {
+    const state = this.store.state();
+    return state && !state.relocated && !state.detached ? state.frameUrl ?? null : null;
+  });
+  private readonly frameContainer = viewChild<ElementRef<HTMLElement>>('frameContainer');
   private readonly surface = viewChild<ElementRef<HTMLElement>>('surface');
   private consumedFile: CodeFileIntent | null = null;
   private previousWide?: boolean;
+  private openingSelection: CodeTarget | null = null;
   private standaloneOpened = false;
   private readonly placedTarget = signal<CodeTarget | null>(null);
   private readonly focusRequest = signal<CodeTarget | null>(null);
-  private readonly root = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   constructor() {
     const stopExit = this.bridge.onCodeExitRequested?.(target => { if (this.active() && this.target()?.scopeId === target.scopeId && this.target()?.taskId === target.taskId) this.wideChange.emit(false); });
     inject(DestroyRef).onDestroy(() => stopExit?.());
@@ -52,53 +59,51 @@ export class CodePanelComponent {
       if (active && target && connected) untracked(() => {
         if (this.previousWide === false || standalone && !this.standaloneOpened) this.focusRequest.set(target);
         if (standalone) this.standaloneOpened = true;
-        if (fits) void this.store.open();
+        if (fits && (this.openingSelection?.scopeId !== target.scopeId || this.openingSelection.taskId !== target.taskId)) { this.openingSelection = target; void this.store.open(); }
       });
+      if (!active || !connected || !fits) this.openingSelection = null;
       this.previousWide = wide;
     });
     effect(() => { const file = this.file(), target = this.target(); if (file && file !== this.consumedFile && target && file.scopeId === target.scopeId && file.taskId === target.taskId && this.active() && this.connected()) untracked(() => { this.consumedFile = file; void this.store.openFile(file.file).then(() => { if (this.file() === file && this.target()?.scopeId === target.scopeId && this.target()?.taskId === target.taskId && !this.store.error()) this.focusRequest.set(target); }); }); });
     effect(() => { if (!this.active()) untracked(() => this.store.suspend()); });
     afterRenderEffect(onCleanup => {
-      const element = this.surface()?.nativeElement, target = this.target(), active = this.active(), hasSurface = this.hasSurface();
-      if (!element || !target) return;
-      let frame = 0, previous = '', stopped = false, placement = 0;
-      const measure = () => {
-        frame = 0;
-        const rect = element.getBoundingClientRect(); this.measuredWidth.set(Math.floor(rect.width)); this.measuredHeight.set(Math.floor(rect.height));
-        const blocked = !!this.root.closest('[inert], [hidden]') || Array.from(document.querySelectorAll<HTMLElement>('.cdk-overlay-pane, [role="dialog"]')).some(item => {
-          if (!item.getClientRects().length || item.closest('[hidden], [inert]')) return false;
-          if (item.matches('[role="dialog"]')) return true;
-          const overlay = item.getBoundingClientRect();
-          return overlay.left < rect.right && overlay.right > rect.left && overlay.top < rect.bottom && overlay.bottom > rect.top;
-        });
-        this.covered.set(blocked);
-        const bounds = active && hasSurface && !blocked && rect.width >= 320 ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null;
-        const key = JSON.stringify(bounds);
-        if (key !== previous) {
-          previous = key; const revision = ++placement; this.placedTarget.set(null);
-          void this.bridge.codeLayout?.(target, bounds).then(() => { if (!stopped && bounds && revision === placement) this.placedTarget.set(target); }).catch(() => undefined);
-        }
-      };
-      const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
-      const resize = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(schedule); resize?.observe(element);
-      const mutations = typeof MutationObserver === 'undefined' ? undefined : new MutationObserver(schedule); mutations?.observe(document.body, { attributes: true, attributeFilter: ['inert', 'hidden', 'class'], childList: true, subtree: true });
-      window.addEventListener('resize', schedule); measure();
-      onCleanup(() => { stopped = true; this.placedTarget.set(null); if (frame) cancelAnimationFrame(frame); resize?.disconnect(); mutations?.disconnect(); window.removeEventListener('resize', schedule); void this.bridge.codeLayout?.(target, null).catch(() => undefined); });
+      const element = this.surface()?.nativeElement;
+      if (!element) return;
+      const measure = () => { const rect = element.getBoundingClientRect(); this.measuredWidth.set(Math.floor(rect.width)); this.measuredHeight.set(Math.floor(rect.height)); };
+      const resize = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure);
+      resize?.observe(element); measure(); onCleanup(() => resize?.disconnect());
+    });
+    afterRenderEffect(onCleanup => {
+      const container = this.frameContainer()?.nativeElement, url = this.frameResource();
+      if (!container || !url || !this.active() || !this.canEmbed()) return;
+      onCleanup(this.frames.mount(url, container));
+    });
+    afterRenderEffect(onCleanup => {
+      const target = this.target(), active = this.active(), hasSurface = this.hasSurface();
+      const compact = this.compact();
+      if (!target) return;
+      let stopped = false;
+      // CSS owns layout. Inform main only about visibility and the compact-mode
+      // boundary, never every pixel/frame of panel animation.
+      const visible = active && hasSurface;
+      this.placedTarget.set(null);
+      void this.bridge.codePresent?.(target, { visible, compact }).then(() => { if (!stopped && visible) this.placedTarget.set(target); }).catch(() => undefined);
+      onCleanup(() => { stopped = true; });
     });
     afterRenderEffect(() => {
       const wanted = this.focusRequest(), placed = this.placedTarget();
       if (!wanted || !placed || wanted.scopeId !== placed.scopeId || wanted.taskId !== placed.taskId || !this.active() || !this.hasSurface()) return;
       untracked(() => { this.focusRequest.set(null); this.store.focus(); });
     });
-    inject(DestroyRef).onDestroy(() => { const target = this.target(); if (target) void this.bridge.codeLayout?.(target, null).catch(() => undefined); });
+    inject(DestroyRef).onDestroy(() => { const target = this.target(); if (target) void this.bridge.codePresent?.(target, {visible:false, compact:this.compact()}).catch(() => undefined); });
   }
-  expand(): void { this.focusRequest.set(this.target()); this.wideChange.emit(true); void this.store.open(); }
+  expand(): void { this.focusRequest.set(this.target()); this.wideChange.emit(true); }
   retry(): void { this.focusRequest.set(this.target()); void this.store.open(); }
   focusEditor(): void { this.focusRequest.set(this.target()); }
   recover(): void { this.focusRequest.set(this.target()); void this.store.recover(); }
   async runAction(action: CodeAction): Promise<void> {
     const target = this.target();
-    if (!target || !this.active() || !this.hasSurface() || this.covered()) return;
+    if (!target || !this.active() || !this.hasSurface()) return;
     try { await this.bridge.codeAction(target, action); }
     catch { if (this.target()?.scopeId === target.scopeId && this.target()?.taskId === target.taskId) this.store.error.set('The editor action could not complete. Your edits are retained.'); }
   }

@@ -607,5 +607,7 @@ and `ELEVENEX_CODE_TEST_WORKSPACE`. The test-only process adapter connects the
 capture to this backend without starting or changing the user's backend manager.
 It covers both themes, native Quick Open/Quick Search, actual toolbar saving,
 dirty-file retention through expansion/collapse, narrow/reduced-motion layout
-and hidden native focus. Use `--built` after `desktop:build`. Its native debugger
-uses focus emulation so root-window diagnostics cannot dismiss native pickers.
+and hidden iframe focus and actual settings layered over the live editor. Use `--built` after `desktop:build`. Its window debugger
+uses focus emulation and trusted input into the focused cross-origin iframe.
+The scenario checks the absence of native editor views and retains the same
+frame through tab changes and expansion.

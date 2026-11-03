@@ -4,7 +4,6 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import type { CodeSurfaceState, CodeTarget } from '@elevenex/shared';
-import type { Session } from 'electron';
 import type { BackendClient } from '../backend-client/client';
 import { requestBackendJson } from '../backend-client/transport';
 import { CODE_OPERATIONS, object, reply, type CodeOperation, type WorkspaceDescriptor } from './validation';
@@ -23,22 +22,15 @@ export class CodeProtocol {
   active = false;
   embedded = true;
   constructor(
-    private readonly session: Session, private readonly client: BackendClient,
+    private readonly client: BackendClient,
     public windowId: number, public target: CodeTarget,
     public workspace: WorkspaceDescriptor, private readonly assets: string,
     private readonly fonts: string, private readonly dark: () => boolean,
     private readonly changed: (phase: CodeSurfaceState['phase'], message: string) => void,
     private readonly returnToChat: () => void = () => undefined,
-  ) { this.authority = `w-${workspace.storageIdentity.slice(0, 32)}.${workspace.storageIdentity.slice(32)}.code.elevenex.invalid`; }
-  async register(): Promise<void> {
-    await this.session.protocol.handle('https', request => this.handle(request));
-    this.session.setPermissionRequestHandler((contents, permission, callback, details) => callback(contents?.getURL() === `https://${this.authority}/` && 'isMainFrame' in details && details.isMainFrame === true && (permission === 'persistent-storage' || permission === 'clipboard-sanitized-write' && contents.isFocused())));
-    this.session.setPermissionCheckHandler((_contents, permission, origin) => permission === 'persistent-storage' && origin === `https://${this.authority}`);
-    this.session.setDevicePermissionHandler(() => false);
-    this.session.webRequest.onBeforeRequest((details, callback) => {
-      callback({ cancel: !this.allows(details.url) && !details.url.startsWith('blob:') && !details.url.startsWith('data:') });
-    });
-  }
+    private readonly shellOrigin = 'app://elevenex',
+    originIdentity = workspace.storageIdentity,
+  ) { this.authority = `w-${originIdentity.slice(0, 32)}.${originIdentity.slice(32)}.code.elevenex.invalid`; }
   allows(value: string): boolean {
     try {
       const url = new URL(value);
@@ -56,12 +48,12 @@ export class CodeProtocol {
       this.readyWaiters.add(done);
     });
   }
-  dispose(): void { this.closed = true; this.lifetime.abort(); for (const done of this.readyWaiters) done(false); this.session.protocol.unhandle('https'); this.session.webRequest.onBeforeRequest(null); }
-  private async handle(request: Request): Promise<Response> {
+  dispose(): void { this.closed = true; this.lifetime.abort(); for (const done of this.readyWaiters) done(false); }
+  async handle(request: Request): Promise<Response> {
     if (this.closed || !this.allows(request.url)) return new Response(null, { status: 403 });
     const url = new URL(request.url), origin = request.headers.get('origin');
     if (origin && !this.allows(origin)) return new Response(null, { status: 403 });
-    const headers: Record<string, string> = { 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': origin ?? 'https://' + this.authority, 'Access-Control-Allow-Headers': 'Content-Type', 'Cache-Control': 'no-store' };
+    const headers: Record<string, string> = { 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'same-site', 'Access-Control-Allow-Origin': origin ?? 'https://' + this.authority, 'Access-Control-Allow-Headers': 'Content-Type', 'Cache-Control': 'no-store' };
     try {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
       if (url.pathname.startsWith('/api/')) return this.api(request, url.pathname.slice(5), headers);
@@ -69,7 +61,7 @@ export class CodeProtocol {
       if (url.pathname === '/') {
         if (url.host !== this.authority) return new Response(null, { status: 403 });
         const tokens = await readFile(join(__dirname, 'tokens.css'), 'utf8');
-        const document = workbenchDocument(this.workspace, this.authority, tokens, this.dark());
+        const document = workbenchDocument(this.workspace, this.authority, tokens, this.dark(), this.shellOrigin);
         return new Response(document.html, { headers: { ...headers, 'Content-Type': 'text/html', 'Content-Security-Policy': document.policy } });
       }
       if (url.pathname === '/extension/package.nls.json') return Response.json({}, { headers });
@@ -89,7 +81,7 @@ export class CodeProtocol {
         if (!extensionWorker || !actual.endsWith('webWorkerExtensionHostIframe.html')) return new Response(null, { status: 403 });
         const html = await readFile(actual, 'utf8');
         const hashes = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(match => createHash('sha256').update(match[1] ?? '').digest('base64'));
-        headers['Content-Security-Policy'] = codePolicy(this.authority, 'static', true, hashes);
+        headers['Content-Security-Policy'] = codePolicy(this.authority, 'static', true, hashes, this.shellOrigin);
         return new Response(html, { headers });
       }
       headers['Content-Security-Policy'] = codePolicy(this.authority, 'static', extensionWorker);

@@ -1,4 +1,4 @@
-import type { CodeTarget, CodeAction, CodeBounds, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
+import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
@@ -38,6 +38,7 @@ export interface GitStatus {
 export interface InvokeContracts {
   'code:window-context': { args: []; result: CodeWindowContext | null };
   'code:open': { args: [target: CodeTarget]; result: BackendResult<CodeSurfaceState> };
+  'code:present': { args: [target: CodeTarget, presentation: CodePresentation]; result: void };
   'code:layout': { args: [target: CodeTarget, bounds: CodeBounds | null]; result: void };
   'code:open-file': { args: [target: CodeTarget, file: CodeOpenFile]; result: BackendResult<{ readonly accepted: true }> };
   'code:recover': { args: [target: CodeTarget]; result: BackendResult<CodeSurfaceState> };
@@ -145,6 +146,7 @@ export interface ElevenexBridge {
   onCodeChanged(listener: (event: { readonly target: CodeTarget; readonly state: CodeSurfaceState }) => void): () => void;
   codeWindowContext(): Promise<CodeWindowContext | null>;
   codeOpen(target: CodeTarget): Promise<BackendResult<CodeSurfaceState>>;
+  codePresent(target: CodeTarget, presentation: CodePresentation): Promise<void>;
   codeLayout(target: CodeTarget, bounds: CodeBounds | null): Promise<void>;
   codeOpenFile(target: CodeTarget, file: CodeOpenFile): Promise<BackendResult<{ readonly accepted: true }>>;
   codeRecover(target: CodeTarget): Promise<BackendResult<CodeSurfaceState>>;

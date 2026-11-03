@@ -11,7 +11,7 @@
 <ex-fold [open]="!!store.state()?.recoveryAvailable"><div class="recovery"><span>The checkout changed. Your tabs and unsaved text are retained. Inspect them before saving.</span><button exButton size="sm" [disabled]="launching() || !connected()" (click)="recover()">Open updated workspace</button></div></ex-fold>
 <ex-fold [open]="!!store.error() && hasSurface()"><div class="recovery" role="alert"><span>{{ store.error() }}</span><button exButton size="sm" variant="ghost" (click)="dismissError()">Dismiss</button></div></ex-fold>
 <div #surface class="editor-surface" [class.loaded]="hasSurface()" [attr.aria-label]="hasSurface() ? 'Task Code workbench' : null">
-  @if (hasSurface() && covered()) { <div class="surface-cover" role="status"><ex-icon name="code" [size]="24" /><p>Your editor stays open.<br>Return here when you’re ready.</p></div> }
+  <div #frameContainer class="frame-container" [hidden]="!store.state()?.frameUrl || store.state()?.relocated || store.state()?.detached || !active() || !canEmbed() || store.state()?.phase === 'failed'"></div>
   @if (!hasSurface()) {
     <div class="launch-card">
       <div class="code-mark"><ex-icon [name]="store.error() || store.state()?.phase === 'failed' ? 'plug' : 'code'" [size]="22" /></div>

@@ -1,5 +1,57 @@
 # New Code workbench verification
 
+## Iframe migration — current verification
+
+Verified on 2026-11-03 on macOS arm64 with Electron 45.0.0 / Chromium 156,
+using the unmodified pinned Code OSS 1.144.0 web artifact. No dependency or
+lockfile changes.
+
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`: passed. Tests
+  include 149 main/preload/security/process cases, seven capture-tool cases,
+  shared/IPC TypeScript assertions and 623 renderer cases in 93 files.
+- Native `electron-smoke.cjs`: passed with the final preload/presentation API,
+  production `app://` routing/CSP, scoped IPC, theme and multiwindow lifecycle.
+  Its backend is a controlled fixture.
+- Native `code-workbench-smoke.cjs --large`: passed against a disposable git
+  worktree with **12,001 files**, actual filesystem/search modules and real Code
+  OSS. Verified text input, exact saved bytes, Quick Open/Quick Search, compact
+  layout, same-frame reopen, forced renderer crash, dirty hot-exit restoration and recovered save. The frame
+  cannot read the parent DOM or access Node/the application bridge; external
+  fetch is blocked by CSP. This uses a focused HTTP adapter, not a full Nest app.
+- Native `code-window-smoke.cjs`: passed against the actual disposable Nest
+  backend. Unsaved source text is restored in a new iframe/window, its backend
+  scope differs, and saving still works after the source window closes.
+- Production capture: **14 checkpoints**, `verified: true`, no errors in
+  `artifacts/desktop-capture/code-iframe-verified/report.json`. Inspected PNGs
+  cover light/dark compact editing and pickers, settings painting above the live
+  editor, dirty text retained through expansion and Browser/Code tab switching,
+  actual toolbar saving, narrow reduced motion and hidden-panel focus.
+- `pnpm desktop:preview` plus a native gallery shell capture: passed. This is a
+  gallery smoke check, separate from the production editor evidence above.
+- `git diff --check`: passed.
+
+Warm artifact-cache measurements from the 12,001-file native regression on this
+Apple M1: artifact validation 3 ms, usable file 1,689 ms, retained reopen 2 ms,
+forced-crash restore 983 ms, filename search cold/warm 28/3 ms, first text-search
+page 12 ms. These are individual smoke measurements, not percentile benchmarks.
+The first-ever artifact download is unchanged and was not rebenchmarked here.
+
+The capture records Chromium’s generic warning about combining `allow-scripts`
+and `allow-same-origin`. The editor is cross-origin from the shell, cannot access
+its parent DOM or remove its outer sandbox, and needs a real origin for workers
+and durable IndexedDB. Both boundaries are enforced independently by CSP and
+main-owned routing. The iframe has no popups, forms, downloads or top navigation.
+
+The earlier native-editor partitions remain untouched. Their development-profile
+browser storage is not imported into the new task/machine iframe origins; save
+existing native-editor writing before restarting into this build. Current iframe
+tabs and unsaved text survive in-window switching and the tested window handoff.
+This migration has not been packaged or run on Windows/Linux or against a live
+SSH backend. Earlier packaged/native-view evidence below is historical.
+
+## Previous native-surface baseline (historical)
+
+
 Verified on 2026-11-03, macOS 26.3 / Apple M1 arm64, Electron 45.0.0,
 Chromium 156.0.8078.48, embedded Node 24.22.0 (CLI Node 24.22.1).
 No previous editor sources, deleted-code diffs, bundles, tests or history were

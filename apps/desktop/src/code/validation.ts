@@ -1,4 +1,4 @@
-import type { CodeAction, CodeBounds, CodeOpenFile, CodeTarget } from '@elevenex/shared';
+import type { CodeAction, CodeBounds, CodeOpenFile, CodePresentation, CodeTarget } from '@elevenex/shared';
 import { invalidResponse } from '../backend-client/transport';
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidResponse();
@@ -21,6 +21,11 @@ export function bounds(value: unknown): CodeBounds | null {
   const raw = object(value);
   if (Object.keys(raw).sort().join(',') !== 'height,width,x,y') throw new Error('Invalid editor bounds');
   return { x: number(raw['x'], 20_000), y: number(raw['y'], 20_000), width: number(raw['width'], 20_000), height: number(raw['height'], 20_000) };
+}
+export function presentation(value: unknown): CodePresentation {
+  const raw = object(value);
+  if (Object.keys(raw).sort().join(',') !== 'compact,visible' || typeof raw['visible'] !== 'boolean' || typeof raw['compact'] !== 'boolean') throw new Error('Invalid editor presentation');
+  return { visible: raw['visible'], compact: raw['compact'] };
 }
 export function action(value: unknown): CodeAction {
   if (value !== 'find-file' && value !== 'search-text' && value !== 'save') throw new Error('Invalid editor action');

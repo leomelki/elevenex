@@ -13,7 +13,7 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   const listeners = new Map();
   const code = await readFile(require.resolve('../dist/preload.js'), 'utf8');
   vm.runInNewContext(code, {
-    exports: {}, process: { platform: 'darwin' },
+    exports: {}, process: { platform: 'darwin', isMainFrame: true },
     require: (name) => {
       assert.equal(name, 'electron', 'sandbox preload must not import other modules');
       return {
@@ -29,7 +29,7 @@ test('preload exposes only the typed bridge and strips event objects', async () 
       };
     },
   });
-  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
+  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
   assert.equal(Object.isFrozen(bridge), true);
   await bridge.appVersion();
   await bridge.gitStatus('/workspace');
@@ -85,4 +85,12 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   listeners.get('machines:changed')({ sender: 'private object' }, { revision: 4 });
   assert.deepEqual(received.at(-1), [{ revision: 4 }]); stopMachine();
   assert.equal(listeners.size, 0);
+});
+
+
+test('editor subframes never receive the application bridge', async () => {
+  const code = await readFile(require.resolve('../dist/preload.js'), 'utf8');
+  let exposed = false;
+  vm.runInNewContext(code, {exports:{},process:{platform:'darwin',isMainFrame:false},require:()=>({contextBridge:{exposeInMainWorld:()=>{exposed=true;}},ipcRenderer:{}})});
+  assert.equal(exposed,false);
 });

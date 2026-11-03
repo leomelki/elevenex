@@ -61,7 +61,7 @@ const remote = new RemoteManager({
 });
 const backendClient = createBackendClient(backend, remote,
   (windowId, snapshot) => sendToWindow(windowId, 'backend-client:changed', snapshot));
-const code = new CodeSurfaces(backendClient.client, join(app.getPath('userData'), 'code-runtimes'), join(rendererRoot, 'fonts'), (windowId, target, snapshot) => sendToWindow(windowId, 'code:changed', { target, state: snapshot }), (windowId, target) => sendToWindow(windowId, 'code:exit-requested', target), (context, configurationIdentity) => createWindow(context.selection, context, configurationIdentity));
+const code = new CodeSurfaces(backendClient.client, join(app.getPath('userData'), 'code-runtimes'), join(rendererRoot, 'fonts'), (windowId, target, snapshot) => sendToWindow(windowId, 'code:changed', { target, state: snapshot }), (windowId, target) => sendToWindow(windowId, 'code:exit-requested', target), (context, configurationIdentity) => createWindow(context.selection, context, configurationIdentity), devUrl ? new URL(devUrl).origin : APP_ORIGIN);
 const machinePreferences = new MachinePreferences(join(app.getPath('userData'), 'machine-preferences.json'));
 const machines = new MachineApplication(backend, remote, machinePreferences,
   (windowId, snapshot) => sendToWindow(windowId, 'machines:changed', snapshot));
@@ -112,6 +112,8 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
     },
   });
   state.attach(window);
+  const stopCodeFrames = code.attachWindow(window.webContents, devUrl);
+  window.once('closed', stopCodeFrames);
   // Home is passive on launch. Restore domain context when a machine is chosen,
   // but do not open a saved SSH host merely because the app started.
   remote.attach(window.webContents.id, launchSelection ?? null);
@@ -127,7 +129,17 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
     if (isMainFrame && !inPlace) { code.detachWindow(windowId); backendClient.client.reset(windowId); }
   });
   window.webContents.on('render-process-gone', () => { code.detachWindow(windowId); backendClient.client.reset(windowId); });
-  window.on('close', () => code.detachWindow(windowId));
+  let editorCloseAccepted = false, editorClosePending = false;
+  window.on('close', event => {
+    if (editorCloseAccepted || quitting) { code.detachWindow(windowId); return; }
+    event.preventDefault();
+    if (editorClosePending) return;
+    editorClosePending = true;
+    void code.prepareWindowClose(windowId).then(accepted => {
+      editorClosePending = false;
+      if (accepted && !window.isDestroyed()) { editorCloseAccepted = true; window.close(); }
+    }).catch(() => { editorClosePending = false; });
+  });
   window.once('closed', () => code.releaseWindow(windowId, () => {
     machines.detach(windowId);
     backendClient.client.detach(windowId);
@@ -197,7 +209,7 @@ void app.whenReady().then(async () => {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({ responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': [contentSecurityPolicy(devUrl)],
+        ...(isAppUrl(details.url, devUrl) ? { 'Content-Security-Policy': [contentSecurityPolicy(devUrl)] } : {}),
         'X-Content-Type-Options': ['nosniff'],
       } });
     });

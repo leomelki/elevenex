@@ -4,6 +4,7 @@ import type { BackendClientState, BackendInfo, BackendResult, MachineState } fro
 
 describe('IPC bridge contract', () => {
   it('keeps the public API arguments and replies typed', () => {
+    expectTypeOf<Parameters<ElevenexBridge['codePresent']>>().toEqualTypeOf<[target: import('@elevenex/shared').CodeTarget, presentation: import('@elevenex/shared').CodePresentation]>();
     expectTypeOf<Parameters<ElevenexBridge['sessionChatCatalog']>>().toEqualTypeOf<[scopeId: string, input: import('@elevenex/shared').SessionChatCatalogRead]>();
     expectTypeOf<ReturnType<ElevenexBridge['sessionChatCatalog']>>().toEqualTypeOf<Promise<BackendResult<import('@elevenex/shared').SessionChatCatalog>>>();
     expectTypeOf<Parameters<ElevenexBridge['gitStatus']>>().toEqualTypeOf<[path: string]>();
@@ -34,6 +35,9 @@ describe('IPC bridge contract', () => {
 // These negative assertions are checked by tsc in pnpm test. Vitest alone only
 // transpiles tests, which would silently miss an accidentally weakened contract.
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  void invoke('code:present', {scopeId:'scope',taskId:1}, {visible:true,compact:false});
+  // @ts-expect-error Frame presentation carries no arbitrary URL or native geometry.
+  void invoke('code:present', {scopeId:'scope',taskId:1}, {url:'https://example.com'});
   void invoke('session-chat:changes', 'scope', { taskId: 1, sessionId: 2, requestId: 'review', turnId: 'reply', offset: 0 });
   // @ts-expect-error Review reads require the selected task and session, never an arbitrary filesystem path.
   void invoke('session-chat:changes', 'scope', { path: '/etc/passwd', offset: 0 });

@@ -1,6 +1,6 @@
-// Real Code OSS + sandboxed native surface + new backend file/search modules.
+// Real Code OSS + sandboxed cross-origin iframe + new backend file/search modules.
 // Run after backend/desktop builds with the installed Electron. No product test hooks.
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, protocol } = require('electron');
 const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
 const { mkdtemp, mkdir, writeFile, readFile, realpath, rm } = require('node:fs/promises');
@@ -15,6 +15,7 @@ const files = require('../../backend/dist/code-workspace/code-files');
 const { CodeSearch } = require('../../backend/dist/code-workspace/code-search.service');
 const { CodeWatch } = require('../../backend/dist/code-workspace/code-watch.service');
 const execute = promisify(execFile);
+protocol.registerSchemesAsPrivileged([{scheme:'app',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
 const deadline = setTimeout(() => { console.error('Code workbench smoke deadline'); app.exit(1); }, 180_000);
 let root, server, code, search, watches, currentView;
 async function wait(predicate, message, timeout = 30_000) {
@@ -64,7 +65,8 @@ app.whenReady().then(async () => {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const window = new BrowserWindow({ width: 1250, height: 900, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
-  await window.loadURL('data:text/html,<html><body>Native Code verification</body></html>'); window.show();
+  protocol.handle('app', () => new globalThis.Response('<html><body><div id=editor style="height:780px"></div></body></html>', {headers:{'Content-Type':'text/html'}}));
+  await window.loadURL('app://elevenex/'); window.show();
   const client = new BackendClient(() => ({ url: `http://127.0.0.1:${server.address().port}`, version: 'b'.repeat(40), headers: {}, identity: 'smoke', environment: { kind: 'local' } }), () => {});
   client.attach(window.webContents.id);
   const target = { scopeId: client.state(window.webContents.id).scope.id, taskId: 1 };
@@ -75,19 +77,26 @@ app.whenReady().then(async () => {
   metrics.artifactCache = process.argv.includes('--cold-install') ? 'cold' : 'warm'; metrics.artifactInstallMs = Math.round(performance.now() - started); console.log('Artifact prepared ms:', metrics.artifactInstallMs);
   let codeState;
   code = new CodeSurfaces(client, runtimeRoot, join(process.cwd(), 'apps/renderer/public/fonts'), (_id, _target, state) => { codeState = state; console.log('CODE_STATE', state.phase, state.message); });
+  window.webContents.on('console-message', event => console.log('FRAME_CONSOLE',event.message));
+  window.webContents.on('did-fail-load', (_event,...args)=>console.log('FRAME_LOAD',...args));
+  code.attachWindow(window.webContents);
   const opened = await code.open(window.webContents.id, target); assert.equal(opened.ok, true, JSON.stringify(opened));
   code.layout(window.webContents.id, target, { x: 60, y: 60, width: 1100, height: 780 });
-  const view = window.contentView.children[0]; currentView = view; assert.ok(view);
+  await window.webContents.executeJavaScript(`{const f=document.createElement('iframe');f.src=${JSON.stringify(opened.value.frameUrl)};f.sandbox='allow-scripts allow-same-origin';f.style='width:1100px;height:780px;border:0';document.querySelector('#editor').append(f);}`);
+  const frame = await wait(()=>window.webContents.mainFrame.frames.find(frame=>frame.url===opened.value.frameUrl), 'Iframe did not navigate');
+  const view = {webContents:{executeJavaScript:code=>frame.executeJavaScript(code),on:()=>{},session:window.webContents.session,focus:()=>{},debugger:window.webContents.debugger,capturePage:()=>window.webContents.capturePage(),isDestroyed:()=>window.isDestroyed()},getVisible:()=>true}; currentView=view;
   view.webContents.on('console-message', event => console.log('WORKBENCH', event.level, event.message));
   view.webContents.on('did-fail-load', (_event, ...details) => console.error('WORKBENCH_LOAD', ...details));
   await wait(() => view.webContents.executeJavaScript('!!document.querySelector(".monaco-workbench")'), 'Genuine workbench did not mount');
   view.webContents.session.webRequest.onErrorOccurred(details => console.log('FAILED_RESOURCE', details.url, details.error));
   assert.equal(await view.webContents.executeJavaScript('typeof window.elevenex'), 'undefined');
   assert.equal(await view.webContents.executeJavaScript('typeof require'), 'undefined');
+  assert.equal(await view.webContents.executeJavaScript("(()=>{try{void parent.document;return false;}catch{return true;}})()"), true, 'Editor must not access the shell DOM');
+  assert.equal(await view.webContents.executeJavaScript("fetch('https://example.invalid/exfiltrate').then(()=>false,()=>true)"), true, 'Editor CSP must block external network');
   assert.equal((await code.openFile(window.webContents.id, target, { path: 'hello.ts', line: 1 })).ok, true);
   await wait(() => view.webContents.executeJavaScript('!!document.querySelector(".monaco-editor") && !!document.querySelector(".tab[aria-label*=hello], .tab[title*=hello]")'), 'File did not open', 45_000);
   metrics.usableFileMs = Math.round(performance.now() - started); console.log('Usable file ms:', metrics.usableFileMs);
-  // Real keyboard commands into the native VS Code editor.
+  // Real keyboard commands into the VS Code iframe.
   window.focus(); view.webContents.focus();
   await view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('workbench.action.focusActiveEditorGroup'))");
   console.log('EDITOR_LAYOUT', await view.webContents.executeJavaScript('JSON.stringify({size:[innerWidth,innerHeight],editor:document.querySelector(".monaco-editor")?.getBoundingClientRect().toJSON(),inputs:[...document.querySelectorAll("textarea,[contenteditable=true]")].map(e=>e.outerHTML.slice(0,180))})'));
@@ -103,8 +112,9 @@ app.whenReady().then(async () => {
   code.release(window.webContents.id, target); await code.open(window.webContents.id, target);
   code.layout(window.webContents.id, target, { x: 60, y: 60, width: 1100, height: 780 });
   metrics.reopenMs = Math.round(performance.now() - reopenStarted);
-  assert.equal(window.contentView.children[0], view, 'Reopen duplicated the workbench');
+  assert.equal(window.webContents.mainFrame.frames.find(f=>f.url===opened.value.frameUrl), frame, 'Reopen duplicated the workbench');
   // Compact side-panel mode uses the same workbench, with direct overlay search.
+  await window.webContents.executeJavaScript("document.querySelector('iframe').style.width='432px'");
   await code.layout(window.webContents.id, target, { x: 750, y: 100, width: 432, height: 700 });
   assert.equal(view.getVisible(), true);
   assert.equal(await view.webContents.executeJavaScript('document.querySelector(".part.sidebar")?.getBoundingClientRect().width ?? 0'), 0);
@@ -116,21 +126,25 @@ app.whenReady().then(async () => {
   await wait(() => view.webContents.executeJavaScript('document.querySelector(".quick-input-list")?.textContent.includes("hello.ts")'), 'Compact text search did not find the real file');
   for (const type of ['keyDown', 'keyUp']) await view.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   await code.layout(window.webContents.id, target, { x: 60, y: 60, width: 1100, height: 780 });
-  assert.equal(window.contentView.children[0], view, 'Expansion duplicated the compact editor');
-  // Dirty backup recovery uses upstream hot-exit storage, without a second workbench.
+  await window.webContents.executeJavaScript("document.querySelector('iframe').style.width='1100px'");
+  assert.equal(window.webContents.mainFrame.frames.find(f=>f.url===opened.value.frameUrl), frame, 'Expansion duplicated the compact editor');
+  // Force a renderer crash after upstream hot-exit backups have settled.
   await view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('editor.action.selectAll'))"); await view.webContents.debugger.sendCommand('Input.insertText', { text: 'export const recoveredFromCrash = true;\n' });
   await wait(() => view.webContents.executeJavaScript('!!document.querySelector(".tab.dirty")'), 'Dirty editor state missing');
   // VS Code debounces browser backups; allow its supported hot-exit mechanism to settle.
   await new Promise(resolve => setTimeout(resolve, 2500));
   view.webContents.debugger.detach();
-  view.webContents.forcefullyCrashRenderer();
-  await wait(() => codeState?.phase === 'failed', 'Crash was not reported');
+  window.webContents.forcefullyCrashRenderer();
+  await wait(()=>codeState?.phase === 'failed','Renderer crash was not reported');
+  await window.loadURL('app://elevenex/');
   const restartAt = performance.now();
-  assert.equal((await code.open(window.webContents.id, target)).ok, true);
+  const restored = await code.open(window.webContents.id, target); assert.equal(restored.ok, true);
+  await window.webContents.executeJavaScript(`{const f=document.createElement('iframe');f.src=${JSON.stringify(opened.value.frameUrl)};f.sandbox='allow-scripts allow-same-origin';f.style='width:1100px;height:780px;border:0';document.querySelector('#editor').append(f);}`);
+  view.webContents.executeJavaScript = async code => (await wait(()=>window.webContents.mainFrame.frames.find(f=>f.url===opened.value.frameUrl),'Restored frame missing')).executeJavaScript(code);
   code.layout(window.webContents.id, target, { x: 60, y: 60, width: 1100, height: 780 });
   await wait(() => view.webContents.executeJavaScript('document.querySelector(".monaco-editor")?.textContent.includes("recoveredFromCrash")'), 'Unsaved hot-exit buffer was not restored', 45_000);
   metrics.crashRecoveryMs = Math.round(performance.now() - restartAt);
-  assert.equal(window.contentView.children[0], view, 'Crash recovery duplicated the workbench');
+  assert.equal(window.webContents.mainFrame.frames.filter(f=>f.url===opened.value.frameUrl).length, 1);
   view.webContents.debugger.attach('1.3');
   await view.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {enabled:true});
   await view.webContents.executeJavaScript('document.querySelector(".monaco-editor textarea.inputarea").focus()');
@@ -152,4 +166,4 @@ app.whenReady().then(async () => {
   client.dispose(); clearTimeout(deadline); await code.dispose(); watches.onModuleDestroy(); search.onModuleDestroy();
   await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
   await rm(root, { recursive: true, force: true }); app.exit(0);
-}).catch(async error => { console.error(error); if (currentView && !currentView.webContents.isDestroyed()) { console.log('FAILED_EDITOR_DOM', await currentView.webContents.executeJavaScript('document.body.innerText.slice(-4000)')); await currentView.webContents.capturePage().then(image => writeFile(join(process.cwd(), 'artifacts/code-workbench-failed.png'), image.toPNG())).catch(() => undefined); } clearTimeout(deadline); await code?.dispose(); watches?.onModuleDestroy(); search?.onModuleDestroy(); server?.close(); if (root) await rm(root, { recursive: true, force: true }).catch(() => {}); app.exit(1); });
+}).catch(async error => { console.error(error); if (currentView && !currentView.webContents.isDestroyed()) { console.log('FAILED_EDITOR_DOM', await currentView.webContents.executeJavaScript('document.body.innerText.slice(-4000)')); await currentView.webContents.capturePage().then(image => writeFile(join(process.cwd(), 'artifacts/code-workbench-failed.png'), image.toPNG())).catch(() => undefined); } try { await code?.dispose(); } catch (cleanupError) { console.error('Editor cleanup failed',cleanupError.message); } clearTimeout(deadline); watches?.onModuleDestroy(); search?.onModuleDestroy(); server?.close(); if (root) await rm(root, { recursive: true, force: true }).catch(() => {}); app.exit(1); });

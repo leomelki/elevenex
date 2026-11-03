@@ -1,9 +1,11 @@
 import type { EnvironmentSelection } from './remote';
-/** Task-owned native workbench controls. No URLs, credentials or absolute paths. */
+/** Task-owned workbench controls. No credentials or absolute paths. */
 export interface CodeTarget {
   readonly scopeId: string;
   readonly taskId: number;
 }
+/** Frame visibility and the single compact-layout boundary. CSS owns geometry. */
+export interface CodePresentation { readonly visible: boolean; readonly compact: boolean }
 export interface CodeBounds {
   readonly x: number;
   readonly y: number;
@@ -18,6 +20,8 @@ export interface CodeOpenFile {
   readonly column?: number;
 }
 export interface CodeSurfaceState {
+  /** Main-issued private editor resource. Never a backend URL or credential. */
+  readonly frameUrl?: string;
   readonly taskId: number;
   readonly identity: string;
   readonly phase: 'loading' | 'ready' | 'disconnected' | 'failed';

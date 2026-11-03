@@ -29,8 +29,8 @@ Sources: [upstream embedder API](https://github.com/microsoft/vscode/blob/1.144.
 [artifact build](https://github.com/YieldRay/vscode-web-build/blob/main/.github/workflows/build.yml),
 [Microsoft distribution terms](https://code.visualstudio.com/license).
 
-The desktop owns lazy atomic artifact installation, isolated native surfaces and
-private session-local HTTPS handling. There is no listening editor port. Its
+The desktop owns lazy atomic artifact installation, cross-origin sandboxed iframes and
+private session-local HTTPS routing. There is no listening editor port. Its
 sandboxed web extension speaks named file/search operations; main validates and
 forwards them through the existing per-window local/SSH backend client. Backend
 modules separately own authoritative task/checkout validation, file revisions,
@@ -63,22 +63,25 @@ menu or forced expansion. At 600px, expansion restores Explorer and the previous
 activity-bar/word-wrap preferences. The extension journals those preferences so
 reloading while compact does not lose them. Mode changes serialize and happen
 only at the size boundary; resizing never reloads the document or replaces the
-workbench. Native placement checks reject stale completions after hiding,
-changing tasks or moving windows.
+workbench. Presentation acknowledgments reject stale completions after hiding,
+changing tasks or moving windows. CSS resizes the iframe directly; IPC runs only
+when visibility or the compact-layout boundary changes.
 
 The editor supports at least 320px usable width and 160px height. Below that,
 the explicit separate-window fallback remains available. Expansion uses the
 existing shell takeover, motion and focus restoration.
 That task-only window has its own selected-machine lease and the existing SSH
 challenge UI; closing/changing the original window does not redirect its files.
-One live workbench per task/machine is reused. Another window offers **Open editor
+One live workbench per task/machine is reused within its owning window. Moving
+to another window waits for upstream hot-exit backup vetoes to clear, then restores
+the editor under the destination window’s independent backend lease. Another window offers **Open editor
 here** or **Focus editor** rather than silently stealing it. Four hot workbenches
 are retained; clean hidden instances may close only after upstream permits unload.
 Dirty instances stay retained. Shutdown respects backup vetoes.
 
 ### Space and focus decisions
 
-The healthy view starts immediately with the native workbench and its file tabs,
+The healthy view starts immediately with the upstream workbench and its file tabs,
 inside 4px gutters. Connection status is already available in the native status
 bar; separate banners appear only for lost connections, checkout changes and
 failures. The task header alongside chat identifies the task and branch. Native
@@ -98,7 +101,7 @@ explicit explanations; short windows scroll their launch actions into reach.
 Shortcuts show only the desktop platform's keys. No redundant task identity row consumes editor height.
 
 Explicit expansion, opening a file and programmatic focus hand off to the current
-task only after main acknowledges its visible native bounds. Stale acknowledgments
+task only after main acknowledges its visible frame presentation. Stale acknowledgments
 cannot steal focus after switching tasks. Restoring an existing wide panel does
 not introduce an extra focus jump. A dedicated window uses `standalone` to omit
 its own detach control and focus its retained workbench on launch. Returning to
@@ -112,16 +115,15 @@ The browser extension's focused modules are bundled with the esbuild already
 provided by Angular, with only the upstream `vscode` module external.
 
 Changing transport invalidates the filesystem root once, without a tree snapshot.
-After the rebound native view becomes visible, the surface invokes upstream's
+After the rebound frame becomes visible, the surface invokes upstream's
 Explorer refresh once as well: Explorer retains failed directory resolutions
 separately from the provider. This clears handoff errors without replacing tabs,
 selection or unsaved buffers, or rescanning on ordinary layout updates.
 
-Tooltips outside the workbench bounds leave it visible. Intersecting overlays and
-dialogs hide the native surface and show a quiet retained-editor message; closing
-them returns the same workbench. A closed editor window is represented as retained
-work, with no dead “Focus other window” control. Connection recovery is busy and
-single-flight so repeated clicks do not start competing recoveries.
+Menus, tooltips and modal layers paint above the iframe using ordinary DOM
+stacking. The editor remains visible beneath them and participates in the shell’s
+background recession. Modal focus trapping and inherited `inert` apply normally;
+there is no overlay scanning, native-surface hiding or placeholder substitution.
 
 `WorkspacePanels` accepts `[workspaceCode]` / `#workspaceCode` and a
 `[codeActions]` template. Bind the latter to `CodePanel.actions() ?? null`; it
@@ -133,7 +135,7 @@ late intents/replies cannot open the old path in a different task. Changes revie
 can open a task-relative path with one-based line/column. Embedded
 Command/Ctrl-Shift-R returns to chat; ordinary Escape remains VS Code's own key.
 The shortcut is contributed through VS Code's supported keybinding API while
-embedded, with Electron's input handler as a fallback. Its local view intent is
+embedded. Its local view intent is
 validated against visibility, window kind, checkout generation and transport;
 it never sends a backend mutation. The binding is disabled in a separate window.
 
@@ -141,9 +143,10 @@ The workbench owns explorer, tabs, Quick Open, search, editing, language basics
 and backups. Chrome uses the upstream textarea/CPU editor paths for predictable
 embedded input/rendering. The app supplies its local fonts and token-derived
 light/dark colors through supported configuration. No existing content animates
-on first paint; only supplied shell/feedback motion is used. Hidden surfaces are
-removed from native focus/hit testing. Menus and modal layers hide the native
-surface while retaining its model.
+on first paint; only supplied shell/feedback motion is used. Hidden frames are parked in a hidden, inert window-owned container.
+Chromium’s state-preserving `moveBefore` retains their browsing contexts, workers,
+selection and unsaved writing across task switches and Angular owner teardown.
+The frame pool owns component cleanup; main owns the bounded retention budget.
 
 Selection, Quick Open, input focus and syntax colors also use the authoritative
 palette through upstream `workbench.colorCustomizations` and
@@ -164,19 +167,25 @@ version** explicitly adopts that reviewed revision, with another server-side
 conflict check. Read-only files and failed/conflicting/unconfirmed saves retain
 local writing. No mutation is replayed on reconnection.
 
-The editor has no preload, Node or Elevenex bridge. It has a separate persistent
-Electron partition, authenticated by ownership of its private HTTPS handler.
+The editor has no preload, Node or Elevenex bridge. It uses a persistent origin derived from machine configuration and task identity,
+with a separate worker subdomain. The frame router checks window ownership and
+request initiators before its private HTTPS handler receives any request. There
+is one router for the shell session, not one conflicting handler per task.
 Backend local access uses a private process capability; SSH uses the existing
 private socket/transport capability. Origins, resource paths, replies, sizes,
 scopes and generations are checked. Root or descendant symlinks cannot broaden
 permissions; Git metadata is hidden. Task finish/reallocation invalidates reads,
 search cursors and watches; mutations share the existing repository lifecycle lock.
 
-The shell `app://` CSP is unchanged. The separate upstream surface needs inline
+The shell `app://` CSP allows frames only beneath `https://*.code.elevenex.invalid`;
+shell scripts, styles and networking retain their existing restrictions. The
+router denies unregistered origins even beneath that suffix. The editor’s
+`frame-ancestors` permits only itself, its worker family and the exact shell
+origin (the precise loopback origin during development). The separate document needs inline
 styles, blob workers and WASM. Only its isolated extension-worker origin permits
 CommonJS evaluation; the pinned iframe's inline code is hash-allowlisted. External
 network, navigation, arbitrary frames and device permissions are denied. The
-private main document may retain persistent browser storage and perform focused
+private editor document may retain persistent browser storage and perform focused
 clipboard writes; clipboard reads and external filesystem pickers are denied.
 HTTP/code caches are distinct from durable task writing. Editor content never
 receives transport credentials or a generic HTTP/filesystem/shell bridge.
@@ -186,6 +195,28 @@ explicitly enabled only for the bundled extension. Their installed definitions
 match the pinned runtime; an upstream upgrade must update and retest them together.
 Filesystem pathname checks and save revisions do not replace an OS sandbox against
 malicious concurrent directory replacement; see the verification limitations.
+
+## Implementation boundaries
+
+- `CodeFramePool` owns retained DOM/component instances for one renderer window.
+  `CodeFrameComponent` declares the iframe sandbox and has no platform calls.
+  The pool validates main-issued URLs before creating a trusted resource URL.
+- `CodePanel` owns selection, measurements, frame mounting and stale focus checks.
+  `codePresent(target, {visible, compact})` is the named presentation contract.
+  The older `codeLayout` operation remains a compatible adapter for existing callers.
+- `CodeSurfaces` owns task leases, bounded retention, recovery and window handoff.
+  `CodeFrame` confines privileged commands to the exact owned direct child frame.
+- `CodeFrameRouter` owns session routing, frame navigation and permission policy.
+  `CodeProtocol` owns confined assets, task operations and generation checks.
+
+The iframe uses `allow-scripts allow-same-origin` so upstream workers and IndexedDB
+work. It is always cross-origin from the shell, so it cannot remove its sandbox
+or reach the parent DOM/bridge. Forms, popups, downloads, top navigation and device
+permissions remain unavailable. No generic `postMessage` command dispatcher or
+listener port is introduced. Storage persistence is requested without delaying
+workbench startup. Existing native-editor partitions are left untouched; this
+change does not import their development-profile browser storage into the new
+iframe origins.
 
 ## Bounds and supported scope
 
