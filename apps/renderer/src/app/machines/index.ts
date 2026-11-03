@@ -19,3 +19,6 @@ export * from './machine-menu.component';
 export * from './machine-menu-popup.component';
 export * from './edit-machine.component';
 export * from './opens-when-back.component';
+
+export { MachineConnectionService } from './application/machine-connection.service';
+export { RemoteChallengeDialogComponent } from './application/remote-challenge-dialog.component';

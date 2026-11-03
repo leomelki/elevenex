@@ -118,6 +118,14 @@ specific resulting state before yielding. For asynchronous error/loading states,
 use a feature's real test provider or controlled promise rather than arbitrary
 timeouts or screenshots of replacement HTML.
 
+Viewport changes resize the native window as well as the renderer. Chromium
+device emulation can suppress native child compositor frames, so it is not used.
+Checkpoints containing visible `WebContentsView` children capture their actual
+pixels separately and composite them at their live bounds; the report records
+those surfaces. Await the child feature's usable state before yielding. DOM and
+accessibility diagnostics still describe the trusted shell; native feature smoke
+checks must inspect the isolated child separately.
+
 ## Motion
 
 `scenarios/composer-queue-motion.mjs` checks optimistic queue receipt handoffs

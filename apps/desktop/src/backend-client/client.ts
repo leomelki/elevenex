@@ -15,6 +15,7 @@ export interface BackendTarget extends BackendEndpoint {
   /** Main-owned identity includes environment, transport generation and instance. */
   readonly identity: string;
   readonly environment: EnvironmentSelection;
+  readonly configurationIdentity?: string;
 }
 
 interface WindowClient {
@@ -93,6 +94,11 @@ export class BackendClient {
     return this.windows.get(windowId)?.state ?? { revision: 0, scope: null };
   }
 
+  configurationIdentity(windowId: number, scopeId: string): string | null {
+    this.refresh(windowId); const window = this.windows.get(windowId);
+    return window?.state.scope?.id === scopeId ? window.target?.configurationIdentity ?? JSON.stringify(window.state.scope.environment) : null;
+  }
+
   info(windowId: number, scopeId: string): Promise<BackendResult<BackendInfo>> {
     this.refresh(windowId);
     const window = this.windows.get(windowId);
@@ -157,12 +163,14 @@ export class BackendClient {
     mutation: boolean,
     operation: (endpoint: BackendEndpoint, signal: AbortSignal) => Promise<T>,
     timeoutMs = 10000,
+    ownerSignal?: AbortSignal,
   ): Promise<BackendResult<T>> {
     this.refresh(windowId);
     const window = this.windows.get(windowId);
     if (!window?.target || !window.state.scope)
       return Promise.resolve(unavailable());
     if (window.state.scope.id !== scopeId) return Promise.resolve(stale());
+    if (ownerSignal?.aborted) return Promise.resolve({ ok: false, error: { code: 'unavailable', message: 'The request was cancelled.' } });
     const identity = mutation || key === null ? randomUUID() : key;
     const existing = window.operations.get(identity);
     if (existing) return existing.result as Promise<BackendResult<T>>;
@@ -176,6 +184,8 @@ export class BackendClient {
       });
     const controller = new AbortController();
     const target = window.target;
+    const abortOwner = () => controller.abort();
+    ownerSignal?.addEventListener('abort', abortOwner, { once: true });
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const result = (async (): Promise<BackendResult<T>> => {
       try {
@@ -211,6 +221,7 @@ export class BackendClient {
             };
       } finally {
         clearTimeout(timer);
+        ownerSignal?.removeEventListener('abort', abortOwner);
       }
     })()
       .then((reply) => {

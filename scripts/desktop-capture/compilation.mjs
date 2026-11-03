@@ -1,3 +1,4 @@
+import { stageCodeAssets } from '../desktop-code-assets.mjs';
 import { createRequire } from 'node:module';
 import { readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -25,5 +26,6 @@ export async function compileMain(root, processes) {
   if (previous && previous.mtimeMs >= changed && complete) return;
   const tsc = desktopRequire.resolve('typescript/bin/tsc');
   for (const project of ['packages/shared', 'apps/desktop']) await processes.start(process.execPath, [tsc, '-p', join(root, project, 'tsconfig.json')], root).done;
+  await stageCodeAssets(root);
   await writeFile(stamp, 'Only source/config/lockfile changes require recompilation.\n');
 }

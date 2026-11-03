@@ -18,13 +18,14 @@ function resolveTarget(backend: BackendManager, remote: RemoteManager, windowId:
   const { selection, connection } = remote.snapshot(windowId);
   const status = remote.backendStatus(windowId, backend.snapshot());
   if (status.phase !== 'ready') return null;
+  const codeAccess = backend.codeAccess?.();
   if (selection.kind === 'local') return {
-    environment: selection, identity: JSON.stringify(['local', status.version, status.url]),
-    url: status.url, version: status.version, headers: {},
+    environment: selection, configurationIdentity: remote.backendCacheIdentity?.(windowId), identity: JSON.stringify(['local', status.version, status.url]),
+    url: status.url, version: status.version, headers: codeAccess ? { 'X-Elevenex-Code-Access': codeAccess } : {},
   };
   const access = remote.backendAccess(windowId);
   if (!access || connection?.phase !== 'ready') return null;
-  return { ...access, version: status.version, environment: selection,
+  return { ...access, version: status.version, environment: selection, configurationIdentity: remote.backendCacheIdentity?.(windowId),
     identity: JSON.stringify(['remote', selection.hostId, connection.generation, connection.instanceId, status.version, access.url]),
   };
 }

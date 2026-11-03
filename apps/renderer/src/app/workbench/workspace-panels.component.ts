@@ -12,6 +12,7 @@ import { IconButtonComponent, IconComponent } from '../ui';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class WorkspacePanelsComponent {
+  readonly codeContent = contentChild('workspaceCode');
   readonly changesContent = contentChild('workspaceChanges');
   readonly panel = model('changes');
   readonly unreachable = input<string>();

@@ -81,6 +81,9 @@ No browser/terminal backend or unrestricted embed was added.
 `panelLabel` inputs control layout without changing feature data. The side panel
 remains mounted and inert while closed; wider review makes the covered main
 region inert and restores focus when it exits. Rail and sidebar keep their place.
+The available workspace is a named CSS `workspace` size container. Projected
+features can use its width for responsive affordances without measuring or
+overriding the shell's private navigation geometry.
 
 `WorkbenchComponent` composes project/task navigation around supplied content.
 Use `workbenchConversation` and `workbenchPanel` slots, readonly `projects` and
@@ -98,7 +101,7 @@ candidate mounts, behind inert Home, before launch; its first render crosses a
 paint boundary before opening starts. Its scoped feature
 stores supply the existing presentational components; they never import the
 legacy renderer or contact the backend directly. The side views provide tabs, close and expansion behavior. Changes reviews the
-selected agent reply; the other four views retain placeholder contents. Expansion
+selected agent reply; Code hosts the genuine task-confined web workbench; the remaining views retain their frames. See [Code ownership and recovery](src/app/code/README.md). Expansion
 is available on every view and stays active when switching tabs.
 `/connected-workspace` exercises this production composition with a typed,
 preview-only backend adapter. Its fixture never enters the production build.
@@ -197,3 +200,5 @@ focus moves into the panel and returns when it closes. Bind `panelCloseRequested
 to the owner's close action for Escape in this compact mode; `reviewExited`
 retains its wider-review meaning. `Workbench` and production MachineWorkspace
 provide both bindings. Ordinary desktop widths keep the existing panel motion.
+
+`WorkspacePanels` also accepts `[workspaceCode]` / `#workspaceCode`. Code follows task identity across sessions and owns its native surface behind that projection.

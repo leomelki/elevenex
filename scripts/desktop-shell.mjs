@@ -1,3 +1,4 @@
+import { stageCodeAssets } from './desktop-code-assets.mjs';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { watch } from 'node:fs';
@@ -46,6 +47,7 @@ async function compileMain() {
   await run(tsc, ['-p', join(shared, 'tsconfig.json')]);
   await run(tsc, ['-p', join(desktop, 'tsconfig.json')]);
   await stageBackendRelease(root);
+  await stageCodeAssets(root);
 }
 
 async function syncTokens() {
@@ -171,7 +173,7 @@ try {
     case 'test':
       await compileMain();
       await run(null, ['--test', 'test/application-identity.test.cjs'], desktop);
-      await run(null, ['--test', 'test/preload.test.cjs', 'test/security.test.cjs', 'test/machines.test.cjs', 'test/backend-install.test.cjs', 'test/backend-development.test.cjs', 'test/backend-manager.test.cjs', 'test/backend-process.test.cjs', 'test/backend-client.test.cjs', 'test/ipc.test.cjs', 'test/remote.test.cjs', 'test/remote-wire.test.cjs', 'test/remote-audit.test.cjs', 'test/remote-recovery.test.cjs', 'test/remote-install.test.cjs', 'test/remote-development.test.cjs', 'test/remote-update.test.cjs', 'test/ssh-native.test.cjs'], desktop);
+      await run(null, ['--test', 'test/preload.test.cjs', 'test/code-security.test.cjs', 'test/code-artifact.test.cjs', 'test/code-save-recovery.test.cjs', 'test/security.test.cjs', 'test/machines.test.cjs', 'test/backend-install.test.cjs', 'test/backend-development.test.cjs', 'test/backend-manager.test.cjs', 'test/backend-process.test.cjs', 'test/backend-client.test.cjs', 'test/ipc.test.cjs', 'test/remote.test.cjs', 'test/remote-wire.test.cjs', 'test/remote-audit.test.cjs', 'test/remote-recovery.test.cjs', 'test/remote-install.test.cjs', 'test/remote-development.test.cjs', 'test/remote-update.test.cjs', 'test/ssh-native.test.cjs'], desktop);
       await run(null, ['--test', 'scripts/desktop-capture/test/options.test.mjs', 'scripts/desktop-capture/test/lifecycle.test.mjs']);
       await run(null, ['--test', 'scripts/desktop-icons.test.mjs']);
       // ng test transpiles TypeScript; tsc also checks the negative IPC type cases.

@@ -217,3 +217,5 @@ ResizeObserver follows intrinsic changes, including countdowns and recovery form
 `MachinePanel` accepts `[machineRecovery]` content before the guest section. The
 production machine owner supplies elapsed outage escalation and real SSH asks;
 these components do not authenticate or infer working transport capabilities.
+
+`MachineConnectionService` and `RemoteChallengeDialogComponent` are also exported for the dedicated Code window. The service owns per-window lifecycle snapshot ordering and subscriptions; the task window retains its own machine lease and modal challenge lifetime.

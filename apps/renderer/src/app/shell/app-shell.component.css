@@ -44,6 +44,7 @@
   overflow: hidden;
 }
 .workspace {
+  container: workspace / inline-size;
   position: relative;
   display: flex;
   flex: 1;

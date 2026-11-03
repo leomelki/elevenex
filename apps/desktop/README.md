@@ -19,8 +19,8 @@ tasks and sessions through scope-bound named bridge operations. It includes
 project creation/settings, task creation/preparation/recovery, task stages, safe
 git operations and close/reopen flows. Selected sessions render streaming chat
 with tool activity, decisions, queue controls and retained drafts. Completed
-replies expose their changed files and a paginated Changes review; other side
-views provide their frames only. See [chat ownership](../renderer/src/app/session-chat/README.md)
+replies expose their changed files and a paginated Changes review; Code provides a genuine task-confined web workbench; the other side
+views provide their frames. See [Code architecture, distribution and recovery](../renderer/src/app/code/README.md). See [chat ownership](../renderer/src/app/session-chat/README.md)
 and the [workspace guide](../renderer/src/app/workspace/README.md).
 The backend gains additive `desktop-workspace` routes;
 the existing app's routes and defaults remain available. A versioned capability
