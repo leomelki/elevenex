@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, contentChild, input, model, output } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
+import { TemplateRef, ChangeDetectionStrategy, Component, computed, contentChild, input, model, output } from '@angular/core';
 import { PanelTabsComponent, type PanelTab } from '../tasks';
 import { OpensWhenBackComponent } from '../machines';
 import { IconButtonComponent, IconComponent } from '../ui';
@@ -6,12 +7,13 @@ import { IconButtonComponent, IconComponent } from '../ui';
 /** Side-view navigation only. Platform-backed panel contents are a separate slice. */
 @Component({
   selector: 'ex-workspace-panels',
-  imports: [PanelTabsComponent, IconButtonComponent, IconComponent, OpensWhenBackComponent],
+  imports: [NgTemplateOutlet, PanelTabsComponent, IconButtonComponent, IconComponent, OpensWhenBackComponent],
   templateUrl: './workspace-panels.component.html',
   styleUrl: './workspace-panels.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class WorkspacePanelsComponent {
+  readonly codeActions = input<TemplateRef<unknown> | null>(null);
   readonly codeContent = contentChild('workspaceCode');
   readonly changesContent = contentChild('workspaceChanges');
   readonly panel = model('changes');

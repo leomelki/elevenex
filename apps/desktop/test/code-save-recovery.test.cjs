@@ -40,7 +40,7 @@ async function mount(persisted, disk, options = {}) {
     commands: { registerCommand: (name, fn) => { commands.set(name, fn); return new Disposable(() => {}); }, executeCommand: async (...args) => { comparisons.push(args); } },
   };
   const code = await readFile(require.resolve('../dist/code/web/extension.js'), 'utf8');
-  const exports = {};
+  const module = { exports: {} };
   const generation = disk.generation ?? 'a'.repeat(64);
   const json = value => globalThis.Response.json({ generation, transportRevision: options.transportRevision ?? 0, ...(options.dark === undefined ? {} : { dark: options.dark }), ...value });
   const fetch = async (url, request) => {
@@ -61,9 +61,9 @@ async function mount(persisted, disk, options = {}) {
     }
     throw new Error('Unexpected provider operation ' + operation);
   };
-  vm.runInNewContext(code, { exports, require: name => { assert.equal(name, 'vscode'); return vscode; }, fetch, URL, Uint8Array, TextEncoder: globalThis.TextEncoder, TextDecoder: globalThis.TextDecoder, AbortController, AbortSignal, crypto: webcrypto, atob: globalThis.atob, btoa: globalThis.btoa, setTimeout, clearTimeout, console });
+  vm.runInNewContext(code, { module, exports: module.exports, require: name => { assert.equal(name, 'vscode'); return vscode; }, fetch, URL, Uint8Array, TextEncoder: globalThis.TextEncoder, TextDecoder: globalThis.TextDecoder, AbortController, AbortSignal, crypto: webcrypto, atob: globalThis.atob, btoa: globalThis.btoa, setTimeout, clearTimeout, console });
   const workspaceState = { get: (_key, fallback) => globalThis.structuredClone(persisted.value ?? fallback), update: async (_key, value) => { if (options.barrier) await options.barrier; persisted.value = globalThis.structuredClone(value); } };
-  await exports.activate({ extensionUri: new Uri({ scheme: 'https', authority: 'code.example.invalid', path: '/extension' }), workspaceState, subscriptions });
+  await module.exports.activate({ extensionUri: new Uri({ scheme: 'https', authority: 'code.example.invalid', path: '/extension' }), workspaceState, subscriptions });
   disposables.push(...subscriptions);
   const uri = root.with({ path: '/file.ts' });
   document = { uri, isDirty: false, getText: () => document.text, text: disk.text, save: async () => { await provider.writeFile(uri, Buffer.from(document.text), { create: true, overwrite: true }); document.isDirty = false; return true; } };

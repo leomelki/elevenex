@@ -160,3 +160,72 @@ writers. Strong adversarial filesystem-race isolation remains a limitation.
 Files over 8 MiB, symlinks, recursive nonempty-folder deletion, native extensions,
 terminals/debuggers and arbitrary webviews are intentionally unsupported; other
 resource/result limits are documented in the feature guide.
+
+## Compact side-panel editing (2026-11-03)
+
+The normal 440px Code panel now mounts the real editor at about 432px usable
+width, alongside chat, with direct Find file / Search text / Save controls.
+Compact mode hides sidebar/activity bars and wraps code; expansion restores
+Explorer and the saved settings without replacing the workbench. The accepted
+4px gutters remain uniform.
+
+Passed for this change:
+
+- `pnpm desktop:lint`, `pnpm desktop:build` and `pnpm desktop:test` (146 desktop
+  tests, seven capture-tool tests, shared/IPC TypeScript checks and 620 renderer
+  tests). The host's installed pnpm initially tried network resolution; validation
+  used the already-installed workspace-pinned pnpm 8.15.4. Socket/native checks
+  ran with the required host access after sandbox EPERM/native-worker failures.
+- New presentation regression: exact preference restoration across an extension
+  restart and no repeated configuration writes within the same size mode.
+  Renderer tests cover compact auto-open, three fixed intents, layout retention,
+  hidden-panel rejection, teardown and stale focus acknowledgements. Main validates
+  the action allowlist and requires a visible owned workbench and current scope.
+- Extended `code-workbench-smoke.cjs`: real sandboxed Code OSS in a disposable
+  worktree, 432px compact layout, native file/text search, same-view expansion,
+  save, crash/hot-exit restoration and toolbar-equivalent explicit saving passed.
+  Its backend adapter uses the real filesystem/search modules.
+- Installed-Electron `electron-smoke.cjs` passed with the exact updated preload
+  surface. This is an unpackaged native check, not a packaged release launch.
+- `task-code-compact.mjs --built`: **10 states, verified: true**, no renderer
+  errors. Actual disposable Nest backend and task, production UI/IPC/transport,
+  both themes, visible native Quick Open/Quick Search, opening a result, exact
+  toolbar-saved bytes, dirty-file retention in both layout directions, narrow
+  reduced motion and hidden native surface. The fixture file is restored. The
+  capture-only backend-manager adapter points to the fixture process without
+  touching the user's managed backend. Native focus emulation keeps pickers open
+  during screenshot diagnostics.
+- Updated existing `task-code-live.mjs` UX suite: **16 states, verified: true**,
+  no renderer errors, plus its verified detached-window/menu report. This covers
+  interrupted expansion/reversal, themes, native search, width stability,
+  tooltips, keyboard focus/return, narrow/short windows, separate-window handoff
+  and closing. The startup wait selects the project before waiting for its tasks.
+- New PNGs were inspected, including compact editing/search, confirmed save,
+  narrow layout, interrupted expansion and expanded editing. Reports/images:
+  `artifacts/desktop-capture/code-side-panel-verified/` and
+  `artifacts/desktop-capture/code-side-full-regression-2/`.
+- `git diff --check` passed; no dependencies, lockfiles or backend sources changed.
+
+Remote-host and packaged-live-editor coverage remains as recorded above; this
+UI change does not establish additional verification of either.
+
+## Removed redundant task toolbar (2026-11-03)
+
+Removed the entire task-name / branch / connection-status / focus toolbar in
+compact, expanded and standalone Code views. The workbench now follows the
+existing panel-tabs row immediately, with the same uniform 4px gutters. File,
+text-search, save and separate-window controls project into that existing row via
+`CodePanel.actions` / `WorkspacePanels.codeActions`; focus and recovery ownership
+remain in CodePanel. Native status feedback and exceptional recovery banners remain.
+
+`desktop:lint`, `desktop:test` (620 renderer tests) and `desktop:build` passed.
+The real disposable Nest-backed `task-code-compact.mjs --built` run captured
+10 states with `verified: true` and no renderer errors, including both themes,
+compact/expanded views, native file/text search, retained dirty file, exact saved
+bytes, narrow/reduced motion and closed-panel state. PNGs in
+`artifacts/desktop-capture/code-without-toolbar/` were inspected. The test fixture
+file was restored and the owned backend was stopped. Existing native smoke and
+full UX capture consumers were updated to use loaded native surfaces and the
+relocated controls instead of depending on the removed toolbar.
+
+No backend, dependencies or lockfiles changed for this follow-up.

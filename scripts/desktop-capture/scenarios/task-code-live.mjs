@@ -14,7 +14,7 @@ export default async function* (capture) {
   await capture.viewport(1440, 900);
   await capture.waitFor(() => document.querySelector('button[data-machine="local"]'));
   await capture.click('button[data-machine="local"]'); await finish();
-  await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
+  await capture.waitFor(() => document.querySelector('ex-workspace-navigation'));
   await capture.waitFor(id => document.querySelector(`[data-project-id="${id}"]`), projectId);
   await capture.click(`[data-project-id="${projectId}"]`); await finish();
   await capture.waitFor(id => document.querySelector(`[data-task-id="${id}"]`), taskId);
@@ -24,14 +24,15 @@ export default async function* (capture) {
   await capture.waitFor(() => document.querySelector('ex-workspace-task-header'));
   await capture.click('ex-workspace-task-header [aria-label="Toggle side panel"]'); await finish();
   await capture.click('ex-workspace-panels [role="tab"][aria-label="Code"]'); await finish();
-  await capture.waitFor(() => document.querySelector('ex-code-panel h2')?.textContent.includes('Your task'));
+  await capture.waitFor(() => !!document.querySelector('ex-workspace-panels .find-file'));
+  await waitMain(() => BrowserWindow.getAllWindows().some(window => window.contentView.children.some(view => view.webContents?.getURL().includes('code.elevenex.invalid') && view.getVisible())), 'Compact editor did not become visible');
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme); await capture.settle();
-    yield { name: `${theme}-code-compact-live`, inspect: ['ex-code-panel', 'ex-code-panel .workspace-identity', 'ex-code-panel button'] };
+    yield { name: `${theme}-code-compact-live`, inspect: ['ex-code-panel', 'ex-workspace-panels .panel-head', 'ex-code-panel button'] };
   }
   if (ux) {
     await capture.motion.freeze();
-    const openingBefore = new Set(capture.motion.animations); await capture.click('ex-code-panel .expand-here');
+    const openingBefore = new Set(capture.motion.animations); await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
     const opening = [...capture.motion.animations].filter(id => !openingBefore.has(id));
     assert.ok(opening.length); await capture.cdp('Animation.seekAnimations', { animations: opening, currentTime: 100 }); await capture.settle();
     yield { name: 'code-opening-interrupted', inspect: ['ex-code-panel', 'ex-app-shell .panel'] };
@@ -40,11 +41,11 @@ export default async function* (capture) {
     assert.ok(closing.length); await capture.cdp('Animation.seekAnimations', { animations: closing, currentTime: 100 }); await capture.settle();
     yield { name: 'code-opening-reversed', inspect: ['ex-code-panel', 'ex-app-shell .panel'] };
     await capture.motion.play(); await finish();
-    await capture.waitFor(() => !document.querySelector('ex-code-panel .expand-here').disabled);
+    await capture.waitFor(() => !document.querySelector('ex-workspace-panels [aria-label="Expand side panel"]').disabled);
   }
-  await capture.click('ex-code-panel .expand-here'); await finish();
+  await capture.click('ex-workspace-panels [aria-label="Expand side panel"]'); await finish();
   const readyDeadline = Date.now() + 90000;
-  while (!await capture.evaluate(() => document.querySelector('ex-code-panel .status')?.textContent.includes('Task connected'))) { if (Date.now() > readyDeadline) throw new Error('Real editor did not connect'); await new Promise(resolve => setTimeout(resolve, 100)); }
+  while (!await capture.evaluate(() => !!document.querySelector('ex-code-panel .editor-surface.loaded'))) { if (Date.now() > readyDeadline) throw new Error('Real editor did not connect'); await new Promise(resolve => setTimeout(resolve, 100)); }
   const result = await capture.evaluate(async taskId => { const {scope} = await window.elevenex.backendClientState(); return window.elevenex.codeOpenFile({scopeId:scope.id,taskId},{path:'src/workspace.ts',line:7}); }, taskId);
   assert.equal(result.ok, true, JSON.stringify(result));
   const liveView = BrowserWindow.getAllWindows().flatMap(window => window.contentView.children).find(view => view.webContents?.getURL().includes('code.elevenex.invalid'));
@@ -68,13 +69,13 @@ export default async function* (capture) {
   if (ux) {
     const geometry = await capture.rect('ex-code-panel .editor-surface');
     assert.ok(geometry.height >= 740 && geometry.y <= 140, JSON.stringify(geometry));
-    await capture.hover('ex-code-panel [aria-label="Focus editor"]');
-    await capture.waitFor(() => document.querySelector('[role="tooltip"]')?.textContent.includes('Focus editor'));
+    await capture.hover('ex-workspace-panels .save-file');
+    await capture.waitFor(() => document.querySelector('[role="tooltip"]')?.textContent.includes('Save file'));
     assert.equal(liveView.getVisible(), true, 'A toolbar tooltip hid the editor');
-    yield { name: 'code-toolbar-tooltip-live', inspect: ['ex-code-panel .workspace-identity', '[role="tooltip"]'] };
+    yield { name: 'code-toolbar-tooltip-live', inspect: ['ex-workspace-panels .panel-head', '[role="tooltip"]'] };
     capture.window.webContents.focus();
-    await capture.evaluate(() => document.querySelector('ex-code-panel [aria-label="Focus editor"]').focus());
-    await capture.press('Enter'); await waitMain(() => liveView.webContents.executeJavaScript('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")'), 'Keyboard Focus editor did not hand off focus');
+    await capture.evaluate(() => document.querySelector('ex-workspace-panels .save-file').focus());
+    await capture.press('Enter'); await waitMain(() => liveView.webContents.executeJavaScript('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")'), 'Keyboard Save did not hand off focus');
   }
   const upstream = (command, ...args) => liveView.webContents.executeJavaScript(`import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand(${JSON.stringify(command)},...${JSON.stringify(args)}))`);
   const waitNative = async predicate => { const deadline = Date.now() + 15000; while (!await liveView.webContents.executeJavaScript(predicate)) { if (Date.now() > deadline) throw new Error('Native search did not resolve: ' + await liveView.webContents.executeJavaScript('document.body.innerText.slice(-1500)')); await new Promise(resolve => setTimeout(resolve, 50)); } };
@@ -94,40 +95,39 @@ export default async function* (capture) {
     const stable = await capture.evaluate(async () => {
       const states = []; for (let frame = 0; frame < 16; frame++) { await new Promise(resolve => requestAnimationFrame(resolve)); states.push(document.querySelector('ex-code-panel .editor-surface').classList.contains('loaded')); } return states;
     });
-    assert.ok(stable.every(value => value === false), 'Editor oscillated near its minimum width');
-    assert.equal(liveView.getVisible(), false);
+    assert.ok(stable.every(value => value === true), 'Editor oscillated near its minimum width');
+    assert.equal(liveView.getVisible(), true);
     yield { name: 'code-minimum-width-live', inspect: ['ex-code-panel .editor-surface', 'ex-code-panel .launch-actions'] };
     await capture.viewport(1440, 900); await finish(); await waitMain(() => liveView.getVisible(), 'Resize did not restore the retained editor');
-    capture.window.webContents.focus(); await capture.evaluate(() => document.querySelector('ex-code-panel [aria-label="Focus editor"]').focus()); await capture.press('Enter');
+    capture.window.webContents.focus(); await capture.evaluate(() => document.querySelector('ex-workspace-panels .save-file').focus()); await capture.press('Enter');
     await waitMain(() => liveView.webContents.executeJavaScript('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")'), 'Editor did not regain focus');
     liveView.webContents.debugger.attach('1.3');
     for (const type of ['keyDown', 'keyUp']) await liveView.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'r', code: 'KeyR', windowsVirtualKeyCode: 82, modifiers: process.platform === 'darwin' ? 12 : 10 });
     liveView.webContents.debugger.detach(); await finish();
     await capture.waitFor(() => !document.querySelector('ex-app-shell').classList.contains('wide-review'));
-    assert.equal(liveView.getVisible(), false);
+    assert.equal(liveView.getVisible(), true);
     assert.equal(await capture.evaluate(() => !!document.activeElement?.closest('ex-app-shell .main') && !document.activeElement?.closest('[inert]')), true, 'Returning to chat did not restore focus');
     yield { name: 'code-keyboard-return-live', inspect: ['ex-code-panel', 'ex-app-shell .main'] };
   } else { await capture.click('ex-workspace-panels [aria-label="Return to chat"]'); await finish(); }
   await capture.viewport(640, 850); await capture.reducedMotion(true); await capture.settle();
   yield { name: 'code-narrow-reduced-motion-live', inspect: ['ex-code-panel', 'ex-app-shell .panel'] };
   if (ux) {
-    assert.equal(await capture.evaluate(() => getComputedStyle(document.querySelector('ex-code-panel .expand-here')).display), 'none');
-    assert.notEqual(await capture.evaluate(() => getComputedStyle(document.querySelector('ex-code-panel .open-window')).display), 'none');
-    await capture.theme('light'); yield { name: 'code-narrow-light-live', inspect: ['ex-code-panel', 'ex-code-panel .launch-actions'] };
+    assert.equal(liveView.getVisible(), true);
+    await capture.theme('light'); yield { name: 'code-narrow-light-live', inspect: ['ex-code-panel', 'ex-workspace-panels .panel-actions'] };
     await capture.viewport(640, 480); await capture.settle();
-    await capture.evaluate(() => document.querySelector('ex-code-panel .open-window').focus());
-    const visibleAction = await capture.rect('ex-code-panel .open-window');
+    await capture.evaluate(() => document.querySelector('ex-workspace-panels [aria-label="Open editor window"]').focus());
+    const visibleAction = await capture.rect('ex-workspace-panels [aria-label="Open editor window"]');
     assert.ok(visibleAction.y >= 0 && visibleAction.y + visibleAction.height <= 480);
-    yield { name: 'code-short-keyboard-focus-live', inspect: ['ex-code-panel .editor-surface', 'ex-code-panel .open-window'] };
+    yield { name: 'code-short-keyboard-focus-live', inspect: ['ex-code-panel .editor-surface', 'ex-workspace-panels .panel-actions'] };
     await capture.viewport(640, 850); await capture.theme('dark'); await capture.settle();
-    await capture.click('ex-code-panel .open-window');
+    await capture.click('ex-workspace-panels [aria-label="Open editor window"]');
     await waitMain(() => BrowserWindow.getAllWindows().some(window => window !== capture.window && window.webContents.getURL().endsWith('/code-window')), 'The narrow action did not open a dedicated editor');
     const editorWindow = BrowserWindow.getAllWindows().find(window => window !== capture.window && window.webContents.getURL().endsWith('/code-window'));
     const diagnostics = { errors: [], warnings: [], droppedDiagnostics: 0 };
     const childCapture = new Capture(editorWindow, capture.nativeTheme, { ...capture.options, width: 1100, height: 850 }, diagnostics);
     try {
       await childCapture.initialize();
-      await childCapture.waitFor(() => document.querySelector('ex-code-panel .status')?.textContent.includes('Task connected'));
+      await childCapture.waitFor(() => !!document.querySelector('ex-code-panel .editor-surface.loaded'));
       await waitMain(() => editorWindow.contentView.children.some(view => view.webContents?.id === liveView.webContents.id && view.getVisible()), 'The editor was duplicated or not reattached to its window');
       await waitMain(() => liveView.webContents.executeJavaScript('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")'), 'The new editor window did not focus the workbench');
       const explorerDeadline = Date.now() + 15000;

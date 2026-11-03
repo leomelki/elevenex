@@ -29,7 +29,7 @@ test('preload exposes only the typed bridge and strips event objects', async () 
       };
     },
   });
-  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codeFocus', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
+  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
   assert.equal(Object.isFrozen(bridge), true);
   await bridge.appVersion();
   await bridge.gitStatus('/workspace');

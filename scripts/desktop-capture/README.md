@@ -598,3 +598,14 @@ separately by desktop regressions and the sandboxed preload smoke.
 reading above the end and inside an earlier-history window. It asserts retained
 scroll position, unread feedback for recovered output, stable history items and
 view identity in both themes through the production window with controlled transport.
+
+`scenarios/task-code-compact.mjs` verifies the genuine compact Code workbench
+through production UI/IPC against a running disposable Nest backend. Supply
+`ELEVENEX_CODE_CAPTURE_ORIGIN`, `ELEVENEX_CODE_CAPTURE_ACCESS`, the existing
+`ELEVENEX_CODE_CAPTURE_PROJECT/TASK/SESSION` IDs, `ELEVENEX_CODE_SMOKE_CACHE`
+and `ELEVENEX_CODE_TEST_WORKSPACE`. The test-only process adapter connects the
+capture to this backend without starting or changing the user's backend manager.
+It covers both themes, native Quick Open/Quick Search, actual toolbar saving,
+dirty-file retention through expansion/collapse, narrow/reduced-motion layout
+and hidden native focus. Use `--built` after `desktop:build`. Its native debugger
+uses focus emulation so root-window diagnostics cannot dismiss native pickers.

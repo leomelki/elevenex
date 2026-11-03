@@ -33,7 +33,7 @@ app.whenReady().then(async () => {
   assert.ok(original);
   await parent.webContents.executeJavaScript(`window.elevenex.codeDetach(${JSON.stringify(target)})`);
   const editor = await wait(() => BrowserWindow.getAllWindows().find(window => window !== parent && window.webContents.getURL().endsWith('/code-window')), 'Dedicated Code window did not load');
-  await wait(() => editor.webContents.executeJavaScript('document.querySelector("ex-code-panel .status")?.textContent.includes("Task connected")'), 'Dedicated window did not connect');
+  await wait(() => editor.webContents.executeJavaScript('!!document.querySelector("ex-code-panel .editor-surface.loaded")'), 'Dedicated window did not connect');
   const childState = await editor.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.notEqual(childState.scope.id, state.scope.id, 'Detached window must own another backend lease');
   const childTarget = { scopeId: childState.scope.id, taskId };

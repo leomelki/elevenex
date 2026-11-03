@@ -1,6 +1,6 @@
 import { BrowserWindow, WebContentsView, session, nativeTheme, dialog, app } from 'electron';
 import { createHash } from 'node:crypto';
-import type { BackendResult, CodeBounds, CodeOpenFile, CodeSurfaceState, CodeTarget, CodeWindowContext, EnvironmentSelection } from '@elevenex/shared';
+import type { BackendResult, CodeAction, CodeBounds, CodeOpenFile, CodeSurfaceState, CodeTarget, CodeWindowContext, EnvironmentSelection } from '@elevenex/shared';
 import type { BackendClient } from '../backend-client/client';
 import { requestBackendJson } from '../backend-client/transport';
 import { CodeArtifact } from './artifact';
@@ -8,7 +8,7 @@ import { CodeProtocol } from './protocol';
 import { descriptor, type WorkspaceDescriptor } from './validation';
 interface Surface {
   readonly key: string; readonly environment: EnvironmentSelection; readonly configurationIdentity: string; readonly view: WebContentsView; readonly host: CodeProtocol;
-  state: CodeSurfaceState; startup?: ReturnType<typeof setTimeout>; wasReady?: boolean; failedStartup?: boolean; crashed?: boolean; closing?: Promise<boolean>; owner: number; target: CodeTarget; used: number; reconcileExplorer?: boolean;
+  state: CodeSurfaceState; startup?: ReturnType<typeof setTimeout>; wasReady?: boolean; failedStartup?: boolean; crashed?: boolean; closing?: Promise<boolean>; owner: number; target: CodeTarget; used: number; reconcileExplorer?: boolean; layoutRevision?: number; compact?: boolean; presentation?: Promise<unknown>;
   parent?: BrowserWindow; detached?: BrowserWindow;
 }
 const failure = (message: string): BackendResult<never> => ({ ok: false, error: { code: 'unavailable', message } });
@@ -77,18 +77,19 @@ export class CodeSurfaces {
         else surface.state = { ...surface.state, phase: 'disconnected', message: 'Workspace changed · saves blocked', recovery: true, recoveryAvailable: true };
       }
       if (acceptChange && surface.host.workspace.identity === result.value.identity) surface.state = { ...surface.state, recovery: false, recoveryAvailable: false };
-      if (surface.crashed || surface.failedStartup || rebound && !surface.wasReady) { surface.crashed = false; surface.failedStartup = false; surface.host.reset(); surface.state = { ...surface.state, phase: 'loading', message: 'Recovering editor…' }; await surface.view.webContents.loadURL(`https://${surface.host.authority}/`); }
+      if (surface.crashed || surface.failedStartup || rebound && !surface.wasReady) { surface.crashed = false; surface.failedStartup = false; surface.compact = undefined; surface.host.reset(); surface.state = { ...surface.state, phase: 'loading', message: 'Recovering editor…' }; await surface.view.webContents.loadURL(`https://${surface.host.authority}/`); }
       if (rebound || acceptChange) void surface.view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('elevenex.code.reconnect'))").catch(() => undefined);
       surface.used = Date.now(); this.changed(windowId, target, surface.state);
       return { ok: true, value: surface.state };
     } catch (error) { return failure(error instanceof Error ? error.message.slice(0, 300) : 'Editor could not start. Try again.'); }
   }
-  layout(windowId: number, target: CodeTarget, bounds: CodeBounds | null): void {
+  async layout(windowId: number, target: CodeTarget, bounds: CodeBounds | null): Promise<void> {
     const surface = this.owned(windowId, target, true);
     if (!surface || surface.detached && surface.detached.webContents.id !== windowId) return;
-    if (!bounds || bounds.width < 600 || bounds.height < 160) { this.hide(surface); return; }
+    if (!bounds || bounds.width < 320 || bounds.height < 160) { this.hide(surface); return; }
     const window = BrowserWindow.fromWebContents(this.ownerContents(windowId));
     if (!window || window.isDestroyed()) return;
+    const compact = bounds.width < 600;
     const zoom = window.webContents.getZoomFactor();
     bounds = { x: bounds.x * zoom, y: bounds.y * zoom, width: bounds.width * zoom, height: bounds.height * zoom };
     if (surface.view.webContents.getZoomFactor() !== zoom) surface.view.webContents.setZoomFactor(zoom);
@@ -97,6 +98,16 @@ export class CodeSurfaces {
     if (bounds.x < (this.windowContexts.has(windowId) ? 0 : 56) || bounds.y < 48 || bounds.x + bounds.width > width + 1 || bounds.y + bounds.height > height + 1) { this.hide(surface); return; }
     if (surface.parent !== window) { this.hide(surface); window.contentView.addChildView(surface.view); surface.parent = window; }
     surface.view.setBounds({ x: Math.round(bounds.x), y: Math.round(bounds.y), width: Math.floor(bounds.width), height: Math.floor(bounds.height) });
+    // Serialize only mode changes, not every resize frame. Keep the same native
+    // workbench and buffers; a stale completion must never reveal a hidden task.
+    const revision = surface.layoutRevision = (surface.layoutRevision ?? 0) + 1;
+    if (surface.compact !== compact && surface.wasReady) {
+      surface.compact = compact;
+      surface.presentation = (surface.presentation ?? Promise.resolve()).catch(() => undefined).then(() =>
+        surface.view.webContents.executeJavaScript(`import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('elevenex.code.set-compact',${compact}))`));
+    }
+    try { await surface.presentation; } catch { surface.compact = undefined; return; }
+    if (revision !== surface.layoutRevision || this.owned(windowId, target, true) !== surface || surface.parent !== window) return;
     surface.host.active = true; surface.view.setVisible(true);
     if (surface.reconcileExplorer) {
       // Upstream Explorer retains failed directory resolutions independently of
@@ -104,6 +115,13 @@ export class CodeSurfaces {
       surface.reconcileExplorer = false;
       void surface.view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('workbench.files.action.refreshFilesExplorer'))").catch(() => { surface.reconcileExplorer = true; });
     }
+  }
+  async action(windowId: number, target: CodeTarget, action: CodeAction): Promise<void> {
+    const surface = this.owned(windowId, target);
+    if (!surface || this.client.state(windowId).scope?.id !== target.scopeId || !surface.host.active || !surface.view.getVisible()) throw new Error('The current task editor is not visible.');
+    const commands = { 'find-file': 'workbench.action.quickOpen', 'search-text': 'workbench.action.quickTextSearch', save: 'workbench.action.files.save' } as const;
+    surface.parent?.focus(); surface.view.webContents.focus();
+    await surface.view.webContents.executeJavaScript(`import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand(${JSON.stringify(commands[action])}))`);
   }
   focus(windowId: number, target: CodeTarget): void {
     const offered = this.offered.get(windowId);
@@ -238,6 +256,7 @@ export class CodeSurfaces {
     return surface?.owner === windowId && surface.target.taskId === target.taskId && (surface.target.scopeId === target.scopeId || cachedDisplay && this.windowContexts.get(windowId)?.context.target.taskId === target.taskId) ? surface : undefined;
   }
   private hide(surface: Surface): void {
+    surface.layoutRevision = (surface.layoutRevision ?? 0) + 1;
     surface.host.active = false; surface.view.setVisible(false);
     if (surface.parent && !surface.parent.isDestroyed()) surface.parent.contentView.removeChildView(surface.view);
     surface.parent = undefined;

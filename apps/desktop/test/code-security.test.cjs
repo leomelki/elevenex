@@ -15,6 +15,8 @@ test('Code controls accept resource identities and bounded file positions, never
   for (const path of ['/absolute', '../escape', 'file/../escape', '.git/config', 'a\0']) assert.throws(() => validate.file({ path }));
   assert.deepEqual(validate.file({ path: 'unicode é #?.ts', line: 10, column: 2 }), { path: 'unicode é #?.ts', line: 10, column: 2 });
   assert.throws(() => validate.file({ path: 'ok', line: 1.2 }));
+  for (const action of ['find-file', 'search-text', 'save']) assert.equal(validate.action(action), action);
+  for (const action of ['workbench.action.terminal.new', 'raw-shell', null, { action: 'save' }]) assert.throws(() => validate.action(action));
   assert.throws(() => validate.bounds({ x: -1, y: 50, width: 600, height: 500 }));
   assert.throws(() => validate.reply('directory', { entries: Array(201).fill({ name: 'a', type: 1 }), next: null }));
   assert.throws(() => validate.reply('read', { content: '', revision: 'not a revision' }));

@@ -1,4 +1,4 @@
-import type { CodeTarget, CodeBounds, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
+import type { CodeTarget, CodeAction, CodeBounds, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
@@ -42,6 +42,7 @@ export interface InvokeContracts {
   'code:open-file': { args: [target: CodeTarget, file: CodeOpenFile]; result: BackendResult<{ readonly accepted: true }> };
   'code:recover': { args: [target: CodeTarget]; result: BackendResult<CodeSurfaceState> };
   'code:detach': { args: [target: CodeTarget]; result: void };
+  'code:action': { args: [target: CodeTarget, action: CodeAction]; result: void };
   'code:focus': { args: [target: CodeTarget]; result: void };
   'code:release': { args: [target: CodeTarget]; result: void };
 
@@ -148,6 +149,7 @@ export interface ElevenexBridge {
   codeOpenFile(target: CodeTarget, file: CodeOpenFile): Promise<BackendResult<{ readonly accepted: true }>>;
   codeRecover(target: CodeTarget): Promise<BackendResult<CodeSurfaceState>>;
   codeDetach(target: CodeTarget): Promise<void>;
+  codeAction(target: CodeTarget, action: CodeAction): Promise<void>;
   codeFocus(target: CodeTarget): Promise<void>;
   codeRelease(target: CodeTarget): Promise<void>;
 

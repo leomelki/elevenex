@@ -7,7 +7,7 @@ export const EXTENSION = {
   capabilities: { virtualWorkspaces: true, untrustedWorkspaces: { supported: true } },
   contributes: {
     commands: [{ command: 'elevenex.code.reconnect', title: 'Reconnect task workspace' }, { command: 'elevenex.code.reconcile-save', title: 'Inspect unconfirmed task save' }, { command: 'elevenex.code.return-to-chat', title: 'Return to chat', enablement: 'elevenex.embedded' }],
-    keybindings: [{ command: 'elevenex.code.return-to-chat', key: 'ctrl+shift+r', mac: 'cmd+shift+r', when: 'elevenex.embedded' }],
+    keybindings: [{ command: 'workbench.action.quickTextSearch', key: 'ctrl+shift+f', mac: 'cmd+shift+f', when: 'elevenex.compact' }, { command: 'elevenex.code.return-to-chat', key: 'ctrl+shift+r', mac: 'cmd+shift+r', when: 'elevenex.embedded' }],
   },
 };
 export function codePolicy(authority: string, nonce: string, extensionWorker = false, hashes: readonly string[] = []): string {

@@ -44,7 +44,7 @@
         </section>
       }
     </div>
-    <ex-workspace-panels [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" shellPanel [panel]="panel()" (panelChange)="store.selectPanel($event)" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (closed)="closePanel()">
+    <ex-workspace-panels [codeActions]="workspaceCode.actions() ?? null" [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" shellPanel [panel]="panel()" (panelChange)="store.selectPanel($event)" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (closed)="closePanel()">
       <ex-code-panel workspaceCode #workspaceCode [target]="codeTarget()" [file]="codeFile()" [taskName]="store.selectedTask()?.name ?? ''" [branch]="store.selectedTask()?.branchName ?? ''" [active]="panelOpen() && panel() === 'code' && active()" [connected]="!store.offline()" [wide]="wideReview()" (wideChange)="wideReview.set($event)" />
       <div workspaceChanges #workspaceChanges class="review-content">
         @if (selectedReview(); as target) {

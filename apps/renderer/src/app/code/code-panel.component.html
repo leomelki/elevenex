@@ -1,20 +1,11 @@
-<header class="workspace-identity">
-  <div class="identity-text">
-    <strong [exTooltip]="taskName() || store.state()?.taskName || 'Choose a task'">{{ taskName() || store.state()?.taskName || 'Choose a task' }}</strong>
-    @if (branch() || store.state()?.branch) {
-      <span class="branch" [exTooltip]="branch() || store.state()?.branch || ''"><ex-icon name="branch" [size]="12" /><span>{{ branch() || store.state()?.branch }}</span></span>
-    }
-  </div>
-  @if (store.state() || launching() || !connected()) {
-    <span class="status" [class.attention]="attention()" [exTooltip]="status()" [attr.aria-label]="status()" role="status"><span class="status-dot" aria-hidden="true"></span><span class="status-text"><ex-ease-swap [value]="status()" /></span></span>
-  }
+<ng-template #actions>
   @if (hasSurface()) {
-    <div class="editor-actions">
-      <ex-icon-button icon="cursor" label="Focus editor" [disabled]="!active()" (pressed)="focusEditor()" />
-      @if (!standalone()) { <ex-icon-button icon="window" label="Open editor window" [disabled]="!active() || !connected() || launching()" (pressed)="detach()" /> }
-    </div>
+    <ex-icon-button class="find-file" icon="file" label="Find file" [disabled]="!active() || !connected()" (pressed)="runAction('find-file')" />
+    <ex-icon-button icon="search" label="Search text in files" [disabled]="!active() || !connected()" (pressed)="runAction('search-text')" />
+    <button exButton size="sm" variant="ghost" class="save-file" [disabled]="!active() || !connected()" [exTooltip]="'Save file · ' + modifier() + 'S'" (click)="runAction('save')">Save</button>
+    @if (!standalone()) { <ex-icon-button icon="window" label="Open editor window" [disabled]="!active() || !connected() || launching()" (pressed)="detach()" /> }
   }
-</header>
+</ng-template>
 <ex-fold [open]="launching()"><ex-progress-line label="Opening editor" /></ex-fold>
 <ex-fold [open]="connectionLost() && hasSurface() && !store.state()?.recoveryAvailable"><div class="recovery" role="status"><span>Connection lost. Your edits stay here. Reconnect using the machine menu before saving.</span></div></ex-fold>
 <ex-fold [open]="!!store.state()?.recoveryAvailable"><div class="recovery"><span>The checkout changed. Your tabs and unsaved text are retained. Inspect them before saving.</span><button exButton size="sm" [disabled]="launching() || !connected()" (click)="recover()">Open updated workspace</button></div></ex-fold>
@@ -33,12 +24,12 @@
             <button exButton variant="primary" class="expand-here" [disabled]="!connected() || launching()" (click)="recover()">Open editor here</button>
             <button exButton variant="primary" class="open-window" [disabled]="!connected() || launching()" (click)="store.state()?.detached ? store.focus() : detach()"><ex-icon name="window" />{{ store.state()?.detached ? 'Return to editor window' : 'Open editor window' }}</button>
             @if (store.state()?.detached) { <button exButton variant="ghost" class="separate-window" (click)="store.focus()">Focus other window</button> }
-          } @else if (!wide()) {
-            <button exButton variant="primary" class="expand-here" [disabled]="launching() || !connected()" (click)="expand()"><ex-icon name="expand" />{{ store.state() ? 'Resume editor' : 'Expand editor' }}</button>
-            <button exButton variant="primary" class="open-window" [disabled]="launching() || !connected()" (click)="detach()"><ex-icon name="window" />Open editor window</button>
-            <button exButton variant="ghost" class="separate-window" [disabled]="launching() || !connected()" (click)="detach()"><ex-icon name="window" />Open in a window</button>
           } @else if (launching()) {
             <button exButton variant="primary" disabled>Opening editor…</button>
+          } @else if (!wide() && !canEmbed()) {
+            <button exButton variant="primary" class="expand-here" [disabled]="launching() || !connected()" (click)="expand()"><ex-icon name="expand" />Expand editor</button>
+            <button exButton variant="primary" class="open-window" [disabled]="launching() || !connected()" (click)="detach()"><ex-icon name="window" />Open editor window</button>
+            <button exButton variant="ghost" class="separate-window" [disabled]="launching() || !connected()" (click)="detach()"><ex-icon name="window" />Open in a window</button>
           } @else if (!canEmbed()) {
             <button exButton variant="primary" [disabled]="!connected()" (click)="detach()"><ex-icon name="window" />Open editor window</button>
           } @else {

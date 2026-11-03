@@ -49,9 +49,25 @@ license and authoritative tokens, not the downloadable runtime.
 
 ## UX and ownership
 
-The 440px panel shows task/branch identity and an explicit **Expand editor** action.
-Expansion uses the existing shell takeover, gutters, motion and focus restoration.
-At less than 600px usable width, **Open editor window** provides room to work.
+The 440px side panel opens a genuine editor directly, alongside chat. The existing panel-tabs row
+contains **Find file**, **Search text**, **Save** and a separate-window action,
+alongside expand/close. There is no additional task/branch/status/focus toolbar. File tabs,
+dirty indicators, selection and save feedback remain native VS Code.
+
+Below 600px usable width, Explorer/activity bars are hidden and long lines wrap.
+Find file uses upstream Quick Open; Search uses upstream Quick Search, as does
+Command/Ctrl-Shift-F while compact. Both show bounded, keyboard-operated results
+over the editor and open the selected result in place. There is no intermediary
+menu or forced expansion. At 600px, expansion restores Explorer and the previous
+activity-bar/word-wrap preferences. The extension journals those preferences so
+reloading while compact does not lose them. Mode changes serialize and happen
+only at the size boundary; resizing never reloads the document or replaces the
+workbench. Native placement checks reject stale completions after hiding,
+changing tasks or moving windows.
+
+The editor supports at least 320px usable width and 160px height. Below that,
+the explicit separate-window fallback remains available. Expansion uses the
+existing shell takeover, motion and focus restoration.
 That task-only window has its own selected-machine lease and the existing SSH
 challenge UI; closing/changing the original window does not redirect its files.
 One live workbench per task/machine is reused. Another window offers **Open editor
@@ -61,12 +77,11 @@ Dirty instances stay retained. Shutdown respects backup vetoes.
 
 ### Space and focus decisions
 
-The healthy expanded view has one compact task/branch toolbar. Connection status
-shares that row; separate banners appear for lost connections, checkout changes
-and failures. This leaves 752px for the workbench at a 1440 × 900 viewport,
-compared with 696px before the UX pass. Upstream's own tabs and Explorer remain
-genuine and configurable. Focus and separate-window actions use
-the existing icon buttons, tooltips and keyboard states.
+The healthy view starts immediately with the native workbench and its file tabs,
+inside 4px gutters. Connection status is already available in the native status
+bar; separate banners appear only for lost connections, checkout changes and
+failures. The task header alongside chat identifies the task and branch. Native
+Explorer remains configurable, and all projected actions use existing controls.
 
 The redundant upstream “Code” title row is disabled using
 `workbench.layoutControl.enabled: false`, alongside compact menus and the disabled
@@ -75,21 +90,25 @@ and separate windows. Layout commands remain available from the workbench menu
 and Command Palette. `window.customTitleBarVisibility` is desktop-only and is not
 used by this web workbench.
 
-The launcher offers expansion and a secondary window action. A CSS query against
-the shell's `workspace` container replaces these with one direct window action
-when there is less than 616px: the 600px native minimum plus two `space-2` gutters.
-Gutters exist in both launch and editing states, preventing resize oscillation
-at the boundary. Loading has an explicit explanation until the workbench is
-ready. The launch area scrolls in short windows, so keyboard actions remain
-reachable. Shortcuts show the desktop platform's keys rather than two competing
-key combinations.
+The workbench has a uniform 4px (`space-1`) gutter on all four sides, in both
+launch and editing states. The shell's `workspace` container offers a direct
+window fallback below 328px (320px plus gutters). Loading and recovery retain
+explicit explanations; short windows scroll their launch actions into reach.
+Shortcuts show only the desktop platform's keys. No redundant task identity row consumes editor height.
 
-Explicit expansion, opening a file and the focus control hand off to the current
+Explicit expansion, opening a file and programmatic focus hand off to the current
 task only after main acknowledges its visible native bounds. Stale acknowledgments
 cannot steal focus after switching tasks. Restoring an existing wide panel does
 not introduce an extra focus jump. A dedicated window uses `standalone` to omit
 its own detach control and focus its retained workbench on launch. Returning to
 chat uses the shell's existing focus restoration.
+
+Toolbar intents cross a fixed `CodeAction` union (`find-file`, `search-text`,
+`save`), validated in main and restricted to the visible owned task and current
+backend scope. No caller-supplied VS Code command ID crosses the bridge. Save is
+an explicit single action and uses the existing revision/conflict safeguards.
+The browser extension's focused modules are bundled with the esbuild already
+provided by Angular, with only the upstream `vscode` module external.
 
 Changing transport invalidates the filesystem root once, without a tree snapshot.
 After the rebound native view becomes visible, the surface invokes upstream's
@@ -103,7 +122,10 @@ them returns the same workbench. A closed editor window is represented as retain
 work, with no dead “Focus other window” control. Connection recovery is busy and
 single-flight so repeated clicks do not start competing recoveries.
 
-`WorkspacePanels` accepts `[workspaceCode]` / `#workspaceCode`. The production
+`WorkspacePanels` accepts `[workspaceCode]` / `#workspaceCode` and a
+`[codeActions]` template. Bind the latter to `CodePanel.actions() ?? null`; it
+projects the feature-owned controls into the existing panel-tabs row only while
+Code is selected. Standalone editor windows have no additional toolbar. The production
 owner supplies a `CodeTarget` from the selected task's captured scope, never from
 the selected session. File intents include that target and are consumed once;
 late intents/replies cannot open the old path in a different task. Changes review

@@ -1,3 +1,4 @@
+import { CompactLayout } from './compact-layout';
 import * as vscode from 'vscode';
 import type { Changes, DirectoryPage, FileRead, SearchPage } from './contracts';
 
@@ -290,6 +291,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (!root || root.scheme !== SCHEME) return;
   const base = context.extensionUri.with({ path: '/', query: '', fragment: '' });
   const files = new TaskFiles(base, root, new SaveLedger(context.workspaceState));
+  const layout = new CompactLayout(context.workspaceState);
+  context.subscriptions.push(vscode.commands.registerCommand('elevenex.code.set-compact', (compact: unknown) => {
+    if (typeof compact !== 'boolean') throw new Error('Invalid editor layout.');
+    return layout.set(compact);
+  }));
   context.subscriptions.push(vscode.commands.registerCommand('elevenex.code.return-to-chat', () => files.call('return-to-chat')));
   context.subscriptions.push(vscode.commands.registerCommand('elevenex.code.set-theme', (dark: unknown) => { if (typeof dark !== 'boolean') throw new Error('Invalid editor theme.'); return files.setTheme(dark); }));
   context.subscriptions.push(vscode.commands.registerCommand('elevenex.code.open-file', async (path: unknown, line: unknown, column: unknown) => {

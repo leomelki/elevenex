@@ -202,3 +202,7 @@ retains its wider-review meaning. `Workbench` and production MachineWorkspace
 provide both bindings. Ordinary desktop widths keep the existing panel motion.
 
 `WorkspacePanels` also accepts `[workspaceCode]` / `#workspaceCode`. Code follows task identity across sessions and owns its native surface behind that projection.
+
+`WorkspacePanels.codeActions` optionally accepts a `TemplateRef` from
+`CodePanel.actions() ?? null` to keep Code actions in the existing panel-tabs row.
+The feature retains action state and handlers; no extra toolbar is mounted.

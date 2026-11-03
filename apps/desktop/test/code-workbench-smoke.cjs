@@ -104,6 +104,19 @@ app.whenReady().then(async () => {
   code.layout(window.webContents.id, target, { x: 60, y: 60, width: 1100, height: 780 });
   metrics.reopenMs = Math.round(performance.now() - reopenStarted);
   assert.equal(window.contentView.children[0], view, 'Reopen duplicated the workbench');
+  // Compact side-panel mode uses the same workbench, with direct overlay search.
+  await code.layout(window.webContents.id, target, { x: 750, y: 100, width: 432, height: 700 });
+  assert.equal(view.getVisible(), true);
+  assert.equal(await view.webContents.executeJavaScript('document.querySelector(".part.sidebar")?.getBoundingClientRect().width ?? 0'), 0);
+  await code.action(window.webContents.id, target, 'find-file');
+  await wait(() => view.webContents.executeJavaScript('!!document.querySelector(".quick-input-widget input")'), 'Compact file picker missing');
+  for (const type of ['keyDown', 'keyUp']) await view.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await code.action(window.webContents.id, target, 'search-text');
+  await view.webContents.debugger.sendCommand('Input.insertText', { text: 'saved through Code OSS' });
+  await wait(() => view.webContents.executeJavaScript('document.querySelector(".quick-input-list")?.textContent.includes("hello.ts")'), 'Compact text search did not find the real file');
+  for (const type of ['keyDown', 'keyUp']) await view.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await code.layout(window.webContents.id, target, { x: 60, y: 60, width: 1100, height: 780 });
+  assert.equal(window.contentView.children[0], view, 'Expansion duplicated the compact editor');
   // Dirty backup recovery uses upstream hot-exit storage, without a second workbench.
   await view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('editor.action.selectAll'))"); await view.webContents.debugger.sendCommand('Input.insertText', { text: 'export const recoveredFromCrash = true;\n' });
   await wait(() => view.webContents.executeJavaScript('!!document.querySelector(".tab.dirty")'), 'Dirty editor state missing');
@@ -121,7 +134,7 @@ app.whenReady().then(async () => {
   view.webContents.debugger.attach('1.3');
   await view.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {enabled:true});
   await view.webContents.executeJavaScript('document.querySelector(".monaco-editor textarea.inputarea").focus()');
-  await key('s');
+  await code.action(window.webContents.id, target, 'save');
   await wait(async () => (await readFile(join(worktree, 'hello.ts'), 'utf8')) === 'export const recoveredFromCrash = true;\n', 'Recovered edits did not save');
   await new Promise(resolve => setTimeout(resolve, 250));
   await view.webContents.capturePage().then(image => writeFile(join(process.cwd(), 'artifacts/code-workbench-smoke.png'), image.toPNG()));

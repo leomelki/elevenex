@@ -20,6 +20,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   codeOpen: target => invoke('code:open', target),
   codeLayout: (target, bounds) => invoke('code:layout', target, bounds),
   codeOpenFile: (target, file) => invoke('code:open-file', target, file),
+  codeAction: (target, action) => invoke('code:action', target, action),
   codeFocus: target => invoke('code:focus', target),
   codeRelease: target => invoke('code:release', target),
   sessionChatCatalog: (scope, input) => invoke('session-chat:catalog', scope, input),

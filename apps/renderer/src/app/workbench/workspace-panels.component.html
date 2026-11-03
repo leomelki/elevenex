@@ -1,6 +1,7 @@
 <header class="panel-head">
   <ex-panel-tabs [tabs]="tabs" [active]="panel()" (selectTab)="panel.set($event)" />
   <div class="panel-actions">
+    @if (panel() === 'code') { <ng-container [ngTemplateOutlet]="codeActions()" /> }
     <ex-icon-button [icon]="wide() ? 'shrink' : 'expand'" [label]="wide() ? 'Return to chat' : 'Expand side panel'" (pressed)="wideChange.emit(!wide())" />
     <ex-icon-button icon="x" label="Close side panel" (pressed)="closed.emit()" />
   </div>

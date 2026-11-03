@@ -10,6 +10,8 @@ export interface CodeBounds {
   readonly width: number;
   readonly height: number;
 }
+/** Fixed editor intents, never arbitrary VS Code command IDs. */
+export type CodeAction = 'find-file' | 'search-text' | 'save';
 export interface CodeOpenFile {
   readonly path: string;
   readonly line?: number;
