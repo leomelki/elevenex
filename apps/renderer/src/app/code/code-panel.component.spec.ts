@@ -97,6 +97,17 @@ describe('Code panel launch and iframe focus handoff', () => {
     fixture.componentRef.setInput('target', target); await settle(fixture);
     expect(bridge.codeOpen).toHaveBeenCalledTimes(2);
   });
+  it('offers a local Back action when browsing over an open file, including while offline', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(432);
+    const {fixture,bridge,publish}=setup(); await settle(fixture);
+    publish({...ready,filesOpen:true,hasEditors:true}); await settle(fixture);
+    expect(fixture.componentInstance.browseLabel()).toBe('Back to editor · Esc');
+    fixture.componentRef.setInput('connected',false); await settle(fixture);
+    await fixture.componentInstance.runAction('dismiss-files');
+    expect(bridge.codeAction).toHaveBeenLastCalledWith(target,'dismiss-files');
+    publish({...ready,filesOpen:true,hasEditors:false}); await settle(fixture);
+    expect(fixture.componentInstance.browseLabel()).toContain('Browse files');
+  });
   it('opens at side-panel width, offers direct file/search/save actions and retains it through expansion', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(424);
     const { fixture, bridge, publish, layouts } = setup();
@@ -107,6 +118,8 @@ describe('Code panel launch and iframe focus handoff', () => {
     const root: HTMLElement = fixture.nativeElement;
     expect(root.querySelector('h2')).toBeNull();
     expect(root.querySelector('header')).toBeNull();
+    await fixture.componentInstance.runAction('browse-files'); await settle(fixture);
+    expect(bridge.codeAction).toHaveBeenLastCalledWith(target, 'browse-files');
     await fixture.componentInstance.runAction('find-file'); await settle(fixture);
     expect(bridge.codeAction).toHaveBeenLastCalledWith(target, 'find-file');
     await fixture.componentInstance.runAction('search-text'); await settle(fixture);

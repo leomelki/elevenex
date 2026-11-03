@@ -1,6 +1,44 @@
 # New Code workbench verification
 
-## Panel loading and reopen regression — current verification
+## Compact Files browsing — current verification
+
+Verified on 2026-11-03 on macOS arm64 / Electron 45.0.0 with the same pinned
+Code OSS 1.144.0 runtime. No dependency or backend endpoint changes.
+
+The compact panel shows the native file tree when empty. Browse files temporarily
+uses the full Code area without closing editors; single-click/Enter accepts a
+file, including the already active one. Back/Escape returns to retained writing.
+Expanding moves the same native file view back to Explorer. A local Back intent
+remains available offline; reads and mutations still require a live backend scope.
+
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`: passed. Tests
+  include 153 main/security/process cases, seven capture-tool cases, IPC/shared
+  TypeScript assertions and 627 renderer cases in 93 files. New coverage checks
+  compact preference restoration, empty/editor transitions, subscriptions,
+  click/focus cleanup, presentation lease/shape validation and Files/Back intent.
+- `artifacts/desktop-capture/code-files-verified/report.json`: **28 checkpoints**,
+  `verified: true`, no errors. Inspected both themes’ initial tree, full-width
+  Files/Back surface and accepted-file states. Real mouse and keyboard acceptance,
+  Escape, closing the last editor, expanded Explorer, dirty saves, tab switching,
+  modal stacking, repeated reopen/resize, interrupted motion and narrow/reduced
+  motion retain their production checks. The test-only adapter holds bootstrap
+  and supplies an actual disposable Nest task/backend; no product test hook exists.
+- Native `code-workbench-smoke.cjs --large`: passed on 12,001 files, including
+  exact saved bytes, retained reopen, forced crash and dirty-buffer recovery.
+  Warm artifact cache: usable file 1,833 ms, reopen 1 ms, crash recovery 1,016 ms
+  on this Apple M1. These are single smoke measurements, not percentile claims.
+- Native `electron-smoke.cjs` and production `code-window-smoke.cjs`: passed.
+  The latter restores unsaved writing in another window and saves after the
+  original closes, using an independent backend scope.
+- Own extension resources now use `/extension-v2/` with `no-store`, escaping old
+  immutable responses without changing task storage IDs. Tests verify the new
+  route/cache policy; the previous path remains a compatible alias. Upstream
+  artifact resources retain immutable caching.
+- `git diff --check`: passed. No packaged launch, Windows/Linux UI or live SSH
+  verification is claimed for this change.
+
+
+## Panel loading and reopen regression baseline
 
 Verified on 2026-11-03, macOS arm64 / Electron 45.0.0. Document loading and
 editor readiness are now separate UI states: once the frame resource exists,

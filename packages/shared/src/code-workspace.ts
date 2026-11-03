@@ -13,13 +13,15 @@ export interface CodeBounds {
   readonly height: number;
 }
 /** Fixed editor intents, never arbitrary VS Code command IDs. */
-export type CodeAction = 'find-file' | 'search-text' | 'save';
+export type CodeAction = 'browse-files' | 'dismiss-files' | 'find-file' | 'search-text' | 'save';
 export interface CodeOpenFile {
   readonly path: string;
   readonly line?: number;
   readonly column?: number;
 }
 export interface CodeSurfaceState {
+  readonly filesOpen?: boolean;
+  readonly hasEditors?: boolean;
   /** Main-issued private editor resource. Never a backend URL or credential. */
   readonly frameUrl?: string;
   readonly taskId: number;

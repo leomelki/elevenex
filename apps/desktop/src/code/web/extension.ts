@@ -291,7 +291,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (!root || root.scheme !== SCHEME) return;
   const base = context.extensionUri.with({ path: '/', query: '', fragment: '' });
   const files = new TaskFiles(base, root, new SaveLedger(context.workspaceState));
-  const layout = new CompactLayout(context.workspaceState);
+  const layout = new CompactLayout(context.workspaceState, (filesOpen, hasEditors) => files.call('presentation', {filesOpen, hasEditors}));
+  context.subscriptions.push(layout,
+    vscode.commands.registerCommand('elevenex.code.browse-files', () => layout.browse()),
+    vscode.commands.registerCommand('elevenex.code.dismiss-files', () => layout.dismiss()),
+    vscode.commands.registerCommand('elevenex.code.focus', () => layout.focus()),
+  );
   context.subscriptions.push(vscode.commands.registerCommand('elevenex.code.set-compact', (compact: unknown) => {
     if (typeof compact !== 'boolean') throw new Error('Invalid editor layout.');
     return layout.set(compact);
@@ -300,7 +305,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(vscode.commands.registerCommand('elevenex.code.set-theme', (dark: unknown) => { if (typeof dark !== 'boolean') throw new Error('Invalid editor theme.'); return files.setTheme(dark); }));
   context.subscriptions.push(vscode.commands.registerCommand('elevenex.code.open-file', async (path: unknown, line: unknown, column: unknown) => {
     if (typeof path !== 'string' || path.length > 4096 || path.startsWith('/') || path.split('/').some(part => !part || part === '.' || part === '..' || part.toLowerCase() === '.git') || typeof line !== 'number' || !Number.isSafeInteger(line) || line < 1 || typeof column !== 'number' || !Number.isSafeInteger(column) || column < 1) throw new Error('Invalid task file position.');
-    await vscode.window.showTextDocument(root.with({ path: '/' + path }), { preview: false, preserveFocus: false, selection: new vscode.Range(line - 1, column - 1, line - 1, column - 1) });
+    await layout.revealEditor();
+    try {
+      await vscode.window.showTextDocument(root.with({ path: '/' + path }), { preview: false, preserveFocus: false, selection: new vscode.Range(line - 1, column - 1, line - 1, column - 1) });
+    } catch (error) { await layout.focus(); throw error; }
   }));
   context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(document => { void files.documentChanged(document); }));
   context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => { void files.documentChanged(event.document); void files.call('ready', { dirty: vscode.workspace.textDocuments.filter(d => d.isDirty).length }).catch(() => undefined); }));

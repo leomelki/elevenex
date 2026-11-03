@@ -40,7 +40,7 @@ export default async function* (capture) {
   const bootstrap = new Promise(resolve => { resumeBootstrap = resolve; });
   let holdBootstrap = true;
   CodeProtocol.prototype.handle = async function(request) {
-    if (holdBootstrap && new URL(request.url).pathname === '/extension/extension.js') await bootstrap;
+    if (holdBootstrap && new URL(request.url).pathname.endsWith('/extension.js')) await bootstrap;
     return handle.call(this, request);
   };
   try {
@@ -66,6 +66,11 @@ export default async function* (capture) {
     await waitMain(() => capture.evaluate(() => !!document.querySelector('ex-workspace-panels .find-file')), 'Compact editor did not open');
     const frame = capture.window.webContents.mainFrame.frames.find(frame => frame.url.includes('code.elevenex.invalid'));
     assert.ok(frame); assert.equal(capture.window.contentView.children.length, 0);
+    await waitMain(()=>frame.executeJavaScript('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16'),'Empty compact workbench did not show its tree');
+    for (const theme of ['light','dark']) {
+      await capture.theme(theme);
+      yield {name:`${theme}-empty-editor-files`,inspect:['ex-code-panel','ex-workspace-panels .browse-files','iframe']};
+    }
     const target = await capture.evaluate(async taskId => ({ scopeId: (await window.elevenex.backendClientState()).scope.id, taskId }), taskId);
     assert.equal((await capture.evaluate(({ target }) => window.elevenex.codeOpenFile(target, { path: 'src/workspace.ts', line: 7 }), { target })).ok, true);
     await waitMain(() => frame.executeJavaScript('!!document.querySelector(".monaco-editor textarea.inputarea")'), 'Real file missing');
@@ -76,10 +81,32 @@ export default async function* (capture) {
     const press = async (key, code, vk, modifiers = 0) => { for (const type of ['keyDown', 'keyUp']) await capture.cdp('Input.dispatchKeyEvent', { type, key, code, windowsVirtualKeyCode: vk, modifiers }); };
     const waitNative = async expression => { try { await waitMain(() => frame.executeJavaScript(expression), expression); } catch (error) { console.log('COMPACT_NATIVE_STATE', await frame.executeJavaScript('JSON.stringify({text:document.body.innerText.slice(-1800),inputs:[...document.querySelectorAll(".quick-input-widget input")].map(e=>({value:e.value,rect:e.getBoundingClientRect().toJSON()}))})')); throw error; } };
     const typeQuery = async text => { await press('a', 'KeyA', 65, process.platform === 'darwin' ? 4 : 2); await capture.cdp('Input.insertText', { text }); };
+    const clickTree = async name => {
+      const row = await frame.executeJavaScript(`(()=>{const row=[...document.querySelectorAll('.part.auxiliarybar [role="treeitem"]')].find(row=>row.querySelector('.label-name')?.textContent===${JSON.stringify(name)});if(!row)throw Error('Tree item missing');const r=row.getBoundingClientRect();return {x:r.x+Math.min(90,r.width/2),y:r.y+r.height/2};})()`);
+      const host = await capture.evaluate(()=>document.querySelector('ex-code-panel iframe').getBoundingClientRect().toJSON());
+      for(const type of ['mousePressed','mouseReleased']) await capture.cdp('Input.dispatchMouseEvent',{type,x:host.x+row.x,y:host.y+row.y,button:'left',clickCount:1});
+    };
     for (const theme of ['light', 'dark']) {
       await capture.theme(theme);
       await waitNative(`!!document.querySelector('.monaco-workbench.${theme === 'light' ? 'vs' : 'vs-dark'}')`);
       await waitNative('(document.querySelector(".part.sidebar")?.getBoundingClientRect().width ?? 0) === 0');
+      await capture.click('ex-workspace-panels .browse-files');
+      await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16');
+      await capture.waitFor(()=>document.querySelector('ex-workspace-panels .browse-files button')?.getAttribute('aria-label')==='Back to editor · Esc');
+      yield {name:`${theme}-files-over-editor`,inspect:['ex-workspace-panels .browse-files','ex-code-panel','iframe']};
+      await press('Escape','Escape',27);
+      await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width === 0');
+      await capture.click('ex-workspace-panels .browse-files');
+      await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16');
+      await waitNative('[...document.querySelectorAll(".part.auxiliarybar [role=treeitem]")].some(row=>row.querySelector(".label-name")?.textContent==="workspace.ts")');
+      await clickTree('workspace.ts'); // The already-open file must also dismiss the cover.
+      await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width === 0 && document.activeElement?.classList.contains("inputarea")');
+      yield {name:`${theme}-tree-file-accepted`,inspect:['ex-code-panel','ex-workspace-panels .browse-files','iframe']};
+      await press('e','KeyE',69,(process.platform==='darwin'?4:2)|8);
+      await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16');
+      await press('Home','Home',36); await press('ArrowRight','ArrowRight',39); await press('ArrowDown','ArrowDown',40); await press('Enter','Enter',13);
+      await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width === 0 && document.activeElement?.classList.contains("inputarea")');
+      yield {name:`${theme}-keyboard-tree-accepted`,inspect:['ex-code-panel','iframe']};
       yield { name: `${theme}-compact-editing`, inspect: ['ex-code-panel', 'ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface', 'ex-app-shell .main'] };
       await capture.evaluate(() => document.querySelector('ex-workspace-panels .save-file button').focus());
       await capture.waitFor(() => document.querySelector('[role="tooltip"]')?.textContent.includes(window.elevenex.platform === 'darwin' ? 'Save file · ⌘S' : 'Save file · Ctrl+S'));
@@ -184,6 +211,9 @@ export default async function* (capture) {
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]');
       await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();
     }
+    await frame.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands})=>commands.executeCommand('workbench.action.closeAllEditors'))");
+    await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16');
+    yield {name:'last-editor-closed-shows-files',inspect:['ex-code-panel','ex-workspace-panels .browse-files','iframe']};
     await capture.viewport(700, 600); await capture.reducedMotion(true); await finish();
     await capture.waitFor(() => document.querySelector('ex-code-frame iframe')?.getBoundingClientRect().width >= 320);
     yield { name: 'narrow-reduced-motion', inspect: ['ex-code-panel', 'ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface'] };

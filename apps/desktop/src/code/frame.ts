@@ -17,7 +17,7 @@ export class CodeFrame {
   }
   async focus(): Promise<void> {
     const frame = this.current();
-    if (frame) await frame.executeJavaScript("window.focus();import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('workbench.action.focusActiveEditorGroup'))");
+    if (frame) await frame.executeJavaScript("window.focus();import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('elevenex.code.focus'))");
   }
   async reload(): Promise<void> {
     const contents = webContents.fromId(this.windowId);

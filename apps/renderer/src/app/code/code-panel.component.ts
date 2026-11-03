@@ -32,6 +32,8 @@ export class CodePanelComponent {
   readonly hasSurface = computed(() => this.showFrame() && this.store.state()?.phase !== 'loading');
   readonly title = computed(() => this.launching() ? 'Opening your workspace' : this.store.error() || this.store.state()?.phase === 'failed' ? 'Code couldn’t open' : !this.target() ? 'Choose a task to open Code' : this.store.state() ? 'Continue in your editor' : 'Your task, in Code');
   readonly modifier = computed(() => this.bridge.platform === 'darwin' ? '⌘' : 'Ctrl+');
+  readonly browsing = computed(() => this.compact() && this.store.state()?.filesOpen === true && this.store.state()?.hasEditors === true);
+  readonly browseLabel = computed(() => this.browsing() ? 'Back to editor · Esc' : this.bridge.platform === 'darwin' ? 'Browse files · ⇧⌘E' : 'Browse files · Ctrl+Shift+E');
   readonly findShortcut = computed(() => this.modifier() + 'P');
   readonly searchShortcut = computed(() => this.bridge.platform === 'darwin' ? '⇧⌘F' : 'Ctrl+Shift+F');
   readonly returnShortcut = computed(() => this.bridge.platform === 'darwin' ? '⇧⌘R' : 'Ctrl+Shift+R');

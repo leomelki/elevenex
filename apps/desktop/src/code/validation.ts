@@ -28,7 +28,7 @@ export function presentation(value: unknown): CodePresentation {
   return { visible: raw['visible'], compact: raw['compact'] };
 }
 export function action(value: unknown): CodeAction {
-  if (value !== 'find-file' && value !== 'search-text' && value !== 'save') throw new Error('Invalid editor action');
+  if (value !== 'browse-files' && value !== 'dismiss-files' && value !== 'find-file' && value !== 'search-text' && value !== 'save') throw new Error('Invalid editor action');
   return value;
 }
 export function file(value: unknown): CodeOpenFile {

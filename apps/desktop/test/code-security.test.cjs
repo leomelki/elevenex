@@ -15,7 +15,7 @@ test('Code controls accept resource identities and bounded file positions, never
   for (const path of ['/absolute', '../escape', 'file/../escape', '.git/config', 'a\0']) assert.throws(() => validate.file({ path }));
   assert.deepEqual(validate.file({ path: 'unicode é #?.ts', line: 10, column: 2 }), { path: 'unicode é #?.ts', line: 10, column: 2 });
   assert.throws(() => validate.file({ path: 'ok', line: 1.2 }));
-  for (const action of ['find-file', 'search-text', 'save']) assert.equal(validate.action(action), action);
+  for (const action of ['browse-files', 'dismiss-files', 'find-file', 'search-text', 'save']) assert.equal(validate.action(action), action);
   for (const action of ['workbench.action.terminal.new', 'raw-shell', null, { action: 'save' }]) assert.throws(() => validate.action(action));
   assert.deepEqual(validate.presentation({visible:true,compact:false}),{visible:true,compact:false});
   for (const value of [null,{visible:'yes',compact:false},{visible:true,compact:false,url:'https://example.com'}]) assert.throws(()=>validate.presentation(value));
@@ -28,8 +28,9 @@ test('Code controls accept resource identities and bounded file positions, never
 test('Code HTTPS is confined to its task origin, rejects foreign origins, confines assets and stale scopes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'new-code-protocol-'));
   let exits = 0;
+  const presentations = [];
   const client = new BackendClient(() => null, () => {}); client.attach(1);
-  const host = new CodeProtocol(client, 1, { taskId: 1, scopeId: 'a'.repeat(36) }, { version: 1, taskId: 1, identity: 'a'.repeat(64), storageIdentity: 'a'.repeat(64), name: 'task', branch: 'branch' }, root, root, () => false, () => {}, () => exits++);
+  const host = new CodeProtocol(client, 1, { taskId: 1, scopeId: 'a'.repeat(36) }, { version: 1, taskId: 1, identity: 'a'.repeat(64), storageIdentity: 'a'.repeat(64), name: 'task', branch: 'branch' }, root, root, () => false, () => {}, () => exits++, 'app://elevenex', 'a'.repeat(64), (filesOpen,hasEditors)=>presentations.push({filesOpen,hasEditors}));
   try {
     assert.equal(host.allows('https://example.com'), false); assert.equal(host.allows(`https://user@${host.authority}/`), false);
     const request = (path, options = {}) => host.handle(new globalThis.Request(`https://${host.authority}${path}`, options));
@@ -47,9 +48,20 @@ test('Code HTTPS is confined to its task origin, rejects foreign origins, confin
     const changes = () => request('/api/changes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation: 'a'.repeat(64), after: 0 }) });
     await request('/api/ready', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"transportRevision":0,"dirty":0}' });
     assert.equal((await (await changes()).json()).paused, true);
+    const presentation = body => request('/api/presentation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    assert.equal((await presentation({generation:'a'.repeat(64),transportRevision:0,filesOpen:true,hasEditors:true})).status,200);
+    assert.deepEqual(presentations,[{filesOpen:true,hasEditors:true}]);
+    assert.equal((await presentation({generation:'a'.repeat(64),transportRevision:0,filesOpen:'yes',hasEditors:true})).status,400);
+    assert.equal((await presentation({generation:'a'.repeat(64),transportRevision:0,filesOpen:true,hasEditors:true,path:'/secret'})).status,400);
+    assert.equal((await (await presentation({generation:'old',transportRevision:0,filesOpen:false,hasEditors:false})).json()).accepted,false);
+    assert.equal(presentations.length,1);
+
     host.bind({ taskId: 1, scopeId: 'b'.repeat(36) });
     assert.equal((await changes()).status, 503, 'A rebinding workbench must reconcile before idle polling can pause');
-    await mkdir(join(root, 'out')); await writeFile(join(root, 'out/safe.js'), 'export {};');
+    const extension = await request('/extension-v2/extension.js');
+    assert.equal(extension.status,200); assert.equal(extension.headers.get('Cache-Control'),'no-store');
+    assert.equal((await request('/extension-v2/package.json')).status,200);
+    await mkdir(join(root, 'out'));  await writeFile(join(root, 'out/safe.js'), 'export {};');
     assert.equal((await request('/assets/out/safe.js')).status, 200);
     await symlink(join(root, '..'), join(root, 'out/escape'));
     assert.equal((await request('/assets/out/escape/not-a-runtime-file')).status, 404);

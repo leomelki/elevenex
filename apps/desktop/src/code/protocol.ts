@@ -7,7 +7,7 @@ import type { CodeSurfaceState, CodeTarget } from '@elevenex/shared';
 import type { BackendClient } from '../backend-client/client';
 import { requestBackendJson } from '../backend-client/transport';
 import { CODE_OPERATIONS, object, reply, type CodeOperation, type WorkspaceDescriptor } from './validation';
-import { codePolicy, EXTENSION, workbenchDocument } from './document';
+import { codePolicy, CODE_EXTENSION_PATH, EXTENSION, workbenchDocument } from './document';
 
 const MIME: Readonly<Record<string, string>> = { '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.html': 'text/html', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain' };
 /** A private session-local HTTPS handler, not an Internet or loopback listener. */
@@ -30,6 +30,7 @@ export class CodeProtocol {
     private readonly returnToChat: () => void = () => undefined,
     private readonly shellOrigin = 'app://elevenex',
     originIdentity = workspace.storageIdentity,
+    private readonly presented: (filesOpen: boolean, hasEditors: boolean) => void = () => undefined,
   ) { this.authority = `w-${originIdentity.slice(0, 32)}.${originIdentity.slice(32)}.code.elevenex.invalid`; }
   allows(value: string): boolean {
     try {
@@ -51,7 +52,10 @@ export class CodeProtocol {
   dispose(): void { this.closed = true; this.lifetime.abort(); for (const done of this.readyWaiters) done(false); }
   async handle(request: Request): Promise<Response> {
     if (this.closed || !this.allows(request.url)) return new Response(null, { status: 403 });
-    const url = new URL(request.url), origin = request.headers.get('origin');
+    const url = new URL(request.url);
+    // Keep the former path as a compatible alias for retained old documents.
+    const pathname = url.pathname.startsWith(CODE_EXTENSION_PATH + '/') ? '/extension/' + url.pathname.slice(CODE_EXTENSION_PATH.length + 1) : url.pathname;
+    const origin = request.headers.get('origin');
     if (origin && !this.allows(origin)) return new Response(null, { status: 403 });
     const headers: Record<string, string> = { 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'same-site', 'Access-Control-Allow-Origin': origin ?? 'https://' + this.authority, 'Access-Control-Allow-Headers': 'Content-Type', 'Cache-Control': 'no-store' };
     try {
@@ -64,9 +68,9 @@ export class CodeProtocol {
         const document = workbenchDocument(this.workspace, this.authority, tokens, this.dark(), this.shellOrigin);
         return new Response(document.html, { headers: { ...headers, 'Content-Type': 'text/html', 'Content-Security-Policy': document.policy } });
       }
-      if (url.pathname === '/extension/package.nls.json') return Response.json({}, { headers });
-      if (url.pathname === '/extension/package.json') return Response.json(EXTENSION, { headers });
-      const path = decodeURIComponent(url.pathname);
+      if (pathname === '/extension/package.nls.json') return Response.json({}, { headers });
+      if (pathname === '/extension/package.json') return Response.json(EXTENSION, { headers });
+      const path = decodeURIComponent(pathname);
       if (path.includes('\0') || path.includes('\\') || path.split('/').some(p => p === '..' || p === '.')) return new Response(null, { status: 403 });
       let root: string, relativePath: string;
       if (path.startsWith('/extension/')) { root = join(__dirname, 'web'); relativePath = path.slice('/extension/'.length); }
@@ -85,7 +89,7 @@ export class CodeProtocol {
         return new Response(html, { headers });
       }
       headers['Content-Security-Policy'] = codePolicy(this.authority, 'static', extensionWorker);
-      headers['Cache-Control'] = 'private, max-age=31536000, immutable';
+      headers['Cache-Control'] = path.startsWith('/extension/') ? 'no-store' : 'private, max-age=31536000, immutable';
       return new Response(request.method === 'HEAD' ? null : Readable.toWeb(createReadStream(actual)) as ReadableStream<Uint8Array>, { headers });
     } catch { return new Response(null, { status: 404, headers }); }
   }
@@ -98,6 +102,12 @@ export class CodeProtocol {
     finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
     let input: Record<string, unknown>;
     try { input = object(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { return new Response(null, { status: 400 }); }
+    if (operation === 'presentation') {
+      if (Object.keys(input).some(key => !['generation','transportRevision','filesOpen','hasEditors'].includes(key)) || typeof input['filesOpen'] !== 'boolean' || typeof input['hasEditors'] !== 'boolean') return new Response(null,{status:400,headers});
+      const accepted = this.ready && input['generation'] === this.workspace.identity && input['transportRevision'] === this.transportRevision;
+      if (accepted) this.presented(input['filesOpen'], input['hasEditors']);
+      return Response.json({accepted},{headers});
+    }
     if (operation === 'return-to-chat') {
       // This local view intent never calls the backend or replays a mutation.
       // A hidden/standalone workbench cannot dismiss another window's panel.

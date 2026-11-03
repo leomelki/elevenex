@@ -613,4 +613,7 @@ The scenario checks the absence of native editor views and retains the same
 frame through tab changes and expansion. It also holds real extension bootstrap
 to check exclusive loading, repeats close/reopen and resizing in both themes,
 scrubs interrupted expansions and asserts zero launch-viewport scrolling and
-matching iframe/workbench widths.
+matching iframe/workbench widths. Compact Files coverage includes the initial
+empty tree, single-click acceptance of an already-open file, Escape/Back state,
+keyboard tree navigation, automatic tree return after closing the last editor,
+and restored Explorer after expansion.

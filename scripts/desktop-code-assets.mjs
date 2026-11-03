@@ -12,5 +12,6 @@ export async function stageCodeAssets(root) {
   const rendererRequire = createRequire(join(root, 'apps/renderer/package.json'));
   const buildRequire = createRequire(rendererRequire.resolve('@angular/build/package.json'));
   const { build } = buildRequire('esbuild');
+  await build({ entryPoints: [join(root, 'apps/desktop/src/code/web/files-focus.ts')], outfile: join(destination, 'web/files-focus.browser.js'), bundle: true, platform: 'browser', format: 'esm', target: 'es2022' });
   await build({ entryPoints: [join(root, 'apps/desktop/src/code/web/extension.ts')], outfile: join(destination, 'web/extension.js'), bundle: true, platform: 'browser', format: 'cjs', target: 'es2022', external: ['vscode'] });
 }

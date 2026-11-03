@@ -144,17 +144,20 @@ export class CodeSurfaces {
     }
   }
   async action(windowId: number, target: CodeTarget, action: CodeAction): Promise<void> {
-    const surface = this.owned(windowId, target);
-    if (!surface || this.client.state(windowId).scope?.id !== target.scopeId || !surface.host.active || !surface.visible) throw new Error('The current task editor is not visible.');
-    const commands = { 'find-file': 'workbench.action.quickOpen', 'search-text': 'workbench.action.quickTextSearch', save: 'workbench.action.files.save' } as const;
+    // Returning to retained writing is a local view intent and stays available
+    // after connection loss. Reads and file mutations retain live scope checks.
+    const local = action === 'dismiss-files';
+    const surface = this.owned(windowId, target, local);
+    if (!surface || (!local && this.client.state(windowId).scope?.id !== target.scopeId) || !surface.host.active || !surface.visible) throw new Error('The current task editor is not visible.');
+    const commands = { 'browse-files': 'elevenex.code.browse-files', 'dismiss-files': 'elevenex.code.dismiss-files', 'find-file': 'workbench.action.quickOpen', 'search-text': 'workbench.action.quickTextSearch', save: 'workbench.action.files.save' } as const;
     this.ownerContents(windowId).focus(); await surface.frame.focus();
-    if (this.owned(windowId, target) !== surface || this.client.state(windowId).scope?.id !== target.scopeId || !surface.host.active || !surface.visible) throw new Error('Code selection changed.');
+    if (this.owned(windowId, target, local) !== surface || (!local && this.client.state(windowId).scope?.id !== target.scopeId) || !surface.host.active || !surface.visible) throw new Error('Code selection changed.');
     await surface.frame.command(commands[action]);
   }
   async focus(windowId: number, target: CodeTarget): Promise<void> {
     const offered = this.offered.get(windowId);
     const surface = this.owned(windowId, target, true) ?? (offered?.target.scopeId === target.scopeId && offered.target.taskId === target.taskId ? this.surfaces.get(offered.key) : undefined);
-    if (surface) { BrowserWindow.fromWebContents(this.ownerContents(surface.owner))?.focus(); await surface.frame.focus(); }
+    if (surface) { BrowserWindow.fromWebContents(this.ownerContents(surface.owner))?.focus(); if (surface.wasReady) await surface.frame.focus(); }
   }
   async openFile(windowId: number, target: CodeTarget, file: CodeOpenFile): Promise<BackendResult<{ readonly accepted: true }>> {
     const current = await this.open(windowId, target, true); if (!current.ok) return current;
@@ -259,7 +262,12 @@ export class CodeSurfaces {
       if (surface.state.phase === phase && surface.state.message === message && surface.state.taskName === host.workspace.name && surface.state.branch === host.workspace.branch) return;
       surface.detached?.setTitle('Code · ' + host.workspace.name);
       surface.state = { ...surface.state, taskName: host.workspace.name, branch: host.workspace.branch, phase: surface.state.recovery ? 'disconnected' : phase, message: surface.state.recovery ? 'Workspace changed · saves blocked' : message }; if (this.active.get(surface.owner) !== key) return; this.changed(surface.owner, surface.target, surface.state);
-    }, () => { const surface = this.surfaces.get(key); if (surface && !surface.detached && this.active.get(surface.owner) === key) this.exitRequested(surface.owner, surface.target); }, this.shellOrigin, key);
+    }, () => { const surface = this.surfaces.get(key); if (surface && !surface.detached && this.active.get(surface.owner) === key) this.exitRequested(surface.owner, surface.target); }, this.shellOrigin, key, (filesOpen, hasEditors) => {
+      const surface = this.surfaces.get(key);
+      if (!surface || surface.state.filesOpen === filesOpen && surface.state.hasEditors === hasEditors) return;
+      surface.state = { ...surface.state, filesOpen, hasEditors };
+      if (this.active.get(surface.owner) === key) this.changed(surface.owner, surface.target, surface.state);
+    });
     this.router?.add(host);
     const frame = new CodeFrame(windowId, `https://${host.authority}/`);
     const surface: Surface = { key, environment, configurationIdentity: this.client.configurationIdentity(windowId, target.scopeId) ?? '', frame, host, state: { ...state, frameUrl: frame.url }, owner: windowId, target, used: Date.now() };

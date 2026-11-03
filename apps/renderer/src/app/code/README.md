@@ -50,22 +50,33 @@ license and authoritative tokens, not the downloadable runtime.
 ## UX and ownership
 
 The 440px side panel opens a genuine editor directly, alongside chat. The existing panel-tabs row
-contains icon actions for **Find file**, **Search text**, **Save** and a separate window,
+contains icon actions for **Browse files**, **Find file**, **Search text**, **Save** and a separate window,
 alongside expand/close. There is no additional task/branch/status/focus toolbar. File tabs,
 dirty indicators, selection and save feedback remain native VS Code. Save is
 optional: Command/Ctrl-S also saves. Its icon tooltip shows the platform shortcut.
 
-Below 600px usable width, Explorer/activity bars are hidden and long lines wrap.
-Find file uses upstream Quick Open; Search uses upstream Quick Search, as does
-Command/Ctrl-Shift-F while compact. Both show bounded, keyboard-operated results
-over the editor and open the selected result in place. There is no intermediary
-menu or forced expansion. At 600px, expansion restores Explorer and the previous
-activity-bar/word-wrap preferences. The extension journals those preferences so
-reloading while compact does not lose them. Mode changes serialize and happen
-only at the size boundary; resizing never reloads the document or replaces the
-workbench. Presentation acknowledgments reject stale completions after hiding,
-changing tasks or moving windows. CSS resizes the iframe directly; IPC runs only
-when visibility or the compact-layout boundary changes.
+Below 600px usable width, editing uses the full panel and long lines wrap.
+**Browse files** (folder icon, Command/Ctrl-Shift-E) temporarily fills that same
+Code area with the genuine VS Code file tree. It never squeezes the file into
+another narrow column. Folder clicks/arrow keys keep browsing; a single file
+click or Enter opens it and returns to full-width editing. Selecting the already
+open file does the same. On macOS, compact Enter accepts a file rather than
+starting rename; expanded mode retains upstream bindings.
+
+With no editor tabs, Files is the default view. Closing the last tab returns to
+it. With open tabs, the folder action becomes **Back to editor · Esc** while
+browsing. Escape, Back or Command/Ctrl-B returns to the retained editor, cursor,
+scroll position and unsaved writing. Renaming, inline find and context menus
+consume their own Escape first. Back remains a local view action when offline.
+The tree keeps its expansion/selection state across visits.
+
+The same native `workbench.explorer.fileView` moves into the bundled extension’s
+Files container and is maximized over the editor area. No editor is closed and
+no second file tree, filesystem bridge or repository snapshot is introduced.
+At 600px, it moves back into normal Explorer and restores the activity-bar and
+word-wrap preferences journaled before compact mode. Layout work is serialized;
+resizing never reloads the document. Find file still uses upstream Quick Open;
+Search uses Quick Search, including Command/Ctrl-Shift-F while compact.
 
 The iframe fills the available panel at every size. There is no native-surface
 minimum-size gate or forced Expand placeholder. Expansion uses the existing
@@ -110,8 +121,8 @@ not introduce an extra focus jump. A dedicated window uses `standalone` to omit
 its own detach control and focus its retained workbench on launch. Returning to
 chat uses the shell's existing focus restoration.
 
-Toolbar intents cross a fixed `CodeAction` union (`find-file`, `search-text`,
-`save`), validated in main and restricted to the visible owned task and current
+Toolbar intents cross a fixed `CodeAction` union (`browse-files`, `dismiss-files`,
+`find-file`, `search-text`, `save`), validated in main and restricted to the visible owned task and current
 backend scope. No caller-supplied VS Code command ID crosses the bridge. Save is
 an explicit single action and uses the existing revision/conflict safeguards.
 The browser extension's focused modules are bundled with the esbuild already
@@ -211,6 +222,20 @@ malicious concurrent directory replacement; see the verification limitations.
   `CodeFrame` confines privileged commands to the exact owned direct child frame.
 - `CodeFrameRouter` owns session routing, frame navigation and permission policy.
   `CodeProtocol` owns confined assets, task operations and generation checks.
+
+`CompactLayout` owns the file-view placement, compact preference journal, tab
+subscriptions and restoration. A small workbench-owned `FilesFocus` adapter
+handles accessible tree-item activation and editor focus: the public extension
+API does not report accepting the already active editor. It changes no upstream
+DOM/styles, excludes folder expansion, rename inputs and modified clicks, and
+releases both listeners on pagehide. Keep its native mouse/keyboard regressions
+when upgrading the pinned workbench. Main validates generation/transport-bound
+presentation booleans before publishing Files/Back state to the selected task.
+
+App-owned extension assets use `/extension-v2/` and `no-store`. The new prefix
+escapes immutable cached responses from the original iframe host; the former
+path remains a compatible alias. Pinned Code OSS assets retain their immutable
+cache, and storage/task IDs stay unchanged.
 
 The iframe uses `allow-scripts allow-same-origin` so upstream workers and IndexedDB
 work. It is always cross-origin from the shell, so it cannot remove its sandbox

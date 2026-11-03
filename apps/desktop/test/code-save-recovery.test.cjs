@@ -35,7 +35,7 @@ async function mount(persisted, disk, options = {}) {
   const vscode = {
     __esModule: true, Uri, Disposable, EventEmitter: Emitter, FileSystemError: FileError, Range,
     ConfigurationTarget: { Global: 1 }, StatusBarAlignment: { Left: 1 }, FileType: { File: 1 }, FileChangeType: { Changed: 1, Created: 2, Deleted: 3 },
-    window: { createStatusBarItem: () => ({ show() {}, dispose() {} }), showWarningMessage: async () => choices.shift(), showTextDocument: async (uri, options) => { opened.push({ uri, options }); }, activeTextEditor: null },
+    window: { tabGroups: {activeTabGroup:{tabs:[]},all:[],onDidChangeTabs:()=>new Disposable(()=>{})}, onDidChangeActiveTextEditor:()=>new Disposable(()=>{}), createStatusBarItem: () => ({ show() {}, dispose() {} }), showWarningMessage: async () => choices.shift(), showTextDocument: async (uri, options) => { opened.push({ uri, options }); }, activeTextEditor: null },
     workspace: { getConfiguration: () => ({ update: async (key, value) => { themes.push({ key, value }); } }), workspaceFolders: [{ uri: root }], textDocuments: documents, fs: { stat: uri => provider.stat(uri) }, registerFileSystemProvider: (_scheme, value) => { provider = value; return new Disposable(() => {}); }, registerTextDocumentContentProvider: () => new Disposable(() => {}), registerFileSearchProvider: () => new Disposable(() => {}), registerTextSearchProvider: () => new Disposable(() => {}), onDidOpenTextDocument: () => new Disposable(() => {}), onDidChangeTextDocument: () => new Disposable(() => {}) },
     commands: { registerCommand: (name, fn) => { commands.set(name, fn); return new Disposable(() => {}); }, executeCommand: async (...args) => { comparisons.push(args); } },
   };
@@ -45,6 +45,7 @@ async function mount(persisted, disk, options = {}) {
   const json = value => globalThis.Response.json({ generation, transportRevision: options.transportRevision ?? 0, ...(options.dark === undefined ? {} : { dark: options.dark }), ...value });
   const fetch = async (url, request) => {
     const operation = new URL(url).pathname.split('/').at(-1), body = JSON.parse(request.body);
+    if (operation === 'presentation') return json({accepted:true});
     if (operation === 'ready') return json({ accepted: true });
     if (operation === 'changes') return json({ sequence: 0, reset: false, paths: [], paused: options.pausedChanges ?? true });
     if (operation === 'stat') return json({ type: 1, size: disk.text.length, ctime: 1, mtime: 1 });

@@ -1,5 +1,6 @@
 <ng-template #actions>
   @if (hasSurface()) {
+    <ex-icon-button class="browse-files" [icon]="browsing() ? 'back' : 'folder'" [label]="browseLabel()" [disabled]="!active() || !connected() && !browsing()" (pressed)="runAction(browsing() ? 'dismiss-files' : 'browse-files')" />
     <ex-icon-button class="find-file" icon="file" label="Find file" [disabled]="!active() || !connected()" (pressed)="runAction('find-file')" />
     <ex-icon-button icon="search" label="Search text in files" [disabled]="!active() || !connected()" (pressed)="runAction('search-text')" />
     <ex-icon-button class="save-file" icon="save" [label]="'Save file · ' + modifier() + 'S'" [disabled]="!active() || !connected()" (pressed)="runAction('save')" />
