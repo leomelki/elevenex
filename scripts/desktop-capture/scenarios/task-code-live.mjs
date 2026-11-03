@@ -74,7 +74,7 @@ export default async function* (capture) {
     assert.equal(liveView.getVisible(), true, 'A toolbar tooltip hid the editor');
     yield { name: 'code-toolbar-tooltip-live', inspect: ['ex-workspace-panels .panel-head', '[role="tooltip"]'] };
     capture.window.webContents.focus();
-    await capture.evaluate(() => document.querySelector('ex-workspace-panels .save-file').focus());
+    await capture.evaluate(() => document.querySelector('ex-workspace-panels .save-file button').focus());
     await capture.press('Enter'); await waitMain(() => liveView.webContents.executeJavaScript('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")'), 'Keyboard Save did not hand off focus');
   }
   const upstream = (command, ...args) => liveView.webContents.executeJavaScript(`import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand(${JSON.stringify(command)},...${JSON.stringify(args)}))`);
@@ -99,7 +99,7 @@ export default async function* (capture) {
     assert.equal(liveView.getVisible(), true);
     yield { name: 'code-minimum-width-live', inspect: ['ex-code-panel .editor-surface', 'ex-code-panel .launch-actions'] };
     await capture.viewport(1440, 900); await finish(); await waitMain(() => liveView.getVisible(), 'Resize did not restore the retained editor');
-    capture.window.webContents.focus(); await capture.evaluate(() => document.querySelector('ex-workspace-panels .save-file').focus()); await capture.press('Enter');
+    capture.window.webContents.focus(); await capture.evaluate(() => document.querySelector('ex-workspace-panels .save-file button').focus()); await capture.press('Enter');
     await waitMain(() => liveView.webContents.executeJavaScript('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")'), 'Editor did not regain focus');
     liveView.webContents.debugger.attach('1.3');
     for (const type of ['keyDown', 'keyUp']) await liveView.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'r', code: 'KeyR', windowsVirtualKeyCode: 82, modifiers: process.platform === 'darwin' ? 12 : 10 });

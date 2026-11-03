@@ -14,7 +14,12 @@ export default async function* (capture) {
   const taskId = Number(process.env.ELEVENEX_CODE_CAPTURE_TASK);
   const sessionId = Number(process.env.ELEVENEX_CODE_CAPTURE_SESSION);
   assert.ok(origin && token && projectId && taskId && sessionId);
-  const metadata = await (await fetch(origin + '/api/info')).json();
+  let metadata;
+  const readyDeadline = Date.now() + 30000;
+  while (!metadata) {
+    try { const response = await fetch(origin + '/api/info', { signal: AbortSignal.timeout(1000) }); if (response.ok) { const value = await response.json(); if (typeof value.backendSha === 'string') metadata = value; } } catch { /* The disposable backend may still be booting. */ }
+    if (!metadata) { if (Date.now() >= readyDeadline) throw new Error('Disposable backend did not become ready'); await new Promise(resolve => setTimeout(resolve, 100)); }
+  }
   const ready = { phase: 'ready', version: metadata.backendSha, url: origin };
   const { BackendManager } = require('../../../apps/desktop/dist/backend/manager.js');
   const previous = { snapshot: BackendManager.prototype.snapshot, start: BackendManager.prototype.start, codeAccess: BackendManager.prototype.codeAccess };
@@ -55,6 +60,9 @@ export default async function* (capture) {
       await waitNative(`!!document.querySelector('.monaco-workbench.${theme === 'light' ? 'vs' : 'vs-dark'}')`);
       await waitNative('(document.querySelector(".part.sidebar")?.getBoundingClientRect().width ?? 0) === 0');
       yield { name: `${theme}-compact-editing`, inspect: ['ex-code-panel', 'ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface', 'ex-app-shell .main'] };
+      await capture.evaluate(() => document.querySelector('ex-workspace-panels .save-file button').focus());
+      await capture.waitFor(() => document.querySelector('[role="tooltip"]')?.textContent.includes(window.elevenex.platform === 'darwin' ? 'Save file · ⌘S' : 'Save file · Ctrl+S'));
+      yield { name: `${theme}-save-icon-focus`, inspect: ['ex-workspace-panels .save-file button', '[role="tooltip"]'] };
       await capture.click('ex-workspace-panels .find-file');
       await waitNative('!!document.activeElement?.closest(".quick-input-widget")');
       await typeQuery('README');

@@ -50,9 +50,10 @@ license and authoritative tokens, not the downloadable runtime.
 ## UX and ownership
 
 The 440px side panel opens a genuine editor directly, alongside chat. The existing panel-tabs row
-contains **Find file**, **Search text**, **Save** and a separate-window action,
+contains icon actions for **Find file**, **Search text**, **Save** and a separate window,
 alongside expand/close. There is no additional task/branch/status/focus toolbar. File tabs,
-dirty indicators, selection and save feedback remain native VS Code.
+dirty indicators, selection and save feedback remain native VS Code. Save is
+optional: Command/Ctrl-S also saves. Its icon tooltip shows the platform shortcut.
 
 Below 600px usable width, Explorer/activity bars are hidden and long lines wrap.
 Find file uses upstream Quick Open; Search uses upstream Quick Search, as does

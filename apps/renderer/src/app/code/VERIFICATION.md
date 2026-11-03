@@ -229,3 +229,12 @@ full UX capture consumers were updated to use loaded native surfaces and the
 relocated controls instead of depending on the removed toolbar.
 
 No backend, dependencies or lockfiles changed for this follow-up.
+
+Save is now the shared icon button with a named 16px `save` glyph, an accessible
+label and platform shortcut tooltip. Command/Ctrl-S remains available. Lint,
+production build and all four focused Code panel tests passed. The live
+`code-save-icon-checked` report verified 12 states with no renderer errors,
+including inspected light/dark icon/focus/tooltip PNGs and exact bytes saved
+through the icon. The obsolete disposable backend fixture was rebuilt from the
+current checkout and launched with its required capability; it was stopped after
+verification. No backend sources, dependencies or lockfiles changed.

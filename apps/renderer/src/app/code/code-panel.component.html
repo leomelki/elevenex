@@ -2,7 +2,7 @@
   @if (hasSurface()) {
     <ex-icon-button class="find-file" icon="file" label="Find file" [disabled]="!active() || !connected()" (pressed)="runAction('find-file')" />
     <ex-icon-button icon="search" label="Search text in files" [disabled]="!active() || !connected()" (pressed)="runAction('search-text')" />
-    <button exButton size="sm" variant="ghost" class="save-file" [disabled]="!active() || !connected()" [exTooltip]="'Save file · ' + modifier() + 'S'" (click)="runAction('save')">Save</button>
+    <ex-icon-button class="save-file" icon="save" [label]="'Save file · ' + modifier() + 'S'" [disabled]="!active() || !connected()" (pressed)="runAction('save')" />
     @if (!standalone()) { <ex-icon-button icon="window" label="Open editor window" [disabled]="!active() || !connected() || launching()" (pressed)="detach()" /> }
   }
 </ng-template>
