@@ -10,10 +10,11 @@ tasks cancels a pending opening before startup. New shell, script launch, interr
 rerun and process close remain user actions. There are no agent terminal tools or
 chat-output mirrors. Existing agent approval flows are unchanged.
 
-`lastClosed` asks the workspace to close its side panel after the last terminal's
-close has settled successfully. Failed/uncertain closes remain inspectable, and
-late closes cannot hide another task or panel. Reopening an empty Terminal starts
-a fresh shell; hiding a panel with existing shells only detaches them.
+`lastClosed` asks the workspace to close its side panel as soon as the last tab
+is removed, while backend cleanup continues. Failed/uncertain closes reconcile
+in the background; surviving tabs and errors remain available on reopening.
+Cleanup replies never close or reopen the panel. Reopening an empty Terminal
+starts a fresh shell; hiding a panel with existing shells only detaches them.
 
 The metadata store owns scoped reads and four task snapshots. The component owns
 up to eight xterm surfaces, each with 2,000 scrollback rows, selection, reading

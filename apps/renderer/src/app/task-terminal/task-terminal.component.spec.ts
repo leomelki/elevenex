@@ -118,7 +118,7 @@ describe('Task terminal panel lifecycle', () => {
     expect(bridge.taskTerminalCreate).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the panel open after a list failure or failed close and when other tabs remain', async () => {
+  it('keeps the panel open after a list failure and when other tabs remain, reconciling a failed final close', async () => {
     const { fixture, component, bridge, page, lastClosed } = setup([terminal(1), terminal(1, 2)]);
     bridge.taskTerminalList.mockResolvedValue({ ok: false, error: { code: 'transport', message: 'Offline' } });
     fixture.componentRef.setInput('visible', true); await settle(fixture);
@@ -128,16 +128,19 @@ describe('Task terminal panel lifecycle', () => {
     expect(lastClosed).not.toHaveBeenCalled();
     bridge.taskTerminalClose.mockRejectedValue(new Error('Connection lost'));
     await component.close('2'); await settle(fixture);
-    expect(lastClosed).not.toHaveBeenCalled();
+    expect(lastClosed).toHaveBeenCalledTimes(1);
     expect(component.store.snapshot()?.terminals).toHaveLength(1);
+    expect(component.store.error()).toContain('Closing outcome is unknown');
   });
 
-  for (const destination of ['hidden', 'task'] as const) it(`ignores a late last-close after navigating to ${destination}`, async () => {
+  for (const destination of ['hidden', 'task'] as const) it(`hides the panel before cleanup and does not close again after navigating to ${destination}`, async () => {
     const { fixture, bridge, rows, lastClosed } = setup([terminal(1)]);
     fixture.componentRef.setInput('visible', true); await settle(fixture);
     let resolve!: (value: { ok: boolean; value: { closed: boolean } }) => void;
     bridge.taskTerminalClose.mockImplementation(() => new Promise(done => { resolve = done; }));
     const closing = fixture.componentInstance.close('1');
+    expect(lastClosed).toHaveBeenCalledTimes(1);
+    expect(fixture.componentInstance.store.snapshot()?.terminals).toHaveLength(0);
     if (destination === 'hidden') fixture.componentRef.setInput('visible', false);
     else {
       rows.set(2, [terminal(2)]);
@@ -146,7 +149,7 @@ describe('Task terminal panel lifecycle', () => {
     await settle(fixture);
     rows.set(1, []); resolve({ ok: true, value: { closed: true } });
     await closing; await settle(fixture);
-    expect(lastClosed).not.toHaveBeenCalled();
+    expect(lastClosed).toHaveBeenCalledTimes(1);
     expect(bridge.taskTerminalCreate).not.toHaveBeenCalled();
   });
 });

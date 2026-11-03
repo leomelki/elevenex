@@ -74,7 +74,6 @@ export class TaskTerminalComponent {
   readonly animateTabs = signal(false);
   private tabTask = "";
   private openingTask = "";
-  private openingRevision = 0;
   private openingAttempted = false;
   readonly inputBlocked = signal(false);
   readonly searchResult = signal("");
@@ -139,7 +138,6 @@ export class TaskTerminalComponent {
       const available = this.available() && this.store.connected();
       if (key !== this.openingTask) {
         this.openingTask = key;
-        this.openingRevision++;
         this.openingAttempted = false;
       }
       if (!key || !available || this.openingAttempted) return;
@@ -390,17 +388,12 @@ export class TaskTerminalComponent {
     await this.create();
   }
   async close(id: string): Promise<void> {
-    const target = this.store.selection();
-    const revision = this.openingRevision;
-    if (!target || !this.store.snapshot()?.terminals.some(row => row.id === Number(id))) return;
-    await this.store.close(Number(id));
-    const current = this.store.selection();
-    if (
-      !this.disposed && revision === this.openingRevision && this.visible() &&
-      target.scopeId === current?.scopeId && target.taskId === current?.taskId &&
-      !this.store.error() && this.store.snapshot()?.terminals.length === 0
-    )
+    if (this.disposed || !this.store.snapshot()?.terminals.some(row => row.id === Number(id))) return;
+    const closing = this.store.close(Number(id));
+    // The store removes the tab immediately; process cleanup must not delay hiding the panel.
+    if (this.visible() && this.store.snapshot()?.terminals.length === 0)
       this.lastClosed.emit();
+    await closing;
   }
   selected(id: string): void {
     this.store.active.set(Number(id));

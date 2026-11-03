@@ -4,6 +4,26 @@
 > in chat/PR descriptions and keep run artifacts under ignored `artifacts/`, as
 > described in the root `AGENTS.md`. Earlier results do not verify current code.
 
+## Immediate final-terminal panel close, 2026-11-03
+
+Closing the final terminal now emits panel dismissal immediately after the store
+removes the tab, before awaiting backend cleanup. Failed/uncertain closes still
+reconcile surviving tabs and errors for inspection on reopening. Cleanup replies
+do not change panel visibility. Deferred-close component regressions assert the
+dismissal synchronously and ensure late completion does not dismiss again after
+task/view navigation.
+
+Desktop lint, the full suite (137 desktop, seven capture-tool and 645 renderer
+tests, including TypeScript contracts), and the production build pass.
+The [native report](../../artifacts/desktop-capture/terminal-final-tab-immediate/report.json)
+is `verified: true`, with two inspected light/dark PNGs and no errors/warnings.
+It verifies the production component/store/workspace composition with deliberately
+unresolved preview backend replies: the panel fully closes and restores focus
+while cleanup remains pending, including narrow keyboard/reduced-motion operation.
+Opening Browser before cleanup completes keeps Browser open. This capture uses
+controlled backend data rather than a real PTY; the timing regression is at the
+renderer ownership boundary. Validation-owned processes are stopped.
+
 ## Automatic terminal panel lifecycle, 2026-11-03
 
 Opening Terminal checks the selected task's current backend list and creates one
