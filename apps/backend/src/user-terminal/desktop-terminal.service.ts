@@ -4,8 +4,11 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  type OnModuleInit,
+  type OnModuleDestroy,
 } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNotNull } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
@@ -33,7 +36,57 @@ function generation(value: unknown): string {
 }
 
 @Injectable()
-export class DesktopTerminalService {
+export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
+  private readonly engineOwner = randomUUID();
+  private stopping = false;
+  private readonly launches = new Set<Promise<unknown>>();
+  private readonly closingOwners = new Set<string>();
+
+  async onModuleInit() {
+    // Direct desktop PTYs cannot survive an engine restart, including a crash.
+    await this.db
+      .delete(schema.userTerminals)
+      .where(isNotNull(schema.userTerminals.desktopOwner));
+  }
+
+  async onModuleDestroy() {
+    this.stopping = true;
+    await Promise.allSettled(this.launches);
+    await this.closeOwned();
+  }
+
+  async closeOwned(owner?: string) {
+    if (owner !== undefined) generation(owner);
+    if (owner !== undefined) this.closingOwners.add(owner);
+    try {
+      await Promise.allSettled(this.launches);
+      // Bounded batches include exited tabs, whose scrollback was only in memory.
+      const condition =
+        owner === undefined
+          ? isNotNull(schema.userTerminals.desktopOwner)
+          : eq(schema.userTerminals.desktopOwner, owner);
+      for (;;) {
+        const rows = await this.db
+          .select({ id: schema.userTerminals.id })
+          .from(schema.userTerminals)
+          .where(condition)
+          .limit(16);
+        if (!rows.length) break;
+        await Promise.all(
+          rows.map(async ({ id }) => {
+            await this.ptys.destroy(id, true);
+            await this.db
+              .delete(schema.userTerminals)
+              .where(eq(schema.userTerminals.id, id));
+            this.ptys.forgetDesktop(id);
+          }),
+        );
+      }
+      return { accepted: true as const };
+    } finally {
+      if (owner !== undefined) this.closingOwners.delete(owner);
+    }
+  }
   private readonly creating = new Set<number>();
   private readonly scriptReads = new Map<
     string,
@@ -166,7 +219,12 @@ export class DesktopTerminalService {
     const rows = await this.db
       .select()
       .from(schema.userTerminals)
-      .where(eq(schema.userTerminals.workspaceId, taskId))
+      .where(
+        and(
+          eq(schema.userTerminals.workspaceId, taskId),
+          isNotNull(schema.userTerminals.desktopOwner),
+        ),
+      )
       .orderBy(schema.userTerminals.id)
       .limit(16);
     const scripts = task.archivedAt ? [] : await this.scripts(task.path);
@@ -177,14 +235,26 @@ export class DesktopTerminalService {
       limit: 16,
     };
   }
-  async create(taskId: number, value: unknown) {
+  create(taskId: number, value: unknown) {
+    if (this.stopping)
+      throw new ConflictException('Terminal service is stopping');
+    const launch = this.createInternal(taskId, value);
+    this.launches.add(launch);
+    void launch.finally(() => this.launches.delete(launch)).catch(() => {});
+    return launch;
+  }
+  private async createInternal(taskId: number, value: unknown) {
     const input = terminalObject(value);
     if (
-      Object.keys(input).some((key) => key !== 'scriptId') ||
+      Object.keys(input).some((key) => key !== 'scriptId' && key !== 'owner') ||
       (input.scriptId !== undefined &&
         (typeof input.scriptId !== 'string' || input.scriptId.length > 100))
     )
       throw new BadRequestException('Invalid terminal launch');
+    const owner =
+      input.owner === undefined ? this.engineOwner : generation(input.owner);
+    if (this.closingOwners.has(owner))
+      throw new ConflictException('Terminal application is closing');
     if (this.creating.has(taskId))
       throw new ConflictException('Another terminal is starting');
     this.creating.add(taskId);
@@ -194,7 +264,12 @@ export class DesktopTerminalService {
       const rows = await this.db
         .select({ id: schema.userTerminals.id })
         .from(schema.userTerminals)
-        .where(eq(schema.userTerminals.workspaceId, taskId))
+        .where(
+          and(
+            eq(schema.userTerminals.workspaceId, taskId),
+            isNotNull(schema.userTerminals.desktopOwner),
+          ),
+        )
         .limit(16);
       if (rows.length >= 16)
         throw new ConflictException('Close a terminal before opening another');
@@ -208,6 +283,7 @@ export class DesktopTerminalService {
         throw new BadRequestException('Script no longer exists');
       const terminal = await this.terminals.create({
         worktreePath: task.path,
+        desktopOwner: owner,
         ...(script ? { name: script.name } : {}),
       });
       id = terminal.id;

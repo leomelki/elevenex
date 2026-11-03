@@ -2676,3 +2676,35 @@ isolated database. Trusted hover/click on Run again produces a second execution
 for both typed and pasted failures. Light/dark PNGs inspected; report
 `verified: true`, with no renderer errors or warnings. These are unpackaged
 captures; no packaged-app launch or remote SSH verification is claimed.
+
+### Terminal toolbar simplification (2026-11-03)
+
+Removed startup directory/branch labels; terminal actions remain right-aligned.
+Desktop lint, build and tests pass (137 desktop, 7 capture-tool, 645 renderer).
+[Three native component checkpoints](../../artifacts/desktop-capture/terminal-actions-only/index.html)
+verify absent metadata, serving actions, Find/Escape focus restoration and a
+narrow reduced-motion layout. Light/dark PNGs inspected; report `verified: true`.
+These use preview data and do not revalidate live PTYs or a packaged app.
+
+### Terminal app-close lifecycle (2026-11-03)
+
+Desktop terminals now carry an app-launch owner. Quit and last-window close stop
+that owner's PTYs and remove running/exited tabs before engine/transport disposal;
+engine startup expires desktop records left by crashes. Legacy records retain
+their existing lifecycle and no longer appear as unavailable desktop tabs. The
+existing empty-pane opening flow starts a fresh shell after reopening.
+
+Validation: desktop lint, production build, and the full desktop suite passed
+(138 desktop, 7 capture-tool, 645 renderer tests). The focused terminal IPC suite
+passed again after its ownership assertions were added. Backend terminal suites
+passed (30 tests), including real PTYs, owner isolation, in-flight startup,
+shutdown failure, restart expiration, and fresh startup. Backend production
+TypeScript checking and changed-file ESLint passed. The broader backend test-file
+TypeScript check reports unrelated existing spec errors; it is not claimed clean.
+
+The native macOS Electron smoke passed with real preload/IPC and a fixture engine:
+closing one of two windows retains terminals; closing the last window cleans
+before engine disposal; reopening finds no tabs and uses a fresh owner; app quit
+cleans again. This is lifecycle verification, not a new visual capture, live SSH
+terminal test, or packaged-app launch. Remote cleanup remains best effort if its
+transport is unavailable. No validation processes are left running.

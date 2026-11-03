@@ -5,6 +5,7 @@ const vm = require('node:vm');
 const { URLSearchParams } = require('node:url');
 const { createServer } = require('node:http');
 const { BackendClient } = require('../dist/backend-client/client');
+const { TerminalLifetime } = require('../dist/backend-client/terminal-lifetime');
 const { parseTaskTerminal, parseTerminalList, parseTerminalOutput } = require('../dist/backend-client/task-terminal');
 const generation = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const terminal = { id: 2, taskId: 1, title: 'bash', cwd: '/task/worktree', branch: 'work', generation, sequence: 4, alive: true, status: 'idle', command: '', exitCode: 0, port: null, canRerun: false };
@@ -29,9 +30,11 @@ test('named terminal IPC keeps credentials/main scope, validates inputs and neve
     requests.push({ url: req.url, method: req.method, auth: req.headers['x-capability'] });
     const chunks = []; for await (const data of req) chunks.push(data);
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : null;
+    requests.at(-1).body = body;
     res.setHeader('content-type', 'application/json');
     if (req.url.includes('/output')) res.end(JSON.stringify({ terminal, generation, from: 0, next: 4, data: 'test', gap: true, more: false }));
     else if (req.method === 'POST' && body.type === 'input') { res.destroy(); }
+    else if (req.method === 'POST') res.end(JSON.stringify(terminal));
     else res.end(JSON.stringify({ taskId: 1, terminals: [terminal], scripts: [], limit: 16 }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -39,7 +42,8 @@ test('named terminal IPC keeps credentials/main scope, validates inputs and neve
   const url = `http://127.0.0.1:${server.address().port}`;
   let target = { identity: 'one', url, version: 'a'.repeat(40), headers: { 'x-capability': 'private' }, environment: { kind: 'local' } };
   const client = new BackendClient(() => target, () => {}); client.attach(11); client.attach(12); context.after(() => client.dispose());
-  const stop = module.registerTaskTerminalIpc(client, (frame, sender) => frame === 'main' && sender.id === 11);
+  const lifetime = new TerminalLifetime();
+  const stop = module.registerTaskTerminalIpc(client, (frame, sender) => frame === 'main' && sender.id === 11, lifetime);
   const event = { senderFrame: 'main', sender: { id: 11 } }, scope = client.state(11).scope.id;
   const list = handlers.get('task-terminal:list'), read = handlers.get('task-terminal:read'), input = handlers.get('task-terminal:input');
   assert.throws(() => list({ senderFrame: 'sub', sender: { id: 11 } }, scope, 1), /Untrusted/);
@@ -49,8 +53,12 @@ test('named terminal IPC keeps credentials/main scope, validates inputs and neve
   assert.equal((await list(event, client.state(12).scope.id, 1)).error.code, 'stale-scope'); assert.equal(requests.length, 0);
   assert.equal((await list(event, scope, 1)).value.terminals[0].cwd, '/task/worktree');
   assert.equal((await read(event, scope, { taskId: 1, terminalId: 2, generation: null, after: 0 })).value.next, 4);
+  const create = handlers.get('task-terminal:create');
+  assert.throws(() => create(event, scope, { taskId: 1, owner: generation }));
+  assert.equal((await create(event, scope, { taskId: 1 })).value.id, terminal.id);
+  assert.deepEqual(requests.at(-1).body, { owner: lifetime.owner });
   assert.equal((await input(event, scope, { taskId: 1, terminalId: 2, generation, data: 'hello\r' })).error.code, 'outcome-unknown');
-  assert.equal(requests.filter(req => req.method === 'POST').length, 1);
+  assert.equal(requests.filter(req => req.method === 'POST').length, 2);
   assert.ok(requests.every(req => req.auth === 'private'));
   target = { ...target, identity: 'two' }; client.refresh(11);
   assert.equal((await list(event, scope, 1)).error.code, 'stale-scope');
@@ -80,4 +88,25 @@ test('serving port handoff uses the actual managed remote forward and cleans its
   assert.equal(retried, 1); assert.equal(opened.at(-1), 'https://127.0.0.1:49322/'); assert.equal(subscriptions, 0);
   await assert.rejects(handler(event, generation, { taskId: 1, terminalId: 2, port: 9999 })); assert.equal(opened.length, 3);
   stop(); assert.equal(handlers.size, 0);
+});
+
+test('app cleanup uses its private launch owner and latest engine endpoint exactly once', async context => {
+  const requests = [];
+  const server = createServer((req, res) => {
+    requests.push({ method: req.method, path: req.url, auth: req.headers['x-capability'] });
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ accepted: true }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  context.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
+  const lifetime = new TerminalLifetime();
+  const endpoint = { url: `http://127.0.0.1:${server.address().port}`, version: 'a'.repeat(40), headers: { 'x-capability': 'private' } };
+  lifetime.track({ ...endpoint, url: 'http://127.0.0.1:1' }, 'remote:machine');
+  lifetime.track(endpoint, 'remote:machine');
+  const cleanup = lifetime.close();
+  assert.equal(lifetime.close(), cleanup);
+  assert.throws(() => lifetime.track(endpoint), /closing/);
+  await cleanup;
+  assert.deepEqual(requests, [{ method: 'DELETE', path: `/api/desktop-workspace/terminal-owners/${lifetime.owner}`, auth: 'private' }]);
+  assert.notEqual(new TerminalLifetime().owner, lifetime.owner);
 });

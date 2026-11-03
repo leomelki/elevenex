@@ -6,6 +6,8 @@ import type {
 import { handleForWindow, type TrustedSender } from "../ipc";
 import type { BackendClient } from "./client";
 import { invalidResponse, requestBackendJson } from "./transport";
+import type { TerminalLifetime } from './terminal-lifetime';
+import type { BackendEndpoint } from './transport';
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -172,8 +174,13 @@ export function parseTerminalOutput(
 export function registerTaskTerminalIpc(
   client: BackendClient,
   trusted: TrustedSender,
+  lifetime?: Pick<TerminalLifetime, 'owner' | 'track'>,
 ): () => void {
   const stops: (() => void)[] = [];
+  const track = (window: number, endpoint: BackendEndpoint) => {
+    const environment = client.state(window).scope?.environment;
+    lifetime?.track(endpoint, environment?.kind === 'remote' ? `remote:${environment.hostId}` : 'local');
+  };
   const scope = (args: unknown[]) => {
     if (args.length !== 2) throw new Error("Invalid terminal arguments");
     return generation(args[0]);
@@ -189,15 +196,17 @@ export function registerTaskTerminalIpc(
         scopeId,
         `terminal:list:${task}`,
         false,
-        async (endpoint, signal) =>
-          parseTerminalList(
+        async (endpoint, signal) => {
+          track(window, endpoint);
+          return parseTerminalList(
             await requestBackendJson(
               endpoint,
               { path: path(task), limit: 512 * 1024 },
               signal,
             ),
             task,
-          ),
+          );
+        },
       );
     }),
   );
@@ -216,20 +225,22 @@ export function registerTaskTerminalIpc(
         scopeId,
         null,
         true,
-        async (endpoint, signal) =>
-          parseTaskTerminal(
+        async (endpoint, signal) => {
+          track(window, endpoint);
+          return parseTaskTerminal(
             await requestBackendJson(
               endpoint,
               {
                 path: path(task),
                 method: "POST",
-                body: script === undefined ? {} : { scriptId: script },
+                body: { ...(script === undefined ? {} : { scriptId: script }), ...(lifetime ? { owner: lifetime.owner } : {}) },
                 limit: 16384,
               },
               signal,
             ),
             task,
-          ),
+          );
+        },
         30000,
       );
     }),
@@ -254,6 +265,7 @@ export function registerTaskTerminalIpc(
         `terminal:read:${task}:${id}:${query}`,
         false,
         async (endpoint, signal) => {
+          track(window, endpoint);
           const reply = parseTerminalOutput(
             await requestBackendJson(
               endpoint,

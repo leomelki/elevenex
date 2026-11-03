@@ -46,3 +46,12 @@ export class DesktopTerminalController {
     return this.service.close(terminalId(task), terminalId(id));
   }
 }
+
+/** App-lifetime cleanup, scoped to the main process's opaque launch owner. */
+@Controller('desktop-workspace/terminal-owners')
+export class DesktopTerminalOwnerController {
+  constructor(private readonly service: DesktopTerminalService) {}
+  @Delete(':owner') close(@Param('owner') owner: string) {
+    return this.service.closeOwned(owner);
+  }
+}

@@ -2,7 +2,7 @@
   <ex-view-tabs label="Terminal tabs" newLabel="New terminal (⌘T)" [items]="tabs()" [active]="current()?.id" [disabled]="disabled()" [animateEntries]="animateTabs()" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()">
     @if (scripts().length) { <select [disabled]="disabled()" #scriptSelect aria-label="Run a project script" (change)="script(scriptSelect.value); scriptSelect.value = ''"><option value="">Run script…</option>@for (script of scripts(); track script.id) { <option [value]="script.id">{{ script.name }}</option> }</select> }
   </ex-view-tabs>
-  <div class="toolbar"><ex-icon name="folder" [size]="13" /><span class="cwd" [title]="current()?.cwd ?? ''">{{ current()?.cwd ?? 'Workspace' }}</span>@if (current()?.branch; as branch) { <span class="branch" [title]="branch"><ex-icon name="branch" [size]="12" />{{ branch }}</span> }
+  <div class="toolbar">
     @if (current()?.status === 'serving') { <button exButton variant="ghost" size="sm" [disabled]="disabled()" (click)="openPort()">Open :{{ current()?.port }}</button> }
     @if (current()?.status === 'running' || current()?.status === 'serving') { <button exButton variant="ghost" size="sm" [disabled]="disabled()" (click)="stopRequested.emit(current()!.id)">Stop</button> }
     <ex-icon-button icon="search" label="Find in terminal (⌘F)" size="sm" [active]="findOpen()" (pressed)="find()" />

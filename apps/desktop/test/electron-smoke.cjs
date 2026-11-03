@@ -22,6 +22,9 @@ const backendRoot = mkdtempSync(join(tmpdir(), 'elevenex-electron-backend-'));
 app.setPath('appData', backendRoot);
 const revision = 'a'.repeat(40);
 let backendUrl;
+const terminalRows = new Map();
+const terminalOwners = [];
+let terminalCleanupCount = 0;
 require('../dist/backend/application').createApplicationBackend = () => new BackendManager({
   root: backendRoot,
   release: async () => backendRelease({ version: revision, tag: `runtime-${revision}` }, process.platform, process.arch),
@@ -29,6 +32,35 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
   start: async () => {
     const http = createServer((request, response) => {
       const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+      if (pathname === '/api/desktop-workspace/tasks/1/terminals') {
+        response.setHeader('content-type', 'application/json');
+        if (request.method === 'GET') {
+          response.end(JSON.stringify({ taskId: 1, terminals: [...terminalRows.values()], scripts: [], limit: 16 }));
+        } else {
+          assert.equal(request.method, 'POST');
+          let body = '';
+          request.on('data', chunk => { body += chunk; });
+          request.on('end', () => {
+            const { owner } = JSON.parse(body);
+            assert.match(owner, /^[a-f\d-]{36}$/);
+            terminalOwners.push(owner);
+            const terminal = { id: terminalOwners.length, taskId: 1, title: 'shell', cwd: '/task', branch: 'work', generation: owner, sequence: 0, alive: true, status: 'idle', command: '', exitCode: null, port: null, canRerun: false };
+            terminalRows.set(terminal.id, terminal);
+            response.end(JSON.stringify(terminal));
+          });
+        }
+        return;
+      }
+      if (pathname.startsWith('/api/desktop-workspace/terminal-owners/')) {
+        assert.equal(request.method, 'DELETE');
+        const owner = pathname.split('/').at(-1);
+        assert.equal(owner, terminalOwners.at(-1));
+        terminalCleanupCount++;
+        terminalRows.clear();
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ accepted: true }));
+        return;
+      }
       if (request.method === 'POST' && pathname === '/api/desktop-workspace/tasks/1/sessions/2/chat/attachments') {
         request.resume();
         response.writeHead(200, { 'content-type': 'application/json' });
@@ -56,6 +88,7 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
     let stopped;
     const exited = new Promise(resolve => { stopped = resolve; });
     return { url: backendUrl, exited, stop: async () => {
+      assert.equal(terminalRows.size, 0, 'terminal cleanup must precede engine shutdown');
       await new Promise(resolve => { http.close(resolve); http.closeAllConnections(); });
       stopped({ code: 0, signal: null });
     } };
@@ -211,7 +244,9 @@ void (async () => {
   assert.equal((await second.webContents.executeJavaScript('window.elevenex.environmentStatus()')).context.draft, '');
   assert.equal((await window.webContents.executeJavaScript('window.elevenex.environmentStatus()')).context.draft, 'unsent');
   assert.equal((await second.webContents.executeJavaScript(`window.elevenex.backendInfo('${restartedScope.scope.id}')`)).error.code, 'stale-scope');
+  assert.equal((await window.webContents.executeJavaScript(`window.elevenex.taskTerminalCreate('${restartedScope.scope.id}', {taskId:1})`)).ok, true);
   second.destroy();
+  assert.equal(terminalCleanupCount, 0, 'closing one of several windows must retain shells');
 
   const journal = await window.webContents.executeJavaScript('window.elevenex.workspaceWaitingRead({kind:"local"})');
   assert.match(journal.identity, /^[a-f0-9]{64}$/);
@@ -238,6 +273,22 @@ void (async () => {
   assert.equal(assets.icon, 200);
   assert.equal(assets.iconType, 'image/svg+xml');
   assert.equal(assets.favicon, 200);
+  if (process.platform === 'darwin') {
+    const closed = new Promise(resolve => window.once('closed', resolve));
+    window.close();
+    await closed;
+    assert.equal(terminalCleanupCount, 1);
+    assert.equal(terminalRows.size, 0);
+    const reopened = nextWindow();
+    newWindow.click();
+    const freshWindow = await reopened;
+    const freshScope = await freshWindow.webContents.executeJavaScript('window.elevenex.backendClientState()');
+    const freshList = await freshWindow.webContents.executeJavaScript(`window.elevenex.taskTerminalList('${freshScope.scope.id}', 1)`);
+    assert.deepEqual(freshList.value.terminals, []);
+    assert.equal((await freshWindow.webContents.executeJavaScript(`window.elevenex.taskTerminalCreate('${freshScope.scope.id}', {taskId:1})`)).ok, true);
+    assert.notEqual(terminalOwners[0], terminalOwners[1]);
+  }
+  app.once('will-quit', () => assert.equal(terminalCleanupCount, process.platform === 'darwin' ? 2 : 1));
   console.log('Electron smoke passed: sandbox, connected deferred workspace, scoped backend HTTP client/lifecycle IPC/events, runtime validation, native theme, multiple windows and app:// history/CSP. Backend runtime is a test fixture.');
   await rm(backendRoot, { recursive: true, force: true });
   clearTimeout(timeout);

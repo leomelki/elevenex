@@ -2,6 +2,7 @@ import { CodeSurfaces } from './code/surfaces';
 import { registerCodeIpc } from './code/ipc';
 import { app, BrowserWindow, Menu, dialog, net, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
 import { registerTerminalPorts } from './backend-client/terminal-ports';
+import { TerminalLifetime } from './backend-client/terminal-lifetime';
 import { readFile, realpath } from 'node:fs/promises';
 import { extname, join, relative, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -64,6 +65,7 @@ const backendClient = createBackendClient(backend, remote,
   (windowId, snapshot) => sendToWindow(windowId, 'backend-client:changed', snapshot));
 const code = new CodeSurfaces(backendClient.client, join(app.getPath('userData'), 'code-runtimes'), join(rendererRoot, 'fonts'), (windowId, target, snapshot) => sendToWindow(windowId, 'code:changed', { target, state: snapshot }), (windowId, target) => sendToWindow(windowId, 'code:exit-requested', target), (context, configurationIdentity) => createWindow(context.selection, context, configurationIdentity), devUrl ? new URL(devUrl).origin : APP_ORIGIN);
 const machinePreferences = new MachinePreferences(join(app.getPath('userData'), 'machine-preferences.json'));
+let terminals = new TerminalLifetime();
 const machines = new MachineApplication(backend, remote, machinePreferences,
   (windowId, snapshot) => sendToWindow(windowId, 'machines:changed', snapshot));
 
@@ -115,6 +117,17 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
   state.attach(window);
   const stopCodeFrames = code.attachWindow(window.webContents, devUrl);
   window.once('closed', stopCodeFrames);
+  let closing = false;
+  window.on('close', event => {
+    if (closing || quitting || BrowserWindow.getAllWindows().length > 1) return;
+    event.preventDefault();
+    closing = true;
+    // macOS can keep the application alive after its last window closes.
+    void terminals.close().then(() => {
+      terminals = new TerminalLifetime();
+      window.close();
+    });
+  });
   // Home is passive on launch. Restore domain context when a machine is chosen,
   // but do not open a saved SSH host merely because the app started.
   remote.attach(window.webContents.id, launchSelection ?? null);
@@ -222,7 +235,10 @@ void app.whenReady().then(async () => {
   app.once('will-quit', unsubscribeBackend);
   const unregisterCode = registerCodeIpc(code, trusted);
   app.once('will-quit', unregisterCode);
-  const unregisterClient = registerBackendClientIpc(backendClient.client, trusted);
+  const unregisterClient = registerBackendClientIpc(backendClient.client, trusted, {
+    get owner() { return terminals.owner; },
+    track: (endpoint, engine) => terminals.track(endpoint, engine),
+  });
   const unregisterTerminalPorts = registerTerminalPorts(backendClient.client, remote, trusted, url => shell.openExternal(url));
   app.once('will-quit', () => { unregisterClient(); unregisterTerminalPorts(); });
   const unregisterRemote = registerRemoteIpc(remote, backend, trusted);
@@ -278,7 +294,7 @@ void app.whenReady().then(async () => {
   disposeIdentity = undefined;
   backendClient.dispose();
   machines.dispose();
-  void Promise.allSettled([code.dispose(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]).then(() => app.exit(1));
+  void terminals.close().then(() => Promise.allSettled([code.dispose(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()])).then(() => app.exit(1));
 });
 
 app.on('window-all-closed', () => {
@@ -289,5 +305,5 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  void code.dispose().then(async () => { disposeIdentity?.(); disposeIdentity = undefined; backendClient.dispose(); machines.dispose(); await Promise.allSettled([state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]); app.quit(); }, async error => { quitting = false; await dialog.showMessageBox({ type: 'warning', message: 'Editor changes are still retained in the open window', detail: error instanceof Error ? error.message : 'Finish backing up your editor changes before quitting.', buttons: ['Keep open'] }); });
+  void code.dispose().then(async () => { disposeIdentity?.(); disposeIdentity = undefined; backendClient.dispose(); machines.dispose(); await terminals.close(); await Promise.allSettled([state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]); app.quit(); }, async error => { quitting = false; await dialog.showMessageBox({ type: 'warning', message: 'Editor changes are still retained in the open window', detail: error instanceof Error ? error.message : 'Finish backing up your editor changes before quitting.', buttons: ['Keep open'] }); });
 });

@@ -1,7 +1,9 @@
 # Production task terminals
 
 `TaskTerminalComponent` adapts the existing `TerminalView` / `ViewTabs`. The
-workspace projects it through `WorkspacePanels[workspaceTerminal]`; task identity
+toolbar shows terminal actions only; directory and branch context belongs in the
+shell, where it reflects the user's current directory rather than startup metadata.
+The workspace projects it through `WorkspacePanels[workspaceTerminal]`; task identity
 is independent of the selected conversation. Terminal data and surfaces activate lazily on first
 use. Opening Terminal checks the current task's backend list and starts one shell
 if it is empty. Existing tabs (including exited shells) are retained. Each opening
@@ -22,9 +24,21 @@ position and a bounded input queue. Eviction disposes a surface, never its PTY.
 Observers belong to the visible attachment. Hidden panels are inert and stop
 output reads; reconnect and show reattach by task/terminal/generation/offset.
 Session changes within a task keep the same surface and process. Switching
-machines clears display caches. Window closure detaches; app-owned local engine
-shutdown stops PTYs. Remote daemon processes remain until explicit close, task
-finish, or daemon shutdown. Task finishing uses the existing strict PTY cleanup.
+machines clears display caches. Closing an individual window detaches while other
+windows remain. Quitting the app or closing its last window closes all terminals
+created by that app launch, including exited tabs, before releasing the local
+engine and SSH transports. Main supplies an opaque app owner; renderers cannot
+choose it. Cleanup on remote engines is best effort when their connection is
+unavailable. Hiding the pane, switching tasks and reconnecting retain processes.
+Task finishing uses the existing strict PTY cleanup.
+
+Desktop records carry a separate nullable owner in the shared terminal table;
+legacy records keep their existing durable lifecycle and do not appear as stale
+desktop tabs. Engine shutdown removes desktop records after stopping their PTYs;
+startup also expires those records after a crash. Reopening the pane on a new
+launch therefore finds an empty list and starts one fresh shell, without replaying
+scripts or input. Remote terminals survive an interrupted connection until app
+cleanup can reach that engine, explicit close, task finish or daemon shutdown.
 
 Closing removes a tab and selects its neighbour immediately while backend process
 cleanup continues. Other tabs and actions remain available. Pending closes are
@@ -45,8 +59,9 @@ identity matches JavaScript on both sides; output responses contain at most
 32 KiB characters. The next request waits for xterm's write callback, providing
 consumer backpressure without accumulating event batches in Angular. Producer
 bursts can expire history; the next response reports a gap and the panel labels
-it. Generation changes reset the surface and are labelled. Engine restart, or an explicit replacement through a legacy client, leaves
-old desktop terminal history unavailable: neither reads nor reconnect start shells.
+it. Generation changes reset the surface and are labelled. Engine restart expires
+desktop records; neither reads nor reconnect start shells. Explicit replacement
+through a legacy client can still invalidate an attached stream and is labelled.
 One active output read runs at a time; metadata refresh is bounded to 16 tabs.
 Script discovery reads one confined root package manifest (256 KiB, 100 scripts),
 coalesced/cached for three seconds. Launch and rerun rediscover it.

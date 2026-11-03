@@ -32,7 +32,11 @@ export class UserTerminalService {
     private readonly ptyManager: UserPtyManager,
   ) {}
 
-  async create(dto: { worktreePath: string; name?: string }) {
+  async create(dto: {
+    worktreePath: string;
+    name?: string;
+    desktopOwner?: string;
+  }) {
     const workspace = await currentWorkspaceForPath(this.db, dto.worktreePath);
     if (workspace) await assertWorkspaceCanExecute(this.db, workspace.id);
     const shell = this.defaultShell;
@@ -45,6 +49,7 @@ export class UserTerminalService {
         workspaceId: workspace?.id ?? null,
         name,
         shell,
+        desktopOwner: dto.desktopOwner ?? null,
       })
       .returning();
 

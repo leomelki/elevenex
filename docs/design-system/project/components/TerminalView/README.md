@@ -19,7 +19,7 @@ The Terminal side view: **your** terminals, in the task's workspace. The agent's
 
 **+ opens a new shell (⌘T) or runs one of the project's scripts** in its own tab, named after the script.
 
-**Under the tabs:** the working directory and branch of the task's workspace, Open :port, Stop (⌃C) while something runs, and Find (⌘F).
+**Under the tabs:** right-aligned Open :port, Stop (⌃C) while something runs, and Find (⌘F). Directory and branch context stays in the terminal itself: the shell can change directory, so initial workspace metadata would become misleading.
 
 **When a command fails,** a bar opens under the output: **Exited 1 · pnpm test …** with **Ask the agent** (it sends the command and its output to the session) and **Run again**.
 

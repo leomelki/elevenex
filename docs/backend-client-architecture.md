@@ -394,3 +394,12 @@ manager and task lifecycle. Reads never spawn; input/mutations never retry.
 See [terminal ownership and limits](../apps/renderer/src/app/task-terminal/README.md)
 for bounded output catch-up, producer gaps, user input backpressure, window/task
 cleanup, prompt integration and the typed Browser/forwarding handoff.
+
+Main stamps terminal creation with an opaque app-launch owner, shared across
+windows and absent from renderer arguments. App quit and last-window close send
+owner-scoped cleanup before releasing engines/transports; remote cleanup is best
+effort when disconnected. Desktop rows are distinct from durable legacy rows and
+expire on engine shutdown/startup. Existing clients may omit the owner and retain
+engine-lifetime desktop shells. Cleanup waits for pending launches and strict PTY
+termination; opening an empty Terminal pane creates a fresh shell through the
+existing explicit opening flow. There is no shutdown channel in the preload.

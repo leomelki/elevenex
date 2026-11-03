@@ -257,7 +257,7 @@ describe('Desktop task terminals with real PTYs', () => {
       .set({ taskState: 'ready' })
       .where(eq(schema.workspaces.id, task));
   });
-  it('reports server-generation loss without restarting a recorded terminal', async () => {
+  it('expires desktop records on engine startup without restarting shells or removing legacy records', async () => {
     const terminal = await service.create(task, {});
     ids.push(terminal.id);
     await ptys.destroy(terminal.id, true);
@@ -281,7 +281,20 @@ describe('Desktop task terminals with real PTYs', () => {
       expect(output.generation).toBeNull();
       expect(output.gap).toBe(true);
       expect(output.data).toBe('');
-      await recovered.list(task);
+      const legacy = await new UserTerminalService(db.db, replacement).create({
+        worktreePath: root,
+      });
+      await recovered.onModuleInit();
+      expect((await recovered.list(task)).terminals).toEqual([]);
+      await expect(recovered.read(task, terminal.id, null, 0)).rejects.toThrow(
+        'not found',
+      );
+      expect(
+        await db.db
+          .select()
+          .from(schema.userTerminals)
+          .where(eq(schema.userTerminals.id, legacy.id)),
+      ).toHaveLength(1);
       expect(replacement.isAlive(terminal.id)).toBe(false);
     } finally {
       replacement.onModuleDestroy();
@@ -309,5 +322,93 @@ describe('Desktop task terminals with real PTYs', () => {
         data: 'stale keystrokes\r',
       }),
     ).rejects.toThrow();
+  });
+  it('closes only this application owner, including exited tabs, and frees the task for a fresh shell', async () => {
+    const owner = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const otherOwner = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const shell = await service.create(task, { owner });
+    const script = await service.create(task, { owner, scriptId: 'fail' });
+    const other = await service.create(task, { owner: otherOwner });
+    ids.push(shell.id, script.id, other.id);
+    await waitFor(() => !ptys.isAlive(script.id));
+    await expect(service.closeOwned('invalid')).rejects.toThrow();
+    await service.closeOwned(owner);
+    expect(ptys.isAlive(shell.id)).toBe(false);
+    expect(ptys.desktopStream(shell.id)).toBeUndefined();
+    expect(
+      (await service.list(task)).terminals.map((row) => row.id),
+    ).not.toContain(shell.id);
+    expect(ptys.isAlive(other.id)).toBe(true);
+    const shutdown = new DesktopTerminalService(
+      db.db,
+      new UserTerminalService(db.db, ptys),
+      ptys,
+    );
+    await shutdown.onModuleDestroy();
+    expect((await service.list(task)).terminals).toEqual([]);
+    expect(ptys.isAlive(other.id)).toBe(false);
+    expect(() => shutdown.create(task, {})).toThrow('stopping');
+    const fresh = await service.create(task, {});
+    ids.push(fresh.id);
+    expect(fresh.alive).toBe(true);
+    expect(fresh.generation).not.toBe(shell.generation);
+    await service.close(task, fresh.id);
+  });
+  it('waits for an in-flight launch before app cleanup removes the process and record', async () => {
+    const owner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const spawn = ptys.spawnDesktop.bind(ptys);
+    const spy = jest
+      .spyOn(ptys, 'spawnDesktop')
+      .mockImplementation(async (...args) => {
+        await gate;
+        return spawn(...args);
+      });
+    const launch = service.create(task, { owner });
+    try {
+      await waitFor(() => spy.mock.calls.length > 0);
+      const cleanup = service.closeOwned(owner);
+      release();
+      const terminal = await launch;
+      ids.push(terminal.id);
+      await cleanup;
+      expect(ptys.isAlive(terminal.id)).toBe(false);
+      expect(ptys.desktopStream(terminal.id)).toBeUndefined();
+      expect(
+        await db.db
+          .select()
+          .from(schema.userTerminals)
+          .where(eq(schema.userTerminals.id, terminal.id)),
+      ).toEqual([]);
+    } finally {
+      release();
+      spy.mockRestore();
+    }
+  });
+  it('retains the record when strict process cleanup fails so shutdown cannot falsely report success', async () => {
+    const owner = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const terminal = await service.create(task, { owner });
+    ids.push(terminal.id);
+    const stop = jest
+      .spyOn(ptys, 'destroy')
+      .mockRejectedValueOnce(new Error('Process did not stop'));
+    try {
+      await expect(service.closeOwned(owner)).rejects.toThrow(
+        'Process did not stop',
+      );
+      expect(
+        (await service.list(task)).terminals.some(
+          (row) => row.id === terminal.id,
+        ),
+      ).toBe(true);
+      expect(ptys.isAlive(terminal.id)).toBe(true);
+    } finally {
+      stop.mockRestore();
+      await service.closeOwned(owner);
+    }
+    expect(ptys.isAlive(terminal.id)).toBe(false);
   });
 });
