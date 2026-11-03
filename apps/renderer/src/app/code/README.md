@@ -50,10 +50,14 @@ license and authoritative tokens, not the downloadable runtime.
 ## UX and ownership
 
 The 440px side panel opens a genuine editor directly, alongside chat. The existing panel-tabs row
-contains icon actions for **Browse files**, **Find file**, **Search text**, **Save** and a separate window,
+contains icon actions for **Browse files**, **Find file**, **Search text** and a separate window,
 alongside expand/close. There is no additional task/branch/status/focus toolbar. File tabs,
-dirty indicators, selection and save feedback remain native VS Code. Save is
-optional: Command/Ctrl-S also saves. Its icon tooltip shows the platform shortcut.
+selection and save feedback remain native VS Code. Files auto-save after one second
+of inactivity using upstream `files.autoSave: afterDelay`; Command/Ctrl-S still
+saves immediately. Save failures use VS Code’s error notifications and retain
+local edits. Conflicts require a disk comparison before an explicit overwrite;
+reconnecting never retries an unconfirmed write. There is no shell Save button
+or extra save status in the panel header.
 
 Below 600px usable width, editing uses the full panel and long lines wrap.
 **Browse files** (folder icon, Command/Ctrl-Shift-E) temporarily fills that same

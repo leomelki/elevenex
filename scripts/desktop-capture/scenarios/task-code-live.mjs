@@ -69,13 +69,15 @@ export default async function* (capture) {
   if (ux) {
     const geometry = await capture.rect('ex-code-panel .editor-surface');
     assert.ok(geometry.height >= 740 && geometry.y <= 140, JSON.stringify(geometry));
-    await capture.hover('ex-workspace-panels .save-file');
-    await capture.waitFor(() => document.querySelector('[role="tooltip"]')?.textContent.includes('Save file'));
+    await capture.hover('ex-workspace-panels .find-file');
+    await capture.waitFor(() => document.querySelector('[role="tooltip"]')?.textContent.includes('Find file'));
     assert.equal(liveView.getVisible(), true, 'A toolbar tooltip hid the editor');
     yield { name: 'code-toolbar-tooltip-live', inspect: ['ex-workspace-panels .panel-head', '[role="tooltip"]'] };
     capture.window.webContents.focus();
-    await capture.evaluate(() => document.querySelector('ex-workspace-panels .save-file button').focus());
-    await capture.press('Enter'); await waitMain(() => liveView.webContents.executeJavaScript('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")'), 'Keyboard Save did not hand off focus');
+    await capture.evaluate(() => document.querySelector('ex-workspace-panels .find-file button').focus());
+    await capture.press('Enter');
+    await waitMain(() => liveView.webContents.executeJavaScript('!!document.activeElement?.closest(".quick-input-widget")'), 'Keyboard Find file did not hand off focus');
+    await capture.press('Escape');
   }
   const upstream = (command, ...args) => liveView.webContents.executeJavaScript(`import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand(${JSON.stringify(command)},...${JSON.stringify(args)}))`);
   const waitNative = async predicate => { const deadline = Date.now() + 15000; while (!await liveView.webContents.executeJavaScript(predicate)) { if (Date.now() > deadline) throw new Error('Native search did not resolve: ' + await liveView.webContents.executeJavaScript('document.body.innerText.slice(-1500)')); await new Promise(resolve => setTimeout(resolve, 50)); } };
@@ -99,7 +101,7 @@ export default async function* (capture) {
     assert.equal(liveView.getVisible(), true);
     yield { name: 'code-minimum-width-live', inspect: ['ex-code-panel .editor-surface', 'ex-code-panel .launch-actions'] };
     await capture.viewport(1440, 900); await finish(); await waitMain(() => liveView.getVisible(), 'Resize did not restore the retained editor');
-    capture.window.webContents.focus(); await capture.evaluate(() => document.querySelector('ex-workspace-panels .save-file button').focus()); await capture.press('Enter');
+    capture.window.webContents.focus(); await capture.evaluate(async taskId => { const {scope} = await window.elevenex.backendClientState(); return window.elevenex.codeFocus({scopeId:scope.id,taskId}); }, taskId);
     await waitMain(() => liveView.webContents.executeJavaScript('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")'), 'Editor did not regain focus');
     liveView.webContents.debugger.attach('1.3');
     for (const type of ['keyDown', 'keyUp']) await liveView.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'r', code: 'KeyR', windowsVirtualKeyCode: 82, modifiers: process.platform === 'darwin' ? 12 : 10 });

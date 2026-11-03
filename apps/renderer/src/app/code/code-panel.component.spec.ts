@@ -108,7 +108,7 @@ describe('Code panel launch and iframe focus handoff', () => {
     publish({...ready,filesOpen:true,hasEditors:false}); await settle(fixture);
     expect(fixture.componentInstance.browseLabel()).toContain('Browse files');
   });
-  it('opens at side-panel width, offers direct file/search/save actions and retains it through expansion', async () => {
+  it('opens at side-panel width, offers direct file/search actions and retains it through expansion', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(424);
     const { fixture, bridge, publish, layouts } = setup();
     fixture.componentRef.setInput('wide', false); await settle(fixture);
@@ -124,8 +124,6 @@ describe('Code panel launch and iframe focus handoff', () => {
     expect(bridge.codeAction).toHaveBeenLastCalledWith(target, 'find-file');
     await fixture.componentInstance.runAction('search-text'); await settle(fixture);
     expect(bridge.codeAction).toHaveBeenLastCalledWith(target, 'search-text');
-    await fixture.componentInstance.runAction('save'); await settle(fixture);
-    expect(bridge.codeAction).toHaveBeenLastCalledWith(target, 'save');
     fixture.componentRef.setInput('wide', true); await settle(fixture);
     fixture.componentRef.setInput('wide', false); await settle(fixture);
     expect(bridge.codeRelease).not.toHaveBeenCalled();

@@ -1,5 +1,33 @@
 # New Code workbench verification
 
+## Auto-save and native save alerts — current verification
+
+Verified on 2026-11-03 on macOS arm64 / Electron 45.0.0 with Code OSS
+1.144.0. Files use upstream delayed auto-save (1,000 ms); the shell Save
+button is removed without adding a header status or replacement action.
+
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`: passed.
+  Tests include 153 main/security/process cases, seven capture-tool cases,
+  IPC/shared TypeScript assertions and 627 renderer cases in 93 files.
+- Native `electron-smoke.cjs`: passed. `code-workbench-smoke.cjs`: passed
+  against a disposable git worktree. Typing reaches disk without a save action;
+  a rejected auto-save displays a visible upstream **Failed to save** toast
+  with Retry, Save As and Revert, retains the dirty buffer and leaves disk
+  unchanged. The smoke deliberately toggles auto-save off only for its existing
+  hot-exit/crash recovery case. Inspected `artifacts/code-autosave-failure.png`.
+- `artifacts/desktop-capture/code-autosave-verified/report.json`: **28 states**,
+  `verified: true`, no errors. Inspected light/dark compact panels, expanded
+  editing and the saved result. The real isolated backend/task capture checks
+  auto-save through resize/tab switching, no shell Save button, keyboard focus,
+  interrupted transitions, reduced motion and narrow/closed layouts.
+
+The host checks require permission to bind loopback sockets and launch native
+workers/Electron; initial sandbox attempts could not do so and were rerun on
+the host. Capture setup used the installed declared Express package through
+`NODE_PATH` and an isolated runtime directory/database. No dependency or
+lockfile changes. This follow-up does not add physical remote-host or packaged
+runtime verification.
+
 ## Compact Files browsing — current verification
 
 Verified on 2026-11-03 on macOS arm64 / Electron 45.0.0 with the same pinned

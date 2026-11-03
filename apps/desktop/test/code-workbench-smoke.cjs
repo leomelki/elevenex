@@ -18,6 +18,7 @@ const execute = promisify(execFile);
 protocol.registerSchemesAsPrivileged([{scheme:'app',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
 const deadline = setTimeout(() => { console.error('Code workbench smoke deadline'); app.exit(1); }, 180_000);
 let root, server, code, search, watches, currentView;
+let rejectWrites = false;
 async function wait(predicate, message, timeout = 30_000) {
   const start = Date.now();
   while (Date.now() - start < timeout) { try { const result = await predicate(); if (result) return result; } catch { /* Wait for real state. */ } await new Promise(r => setTimeout(r, 100)); }
@@ -48,7 +49,10 @@ app.whenReady().then(async () => {
       if (op === 'read') value = await files.codeRead(workspace, input.path);
       else if (op === 'stat') value = await files.codeStat(workspace, input.path);
       else if (op === 'directory') value = await files.codeDirectory(workspace, input.path, input.after);
-      else if (op === 'write') value = await files.codeWrite(workspace, input, async () => {});
+      else if (op === 'write') {
+        if (rejectWrites) { response.statusCode = 403; response.end(JSON.stringify({ error: 'read-only' })); return; }
+        value = await files.codeWrite(workspace, input, async () => {});
+      }
       else if (op === 'mkdir') value = await files.codeMkdir(workspace, input.path);
       else if (op === 'rename') value = await files.codeRename(workspace, input);
       else if (op === 'delete') value = await files.codeDelete(workspace, input);
@@ -103,11 +107,9 @@ app.whenReady().then(async () => {
   await view.webContents.executeJavaScript('document.querySelector(".monaco-editor textarea.inputarea").focus()');
   view.webContents.debugger.attach('1.3');
   await view.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', {enabled:true});
-  const modifier = process.platform === 'darwin' ? 4 : 2;
-  const key = async key => { const code = 'Key' + key.toUpperCase(), windowsVirtualKeyCode = key.toUpperCase().charCodeAt(0); await view.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode, modifiers: modifier }); await view.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode, modifiers: modifier }); };
-  await view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('editor.action.selectAll'))"); await view.webContents.debugger.sendCommand('Input.insertText', { text: 'export const message = "saved through Code OSS";\n' }); await key('s');
+  await view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('editor.action.selectAll'))"); await view.webContents.debugger.sendCommand('Input.insertText', { text: 'export const message = "saved through Code OSS";\n' });
   console.log('AFTER_INPUT', await view.webContents.executeJavaScript('JSON.stringify({active:document.activeElement?.className,dirty:!!document.querySelector(".tab.dirty"),text:document.querySelector(".monaco-editor")?.innerText})')); 
-  await wait(async () => (await readFile(join(worktree, 'hello.ts'), 'utf8')) === 'export const message = "saved through Code OSS";\n', 'Real editor save did not reach task files');
+  await wait(async () => (await readFile(join(worktree, 'hello.ts'), 'utf8')) === 'export const message = "saved through Code OSS";\n', 'Auto-save did not reach task files without a save action');
   const reopenStarted = performance.now();
   code.release(window.webContents.id, target); await code.open(window.webContents.id, target);
   code.layout(window.webContents.id, target, { x: 60, y: 60, width: 1100, height: 780 });
@@ -129,6 +131,8 @@ app.whenReady().then(async () => {
   await window.webContents.executeJavaScript("document.querySelector('iframe').style.width='1100px'");
   assert.equal(window.webContents.mainFrame.frames.find(f=>f.url===opened.value.frameUrl), frame, 'Expansion duplicated the compact editor');
   // Force a renderer crash after upstream hot-exit backups have settled.
+  // Deliberately disable auto-save only for this unsaved-buffer recovery case.
+  await view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('workbench.action.toggleAutoSave'))");
   await view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('editor.action.selectAll'))"); await view.webContents.debugger.sendCommand('Input.insertText', { text: 'export const recoveredFromCrash = true;\n' });
   await wait(() => view.webContents.executeJavaScript('!!document.querySelector(".tab.dirty")'), 'Dirty editor state missing');
   // VS Code debounces browser backups; allow its supported hot-exit mechanism to settle.
@@ -161,6 +165,16 @@ app.whenReady().then(async () => {
   metrics.processes = app.getAppMetrics().map(({ type, memory }) => ({ type, memory }));
   await writeFile(join(process.cwd(), 'artifacts/code-workbench-metrics.json'), JSON.stringify(metrics, null, 2));
   console.log('METRICS', JSON.stringify(metrics));
+  await view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('workbench.action.toggleAutoSave'))");
+  // Native save errors must stay visible inside VS Code and retain the buffer.
+  rejectWrites = true;
+  await view.webContents.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('editor.action.selectAll'))");
+  await view.webContents.debugger.sendCommand('Input.insertText', { text: 'export const retainedAfterSaveFailure = true;\n' });
+  await wait(() => view.webContents.executeJavaScript('document.querySelector(".notifications-toasts")?.textContent.includes("Failed to save")'), 'Auto-save failure did not show a native VS Code notification');
+  await wait(() => view.webContents.executeJavaScript('(()=>{const toasts=document.querySelector(".notifications-toasts");return toasts?.classList.contains("visible") && toasts.getAnimations({subtree:true}).every(animation=>animation.playState!=="running");})()'), 'Save error toast did not become visible');
+  assert.equal(await readFile(join(worktree, 'hello.ts'), 'utf8'), 'export const recoveredFromCrash = true;\n');
+  assert.equal(await view.webContents.executeJavaScript('!!document.querySelector(".tab.dirty") && document.querySelector(".monaco-editor")?.textContent.includes("retainedAfterSaveFailure")'), true);
+  await view.webContents.capturePage().then(image => writeFile(join(process.cwd(), 'artifacts/code-autosave-failure.png'), image.toPNG()));
   view.webContents.debugger.detach();
   console.log('CODE_WORKBENCH_SMOKE_PASSED');
   client.dispose(); clearTimeout(deadline); await code.dispose(); watches.onModuleDestroy(); search.onModuleDestroy();

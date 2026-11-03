@@ -108,9 +108,9 @@ export default async function* (capture) {
       await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width === 0 && document.activeElement?.classList.contains("inputarea")');
       yield {name:`${theme}-keyboard-tree-accepted`,inspect:['ex-code-panel','iframe']};
       yield { name: `${theme}-compact-editing`, inspect: ['ex-code-panel', 'ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface', 'ex-app-shell .main'] };
-      await capture.evaluate(() => document.querySelector('ex-workspace-panels .save-file button').focus());
-      await capture.waitFor(() => document.querySelector('[role="tooltip"]')?.textContent.includes(window.elevenex.platform === 'darwin' ? 'Save file · ⌘S' : 'Save file · Ctrl+S'));
-      yield { name: `${theme}-save-icon-focus`, inspect: ['ex-workspace-panels .save-file button', '[role="tooltip"]'] };
+      await capture.evaluate(() => document.querySelector('ex-workspace-panels .find-file button').focus());
+      await capture.waitFor(() => document.querySelector('[role="tooltip"]')?.textContent.includes('Find file'));
+      yield { name: `${theme}-find-icon-focus`, inspect: ['ex-workspace-panels .find-file button', '[role="tooltip"]'] };
       await capture.click('ex-workspace-panels .find-file');
       await waitNative('!!document.activeElement?.closest(".quick-input-widget")');
       await typeQuery('README');
@@ -147,27 +147,27 @@ export default async function* (capture) {
     const path = process.env.ELEVENEX_CODE_TEST_WORKSPACE + '/src/workspace.ts';
     const original = await readFile(path, 'utf8');
     try {
-      // Dirty text survives both layout directions; explicit toolbar Save reaches disk.
+      // Auto-save persists editing through both layout directions without a save action.
       assert.equal((await capture.evaluate(target => window.elevenex.codeOpenFile(target, { path: 'src/workspace.ts', line: 10000000, column: 10000000 }), target)).ok, true);
       await capture.evaluate(target => window.elevenex.codeFocus(target), target);
       await waitNative('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")');
       await capture.cdp('Input.insertText', { text: '// compact panel save verification\n' });
-      await waitNative('!!document.querySelector(".tab.dirty")');
+      await waitNative('document.querySelector(".monaco-editor")?.textContent.includes("verification")');
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]'); await finish();
       await waitNative('(document.querySelector(".part.sidebar")?.getBoundingClientRect().width ?? 0) > 0');
       assert.equal(capture.window.webContents.mainFrame.frames.find(child => child.url === frame.url), frame);
       await capture.click('ex-workspace-panels [role="tab"][aria-label="Browser"]'); await finish();
       await capture.click('ex-workspace-panels [role="tab"][aria-label="Code"]'); await finish();
       assert.equal(capture.window.webContents.mainFrame.frames.find(child => child.url === frame.url), frame);
-      assert.equal(await frame.executeJavaScript('!!document.querySelector(".tab.dirty")'), true);
-      yield { name: 'expanded-retained-dirty-file', inspect: ['ex-code-panel .editor-surface'] };
+      assert.equal(await frame.executeJavaScript('document.querySelector(".monaco-editor")?.textContent.includes("verification")'), true);
+      yield { name: 'expanded-retained-file', inspect: ['ex-code-panel .editor-surface'] };
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]'); await finish();
       await waitNative('(document.querySelector(".part.sidebar")?.getBoundingClientRect().width ?? 0) === 0');
-      assert.equal(await frame.executeJavaScript('!!document.querySelector(".tab.dirty")'), true);
-      await capture.click('ex-workspace-panels .save-file');
-      await waitMain(async () => (await readFile(path, 'utf8')) === original + '// compact panel save verification\n', 'Toolbar Save did not reach the actual task');
+      assert.equal(await frame.executeJavaScript('document.querySelector(".monaco-editor")?.textContent.includes("verification")'), true);
+      assert.equal(await capture.evaluate(() => !!document.querySelector('ex-workspace-panels .save-file')), false);
+      await waitMain(async () => (await readFile(path, 'utf8')) === original + '// compact panel save verification\n', 'Auto-save did not reach the actual task');
       await waitNative('!document.querySelector(".tab.dirty")');
-      yield { name: 'compact-save-confirmed', inspect: ['ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface'] };
+      yield { name: 'compact-autosave-confirmed', inspect: ['ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface'] };
     } finally { await writeFile(path, original); }
     const geometry = async () => {
       const bounds = await capture.evaluate(() => {
