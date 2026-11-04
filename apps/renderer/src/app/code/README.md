@@ -105,6 +105,15 @@ here** or **Focus editor** rather than silently stealing it. Four hot workbenche
 are retained; clean hidden instances may close only after upstream permits unload.
 Dirty instances stay retained. Shutdown respects backup vetoes.
 
+During the shell's expand/collapse width transition, `CodeViewportDirective`
+holds the existing iframe layout width and scales its composited surface with
+a slight blur. At settlement it releases the width once, updates compact mode,
+and sharpens the editor. This avoids repeated upstream text/tree reflows without
+reloading the browsing context or blocking input. Reversals retain the original
+viewport; cancellation, reduced-motion changes and teardown release it. Normal
+window resizing remains live. Measurements use layout pixels so launch/modal
+transforms cannot change compact preferences.
+
 ### Space and focus decisions
 
 The healthy view starts immediately with the upstream workbench and its file tabs,

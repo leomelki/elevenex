@@ -1,5 +1,25 @@
 # New Code workbench verification
 
+## Expand/collapse viewport motion
+
+Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0 with the real Code OSS
+workbench and a disposable Nest task/backend.
+
+- `pnpm desktop:lint`, `pnpm desktop:test` and `pnpm desktop:build`: passed.
+  Tests include 154 desktop cases, seven capture cases and 631 renderer cases
+  in 94 files, plus TypeScript contract checks. New tests cover frozen layout,
+  cancellation/reversal, live window resizing, reduced-motion changes and cleanup.
+- `artifacts/desktop-capture/code-motion-verified/report.json`: **35 checkpoints,
+  verified: true**, no renderer errors. Inspected light/dark settled and midpoint
+  images, plus narrow reduced motion. The actual child viewport changes exactly
+  once per toggle: **432 → 1,072 px**, then **1,072 → 432 px**, in both themes.
+  These are resize counts, not an FPS benchmark. Both midpoint reversal
+  directions, six close/reopen cycles, frame identity, final panel/iframe/editor
+  width agreement, search, focus, retained edits and real auto-save pass.
+- Existing component preview opened successfully using the warm server on 4310.
+  `git diff --check`: passed. No dependencies, bridge or backend contracts changed.
+  This is unpackaged macOS verification; no packaged or Windows/Linux launch ran.
+
 ## Find file target size and spacing
 
 Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0. The native Find file

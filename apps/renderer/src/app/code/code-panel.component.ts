@@ -4,9 +4,10 @@ import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, KbdComponent, ProgressLineComponent } from '../ui';
 import { CodeFramePool } from './code-frame-pool.service';
 import { CodeWorkspaceStore } from './code-workspace.store';
+import { CodeViewportDirective } from './code-viewport.directive';
 @Component({
   selector: 'ex-code-panel', providers: [CodeWorkspaceStore],
-  imports: [ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, KbdComponent, ProgressLineComponent],
+  imports: [ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, KbdComponent, ProgressLineComponent, CodeViewportDirective],
   host: { '[class.wide]': 'wide()', '[attr.aria-busy]': 'launching()' },
   templateUrl: './code-panel.component.html', styleUrl: './code-panel.component.css', changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -44,7 +45,6 @@ export class CodePanelComponent {
     return state && !state.relocated && !state.detached ? state.frameUrl ?? null : null;
   });
   private readonly frameContainer = viewChild<ElementRef<HTMLElement>>('frameContainer');
-  private readonly surface = viewChild<ElementRef<HTMLElement>>('surface');
   private consumedFile: CodeFileIntent | null = null;
   private previousWide?: boolean;
   private openingSelection: CodeTarget | null = null;
@@ -67,15 +67,6 @@ export class CodePanelComponent {
     });
     effect(() => { const file = this.file(), target = this.target(); if (file && file !== this.consumedFile && target && file.scopeId === target.scopeId && file.taskId === target.taskId && this.active() && this.connected()) untracked(() => { this.consumedFile = file; void this.store.openFile(file.file).then(() => { if (this.file() === file && this.target()?.scopeId === target.scopeId && this.target()?.taskId === target.taskId && !this.store.error()) this.focusRequest.set(target); }); }); });
     effect(() => { if (!this.active()) untracked(() => this.store.suspend()); });
-    afterRenderEffect(onCleanup => {
-      const element = this.surface()?.nativeElement;
-      if (!element) return;
-      // Layout dimensions ignore the shell’s launch/modal transforms. An
-      // animation must never change editor eligibility or compact preferences.
-      const measure = () => this.measuredWidth.set(element.clientWidth);
-      const resize = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure);
-      resize?.observe(element); measure(); onCleanup(() => resize?.disconnect());
-    });
     afterRenderEffect(onCleanup => {
       const container = this.frameContainer()?.nativeElement, url = this.frameResource();
       if (!container || !url || !this.active()) return;

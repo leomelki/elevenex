@@ -234,15 +234,17 @@ export default async function* (capture) {
       yield { name: 'compact-autosave-confirmed', inspect: ['ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface'] };
     } finally { await writeFile(path, original); }
     const geometry = async () => {
+      await capture.waitFor(() => !document.querySelector('ex-code-panel .frame-container.resizing'));
       const bounds = await capture.evaluate(() => {
         const launch = document.querySelector('ex-machine-launch .launch');
         const shell = document.querySelector('ex-machine-workspace ex-app-shell');
         const iframe = document.querySelector('ex-code-panel iframe');
-        return {scroll:launch.scrollLeft,launch:launch.getBoundingClientRect().toJSON(),shell:shell.getBoundingClientRect().toJSON(),iframe:iframe.getBoundingClientRect().toJSON(),width:iframe.clientWidth,fallback:!!document.querySelector('ex-code-panel .launch-card')};
+        return {scroll:launch.scrollLeft,launch:launch.getBoundingClientRect().toJSON(),shell:shell.getBoundingClientRect().toJSON(),iframe:iframe.getBoundingClientRect().toJSON(),width:iframe.clientWidth,viewport:iframe.closest('.editor-surface').clientWidth,fallback:!!document.querySelector('ex-code-panel .launch-card')};
       });
       assert.equal(bounds.scroll,0,'Focus scrolled the machine launch viewport');
       assert.ok(Math.abs(bounds.shell.left-bounds.launch.left)<1 && Math.abs(bounds.shell.right-bounds.launch.right)<1,'Workspace shifted and left a blank right margin');
       assert.equal(bounds.fallback,false,'Launch UI replaced or shared space with the retained iframe');
+      assert.equal(bounds.width,bounds.viewport,'Editor did not return to the actual panel width');
       // Chromium notifies the out-of-process frame after the parent’s final
       // animation frame. Await its actual viewport/layout rather than a timer.
       await waitMain(async () => {
@@ -251,8 +253,31 @@ export default async function* (capture) {
       }, 'Workbench did not fill the resized iframe: '+JSON.stringify(bounds));
       assert.equal(capture.window.webContents.mainFrame.frames.find(child=>child.url===frame.url),frame);
     };
+    const viewportMotion = async (selector) => {
+      // Measure actual child browsing-context resizes, rather than just the
+      // shell's geometry. Test-only instrumentation stays inside this process.
+      await frame.executeJavaScript(`(() => {
+        window.codeViewportWidths = [innerWidth];
+        window.codeViewportResize = () => { if (window.codeViewportWidths.length < 60) window.codeViewportWidths.push(innerWidth); };
+        addEventListener('resize', window.codeViewportResize);
+      })()`);
+      try {
+        await capture.click(selector);
+        await finish(); await geometry();
+        const widths = await frame.executeJavaScript('window.codeViewportWidths');
+        assert.notEqual(widths[0], widths.at(-1), 'Editor must resize to the new viewport');
+        assert.equal(new Set(widths).size, 2, 'Code must resize exactly once during panel motion: ' + JSON.stringify(widths));
+        assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel .frame-container').style.width), '', 'Frozen viewport was not released');
+        return widths;
+      } finally {
+        await frame.executeJavaScript('removeEventListener("resize", window.codeViewportResize); delete window.codeViewportResize; delete window.codeViewportWidths;');
+      }
+    };
     for (const theme of ['light','dark']) {
       await capture.theme(theme);
+      const expansion = await viewportMotion('ex-workspace-panels [aria-label="Expand side panel"]');
+      const collapse = await viewportMotion('ex-workspace-panels [aria-label="Return to chat"]');
+      yield { name: `${theme}-single-editor-resize`, inspect: ['ex-code-panel .editor-surface'], metadata: { expansion, collapse } };
       for (let cycle=0;cycle<3;cycle++) {
         await capture.click('ex-workspace-panels [aria-label="Close side panel"]'); await finish();
         await capture.click('ex-workspace-task-header [aria-label="Toggle side panel"]'); await finish();
@@ -268,12 +293,28 @@ export default async function* (capture) {
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
       const opening = [...capture.motion.animations].filter(id=>!previousAnimations.has(id));
       assert.ok(opening.length,'Panel expansion animation did not start');
-      await capture.cdp('Animation.seekAnimations',{animations:opening,currentTime:80});
+      const heldWidth = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth);
+      await capture.cdp('Animation.seekAnimations',{animations:opening,currentTime:140});
       await capture.settle();
       assert.equal(await capture.evaluate(()=>!!document.querySelector('ex-code-panel .launch-card')),false);
+      assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth), heldWidth, 'Midpoint reflowed the editor');
+      assert.ok(await capture.evaluate(() => document.querySelector('ex-code-panel .frame-container').classList.contains('resizing')));
       yield {name:`${theme}-expansion-interrupted`,inspect:['.panel','ex-code-panel','iframe']};
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]');
       await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();
+      await capture.click('ex-workspace-panels [aria-label="Expand side panel"]'); await finish(); await geometry();
+      await capture.motion.freeze();
+      const beforeCollapse = new Set(capture.motion.animations);
+      const wideWidth = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth);
+      await capture.click('ex-workspace-panels [aria-label="Return to chat"]');
+      const closing = [...capture.motion.animations].filter(id=>!beforeCollapse.has(id));
+      assert.ok(closing.length, 'Panel collapse animation did not start');
+      await capture.cdp('Animation.seekAnimations', {animations:closing,currentTime:140}); await capture.settle();
+      assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth),wideWidth,'Collapse midpoint reflowed the editor');
+      yield {name:`${theme}-collapse-interrupted`,inspect:['.panel','ex-code-panel .frame-container','iframe']};
+      await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
+      await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();
+      await capture.click('ex-workspace-panels [aria-label="Return to chat"]'); await finish(); await geometry();
     }
     await frame.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands})=>commands.executeCommand('workbench.action.closeAllEditors'))");
     await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16');
