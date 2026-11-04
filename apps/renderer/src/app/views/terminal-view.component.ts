@@ -36,7 +36,7 @@ export class TerminalViewComponent {
   protected readonly current = computed(() => this.tabs().find(tab => tab.id === this.active()) ?? this.tabs()[0]);
   protected readonly findOpen = signal(false);
   protected readonly query = signal('');
-  protected readonly toolbarOpen = computed(() => this.findOpen() || this.current()?.status === 'running' || this.current()?.status === 'serving');
+  protected readonly toolbarOpen = computed(() => this.findOpen() || this.current()?.status === 'serving');
   protected readonly preview = computed(() => {
     const query = this.query().toLocaleLowerCase();
     return this.output().slice(-2000).filter(line => !query || line.text.toLocaleLowerCase().includes(query));

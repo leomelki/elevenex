@@ -7,7 +7,7 @@
     <div class="toolbar">
       <div class="toolbar-actions" [hidden]="findOpen()" [attr.inert]="findOpen() ? '' : null">
         @if (current()?.status === 'serving') { <button exButton variant="ghost" size="sm" [disabled]="disabled()" (click)="openPort()">Open :{{ current()?.port }}</button> }
-        @if (current()?.status === 'running' || current()?.status === 'serving') { <button exButton variant="ghost" size="sm" [disabled]="disabled()" (click)="stopRequested.emit(current()!.id)">Stop</button> }
+        @if (current()?.status === 'serving') { <button exButton variant="ghost" size="sm" [disabled]="disabled()" (click)="stopRequested.emit(current()!.id)">Stop</button> }
       </div>
       <div #findBar class="find" role="search" aria-label="Find in terminal" [hidden]="!findOpen()" [attr.inert]="findOpen() ? null : ''">
         <div class="find-field">

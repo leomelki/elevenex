@@ -38,7 +38,9 @@ The optional `findMatches` count disables navigation for zero matches (null mean
 unknown). The Find button lives in the tab bar beside the script picker. It
 opens a compact folding row with a single focus border, previous/next buttons
 and Close. The row collapses completely when closed unless the selected terminal
-has Open/Stop actions; those share the row and return when Find closes.
+is serving a local port; its Open/Stop actions share the row and return when Find
+closes. Ordinary running commands do not open a Stop-only row; use Ctrl-C in the
+terminal to interrupt them.
 Enter/Shift-Enter navigates; Command/Ctrl-F opens or focuses
 and selects the current query. Close/Escape clears the search and restores the
 opening control's focus, including when a search action has focus. The preview
