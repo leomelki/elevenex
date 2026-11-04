@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const remote = require('./remote-contract.cjs');
 const machines = require('./machine-contract.cjs');
 const workspace = require('./workspace-contract.cjs');
-const chatMethods = ['taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'];
+const chatMethods = ['taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'];
 
 test('preload exposes only the typed bridge and strips event objects', async () => {
   let bridge;
@@ -84,6 +84,14 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   const stopMachine = bridge.onMachineStateChanged((...args) => received.push(args));
   listeners.get('machines:changed')({ sender: 'private object' }, { revision: 4 });
   assert.deepEqual(received.at(-1), [{ revision: 4 }]); stopMachine();
+  const windowInfo = { scopeId: 'scope', taskId: 1, tabId: 'tab', available: false };
+  const stopWindow = bridge.onTaskBrowserWindowChanged((...args) => received.push(args));
+  listeners.get('task-browser:window-changed')({ sender: 'private object' }, windowInfo);
+  assert.deepEqual(received.at(-1), [windowInfo]); assert.equal(stopWindow(), undefined);
+  const targetTask = { scopeId: 'scope', taskId: 1 };
+  const stopReveal = bridge.onTaskBrowserRevealTask((...args) => received.push(args));
+  listeners.get('task-browser:reveal-task')({ sender: 'private object' }, targetTask);
+  assert.deepEqual(received.at(-1), [targetTask]); assert.equal(stopReveal(), undefined);
   assert.equal(listeners.size, 0);
 });
 

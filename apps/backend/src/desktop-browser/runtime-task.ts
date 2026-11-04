@@ -18,6 +18,28 @@ export class RuntimeBrowserTask {
   readonly id = randomUUID();
   readonly tabs = new Map<string, RuntimeBrowserTab>();
   active: string | null = null;
+  private readonly presentations = new Map<string, { width: number; height: number; visible: boolean; interactive: boolean; pixelRatio: number; colorScheme: 'light' | 'dark'; seen: number }>();
+  isPresented(tabId: string): boolean {
+    const view = this.presentations.get(tabId);
+    return this.alive && (view ? view.visible && Date.now() - view.seen < 3000 : this.active === tabId && this.visible);
+  }
+  private canInput(tabId: string): boolean {
+    const view = this.presentations.get(tabId);
+    return this.isPresented(tabId) && (view ? view.interactive : this.interactive);
+  }
+  async layoutTab(tabId: string, width: number, height: number, visible: boolean, interactive: boolean, pixelRatio: number, colorScheme: 'light' | 'dark', detached = true): Promise<void> {
+    const page = this.page(tabId);
+    if (!detached) { this.presentations.delete(tabId); page.takeover(); await page.layout(width, height, false); this.revision++; return; }
+    this.touch();
+    const view = { width, height, visible, interactive, pixelRatio, colorScheme, seen: Date.now() };
+    if (!this.presentations.has(tabId)) { page.takeover(); this.revision++; }
+    this.presentations.set(tabId, view);
+    if (visible) await this.ensure(page);
+    if (this.presentations.get(tabId) !== view || !this.alive) return;
+    if (page.theme === 'system') await page.themeTo('system', colorScheme);
+    if (this.presentations.get(tabId) !== view || !this.alive) return;
+    await page.layout(width, height, visible, interactive, pixelRatio);
+  }
   private revision = 0;
   private controlsFocus = 0;
   private picked: TaskBrowserState['picked'] = null;
@@ -59,7 +81,15 @@ export class RuntimeBrowserTask {
   get expired(): boolean {
     return Date.now() - this.selectedAt > 300000;
   }
+  private expirePresentations(): void {
+    for (const [tabId, view] of this.presentations) if (view.visible && Date.now() - view.seen >= 3000) {
+      view.visible = false; view.interactive = false;
+      const page = this.tabs.get(tabId); page?.takeover();
+      void page?.layout(view.width, view.height, false); this.revision++;
+    }
+  }
   touch(): void {
+    this.expirePresentations();
     this.connected = true;
     this.selectedAt = Date.now();
   }
@@ -71,6 +101,7 @@ export class RuntimeBrowserTask {
     this.connected = false;
     this.network.pause();
     this.visible = false;
+    this.presentations.clear();
     for (const tab of this.tabs.values()) {
       tab.takeover();
       void tab.layout(this.viewport.width, this.viewport.height, false);
@@ -82,6 +113,7 @@ export class RuntimeBrowserTask {
   }
   state(): TaskBrowserState {
     return {
+      canDetach: true,
       scopeId: this.id,
       taskId: this.taskId,
       revision: this.revision,
@@ -305,7 +337,7 @@ export class RuntimeBrowserTask {
       (this.page(previous).driver === 'agent' &&
         this.page(previous).agentSessionId === sessionId)
     ) {
-      if (previous)
+      if (previous && !this.presentations.has(previous))
         void this.page(previous).layout(
           this.viewport.width,
           this.viewport.height,
@@ -346,7 +378,7 @@ export class RuntimeBrowserTask {
     } finally {
       signal?.removeEventListener('abort', abort);
     }
-    if (this.active && this.active !== tab.id)
+    if (this.active && this.active !== tab.id && !this.presentations.has(this.active))
       await this.page(this.active).layout(
         this.viewport.width,
         this.viewport.height,
@@ -366,7 +398,7 @@ export class RuntimeBrowserTask {
     const page = this.page(id);
     const previous = this.active;
     this.active = id;
-    if (previous && previous !== id)
+    if (previous && previous !== id && !this.presentations.has(previous))
       await this.page(previous).layout(
         this.viewport.width,
         this.viewport.height,
@@ -387,6 +419,7 @@ export class RuntimeBrowserTask {
     this.active = id;
     this.picked = null;
     this.picking = false;
+    if (this.presentations.has(id)) { this.revision++; return; }
     await page.layout(
       this.viewport.width,
       this.viewport.height,
@@ -413,7 +446,7 @@ export class RuntimeBrowserTask {
     const changedScheme = this.colorScheme !== colorScheme;
     this.colorScheme = colorScheme;
     this.pixelRatio = pixelRatio;
-    const page = this.active ? this.page(this.active) : undefined;
+    const page = this.active && !this.presentations.has(this.active) ? this.page(this.active) : undefined;
     if (visible && page) {
       await this.ensure(page);
       if (
@@ -463,7 +496,7 @@ export class RuntimeBrowserTask {
       else if (input.kind === 'close') {
         if (this.attention?.tabId === page.id) this.attention = undefined;
         await page.destroy();
-        this.tabs.delete(page.id);
+        this.tabs.delete(page.id); this.presentations.delete(page.id);
         if (this.active === page.id) {
           this.active = [...this.tabs.keys()].at(-1) ?? null;
           if (this.active) await this.select(this.active);
@@ -495,6 +528,7 @@ export class RuntimeBrowserTask {
         await page.back();
       } else if (input.kind === 'width') {
         page.width = input.width;
+        if (this.presentations.has(page.id)) { this.revision++; return this.state(); }
         await page.layout(
           input.width === 'phone' ? 390 : this.viewport.width,
           this.viewport.height,
@@ -519,17 +553,14 @@ export class RuntimeBrowserTask {
     this.touch();
     const page = this.page(tabId);
     if (
-      tabId === this.active &&
-      this.visible &&
+      this.isPresented(tabId) &&
       this.picked &&
       input.kind === 'pointer' &&
       input.type === 'up'
     )
       return { generation: page.generation, revision: this.revision };
     if (
-      tabId !== this.active ||
-      !this.visible ||
-      !this.interactive ||
+      !this.canInput(tabId) ||
       this.picked
     )
       throw new Error('Browser input is no longer visible');
@@ -549,10 +580,7 @@ export class RuntimeBrowserTask {
       )
         break;
       if (
-        tabId !== this.active ||
-        !this.alive ||
-        !this.visible ||
-        !this.interactive ||
+        !this.canInput(tabId) ||
         this.picked
       )
         throw new Error('Browser input was interrupted');
@@ -592,6 +620,7 @@ export class RuntimeBrowserTask {
     signal: AbortSignal,
   ): Promise<BrowserAgentState> {
     signal.throwIfAborted();
+    this.expirePresentations();
     if (!this.alive) throw new Error('Task browser is disconnected');
     if (input.kind !== 'list') {
       if (input.kind === 'open') {
@@ -713,6 +742,7 @@ export class RuntimeBrowserTask {
   async destroy(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.presentations.clear();
     await Promise.allSettled(
       [...this.tabs.values()].map((page) => page.destroy()),
     );

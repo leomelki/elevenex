@@ -152,3 +152,11 @@ test('human input batches exclude nesting and clipboard, and bound events and ag
   assert.deepEqual(streamInput({kind:'batch',events:[event,event]}),{kind:'batch',events:[event,event]});
   for(const events of [[],Array(33).fill(event),[{kind:'batch',events:[event]}],[{kind:'clipboard',operation:'paste'}],[{kind:'text',text:'x'.repeat(65536)},event]])assert.throws(()=>streamInput({kind:'batch',events}));
 });
+
+
+test('detached-window labels are bounded presentation data with no executable settings', () => {
+  const { windowContext } = require('../dist/browser/validation');
+  const context = { projectName: 'Elevenex', taskName: 'Checkout', branchName: 'feat/checkout', machineName: 'This Mac', stage: 'active', hue: 'pine' };
+  assert.deepEqual(windowContext(context), context);
+  for (const invalid of [{ ...context, preload: '/unsafe' }, { ...context, taskName: 'x'.repeat(257) }, { ...context, projectName: 'bad\nlabel' }, { ...context, stage: 'running' }, { ...context, hue: 'url(secret)' }]) assert.throws(() => windowContext(invalid));
+});

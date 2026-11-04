@@ -151,3 +151,39 @@ captured resource even after selecting another tab; closing it clears the notice
 Completed downloads similarly retain their initiating page identity and never
 publish OS save paths. Unowned popups are closed without suggesting an unrelated
 tab as the destination.
+
+## Detached tab windows
+
+`TaskBrowserComponent.windowContext` supplies bounded project/task/branch/machine
+labels, stage and hue. With the optional bridge capability, **Open tab in new
+window** opens the selected tab through named, scope-bound IPC. `BrowserWindowComponent`
+is the dedicated lazy `/browser-window` route. Its `Project / Task` title-bar
+control reveals the owning task using a bounded navigation window; the centered
+machine island remains on wide windows, and Return tab is one icon. Task labels
+are presentation data, never resource authority. `/browser-window` in the isolated
+component preview exercises the same component with a preview-only provider.
+
+Each companion is bound in main to one source window, backend scope, task and
+existing tab. No IDs from route parameters establish ownership. It can neither
+create nor control sibling tabs. The panel retains its tab and offers Show window
+and Return tab. Native close returns the tab; explicit Return also reveals its
+task. Other tabs remain usable. Missing/closed tasks and changed source scopes
+leave an inert Task unavailable surface instead of silently closing the window.
+At most twelve companions are open, and their tasks are pinned against eviction.
+
+**Local moves reload the page**, retaining the same tab ID and ephemeral task
+profile (including sign-in). Electron cannot adopt an already attached guest in
+another renderer. Rehosting never reads or copies forms/page text/storage into
+application state. Unsubmitted forms, scroll and live document state do not carry
+across. Both documents use hardened, main-issued native guests. Returning also
+reloads; it invalidates prior input generations and restores user control.
+Remote companions share the existing private viewer lease and live task pages,
+with separate bounded viewport, frame receipt and input state per tab. Hidden
+source panels do not disconnect a visible companion.
+
+Guest cleanup captures the webContents reference before native close; accessing
+`window.webContents` after `closed` can throw. Companion listeners, pending guests,
+frames and scope subscriptions are released by their creators. Entry and explicit
+return use token durations and reduced-motion handling; page input waits for
+stable geometry. The detached production route is covered by
+`apps/desktop/test/browser-detached-native.cjs` within the Electron smoke.

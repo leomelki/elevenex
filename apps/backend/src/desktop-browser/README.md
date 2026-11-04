@@ -56,3 +56,12 @@ closed/crashed engine; metadata and fresh user ownership survive, queued actions
 Nest owns SIGINT/SIGTERM shutdown, including contexts and browser children.
 Playwright's global process signal handlers are disabled so they cannot swallow
 backend termination. This also preserves application-owned process supervision.
+
+The private layout route accepts optional `tabId` and `detached` fields for
+companion presentations. Omitted fields retain the original active-tab behavior.
+All views share the original viewer token; a companion does not acquire another
+lease. Per-tab visibility gates frames and every input event independently, with
+three-second presentation freshness and the existing viewer expiry. A detached
+layout never selects another tab. Returning removes its presentation; disconnect
+clears all presentations and revokes control. The public TCP and agent boundaries
+are unchanged.

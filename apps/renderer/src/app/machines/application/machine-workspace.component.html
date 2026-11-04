@@ -55,7 +55,7 @@
           <p class="review-hint">Choose Review beneath an agent reply to see its changes.</p>
         }
       </div>
-      <ex-task-browser workspaceBrowser #workspaceBrowser [scopeId]="store.offline() ? null : store.scopeId()" [taskId]="store.selectedTask()?.state === 'ready' ? store.selectedTask()!.id : null" [sessionId]="store.selected()?.sessionId ?? null" [active]="active() && panelOpen() && panel() === 'browser' && !store.offline()" (contextRequested)="browserContext($event)" />
+      <ex-task-browser [windowContext]="browserWindowContext()" workspaceBrowser #workspaceBrowser [scopeId]="store.offline() ? null : store.scopeId()" [taskId]="store.selectedTask()?.state === 'ready' ? store.selectedTask()!.id : null" [sessionId]="store.selected()?.sessionId ?? null" [active]="active() && panelOpen() && panel() === 'browser' && !store.offline()" (contextRequested)="browserContext($event)" />
     </ex-workspace-panels>
   </ex-app-shell>
 </div>

@@ -563,4 +563,40 @@ describe('Remote browser public HTTP behavior', () => {
     ).toMatchObject({ url: new URL(pageUrl).href, error: null });
     await request('disconnect', {});
   });
+  it('presents a detached remote tab independently and rejects hidden or stale input', async () => {
+    const connected = await request('connect', { clientId: '22222222-2222-4222-8222-222222222222' }).then(response => response.json());
+    token = connected.token;
+    const opened = await request('command', { kind: 'open', url: pageUrl }).then(response => response.json());
+    const detachedId: string = opened.active;
+    const box = { tabId: detachedId, width: 720, height: 480, visible: true, interactive: true, pixelRatio: 1 };
+    expect((await request('layout', { ...box, sequence: 1 })).status).toBe(201);
+    const main = await request('command', { kind: 'new-tab' }).then(response => response.json());
+    expect(main.active).not.toBe(detachedId);
+    // The main panel can be hidden while the companion continues painting.
+    await request('layout', { width: 800, height: 600, visible: false, interactive: false, pixelRatio: 1, sequence: 2 });
+    const frame = await request('frame?tabId=' + detachedId + '&after=0');
+    expect(frame.status).toBe(200);
+    const bytes = Buffer.from(await frame.arrayBuffer());
+    expect(JSON.parse(bytes.subarray(4, 4 + bytes.readUInt32BE(0)).toString()).width).toBe(720);
+    const tab = main.tabs.find((tab: { id: string }) => tab.id === detachedId);
+    expect((await request('input', { tabId: detachedId, generation: tab.generation, input: { kind: 'pointer', type: 'down', x: 30, y: 30, button: 'left', buttons: 1, clicks: 1, modifiers: 0 } })).status).toBe(201);
+    await request('layout', { ...box, visible: false, interactive: false, sequence: 10 });
+    await request('layout', { ...box, sequence: 9 });
+    expect((await request('input', { tabId: detachedId, generation: tab.generation, input: { kind: 'text', text: 'must not be typed' } })).status).toBe(400);
+    expect((await request('frame?tabId=' + detachedId + '&after=0')).status).toBe(400);
+    await request('layout', { ...box, sequence: 11 });
+    await request('command', { kind: 'handoff', tabId: detachedId, sessionId: 2 });
+    const now = Date.now(), clock = jest.spyOn(Date, 'now').mockReturnValue(now + 3100);
+    try {
+      const expired = await runtime.viewer(1, token).agent({ kind: 'list' }, 2, new AbortController().signal);
+      expect(expired.tabs.find(tab => tab.id === detachedId)?.driver).toBe('you');
+      expect((await request('frame?tabId=' + detachedId + '&after=0')).status).toBe(400);
+    } finally { clock.mockRestore(); }
+    await request('layout', { ...box, detached: false, visible: false, interactive: false, sequence: 12 });
+    await request('command', { kind: 'select', tabId: detachedId });
+    await request('layout', { width: 800, height: 600, visible: true, interactive: true, pixelRatio: 1, sequence: 13 });
+    expect((await request('frame?tabId=' + detachedId + '&after=0')).status).toBe(200);
+    await request('disconnect', {});
+  });
+
 });

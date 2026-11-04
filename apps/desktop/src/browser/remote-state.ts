@@ -135,6 +135,7 @@ export function remoteBrowserState(
   )
     invalid();
   return {
+    canDetach: raw['canDetach'] === true,
     scopeId,
     taskId,
     revision: integer(raw["revision"]),

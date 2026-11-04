@@ -166,6 +166,8 @@ export class WorkspaceStore {
   private projectCompletion: { readonly scope: string; readonly projectId: number } | null = null;
 
   constructor() {
+    const stopBrowserReveal = this.bridge.onTaskBrowserRevealTask?.(target => { if (this.scopeId() === target.scopeId && !this.offline()) void this.revealBrowserTask(target.taskId); });
+    inject(DestroyRef).onDestroy(() => stopBrowserReveal?.());
     effect(() => { const saved = this.journal?.restored(); if (saved) untracked(() => { this.taskOutbox.restore(saved.tasks); this.sessionOutbox.restore(saved.sessions ?? []); }); });
     effect(() => {
       const scope = this.backend.state().scope;
@@ -403,6 +405,20 @@ export class WorkspaceStore {
     this.taskRecords.set(result.items); this.sessionRecords.set(sessions); this.sessionCursors.set(cursors); this.tasksCursor.set(result.nextCursor); this.taskPage.set(!!cursor);
     if (this.chosen() && !result.items.some(task => task.id === this.chosen()?.taskId)) this.chosen.set(null);
     if (!this.restoring()) this.loading.set(false);
+  }
+
+  async revealBrowserTask(taskId: number): Promise<void> {
+    const scope = this.scopeId(); if (!scope || this.offline()) return;
+    if (this.selectedTask()?.id !== taskId) {
+      this.leaveResume(); this.stopPreparation(); this.activeProject.set('all'); this.closed.set(false); this.filter.set(null);
+      const navigation = this.listRevision + 1, selection = this.chosen();
+      await this.loadTasks(taskId < Number.MAX_SAFE_INTEGER ? String(taskId + 1) : undefined);
+      if (!this.valid(scope) || this.listRevision !== navigation || this.chosen() !== selection && this.chosen() !== null) return;
+      const session = this.sessionRecords().get(taskId)?.[0];
+      if (!session) return;
+      this.selectSession({ taskId: String(taskId), sessionId: String(session.id) });
+    }
+    this.selectPanel('browser'); this.panelOpen.set(true);
   }
 
   selectSession(selection: { readonly taskId: string; readonly sessionId: string }): void {

@@ -91,9 +91,9 @@ function openExternal(url: string): void {
   if (isExternalUrl(url)) void shell.openExternal(url).catch(console.error);
 }
 
-function createWindow(launchSelection?: EnvironmentSelection | null, editorContext?: CodeWindowContext, editorConfiguration?: string): BrowserWindow {
+function createWindow(launchSelection?: EnvironmentSelection | null, editorContext?: CodeWindowContext, editorConfiguration?: string, browserOnly = false): BrowserWindow {
   const window = new BrowserWindow({
-    ...state.options(),
+    ...(browserOnly ? { width: 1120, height: 800, minWidth: 400, minHeight: 320 } : state.options()),
     title: editorContext ? 'Code · ' + (editorContext.state.taskName ?? 'Task') : 'Elevenex',
     icon: applicationIcon,
     show: false,
@@ -113,20 +113,21 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
       devTools: !app.isPackaged,
     },
   });
-  state.attach(window);
+  const contents = window.webContents;
+  if (!browserOnly) state.attach(window);
   const stopCodeFrames = code.attachWindow(window.webContents, devUrl);
   window.once('closed', stopCodeFrames);
   // Home is passive on launch. Restore domain context when a machine is chosen,
   // but do not open a saved SSH host merely because the app started.
-  remote.attach(window.webContents.id, launchSelection ?? null);
+  if (!browserOnly) remote.attach(window.webContents.id, launchSelection ?? null);
   const windowId = window.webContents.id;
-  machines.attach(windowId, launchSelection ?? null);
+  if (!browserOnly) machines.attach(windowId, launchSelection ?? null);
   if (editorContext && editorConfiguration) code.registerWindow(windowId, editorContext, editorConfiguration);
   if (launchSelection && (!editorConfiguration || remote.backendCacheIdentity(windowId) === editorConfiguration)) void remote.select(windowId, launchSelection).catch(() => {
     // The renderer can retry from Home; never abandon a newly created window.
     console.error('Could not select the requested machine');
   });
-  backendClient.client.attach(windowId);
+  if (!browserOnly) backendClient.client.attach(windowId);
   window.webContents.on('did-start-navigation', (_event, _url, inPlace, isMainFrame) => {
     if (isMainFrame && !inPlace) { code.detachWindow(windowId); backendClient.client.reset(windowId); }
   });
@@ -148,22 +149,25 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
     void remote.detach(windowId).catch(() => console.error('Remote window cleanup failed'));
   }));
   window.once('ready-to-show', () => window.show());
-  window.webContents.setWindowOpenHandler(({ url }) => {
+  contents.setWindowOpenHandler(({ url }) => {
     openExternal(url);
     return { action: 'deny' };
   });
-  window.webContents.on('will-navigate', (event, url) => {
+  contents.on('will-navigate', (event, url) => {
     if (!isAppUrl(url, devUrl)) {
       event.preventDefault();
       openExternal(url);
     }
   });
   // A redirect must never turn a trusted app window into an external site.
-  window.webContents.on('will-redirect', (event, url) => {
+  contents.on('will-redirect', (event, url) => {
     if (!isAppUrl(url, devUrl)) event.preventDefault();
   });
-  window.webContents.on('will-attach-webview', (event, _preferences, params) => { if (!taskBrowser?.permitsGuest(window.webContents.id, params)) event.preventDefault(); });
-  void window.loadURL(editorContext ? `${devUrl ?? APP_ORIGIN}/code-window` : devUrl ?? `${APP_ORIGIN}/`).catch((error: unknown) => {
+  contents.on('will-attach-webview', (event, _preferences, params) => { if (contents.isDestroyed() || !taskBrowser?.permitsGuest(windowId, params)) event.preventDefault(); });
+  const rendererUrl = new URL(devUrl ?? `${APP_ORIGIN}/`);
+  if (editorContext) rendererUrl.pathname = '/code-window';
+  if (browserOnly) rendererUrl.pathname = '/browser-window';
+  void window.loadURL(rendererUrl.href).catch((error: unknown) => {
     console.error('Could not load the renderer:', error);
     window.destroy();
   });
@@ -223,7 +227,7 @@ void app.whenReady().then(async () => {
   app.once('will-quit', unsubscribeBackend);
   const unregisterCode = registerCodeIpc(code, trusted);
   app.once('will-quit', unregisterCode);
-  taskBrowser = registerTaskBrowser(backendClient.client, remote, join(app.getPath('userData'), 'task-browsers'), trusted);
+  taskBrowser = registerTaskBrowser(backendClient.client, remote, join(app.getPath('userData'), 'task-browsers'), trusted, () => createWindow(null, undefined, undefined, true));
   const unregisterClient = registerBackendClientIpc(backendClient.client, trusted);
   app.once('will-quit', unregisterClient);
   const unregisterRemote = registerRemoteIpc(remote, backend, trusted);

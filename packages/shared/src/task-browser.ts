@@ -54,11 +54,14 @@ export interface TaskBrowserTab {
   readonly theme: 'light' | 'dark' | 'system';
   readonly slowNetwork: boolean;
   readonly waiting: boolean;
+  readonly detached?: boolean;
   readonly server?: string;
   readonly step?: { readonly n: number; readonly total?: number; readonly text: string };
   readonly target?: BrowserElement;
 }
 export interface TaskBrowserState {
+  /** Older remote runtimes omit this capability. */
+  readonly canDetach?: boolean;
   readonly scopeId: string;
   readonly taskId: number;
   readonly revision: number;
@@ -111,4 +114,21 @@ export interface BrowserAgentState {
   readonly tabs: readonly { readonly id: string; readonly by: 'you' | 'agent'; readonly agentSessionId: number | null; readonly driver: 'you' | 'agent' | 'needs'; readonly generation: number; readonly loading: boolean; readonly ready: boolean; readonly error: string | null; readonly errors?: number }[];
   readonly observation: 'withheld';
   readonly message: string;
+}
+
+/** Labels are presentation data, never authority to access a task or machine. */
+export interface TaskBrowserWindowContext {
+  readonly projectName: string;
+  readonly taskName: string;
+  readonly branchName: string;
+  readonly machineName: string;
+  readonly stage: 'planned' | 'active' | 'waiting' | 'closed';
+  readonly hue: 'ocean' | 'pine' | 'plum' | 'rust' | 'steel' | 'rose';
+}
+export interface TaskBrowserWindowInfo {
+  readonly scopeId: string;
+  readonly taskId: number;
+  readonly tabId: string;
+  readonly context: TaskBrowserWindowContext;
+  readonly available: boolean;
 }

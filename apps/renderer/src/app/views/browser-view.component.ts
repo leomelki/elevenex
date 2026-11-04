@@ -12,6 +12,13 @@ import { ViewTabsComponent } from './view-tabs.component';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class BrowserViewComponent {
+  readonly showTabs = input(true);
+  readonly controlsDisabled = input(false);
+  readonly pickerAvailable = input(true);
+  readonly detachable = input(false);
+  readonly detachBusy = input(false);
+  readonly detachLabel = input('Open tab in new window');
+  readonly detachRequested = output<void>();
   readonly tabs = input<readonly BrowserTab[]>([]);
   readonly active = input<string>();
   readonly clipPreview = input(false);
@@ -52,7 +59,7 @@ export class BrowserViewComponent {
   protected readonly driverLabel = computed(() => (this.driver() === 'agent' ? 'Agent driving. Take over and focus page.' : this.driver() === 'needs' ? 'Your turn. Focus page.' : 'You are driving. Focus page.') + ' Shift+Escape returns to browser controls.');
   protected readonly askText = signal('');
   protected readonly current = computed(() => this.tabs().find(tab => tab.id === this.active()) ?? this.tabs()[0]);
-  protected readonly tabItems = computed<readonly ViewTab[]>(() => this.tabs().map(tab => ({ ...tab, icon: 'globe', agent: tab.by === 'agent', agentDriving: this.driver() === 'agent' && tab.id === this.current()?.id })));
+  protected readonly tabItems = computed<readonly ViewTab[]>(() => this.tabs().map(tab => ({ ...tab, icon: tab.icon ?? 'globe', agent: tab.by === 'agent', agentDriving: this.driver() === 'agent' && tab.id === this.current()?.id })));
   protected readonly target = computed(() => this.picked() ?? (this.driver() === 'agent' ? this.action() : undefined));
   protected readonly targetTransform = computed(() => {
     const target = this.target();
@@ -130,7 +137,7 @@ export class BrowserViewComponent {
     }
   }
   protected keydown(event: KeyboardEvent): void {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 't') { event.preventDefault(); this.added.emit(); }
-    if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'c') { event.preventDefault(); this.pickingChange.emit(!this.picking()); }
+    if (this.showTabs() && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 't') { event.preventDefault(); this.added.emit(); }
+    if (this.pickerAvailable() && !this.controlsDisabled() && (event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'c') { event.preventDefault(); this.pickingChange.emit(!this.picking()); }
   }
 }

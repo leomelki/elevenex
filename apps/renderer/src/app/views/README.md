@@ -130,3 +130,10 @@ The workflow uses one retained footer for driving and waiting, with a reserved
 progress row at narrow widths. Error counts stay in the workflow controls during agent work.
 This avoids a page resize in the middle of the user's takeover click. These are
 presentation choices; driver authority is always enforced by the platform adapter.
+
+Browser owners may set `detachable` and handle `detachRequested` for the current
+tab; `detachBusy` disables duplicate requests. `showTabs=false` presents a single
+bound page and ignores the new-tab shortcut. `controlsDisabled` disables page
+controls for a tab displayed elsewhere while preserving its tab-strip identity.
+`pickerAvailable=false` hides picking when the owner has no composer destination.
+All defaults preserve existing preview and product callers.

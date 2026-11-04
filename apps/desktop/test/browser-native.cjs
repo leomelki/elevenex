@@ -24,6 +24,7 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
     const render = surfaces => {
       window.__browserSurfaces = surfaces;
       for (const surface of surfaces) {
+        if (!surface.partition) { guests.get(surface.tabId)?.remove(); guests.delete(surface.tabId); continue; }
         let guest = guests.get(surface.tabId);
         if (!guest) { guest = document.createElement('webview'); guest.setAttribute('partition', surface.partition); guest.setAttribute('src', surface.bootstrap); guest.addEventListener('dom-ready', () => { void window.elevenex.taskBrowserAttach(surface.scopeId, surface.taskId, surface.tabId, guest.getWebContentsId()); }, { once: true }); document.body.append(guest); guests.set(surface.tabId, guest); }
         Object.assign(guest.style, { position: 'fixed', display: 'flex', left: surface.visible ? surface.bounds.x / surface.zoom + 'px' : '-20000px', top: surface.bounds.y / surface.zoom + 'px', width: (surface.bounds.width / surface.zoom || 800) + 'px', height: (surface.bounds.height / surface.zoom || 600) + 'px' });
@@ -41,7 +42,7 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   assert.equal(blank.tabs[0].loading, false);
   let state = await command({ kind: 'navigate', tabId: blank.active, url: url + '/browser-test' });
   const first = state.active;
-  const native = await until(() => webContents.getAllWebContents().find(contents => contents !== window.webContents && contents.getURL().includes('/browser-test')), 'Browser page did not load');
+  let native = await until(() => webContents.getAllWebContents().find(contents => contents !== window.webContents && contents.getURL().includes('/browser-test')), 'Browser page did not load');
   await until(async () => (await read()).tabs[0]?.loading === false, 'Browser page still loading');
   const prefs = native.getLastWebPreferences();
   assert.equal(prefs.sandbox, true); assert.equal(prefs.contextIsolation, true); assert.equal(prefs.nodeIntegration, false); assert.equal(prefs.preload, undefined); assert.equal(prefs.webSecurity, true); assert.equal(native.getWebRTCIPHandlingPolicy(),'disable_non_proxied_udp');
@@ -53,6 +54,7 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   await call('taskBrowserLayout', scope, 1, layout);
   await until(async()=>await visibleCount() === 1, 'Guest was not presented');
   assert.deepEqual(await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible).bounds'), layout.bounds);
+  native = await require('./browser-detached-native.cjs')(window, native, scope, first);
   // Page strings/secret controls never appear in state or automation-facing tab titles.
   await native.executeJavaScript(`document.title='password-secret';document.querySelector('input').value='password-secret';console.error('password-secret')`);
   state = await read(); assert.equal(JSON.stringify(state).includes('password-secret'), false);

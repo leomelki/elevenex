@@ -1,5 +1,5 @@
 import { browserLoopbackHost } from '@elevenex/browser-network';
-import type { BrowserAgentCommand, BrowserRect, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserStreamInput, TaskBrowserStreamEvent } from '@elevenex/shared';
+import type { TaskBrowserWindowContext, BrowserAgentCommand, BrowserRect, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserStreamInput, TaskBrowserStreamEvent } from '@elevenex/shared';
 
 export function streamInput(value: unknown): TaskBrowserStreamInput {
   const raw = record(value);
@@ -99,4 +99,15 @@ export function agentCommand(value: unknown): BrowserAgentCommand {
 export function intersect(box: BrowserRect, width: number, height: number): BrowserRect {
   const x = Math.max(0, Math.ceil(box.x)), y = Math.max(0, Math.ceil(box.y));
   return { x, y, width: Math.max(0, Math.floor(Math.min(box.x + box.width, width)) - x), height: Math.max(0, Math.floor(Math.min(box.y + box.height, height)) - y) };
+}
+
+export function windowContext(value: unknown): TaskBrowserWindowContext {
+  const raw = record(value);
+  exact(raw, ['projectName', 'taskName', 'branchName', 'machineName', 'stage', 'hue']);
+  for (const key of ['projectName', 'taskName', 'branchName', 'machineName'])
+    if (typeof raw[key] !== 'string' || raw[key].length > 256 || [...raw[key]].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new Error('Invalid browser window label');
+  const stage = raw['stage'], hue = raw['hue'];
+  if (stage !== 'planned' && stage !== 'active' && stage !== 'waiting' && stage !== 'closed') throw new Error('Invalid task stage');
+  if (hue !== 'ocean' && hue !== 'pine' && hue !== 'plum' && hue !== 'rust' && hue !== 'steel' && hue !== 'rose') throw new Error('Invalid project hue');
+  return { projectName: String(raw['projectName']), taskName: String(raw['taskName']), branchName: String(raw['branchName']), machineName: String(raw['machineName']), stage, hue };
 }

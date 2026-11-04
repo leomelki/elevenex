@@ -1,14 +1,16 @@
 <section class="browser" tabindex="-1" aria-label="Task browser" (keydown)="keydown($event)">
-  <ex-view-tabs label="Browser tabs" newLabel="New browser tab (⌘T)" [items]="tabItems()" [active]="current()?.id" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()" />
+  @if (showTabs()) { <ex-view-tabs label="Browser tabs" newLabel="New browser tab (⌘T)" [items]="tabItems()" [active]="current()?.id" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()">
+    @if (detachable()) { <ex-icon-button icon="window" [label]="detachLabel()" size="sm" [disabled]="!current() || detachBusy()" (pressed)="detachRequested.emit()" /> }
+  </ex-view-tabs> }
   <div class="toolbar">
     <div class="navigation">
-      <ex-icon-button icon="back" label="Back" size="sm" [disabled]="!canGoBack() || !current()" (pressed)="backRequested.emit()" />
-      <ex-icon-button icon="refresh" label="Reload" size="sm" [disabled]="!current()" (pressed)="reloadRequested.emit()" />
+      <ex-icon-button icon="back" label="Back" size="sm" [disabled]="!canGoBack() || !current() || controlsDisabled()" (pressed)="backRequested.emit()" />
+      <ex-icon-button icon="refresh" label="Reload" size="sm" [disabled]="!current() || controlsDisabled()" (pressed)="reloadRequested.emit()" />
     </div>
     <div class="address" [title]="current()?.url ?? ''">
       @if (current()?.server; as server) { <span class="server" [title]="server + ' · this task’s dev server'">{{ server }}</span> }
       @if (addressEditable() && current()) {
-        <input #address aria-label="Page address" [value]="addressDraft() ?? current()?.url ?? ''" (input)="addressDraft.set(address.value)" (keydown.enter)="$event.preventDefault(); navigateAddress()" (keydown.escape)="addressDraft.set(null); address.blur()" />
+        <input #address [disabled]="controlsDisabled()" aria-label="Page address" [value]="addressDraft() ?? current()?.url ?? ''" (input)="addressDraft.set(address.value)" (keydown.enter)="$event.preventDefault(); navigateAddress()" (keydown.escape)="addressDraft.set(null); address.blur()" />
       } @else { <span>{{ current()?.url ?? 'No page open' }}</span> }
     </div>
     <button #driverControl type="button" class="driver" [attr.aria-label]="driverLabel()" (click)="focusPage()" [disabled]="loading() || !pageFocusAvailable()" [hidden]="!current()" [attr.data-driver]="driver()">
@@ -17,9 +19,9 @@
       <ex-ease-swap [value]="driver() === 'agent' ? 'Driving' : driver() === 'needs' ? 'Your turn' : 'You'" />
     </button>
     <div class="tools">
-      <ex-icon-button icon="target" label="Point and ask (⇧⌘C)" size="sm" [active]="picking()" [disabled]="!current()" (pressed)="pickingChange.emit(!picking())" />
-      <ex-icon-button icon="phone" [label]="width() === 'phone' ? 'Full width' : 'Phone width'" size="sm" [active]="width() === 'phone'" [disabled]="!current()" (pressed)="widthChange.emit(width() === 'phone' ? 'full' : 'phone')" />
-      <ex-icon-button icon="more" label="More browser actions" size="sm" (pressed)="moreRequested.emit()" />
+      @if (pickerAvailable()) { <ex-icon-button icon="target" label="Point and ask (⇧⌘C)" size="sm" [active]="picking()" [disabled]="!current() || controlsDisabled()" (pressed)="pickingChange.emit(!picking())" /> }
+      <ex-icon-button icon="phone" [label]="width() === 'phone' ? 'Full width' : 'Phone width'" size="sm" [active]="width() === 'phone'" [disabled]="!current() || controlsDisabled()" (pressed)="widthChange.emit(width() === 'phone' ? 'full' : 'phone')" />
+      <ex-icon-button icon="more" label="More browser actions" size="sm" [disabled]="controlsDisabled()" (pressed)="moreRequested.emit()" />
     </div>
   </div>
   <ex-fold [open]="!!current() && driver() === 'needs'">

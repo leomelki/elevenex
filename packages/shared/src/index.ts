@@ -1,6 +1,6 @@
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
-import type { TaskBrowserState, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserSurface, TaskBrowserFrame, TaskBrowserStreamInput } from './task-browser';
+import type { TaskBrowserWindowInfo, TaskBrowserWindowContext, TaskBrowserState, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserSurface, TaskBrowserFrame, TaskBrowserStreamInput } from './task-browser';
 export type * from './task-browser';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
@@ -49,6 +49,10 @@ export interface InvokeContracts {
   'code:focus': { args: [target: CodeTarget]; result: void };
   'code:release': { args: [target: CodeTarget]; result: void };
 
+  'task-browser:detach': { args: [scopeId: string, taskId: number, tabId: string, context: TaskBrowserWindowContext]; result: void };
+  'task-browser:return': { args: [scopeId: string, taskId: number, tabId: string]; result: void };
+  'task-browser:window': { args: []; result: TaskBrowserWindowInfo | null };
+  'task-browser:window-action': { args: [action: 'return' | 'reveal']; result: void };
   'task-browser:attach': { args: [scopeId: string, taskId: number, tabId: string, contentsId: number]; result: void };
   'task-browser:surfaces': { args: []; result: readonly TaskBrowserSurface[] };
   'task-browser:presentation': { args: [scopeId: string, taskId: number, tabId: string, presentation: 'embedded' | 'stream']; result: void };
@@ -135,6 +139,8 @@ export interface InvokeContracts {
 export interface EventContracts {
   'code:exit-requested': CodeTarget;
   'code:changed': { readonly target: CodeTarget; readonly state: CodeSurfaceState };
+  'task-browser:window-changed': TaskBrowserWindowInfo;
+  'task-browser:reveal-task': { readonly scopeId: string; readonly taskId: number };
   'task-browser:changed': TaskBrowserState;
   'task-browser:surfaces-changed': readonly TaskBrowserSurface[];
   'task-browser:frame': TaskBrowserFrame;
@@ -170,6 +176,12 @@ export interface ElevenexBridge {
   codeFocus(target: CodeTarget): Promise<void>;
   codeRelease(target: CodeTarget): Promise<void>;
 
+  taskBrowserDetach?(scopeId: string, taskId: number, tabId: string, context: TaskBrowserWindowContext): Promise<void>;
+  taskBrowserReturn?(scopeId: string, taskId: number, tabId: string): Promise<void>;
+  taskBrowserWindow?(): Promise<TaskBrowserWindowInfo | null>;
+  taskBrowserWindowAction?(action: 'return' | 'reveal'): Promise<void>;
+  onTaskBrowserWindowChanged?(listener: (info: TaskBrowserWindowInfo) => void): () => void;
+  onTaskBrowserRevealTask?(listener: (target: { readonly scopeId: string; readonly taskId: number }) => void): () => void;
   taskBrowserAttach?(scopeId: string, taskId: number, tabId: string, contentsId: number): Promise<void>;
   taskBrowserSurfaces?(): Promise<readonly TaskBrowserSurface[]>;
   taskBrowserPresentation?(scopeId: string, taskId: number, tabId: string, presentation: 'embedded' | 'stream'): Promise<void>;

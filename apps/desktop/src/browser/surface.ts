@@ -26,7 +26,8 @@ export interface BrowserPageHost {
 }
 /** One sandboxed, unprivileged page. The creating task owns and destroys it explicitly. */
 export class BrowserPage {
-  readonly id = randomUUID();
+  readonly id: string;
+  displayWindow?: BrowserWindow;
   readonly lease: BrowserDriverLease;
   private engine?: WebContents;
   get contents(): WebContents { if (!this.engine) throw new Error('The page is still connecting'); return this.engine; }
@@ -70,7 +71,8 @@ export class BrowserPage {
   private readonly pageSession;
 
 
-  constructor(private readonly host: BrowserPageHost, by: 'you' | 'agent', sessionId: number | null = null) {
+  constructor(private readonly host: BrowserPageHost, by: 'you' | 'agent', sessionId: number | null = null, id: string = randomUUID()) {
+    this.id = id;
     if (process.env['ELECTRON_ENABLE_LOGGING'] || app.commandLine.hasSwitch('enable-logging')) throw new Error('Private browsing is unavailable while Chromium page logging is enabled. Disable page logging before opening a tab.');
     this.lease = new BrowserDriverLease(by, sessionId);
     if (by === 'agent') this.step = { n: 1, text: 'Opening page' };
@@ -308,7 +310,7 @@ export class BrowserPage {
     this.assertInput(generation);
   }
   private assertInput(generation: number): void {
-    this.lease.assert(generation); if (!this.host.authorized() || !this.host.window.isVisible() || this.host.window.isMinimized() || !this.ready || this.destroyed || this.loading || this.error) throw new Error('Agent input requires a visible, loaded page with native delivery confirmation');
+    this.lease.assert(generation); if (!this.host.authorized() || !(this.displayWindow ?? this.host.window).isVisible() || (this.displayWindow ?? this.host.window).isMinimized() || !this.ready || this.destroyed || this.loading || this.error) throw new Error('Agent input requires a visible, loaded page with native delivery confirmation');
   }
   async tool(kind: 'theme' | 'network', value: string | boolean): Promise<void> {
     const contents = this.contents;

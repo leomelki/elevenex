@@ -8,6 +8,7 @@ void bootstrapApplication(PreviewComponent, {
     provideZonelessChangeDetection(),
     provideRouter(
       [
+        { path: 'browser-window', loadComponent: () => import('./browser-window-demo.component').then(module => module.BrowserWindowDemoComponent) },
         { path: 'task-browser', loadComponent: () => import('./task-browser-demo.component').then(module => module.TaskBrowserDemoComponent) },
         { path: "agent-picker", loadComponent: () => import("./agent-picker-demo.component").then(module => module.AgentPickerDemoComponent) },
         { path: 'reconnect', loadComponent: () => import('./reconnect-demo.component').then(module => module.ReconnectDemoComponent) },

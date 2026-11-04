@@ -1,0 +1,26 @@
+<header class="titlebar">
+  @if (info(); as info) {
+    <button type="button" class="task-context" [disabled]="!info.available || returning()" [attr.aria-label]="'Open task ' + info.context.projectName + ' / ' + info.context.taskName" [exTooltip]="info.context.branchName ? info.context.taskName + ' · ' + info.context.branchName : info.context.taskName" (click)="action('reveal')">
+      <ex-project-mark [name]="info.context.projectName" [hue]="info.context.hue" [size]="20" [decorative]="true" />
+      <span class="project">{{ info.context.projectName }}</span><span class="slash" aria-hidden="true">/</span>
+      <span class="task">{{ info.context.taskName }}</span>
+      <ex-stage-glyph [stage]="info.context.stage" [size]="12" />
+    </button>
+    @if (info.context.machineName) {
+      <div class="machine-island"><ex-title-island [contentKey]="info.context.machineName" [label]="'Open task on ' + info.context.machineName" (pressed)="action('reveal')"><span class="machine"><ex-icon name="laptop" [size]="13" />{{ info.context.machineName }}</span></ex-title-island></div>
+    }
+    <div class="window-actions"><ex-icon-button icon="panel" [label]="browser()?.directAvailable() ? 'Return tab to task (reloads page)' : 'Return tab to task'" [disabled]="!info.available || returning()" (pressed)="action('return')" /></div>
+  }
+</header>
+<main animate.enter="arrive" [attr.inert]="returning() ? '' : null">
+  <ex-fold [open]="!!error()"><div class="window-error" role="alert">{{ error() }}</div></ex-fold>
+  @if (info(); as info) {
+    @if (info.available) {
+      <ex-task-browser [scopeId]="info.scopeId" [taskId]="info.taskId" [active]="!returning()" [detachedWindow]="true" [windowContext]="info.context" />
+    } @else {
+      <div class="unavailable" role="status"><ex-icon name="window" [size]="24" /><h1>Task unavailable</h1><p>The task window closed or changed machine.</p></div>
+    }
+  } @else {
+    <div class="unavailable" role="status" [attr.aria-busy]="loading()"><ex-icon name="window" [size]="24" /><p>{{ loading() ? 'Opening tab…' : 'This window is no longer linked to a task.' }}</p></div>
+  }
+</main>

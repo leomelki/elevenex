@@ -76,7 +76,8 @@ footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .cursor-pulse { animation: none; opacity: 0; }
 }
 
-.address > input { width: 100%; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ink); font: inherit; outline-offset: var(--space-1); }
+/* The container owns the rounding; a rounded, unpadded input clips the caret. */
+.address > input { width: 100%; min-width: 0; border: 0; border-radius: 0; padding: 0; background: transparent; color: var(--ink); font: inherit; outline-offset: var(--space-1); }
 
 .page.keeping-empty { background: transparent; }
 

@@ -128,6 +128,8 @@ export class RuntimeBrowserController {
     const box = parse(
       z
         .object({
+          tabId: z.string().uuid().optional(),
+          detached: z.boolean().optional(),
           width: z.number().int().min(100).max(2560),
           height: z.number().int().min(100).max(1600),
           visible: z.boolean(),
@@ -139,16 +141,12 @@ export class RuntimeBrowserController {
         .strict(),
       input,
     );
-    await this.browsers
-      .layoutViewer(id, token, box.sequence ?? 0)
-      ?.layout(
-        box.width,
-        box.height,
-        box.visible,
-        box.interactive,
-        box.pixelRatio,
-        box.colorScheme ?? 'light',
-      );
+    const task = this.browsers.layoutViewer(id, token, box.sequence ?? 0);
+    if (box.tabId) await task?.layoutTab(box.tabId, box.width, box.height, box.visible, box.interactive, box.pixelRatio, box.colorScheme ?? 'light', box.detached ?? true);
+    else {
+      if (box.detached !== undefined) throw new BadRequestException('A tab is required');
+      await task?.layout(box.width, box.height, box.visible, box.interactive, box.pixelRatio, box.colorScheme ?? 'light');
+    }
     return this.browsers.viewer(id, token).state();
   }
   @Post('input') async input(
@@ -198,7 +196,7 @@ export class RuntimeBrowserController {
       task = this.browsers.viewer(id, token);
     parse(z.string().uuid(), tabId);
     const sequence = parse(z.coerce.number().int().min(0).safe(), after ?? 0);
-    if (task.active !== tabId)
+    if (!task.isPresented(tabId))
       throw new BadRequestException('Browser tab changed');
     const controller = new AbortController();
     const close = () => {

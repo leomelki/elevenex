@@ -4,8 +4,8 @@ import { ELEVENEX_BRIDGE } from '../src/app/backend/backend-client.service';
 import { TaskBrowserComponent } from '../src/app/task-browser';
 
 /** Preview-only transport for exercising the production start-tab owner. No network or guest. */
-class StartTabFixture implements Pick<ElevenexBridge, 'taskBrowserRead' | 'taskBrowserHide' | 'taskBrowserCommand'> {
-  private state: TaskBrowserState = { scopeId: 'preview', taskId: 1, revision: 0, surfaceEpoch: 0, controlsFocus: 0, tabs: [], active: null, picked: null, picking: false, pickerMessage: null, feedback: false, ports: [3000, 4310], privacy: 'content-withheld' };
+export class StartTabFixture implements Pick<ElevenexBridge, 'taskBrowserRead' | 'taskBrowserHide' | 'taskBrowserCommand'> {
+  protected state: TaskBrowserState = { scopeId: 'preview', taskId: 1, revision: 0, surfaceEpoch: 0, controlsFocus: 0, tabs: [], active: null, picked: null, picking: false, pickerMessage: null, feedback: false, ports: [3000, 4310], privacy: 'content-withheld' };
   private nextId = 0;
   async taskBrowserRead(): Promise<BackendResult<TaskBrowserState>> { return { ok: true, value: this.state }; }
   async taskBrowserHide() { /* No guest in this preview. */ }

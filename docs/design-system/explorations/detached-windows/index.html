@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Detached windows · Elevenex design study</title>
+  <link rel="stylesheet" href="../../project/tokens.css">
+  <link rel="stylesheet" href="./study.css">
+  <script src="./study.js" defer></script>
+</head>
+<body>
+  <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+    <symbol id="i-branch" viewBox="0 0 16 16"><path d="M5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM5 11a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM11 3.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM5 5v6M11 6.5c0 2.5-2.5 3.5-6 4.5"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 16 16"><path d="M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM2.5 8h11M8 2.5c1.6 1.5 2.4 3.4 2.4 5.5S9.6 12 8 13.5C6.4 12 5.6 10.1 5.6 8S6.4 4 8 2.5z"/></symbol>
+    <symbol id="i-laptop" viewBox="0 0 16 16"><path d="M3.5 4.5h9a1 1 0 0 1 1 1v5.5h-11V5.5a1 1 0 0 1 1-1zM1.5 11h13l-.6 1.2a1 1 0 0 1-.9.55H3a1 1 0 0 1-.9-.55z"/></symbol>
+    <symbol id="i-return" viewBox="0 0 16 16"><path d="M9.5 3h4v10h-11V3h4M10 8H2M5 5L2 8l3 3"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5L9 7M6.5 13.5h-4v-4M2.5 13.5L7 9"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13 4.5V2M13 4.5h-2.5M12.6 4.4A5.5 5.5 0 1 0 13.5 8"/></symbol>
+    <symbol id="i-back" viewBox="0 0 16 16"><path d="M13 8H3M7 4L3 8l4 4"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 16 16"><path d="m6 4 4 4-4 4"/></symbol>
+    <symbol id="i-down" viewBox="0 0 16 16"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="m4.5 4.5 7 7m0-7-7 7"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7"/></symbol>
+    <symbol id="i-target" viewBox="0 0 16 16"><path d="M8 2v2.5M8 11.5V14M2 8h2.5M11.5 8H14M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 16 16"><path d="M4 2.5h8A1.5 1.5 0 0 1 13.5 4v5.5A1.5 1.5 0 0 1 12 11H7.5l-3 2.5V11H4a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 4 2.5z"/></symbol>
+  </defs></svg>
+  <main class="study">
+    <header class="study-header">
+      <div class="brand"><span class="brand-mark">e</span> elevenex <span class="separator"></span><span class="muted">Design explorations</span></div>
+      <div class="theme-picker" role="group" aria-label="Color theme"><button data-theme-choice="light" aria-pressed="false">Light</button><button data-theme-choice="dark" aria-pressed="false">Dark</button><button data-theme-choice="system" aria-pressed="true">System</button></div>
+    </header>
+    <div class="intro"><div><p class="eyebrow">WORKSPACE / DETACHED TABS</p><h1>A window of its own.<br class="mobile-break"> Still part of the task.</h1><p class="lede">Three ways to keep your bearings when Browser, Terminal or Changes leaves the main window.</p></div><span class="study-label">Interactive design study <span>01 — 03</span></span></div>
+    <div id="ideas"></div>
+    <footer class="study-footer"><span><strong>Shared behavior</strong> Same task, branch and tab state. Detaching changes the view, never the workspace.</span><span>Click a task name for context · Enlarge to explore</span></footer>
+  </main>
+  <dialog id="detail-dialog" aria-labelledby="detail-title"><div class="dialog-head"><span class="eyebrow">LINKED TASK</span><button class="icon-button" data-close="detail-dialog" aria-label="Close task context"><svg><use href="#i-x"/></svg></button></div><div class="detail-project"><span class="project-mark">AC</span><span>Acme <span class="muted">/ web</span></span></div><h2 id="detail-title">Simplify checkout</h2><p class="detail-note">This window uses the task’s existing workspace. Your agents and other tabs stay connected.</p><dl><div><dt>Branch</dt><dd>leo/simplify-checkout</dd></div><div><dt>Workspace</dt><dd>acme-checkout</dd></div><div><dt>Session</dt><dd>Polish the checkout flow</dd></div><div><dt>Machine</dt><dd>This Mac</dd></div></dl><div class="dialog-actions"><button class="button primary" data-demo="Task opened in the main window (prototype)">Show task <svg><use href="#i-arrow"/></svg></button><button class="button" data-demo="Tab returned to the task’s Browser panel (prototype)"><svg><use href="#i-return"/></svg>Return tab</button></div><p class="prototype-note">Prototype actions show feedback; they don’t change your workspace.</p></dialog>
+  <dialog id="enlarge-dialog" aria-labelledby="enlarge-title"><div class="dialog-head"><h2 id="enlarge-title"></h2><button class="icon-button" data-close="enlarge-dialog" aria-label="Close enlarged idea"><svg><use href="#i-x"/></svg></button></div><div id="enlarge-content"></div><p class="prototype-note">Interactive prototype · Esc to close</p></dialog>
+  <div class="toast" role="status" hidden></div>
+</body>
+</html>

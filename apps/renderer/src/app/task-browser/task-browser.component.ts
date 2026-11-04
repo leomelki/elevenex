@@ -1,7 +1,7 @@
 import { BrowserSurfacesComponent } from './browser-surfaces.component';
 import { OverlayContainer } from '@angular/cdk/overlay';
 import { ChangeDetectionStrategy, Component, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
-import type { TaskBrowserCommand } from '@elevenex/shared';
+import type { TaskBrowserCommand, TaskBrowserWindowContext } from '@elevenex/shared';
 import { BrowserViewComponent, type BrowserQuestion, type BrowserTab, type BrowserTarget } from '../views';
 import { ButtonComponent, FoldComponent, IconComponent, ModalLayerComponent } from '../ui';
 import { TaskBrowserStore } from './task-browser.store';
@@ -15,6 +15,9 @@ export interface BrowserComposerIntent { readonly scopeId: string; readonly task
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TaskBrowserComponent {
+  readonly detachedWindow = input(false);
+  readonly windowContext = input<TaskBrowserWindowContext | null>(null);
+  readonly moving = signal(false);
   readonly scopeId = input<string | null>(null);
   readonly taskId = input<number | null>(null);
   readonly sessionId = input<number | null>(null);
@@ -25,7 +28,7 @@ export class TaskBrowserComponent {
   readonly dialogOpen = signal(false);
   readonly notice = signal('');
   readonly current = this.store.current;
-  readonly tabs = computed<readonly BrowserTab[]>(() => (this.store.state()?.tabs ?? []).map(tab => ({ id: tab.id, title: tab.title, url: tab.url, by: tab.by, server: tab.server, status: tab.error ? 'failed' : tab.loading ? 'running' : 'idle' })));
+  readonly tabs = computed<readonly BrowserTab[]>(() => (this.store.state()?.tabs ?? []).map(tab => ({ id: tab.id, title: tab.title, url: tab.url, by: tab.by, server: tab.server, icon: tab.detached ? 'window' : 'globe', tip: tab.detached ? tab.title + ' · Open in window' : tab.title, status: tab.error ? 'failed' : tab.loading ? 'running' : 'idle' })));
   readonly directAvailable = computed(() => this.surfaces()?.surfaces().some(surface => surface.tabId === this.current()?.id && !!surface.partition) ?? false);
   readonly picked = computed<BrowserTarget | undefined>(() => {
     const raw = this.store.state()?.picked;
@@ -85,11 +88,12 @@ export class TaskBrowserComponent {
   command(input: TaskBrowserCommand): void { void this.store.command(input); }
   tabCommand(kind: 'select' | 'close' | 'back' | 'reload' | 'takeover' | 'handoff' | 'outside' | 'focus', tabId = this.current()?.id): void {
     if (tabId) {
+      if (kind === 'select' && this.store.state()?.tabs.find(tab => tab.id === tabId)?.detached) { void this.moveToWindow(tabId); return; }
       if (kind === 'handoff') { const sessionId = this.current()?.agentSessionId ?? this.sessionId(); if (sessionId) this.command({ kind, tabId, sessionId }); else this.notice.set('Choose a conversation before handing control to the agent.'); }
       else { this.command({ kind, tabId }); if (kind === 'focus') this.surfaces()?.focusPage(tabId); }
     }
   }
-  shortcut(kind: 'open' | 'pick' | 'controls'): void { if (kind === 'controls') this.browser()?.focusControls(); else if (kind === 'open') this.newTab(); else this.command({ kind: 'pick', enabled: !this.store.state()?.picking }); }
+  shortcut(kind: 'open' | 'pick' | 'controls'): void { if (kind === 'controls') this.browser()?.focusControls(); else if (kind === 'open') this.newTab(); else if (!this.detachedWindow()) this.command({ kind: 'pick', enabled: !this.store.state()?.picking }); }
   handToSelected(): void {
     const sessionId = this.sessionId(), tabId = this.current()?.id;
     if (sessionId && tabId) this.command({ kind: 'handoff', tabId, sessionId });
@@ -102,7 +106,23 @@ export class TaskBrowserComponent {
     const tabId = this.current()?.id;
     if (tabId) this.command({ kind: 'navigate', tabId, url: this.normalize(value) });
   }
-  newTab(): void { if (!this.store.pending()) this.command({ kind: 'new-tab' }); }
+  newTab(): void { if (!this.detachedWindow() && !this.store.pending()) this.command({ kind: 'new-tab' }); }
+  async moveToWindow(tabId = this.current()?.id): Promise<void> {
+    const scope = this.scopeId(), task = this.taskId(), context = this.windowContext();
+    if (!scope || !task || !tabId || !context || this.moving()) return;
+    this.moving.set(true);
+    try { await this.store.bridge.taskBrowserDetach?.(scope, task, tabId, context); }
+    catch { if (this.scopeId() === scope && this.taskId() === task) this.notice.set('Could not open this tab in a window. Try again.'); }
+    finally { this.moving.set(false); }
+  }
+  async returnTab(): Promise<void> {
+    const scope = this.scopeId(), task = this.taskId(), tab = this.current()?.id;
+    if (!scope || !task || !tab || this.moving()) return;
+    this.moving.set(true);
+    try { await this.store.bridge.taskBrowserReturn?.(scope, task, tab); }
+    catch { if (this.scopeId() === scope && this.taskId() === task) this.notice.set('Could not return this tab. Try again.'); }
+    finally { this.moving.set(false); }
+  }
   private normalize(value: string): string { const trimmed = value.trim(); if (/^[0-9]{1,5}$/.test(trimmed)) return 'http://localhost:' + trimmed; return /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : 'http://' + trimmed; }
   setWidth(width: 'full' | 'phone'): void { const tabId = this.current()?.id; if (tabId) this.command({ kind: 'width', tabId, width }); }
   presentation(mode: 'embedded' | 'stream'): void {

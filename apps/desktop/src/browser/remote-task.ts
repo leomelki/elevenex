@@ -23,9 +23,34 @@ import { requestBackendJson } from "../backend-client/transport";
 import { browserId, browserUrl, record } from "./validation";
 
 class RemoteBrowserConflict extends Error {}
-/** Remote browser transport. Private endpoints and viewer credentials never cross preload. */
+/** Remote task transport. Child presentations share its private viewer connection;
+ * only the root connects/polls, while each view owns its viewport and frame receipts. */
 export class RemoteTaskBrowser {
   readonly isRemote = true;
+  private readonly detached = new Map<string, RemoteTaskBrowser>();
+  private get ownerId(): number { return this.parent?.browser.ownerId ?? this.window.webContents.id; }
+  hasDetached(): boolean { return this.detached.size > 0; }
+  detachTab(tabId: string, window: BrowserWindow): void {
+    if (!this.state?.canDetach) throw new Error('Update this machine to open browser tabs in windows.');
+    if (!this.state?.tabs.some(tab => tab.id === tabId) || this.detached.has(tabId)) throw new Error('Browser tab changed');
+    const view = new RemoteTaskBrowser(this.scopeId, this.taskId, window, this.client,
+      () => { this.revision++; this.changed(this.snapshot()); this.surfacesChanged(); }, this.selected, this.surfacesChanged, this.deliver, this.remote,
+      { browser: this, tabId });
+    view.reconnect = false; this.detached.set(tabId, view);
+    view.accept({ ...this.state, active: tabId });
+    this.epoch++; this.revision++; this.changed(this.snapshot()); this.surfacesChanged();
+  }
+  returnTab(tabId: string): void {
+    const view = this.detached.get(tabId); if (!view) return;
+    this.detached.delete(tabId); view.destroy();
+    void this.request('layout', { tabId, detached: false, width: 800, height: 600, visible: false, interactive: false, pixelRatio: 1, sequence: ++this.remoteLayoutSequence }).catch(() => undefined);
+    this.epoch++; this.revision++; this.changed(this.snapshot()); this.surfacesChanged();
+  }
+  positionDetached(tabId: string, input: TaskBrowserLayout): void { this.detached.get(tabId)?.position(input); }
+  hideDetached(tabId: string): void { this.detached.get(tabId)?.hide(); }
+  applicationInputDetached(tabId: string, x?: number, y?: number): void { this.detached.get(tabId)?.applicationInput(x, y); }
+  detachedSurfaces(tabId: string): readonly TaskBrowserSurface[] { return this.detached.get(tabId)?.surfaces() ?? []; }
+  detachedSnapshot(tabId: string, state = this.snapshot()): TaskBrowserState { const view = this.detached.get(tabId); return view ? { ...view.snapshot(), revision: state.revision } : state; }
   private state?: TaskBrowserState;
   private token = "";
   private revision = 0;
@@ -67,18 +92,20 @@ export class RemoteTaskBrowser {
     private readonly selected: () => boolean,
     private readonly surfacesChanged: () => void,
     private readonly deliver: (frame: TaskBrowserFrame) => void,
-    remote: RemoteManager,
+    private readonly remote: RemoteManager,
+    private readonly parent?: { readonly browser: RemoteTaskBrowser; readonly tabId: string },
   ) {
     this.network = new TaskBrowserNetwork(
       true,
-      (port) => remote.browserForward(window.webContents.id, port),
+      (port) => remote.browserForward(this.ownerId, port),
       () =>
         !this.disposed &&
-        client.state(window.webContents.id).scope?.id === scopeId,
+        client.state(this.ownerId).scope?.id === scopeId,
       selected,
     );
   }
   private endpoint(endpoint: BackendEndpoint): BackendEndpoint {
+    if (this.parent) return this.parent.browser.endpoint(endpoint);
     return {
       ...endpoint,
       headers: { ...endpoint.headers, "x-elevenex-browser-view": this.token },
@@ -90,9 +117,10 @@ export class RemoteTaskBrowser {
     timeout = 10000,
   ): Promise<unknown> {
     if (this.disposed) throw new Error("Remote browser closed");
+    if (this.parent) return this.parent.browser.request(path, body, timeout);
     const revision = this.connectionRevision;
     const result = await this.client.execute(
-      this.window.webContents.id,
+      this.ownerId,
       this.scopeId,
       null,
       body !== undefined,
@@ -148,6 +176,7 @@ export class RemoteTaskBrowser {
     this.connectionRevision++;
     this.serverRevision = -1;
     this.token = browserId(reply["token"]);
+    for (const view of this.detached.values()) { view.streamId = randomUUID(); view.after = 0; view.waitingAck = 0; view.layoutSent = ''; view.frameRevision++; view.serverRevision = -1; }
     this.streamId = randomUUID();
     this.waitingAck = 0;
     this.after = 0;
@@ -157,6 +186,7 @@ export class RemoteTaskBrowser {
     this.accept(reply["state"]);
   }
   async refresh(): Promise<void> {
+    if (this.hasDetached() && !this.reconnect) { this.accept(await this.request('state')); return; }
     this.connection = { phase: "idle" };
     this.reconnect = true;
     this.accept(await this.request("initial"));
@@ -167,7 +197,8 @@ export class RemoteTaskBrowser {
       ...this.state,
       revision: this.revision,
       surfaceEpoch: this.epoch,
-      connection: this.connection,
+      connection: this.parent?.browser.connection ?? this.connection,
+      tabs: (this.state?.tabs ?? []).map(tab => ({ ...tab, detached: this.detached.has(tab.id) })),
     };
   }
   private accept(value: unknown): void {
@@ -176,7 +207,7 @@ export class RemoteTaskBrowser {
     const state = remoteBrowserState(value, this.scopeId, this.taskId);
     if (state.revision < this.serverRevision) return;
     this.serverRevision = state.revision;
-    this.state = state;
+    this.state = this.parent ? { ...state, active: this.parent.tabId } : state;
     this.revision++;
     if (this.presentedTab !== this.state.active) {
       this.presentedTab = this.state.active;
@@ -184,13 +215,14 @@ export class RemoteTaskBrowser {
       this.waitingAck = 0;
       this.layoutSent = "";
     }
+    for (const [tabId, view] of this.detached) view.accept({ ...state, active: tabId });
     this.changed(this.snapshot());
     this.surfacesChanged();
   }
   surfaces(): readonly TaskBrowserSurface[] {
     const tab = this.state?.tabs.find((tab) => tab.id === this.state?.active),
       box = this.layout?.bounds;
-    if (this.disposed || !tab?.url || !box) return [];
+    if (this.disposed || !tab?.url || !box || this.detached.has(tab.id)) return [];
     const zoom = this.window.webContents.getZoomFactor();
     return [
       {
@@ -216,11 +248,12 @@ export class RemoteTaskBrowser {
     ];
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
+    if (this.parent) return this.parent.browser.command(input);
     if (input.kind === "outside") {
       const tab = this.state?.tabs.find((tab) => tab.id === input.tabId);
       if (!tab) throw new Error("Browser tab closed");
       const actual = await this.network.outside(browserUrl(tab.url));
-      if (!this.selected() || this.disposed || this.client.state(this.window.webContents.id).scope?.id !== this.scopeId || !this.state?.tabs.some(item => item.id === tab.id)) throw new Error("Task changed");
+      if (!this.selected() || this.disposed || this.client.state(this.ownerId).scope?.id !== this.scopeId || !this.state?.tabs.some(item => item.id === tab.id)) throw new Error("Task changed");
       await shell.openExternal(actual);
       return this.snapshot();
     }
@@ -241,6 +274,7 @@ export class RemoteTaskBrowser {
     generation: number,
     input: TaskBrowserStreamInput,
   ): Promise<number> {
+    const detached = this.detached.get(tabId); if (detached) return detached.userInput(tabId, generation, input);
     if (this.selected() && this.layout?.visible && this.state?.active === tabId && this.state.picked && input.kind === 'pointer' && input.type === 'up') return this.state.tabs.find(tab => tab.id === tabId)?.generation ?? generation;
     if (
       !this.selected() ||
@@ -268,6 +302,10 @@ export class RemoteTaskBrowser {
       await clipboard.writeText(reply["clipboard"]);
     if (!Number.isSafeInteger(reply["generation"]))
       throw new Error("Invalid remote control receipt");
+    if (this.parent) {
+      this.parent.browser.accept(await this.parent.browser.request('state'));
+      return Number(reply['generation']);
+    }
     if (this.state && this.selected()) {
       const accepted = Number(reply["generation"]);
       if (Number.isSafeInteger(reply["revision"]))
@@ -296,6 +334,7 @@ export class RemoteTaskBrowser {
     return Number(reply["generation"]);
   }
   acknowledge(tabId: string, streamId: string, sequence: number): void {
+    const detached = this.detached.get(tabId); if (detached) { detached.acknowledge(tabId, streamId, sequence); return; }
     if (
       streamId === this.streamId &&
       tabId === this.state?.active &&
@@ -316,6 +355,7 @@ export class RemoteTaskBrowser {
     this.heartbeat = Date.now();
     this.layout = input;
     this.surfacesChanged();
+    if (this.parent) { void this.pushLayout(); void this.readFrame(); return; }
     if (this.reconnect && this.connection.phase !== "blocked") {
       void this.connect()
         .then(() => {
@@ -339,7 +379,9 @@ export class RemoteTaskBrowser {
       this.reconnect
     )
       return;
+    if (!this.parent && this.state?.active && this.detached.has(this.state.active)) return;
     const box = {
+      ...(this.parent ? { tabId: this.parent.tabId } : {}),
       width: Math.max(
         100,
         Math.min(
@@ -371,7 +413,7 @@ export class RemoteTaskBrowser {
       this.accept(
         await this.request("layout", {
           ...box,
-          sequence: ++this.remoteLayoutSequence,
+          sequence: this.parent ? ++this.parent.browser.remoteLayoutSequence : ++this.remoteLayoutSequence,
         }),
       );
     } catch (error) {
@@ -393,7 +435,7 @@ export class RemoteTaskBrowser {
     try {
       if (
         this.selected() &&
-        this.layout?.visible &&
+        (this.layout?.visible || this.hasDetached()) &&
         this.connection.phase !== "blocked"
       ) {
         if (this.reconnect) await this.connect();
@@ -407,6 +449,7 @@ export class RemoteTaskBrowser {
     }
   }
   private fail(error?: unknown): void {
+    if (this.parent) { this.parent.browser.fail(error); return; }
     this.connection =
       error instanceof RemoteBrowserConflict
         ? { phase: "blocked", message: error.message }
@@ -416,6 +459,7 @@ export class RemoteTaskBrowser {
               "Browser connection interrupted. Reconnecting with user control…",
           };
     this.reconnect = true;
+    for (const view of this.detached.values()) { view.waitingAck = 0; view.frameRevision++; view.layoutSent = ""; }
     this.waitingAck = 0;
     if (this.state) {
       this.state = {
@@ -441,6 +485,7 @@ export class RemoteTaskBrowser {
       this.framePending ||
       this.waitingAck ||
       !tabId ||
+      this.detached.has(tabId) ||
       !this.layout?.visible ||
       !this.selected() ||
       this.disposed ||
@@ -448,12 +493,12 @@ export class RemoteTaskBrowser {
     )
       return;
     this.framePending = true;
-    const revision = this.connectionRevision,
+    const revision = this.parent?.browser.connectionRevision ?? this.connectionRevision,
       frameRevision = this.frameRevision;
     const result = await this.client.execute(
-      this.window.webContents.id,
+      this.ownerId,
       this.scopeId,
-      "browser-frame:" + this.taskId,
+      "browser-frame:" + this.taskId + (this.parent ? ":" + this.parent.tabId : ""),
       false,
       async (endpoint, signal) => {
         const response = await fetch(
@@ -523,7 +568,7 @@ export class RemoteTaskBrowser {
     this.framePending = false;
     if (
       this.disposed ||
-      revision !== this.connectionRevision ||
+      revision !== (this.parent?.browser.connectionRevision ?? this.connectionRevision) ||
       frameRevision !== this.frameRevision ||
       this.state?.active !== tabId ||
       !this.layout?.visible
@@ -546,6 +591,7 @@ export class RemoteTaskBrowser {
       }, 200);
   }
   maintain(): void {
+    for (const view of this.detached.values()) view.maintain();
     if (
       this.layout &&
       (Date.now() - this.heartbeat > 750 ||
@@ -554,7 +600,7 @@ export class RemoteTaskBrowser {
     )
       this.hide();
     if (
-      this.client.state(this.window.webContents.id).scope?.id !== this.scopeId
+      this.client.state(this.ownerId).scope?.id !== this.scopeId
     )
       this.destroy();
   }
@@ -584,15 +630,22 @@ export class RemoteTaskBrowser {
     this.layout = undefined;
     this.waitingAck = 0;
     this.client.cancel(
-      this.window.webContents.id,
+      this.ownerId,
       this.scopeId,
-      "browser-frame:" + this.taskId,
+      "browser-frame:" + this.taskId + (this.parent ? ":" + this.parent.tabId : ""),
     );
     if (this.state) {
       this.revision++;
       this.changed(this.snapshot());
     }
     this.surfacesChanged();
+    if (visible && (this.parent || this.hasDetached())) {
+      if (this.parent || !this.state?.active || !this.detached.has(this.state.active)) void this.request('layout', {
+        ...(this.parent ? { tabId: this.parent.tabId } : {}), width: 800, height: 600, visible: false, interactive: false, pixelRatio: 1,
+        sequence: this.parent ? ++this.parent.browser.remoteLayoutSequence : ++this.remoteLayoutSequence,
+      }).catch(() => undefined);
+      return;
+    }
     if (visible) {
       this.connection = { phase: "idle" };
       this.reconnect = true;
@@ -601,6 +654,7 @@ export class RemoteTaskBrowser {
   }
   suspend(): void {
     this.hide();
+    if (this.hasDetached() || this.parent) return;
     this.reconnect = true;
     void this.request("disconnect", {}).catch(() => undefined);
   }
@@ -611,8 +665,9 @@ export class RemoteTaskBrowser {
   destroy(): void {
     if (this.disposed) return;
     this.hide();
+    for (const view of this.detached.values()) view.destroy(); this.detached.clear();
     clearTimeout(this.timer);
-    void this.request("disconnect", {}).catch(() => undefined);
+    if (!this.parent) void this.request("disconnect", {}).catch(() => undefined);
     this.disposed = true;
     this.network.close();
     this.surfacesChanged();

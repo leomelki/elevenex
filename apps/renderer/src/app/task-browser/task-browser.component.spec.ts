@@ -1,6 +1,6 @@
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TaskBrowserCommand, TaskBrowserState, TaskBrowserTab } from '@elevenex/shared';
+import type { TaskBrowserCommand, TaskBrowserState, TaskBrowserTab, TaskBrowserWindowContext, ElevenexBridge } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { TaskBrowserComponent } from './task-browser.component';
 
@@ -10,6 +10,8 @@ function tab(id = 'tab-1'): TaskBrowserTab {
 function setup(tabs: readonly TaskBrowserTab[] = []) {
   let state: TaskBrowserState = { scopeId: 'scope', taskId: 1, revision: 0, surfaceEpoch: 0, controlsFocus: 0, active: tabs[0]?.id ?? null, tabs, picked: null, picking: false, pickerMessage: null, feedback: false, ports: [3000], privacy: 'content-withheld' };
   const bridge = {
+    taskBrowserDetach: vi.fn<NonNullable<ElevenexBridge['taskBrowserDetach']>>(async () => undefined),
+    taskBrowserReturn: vi.fn<NonNullable<ElevenexBridge['taskBrowserReturn']>>(async () => undefined),
     taskBrowserRead: vi.fn(async () => ({ ok: true, value: state })),
     taskBrowserHide: vi.fn(async () => undefined),
     taskBrowserCommand: vi.fn(async (_scope: string, _task: number, input: TaskBrowserCommand) => {
@@ -81,5 +83,36 @@ describe('Task browser start tabs', () => {
     await fixture.componentInstance.store.read(); await render(fixture);
     expect(bridge.taskBrowserCommand).toHaveBeenCalledTimes(1);
     expect(fixture.componentInstance.store.error()).toContain('interrupted');
+  });
+});
+
+
+describe('Detached browser tab intents', () => {
+  const context: TaskBrowserWindowContext = { projectName: 'Shop', taskName: 'Checkout', branchName: 'feat/checkout', machineName: 'This Mac', stage: 'active', hue: 'pine' };
+  it('opens the current tab with captured task context', async () => {
+    const { fixture, bridge } = setup([tab('existing')]);
+    fixture.componentRef.setInput('windowContext', context); await render(fixture);
+    (fixture.nativeElement.querySelector('[aria-label="Open tab in new window"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(bridge.taskBrowserDetach).toHaveBeenCalledExactlyOnceWith('scope', 1, 'existing', context));
+    expect(bridge.taskBrowserCommand).not.toHaveBeenCalled();
+  });
+  it('keeps detached tabs discoverable without enabling duplicate page controls', async () => {
+    const { fixture, bridge } = setup([{ ...tab('detached'), detached: true }]);
+    fixture.componentRef.setInput('windowContext', context); await render(fixture);
+    expect(fixture.nativeElement.querySelector('.detached-placeholder')?.textContent).toContain('Show window');
+    expect((fixture.nativeElement.querySelector('[aria-label="Page address"]') as HTMLInputElement).disabled).toBe(true);
+    fixture.componentInstance.tabCommand('select', 'detached');
+    await vi.waitFor(() => expect(bridge.taskBrowserDetach).toHaveBeenCalledWith('scope', 1, 'detached', context));
+    await fixture.componentInstance.returnTab();
+    expect(bridge.taskBrowserReturn).toHaveBeenCalledExactlyOnceWith('scope', 1, 'detached');
+    expect(bridge.taskBrowserCommand).not.toHaveBeenCalled();
+  });
+  it('keeps a companion bound to one tab when the new-tab shortcut is pressed', async () => {
+    const { fixture, bridge } = setup([tab('existing')]);
+    fixture.componentRef.setInput('detachedWindow', true); fixture.componentRef.setInput('active', true); await render(fixture);
+    expect(fixture.nativeElement.querySelector('ex-view-tabs')).toBeNull();
+    fixture.nativeElement.querySelector('.browser').dispatchEvent(new KeyboardEvent('keydown', { key: 't', ctrlKey: true, bubbles: true }));
+    await fixture.componentInstance.newTab();
+    expect(bridge.taskBrowserCommand).not.toHaveBeenCalled();
   });
 });
