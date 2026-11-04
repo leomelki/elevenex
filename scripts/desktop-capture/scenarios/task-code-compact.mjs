@@ -389,7 +389,9 @@ export default async function* (capture) {
       const before = await capture.evaluate(() => ({width:document.querySelector('ex-code-panel iframe').clientWidth,inner:document.querySelector('ex-app-shell .panel-inner').clientWidth,transform:getComputedStyle(document.querySelector('ex-code-panel .frame-container')).transform}));
       await capture.motion.freeze();
       await capture.click('ex-workspace-panels [aria-label="Close side panel"]');
-      for (const time of interrupted ? [140] : [70,140,245]) {
+      // Include subpixel/zero-width frames before retention cleanup: composited
+      // editor layers must stay clipped right up to the end of the slide.
+      for (const time of interrupted ? [140] : [70,140,245,270,279]) {
         await capture.evaluate(time => {
           for (const region of document.querySelector('ex-app-shell .workspace').children) {
             for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=time;

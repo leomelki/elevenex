@@ -70,6 +70,8 @@
   width: 0;
   min-width: 0;
   overflow: clip;
+  /* Clip composited editor/snapshot layers even at the final subpixel widths. */
+  clip-path: inset(0 round var(--radius-lg));
   opacity: 0;
   transition: width var(--dur-slow) var(--ease-in-out);
 }

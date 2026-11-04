@@ -1,5 +1,19 @@
 # New Code workbench verification
 
+## Closing-edge compositor clipping
+
+On 2026-11-04, added an explicit rounded clip to the shell panel so retained
+Code iframe and snapshot layers remain confined through its final subpixel
+widths. The existing native scenario now includes 270ms and 279ms closing frames.
+`artifacts/desktop-capture/code-panel-flash/report.json` verified **83 checkpoints**
+with no renderer errors using real Code OSS and an isolated disposable backend.
+Inspected the final light/dark compact, wide and interrupted-expansion PNGs;
+the right edge stays clear. Reopening, search, saving, focus and reduced motion
+also passed. A separate shell capture verified 24 checkpoints in both themes.
+`desktop:lint`, `desktop:test`, `desktop:build` and `git diff --check` passed
+(158 desktop cases, seven capture cases and 647 renderer cases, plus type checks).
+Verification used unpackaged macOS Electron; no packaged or other-OS launch.
+
 ## Softer transition blur
 
 On 2026-11-04, reduced only the editor transition peak blur from 20px to 16px,
