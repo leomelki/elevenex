@@ -650,7 +650,7 @@ native captures after building. When starting a disposable backend, set both
 directory, to avoid inheriting a running development session's database.
 
 `scenarios/terminal-tabs.mjs` verifies TerminalView's shared tab strip: repeated
-creation and automatic revelation, hidden-tab counts, selection-independent
-browsing, metadata refresh, Home/End/Delete, ancestor scroll and focus retention,
+creation and automatic revelation, edge fades, wheel browsing without
+selection changes, metadata refresh, Home/End/Delete, ancestor scroll and focus retention,
 empty strips and 320px reduced-motion layouts in both themes. Run against the
 component preview with `--url http://127.0.0.1:4310`.

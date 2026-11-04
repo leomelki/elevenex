@@ -13,21 +13,25 @@ export default async function* (capture) {
       .some(animation => animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime)));
     await capture.settle();
   };
+  // Selection jumps scroll smoothly; wait for the selected tab to land in view.
+  const revealed = () => capture.waitFor(() => {
+    const list = document.querySelector('ex-terminal-view [role="tablist"]');
+    const tab = list.querySelector('[aria-selected="true"]')?.parentElement.getBoundingClientRect();
+    const bounds = list.getBoundingClientRect();
+    return !!tab && tab.left >= bounds.left - 1 && tab.right <= bounds.right + 1;
+  });
   const state = () => capture.evaluate(() => {
     const root = document.querySelector('ex-terminal-view');
     const list = root.querySelector('[role="tablist"]');
     const selected = root.querySelector('[role="tab"][aria-selected="true"]');
     const bounds = list.getBoundingClientRect(), tab = selected?.parentElement.getBoundingClientRect();
-    const button = selector => {
-      const control = root.querySelector(selector);
-      return control ? { disabled: control.disabled, label: control.getAttribute('aria-label') } : null;
-    };
     return {
       active: selected?.dataset.tabId, scroll: list.scrollLeft,
       strip: { left: bounds.left, right: bounds.right, width: bounds.width },
       tab: tab ? { left: tab.left, right: tab.right, width: tab.width } : null,
       visible: !!tab && tab.left >= bounds.left - 1 && tab.right <= bounds.right + 1,
-      previous: button('.scroll.previous'), next: button('.scroll.next'),
+      before: list.classList.contains('more-before'), after: list.classList.contains('more-after'),
+      fade: getComputedStyle(list).maskImage,
       focused: document.activeElement?.getAttribute('aria-label'),
       documentScroll: document.scrollingElement.scrollTop,
     };
@@ -42,7 +46,8 @@ export default async function* (capture) {
     });
     await settled();
     await capture.evaluate(() => document.querySelector('ex-terminal-view').scrollIntoView({ block: 'center' }));
-    assert.equal((await state()).previous, null, 'No overflow controls for a fitting tab');
+    let fitting = await state();
+    assert.equal(fitting.before || fitting.after, false, 'No edge fades for a fitting tab');
     for (let index = 0; index < 7; index++) {
       const before = await state();
       await capture.click(`${root} [aria-label="New terminal (⌘T)"]`);
@@ -54,16 +59,21 @@ export default async function* (capture) {
     }
     let current = await state();
     assert.ok(current.scroll > 0);
-    assert.equal(current.previous.disabled, false);
-    assert.equal(current.next.disabled, true);
+    assert.equal(current.before, true, 'Earlier tabs fade out at the start edge');
+    assert.equal(current.after, false);
     yield { name: `${theme}-new-terminal-visible`, selector: root, metadata: current };
 
-    const active = current.active;
-    await capture.click(`${root} .scroll.previous`);
+    const active = current.active, browsedFrom = current.scroll;
+    // A plain vertical mouse wheel scrolls the strip horizontally.
+    await capture.evaluate(() => {
+      const list = document.querySelector('ex-terminal-view [role="tablist"]');
+      list.dispatchEvent(new window.WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }));
+    });
     await capture.settle();
     current = await state();
+    assert.ok(current.scroll < browsedFrom, 'Wheel scrolls toward earlier tabs');
     assert.equal(current.active, active, 'Browsing does not change selection');
-    assert.equal(current.next.disabled, false, 'Hidden later tabs remain discoverable');
+    assert.equal(current.before && current.after, true, 'Both edges fade while browsing the middle');
     const browsed = current.scroll;
     await owner(component => component.terminalTabs.update(tabs => tabs.map(tab => ({ ...tab }))));
     assert.equal((await state()).scroll, browsed, 'Metadata refresh preserves manual browsing');
@@ -72,14 +82,15 @@ export default async function* (capture) {
     await owner(component => component.terminalActive.set('one'));
     await capture.evaluate(() => document.querySelector('ex-terminal-view [data-tab-id="one"]').focus({ preventScroll: true }));
     await capture.press('End');
-    await capture.settle();
+    await revealed();
     assert.equal((await state()).visible, true, 'End reveals and focuses the last terminal');
     await capture.press('Home');
-    await capture.settle();
+    await revealed();
     assert.equal((await state()).active, 'one');
     assert.equal((await state()).visible, true);
     await capture.press('Delete');
     await settled();
+    await revealed();
     assert.equal((await state()).visible, true, 'Closing reveals the selected neighbour');
 
     await capture.click(`${root} [aria-label="New terminal (⌘T)"]`);
@@ -111,7 +122,8 @@ export default async function* (capture) {
 
     await owner(component => { component.terminalTabs.set([]); component.terminalActive.set(''); });
     await settled();
-    assert.equal((await state()).previous, null, 'Empty strips remove overflow controls');
+    fitting = await state();
+    assert.equal(fitting.before || fitting.after, false, 'Empty strips have no edge fades');
     yield { name: `${theme}-empty`, selector: root };
   }
 }

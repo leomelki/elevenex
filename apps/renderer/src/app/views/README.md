@@ -110,9 +110,11 @@ with the same file/revision/mode identity. This keeps line paging attached to th
 file while scroll-based selection moves between its neighbours.
 
 `ViewTabs` reveals the controlled selection within its own horizontal strip,
-including while a newly created tab grows in. Overflow shows earlier/later
-buttons with counts of partially or fully hidden tabs. These browse the strip
-without selecting another tab; New stays fixed outside it. Wheel/drag browsing
-suspends selection following until selection changes, so metadata updates never
-pull the strip back. Resize observers and scheduled measurements are disposed
-with the component. Revelation is immediate and does not scroll any ancestor.
+including while a newly created tab grows in, and keeps it clear of the edge
+fades. Overflow is signalled only by those 24px fades; the scrollbar is hidden.
+Trackpads scroll natively and a vertical mouse wheel scrolls the strip
+horizontally. New stays fixed outside it. Wheel/drag browsing suspends selection
+following until selection changes, so metadata updates never pull the strip
+back. Selection jumps scroll smoothly (instant under reduced motion); growth
+tracking is immediate. Resize observers and scheduled measurements are disposed
+with the component. Revelation never scrolls an ancestor.
