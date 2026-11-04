@@ -14,7 +14,8 @@ pnpm desktop:preview
 
 Open `http://127.0.0.1:4310`. The workspace preview composes real components;
 Foundations, Tasks, Projects, Settings, Sub-tasks, Git helpers, Conversation, Agent picker, Machines and views, and Machine flow exercise their public
-APIs. Example data lives only in `preview/`, under a separate Angular build
+APIs. `/task-browser` exercises the production browser's default/new-tab flow
+with a preview-only transport. Example data lives only in `preview/`, under a separate Angular build
 configuration. It is absent from the production entry graph and packaged app.
 
 The **Sidebar motion** and **Git motion** pages exercise repeated/bulk changes

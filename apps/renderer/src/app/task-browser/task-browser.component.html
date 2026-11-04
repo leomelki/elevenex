@@ -12,7 +12,7 @@
     [loading]="current()?.loading ?? false" [canGoBack]="current()?.canGoBack ?? false"
     [errors]="current()?.errors ?? 0" errorText=" · Details withheld for privacy."
     needsTitle="The agent needs you here" needsText="Complete sign-in, codes or payment yourself. Agent page text, screenshots and logs are withheld. I’m done explicitly returns control."
-    (selected)="tabCommand('select', $event)" (closed)="tabCommand('close', $event)" (added)="showDialog('new')"
+    (selected)="tabCommand('select', $event)" (closed)="tabCommand('close', $event)" (added)="newTab()"
     (navigated)="navigate($event)" (backRequested)="tabCommand('back')" (reloadRequested)="tabCommand('reload')"
     (pageFocusRequested)="tabCommand('focus')" (takeOverRequested)="tabCommand('takeover')" (handBackRequested)="tabCommand('handoff')" (widthChange)="setWidth($event)"
     (pickingChange)="command({kind: 'pick', enabled: $event})" (asked)="ask($event)" (sendErrorsRequested)="sendErrors()" (moreRequested)="showDialog('tools')">
@@ -24,22 +24,19 @@
       } @else if (current()?.loading) {
         <div class="page-state" role="status"><p>Loading page…</p></div>
       } @else if (!current()?.url && current()) {
-        <div class="page-state"><ex-icon name="globe" [size]="24" /><p>Enter an address above to open a page.</p><button exButton (click)="showDialog('new')">Open a page</button></div>
+        <div class="page-state start-page">
+          <ex-icon name="globe" [size]="40" /><h2>New tab</h2><p>Where would you like to go?</p>
+          @if (store.state()?.ports?.length) {
+            <div class="server-options" aria-label="Task servers">@for (port of store.state()!.ports; track port) { <button exButton (click)="navigate('http://localhost:' + port)"><ex-icon name="globe" [size]="14" />localhost:{{ port }}</button> }</div>
+          }
+        </div>
       }
     </div>
   </ex-browser-view>
 }
 @if (dialog()) {
   <ex-modal-layer [open]="dialogOpen()" (closeRequested)="dialogOpen.set(false)" (closed)="dialog.set(null)">
-    <section class="browser-dialog" role="dialog" aria-modal="true" [attr.aria-label]="dialog() === 'new' ? 'New browser tab' : 'Browser tools'" [attr.inert]="dialogOpen() ? null : ''">
-      @if (dialog() === 'new') {
-        <h2>Open a page</h2><p>Tabs belong to this task. Localhost uses the selected machine’s server, including SSH forwarding.</p>
-        @if (store.state()?.ports?.length) {
-          <div class="server-options" aria-label="Task servers">@for (port of store.state()!.ports; track port) { <button exButton size="sm" (click)="address.set('http://localhost:' + port)"><ex-icon name="globe" [size]="14" />localhost:{{ port }}</button> }</div>
-        }
-        @if (store.error()) { <p role="alert">{{ store.error() }}</p> }
-        <form (submit)="$event.preventDefault(); openPage()"><label for="task-browser-url">Address or task server port</label><input #urlInput id="task-browser-url" [value]="address()" (input)="address.set(urlInput.value)" placeholder="http://localhost:3000" /><div class="actions"><button exButton type="button" (click)="dialogOpen.set(false)">Cancel</button><button exButton variant="primary" type="submit" [disabled]="!address().trim() || store.pending() > 0">{{ store.pending() > 0 ? 'Opening…' : 'Open tab' }}</button></div></form>
-      } @else {
+    <section class="browser-dialog" role="dialog" aria-modal="true" aria-label="Browser tools" [attr.inert]="dialogOpen() ? null : ''">
         <h2>Browser tools</h2>
         @if (store.error()) { <p role="alert">{{ store.error() }}</p> }
         <p class="privacy"><ex-icon name="shield" [size]="16" />Agent observation is withheld: arbitrary pages cannot guarantee complete secret redaction.</p>
@@ -52,7 +49,6 @@
         <div class="unavailable" [hidden]="directAvailable() || !current()?.url"><span>Streamed display</span><small>Audio, page accessibility and device permission prompts are unavailable here. File selection and downloads require Open outside, with a separate sign-in profile.</small></div>
         <div class="unavailable"><span>Screenshot to chat unavailable</span><small>Pixels can expose sign-in, code and payment secrets. No screenshot is captured or sent.</small></div>
         <div class="actions"><button exButton variant="primary" (click)="dialogOpen.set(false)">Done</button></div>
-      }
     </section>
   </ex-modal-layer>
 }

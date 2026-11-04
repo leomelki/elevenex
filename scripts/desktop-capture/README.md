@@ -641,6 +641,12 @@ native captures after building. When starting a disposable backend, set both
 directory, to avoid inheriting a running development session's database.
 ### Native task browser integration
 
+`scenarios/browser-new-tab.mjs` uses `--url http://127.0.0.1:4310/task-browser`
+to check the production default tab, +/Command/Ctrl-T, address focus/drafts,
+Enter navigation, task-server shortcuts, empty tabs and narrow/reduced-motion
+layouts in both themes. Its isolated preview transport does not load websites;
+native Electron and runtime Chromium integration tests verify actual navigation.
+
 `--backend-url http://127.0.0.1:<port>` borrows an already running **isolated**
 backend for live product captures. The capture CLI validates its `/api/info`
 revision; only the test runner substitutes the backend lifecycle composition.

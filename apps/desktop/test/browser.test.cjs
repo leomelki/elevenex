@@ -21,6 +21,9 @@ test('navigation and tools reject privileged protocols, credentials, unknown fie
   for (const value of ['http://127.1', 'http://2130706433', 'http://localhost.', 'http://x.localhost', 'http://[::ffff:127.0.0.1]', 'http://127.0.0.2']) assert.equal(loopback(new URL(value)), true);
   assert.equal(loopback(new URL('https://example.com')), false);
   assert.equal(browserUrl('https://example.com/'), 'https://example.com/');
+  assert.deepEqual(command({ kind: 'new-tab' }), { kind: 'new-tab' });
+  assert.throws(() => command({ kind: 'new-tab', url: 'file:///etc/passwd' }));
+  assert.throws(() => agentCommand({ kind: 'new-tab' }));
   assert.throws(() => command({ kind: 'open', url: 'https://example.com', preload: '/tmp/unsafe' }));
   assert.throws(() => agentCommand({ kind: 'type', tabId: id, generation: 1, text: 'secret' }));
   assert.throws(() => agentCommand({ kind: 'click', tabId: id, generation: 1, x: NaN, y: 2, step: 'Click' }));

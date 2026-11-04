@@ -242,8 +242,9 @@ export class RuntimeBrowserTask {
   private async ensure(
     page: RuntimeBrowserTab,
     signal = this.controller.signal,
+    assertOwnership?: () => void,
   ): Promise<void> {
-    if (page.started) return;
+    if (page.started || !page.url) return;
     if (page.error) return; // A failed engine requires explicit human Reload.
     let pending = this.starting.get(page.id);
     if (!pending) {
@@ -257,6 +258,9 @@ export class RuntimeBrowserTask {
         page.setPorts([...this.authorizedPorts]);
         await page.themeTo(page.theme, this.colorScheme);
         if (page.slowNetwork) await page.networkTo(true);
+        signal.throwIfAborted();
+        // A start tab may lose agent ownership while its engine is launching.
+        assertOwnership?.();
         await page.navigate(page.url);
       })().finally(() => this.starting.delete(page.id));
       this.starting.set(page.id, pending);
@@ -269,7 +273,7 @@ export class RuntimeBrowserTask {
     url: string,
     signal?: AbortSignal,
   ): Promise<RuntimeBrowserTab> {
-    this.authorize(url);
+    if (url) this.authorize(url);
     if (this.tabs.size >= 12) throw new Error('Task browser tab limit reached');
     const tab = new RuntimeBrowserTab(
       by,
@@ -293,7 +297,7 @@ export class RuntimeBrowserTask {
     );
     const previous = this.active;
     tab.url = url;
-    tab.loading = true;
+    tab.loading = !!url;
     this.tabs.set(tab.id, tab);
     if (
       by === 'you' ||
@@ -433,7 +437,10 @@ export class RuntimeBrowserTask {
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
     this.touch();
     if (input.kind === 'dismiss-attention') this.attention = undefined;
-    else if (input.kind === 'open') {
+    else if (input.kind === 'new-tab') {
+      const page = await this.create('you', null, '', this.controller.signal);
+      await this.select(page.id);
+    } else if (input.kind === 'open') {
       const page = await this.create(
         'you',
         null,
@@ -466,8 +473,13 @@ export class RuntimeBrowserTask {
         page.takeover();
       else if (input.kind === 'navigate') {
         page.takeover();
-        await page.navigate(input.url);
+        if (!page.started && !page.error) {
+          page.url = input.url;
+          await this.ensure(page);
+          if (this.active === page.id) await this.select(page.id);
+        } else await page.navigate(input.url);
       } else if (input.kind === 'reload') {
+        if (!page.url) return this.state();
         page.takeover();
         if (!page.started) {
           await page.resetEngine();
@@ -638,7 +650,14 @@ export class RuntimeBrowserTask {
             await this.command({ kind: 'close', tabId: page.id });
           } else if (input.kind === 'navigate') {
             this.authorize(input.url);
-            await page.navigate(input.url);
+            if (!page.started && !page.error) {
+              page.url = input.url;
+              await this.ensure(
+                page,
+                AbortSignal.any([signal, this.controller.signal]),
+                () => page.assertAgent(input.generation, sessionId),
+              );
+            } else await page.navigate(input.url);
           } else if (input.kind === 'reload') await page.navigate(page.url);
           else if (input.kind === 'back') await page.back();
         } finally {

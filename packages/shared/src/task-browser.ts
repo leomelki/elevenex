@@ -78,6 +78,7 @@ export interface TaskBrowserState {
 }
 export type TaskBrowserCommand =
   | { readonly kind: 'dismiss-attention' }
+  | { readonly kind: 'new-tab' }
   | { readonly kind: 'open'; readonly url: string }
   | { readonly kind: 'select' | 'close' | 'back' | 'reload' | 'takeover' | 'outside' | 'focus'; readonly tabId: string }
   | { readonly kind: 'handoff'; readonly tabId: string; readonly sessionId: number }

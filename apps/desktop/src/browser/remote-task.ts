@@ -190,7 +190,7 @@ export class RemoteTaskBrowser {
   surfaces(): readonly TaskBrowserSurface[] {
     const tab = this.state?.tabs.find((tab) => tab.id === this.state?.active),
       box = this.layout?.bounds;
-    if (this.disposed || !tab || !box) return [];
+    if (this.disposed || !tab?.url || !box) return [];
     const zoom = this.window.webContents.getZoomFactor();
     return [
       {

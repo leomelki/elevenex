@@ -34,7 +34,12 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   })()`);
   const visibleCount = () => window.webContents.executeJavaScript('(window.__browserSurfaces || []).filter(surface=>surface.visible).length');
   await read();
-  let state = await command({ kind: 'open', url: url + '/browser-test' });
+  const blank = await command({ kind: 'new-tab' });
+  assert.equal(blank.tabs.length, 1);
+  assert.equal(blank.tabs[0].url, '');
+  assert.equal(blank.tabs[0].title, 'New tab');
+  assert.equal(blank.tabs[0].loading, false);
+  let state = await command({ kind: 'navigate', tabId: blank.active, url: url + '/browser-test' });
   const first = state.active;
   const native = await until(() => webContents.getAllWebContents().find(contents => contents !== window.webContents && contents.getURL().includes('/browser-test')), 'Browser page did not load');
   await until(async () => (await read()).tabs[0]?.loading === false, 'Browser page still loading');

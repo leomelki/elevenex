@@ -104,6 +104,7 @@ export class TaskBrowser {
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
     this.assertScope();
     if (input.kind === 'dismiss-attention') this.attention=undefined;
+    else if (input.kind === 'new-tab') this.select(this.create('you'));
     else if (input.kind === 'open') {
       const page = this.create('you'); page.userDownloadIntent = true; this.select(page); await this.navigate(page, input.url);
     } else if (input.kind === 'pick') {
@@ -142,6 +143,7 @@ export class TaskBrowser {
         await shell.openExternal(actual);
       } else if (input.kind === 'back') { page.lease.takeOver(); if (page.hasContents && page.contents.navigationHistory.canGoBack()) page.contents.navigationHistory.goBack(); }
       else if (input.kind === 'reload') {
+        if (!page.url) return this.snapshot();
         page.userDownloadIntent = true; page.lease.takeOver();
         if (!page.hasContents) {
           const wasActive = this.active === page.id, url = page.url;
@@ -270,7 +272,7 @@ export class TaskBrowser {
     for (const page of this.pages.values()) if (page.id !== this.active) page.hide();
     const page = this.active ? this.pages.get(this.active) : undefined;
     const layout = this.layout;
-    if (!page || !layout?.visible || this.disposed || this.window.isDestroyed() || !this.window.isVisible() || this.window.isMinimized()) { page?.hide(); return; }
+    if (!page || !page.url || !layout?.visible || this.disposed || this.window.isDestroyed() || !this.window.isVisible() || this.window.isMinimized()) { page?.hide(); return; }
     const viewport = this.window.getContentBounds();
     page.reducedMotion = layout.reducedMotion;
     const zoom = this.window.webContents.getZoomFactor();

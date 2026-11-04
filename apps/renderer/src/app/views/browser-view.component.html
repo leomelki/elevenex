@@ -8,7 +8,7 @@
     <div class="address" [title]="current()?.url ?? ''">
       @if (current()?.server; as server) { <span class="server" [title]="server + ' · this task’s dev server'">{{ server }}</span> }
       @if (addressEditable() && current()) {
-        <input #address aria-label="Page address" placeholder="https://example.com or http://localhost:3000" [value]="addressDraft() ?? current()?.url ?? ''" (input)="addressDraft.set(address.value)" (keydown.enter)="$event.preventDefault(); navigateAddress()" (keydown.escape)="addressDraft.set(null); address.blur()" />
+        <input #address aria-label="Page address" [value]="addressDraft() ?? current()?.url ?? ''" (input)="addressDraft.set(address.value)" (keydown.enter)="$event.preventDefault(); navigateAddress()" (keydown.escape)="addressDraft.set(null); address.blur()" />
       } @else { <span>{{ current()?.url ?? 'No page open' }}</span> }
     </div>
     <button #driverControl type="button" class="driver" [attr.aria-label]="driverLabel()" (click)="focusPage()" [disabled]="loading() || !pageFocusAvailable()" [hidden]="!current()" [attr.data-driver]="driver()">

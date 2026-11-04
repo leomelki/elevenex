@@ -5,6 +5,13 @@
 of the selected conversation. Questions and error reports capture scope/task/session
 and stage context in that session's explicit composer. They never send prompts.
 
+Opening an empty browser creates one user-owned start tab. The + button and
+Command/Ctrl-T create the same tab immediately and focus its address bar; Enter
+navigates that tab. The trusted start page also offers discovered task servers.
+No website, guest or remote Chromium process starts until navigation. Existing
+tabs survive panel/conversation changes. Closing the last tab leaves the New tab
+action available; returning to the empty browser creates its default again.
+
 ## Rendering and composition
 
 Local tasks use a real Electron guest `<webview>`. `EmbeddedPageComponent` creates

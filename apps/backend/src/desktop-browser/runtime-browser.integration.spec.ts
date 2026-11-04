@@ -197,8 +197,19 @@ describe('Remote browser public HTTP behavior', () => {
     heartbeat = setInterval(() => {
       void request('state').catch(() => undefined);
     }, 1000);
+    const blank = await request('command', { kind: 'new-tab' }).then((r) =>
+      r.json(),
+    );
+    expect(blank.tabs).toHaveLength(1);
+    expect(blank.tabs[0]).toMatchObject({
+      url: '',
+      title: 'New tab',
+      loading: false,
+      driver: 'you',
+    });
     const openedResponse = await request('command', {
-      kind: 'open',
+      kind: 'navigate',
+      tabId: blank.active,
       url: pageUrl,
     });
     expect(openedResponse.status).toBe(201);
@@ -521,6 +532,35 @@ describe('Remote browser public HTTP behavior', () => {
       (r) => r.json(),
     );
     expect(closed.attention).toBeUndefined();
+    const start = await request('command', { kind: 'new-tab' }).then((r) =>
+      r.json(),
+    );
+    const handedStart = await request('command', {
+      kind: 'handoff',
+      tabId: start.active,
+      sessionId: 2,
+    }).then((r) => r.json());
+    const startGeneration = handedStart.tabs.find(
+      (tab: { id: string }) => tab.id === start.active,
+    ).generation;
+    await runtime
+      .viewer(1, token)
+      .agent(
+        {
+          kind: 'navigate',
+          tabId: start.active,
+          generation: startGeneration,
+          url: pageUrl,
+        },
+        2,
+        new AbortController().signal,
+      );
+    expect(
+      runtime
+        .viewer(1, token)
+        .state()
+        .tabs.find((tab) => tab.id === start.active),
+    ).toMatchObject({ url: new URL(pageUrl).href, error: null });
     await request('disconnect', {});
   });
 });

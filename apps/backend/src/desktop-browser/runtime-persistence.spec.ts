@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RuntimeBrowserPersistence } from './runtime-persistence.js';
 import { RuntimeBrowserService } from './runtime-browser.service.js';
+import { runtimeCommand } from './runtime-validation.js';
 import { RuntimeBrowserPool } from './runtime-browser-pool.js';
 describe('Runtime browser retention and viewer authority', () => {
   let root: string,
@@ -18,6 +19,44 @@ describe('Runtime browser retention and viewer authority', () => {
     await rm(root, { recursive: true, force: true });
     if (previous === undefined) delete process.env['ELEVENEX_DATA_ROOT'];
     else process.env['ELEVENEX_DATA_ROOT'] = previous;
+  });
+  it('opens and selects bounded start tabs without starting Chromium', async () => {
+    expect(runtimeCommand.parse({ kind: 'new-tab' })).toEqual({
+      kind: 'new-tab',
+    });
+    expect(
+      runtimeCommand.safeParse({ kind: 'new-tab', url: 'file:///secret' })
+        .success,
+    ).toBe(false);
+    const pool = new RuntimeBrowserPool();
+    const acquire = jest.spyOn(pool, 'acquire');
+    const service = new RuntimeBrowserService(pool, store);
+    try {
+      const view = await service.connect(1, 'viewer', 'c'.repeat(64));
+      const task = service.viewer(1, view.token);
+      const first = await task.command({ kind: 'new-tab' });
+      expect(first.tabs).toHaveLength(1);
+      expect(first.tabs[0]).toMatchObject({
+        id: first.active,
+        title: 'New tab',
+        url: '',
+        driver: 'you',
+        loading: false,
+      });
+      await task.layout(800, 600, true, true);
+      const second = await task.command({ kind: 'new-tab' });
+      expect(second.active).not.toBe(first.active);
+      await task.command({ kind: 'select', tabId: first.active! });
+      await task.command({ kind: 'reload', tabId: first.active! });
+      expect(task.state().active).toBe(first.active);
+      expect(acquire).not.toHaveBeenCalled();
+      for (let count = 2; count < 12; count++)
+        await task.command({ kind: 'new-tab' });
+      await expect(task.command({ kind: 'new-tab' })).rejects.toThrow(/limit/);
+    } finally {
+      await service.onModuleDestroy();
+      await pool.onModuleDestroy();
+    }
   });
   it('retains user ownership when an old agent launch fails after takeover', async () => {
     const pool = new RuntimeBrowserPool();

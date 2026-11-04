@@ -20,6 +20,7 @@ const url = z
 const unit = z.number().finite().min(0).max(16384),
   modifiers = z.number().int().min(0).max(15);
 export const runtimeCommand = z.union([
+  z.object({ kind: z.literal('new-tab') }).strict(),
   z.object({ kind: z.literal('dismiss-attention') }).strict(),
   z.object({ kind: z.literal('open'), url }).strict(),
   z

@@ -21,9 +21,8 @@ export class TaskBrowserComponent {
   readonly active = input(false);
   readonly contextRequested = output<BrowserComposerIntent>();
   readonly store = inject(TaskBrowserStore);
-  readonly dialog = signal<'new' | 'tools' | null>(null);
+  readonly dialog = signal<'tools' | null>(null);
   readonly dialogOpen = signal(false);
-  readonly address = signal('http://localhost:3000');
   readonly notice = signal('');
   readonly current = this.store.current;
   readonly tabs = computed<readonly BrowserTab[]>(() => (this.store.state()?.tabs ?? []).map(tab => ({ id: tab.id, title: tab.title, url: tab.url, by: tab.by, server: tab.server, status: tab.error ? 'failed' : tab.loading ? 'running' : 'idle' })));
@@ -42,12 +41,23 @@ export class TaskBrowserComponent {
   private readonly surface = viewChild<ElementRef<HTMLElement>>('surface');
   private readonly surfaces = viewChild(BrowserSurfacesComponent);
   private readonly browser = viewChild(BrowserViewComponent);
+  private openedIdentity = '';
   private controlsIdentity = '';
   private controlsSeen = 0;
   private pickerSession: number | null = null;
   private pickerIdentity = '';
   constructor() {
     effect(() => this.store.open(this.scopeId(), this.taskId()));
+    effect(() => {
+      const state = this.store.state();
+      if (!this.active()) { this.openedIdentity = ''; return; }
+      const identity = this.scopeId() + ':' + this.taskId();
+      if (!state || state.scopeId !== this.scopeId() || state.taskId !== this.taskId()) { this.openedIdentity = ''; return; }
+      if (this.store.pending()) return;
+      if (identity === this.openedIdentity) return;
+      this.openedIdentity = identity;
+      if (!state.tabs.length) untracked(() => this.newTab());
+    });
     effect(() => { if (!this.active()) { this.dialogOpen.set(false); this.hideSurface(); } });
     effect(() => {
       const state = this.store.state(), picked = state?.picked;
@@ -79,20 +89,20 @@ export class TaskBrowserComponent {
       else { this.command({ kind, tabId }); if (kind === 'focus') this.surfaces()?.focusPage(tabId); }
     }
   }
-  shortcut(kind: 'open' | 'pick' | 'controls'): void { if (kind === 'controls') this.browser()?.focusControls(); else if (kind === 'open') this.showDialog('new'); else this.command({ kind: 'pick', enabled: !this.store.state()?.picking }); }
+  shortcut(kind: 'open' | 'pick' | 'controls'): void { if (kind === 'controls') this.browser()?.focusControls(); else if (kind === 'open') this.newTab(); else this.command({ kind: 'pick', enabled: !this.store.state()?.picking }); }
   handToSelected(): void {
     const sessionId = this.sessionId(), tabId = this.current()?.id;
     if (sessionId && tabId) this.command({ kind: 'handoff', tabId, sessionId });
     this.dialogOpen.set(false);
   }
-  showDialog(kind: 'new' | 'tools'): void {
+  showDialog(kind: 'tools'): void {
     this.dialog.set(kind); this.dialogOpen.set(true);
   }
   navigate(value: string): void {
     const tabId = this.current()?.id;
     if (tabId) this.command({ kind: 'navigate', tabId, url: this.normalize(value) });
   }
-  async openPage(): Promise<void> { if (this.store.pending()) return; if (await this.store.command({ kind: 'open', url: this.normalize(this.address()) })) this.dialogOpen.set(false); }
+  newTab(): void { if (!this.store.pending()) this.command({ kind: 'new-tab' }); }
   private normalize(value: string): string { const trimmed = value.trim(); if (/^[0-9]{1,5}$/.test(trimmed)) return 'http://localhost:' + trimmed; return /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : 'http://' + trimmed; }
   setWidth(width: 'full' | 'phone'): void { const tabId = this.current()?.id; if (tabId) this.command({ kind: 'width', tabId, width }); }
   presentation(mode: 'embedded' | 'stream'): void {

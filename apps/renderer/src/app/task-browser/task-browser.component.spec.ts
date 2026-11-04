@@ -1,0 +1,85 @@
+import { type ComponentFixture, TestBed } from '@angular/core/testing';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { TaskBrowserCommand, TaskBrowserState, TaskBrowserTab } from '@elevenex/shared';
+import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
+import { TaskBrowserComponent } from './task-browser.component';
+
+function tab(id = 'tab-1'): TaskBrowserTab {
+  return { id, title: 'New tab', url: '', by: 'you', driver: 'you', agentSessionId: null, generation: 1, loading: false, ready: false, canGoBack: false, error: null, errors: 0, width: 'full', theme: 'system', slowNetwork: false, waiting: false };
+}
+function setup(tabs: readonly TaskBrowserTab[] = []) {
+  let state: TaskBrowserState = { scopeId: 'scope', taskId: 1, revision: 0, surfaceEpoch: 0, controlsFocus: 0, active: tabs[0]?.id ?? null, tabs, picked: null, picking: false, pickerMessage: null, feedback: false, ports: [3000], privacy: 'content-withheld' };
+  const bridge = {
+    taskBrowserRead: vi.fn(async () => ({ ok: true, value: state })),
+    taskBrowserHide: vi.fn(async () => undefined),
+    taskBrowserCommand: vi.fn(async (_scope: string, _task: number, input: TaskBrowserCommand) => {
+      if (input.kind === 'new-tab') {
+        const next = tab('tab-' + (state.revision + 1));
+        state = { ...state, revision: state.revision + 1, tabs: [...state.tabs, next], active: next.id };
+      } else if (input.kind === 'close') state = { ...state, revision: state.revision + 1, tabs: [], active: null };
+      return { ok: true, value: state };
+    }),
+  };
+  TestBed.configureTestingModule({ providers: [{ provide: ELEVENEX_BRIDGE, useValue: bridge }] });
+  const fixture = TestBed.createComponent(TaskBrowserComponent);
+  fixture.componentRef.setInput('scopeId', 'scope');
+  fixture.componentRef.setInput('taskId', 1);
+  return { fixture, bridge };
+}
+async function render(fixture: ComponentFixture<TaskBrowserComponent>): Promise<void> {
+  await vi.waitFor(() => {
+    fixture.detectChanges();
+    expect(fixture.componentInstance.store.pending()).toBe(0);
+    expect(fixture.nativeElement.querySelector('ex-browser-view')).not.toBeNull();
+  });
+}
+afterEach(() => TestBed.resetTestingModule());
+describe('Task browser start tabs', () => {
+  it('waits until the browser is active, then creates one start tab with address focus', async () => {
+    const { fixture, bridge } = setup();
+    await render(fixture);
+    expect(bridge.taskBrowserCommand).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('active', true); await render(fixture);
+    expect(bridge.taskBrowserCommand).toHaveBeenCalledExactlyOnceWith('scope', 1, { kind: 'new-tab' });
+    expect(fixture.nativeElement.querySelector('.start-page')?.textContent).toContain('Where would you like to go?');
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('[aria-label="Page address"]'));
+    await render(fixture);
+    expect(bridge.taskBrowserCommand).toHaveBeenCalledTimes(1);
+  });
+  it('adds tabs immediately from + and the keyboard, and navigates in the selected tab', async () => {
+    const { fixture, bridge } = setup();
+    fixture.componentRef.setInput('active', true); await render(fixture);
+    (fixture.nativeElement.querySelector('[aria-label="New browser tab (⌘T)"]') as HTMLButtonElement).click();
+    await render(fixture);
+    expect(fixture.componentInstance.store.state()?.tabs).toHaveLength(2);
+    expect(fixture.nativeElement.querySelector('[role="dialog"]')).toBeNull();
+    const address = fixture.nativeElement.querySelector('[aria-label="Page address"]') as HTMLInputElement;
+    expect(document.activeElement).toBe(address);
+    address.dispatchEvent(new KeyboardEvent('keydown', { key: 't', ctrlKey: true, bubbles: true }));
+    await render(fixture);
+    expect(fixture.componentInstance.store.state()?.tabs).toHaveLength(3);
+    address.value = '3000'; address.dispatchEvent(new Event('input')); fixture.detectChanges();
+    address.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await render(fixture);
+    expect(bridge.taskBrowserCommand).toHaveBeenLastCalledWith('scope', 1, { kind: 'navigate', tabId: 'tab-3', url: 'http://localhost:3000' });
+  });
+  it('retains existing tabs and creates a default again only on returning to an empty browser', async () => {
+    const { fixture, bridge } = setup([tab('existing')]);
+    fixture.componentRef.setInput('active', true); await render(fixture);
+    expect(bridge.taskBrowserCommand).not.toHaveBeenCalled();
+    await fixture.componentInstance.store.command({ kind: 'close', tabId: 'existing' });
+    await render(fixture);
+    expect(bridge.taskBrowserCommand).toHaveBeenCalledTimes(1);
+    fixture.componentRef.setInput('active', false); fixture.detectChanges();
+    fixture.componentRef.setInput('active', true); await render(fixture);
+    expect(bridge.taskBrowserCommand).toHaveBeenLastCalledWith('scope', 1, { kind: 'new-tab' });
+  });
+  it('does not replay a default-tab mutation after an interrupted result', async () => {
+    const { fixture, bridge } = setup();
+    bridge.taskBrowserCommand.mockRejectedValue(new Error('Disconnected'));
+    fixture.componentRef.setInput('active', true); await render(fixture);
+    await fixture.componentInstance.store.read(); await render(fixture);
+    expect(bridge.taskBrowserCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.componentInstance.store.error()).toContain('interrupted');
+  });
+});
