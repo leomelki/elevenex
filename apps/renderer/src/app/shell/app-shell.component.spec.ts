@@ -4,6 +4,47 @@ import { AppShellComponent } from "./app-shell.component";
 describe("Desktop region ownership", () => {
   beforeEach(() => vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
   afterEach(() => { TestBed.resetTestingModule(); vi.unstubAllGlobals(); });
+  for (const reopen of [false, true]) it(`retains an inert outgoing panel until width motion settles${reopen ? ', preserving interrupted reopening' : ''}`, async () => {
+    const fixture = TestBed.createComponent(AppShellComponent);
+    fixture.componentRef.setInput('titleBar', false);
+    fixture.componentRef.setInput('panelOpen', true);
+    fixture.componentRef.setInput('wideReview', true);
+    fixture.detectChanges(); await fixture.whenStable();
+    const panel: HTMLElement = fixture.nativeElement.querySelector('.panel');
+    const inner: HTMLElement = fixture.nativeElement.querySelector('.panel-inner');
+    Object.defineProperty(inner,'clientWidth',{value:1072});
+    let finish!: () => void;
+    const finished = new Promise<void>(resolve => { finish = resolve; });
+    Object.defineProperty(panel,'getAnimations',{value:()=>[{transitionProperty:'width',finished}]});
+    fixture.componentRef.setInput('panelOpen', false);
+    fixture.componentRef.setInput('wideReview', false);
+    fixture.detectChanges(); await fixture.whenStable();
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    expect(fixture.componentInstance.panelPresent()).toBe(true);
+    expect(fixture.componentInstance.panelWide()).toBe(true);
+    expect(inner.style.width).toBe('1072px');
+    expect(panel.hasAttribute('inert')).toBe(true);
+    expect(panel.getAttribute('aria-hidden')).toBe('true');
+    if (reopen) {
+      fixture.componentRef.setInput('panelOpen', true); fixture.detectChanges(); await fixture.whenStable();
+    }
+    finish(); await Promise.resolve(); await fixture.whenStable();
+    expect(fixture.componentInstance.panelPresent()).toBe(reopen);
+    expect(fixture.componentInstance.panelWide()).toBe(false);
+    expect(inner.style.width).toBe('');
+    expect(panel.hasAttribute('inert')).toBe(!reopen);
+  });
+
+  it('releases closing contents without waiting when no width animation exists', async () => {
+    const fixture = TestBed.createComponent(AppShellComponent);
+    fixture.componentRef.setInput('titleBar',false);
+    fixture.componentRef.setInput('panelOpen',true); fixture.detectChanges(); await fixture.whenStable();
+    const panel: HTMLElement = fixture.nativeElement.querySelector('.panel');
+    Object.defineProperty(panel,'getAnimations',{value:()=>[]});
+    fixture.componentRef.setInput('panelOpen',false); fixture.detectChanges(); await fixture.whenStable();
+    await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve())); await fixture.whenStable();
+    expect(fixture.componentInstance.panelPresent()).toBe(false);
+  });
   it('takes over a narrow main region instead of squeezing its content and returns Escape intent', () => {
     const remove = vi.fn();
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: remove }));

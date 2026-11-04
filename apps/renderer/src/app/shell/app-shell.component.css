@@ -71,9 +71,7 @@
   min-width: 0;
   overflow: clip;
   opacity: 0;
-  transition:
-    width var(--dur-slow) var(--ease-in-out),
-    opacity var(--dur-base) var(--ease-out);
+  transition: width var(--dur-slow) var(--ease-in-out);
 }
 .panel-inner {
   display: flex;
@@ -85,6 +83,8 @@
 }
 :host(.panel-open) .panel {
   width: var(--side-panel-width);
+}
+:host(.panel-retained) .panel {
   opacity: 1;
 }
 :host(.panel-open) .main {

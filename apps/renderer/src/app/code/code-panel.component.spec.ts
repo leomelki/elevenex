@@ -92,6 +92,21 @@ describe('Code panel launch and iframe focus handoff', () => {
     publish({...ready,frameUrl,branch:'renamed'}); await settle(fixture);
     expect(pool.mount).toHaveBeenCalledOnce();
   });
+  it('keeps its frame mounted but disables platform actions during the inert closing slide', async () => {
+    const {fixture,bridge,publish}=setup(); await settle(fixture); publish(ready); await settle(fixture);
+    const pool = TestBed.inject(CodeFramePool);
+    const park = vi.mocked(pool.mount).mock.results[0]?.value;
+    fixture.componentRef.setInput('retained',true);
+    fixture.componentRef.setInput('active',false); await settle(fixture);
+    expect(fixture.nativeElement.querySelector('.frame-container').hidden).toBe(false);
+    expect(pool.mount).toHaveBeenCalledOnce(); expect(park).not.toHaveBeenCalled();
+    expect(bridge.codePresent).toHaveBeenLastCalledWith(target,{visible:false,compact:false});
+    await fixture.componentInstance.runAction('save');
+    expect(bridge.codeAction).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('retained',false); await settle(fixture);
+    expect(fixture.nativeElement.querySelector('.frame-container').hidden).toBe(true);
+    expect(park).toHaveBeenCalledOnce();
+  });
   it('shows only the iframe while its document is loading and keeps the same mount when ready', async () => {
     const { fixture, publish } = setup(); await settle(fixture);
     publish({ ...loading, frameUrl }); await settle(fixture);

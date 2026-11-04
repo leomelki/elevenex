@@ -372,6 +372,50 @@ export default async function* (capture) {
         await capture.evaluate(() => { window.codeReflowObserver.disconnect(); document.removeEventListener('click',window.codeResizeClick,true); delete window.codeResizeClick; delete window.codeResizeStarted; delete window.codeReflowObserver; delete window.codeReflowPaints; });
       }
     };
+    const closingMotion = async function* (name, interrupted = false, resizing = false) {
+      if (resizing) {
+        await capture.motion.freeze();
+        const before = layoutSequence;
+        await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
+        await waitMain(()=>layoutSequence>before && settledSequence===layoutSequence,'Interrupted expansion did not settle');
+        await capture.settle();
+        await capture.evaluate(() => {
+          for (const region of document.querySelector('ex-app-shell .workspace').children) {
+            for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=140;
+          }
+        });
+        await capture.settle();
+      }
+      const before = await capture.evaluate(() => ({width:document.querySelector('ex-code-panel iframe').clientWidth,inner:document.querySelector('ex-app-shell .panel-inner').clientWidth,transform:getComputedStyle(document.querySelector('ex-code-panel .frame-container')).transform}));
+      await capture.motion.freeze();
+      await capture.click('ex-workspace-panels [aria-label="Close side panel"]');
+      for (const time of interrupted ? [140] : [70,140,245]) {
+        await capture.evaluate(time => {
+          for (const region of document.querySelector('ex-app-shell .workspace').children) {
+            for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=time;
+          }
+        },time);
+        await capture.settle();
+        const state=await capture.evaluate(() => {
+          const panel=document.querySelector('ex-app-shell .panel'), inner=panel.querySelector('.panel-inner'), scope=panel.querySelector('ex-code-panel .frame-container'), iframe=scope.querySelector('iframe');
+          return {opacity:getComputedStyle(panel).opacity,inert:panel.inert,visible:!scope.hidden && !!iframe,width:iframe?.clientWidth,inner:inner.clientWidth,transform:getComputedStyle(scope).transform,cover:getComputedStyle(scope,'::after').opacity};
+        });
+        assert.deepEqual(state,{opacity:'1',inert:true,visible:true,width:before.width,inner:before.inner,transform:before.transform,cover:'0'},'Closing discarded, faded or resized the outgoing editor');
+        assert.equal(await frame.executeJavaScript('innerWidth'),before.width,'Closing resized the real child browsing context');
+        assert.equal(capture.window.webContents.mainFrame.frames.find(child=>child.url===frame.url),frame);
+        yield {name:`${name}-closing-${time}ms`,inspect:['.panel','.panel-inner','ex-code-panel .frame-container','iframe']};
+      }
+      if (interrupted) {
+        await capture.click('ex-workspace-task-header [aria-label="Toggle side panel"]');
+        await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();
+        assert.ok(await capture.evaluate(()=>!!document.querySelector('ex-code-panel iframe')),'Interrupted reopening parked the retained editor');
+        yield {name:`${name}-reopened`,inspect:['.panel','iframe']};
+      } else {
+        await capture.motion.finish(); await capture.motion.play(); await finish();
+        assert.equal(await capture.evaluate(()=>!!document.querySelector('ex-code-panel iframe')),false,'Closed editor was not parked after the slide');
+        await capture.click('ex-workspace-task-header [aria-label="Toggle side panel"]'); await finish(); await geometry();
+      }
+    };
     for (const theme of ['light','dark']) {
       await capture.theme(theme);
       const glideExpansion=await glidingCrossfade('ex-workspace-panels [aria-label="Expand side panel"]');
@@ -406,6 +450,11 @@ export default async function* (capture) {
         await capture.click('ex-workspace-panels [aria-label="Expand side panel"]'); await finish(); await geometry();
         await capture.click('ex-workspace-panels [aria-label="Return to chat"]'); await finish(); await geometry();
       }
+      yield* closingMotion(`${theme}-compact`);
+      yield* closingMotion(`${theme}-interrupted`,true);
+      await capture.click('ex-workspace-panels [aria-label="Expand side panel"]'); await finish(); await geometry();
+      yield* closingMotion(`${theme}-wide`);
+      yield* closingMotion(`${theme}-mid-expansion`,false,true);
       yield {name:`${theme}-reopened-without-right-gap`,inspect:['ex-machine-launch .launch','ex-app-shell','.panel','iframe']};
       await capture.motion.freeze();
       const beforeExpansion = layoutSequence;

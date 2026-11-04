@@ -618,7 +618,9 @@ snapshot is retained, records click-to-resize latency, holds back the real
 child-layout acknowledgement, checks stable pane geometry through the blur/fade,
 asserts immediate uncovered Code visibility during ordinary panel opening,
 continuous shell width motion with a blur/crossfade starting one third into it,
-checks stretched editor bounds at the shell midpoint in both directions, and
+checks stretched editor bounds at the shell midpoint in both directions,
+checks opaque retained Code at early/middle/late closing frames in compact/wide
+layouts plus interrupted reopening, and
 asserts zero launch-viewport scrolling and matching iframe/workbench widths. Compact Files coverage includes the initial
 empty tree, single-click acceptance of an already-open file, Escape/Back state,
 keyboard tree navigation, automatic tree return after closing the last editor,

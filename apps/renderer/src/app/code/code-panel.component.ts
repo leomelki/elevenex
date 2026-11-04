@@ -19,6 +19,9 @@ export class CodePanelComponent {
   readonly taskName = input('');
   readonly branch = input('');
   readonly active = input(false);
+  /** Retain the picture through the shell's inert closing slide. */
+  readonly retained = input(false);
+  readonly frameVisible = computed(() => this.active() || this.retained());
   readonly connected = input(true);
   readonly wide = input(false);
   readonly standalone = input(false);
@@ -30,7 +33,7 @@ export class CodePanelComponent {
   readonly layoutRevision = signal(0);
   private readonly acknowledgedLayout = signal(-1);
   readonly layoutReady = computed(() => this.acknowledgedLayout() === this.layoutRevision());
-  readonly viewportKey = computed(() => { const target = this.target(); return this.active() && target ? `${target.scopeId}:${target.taskId}` : ''; });
+  readonly viewportKey = computed(() => { const target = this.target(); return this.frameVisible() && target ? `${target.scopeId}:${target.taskId}` : ''; });
   readonly launching = computed(() => this.store.busy() || this.store.state()?.phase === 'loading');
   readonly connectionLost = computed(() => !this.connected() || this.store.state()?.phase === 'disconnected' && !this.store.state()?.relocated && !this.store.state()?.detached);
   readonly showFrame = computed(() => !!this.frameResource() && this.store.state()?.phase !== 'failed');
@@ -73,7 +76,7 @@ export class CodePanelComponent {
     effect(() => { if (!this.active()) untracked(() => this.store.suspend()); });
     afterRenderEffect(onCleanup => {
       const container = this.frameContainer()?.nativeElement, url = this.frameResource();
-      if (!container || !url || !this.active()) return;
+      if (!container || !url || !this.frameVisible()) return;
       onCleanup(this.frames.mount(url, container));
     });
     afterRenderEffect(onCleanup => {

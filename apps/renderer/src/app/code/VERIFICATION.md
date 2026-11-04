@@ -1,5 +1,46 @@
 # New Code workbench verification
 
+## Softer transition blur
+
+On 2026-11-04, reduced only the editor transition peak blur from 20px to 16px,
+derived from existing tokens. Timing, opacity, scaling and panel retention are
+unchanged. `desktop:lint`, `desktop:build` and `git diff --check` passed.
+`artifacts/desktop-capture/code-softer-blur/report.json` verified **71 checkpoints**
+with no renderer errors, including exact computed `blur(16px)` at light/dark
+expand/collapse midpoints. Inspected those new PNGs. No new unit tests were added
+or rerun for this CSS-only adjustment; behavior is covered by the native run.
+Verification used unpackaged macOS, with an isolated backend stopped afterward.
+
+
+## Retained contents during the closing slide
+
+Verified on 2026-11-04 on macOS arm64 / Electron 45 with the real Code OSS
+workbench and disposable Nest backend/task. The shell keeps outgoing contents
+opaque at their existing inner width until its actual closing width transition
+settles. `panelPresent` owns visual lifetime and `panelWide` retains the outgoing
+feature layout. Code becomes inactive immediately, retains its mounted frame and
+painted viewport through exit, then parks it after completion. Changes review
+uses the same visual lifetime. Interrupted reopening cancels pending cleanup.
+
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`: passed.
+  Full suite: 158 desktop cases, seven capture cases, TypeScript contract checks,
+  and 647 renderer cases in 94 files. Focused tests cover inert retained contents,
+  wide layout, cancellation/reopening, frame parking, suspended measurement,
+  disabled platform actions and Changes review retention/disposal.
+- `artifacts/desktop-capture/code-closing-final/report.json`: **71 checkpoints,
+  verified: true**, no renderer errors. Both themes retain visible Code at
+  70/140/245ms of closing from compact, expanded and halfway-expanded states.
+  The panel remains opaque and inert, the real child viewport and current
+  transform stay unchanged, and the same iframe survives interrupted reopening.
+  Inspected closing midpoint and late-frame PNGs from the actual renderer.
+- Immediate opening, staged blur/crossfade during expand/collapse, one viewport
+  resize, stable panes, search, auto-save, repeated reopening, focus and narrow
+  reduced motion also passed. Closed contents are parked after the slide.
+- `git diff --check`: passed. No dependencies, backend sources or bridge contracts
+  changed. Verification used an unpackaged native macOS app; no packaged or
+  Windows/Linux runtime launch was run. The owned disposable backend was stopped.
+
+
 ## Immediate panel opening and staged expand/collapse — current motion
 
 Verified on 2026-11-04 on macOS arm64 / Electron 45 with the real Code OSS

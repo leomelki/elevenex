@@ -3,8 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { CodeViewportDirective } from './code-viewport.directive';
 import { codeBlendDelay } from './code-view-transition';
 
-@Component({ imports: [CodeViewportDirective], template: '<section><div><div exCodeViewport [contextKey]="context()" [layoutReady]="ready()" (viewportWidth)="width.set($event)" (layoutRequested)="requested()"></div></div></section>' })
-class Host { readonly width = signal(0); readonly ready = signal(true); readonly context = signal('task-one'); requests = 0; requested() { this.requests++; } }
+@Component({ imports: [CodeViewportDirective], template: '<section><div><div exCodeViewport [active]="active()" [contextKey]="context()" [layoutReady]="ready()" (viewportWidth)="width.set($event)" (layoutRequested)="requested()"></div></div></section>' })
+class Host { readonly active = signal(true); readonly width = signal(0); readonly ready = signal(true); readonly context = signal('task-one'); requests = 0; requested() { this.requests++; } }
 
 describe('Code viewport transition ownership', () => {
   let resize: () => void;
@@ -141,6 +141,17 @@ describe('Code viewport transition ownership', () => {
     complete(); await finished; await Promise.resolve();
     expect(frame.classList.contains('crossfading')).toBe(false);
     expect(skip).not.toHaveBeenCalled();
+  });
+
+  it('keeps the current viewport while inactive closing contents remain painted, then resumes measurement', async () => {
+    const {fixture,frame,transition}=await setup();
+    fixture.componentInstance.active.set(false); await fixture.whenStable();
+    width=280; resize(); transition('transitionrun'); transition('transitionend'); await nextFrame();
+    expect(frame.style.width).toBe('432px');
+    expect(frame.classList.contains('reflowing')).toBe(false);
+    expect(fixture.componentInstance.requests).toBe(0);
+    fixture.componentInstance.active.set(true); await fixture.whenStable();
+    expect(frame.style.width).toBe('280px');
   });
 
   it('freezes the cached viewport before reading any animated layout', async () => {

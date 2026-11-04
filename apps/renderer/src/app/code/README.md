@@ -105,6 +105,14 @@ here** or **Focus editor** rather than silently stealing it. Four hot workbenche
 are retained; clean hidden instances may close only after upstream permits unload.
 Dirty instances stay retained. Shutdown respects backup vetoes.
 
+`CodePanel.active` controls platform operations and focus; optional `retained`
+keeps only its visual frame mounted during the shell's inert closing slide.
+The production owner binds retention to `AppShell.panelPresent`. The viewport
+suspends measurement and any in-progress snapshot at its current painted state
+while inactive, then parks the same iframe only after closing completes. Reopening
+resumes measurement without reloading the document. Changes review uses the same
+shell lifetime to keep its loaded contents through exit.
+
 Ordinary panel opening/closing clips the retained editor at its existing width.
 It adds no resize cover or snapshot and does not wait for layout acknowledgement
 to reveal: a loaded workbench is visible immediately during the slide. Only a
@@ -117,8 +125,8 @@ renders underneath. The shell retains its original 280ms width/opacity glide;
 Code never finishes it early. ResizeObserver fits the outer compositor surface to
 the moving viewport using scaleX, without relaying intermediate widths to the
 iframe. Both images stretch with that surface and blend in a 140ms token-driven
-effect with the 20px glass blur. Blur starts one third into the shell glide
-(about 93ms). Its opaque midpoint holds the old image until the child's layout
+effect with a 16px blur derived from the glass and spacing tokens. Blur starts
+one third into the shell glide (about 93ms). Its opaque midpoint holds the old image until the child's layout
 acknowledgement, then the remaining half crossfades and clears the new image.
 An early acknowledgement adds no wait; a later one resumes immediately. Timing
 follows the shell's actual animation clock, including interrupted transitions.

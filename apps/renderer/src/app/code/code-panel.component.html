@@ -10,7 +10,7 @@
 <ex-fold [open]="!!store.state()?.recoveryAvailable"><div class="recovery"><span>The checkout changed. Your tabs and unsaved text are retained. Inspect them before saving.</span><button exButton size="sm" [disabled]="launching() || !connected()" (click)="recover()">Open updated workspace</button></div></ex-fold>
 <ex-fold [open]="!!store.error() && hasSurface()"><div class="recovery" role="alert"><span>{{ store.error() }}</span><button exButton size="sm" variant="ghost" (click)="dismissError()">Dismiss</button></div></ex-fold>
 <div class="editor-surface" [class.loaded]="showFrame()" [attr.aria-label]="showFrame() ? 'Task Code workbench' : null">
-  <div #frameContainer exCodeViewport (viewportWidth)="measuredWidth.set($event)" (layoutRequested)="layoutRevision.set(layoutRevision() + 1)" [layoutReady]="layoutReady()" [contextKey]="viewportKey()" class="frame-container" [hidden]="!showFrame() || !active()"></div>
+  <div #frameContainer exCodeViewport [active]="active()" (viewportWidth)="measuredWidth.set($event)" (layoutRequested)="layoutRevision.set(layoutRevision() + 1)" [layoutReady]="layoutReady()" [contextKey]="viewportKey()" class="frame-container" [hidden]="!showFrame() || !frameVisible()"></div>
   @if (!showFrame()) {
     <div class="launch-card">
       <div class="code-mark"><ex-icon [name]="store.error() || store.state()?.phase === 'failed' ? 'plug' : 'code'" [size]="22" /></div>

@@ -11,10 +11,13 @@ export class CodeViewportDirective {
   readonly layoutRequested = output<void>();
   readonly layoutReady = input(true);
   readonly contextKey = input('');
+  readonly active = input(true);
   private readonly settlement = signal(0);
   private revealWhenReady?: () => void;
   private resetContext?: () => void;
+  private suspendViewport?: () => void;
   private previousContext?: string;
+  private previousActive?: boolean;
   private readonly frame = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly document = inject(DOCUMENT);
 
@@ -23,10 +26,16 @@ export class CodeViewportDirective {
     afterNextRender(() => { dispose = this.observe(); });
     afterRenderEffect(() => {
       const context = this.contextKey();
+      const active = this.active();
       if (this.previousContext !== undefined && this.previousContext !== context) this.resetContext?.();
+      else if (this.previousActive !== undefined && this.previousActive !== active) {
+        if (active) this.resetContext?.();
+        else this.suspendViewport?.();
+      }
       this.previousContext = context;
+      this.previousActive = active;
       this.settlement();
-      if (this.layoutReady()) this.revealWhenReady?.();
+      if (active && this.layoutReady()) this.revealWhenReady?.();
     });
     inject(DestroyRef).onDestroy(() => dispose?.());
   }
@@ -99,6 +108,7 @@ export class CodeViewportDirective {
     };
 
     const measure = () => {
+      if (!this.active()) return;
       const next = viewport.clientWidth;
       if (frozenWidth && preparedWidth && next > 0) {
         // Transform only the outer compositor surface: the cross-origin child
@@ -160,6 +170,7 @@ export class CodeViewportDirective {
       // projected content. Unrelated widths, opacity and nested effects cannot
       // hold the editor's viewport. No shell-private selectors are needed.
       if (!('propertyName' in event) || event.propertyName !== 'width' || !(ancestor instanceof HTMLElement) || ancestor === this.frame || !ancestor.contains(viewport)) return;
+      if (!this.active()) return;
       if (event.type === 'transitionrun') {
         // Use the last settled measurement: reading layout here would flush
         // the first animated width into the child before we can freeze it.
@@ -210,7 +221,7 @@ export class CodeViewportDirective {
               for (const animation of snapshotAnimations()) {
                 animation.pause(); animation.currentTime = 0;
               }
-              playSnapshots();
+              if (this.active()) playSnapshots();
             }).catch(() => { if (snapshot === transition) this.frame.classList.add('reflowing'); });
             void transition.finished.finally(() => {
               if (snapshot !== transition) return;
@@ -240,6 +251,15 @@ export class CodeViewportDirective {
       release();
     };
     const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure);
+    this.suspendViewport = () => {
+      // Preserve the currently painted editor (even halfway through a resize)
+      // while the shell clips it away. Platform actions are already inactive.
+      transitions.clear();
+      window.cancelAnimationFrame(pending); pending = 0;
+      cancelReveal(); stopBlurHold();
+      awaitingLayout = false;
+      for (const animation of snapshotAnimations()) animation.pause();
+    };
     this.resetContext = () => {
       transitions.clear();
       window.cancelAnimationFrame(pending); pending = 0;
@@ -259,6 +279,7 @@ export class CodeViewportDirective {
       cancelSnapshot();
       this.revealWhenReady = undefined;
       this.resetContext = undefined;
+      this.suspendViewport = undefined;
       for (const type of ['transitionrun', 'transitionend', 'transitioncancel']) this.document.removeEventListener(type, changed, true);
       reduced.removeEventListener('change', motionChanged);
       this.frame.style.removeProperty('width');

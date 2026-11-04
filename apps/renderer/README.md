@@ -80,12 +80,20 @@ No browser/terminal backend or unrestricted embed was added.
 `shellSidebar`, `shellMain`, `shellPanel`. Its `panelOpen`, `wideReview`, and
 `panelLabel` inputs control layout without changing feature data. The side panel
 remains mounted and inert while closed; wider review makes the covered main
-region inert and restores focus when it exits. Rail and sidebar keep their place.
+region inert and restores focus when it exits. The shell's readonly `panelPresent`
+signal includes the closing slide; `panelWide` retains the outgoing compact/wide
+feature layout during that exit. Use a template reference (`#shell`) and this
+signal to retain expensive projected content through exit, while `panelOpen`
+continues to control interaction. Closing immediately makes the region inert,
+keeps its contents opaque at their outgoing width, then releases visual retention
+when the actual width transition settles. Reopening cancels that release; reduced
+motion and absent/cancelled transitions do not leave retained contents behind. Rail and sidebar keep their place.
 The available workspace is a named CSS `workspace` size container. Projected
 features can use its width for responsive affordances without measuring or
 overriding the shell's private navigation geometry.
 
-The shell owns its width/opacity transitions for their full duration. Projected
+The shell owns its width transition for its full duration; closing content stays
+opaque until clipping completes. Projected
 Code content predicts its destination viewport without finishing shell motion.
 It resizes the iframe once behind browser-owned snapshots, stretches the outer
 compositor surface to follow the animated panel, and blends the editor images

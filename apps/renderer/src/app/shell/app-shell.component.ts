@@ -9,6 +9,7 @@ import {
   inject,
   input,
   output,
+  untracked,
 } from "@angular/core";
 import { TitleBarComponent } from "../machines/title-bar.component";
 
@@ -20,6 +21,7 @@ import { TitleBarComponent } from "../machines/title-bar.component";
   host: {
     "[class.embedded]": "!titleBar()",
     "[class.panel-open]": "panelOpen()",
+    "[class.panel-retained]": "panelPresent()",
     "[class.wide-review]": "takingOver()",
     "(keydown.escape)": "leaveReview()",
     "(focusin)": "rememberFocus($event)",
@@ -31,7 +33,13 @@ export class AppShellComponent {
   /** MachineApp owns native chrome; standalone compositions include it here. */
   readonly titleBar = input(true);
   readonly panelOpen = input(false);
+  private readonly retainedPanel = signal(false);
+  private readonly retainedWide = signal(false);
+  /** Visual lifetime only; closed contents are already inert during their exit. */
+  readonly panelPresent = computed(() => this.panelOpen() || this.retainedPanel());
   readonly wideReview = input(false);
+  /** Keep the outgoing feature layout until its closing picture is gone. */
+  readonly panelWide = computed(() => !this.panelOpen() && this.retainedPanel() ? this.retainedWide() : this.wideReview());
   readonly panelLabel = input("Side panel");
   readonly reviewExited = output<void>();
   readonly panelCloseRequested = output<void>();
@@ -48,6 +56,33 @@ export class AppShellComponent {
     const changed = () => this.compact.set(media.matches);
     changed(); media.addEventListener('change', changed);
     inject(DestroyRef).onDestroy(() => media.removeEventListener('change', changed));
+    afterRenderEffect(onCleanup => {
+      const open = this.panelOpen();
+      const panel = this.root.querySelector<HTMLElement>('.panel');
+      const inner = this.root.querySelector<HTMLElement>('.panel-inner');
+      if (!panel || !inner) return;
+      if (open) {
+        inner.style.removeProperty('width');
+        this.retainedPanel.set(true);
+        this.retainedWide.set(this.wideReview());
+        return;
+      }
+      if (!untracked(this.retainedPanel)) return;
+      // Preserve the outgoing layout, including a wide or interrupted panel.
+      // Width clipping slides it away without squeezing its contents.
+      inner.style.width = `${inner.clientWidth}px`;
+      let stopped = false;
+      const finish = () => {
+        if (stopped || this.panelOpen()) return;
+        inner.style.removeProperty('width');
+        this.retainedPanel.set(false);
+      };
+      const frame = requestAnimationFrame(() => {
+        const motion = (panel.getAnimations?.() ?? []).filter(animation => 'transitionProperty' in animation && animation.transitionProperty === 'width');
+        void Promise.allSettled(motion.map(animation => animation.finished)).then(finish);
+      });
+      onCleanup(() => { stopped = true; cancelAnimationFrame(frame); inner.style.removeProperty('width'); });
+    });
     afterRenderEffect(() => {
       const open = this.panelOpen();
       const wide = this.takingOver();

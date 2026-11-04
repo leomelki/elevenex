@@ -182,3 +182,10 @@ git blocking, credential focus/clearing, host trust, elapsed escalation and
 one-time recovery across both themes and narrow reduced-motion layouts. These
 captures verify actual renderer behavior with mocked transport; native SSH
 regressions separately verify real loopback network/process recovery.
+
+The shell separates `panelOpen` (interaction) from `panelPresent` (visual lifetime).
+MachineWorkspace keeps Code's frame and loaded Changes review through the closing
+width transition, with `panelWide` preserving the outgoing feature layout. Code's `active` input becomes false immediately; `retained`
+keeps the picture mounted inside the already inert region until the shell settles.
+The shell freezes its inner width and opacity through exit, owns cancellation on
+reopen/destruction, and releases contents without a timer when motion is absent.
