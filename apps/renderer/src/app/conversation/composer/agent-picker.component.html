@@ -12,8 +12,10 @@
   (click)="toggle()"
 >
   <ex-agent-mark [mark]="value().mark" [harness]="value().harness" />
-  <span class="name">{{ value().preset || modelLabel() }}</span
-  ><span class="sub">{{ subtitle() }}</span>
+  <span class="name">{{ value().preset || modelLabel() }}</span>
+  @if (subtitle(); as subtitle) {
+    <span class="sub">{{ subtitle }}</span>
+  }
   @if (value().fast) {
     <ex-icon class="fast" name="bolt" [size]="12" />
   }

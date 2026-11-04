@@ -2407,3 +2407,28 @@ the PNGs were inspected. `session-harness`, `session-composer`, `session-quota`,
 `session-presets` and `preset-creator-harness` were updated where they used the
 old form and verify through the preview transport. No live provider, packaged
 app or Windows/Linux run was checked.
+
+## Explicit model choices — 2026-11-04
+
+Chat and preset model selectors use only reported models, without a synthetic
+Provider default option that lacks thinking capabilities. Unknown models display
+Choose model. Desktop lint, test (618 renderer tests plus desktop/capture suites),
+build and `git diff --check` pass. The `session-composer` and
+`preset-creator-harness` native regressions assert the option is absent and verify
+thinking changes, keyboard/focus, loading/retry and narrow reduced-motion layouts
+in both themes. Reports in `artifacts/desktop-capture/run-r8Aw6H` and
+`artifacts/desktop-capture/run-iXYCGF` say `verified: true`; relevant chat and preset
+PNGs were inspected. These checks use preview-controlled provider data; no live
+provider or packaged-app launch was tested.
+
+## Agent chip labels — 2026-11-04
+
+The composer chip uses its harness logo/monogram instead of repeating the harness
+name in its subtitle. Model, preset and thinking labels remain; absent subtitles
+leave no empty flex item. The accessible name retains the harness. Lint, build
+and diff checks pass. The full test run had 617 renderer passes and one workspace
+timeout; that workspace file and the picker file passed a focused rerun (24 tests).
+The stdin native capture in `artifacts/desktop-capture/run-KgXsFu` is verified,
+covering both themes, presets, no thinking, narrow/reduced motion, the accessible
+name and menu focus restoration. Relevant PNGs were inspected. This used the real
+component preview, without a live provider or packaged-app launch.

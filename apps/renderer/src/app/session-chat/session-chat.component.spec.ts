@@ -95,6 +95,15 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
   };
   let resolve!: (value: BackendResult<SessionChatCommandReply>) => void;
   const bridge = {
+    sessionChatCatalog: vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        provider: "claude", label: "Claude Code",
+        models: [{ id: "sonnet", label: "Sonnet", reasoningEfforts: ["low", "high"], supportsFastMode: false }],
+        model: "sonnet", reasoning: "high", fast: false,
+        reasoningAvailable: true, fastAvailable: false, error: null,
+      },
+    })),
     sessionChatMedia: vi.fn(async (_scope: string, input: { itemId: string; mediaId: string }) => ({ ok: true as const, value: { ...input, source: 'data:image/png;base64,iVBORw0KGgo=' } })),
     sessionChatRead: vi.fn(async () => ({ ok: true as const, value: page })),
     sessionChatCommand: vi.fn(
@@ -601,8 +610,38 @@ describe("connected composer controls", () => {
     );
     expect(root.querySelectorAll(".bar ex-dropdown")).toHaveLength(0);
     expect(
-      fixture.componentInstance.harnesses()[0]?.models[1]?.thinking,
+      fixture.componentInstance.harnesses()[0]?.models[0]?.thinking,
     ).toEqual(["low", "high"]);
+    root.querySelector<HTMLButtonElement>("ex-agent-picker > button")!.click();
+    await settle(fixture);
+    const options = document.querySelectorAll('.agent-settings [role="option"]');
+    expect([...options].map((option) => option.textContent?.trim())).toEqual(["GPT"]);
+    expect(options[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(document.querySelector('.agent-settings [aria-label="Thinking level"]')).not.toBeNull();
+  });
+  it("offers only named models with their thinking levels in a fetched preset catalog", async () => {
+    const { fixture, bridge } = setup([], { ...capabilities, presets: [], presetCatalogs: true });
+    await settle(fixture);
+    const flow = fixture.componentInstance.presetFlow;
+    flow.openPresetCreator();
+    const catalog = await flow.presetDraft()!.catalogProvider!("claude", new AbortController().signal);
+    expect(bridge.sessionChatCatalog).toHaveBeenCalledWith("scope", expect.objectContaining({ provider: "claude" }));
+    expect(catalog.harness.models).toEqual([
+      { id: "sonnet", label: "Sonnet", thinking: ["low", "high"], supportsFastMode: false },
+    ]);
+    expect(catalog.initial.model).toBe("sonnet");
+    expect(catalog.initial.thinking).toBe("high");
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+  it("asks for a model when an older engine has not reported one", async () => {
+    const { fixture, root } = setup();
+    await settle(fixture);
+    const trigger = root.querySelector<HTMLButtonElement>("ex-agent-picker > button")!;
+    expect(trigger.textContent).toContain("Choose model");
+    trigger.click();
+    await settle(fixture);
+    expect(document.querySelectorAll('.agent-settings [role="option"]')).toHaveLength(0);
+    expect(document.querySelector(".agent-settings")?.textContent).toContain("No models reported yet");
   });
   it("submits only the changed agent setting and retains a draft during reconciliation", async () => {
     const { fixture, bridge, complete } = setup([], capabilities);

@@ -192,6 +192,10 @@ defines the chip's meters and hover card. The `/agent-picker` preview supplies
 Claude Code, Codex, Pi, OpenCode (a long, filterable list) and a harness without
 a logo, plus optional context/plan data and busy, locked and disabled states.
 
+The chip identifies the harness with its logo or monogram. Its text shows the
+model and optional thinking level; presets show their name with the model and
+thinking level beside it. The accessible name still includes the harness.
+
 - `AgentPicker` owns the chip, 400ms pointer/focus disclosure, CDK portals,
   positioning, focus trapping/restoration and their lifetimes. It preserves
   `open` and `openPicker()` for the composer shortcut. Its menu portal stays

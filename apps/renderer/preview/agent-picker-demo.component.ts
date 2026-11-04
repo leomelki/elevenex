@@ -37,7 +37,6 @@ export class AgentPickerDemoComponent {
       label: "Claude Code",
       mark: "Cl",
       models: [
-        { id: "", label: "Provider default", thinking: [] },
         {
           id: "opus",
           label: "Opus 5.5",
@@ -59,7 +58,6 @@ export class AgentPickerDemoComponent {
       label: "Codex",
       mark: "Cx",
       models: [
-        { id: "", label: "Provider default", thinking: [] },
         {
           id: "codex",
           label: "GPT-5.5 Codex",
@@ -83,7 +81,6 @@ export class AgentPickerDemoComponent {
       label: "Pi",
       mark: "Pi",
       models: [
-        { id: "", label: "Provider default", thinking: [] },
         {
           id: "pi-sonnet",
           label: "Claude Sonnet 5.5",
@@ -97,7 +94,6 @@ export class AgentPickerDemoComponent {
       label: "OpenCode",
       mark: "Oc",
       models: [
-        { id: "", label: "Provider default", thinking: [] },
         ...[
           "Claude Opus 5.5",
           "Claude Sonnet 5.5",

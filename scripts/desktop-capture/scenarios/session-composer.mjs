@@ -23,6 +23,7 @@ export default async function* (capture) {
     // Keyboard access, nested menu dismissal and retained textarea focus.
     await capture.press('j', 4);
     await capture.waitFor(() => document.querySelector('.agent-settings'));
+    assert.equal(await capture.evaluate(() => [...document.querySelectorAll('.agent-settings [role="option"]')].some(option => option.textContent.includes('Provider default'))), false);
     // Focus starts on the chosen model; the track holds only the model's levels.
     assert.equal(await capture.evaluate(() => document.activeElement?.matches('.agent-settings [role="option"][aria-selected="true"]')), true);
     assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings [aria-label="Thinking level"]')?.max), '3');

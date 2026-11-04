@@ -186,15 +186,12 @@ export class SessionChatPresets {
             id: provider,
             label: catalog.label,
             mark,
-            models: [
-              { id: "", label: "Provider default", thinking: [] },
-              ...catalog.models.map((m) => ({
-                id: m.id,
-                label: m.label,
-                thinking: m.reasoningEfforts ?? [],
-                supportsFastMode: m.supportsFastMode,
-              })),
-            ],
+            models: catalog.models.map((m) => ({
+              id: m.id,
+              label: m.label,
+              thinking: m.reasoningEfforts ?? [],
+              supportsFastMode: m.supportsFastMode,
+            })),
           },
           initial: {
             harness: provider,

@@ -144,12 +144,12 @@ export class AgentPickerComponent {
         .find((h) => h.id === this.value().harness)
         ?.models.find((m) => m.id === this.value().model)?.label ||
       this.value().model ||
-      "Provider default",
+      "Choose model",
   );
   protected readonly subtitle = computed(() => {
     const thinking = this.value().thinking;
     return [
-      this.value().preset ? this.modelLabel() : this.harnessLabel(),
+      this.value().preset ? this.modelLabel() : "",
       thinking ? thinkingLabel(thinking) : "",
     ]
       .filter(Boolean)
