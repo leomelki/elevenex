@@ -1,5 +1,40 @@
 # Component system verification
 
+## Agent picker review fixes, 2026-11-04
+
+Model search stays mounted for its current harness after a catalog shrinks,
+including when the query is cleared; menu recreation and harness changes reset
+that local disclosure. Space retains native model activation. An unset thinking
+range commits the first reported level on its first arrow/Home adjustment or a
+click on the first step, without changing the setting merely on opening. Its
+keyboard focus ring remains visible. Scroll-driven tooltip detachment releases
+the frame loop, overlay subscription and accessible description.
+
+`pnpm desktop:lint`, `pnpm desktop:test` (134 desktop, seven capture-tool and
+637 renderer tests, plus TypeScript contracts), `pnpm desktop:build` and
+`git diff --check` passed. No dependencies changed.
+
+Three native reports say `verified: true`, with no errors or warnings:
+
+- `artifacts/desktop-capture/agent-picker-fixes-verified/report.json`: 12 checkpoints
+  for catalog shrink/clear focus, native Space activation, unset thinking via
+  keyboard and pointer, tooltip scroll cleanup, harness/menu resets and narrow
+  reduced motion in both themes.
+- `artifacts/desktop-capture/agent-picker-existing-final/report.json`: 18 existing
+  picker checkpoints for settings, usage, keyboard, busy states, motion and cleanup.
+- `artifacts/desktop-capture/agent-picker-connected-final/report.json`: 16 connected
+  composer checkpoints, including async settings, retained drafts, queue controls,
+  uncertainty and narrow layouts in both themes.
+
+The connected run's preview server logged ResizeObserver loop notifications
+during its interrupted composer-height exercise; that existing scenario does
+not forward Vite-handled window errors into its report. The dedicated picker
+regression explicitly forwards window errors and completed without notifications.
+
+Final light/dark focus, search and connected-settings PNGs were inspected. These
+are native macOS preview checks with supplied provider data, not live-provider
+or packaged-app verification.
+
 ## Tinted reply harness tiles, 2026-11-04
 
 Implemented the selected Option 3 on the shared reply mark: Claude uses a

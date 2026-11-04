@@ -114,15 +114,15 @@ input:hover:not(:disabled)::-webkit-slider-thumb {
 input:active:not(:disabled)::-webkit-slider-thumb {
   transform: scale(0.94);
 }
+.unset input:not(:focus-visible)::-webkit-slider-thumb {
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1.5px var(--line-strong);
+}
 input:focus-visible::-webkit-slider-thumb {
   box-shadow:
     var(--focus-ring),
     inset 0 0 0 1.5px var(--accent);
-}
-.unset input::-webkit-slider-thumb {
-  box-shadow:
-    var(--shadow-raised),
-    inset 0 0 0 1.5px var(--line-strong);
 }
 input:disabled {
   cursor: default;

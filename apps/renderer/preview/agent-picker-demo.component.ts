@@ -31,7 +31,7 @@ export class AgentPickerDemoComponent {
   readonly busy = signal(false);
   readonly disabled = signal(false);
   readonly notice = signal("");
-  readonly harnesses: readonly AgentHarness[] = [
+  readonly harnesses = signal<readonly AgentHarness[]>([
     {
       id: "claude",
       label: "Claude Code",
@@ -120,12 +120,12 @@ export class AgentPickerDemoComponent {
       mark: "Lo",
       models: [{ id: "qwen", label: "Qwen3 Coder", thinking: [] }],
     },
-  ];
+  ]);
   /** As in a connected session: fast mode follows the chosen model's support. */
   readonly fastAvailable = computed(
     () =>
       !!this.agent().fast ||
-      !!this.harnesses
+      !!this.harnesses()
         .find((harness) => harness.id === this.agent().harness)
         ?.models.find((model) => model.id === this.agent().model)
         ?.supportsFastMode,

@@ -192,6 +192,12 @@ the [usage specification](../../../../../docs/design-system/project/components/P
 defines the chip's meters and hover card. The `/agent-picker` preview supplies
 Claude Code, Codex, Pi, OpenCode (a long, filterable list) and a harness without
 a logo, plus optional context/plan data and busy, locked and disabled states.
+Its `harnesses` signal supports catalog refresh scenarios. Once shown, model
+search stays mounted for that harness until the menu closes or the harness
+changes, including after the catalog shrinks or the query is cleared. Space
+activates the focused model; printable text starts search. From an unset thinking
+level, the first arrow/Home interaction or a click on the first step explicitly
+chooses the lowest reported level without changing the setting on open.
 
 The chip identifies the harness with its logo or monogram. Its text shows the
 model and optional thinking level; presets show their name with the model and

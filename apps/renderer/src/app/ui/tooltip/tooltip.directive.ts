@@ -9,6 +9,7 @@ import {
   inject,
   input,
 } from "@angular/core";
+import type { Subscription } from "rxjs";
 import { TooltipComponent } from "./tooltip.component";
 
 /** Shared hover grace belongs to this renderer, rather than module mutable state. */
@@ -48,6 +49,7 @@ export class TooltipDirective {
   private readonly describer = inject(AriaDescriber);
   private readonly timing = inject(TooltipTiming);
   private popup?: OverlayRef;
+  private detachment?: Subscription;
   private timer?: ReturnType<typeof setTimeout>;
   private frame = 0;
   private described = "";
@@ -111,6 +113,7 @@ export class TooltipDirective {
       positionStrategy: position,
       scrollStrategy: this.overlay.scrollStrategies.close(),
     });
+    this.detachment = this.popup.detachments().subscribe(() => this.hide());
     const component = this.popup.attach(new ComponentPortal(TooltipComponent));
     component.setInput("label", this.exTooltip());
     component.setInput("kbd", this.tooltipShortcut());
@@ -128,6 +131,7 @@ export class TooltipDirective {
     const anchor = this.element.nativeElement;
     let last = anchor.getBoundingClientRect();
     const tick = () => {
+      if (!this.popup?.hasAttached()) return;
       const rect = anchor.getBoundingClientRect();
       if (rect.top !== last.top || rect.left !== last.left) {
         last = rect;
@@ -141,10 +145,14 @@ export class TooltipDirective {
   protected hide(): void {
     clearTimeout(this.timer);
     cancelAnimationFrame(this.frame);
+    this.frame = 0;
+    this.detachment?.unsubscribe();
+    this.detachment = undefined;
     this.timing.release(this.closeActive);
-    if (this.popup) {
-      this.popup.dispose();
-      this.popup = undefined;
+    const popup = this.popup;
+    this.popup = undefined;
+    if (popup) {
+      popup.dispose();
       this.timing.lastClosed = Date.now();
     }
     if (this.described) {

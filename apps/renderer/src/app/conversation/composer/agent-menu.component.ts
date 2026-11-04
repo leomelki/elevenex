@@ -85,11 +85,16 @@ export class AgentMenuComponent {
     () => !this.locked() && this.harnesses().length > 1,
   );
   protected readonly models = computed(() => this.harness()?.models ?? []);
-  protected readonly filterable = computed(
-    () => this.models().length > FILTER_FROM,
-  );
   /** Memoized so a new config for the same harness keeps the filter. */
   private readonly harnessId = computed(() => this.value().harness);
+  /** Once offered, search stays mounted for this harness until the menu closes.
+   * Catalog refreshes must not remove a focused field or hide an active query. */
+  protected readonly filterable = linkedSignal({
+    source: () => ({ harness: this.harnessId(), count: this.models().length }),
+    computation: ({ harness, count }, previous): boolean =>
+      count > FILTER_FROM ||
+      (previous?.source.harness === harness && previous.value),
+  });
   /** A filter belongs to one harness's list. */
   protected readonly query = linkedSignal({
     source: this.harnessId,
@@ -210,7 +215,13 @@ export class AgentMenuComponent {
       options[next]?.focus();
       return;
     }
-    if (event.key.length !== 1 || event.metaKey || event.ctrlKey || event.altKey)
+    if (
+      event.key === " " ||
+      event.key.length !== 1 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey
+    )
       return;
     if (this.filterable()) {
       event.preventDefault();

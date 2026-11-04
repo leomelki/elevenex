@@ -562,6 +562,12 @@ actions and standalone agent messages.
 It covers both themes and narrow reduced-motion layouts against the component
 preview URL. Pair it with `message-working.mjs` for reply entrance/cleanup checks.
 
+`scenarios/agent-picker-recovery.mjs` checks search/focus retention through a
+shrinking catalog and query clearing, native Space selection, first keyboard and
+pointer selection from unset thinking, tooltip cleanup on scroll detachment,
+harness/menu resets and narrow reduced motion in both themes. Run against the
+component preview URL.
+
 
 `scenarios/message-bottom-scroll.mjs` starts at the bottom of a full history
 window. Natural frames begin before submission and check the first painted row,

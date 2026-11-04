@@ -57,6 +57,30 @@ export class ThinkingSliderComponent {
   protected preview(event: Event): void {
     this.shown.set(Number((event.target as HTMLInputElement).value));
   }
+  protected initialKey(event: KeyboardEvent): void {
+    if (
+      ![
+        "Home",
+        "ArrowLeft",
+        "ArrowDown",
+        "ArrowRight",
+        "ArrowUp",
+        "PageDown",
+      ].includes(event.key)
+    )
+      return;
+    if (this.unset() && !this.disabled()) {
+      event.preventDefault();
+      this.commitInitial(event);
+    }
+  }
+  /** An unset range already sits at zero, so selecting its first step does not
+   * produce a native change event. Other selections retain native drag behavior. */
+  protected commitInitial(event: Event): void {
+    if (!this.unset() || this.disabled()) return;
+    this.preview(event);
+    this.commit(event);
+  }
   protected commit(event: Event): void {
     const level = this.levels()[Number((event.target as HTMLInputElement).value)];
     if (level && !this.disabled() && level !== this.value())

@@ -31,6 +31,17 @@ const harnesses = [
     models: [{ id: "gpt", label: "GPT", thinking: ["low", "high", "xhigh"] }],
   },
 ];
+const longHarness = {
+  ...harnesses[0]!,
+  models: [
+    ...harnesses[0]!.models,
+    ...Array.from({ length: 10 }, (_, index) => ({
+      id: `m${index}`,
+      label: index === 7 ? "Kimi K3" : `Model ${index}`,
+      thinking: [],
+    })),
+  ],
+};
 function button(selector: string): HTMLButtonElement {
   const element = document.querySelector(selector);
   if (!(element instanceof HTMLButtonElement))
@@ -217,6 +228,48 @@ describe("AgentPicker controlled settings and focus", () => {
     expect(document.querySelector('[aria-label="Thinking level"]')).toBeNull();
     expect(document.querySelector(".agent-settings .tune")).toBeNull();
   });
+  it.each(["Home", "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown", "PageDown"])(
+    "selects the first reported thinking level from Default with %s",
+    async (pressed) => {
+      const { fixture, open } = await setup();
+      fixture.componentRef.setInput("value", { ...agent, thinking: undefined });
+      const changed = vi.fn();
+      fixture.componentInstance.changed.subscribe(changed);
+      await open();
+      expect(slider().getAttribute("aria-valuetext")).toBe("Default");
+      expect(key(slider(), pressed).defaultPrevented).toBe(true);
+      await settle(fixture);
+      expect(changed).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ thinking: "High" }),
+      );
+      expect(slider().getAttribute("aria-valuetext")).toBe("High");
+    },
+  );
+  it("commits an unchanged first thinking step on pointer release without duplicating native changes", async () => {
+    const { fixture, open } = await setup();
+    fixture.componentRef.setInput("value", { ...agent, thinking: undefined });
+    const changed = vi.fn();
+    fixture.componentInstance.changed.subscribe(changed);
+    await open();
+    slider().dispatchEvent(new Event("pointerup", { bubbles: true }));
+    expect(changed).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ thinking: "High" }),
+    );
+    fixture.componentRef.setInput("value", { ...agent, thinking: undefined });
+    // A disabled update re-syncs the local preview, just as an owner rejection does.
+    fixture.componentRef.setInput("busy", true);
+    await settle(fixture);
+    slider().dispatchEvent(new Event("pointerup", { bubbles: true }));
+    expect(changed).toHaveBeenCalledTimes(1);
+    fixture.componentRef.setInput("busy", false);
+    await settle(fixture);
+    commitLevel(1);
+    slider().dispatchEvent(new Event("pointerup", { bubbles: true }));
+    expect(changed).toHaveBeenCalledTimes(2);
+    expect(changed).toHaveBeenLastCalledWith(
+      expect.objectContaining({ thinking: "Max" }),
+    );
+  });
   it("moves through models with the keyboard and chooses only on a deliberate press", async () => {
     const { fixture, trigger, open } = await setup();
     const changed = vi.fn();
@@ -253,14 +306,7 @@ describe("AgentPicker controlled settings and focus", () => {
   });
   it("filters a long model list, and Escape clears the filter before closing", async () => {
     const { fixture, open } = await setup();
-    const many = Array.from({ length: 10 }, (_, index) => ({
-      id: `m${index}`,
-      label: index === 7 ? "Kimi K3" : `Model ${index}`,
-      thinking: [],
-    }));
-    fixture.componentRef.setInput("harnesses", [
-      { ...harnesses[0]!, models: [...harnesses[0]!.models, ...many] },
-    ]);
+    fixture.componentRef.setInput("harnesses", [longHarness]);
     const changed = vi.fn();
     fixture.componentInstance.changed.subscribe(changed);
     await open();
@@ -287,6 +333,49 @@ describe("AgentPicker controlled settings and focus", () => {
     escape(filter!);
     await settle(fixture);
     expect(document.querySelector(".agent-settings")).toBeNull();
+  });
+  it("keeps search and focus through a catalog shrinking below the threshold, including clearing its query", async () => {
+    const { fixture, open } = await setup();
+    fixture.componentRef.setInput("harnesses", [longHarness, harnesses[1]!]);
+    await open();
+    const filter = document.querySelector<HTMLInputElement>('.filter input')!;
+    filter.focus();
+    filter.value = "Kimi";
+    filter.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle(fixture);
+    expect(document.querySelectorAll('.agent-settings [role="option"]')).toHaveLength(1);
+    fixture.componentRef.setInput("harnesses", [
+      { ...longHarness, models: longHarness.models.slice(0, 8) },
+      harnesses[1]!,
+    ]);
+    await settle(fixture);
+    expect(document.querySelector('.filter input')).toBe(filter);
+    expect(document.activeElement).toBe(filter);
+    expect(filter.value).toBe("Kimi");
+    expect(document.querySelectorAll('.agent-settings [role="option"]')).toHaveLength(0);
+    escape(filter);
+    await settle(fixture);
+    expect(document.querySelector('.filter input')).toBe(filter);
+    expect(document.activeElement).toBe(filter);
+    expect(filter.value).toBe("");
+    expect(document.querySelectorAll('.agent-settings [role="option"]')).toHaveLength(8);
+    fixture.componentRef.setInput("value", { ...agent, harness: "codex", model: "gpt" });
+    await settle(fixture);
+    expect(document.querySelector('.filter input')).toBeNull();
+    fixture.componentRef.setInput("value", agent);
+    await settle(fixture);
+    expect(document.querySelector('.filter input')).toBeNull();
+  });
+  it("leaves Space available for native model activation in a searchable catalog", async () => {
+    const { fixture, open } = await setup();
+    fixture.componentRef.setInput("harnesses", [longHarness]);
+    await open();
+    const model = option("Sonnet 5.5");
+    model.focus();
+    expect(key(model, " ").defaultPrevented).toBe(false);
+    await settle(fixture);
+    expect(document.activeElement).toBe(model);
+    expect(document.querySelector<HTMLInputElement>('.filter input')?.value).toBe("");
   });
   it("retains an inert exiting portal, restores focus immediately, and permits interrupted reopening", async () => {
     const { fixture, trigger, open } = await setup(false);

@@ -26,6 +26,8 @@
     [disabled]="disabled()"
     [attr.aria-valuetext]="label()"
     aria-label="Thinking level"
+    (keydown)="initialKey($event)"
+    (pointerup)="commitInitial($event)"
     (input)="preview($event)"
     (change)="commit($event)"
   />
