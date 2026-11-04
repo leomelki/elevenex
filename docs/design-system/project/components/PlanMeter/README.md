@@ -19,9 +19,9 @@ Point at the agent chip (or focus it) for 400ms and a card rises above it:
 - context: its ring, the percentage and the tokens ("84k of 200k");
 - the plan's name and tier ("Claude plan · Max");
 - each limit with a thin bar of what's left and when it resets ("5-hour limit · 12% left · Resets at 14:30", "Weekly limit · 58% left · Resets Monday"). The tighter one is in bold.
-- a footer: "More in the agent menu ⌘J".
+- a footer: "Adjust the agent ⌘J".
 
-The agent menu (⌘J) opens on the same block, above the model and thinking settings.
+The agent menu (⌘J) keeps one quiet line for the plan in its header (“62% left”, colored only when running low) and a Compact line once context is 75% full; this card holds the detail.
 
 ## The line above the composer (`PlanNotice`)
 

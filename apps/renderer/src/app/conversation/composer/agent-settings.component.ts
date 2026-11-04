@@ -15,6 +15,7 @@ import {
 } from "../../ui";
 import type { AgentConfig, AgentHarness } from "../conversation.models";
 
+import { withHarness, withModel } from "./agent-config";
 import { AgentMarkComponent } from "./agent-mark.component";
 
 /** Controlled settings; provider mutations and popover lifetime belong to the owner. */
@@ -97,14 +98,7 @@ export class AgentSettingsComponent {
     if (this.modelUnavailable() || model === this.value().model) return;
     const selected = this.models().find((item) => item.id === model);
     if (!selected) return;
-    this.changed.emit({
-      ...this.value(),
-      preset: undefined,
-      model,
-      thinking: selected.thinking.includes(this.value().thinking ?? "")
-        ? this.value().thinking
-        : selected.thinking[0],
-    });
+    this.changed.emit(withModel(this.value(), selected));
   }
   thinkingChange(thinking: string): void {
     if (
@@ -122,19 +116,7 @@ export class AgentSettingsComponent {
     if (this.locked() || this.unavailable() || id === this.value().harness)
       return;
     const harness = this.harnesses().find((item) => item.id === id);
-    if (harness)
-      this.changed.emit({
-        ...this.value(),
-        preset: undefined,
-        harness: id,
-        mark: harness.mark,
-        model: harness.models[0]?.id ?? "",
-        thinking: harness.models[0]?.thinking[0],
-        fast: false,
-        context: undefined,
-        tokens: undefined,
-        plan: undefined,
-      });
+    if (harness) this.changed.emit(withHarness(this.value(), harness));
   }
   fastChange(fast: boolean): void {
     if (!this.modelUnavailable() && this.fastAvailable())

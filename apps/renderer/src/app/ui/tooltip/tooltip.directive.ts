@@ -41,13 +41,15 @@ export class TooltipTiming {
 export class TooltipDirective {
   readonly exTooltip = input.required<string>();
   readonly tooltipShortcut = input("");
-  readonly tooltipSide = input<"top" | "bottom">("top");
+  /** `end` suits vertical stacks such as a rail, where above would cover a neighbour. */
+  readonly tooltipSide = input<"top" | "bottom" | "end">("top");
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly overlay = inject(Overlay);
   private readonly describer = inject(AriaDescriber);
   private readonly timing = inject(TooltipTiming);
   private popup?: OverlayRef;
   private timer?: ReturnType<typeof setTimeout>;
+  private frame = 0;
   private described = "";
   private readonly closeActive = () => this.hide();
 
@@ -70,22 +72,41 @@ export class TooltipDirective {
     const position = this.overlay
       .position()
       .flexibleConnectedTo(this.element)
-      .withPositions([
-        {
-          originX: "center",
-          originY: top ? "top" : "bottom",
-          overlayX: "center",
-          overlayY: top ? "bottom" : "top",
-          offsetY: top ? -8 : 8,
-        },
-        {
-          originX: "center",
-          originY: top ? "bottom" : "top",
-          overlayX: "center",
-          overlayY: top ? "top" : "bottom",
-          offsetY: top ? 8 : -8,
-        },
-      ]);
+      .withPositions(
+        this.tooltipSide() === "end"
+          ? [
+              {
+                originX: "end",
+                originY: "center",
+                overlayX: "start",
+                overlayY: "center",
+                offsetX: 8,
+              },
+              {
+                originX: "start",
+                originY: "center",
+                overlayX: "end",
+                overlayY: "center",
+                offsetX: -8,
+              },
+            ]
+          : [
+              {
+                originX: "center",
+                originY: top ? "top" : "bottom",
+                overlayX: "center",
+                overlayY: top ? "bottom" : "top",
+                offsetY: top ? -8 : 8,
+              },
+              {
+                originX: "center",
+                originY: top ? "bottom" : "top",
+                overlayX: "center",
+                overlayY: top ? "top" : "bottom",
+                offsetY: top ? 8 : -8,
+              },
+            ],
+      );
     this.popup = this.overlay.create({
       positionStrategy: position,
       scrollStrategy: this.overlay.scrollStrategies.close(),
@@ -95,10 +116,31 @@ export class TooltipDirective {
     component.setInput("kbd", this.tooltipShortcut());
     this.described = this.exTooltip();
     this.describer.describe(this.element.nativeElement, this.described);
+    this.follow();
+  }
+
+  /**
+   * CDK repositions only on scroll and resize. An anchor inside a surface that
+   * eases its size (a menu growing upward) moves on its own: keep the tooltip on
+   * it while shown, with one rect read per frame.
+   */
+  private follow(): void {
+    const anchor = this.element.nativeElement;
+    let last = anchor.getBoundingClientRect();
+    const tick = () => {
+      const rect = anchor.getBoundingClientRect();
+      if (rect.top !== last.top || rect.left !== last.left) {
+        last = rect;
+        this.popup?.updatePosition();
+      }
+      this.frame = requestAnimationFrame(tick);
+    };
+    this.frame = requestAnimationFrame(tick);
   }
 
   protected hide(): void {
     clearTimeout(this.timer);
+    cancelAnimationFrame(this.frame);
     this.timing.release(this.closeActive);
     if (this.popup) {
       this.popup.dispose();

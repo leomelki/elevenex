@@ -183,36 +183,50 @@ Neither locks the draft. `modeAvailable`, `agentLocked`, `showFork`,
 operations supplied by the owner. `permissionChoices` accepts bounded,
 harness-native IDs, labels and descriptions. Omission retains the design defaults.
 
-### AgentPicker: reference and ownership
+### AgentPicker: design and ownership
 
-The standalone ZIP's `project/components/bundle.js` (`AgentPicker`, `UsageBlock`,
-`UsageCard`, `PlanMeter`) and its CSS define the actual visual reference. The
-[AgentPicker specification](../../../../../docs/design-system/project/components/AgentPicker/README.md)
-and [usage specification](../../../../../docs/design-system/project/components/PlanMeter/README.md)
-describe its interaction. A dedicated `/agent-picker` preview supplies identical
-reference values, optional context/plan data, editable harnesses and busy states.
+The [AgentPicker specification](../../../../../docs/design-system/project/components/AgentPicker/README.md)
+defines the chip and its menu (harness rail, models, thinking track, fast pill);
+the [usage specification](../../../../../docs/design-system/project/components/PlanMeter/README.md)
+defines the chip's meters and hover card. The `/agent-picker` preview supplies
+Claude Code, Codex, Pi, OpenCode (a long, filterable list) and a harness without
+a logo, plus optional context/plan data and busy, locked and disabled states.
 
 - `AgentPicker` owns the chip, 400ms pointer/focus disclosure, CDK portals,
   positioning, focus trapping/restoration and their lifetimes. It preserves
-  `open` and `openPicker()` for the composer shortcut. Its settings portal stays
+  `open` and `openPicker()` for the composer shortcut. Its menu portal stays
   mounted through exit, immediately becomes inert and releases its backdrop's
-  pointer handling. Reopening interrupts that exit. Nested model-menu Escape
-  closes that menu first. Focus initially reads the settings heading and returns
-  to the opener on close. Opening settings consumes the current usage hover/focus;
-  restored focus does not reopen usage until a fresh hover or focus interaction.
-  Harness, model, thinking and fast-mode changes keep
-  the settings menu open so users can finish adjusting the agent.
-  A compaction intent focuses stable content before its
-  initiating button can disappear. When no settings are enabled, Tab/Shift Tab
-  stay on the heading and Escape remains available through the whole owned pane.
-- Internal `AgentSettings` owns capability-derived choices and controlled config
-  intents. The source's fixed label column, harness mark/segment, compact model
-  dropdown, thinking segment, fast switch/hint and separated footer are retained.
-  Busy state keeps those controls and their data mounted. Unsupported thinking
-  choices remain disabled. Provider-specific variants are appended using their
-  exact IDs. An absent thinking value stays unselected rather than claiming Off.
-- Internal `AgentUsage` renders the same context/plan block in the menu and the
-  read-only hover card. Internal `AgentPlanMeter` shows the tighter account limit
+  pointer handling. Reopening interrupts that exit. Focus starts on the chosen
+  model (on the menu heading while busy) and returns to the opener on close.
+  Opening the menu consumes the current usage hover/focus; restored focus does
+  not reopen usage until a fresh hover or focus interaction. The menu is 340px
+  with the harness rail and 296px without, and eases its height (`AutoHeight`)
+  when a section comes or goes.
+- Internal `AgentMenu` owns capability-derived choices, keyboard behavior and
+  controlled config intents. Harness, model, thinking and fast-mode changes keep
+  the menu open. The rail is a radio group (arrows move and choose) whose thumb
+  is the shared `FittedHighlight`; it shows only while the harness is unlocked.
+  The model list is a listbox: arrows move focus only, ↵/click chooses, typing
+  jumps by first letter, and lists over eight models get a filter whose first
+  Escape clears it. While `busy`, rail and model rows stay focusable with
+  `aria-disabled` so keyboard position survives the update; the track, fast pill
+  and actions are disabled. `disabled` disables everything. A compaction intent
+  focuses the heading before its button can disappear.
+- Internal `ThinkingSlider` is a native range over the model's own levels,
+  provider IDs kept exact and ordered as reported. Dragging previews; a level is
+  emitted once committed, and a rejected change returns the thumb to the actual
+  level when the update settles. An absent thinking value shows “Default”
+  rather than claiming the first level.
+- Internal `AgentMark` renders the bundled harness logo (`agent-logos.ts`:
+  Claude Code, Codex, OpenCode, Pi; MIT/published marks, attribution in the
+  file) in `currentColor`, sized by `--agent-mark-size`, or the `mark` monogram
+  for any other harness. Logos match exact harness IDs only.
+- `agent-config.ts` holds the shared config transitions (`withHarness`,
+  `withModel`, `thinkingLabel`). The menu and the preset form's
+  `AgentSettings` both use them, so a manual change always leaves the preset
+  and a new model keeps a thinking level it supports.
+- Internal `AgentUsage` renders the context/plan block in the read-only hover
+  card; the menu shows only its one-line plan summary. Internal `AgentPlanMeter` shows the tighter account limit
   as a clock ring. `AgentConfig.tokens` is display text. Optional `plan` follows
   the supplied `{ win, week, resetWin, resetWeek, name, tier }` API: fractions are
   **remaining**, independently of the session's context fraction **used**.

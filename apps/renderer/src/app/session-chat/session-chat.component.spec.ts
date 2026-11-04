@@ -64,6 +64,7 @@ beforeEach(() => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -690,7 +691,8 @@ describe("connected composer controls", () => {
       expect(surface.getAttribute("aria-busy")).toBe("false");
       expect(surface.contains(document.activeElement)).toBe(true);
       expect(
-        surface.querySelector('[aria-label^="Model:"]')?.textContent,
+        surface.querySelector('[role="option"][aria-selected="true"]')
+          ?.textContent,
       ).toContain(accepted ? "Sonnet" : "GPT");
       expect(fixture.componentInstance.store.draft()).toBe("Keep this draft");
       surface.dispatchEvent(

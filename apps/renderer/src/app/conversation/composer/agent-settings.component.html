@@ -14,7 +14,7 @@
           : 'The harness is fixed for this conversation'
       "
     >
-      <ex-agent-mark [mark]="value().mark" />{{
+      <ex-agent-mark [mark]="value().mark" [harness]="value().harness" />{{
         harness()?.label || value().harness
       }}
     </span>

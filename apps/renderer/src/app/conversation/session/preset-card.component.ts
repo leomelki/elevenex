@@ -7,9 +7,10 @@ import {
 } from "@angular/core";
 import { IconComponent, KbdComponent } from "../../ui";
 import type { AgentConfig } from "../conversation.models";
+import { AgentMarkComponent } from "../composer/agent-mark.component";
 @Component({
   selector: "ex-preset-card",
-  imports: [IconComponent, KbdComponent],
+  imports: [AgentMarkComponent, IconComponent, KbdComponent],
   templateUrl: "./preset-card.component.html",
   styleUrl: "./preset-card.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,

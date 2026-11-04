@@ -1,0 +1,148 @@
+:host {
+  --thumb: 14px;
+  display: block;
+  min-width: 0;
+}
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height);
+}
+.name {
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}
+.level {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: var(--text-ui-size);
+  line-height: var(--text-ui-line);
+  font-weight: var(--text-ui-weight);
+}
+.level.unset {
+  color: var(--ink-muted);
+  font-weight: var(--text-body-weight);
+}
+/* The painted rail sits under a transparent native range of the same width. */
+.track {
+  position: relative;
+  height: 22px;
+}
+.rail {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--thumb) / 2);
+  right: calc(var(--thumb) / 2);
+  height: 4px;
+  margin-top: -2px;
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.filled {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--fill) * 100%);
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--dur-fast) var(--ease-out);
+}
+.unset .filled {
+  opacity: 0;
+}
+.tick {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--at) * 100%);
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: var(--radius-full);
+  background: var(--line-strong);
+  opacity: 0.6;
+}
+.tick.passed {
+  background: var(--on-accent);
+  opacity: 0.75;
+}
+.unset .tick.passed {
+  background: var(--line-strong);
+  opacity: 0.6;
+}
+input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+}
+input:focus {
+  outline: none;
+}
+input::-webkit-slider-runnable-track {
+  height: 100%;
+  background: transparent;
+}
+input::-webkit-slider-thumb {
+  width: var(--thumb);
+  height: var(--thumb);
+  margin-top: calc((22px - var(--thumb)) / 2);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1.5px var(--accent);
+  appearance: none;
+  transition: transform var(--dur-instant) var(--ease-out);
+}
+input:hover:not(:disabled)::-webkit-slider-thumb {
+  transform: scale(1.1);
+}
+input:active:not(:disabled)::-webkit-slider-thumb {
+  transform: scale(0.94);
+}
+input:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    var(--focus-ring),
+    inset 0 0 0 1.5px var(--accent);
+}
+.unset input::-webkit-slider-thumb {
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1.5px var(--line-strong);
+}
+input:disabled {
+  cursor: default;
+}
+.ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  color: var(--ink-muted);
+  font-size: var(--text-overline-size);
+  line-height: var(--text-overline-line);
+}
+:host(:has(input:disabled)) .track,
+:host(:has(input:disabled)) .ends {
+  opacity: 0.45;
+  transition: opacity var(--dur-base) var(--ease-out) 150ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .filled,
+  input::-webkit-slider-thumb {
+    transition: none;
+  }
+}

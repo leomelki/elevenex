@@ -39,8 +39,11 @@ export default async function* (capture) {
     assert.deepEqual(await capture.evaluate(() => [...document.querySelectorAll('.usage-card [role="meter"]')].map(e => e.getAttribute('aria-valuenow'))), ['64', '82']);
     yield { name: theme + '-quota-hover', inspect: ['.usage-card', 'ex-agent-plan-meter', '.limit'] };
     await open();
-    assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings')?.textContent.includes('Plus')), true);
-    yield { name: theme + '-quota-menu', selector: '.agent-settings', inspect: ['.agent-settings', '.limit'] };
+    // The menu keeps one quiet line for the plan; the hover card holds the detail.
+    assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings .plan')?.textContent.trim()), '64% left');
+    assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings .plan')?.getAttribute('aria-label').includes('Plus')), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings .plan')?.dataset.tone), 'normal');
+    yield { name: theme + '-quota-menu', selector: '.agent-settings', inspect: ['.agent-settings', '.plan'] };
     await close();
     await publish(usage('codex', [window('primary', '5-hour limit', 12), window('secondary', 'Weekly limit', 58)], 'warning'));
     await capture.waitFor(() => document.querySelector('ex-agent-usage-notice')?.textContent.includes('12% of your 5-hour limit left'));
@@ -58,9 +61,9 @@ export default async function* (capture) {
     await publish(usage('claude', [window('seven_day', 'Weekly limit', 18), window('seven_day_opus', 'Weekly Opus limit', 7)], 'warning'));
     await capture.waitFor(() => document.querySelector('ex-agent-plan-meter')?.getAttribute('aria-label').includes('7% of the weekly opus limit'));
     await capture.viewport(1000, 760); await capture.reducedMotion(true); await open();
-    const limits = await capture.evaluate(() => [...document.querySelectorAll('.agent-settings .limit-label')].map(e => e.textContent));
-    assert.deepEqual(limits, ['Weekly limit', 'Weekly Opus limit']);
-    yield { name: theme + '-quota-weekly-narrow', inspect: ['.agent-settings', '.limit', 'ex-composer'] };
+    const plan = await capture.evaluate(() => { const e = document.querySelector('.agent-settings .plan'); return { text: e?.textContent.trim(), tone: e?.dataset.tone, detail: e?.getAttribute('aria-label') }; });
+    assert.equal(plan.text, '7% left'); assert.equal(plan.tone, 'attention'); assert.match(plan.detail, /Weekly Opus limit/);
+    yield { name: theme + '-quota-weekly-narrow', inspect: ['.agent-settings', '.plan', 'ex-composer'] };
     await close();
     await publish(usage('claude', [window('seven_day', 'Weekly limit', 0, Math.floor(Date.now() / 1000) - 60)], 'exhausted'));
     await capture.waitFor(() => document.querySelector('ex-agent-usage-notice')?.textContent.includes('awaiting usage update'));
@@ -69,7 +72,7 @@ export default async function* (capture) {
     await publish(null);
     await capture.waitFor(() => !document.querySelector('ex-agent-plan-meter, ex-agent-usage-notice .notice'));
     await open();
-    assert.equal(await capture.evaluate(() => !!document.querySelector('.plan-heading, .limit')), false);
+    assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-settings .plan')), false);
     await close(); await capture.reducedMotion(false);
   }
 }

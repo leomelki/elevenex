@@ -308,7 +308,7 @@ One meaning per shortcut, everywhere. Check this table before giving anything a 
 | ⇧⌘N | New window (opens on Home) |
 | ⌘O | Find a machine (on Home) |
 | ⌘K | Command palette |
-| ⌘J | Adjust the agent |
+| ⌘J | Adjust the agent (↑↓ through models, ↵ to choose, type to filter a long list) |
 | ⌥1–⌥9 | Pick a preset on a new session |
 | ⇧Tab | Plan ↔ Code |
 | ⌘U · ⌘D · ⌘. | Attach · dictate · stop |
@@ -330,7 +330,8 @@ One meaning per shortcut, everywhere. Check this table before giving anything a 
 - One line set on a 16px grid, 1.5px stroke, round caps and joins, `currentColor` (`Icon`). Use 16px in toolbars, 14–15px in rows and tabs, 13px for row-kind markers.
 - Fixed meanings: `terminal`, `code`, `changes`, `actions`, `globe` (browser) for side views; `fork` and `side-chat` for branching a conversation; `branch`, `commit` and `push` for git; `close-task` (a ticked square) for closing a task, `archive` only for lists of closed things; `workspace` for workspaces; `expand` / `shrink` for Wider review; `expand-up`, `expand-down` and `unfold` for opening context around a hunk; `wrap` for line wrapping; `folder` in file lists.
 - The bundled set is original and small. For icons it lacks, use Lucide at the same 1.5 stroke; flag any mismatch rather than mixing styles.
-- No emoji (except a project face someone picked), no filled icons, no provider logos: agent harnesses show a two-letter monogram on `accent-soft`; PRs and tickets show the `pr` / `merged` / `ticket` icons.
+- No emoji (except a project face someone picked) and no filled icons; PRs and tickets show the `pr` / `merged` / `ticket` icons.
+- Agent harnesses are the one other place for outside marks: wherever you choose or recognise a harness (the agent chip and menu, preset cards), Claude Code, Codex, OpenCode and Pi show their real logos (`AgentMark`), bundled with the app, in `currentColor` so they stay calm in both themes and never compete with `accent`. A harness without a bundled logo keeps a two-letter monogram on `accent-soft`. The agent's mark in the chat gutter is still a monogram (open question 13).
 - Projects are the one place for outside imagery: each may carry its own logo (`ProjectMark`), shown as given, never recolored. Without one, the face is two letters, an emoji or an icon from the set, on the project's color. The sample logos in these previews are placeholders.
 - There is no Elevenex logo yet: set “Elevenex” in Instrument Sans 600, `ink`.
 
@@ -354,6 +355,7 @@ Decisions still waiting on an answer. Until then, the system does what's in brac
 10. Naming a task from its first message (an “Untitled task” that the agent names) was discussed and not built: New task names it up front.
 11. Pictures from the web in a reply (`![…](https://…)`): load at once, or only after you allow that site, since loading tells the site you're reading? (`Markdown` shows whatever `resolve` returns; nothing asks yet.)
 12. Short recordings (10s or less): loop silently like a moving screenshot, or always wait for Play? (They wait for Play.)
+13. Should the agent's mark in the chat gutter also become its harness logo, like the agent menu and preset cards? (It stays a monogram.)
 
 Not designed yet:
 - Side views other than Changes, Browser and Terminal: Code, Actions.

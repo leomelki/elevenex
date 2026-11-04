@@ -2385,3 +2385,25 @@ build and diff checks pass. [Four native captures](../../artifacts/desktop-captu
 verify passphrase/password titles in both themes, with narrow/reduced-motion and
 focused input coverage. Report `verified: true`; all PNGs inspected. These use
 preview-controlled challenges rather than a live SSH password server.
+
+## Agent menu redesign — 2026-11-04
+
+The composer's agent menu replaces the fixed-column form with a harness rail of
+bundled logos (unlocked sessions only), a keyboard-driven model listbox with a
+filter for lists over eight, a stepped thinking track with a fast pill, a
+one-line plan summary and a Compact line from 75% context. Harness logos
+(Claude Code, Codex, OpenCode, Pi) also replace monograms on the chip and preset
+cards; other harnesses keep monograms. The shared tooltip gains an `end` side and
+follows an anchor that moves while it is shown.
+
+Desktop lint, test (616 renderer tests plus the desktop and capture-tool suites),
+build and `git diff --check` pass. The rewritten `agent-picker` regression
+scenario verifies, in both themes, locked/unlocked geometry (296/340px), initial
+focus on the chosen model, list keyboard and type-ahead, filter and its Escape
+order, thinking commit, fast toggle, constant list height across harnesses, rail
+thumb alignment, plan/context tones, busy focus retention, narrow reduced motion,
+interrupted reopening and unmount cleanup; `report.json` is `verified: true` and
+the PNGs were inspected. `session-harness`, `session-composer`, `session-quota`,
+`session-presets` and `preset-creator-harness` were updated where they used the
+old form and verify through the preview transport. No live provider, packaged
+app or Windows/Linux run was checked.

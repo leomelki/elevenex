@@ -85,6 +85,7 @@ beforeEach(() => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -95,38 +96,59 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function option(label: string): HTMLButtonElement {
+  return button(`.agent-settings [role="option"][data-label="${label}"]`);
+}
+function slider(): HTMLInputElement {
+  const element = document.querySelector('[aria-label="Thinking level"]');
+  if (!(element instanceof HTMLInputElement))
+    throw new Error("Missing thinking slider");
+  return element;
+}
+function commitLevel(index: number): void {
+  const range = slider();
+  range.value = String(index);
+  range.dispatchEvent(new Event("input", { bubbles: true }));
+  range.dispatchEvent(new Event("change", { bubbles: true }));
+}
+function key(target: HTMLElement, key: string): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
 describe("AgentPicker controlled settings and focus", () => {
-  it("uses the reference hierarchy and emits only supported segmented thinking choices", async () => {
+  it("shows the harness, its models and a thinking track, and emits a committed level", async () => {
     const { fixture, open } = await setup();
     const changed = vi.fn();
     fixture.componentInstance.changed.subscribe(changed);
     await open();
-    expect(
-      document.querySelector(".agent-settings .heading")?.textContent,
-    ).toContain("Adjust “Deep work”");
-    expect(
-      document.querySelector(".agent-settings .harness")?.textContent,
-    ).toContain("Claude Code");
-    expect(
-      button('.agent-settings [aria-label^="Model:"]').textContent,
-    ).toContain("Opus 5.5");
-    const thinking = '[aria-label="Thinking level"]';
-    expect(
-      button(`${thinking} button[aria-label="High"]`).getAttribute(
-        "aria-checked",
-      ),
-    ).toBe("true");
-    expect(
-      document.querySelector(`${thinking} button[aria-label="Low"]`),
-    ).toBeNull();
+    const heading = document.querySelector(".agent-settings .heading");
+    expect(heading?.textContent).toContain("Claude Code");
+    expect(heading?.textContent).toContain("Deep work");
+    expect(heading?.textContent).toContain("fixed for this conversation");
+    // A locked harness has no rail: its models are the whole menu.
+    expect(document.querySelector('[aria-label="Harness"]')).toBeNull();
+    expect(option("Opus 5.5").getAttribute("aria-selected")).toBe("true");
+    expect(option("Sonnet 5.5").getAttribute("aria-selected")).toBe("false");
+    // jsdom has no geometry for CDK's focus check; captures verify real focus.
+    expect(option("Opus 5.5").hasAttribute("cdkFocusInitial")).toBe(true);
+    expect(slider().max).toBe("1");
+    expect(slider().getAttribute("aria-valuetext")).toBe("High");
     expect(changed).not.toHaveBeenCalled();
-    button(`${thinking} button[aria-label="Max"]`).click();
+    commitLevel(1);
     expect(changed).toHaveBeenCalledWith(
       expect.objectContaining({ thinking: "Max", preset: undefined }),
     );
     expect(fixture.componentInstance.value().thinking).toBe("High");
-    expect(document.querySelector("footer")?.textContent).toContain(
-      "Applies from the next message",
+    // The mix already matches a preset, so there is nothing to save.
+    expect(document.querySelector(".agent-settings .save")).toBeNull();
+    expect(document.querySelector(".agent-settings footer")?.textContent).toContain(
+      "Fork to",
     );
   });
   it.each([
@@ -158,21 +180,23 @@ describe("AgentPicker controlled settings and focus", () => {
       const changed = vi.fn();
       fixture.componentInstance.changed.subscribe(changed);
       await open();
-      const options = [
-        ...document.querySelectorAll<HTMLButtonElement>(
-          '[aria-label="Thinking level"] button',
-        ),
-      ];
-      expect(options.map((option) => option.textContent?.trim())).toEqual(
+      expect(slider().max).toBe(String(levels.length - 1));
+      const labels: string[] = [];
+      for (let index = 0; index < levels.length; index++) {
+        slider().value = String(index);
+        slider().dispatchEvent(new Event("input", { bubbles: true }));
+        await settle(fixture);
+        labels.push(slider().getAttribute("aria-valuetext") ?? "");
+      }
+      expect(labels).toEqual(
         levels.map((id) =>
-          id === "medium"
-            ? "Med"
-            : id === "xhigh"
-              ? "XHigh"
-              : id.charAt(0).toUpperCase() + id.slice(1),
+          id === "xhigh" ? "Extra high" : id.charAt(0).toUpperCase() + id.slice(1),
         ),
       );
-      options.at(-1)!.click();
+      // Dragging previews; only the committed level is emitted.
+      expect(changed).not.toHaveBeenCalled();
+      commitLevel(levels.length - 1);
+      expect(changed).toHaveBeenCalledOnce();
       expect(changed).toHaveBeenCalledWith(
         expect.objectContaining({ thinking: levels.at(-1) }),
       );
@@ -188,27 +212,81 @@ describe("AgentPicker controlled settings and focus", () => {
         models: [{ id: "opus", label: "Unknown", thinking: [] }],
       },
     ]);
+    fixture.componentRef.setInput("fastAvailable", false);
     await open();
     expect(document.querySelector('[aria-label="Thinking level"]')).toBeNull();
+    expect(document.querySelector(".agent-settings .tune")).toBeNull();
   });
-  it("dismisses a nested model menu before settings and restores the original focus", async () => {
+  it("moves through models with the keyboard and chooses only on a deliberate press", async () => {
     const { fixture, trigger, open } = await setup();
+    const changed = vi.fn();
+    fixture.componentInstance.changed.subscribe(changed);
     await open();
-    button('.agent-settings [aria-label^="Model:"]').click();
-    await settle(fixture);
-    const option = button('ex-dropdown-menu[aria-label="Model"] button');
-    escape(option);
-    await settle(fixture);
-    expect(
-      document.querySelector('ex-dropdown-menu[aria-label="Model"]'),
-    ).toBeNull();
-    expect(
-      document.querySelector(".agent-settings")?.getAttribute("aria-hidden"),
-    ).toBe("false");
-    escape(button('.agent-settings [aria-label^="Model:"]'));
+    key(option("Opus 5.5"), "ArrowDown");
+    expect(document.activeElement).toBe(option("Sonnet 5.5"));
+    key(option("Sonnet 5.5"), "Home");
+    expect(document.activeElement).toBe(option("Opus 5.5"));
+    key(option("Opus 5.5"), "s");
+    expect(document.activeElement).toBe(option("Sonnet 5.5"));
+    expect(changed).not.toHaveBeenCalled();
+    option("Sonnet 5.5").click();
+    expect(changed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "sonnet",
+        thinking: "High",
+        preset: undefined,
+      }),
+    );
+    escape(option("Sonnet 5.5"));
     await settle(fixture);
     expect(document.querySelector(".agent-settings")).toBeNull();
     expect(document.activeElement).toBe(trigger);
+  });
+  it("closes on Escape pressed on the chip before focus reaches the menu", async () => {
+    const { fixture, trigger, open } = await setup();
+    await open();
+    trigger.focus();
+    escape(trigger);
+    await settle(fixture);
+    expect(document.querySelector(".agent-settings")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+  it("filters a long model list, and Escape clears the filter before closing", async () => {
+    const { fixture, open } = await setup();
+    const many = Array.from({ length: 10 }, (_, index) => ({
+      id: `m${index}`,
+      label: index === 7 ? "Kimi K3" : `Model ${index}`,
+      thinking: [],
+    }));
+    fixture.componentRef.setInput("harnesses", [
+      { ...harnesses[0]!, models: [...harnesses[0]!.models, ...many] },
+    ]);
+    const changed = vi.fn();
+    fixture.componentInstance.changed.subscribe(changed);
+    await open();
+    key(option("Opus 5.5"), "k");
+    await settle(fixture);
+    const filter = document.querySelector<HTMLInputElement>(
+      '.agent-settings input[aria-label="Filter models"]',
+    );
+    expect(document.activeElement).toBe(filter);
+    expect(filter?.value).toBe("k");
+    expect(
+      [...document.querySelectorAll('.agent-settings [role="option"]')].map(
+        (item) => item.getAttribute("data-label"),
+      ),
+    ).toEqual(["Kimi K3"]);
+    key(filter!, "Enter");
+    expect(changed).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "m7" }),
+    );
+    escape(filter!);
+    await settle(fixture);
+    expect(filter?.value).toBe("");
+    expect(document.querySelector(".agent-settings")).not.toBeNull();
+    escape(filter!);
+    await settle(fixture);
+    expect(document.querySelector(".agent-settings")).toBeNull();
   });
   it("retains an inert exiting portal, restores focus immediately, and permits interrupted reopening", async () => {
     const { fixture, trigger, open } = await setup(false);
@@ -243,7 +321,7 @@ describe("AgentPicker controlled settings and focus", () => {
     expect(document.querySelector(".agent-settings")).toBeNull();
     fixture.destroy();
   });
-  it("keeps settings and focus available for successive harness and model choices", async () => {
+  it("keeps the menu and focus for successive harness and model choices", async () => {
     const { fixture, open } = await setup();
     fixture.componentRef.setInput("locked", false);
     fixture.componentRef.setInput("value", {
@@ -259,32 +337,78 @@ describe("AgentPicker controlled settings and focus", () => {
     });
     await open();
     const surface = document.querySelector(".agent-settings");
-    const codex = button('[aria-label="Harness"] button[aria-label="Codex"]');
+    expect(surface?.querySelector(".plan")?.textContent).toContain("12% left");
+    const rail = '[role="radiogroup"][aria-label="Harness"]';
+    const codex = button(`${rail} [role="radio"][aria-label="Codex"]`);
     codex.focus();
     codex.click();
     await settle(fixture);
     expect(changed).toHaveBeenCalledWith(
-      expect.objectContaining({ harness: "codex", model: "gpt", mark: "Cx" }),
+      expect.objectContaining({
+        harness: "codex",
+        model: "gpt",
+        mark: "Cx",
+        plan: undefined,
+      }),
     );
     expect(document.querySelector(".agent-settings")).toBe(surface);
     expect(document.activeElement).toBe(codex);
     expect(codex.getAttribute("aria-checked")).toBe("true");
-    expect(
-      button('.agent-settings [aria-label^="Model:"]').textContent,
-    ).toContain("GPT");
-    expect(document.querySelector(".menu-usage")).toBeNull();
-    button('[aria-label="Harness"] button[aria-label="Claude Code"]').click();
+    expect(option("GPT").getAttribute("aria-selected")).toBe("true");
+    expect(surface?.querySelector(".plan")).toBeNull();
+    // Arrow keys move through harnesses and select, as in any radio group.
+    key(codex, "ArrowUp");
     await settle(fixture);
-    button('.agent-settings [aria-label^="Model:"]').click();
-    await settle(fixture);
-    button('ex-dropdown-menu[aria-label="Model"] button:last-child').click();
+    expect(changed).toHaveBeenLastCalledWith(
+      expect.objectContaining({ harness: "claude", model: "opus" }),
+    );
+    expect(document.activeElement).toBe(
+      button(`${rail} [role="radio"][aria-label="Claude Code"]`),
+    );
+    option("Sonnet 5.5").click();
     await settle(fixture);
     expect(changed).toHaveBeenLastCalledWith(
       expect.objectContaining({ harness: "claude", model: "sonnet" }),
     );
     expect(document.querySelector(".agent-settings")).toBe(surface);
+    // A manual mix no longer matches the preset and can be saved as one.
+    const saved = vi.fn();
+    fixture.componentInstance.savePreset.subscribe(saved);
+    button(".agent-settings .save").click();
+    expect(saved).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "sonnet" }),
+    );
   });
-  it("keeps the surface mounted during a save and disables every editable choice", async () => {
+  it("toggles fast mode and offers Compact only once context is filling up", async () => {
+    const { fixture, open } = await setup();
+    fixture.componentRef.setInput("canCompact", true);
+    fixture.componentRef.setInput("value", { ...agent, context: 0.5 });
+    const changed = vi.fn();
+    const compact = vi.fn();
+    fixture.componentInstance.changed.subscribe(changed);
+    fixture.componentInstance.compactRequested.subscribe(compact);
+    await open();
+    expect(document.querySelector(".agent-settings .compact")).toBeNull();
+    const fast = button('.agent-settings [aria-label="Fast mode"]');
+    expect(fast.getAttribute("aria-pressed")).toBe("false");
+    fast.click();
+    expect(changed).toHaveBeenCalledWith(
+      expect.objectContaining({ fast: true, preset: undefined }),
+    );
+    fixture.componentRef.setInput("value", { ...agent, context: 0.93 });
+    await settle(fixture);
+    expect(
+      document.querySelector(".agent-settings .context")?.getAttribute(
+        "data-tone",
+      ),
+    ).toBe("danger");
+    button(".agent-settings .compact").click();
+    expect(compact).toHaveBeenCalledOnce();
+    expect(document.activeElement?.matches(".agent-settings .heading")).toBe(
+      true,
+    );
+  });
+  it("keeps the surface and focus during an update and ignores every choice", async () => {
     const { fixture, open } = await setup();
     await open();
     const surface = document.querySelector(".agent-settings");
@@ -293,28 +417,21 @@ describe("AgentPicker controlled settings and focus", () => {
     fixture.componentRef.setInput("busy", true);
     await settle(fixture);
     expect(document.querySelector(".agent-settings")).toBe(surface);
-    expect(button('.agent-settings [aria-label^="Model:"]').disabled).toBe(
+    // Model rows stay focusable so keyboard position survives the update;
+    // a fresh focus request lands on the stable heading instead.
+    expect(option("Sonnet 5.5").disabled).toBe(false);
+    expect(option("Sonnet 5.5").getAttribute("aria-disabled")).toBe("true");
+    expect(
+      surface?.querySelector("[cdkFocusInitial]")?.matches(".heading"),
+    ).toBe(true);
+    option("Sonnet 5.5").click();
+    expect(slider().disabled).toBe(true);
+    expect(button('.agent-settings [aria-label="Fast mode"]').disabled).toBe(
       true,
     );
-    expect(
-      button('[aria-label="Thinking level"] button[aria-label="Max"]').disabled,
-    ).toBe(true);
-    expect(document.querySelector("footer")?.textContent).toContain(
-      "Updating agent",
+    expect(surface?.querySelector('[role="status"]')?.textContent).toContain(
+      "Updating",
     );
-    const heading = document.querySelector<HTMLElement>(
-      ".agent-settings .heading",
-    );
-    const tab = new KeyboardEvent("keydown", {
-      key: "Tab",
-      keyCode: 9,
-      bubbles: true,
-      cancelable: true,
-    });
-    heading?.dispatchEvent(tab);
-    expect(tab.defaultPrevented).toBe(true);
-    expect(document.activeElement).toBe(heading);
-    button('[aria-label="Thinking level"] button[aria-label="Max"]').click();
     expect(changed).not.toHaveBeenCalled();
     fixture.componentRef.setInput("disabled", true);
     await settle(fixture);
@@ -332,7 +449,7 @@ describe("AgentPicker controlled settings and focus", () => {
       host.dispatchEvent(new MouseEvent("mousemove"));
       await open();
       if (dismissal === "Escape")
-        escape(button('.agent-settings [aria-label^="Model:"]'));
+        escape(option("Opus 5.5"));
       else if (dismissal === "backdrop")
         document.querySelector<HTMLElement>(".cdk-overlay-backdrop")?.click();
       else if (dismissal === "trigger") trigger.click();
@@ -399,7 +516,9 @@ describe("AgentPicker controlled settings and focus", () => {
     trigger.click();
     await settle(fixture);
     expect(document.querySelector('[role="tooltip"]')).toBeNull();
-    expect(document.querySelector(".menu-usage")?.textContent).toContain("84%");
+    expect(document.querySelector(".agent-settings .plan")?.textContent).toContain(
+      "12% left",
+    );
     fixture.destroy();
     expect(document.querySelector(".agent-settings")).toBeNull();
     expect(document.querySelector('[role="tooltip"]')).toBeNull();

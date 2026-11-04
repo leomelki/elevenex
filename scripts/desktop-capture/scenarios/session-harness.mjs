@@ -9,7 +9,7 @@ export default async function* (capture) {
     if (!await capture.evaluate(() => !!document.querySelector('.agent-settings:not(.leaving)')))
       await capture.click('ex-agent-picker > button');
     await capture.waitFor(() => document.querySelector('.agent-settings')?.getAttribute('aria-busy') === 'false');
-    await capture.click('.agent-settings [aria-label="Harness"] button[aria-checked="true"]');
+    await capture.evaluate(() => document.querySelector('.agent-settings [aria-label="Harness"] [aria-checked="true"]').focus());
     await capture.press(key);
     await capture.waitFor(label => document.querySelector('ex-session-chat .provider')?.textContent.includes(label), label);
     await capture.waitFor(() => document.querySelector('.agent-settings')?.getAttribute('aria-busy') === 'false');
@@ -23,14 +23,16 @@ export default async function* (capture) {
     await capture.fill('ex-composer textarea', 'Keep my message while changing agents');
     await capture.click('ex-agent-picker > button');
     await capture.waitFor(() => !!document.querySelector('.agent-settings [aria-label="Harness"]'));
-    const labels = await capture.evaluate(() => [...document.querySelectorAll('.agent-settings [aria-label="Harness"] button')].map(b => b.textContent.trim()));
+    const labels = await capture.evaluate(() => [...document.querySelectorAll('.agent-settings [aria-label="Harness"] [role="radio"]')].map(b => b.getAttribute('aria-label')));
     assert.deepEqual(labels, ['Claude Code', 'Codex', 'Pi', 'OpenCode']);
+    // Known harnesses show their bundled brand mark instead of a monogram.
+    assert.equal(await capture.evaluate(() => document.querySelectorAll('.agent-settings [aria-label="Harness"] ex-agent-mark svg').length), 4);
     await finish();
     yield { name: theme + '-harness-choices', inspect: ['ex-composer', '.agent-settings'] };
     await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.agent-settings'));
     await choose('Home', 'Claude Code');
-    await capture.waitFor(() => !!document.querySelector('.agent-settings button[aria-label^="Model:"]'));
-    assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings button[aria-label^="Model:"]').textContent.includes('Sonnet')), true);
+    await capture.waitFor(() => !!document.querySelector('.agent-settings [role="option"][aria-selected="true"]'));
+    assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings [role="option"][aria-selected="true"]').textContent.includes('Sonnet')), true);
     await finish(); yield { name: theme + '-claude-selected', inspect: ['ex-composer', '.agent-settings'] };
     await choose('End', 'OpenCode'); await choose('ArrowLeft', 'Pi'); await choose('ArrowLeft', 'Codex');
     await capture.viewport(1000, 760); await capture.reducedMotion(true); await finish();
@@ -41,10 +43,10 @@ export default async function* (capture) {
   }
   await capture.fill('ex-composer textarea', 'Start with Codex'); await capture.press('Enter');
   await capture.waitFor(() => document.querySelector('ex-agent-picker > button')?.disabled === false);
-  await capture.click('ex-agent-picker > button'); await capture.waitFor(() => !!document.querySelector('.agent-settings .harness'));
+  await capture.click('ex-agent-picker > button'); await capture.waitFor(() => !!document.querySelector('.agent-settings .lock'));
   await finish(); yield { name: 'started-harness-locked', inspect: ['ex-composer', '.agent-settings'] };
   await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.agent-settings'));
   await select('101'); await capture.waitFor(() => document.querySelector('ex-agent-picker > button')?.disabled === false);
-  await capture.click('ex-agent-picker > button'); await capture.waitFor(() => !!document.querySelector('.agent-settings .harness'));
+  await capture.click('ex-agent-picker > button'); await capture.waitFor(() => !!document.querySelector('.agent-settings .lock'));
   await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.agent-settings'));
 }

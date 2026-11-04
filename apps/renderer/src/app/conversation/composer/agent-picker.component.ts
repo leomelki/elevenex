@@ -18,10 +18,16 @@ import {
   signal,
   viewChild,
 } from "@angular/core";
-import { ContextMeterComponent, IconComponent, KbdComponent } from "../../ui";
+import {
+  AutoHeightDirective,
+  ContextMeterComponent,
+  IconComponent,
+  KbdComponent,
+} from "../../ui";
 import type { AgentConfig, AgentHarness } from "../conversation.models";
+import { thinkingLabel } from "./agent-config";
+import { AgentMenuComponent } from "./agent-menu.component";
 import { AgentPlanMeterComponent } from "./agent-plan-meter.component";
-import { AgentSettingsComponent } from "./agent-settings.component";
 import { AgentUsageComponent } from "./agent-usage.component";
 import { PopoverPresence } from "./popover-presence";
 
@@ -34,11 +40,12 @@ import { AgentMarkComponent } from "./agent-mark.component";
     AgentMarkComponent,
     OverlayModule,
     A11yModule,
+    AutoHeightDirective,
     IconComponent,
     ContextMeterComponent,
     KbdComponent,
+    AgentMenuComponent,
     AgentPlanMeterComponent,
-    AgentSettingsComponent,
     AgentUsageComponent,
   ],
   templateUrl: "./agent-picker.component.html",
@@ -118,6 +125,11 @@ export class AgentPickerComponent {
       offsetY: 6,
     },
   ];
+  /** The harness rail adds a column only while the harness can still change. */
+  protected readonly menuWidth = computed(
+    () =>
+      `min(${!this.locked() && this.harnesses().length > 1 ? 340 : 296}px, calc(100vw - var(--space-8)))`,
+  );
   protected readonly hasUsage = computed(
     () => this.value().context !== undefined || !!this.value().plan,
   );
@@ -134,14 +146,15 @@ export class AgentPickerComponent {
       this.value().model ||
       "Provider default",
   );
-  protected readonly subtitle = computed(() =>
-    [
+  protected readonly subtitle = computed(() => {
+    const thinking = this.value().thinking;
+    return [
       this.value().preset ? this.modelLabel() : this.harnessLabel(),
-      this.thinkingLabel(this.value().thinking),
+      thinking ? thinkingLabel(thinking) : "",
     ]
       .filter(Boolean)
-      .join(" · "),
-  );
+      .join(" · ");
+  });
   private readonly disclosureEligible = computed(
     () =>
       this.hasUsage() &&
@@ -240,13 +253,6 @@ export class AgentPickerComponent {
   protected focusTrigger(): void {
     this.usageFocused.set(!this.open() && !this.restoringFocus);
   }
-  protected compact(): void {
-    // A successful compaction removes its button. Move focus to stable content.
-    this.dialog()
-      ?.nativeElement.querySelector<HTMLElement>("[cdkFocusInitial]")
-      ?.focus({ preventScroll: true });
-    this.compactRequested.emit();
-  }
   protected changeAgent(value: AgentConfig): void {
     this.changed.emit(value);
   }
@@ -255,10 +261,21 @@ export class AgentPickerComponent {
     if (
       !this.open() ||
       event.defaultPrevented ||
-      !(event.target instanceof Node) ||
-      !pane?.contains(event.target)
+      !(event.target instanceof Node)
     )
       return;
+    // Focus reaches the menu a frame after it opens; Escape pressed on the chip
+    // in that frame still belongs to this menu.
+    if (
+      event.key === "Escape" &&
+      this.element.contains(event.target) &&
+      !pane?.contains(event.target)
+    ) {
+      event.preventDefault();
+      this.open.set(false);
+      return;
+    }
+    if (!pane?.contains(event.target)) return;
     // CDK's trap anchors are also owned by the pane. A fully disabled form
     // needs a stable focus destination until its controls become available.
     if (
@@ -291,12 +308,5 @@ export class AgentPickerComponent {
         this.restoringFocus = false;
       }
     }
-  }
-  private thinkingLabel(value: string | undefined): string {
-    return value === "xhigh"
-      ? "Extra high"
-      : value
-        ? value.charAt(0).toUpperCase() + value.slice(1)
-        : "";
   }
 }

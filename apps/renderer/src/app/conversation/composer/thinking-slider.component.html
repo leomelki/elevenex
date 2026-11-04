@@ -1,0 +1,35 @@
+<div class="head">
+  <label class="name" [for]="id">Thinking</label>
+  <span class="level" [class.unset]="unset()" aria-hidden="true">{{
+    label()
+  }}</span>
+  <ng-content />
+</div>
+<div class="track" [class.unset]="unset()" [style.--fill]="fraction()">
+  <span class="rail" aria-hidden="true"
+    ><span class="filled"></span>
+    @for (tick of ticks(); track tick.level) {
+      <span
+        class="tick"
+        [class.passed]="tick.at <= fraction()"
+        [style.--at]="tick.at"
+      ></span>
+    }
+  </span>
+  <input
+    type="range"
+    [id]="id"
+    min="0"
+    [max]="levels().length - 1"
+    step="1"
+    [value]="unset() ? 0 : shown()"
+    [disabled]="disabled()"
+    [attr.aria-valuetext]="label()"
+    aria-label="Thinking level"
+    (input)="preview($event)"
+    (change)="commit($event)"
+  />
+</div>
+<div class="ends" aria-hidden="true">
+  <span>Faster</span><span>Smarter</span>
+</div>
