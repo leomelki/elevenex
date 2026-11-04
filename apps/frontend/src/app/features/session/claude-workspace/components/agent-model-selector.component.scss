@@ -1,0 +1,50 @@
+:host {
+  display: block;
+}
+
+.model-list {
+  mask-image: linear-gradient(#000 calc(100% - 8px), transparent);
+}
+
+// Keep the browser's accessible range behavior; only style its vendor pseudo-elements.
+.thinking-slider {
+  --thumb-size: 14px;
+  --fill-position: calc(7px + (100% - var(--thumb-size)) * var(--effort-ratio));
+  appearance: none;
+  height: 4px;
+  margin: 0;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--primary) var(--fill-position),
+    var(--muted) var(--fill-position)
+  );
+  cursor: pointer;
+
+  &::-webkit-slider-thumb {
+    appearance: none;
+    box-sizing: border-box;
+    width: var(--thumb-size);
+    height: var(--thumb-size);
+    border-radius: 50%;
+    background: var(--popover);
+    border: 2px solid var(--primary);
+    box-shadow: 0 1px 3px color-mix(in oklch, var(--foreground) 15%, transparent);
+  }
+  &::-moz-range-thumb {
+    box-sizing: border-box;
+    width: var(--thumb-size);
+    height: var(--thumb-size);
+    border-radius: 50%;
+    background: var(--popover);
+    border: 2px solid var(--primary);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 6px;
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}

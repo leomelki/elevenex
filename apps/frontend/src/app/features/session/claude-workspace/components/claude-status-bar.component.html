@@ -3,138 +3,30 @@
     class="flex min-w-0 items-center gap-1.5 @max-[22rem]:flex-wrap"
     aria-label="Message settings"
   >
-    <button
-      z-button
-      zType="ghost"
-      type="button"
-      class="cw-sb__model-trigger h-8 min-w-0 max-w-full justify-start gap-1.5 rounded-lg px-1.5 text-left text-xs"
-      z-dropdown
-      [zDropdownMenu]="modelMenu"
-      (click)="loadModels()"
-      (keydown.enter)="loadModels()"
-      (keydown.space)="loadModels()"
-      (keydown.arrowdown)="loadModels()"
-      [attr.aria-label]="
-        'Configure agent, model and thinking' +
-        (selectedModelSupportsFastMode() && fastMode() ? ' · Fast mode enabled' : '')
-      "
-      [title]="
-        activeProviderLabel() +
-        ' · ' +
-        selectedModelLabel() +
-        (selectedModelSupportsEffort() ? ' · ' + reasoningEffortLabel() + ' thinking' : '') +
-        (selectedModelSupportsFastMode() && fastMode() ? ' · Fast mode enabled' : '')
-      "
-    >
-      <span class="truncate font-medium text-foreground">{{ selectedModelLabel() }}</span>
-      @if (selectedModelSupportsEffort()) {
-        <span class="cw-sb__thinking shrink-0 font-normal text-muted-foreground">
-          <span class="mr-1.5 text-border" aria-hidden="true">/</span>{{ reasoningEffortLabel() }}
-        </span>
-      }
-      @if (selectedModelSupportsFastMode() && fastMode()) {
-        <ng-icon
-          name="lucideZap"
-          size="12"
-          class="cw-sb__fast-mode shrink-0 text-success"
-          aria-hidden="true"
-        />
-      }
-      <ng-icon name="lucideChevronDown" size="12" class="shrink-0 text-muted-foreground" />
-    </button>
-    <z-dropdown-menu-content
-      #modelMenu="zDropdownMenuContent"
-      zSide="top"
-      zAlign="start"
-      class="w-[22rem] max-w-[calc(100vw-2rem)] max-h-[min(24rem,calc(100dvh-2rem))] p-2"
-      aria-label="Agent, model and thinking"
-    >
-      @if (providerLocked() || providers().length < 2) {
-        <div
-          class="cw-sb__agent-header mb-2 flex h-8 items-center gap-3 px-2 text-xs"
-          [title]="
-            providerLocked()
-              ? 'The agent can only be changed before the conversation starts.'
-              : activeProviderLabel()
-          "
-        >
-          <span class="text-muted-foreground">Agent</span>
-          <span class="min-w-0 flex-1 truncate font-medium">{{ activeProviderLabel() }}</span>
-          @if (providerLocked()) {
-            <ng-icon
-              name="lucideLockKeyhole"
-              size="12"
-              class="shrink-0 text-muted-foreground"
-              aria-label="Agent cannot be changed after the conversation starts"
-            />
-          }
-        </div>
-      } @else {
-        <button
-          type="button"
-          z-dropdown-menu-sub-trigger
-          [zSubMenu]="agentMenu"
-          class="cw-sb__agent-trigger mb-2 h-8 w-full gap-3 px-2 text-left text-xs"
-          aria-label="Change agent"
-          [title]="activeProviderLabel()"
-        >
-          <span class="text-muted-foreground">Agent</span>
-          <span class="min-w-0 flex-1 truncate font-medium">{{ activeProviderLabel() }}</span>
-        </button>
-        <z-dropdown-menu-sub-content
-          #agentMenu="zDropdownMenuSubContent"
-          class="w-48 max-w-[calc(100vw-2rem)] p-1"
-        >
-          <div role="group" aria-label="Agent">
-            @for (provider of providers(); track provider.id) {
-              <cw-setting-option
-                [label]="provider.displayName"
-                [selected]="currentProvider() === provider.id"
-                (picked)="pickProvider(provider.id)"
-              />
-            }
-          </div>
-        </z-dropdown-menu-sub-content>
-      }
-      <div role="group" aria-label="Model">
-        <div class="mb-1 flex items-start justify-between gap-2 px-2">
-          <span class="pt-1 text-xs font-medium text-muted-foreground">Model</span>
-          <app-model-catalog-refresh [provider]="currentProvider()" />
-        </div>
-        <div class="max-h-32 overflow-y-auto">
-          <cw-setting-option
-            label="Agent default"
-            description="Use this agent's default model"
-            [selected]="!selectedModel()"
-            (picked)="pickModel('')"
-          />
-          @for (m of pickerModels(); track m.id) {
-            <cw-setting-option
-              [label]="m.displayName"
-              [description]="m.description"
-              [selected]="!!selectedModel() && selectedModelOption()?.id === m.id"
-              (picked)="pickModel(m.id)"
-            />
-          }
-        </div>
-      </div>
-
-      @if (selectedModelSupportsEffort()) {
-        <div class="mt-2 border-t border-border pt-3">
-          <div class="mb-2 px-2 text-xs font-medium text-foreground">Thinking</div>
-          <div class="grid grid-cols-2 gap-1" role="group" aria-label="Thinking">
-            @for (effort of reasoningEffortOptions(); track effort.id) {
-              <cw-setting-option
-                [label]="effort.label"
-                [description]="effort.hint"
-                [selected]="(reasoningEffort() ?? '') === effort.id"
-                (picked)="pickReasoningEffort(effort.id)"
-              />
-            }
-          </div>
-        </div>
-      }
-    </z-dropdown-menu-content>
+    <cw-agent-model-selector
+      class="min-w-0"
+      [providers]="providers()"
+      [provider]="currentProvider()"
+      [locked]="providerLocked()"
+      [authStatus]="authStatus()"
+      [models]="pickerModels()"
+      [selectedModel]="selectedModel()"
+      [effectiveModelId]="selectedModelOption()?.id ?? null"
+      [modelLabel]="selectedModelLabel()"
+      [effort]="reasoningEffort()"
+      [effortLabel]="reasoningEffortLabel()"
+      [effortOptions]="reasoningEffortOptions()"
+      [supportsEffort]="selectedModelSupportsEffort()"
+      [supportsFastMode]="selectedModelSupportsFastMode()"
+      [fastMode]="fastMode()"
+      [planUsage]="visiblePlanUsage()"
+      (providerChange)="pickProvider($event)"
+      (modelChange)="pickModel($event)"
+      (providerModelChange)="providerModelChange.emit($event)"
+      (effortChange)="pickReasoningEffort($event)"
+      (fastModeChange)="fastModeChange.emit($event)"
+      (connectProvider)="connectProvider.emit()"
+    />
 
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
       @if (currentProviderCapabilities()?.permissions) {

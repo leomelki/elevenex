@@ -1,0 +1,319 @@
+<button
+  z-button
+  zType="ghost"
+  type="button"
+  class="cw-sb__model-trigger h-8 min-w-0 max-w-full justify-start gap-1.5 rounded-lg px-1.5 text-left text-xs aria-expanded:bg-accent"
+  zPopover
+  #modelPopover="zPopover"
+  [zContent]="modelContent"
+  zPlacement="top"
+  zAlign="start"
+  [zPush]="true"
+  (zVisibleChange)="opened($event)"
+  (keydown)="openFromKeyboard($event)"
+  aria-label="Configure agent, model and thinking"
+  [title]="
+    providerLabel() +
+    ' · ' +
+    modelLabel() +
+    (supportsEffort() ? ' · ' + effortLabel() + ' thinking' : '') +
+    (supportsFastMode() && fastMode() ? ' · Fast mode enabled' : '')
+  "
+>
+  <app-agent-logo class="size-3.5" [provider]="provider()" />
+  <span class="truncate font-medium">{{ modelLabel() }}</span>
+  @if (supportsEffort()) {
+    <span class="cw-sb__thinking shrink-0 font-normal text-muted-foreground"
+      >· {{ effortLabel() }}</span
+    >
+  }
+  @if (supportsFastMode() && fastMode()) {
+    <ng-icon
+      name="lucideZap"
+      size="12"
+      class="shrink-0 text-success"
+      aria-label="Fast mode enabled"
+    />
+  }
+  <ng-icon name="lucideChevronDown" size="12" class="shrink-0 text-muted-foreground" />
+</button>
+
+<ng-template #modelContent>
+  <div
+    z-popover
+    #modelPanel
+    cdkTrapFocus
+    [cdkTrapFocusAutoCapture]="true"
+    tabindex="-1"
+    class="flex h-[19rem] w-[20rem] max-w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] flex-row gap-0 overflow-hidden p-0 text-foreground"
+    aria-label="Agent, model and thinking"
+    (keydown)="keydown($event)"
+  >
+    @if (!locked() && providers().length > 1) {
+      <div
+        class="flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-border py-1"
+        role="group"
+        aria-label="Agent"
+      >
+        @for (agent of providers(); track agent.id) {
+          <button
+            z-button
+            zType="ghost"
+            type="button"
+            data-agent-choice
+            class="relative size-9 shrink-0 rounded-lg p-0 text-muted-foreground aria-pressed:bg-accent aria-pressed:text-foreground"
+            [attr.aria-label]="agent.displayName"
+            [attr.aria-pressed]="provider() === agent.id"
+            [title]="
+              agent.displayName +
+              (provider() === agent.id && remaining() !== null
+                ? ' · ' + remaining() + '% left'
+                : '')
+            "
+            (click)="selectProvider(agent.id)"
+          >
+            <app-agent-logo class="size-[18px]" [provider]="agent.id" />
+            @if (provider() === agent.id && needsLogin()) {
+              <span
+                class="absolute right-1 top-1 size-1.5 rounded-full bg-warning ring-2 ring-popover"
+                aria-label="Sign in needed"
+              ></span>
+            }
+          </button>
+        }
+      </div>
+    }
+    <div class="flex min-w-0 flex-1 flex-col">
+      <div class="cw-sb__agent-header flex h-11 shrink-0 items-center gap-2 px-3">
+        @if (searchOpen()) {
+          <ng-icon name="lucideSearch" size="14" class="shrink-0 text-muted-foreground" />
+          <input
+            z-input
+            zBorderless
+            #searchInput
+            class="h-7 min-w-0 flex-1 rounded-sm px-0 text-xs shadow-none"
+            [(value)]="query"
+            aria-label="Search models"
+            [placeholder]="locked() ? 'Search models…' : 'Search all agents…'"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button
+            z-button
+            zType="ghost"
+            type="button"
+            class="size-6 shrink-0 rounded-md p-0 text-muted-foreground"
+            aria-label="Close search"
+            title="Close search (Esc)"
+            (click)="clearSearch()"
+          >
+            <ng-icon name="lucideX" size="13" />
+          </button>
+        } @else {
+          @if (locked()) {
+            <app-agent-logo class="size-4" [provider]="provider()" />
+          }
+          <span class="min-w-0 truncate text-xs font-semibold">{{ providerLabel() }}</span>
+          @if (locked()) {
+            <ng-icon
+              name="lucideLockKeyhole"
+              size="11"
+              class="shrink-0 text-muted-foreground"
+              aria-label="Agent cannot be changed after the conversation starts"
+              title="The agent can only be changed before the conversation starts. Create a new conversation to use another agent."
+            />
+          }
+          <div class="ml-auto flex shrink-0 items-center gap-2">
+            @if (remaining() !== null) {
+              <span
+                data-plan-remaining
+                class="whitespace-nowrap text-[11px] leading-none tabular-nums"
+                [class.text-muted-foreground]="remaining()! >= 25"
+                [class.text-warning]="remaining()! < 25 && remaining()! >= 10"
+                [class.text-destructive]="remaining()! < 10"
+                [attr.aria-label]="providerLabel() + ' plan: ' + remaining() + '% remaining'"
+                [title]="usageTitle()"
+                >{{ remaining() }}% left</span
+              >
+            }
+            <button
+              z-button
+              zType="ghost"
+              type="button"
+              class="size-6 shrink-0 rounded-md p-0 text-muted-foreground"
+              aria-label="Search models"
+              title="Search models (or start typing)"
+              data-search-trigger
+              (click)="startSearch()"
+            >
+              <ng-icon name="lucideSearch" size="14" />
+            </button>
+          </div>
+        }
+      </div>
+
+      @if (needsLogin() && !query()) {
+        <div
+          class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-5 pb-4 text-center"
+        >
+          <app-agent-logo class="mb-1 size-7 text-muted-foreground" [provider]="provider()" />
+          <span class="text-xs font-medium">Sign in to {{ providerLabel() }}</span>
+          <p class="text-[11px] leading-relaxed text-muted-foreground">
+            Connect your account to choose a model and start working.
+          </p>
+          <button
+            z-button
+            zSize="sm"
+            type="button"
+            class="mt-1 h-7 text-xs"
+            (click)="modelPopover.hide(); connectProvider.emit()"
+          >
+            Sign in
+          </button>
+        </div>
+      } @else {
+        <div
+          class="model-list min-h-0 flex-1 overflow-y-auto overscroll-contain px-1.5 pb-2"
+          role="radiogroup"
+          aria-label="Model"
+          [attr.aria-busy]="catalog.isLoading(query() && !locked() ? undefined : provider())"
+        >
+          @for (choice of choices(); track choice.provider + ':' + choice.id) {
+            @let selected =
+              choice.provider === provider() &&
+              (choice.id
+                ? !!selectedModel() && effectiveModelId() === choice.id
+                : !selectedModel());
+            <button
+              type="button"
+              data-model-choice
+              role="radio"
+              [attr.aria-checked]="selected"
+              [attr.cdkFocusInitial]="selected ? '' : null"
+              class="flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-checked:bg-accent"
+              [title]="choice.description || choice.label"
+              (click)="pick(choice)"
+            >
+              <ng-icon
+                name="lucideCheck"
+                size="13"
+                class="shrink-0"
+                [class.invisible]="!selected"
+              />
+              <span class="min-w-0 flex-1">
+                <span class="block truncate" [class.font-medium]="selected">{{
+                  choice.label
+                }}</span>
+                @if (selected && choice.description) {
+                  <span
+                    class="mt-0.5 block text-[11px] font-normal leading-snug text-muted-foreground"
+                    >{{ choice.description }}</span
+                  >
+                }
+              </span>
+              @if (!choice.id && choice.defaultModel) {
+                <span class="max-w-24 truncate text-[11px] text-muted-foreground">{{
+                  choice.defaultModel
+                }}</span>
+              }
+              @if (query() && !locked()) {
+                <app-agent-logo
+                  class="size-3.5 text-muted-foreground"
+                  [provider]="choice.provider"
+                  [title]="choice.provider"
+                />
+                <span class="sr-only">{{ choice.provider }}</span>
+              }
+            </button>
+          }
+          @if (catalog.isLoading(query() && !locked() ? undefined : provider())) {
+            <div
+              class="flex items-center justify-center gap-2 py-3 text-[11px] text-muted-foreground"
+              role="status"
+            >
+              <ng-icon name="lucideLoaderCircle" size="13" class="animate-spin" /> Loading models…
+            </div>
+          } @else if (query() && !choices().length) {
+            <p class="px-3 py-8 text-center text-xs text-muted-foreground" role="status">
+              No models match “{{ query() }}”.
+            </p>
+          } @else if (!models().length && !query()) {
+            <p
+              class="px-3 py-4 text-center text-[11px] leading-relaxed text-muted-foreground"
+              role="status"
+            >
+              {{
+                unavailableReason() ||
+                  catalog.error() ||
+                  'Models appear when this agent connects. You can use the agent default.'
+              }}
+            </p>
+          }
+        </div>
+      }
+
+      @if (!searchOpen() && !needsLogin() && (supportsEffort() || supportsFastMode())) {
+        <div class="shrink-0 border-t border-border px-3 py-2.5" role="group" aria-label="Thinking">
+          <div class="mb-2 flex h-5 items-center gap-2 text-xs">
+            <span class="text-[11px] text-muted-foreground">Thinking</span>
+            <span class="font-medium">{{
+              supportsEffort() ? previewEffortLabel() : 'Not available'
+            }}</span>
+            <button
+              z-button
+              zType="ghost"
+              type="button"
+              class="ml-auto h-[22px] gap-1 rounded-full border border-border px-2 text-[11px] text-muted-foreground aria-pressed:border-success/30 aria-pressed:bg-success/10 aria-pressed:text-success"
+              [zDisabled]="!supportsFastMode()"
+              [attr.aria-pressed]="supportsFastMode() && fastMode()"
+              [title]="
+                supportsFastMode()
+                  ? 'Fast mode · faster responses, higher usage'
+                  : 'Fast mode is not supported by this model'
+              "
+              aria-label="Fast mode"
+              (click)="fastModeChange.emit(!fastMode())"
+            >
+              <ng-icon name="lucideZap" size="11" /> Fast
+            </button>
+          </div>
+          @if (supportsEffort()) {
+            <div class="relative flex h-6 items-center">
+              <div class="pointer-events-none absolute inset-x-[7px] h-full" aria-hidden="true">
+                @for (option of effortOptions(); track option.id) {
+                  <span
+                    class="absolute top-1/2 z-10 size-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full"
+                    [style.left.%]="
+                      effortOptions().length > 1 ? ($index / (effortOptions().length - 1)) * 100 : 0
+                    "
+                    [class.invisible]="$index === effortIndex()"
+                    [class.bg-primary-foreground]="$index <= effortIndex()"
+                    [class.bg-muted-foreground]="$index > effortIndex()"
+                  ></span>
+                }
+              </div>
+              <input
+                class="thinking-slider relative w-full"
+                type="range"
+                min="0"
+                [max]="effortOptions().length - 1"
+                step="1"
+                [value]="effortIndex()"
+                [disabled]="effortOptions().length < 2"
+                [style.--effort-ratio]="effortPercent() / 100"
+                aria-label="Thinking effort"
+                [attr.aria-valuetext]="previewEffortLabel()"
+                [title]="effortOptions()[effortIndex()]?.hint"
+                (input)="effortIndex.set(+$any($event.target).value)"
+                (change)="selectEffort($event)"
+              />
+            </div>
+            <div class="mt-1 flex justify-between text-[10px] text-muted-foreground">
+              <span>Faster</span><span>Smarter</span>
+            </div>
+          }
+        </div>
+      }
+    </div>
+  </div>
+</ng-template>

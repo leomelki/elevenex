@@ -1,0 +1,385 @@
+{
+  "sessionId": 761,
+  "responses": {
+    "/api/sessions/761": {
+      "id": 761,
+      "repoId": 1,
+      "projectId": 1,
+      "branchName": "master",
+      "worktreePath": "/Users/leomelki/Documents/git/elevenex",
+      "name": "Agent model selector preview",
+      "surface": "session",
+      "status": "active",
+      "activeAgentProvider": "claude",
+      "claudeSessionId": "-1",
+      "codexSessionId": "-1",
+      "hasInjectedWorktreeContext": true,
+      "hasUnreviewedCompletion": false,
+      "lastCompletionAt": null,
+      "lastCompletionKind": null,
+      "lastStateChangeAt": null,
+      "createdAt": "2026-10-12T16:00:00.000Z",
+      "updatedAt": "2026-10-12T16:01:00.000Z"
+    },
+    "/api/sessions/761/agents/claude/history": [],
+    "/api/sessions/761/agents/claude/runtime-state": {
+      "sessionId": 761,
+      "claudeSessionId": null,
+      "runPhase": "idle",
+      "sessionState": "idle",
+      "canInterrupt": false,
+      "backgroundWork": [],
+      "backgroundRunActive": false,
+      "nativeSteering": true,
+      "pendingPermissionRequest": null,
+      "pendingUserInputRequest": null,
+      "pendingPrompts": [],
+      "queuePaused": false,
+      "liveItems": [],
+      "lastError": null,
+      "selectedModel": "opus",
+      "reasoningEffort": "high",
+      "fastMode": true,
+      "permissionMode": "default",
+      "planMode": false,
+      "availableModels": [
+        {
+          "id": "opus",
+          "displayName": "Opus",
+          "description": "Most capable for complex tasks",
+          "supportsEffort": true,
+          "reasoningEfforts": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
+          "supportsFastMode": true,
+          "isProviderDefault": true
+        },
+        {
+          "id": "sonnet",
+          "displayName": "Sonnet",
+          "description": "Balanced speed and capability",
+          "supportsEffort": true
+        },
+        {
+          "id": "haiku",
+          "displayName": "Haiku",
+          "description": "Fast and efficient",
+          "supportsEffort": false
+        }
+      ],
+      "contextUsage": null,
+      "sessionMetadata": null,
+      "runtimeStatus": null,
+      "authStatus": {
+        "installed": true,
+        "authenticated": true,
+        "version": "2.1.296",
+        "isAuthenticating": false,
+        "output": []
+      },
+      "rateLimit": null,
+      "notifications": [],
+      "hooks": [],
+      "recentHookEvents": [],
+      "tasks": [],
+      "taskLifecycle": [],
+      "subagents": [],
+      "latestToolProgress": null,
+      "latestToolSummary": null,
+      "latestApiRetry": null,
+      "latestPluginInstall": null,
+      "latestMemoryRecall": null,
+      "latestFilesPersisted": null,
+      "latestElicitationCompletion": null,
+      "latestPromptSuggestion": null,
+      "latestCompactBoundary": null,
+      "latestMirrorError": null,
+      "warmState": "warm",
+      "lastWarmedAt": "2026-10-12T16:00:00.000Z",
+      "lastPromptTiming": null,
+      "planUsage": {
+        "provider": "claude",
+        "planName": "Max",
+        "status": "available",
+        "windows": [
+          {
+            "id": "session",
+            "label": "Session limit",
+            "remainingPercentage": 62,
+            "resetsAt": null
+          }
+        ],
+        "credits": null,
+        "updatedAt": "2026-11-04T10:00:00Z"
+      }
+    },
+    "/api/sessions/761/agents/claude/autocomplete": [
+      {
+        "id": "agent:reviewer",
+        "kind": "agent",
+        "trigger": "@",
+        "label": "code-reviewer",
+        "insertText": "Use the code-reviewer agent to ",
+        "description": "Review code changes and test coverage",
+        "detail": "Model: sonnet",
+        "source": "runtime"
+      }
+    ],
+    "/api/agent-providers/claude/auth/status": {
+      "installed": true,
+      "authenticated": true,
+      "isAuthenticating": false,
+      "output": []
+    },
+    "/api/agent-providers": [
+      {
+        "id": "claude",
+        "displayName": "Claude",
+        "capabilities": {
+          "mcp": true,
+          "subagents": true,
+          "permissions": true,
+          "userInput": true,
+          "multimodalPrompts": true,
+          "terminalFallback": false,
+          "rewindConversation": true
+        }
+      },
+      {
+        "id": "codex",
+        "displayName": "Codex",
+        "capabilities": {
+          "mcp": true,
+          "subagents": true,
+          "permissions": true,
+          "userInput": true,
+          "multimodalPrompts": true,
+          "terminalFallback": false,
+          "rewindConversation": true
+        }
+      },
+      {
+        "id": "opencode",
+        "displayName": "OpenCode",
+        "capabilities": {
+          "mcp": true,
+          "subagents": true,
+          "permissions": true,
+          "userInput": true,
+          "multimodalPrompts": true,
+          "terminalFallback": false,
+          "rewindConversation": true
+        }
+      },
+      {
+        "id": "pi",
+        "displayName": "Pi",
+        "capabilities": {
+          "mcp": true,
+          "subagents": true,
+          "permissions": true,
+          "userInput": true,
+          "multimodalPrompts": true,
+          "terminalFallback": false,
+          "rewindConversation": true
+        }
+      }
+    ],
+    "/api/agent-providers/models": [
+      {
+        "provider": "claude",
+        "displayName": "Claude",
+        "models": [
+          {
+            "id": "opus",
+            "displayName": "Opus",
+            "description": "Most capable for complex tasks",
+            "supportsEffort": true,
+            "reasoningEfforts": [
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "supportsFastMode": true,
+            "isProviderDefault": true
+          },
+          {
+            "id": "sonnet",
+            "displayName": "Sonnet",
+            "description": "Balanced speed and capability",
+            "supportsEffort": true
+          },
+          {
+            "id": "haiku",
+            "displayName": "Haiku",
+            "description": "Fast and efficient",
+            "supportsEffort": false
+          }
+        ],
+        "reasoningEfforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "providerDefaultModelId": "opus",
+        "supportsModelSelection": true
+      },
+      {
+        "provider": "codex",
+        "displayName": "Codex",
+        "models": [
+          {
+            "id": "gpt-5-codex",
+            "displayName": "GPT-5 Codex",
+            "description": "Coding model",
+            "supportsEffort": true
+          }
+        ],
+        "reasoningEfforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "providerDefaultModelId": null,
+        "supportsModelSelection": true
+      },
+      {
+        "provider": "opencode",
+        "displayName": "OpenCode",
+        "models": [],
+        "reasoningEfforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "providerDefaultModelId": null,
+        "supportsModelSelection": true
+      },
+      {
+        "provider": "pi",
+        "displayName": "Pi",
+        "models": [],
+        "reasoningEfforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "providerDefaultModelId": null,
+        "supportsModelSelection": true
+      }
+    ],
+    "/api/agent-providers/claude/models": [
+      {
+        "provider": "claude",
+        "displayName": "Claude",
+        "models": [
+          {
+            "id": "opus",
+            "displayName": "Opus",
+            "description": "Most capable for complex tasks",
+            "supportsEffort": true,
+            "reasoningEfforts": [
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "supportsFastMode": true,
+            "isProviderDefault": true
+          },
+          {
+            "id": "sonnet",
+            "displayName": "Sonnet",
+            "description": "Balanced speed and capability",
+            "supportsEffort": true
+          },
+          {
+            "id": "haiku",
+            "displayName": "Haiku",
+            "description": "Fast and efficient",
+            "supportsEffort": false
+          }
+        ],
+        "reasoningEfforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "providerDefaultModelId": "opus",
+        "supportsModelSelection": true
+      }
+    ],
+    "/api/agent-providers/codex/models": [
+      {
+        "provider": "codex",
+        "displayName": "Codex",
+        "models": [
+          {
+            "id": "gpt-5-codex",
+            "displayName": "GPT-5 Codex",
+            "description": "Coding model",
+            "supportsEffort": true
+          }
+        ],
+        "reasoningEfforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "providerDefaultModelId": null,
+        "supportsModelSelection": true
+      }
+    ],
+    "/api/agent-providers/codex/auth/status": {
+      "installed": true,
+      "authenticated": true,
+      "isAuthenticating": false,
+      "output": []
+    },
+    "/api/agent-providers/opencode/models": [
+      {
+        "provider": "opencode",
+        "displayName": "OpenCode",
+        "models": [],
+        "reasoningEfforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "providerDefaultModelId": null,
+        "supportsModelSelection": true
+      }
+    ],
+    "/api/agent-providers/opencode/auth/status": {
+      "installed": true,
+      "authenticated": true,
+      "isAuthenticating": false,
+      "output": []
+    },
+    "/api/agent-providers/pi/models": [
+      {
+        "provider": "pi",
+        "displayName": "Pi",
+        "models": [],
+        "reasoningEfforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "providerDefaultModelId": null,
+        "supportsModelSelection": true
+      }
+    ],
+    "/api/agent-providers/pi/auth/status": {
+      "installed": true,
+      "authenticated": true,
+      "isAuthenticating": false,
+      "output": []
+    }
+  },
+  "events": []
+}

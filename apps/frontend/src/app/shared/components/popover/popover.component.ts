@@ -162,6 +162,8 @@ export class ZardPopoverDirective implements OnInit, OnDestroy {
   readonly zAlign = input<ZardPopoverAlign>('center');
   readonly zSideOffset = input(4, { transform: numberAttribute });
   readonly zAlignOffset = input(0, { transform: numberAttribute });
+  /** Keep the content within the viewport when its trigger is near an edge. */
+  readonly zPush = input(false);
   readonly zOrigin = input<ElementRef>();
   readonly zVisible = input<boolean>(false);
   readonly zOverlayClickable = input<boolean>(true);
@@ -227,7 +229,7 @@ export class ZardPopoverDirective implements OnInit, OnDestroy {
       this.cancelPendingDetach();
     }
 
-    this.positionStrategy?.withPositions(this.getPositions());
+    this.positionStrategy?.withPush(this.zPush()).withPositions(this.getPositions());
 
     if (reopening) {
       this.overlayRef?.updatePosition();
@@ -282,7 +284,7 @@ export class ZardPopoverDirective implements OnInit, OnDestroy {
     const positionStrategy = this.overlayPositionBuilder
       .flexibleConnectedTo(this.nativeElement)
       .withPositions(this.getPositions())
-      .withPush(false)
+      .withPush(this.zPush())
       .withFlexibleDimensions(false)
       .withViewportMargin(8);
 

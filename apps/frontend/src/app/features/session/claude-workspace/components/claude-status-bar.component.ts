@@ -1,17 +1,10 @@
 import { AgentModelCatalogService } from '@/shared/services/agent-model-catalog.service';
-import { ModelCatalogRefreshComponent } from '@/shared/components/model-catalog-refresh/model-catalog-refresh.component';
 import { withPinnedModel } from '@/shared/models/agent-model-options';
 import { ZardButtonComponent } from '@/shared/components/button';
-import {
-  ZardDropdownDirective,
-  ZardDropdownMenuContentComponent,
-  ZardDropdownMenuSubContentComponent,
-  ZardDropdownMenuSubTriggerComponent,
-  ZardDropdownService,
-} from '@/shared/components/dropdown';
 import { ZardPopoverComponent, ZardPopoverDirective } from '@/shared/components/popover';
 import { ZardProgressBarComponent } from '@/shared/components/progress-bar';
 import {
+  AgentAuthStatus,
   AgentBackgroundWorkItem,
   AgentPlanUsage,
   AgentPlanUsageWindow,
@@ -32,18 +25,15 @@ import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
-  lucideChevronDown,
   lucideDownload,
   lucideListTodo,
   lucideLoaderCircle,
-  lucideLockKeyhole,
   lucidePlugZap,
   lucideSlidersHorizontal,
   lucideTerminal,
   lucideTriangleAlert,
-  lucideZap,
 } from '@ng-icons/lucide';
-import { AgentSettingOptionComponent } from './agent-setting-option.component';
+import { AgentModelSelectorComponent } from './agent-model-selector.component';
 import { ComposerSettingsComponent } from './composer-settings.component';
 import { ContextUsageComponent } from '@/shared/agent-chat/context-usage/context-usage.component';
 
@@ -76,22 +66,16 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
 
 @Component({
   selector: 'cw-status-bar',
-  providers: [ZardDropdownService],
   standalone: true,
   imports: [
     CommonModule,
-    ModelCatalogRefreshComponent,
     NgIcon,
     ZardProgressBarComponent,
     ZardButtonComponent,
-    ZardDropdownDirective,
-    ZardDropdownMenuContentComponent,
-    ZardDropdownMenuSubContentComponent,
-    ZardDropdownMenuSubTriggerComponent,
     ZardPopoverComponent,
     ZardPopoverDirective,
     CdkTrapFocus,
-    AgentSettingOptionComponent,
+    AgentModelSelectorComponent,
     ComposerSettingsComponent,
     ContextUsageComponent,
   ],
@@ -102,13 +86,10 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
   },
   viewProviders: [
     provideIcons({
-      lucideChevronDown,
       lucideDownload,
       lucideListTodo,
       lucideLoaderCircle,
-      lucideLockKeyhole,
       lucidePlugZap,
-      lucideZap,
       lucideSlidersHorizontal,
       lucideTerminal,
       lucideTriangleAlert,
@@ -123,6 +104,7 @@ export class ClaudeStatusBarComponent {
   readonly providers = input<AgentRuntimeProviderInfo[]>([]);
   readonly currentProvider = input<AgentProviderId>('claude');
   readonly providerLocked = input(false);
+  readonly authStatus = input<AgentAuthStatus | null>(null);
   readonly selectedModel = input<string | null>(null);
   readonly reasoningEffort = input<ClaudeReasoningEffort | null>(null);
   readonly fastMode = input(false);
@@ -153,10 +135,6 @@ export class ClaudeStatusBarComponent {
     );
   });
 
-  loadModels(): void {
-    void this.catalog.load(this.currentProvider()).catch(() => undefined);
-  }
-
   readonly contextUsage = input<ClaudeContextUsage | null>(null);
   readonly planUsage = input<AgentPlanUsage | null>(null);
   readonly tasks = input<ClaudeTaskState[]>([]);
@@ -183,6 +161,7 @@ export class ClaudeStatusBarComponent {
   readonly mcpSnapshot = input<ClaudeMcpSnapshot | null>(null);
 
   readonly modelChange = output<string>();
+  readonly providerModelChange = output<{ provider: AgentProviderId; model: string }>();
   readonly reasoningEffortChange = output<ClaudeReasoningEffort | null>();
   readonly fastModeChange = output<boolean>();
   readonly providerChange = output<AgentProviderId>();
@@ -218,8 +197,8 @@ export class ClaudeStatusBarComponent {
   });
 
   usageProgressType(window: AgentPlanUsageWindow): 'success' | 'warning' | 'destructive' {
-    if (window.remainingPercentage <= 5) return 'destructive';
-    if (window.remainingPercentage <= 20) return 'warning';
+    if (window.remainingPercentage < 10) return 'destructive';
+    if (window.remainingPercentage < 25) return 'warning';
     return 'success';
   }
 
@@ -334,9 +313,17 @@ export class ClaudeStatusBarComponent {
       ];
     }
     const base = supported?.length
-      ? REASONING_EFFORTS.filter(
-          (option) => option.id === '' || supported.includes(option.id as string),
-        )
+      ? [
+          REASONING_EFFORTS[0],
+          ...[...new Set(supported)].filter(Boolean).map(
+            (id) =>
+              REASONING_EFFORTS.find((option) => option.id === id) ?? {
+                id,
+                label: id,
+                hint: 'Agent-supported thinking level',
+              },
+          ),
+        ]
       : REASONING_EFFORTS;
     return effort && !base.some((option) => option.id === effort)
       ? [{ id: effort, label: effort, hint: 'Custom effort' }, ...base]

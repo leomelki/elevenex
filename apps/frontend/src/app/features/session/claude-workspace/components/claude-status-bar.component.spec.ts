@@ -319,13 +319,13 @@ describe('ClaudeStatusBarComponent', () => {
     trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     fixture.detectChanges();
     expect(
-      TestBed.inject(OverlayContainer).getContainerElement().querySelector('[role="menu"]'),
+      TestBed.inject(OverlayContainer).getContainerElement().querySelector('[role="dialog"]'),
     ).toBeNull();
     trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     fixture.detectChanges();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     const overlay = TestBed.inject(OverlayContainer).getContainerElement();
-    const menu = overlay.querySelector('[role="menu"]') as HTMLElement;
+    const menu = overlay.querySelector('[role="dialog"]') as HTMLElement;
     expect(menu).not.toBeNull();
     expect(menu.getAttribute('aria-label')).toBe('Agent, model and thinking');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
@@ -337,11 +337,11 @@ describe('ClaudeStatusBarComponent', () => {
     document.activeElement?.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     fixture.detectChanges();
 
     expect(selected).toEqual(['model-a']);
-    expect(overlay.querySelector('[role="menu"]')).toBeNull();
+    expect(overlay.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
 
@@ -354,50 +354,39 @@ describe('ClaudeStatusBarComponent', () => {
     const overlay = TestBed.inject(OverlayContainer).getContainerElement();
     trigger.click();
     fixture.detectChanges();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const menu = overlay.querySelector('[role="menu"]') as HTMLElement;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const menu = overlay.querySelector('[role="dialog"]') as HTMLElement;
     menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     fixture.detectChanges();
-    expect(overlay.querySelector('[role="menu"]')).toBeNull();
+    expect(overlay.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
 
     trigger.click();
     fixture.detectChanges();
-    expect(overlay.querySelector('[role="menu"]')).not.toBeNull();
+    expect(overlay.querySelector('[role="dialog"]')).not.toBeNull();
     fixture.destroy();
-    expect(overlay.querySelector('[role="menu"]')).toBeNull();
+    expect(overlay.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it('changes the agent from the model menu and restores focus after selection', async () => {
+  it('switches agents directly from the rail and keeps the selector open', async () => {
     const fixture = await render();
     const changes: string[] = [];
     fixture.componentInstance.providerChange.subscribe((provider) => changes.push(provider));
     fixture.detectChanges();
-    const trigger = fixture.nativeElement.querySelector(
-      '.cw-sb__model-trigger',
-    ) as HTMLButtonElement;
-    trigger.click();
+    fixture.nativeElement.querySelector('.cw-sb__model-trigger').click();
     fixture.detectChanges();
-    await new Promise((resolve) => setTimeout(resolve, 0));
     const overlay = TestBed.inject(OverlayContainer).getContainerElement();
-    const agentTrigger = overlay.querySelector('[aria-label="Change agent"]') as HTMLButtonElement;
-    agentTrigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-    fixture.detectChanges();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const options = overlay.querySelectorAll<HTMLButtonElement>(
-      '[aria-label="Agent"] [role="menuitemradio"]',
-    );
+    const options = overlay.querySelectorAll<HTMLButtonElement>('[data-agent-choice]');
     expect(options).toHaveLength(2);
-    expect(options[0].getAttribute('aria-checked')).toBe('true');
-    expect(document.activeElement).toBe(options[0]);
+    expect(options[0].getAttribute('aria-pressed')).toBe('true');
+    options[0].focus();
     options[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     expect(document.activeElement).toBe(options[1]);
-    options[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    options[1].click();
     fixture.detectChanges();
     expect(changes).toEqual(['codex']);
-    expect(overlay.querySelector('[role="menu"]')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    expect(overlay.querySelector('[aria-label="Agent, model and thinking"]')).not.toBeNull();
   });
 
   it('explains the locked agent in the model menu while keeping models editable', async () => {
@@ -417,7 +406,7 @@ describe('ClaudeStatusBarComponent', () => {
     expect(
       overlay.querySelector('[aria-label="Agent cannot be changed after the conversation starts"]'),
     ).not.toBeNull();
-    expect(overlay.querySelectorAll('[aria-label="Model"] [role="menuitemradio"]')).toHaveLength(2);
+    expect(overlay.querySelectorAll('[aria-label="Model"] [role="radio"]')).toHaveLength(2);
     fixture.componentInstance.pickProvider('codex');
     expect(changes).toEqual([]);
   });
@@ -563,12 +552,12 @@ describe('ClaudeStatusBarComponent', () => {
     trigger.click();
     fixture.detectChanges();
     const overlay = TestBed.inject(OverlayContainer).getContainerElement();
-    const options = overlay.querySelectorAll<HTMLButtonElement>(
-      '[role="group"][aria-label="Thinking"] [role="menuitemradio"]',
-    );
-    expect(options).toHaveLength(3);
-    expect(options[2].getAttribute('aria-checked')).toBe('true');
-    options[1].click();
+    const slider = overlay.querySelector<HTMLInputElement>('[aria-label="Thinking effort"]')!;
+    expect(slider.max).toBe('2');
+    expect(slider.getAttribute('aria-valuetext')).toBe('High');
+    slider.value = '1';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
     expect(changes).toEqual(['low']);
   });
 
@@ -585,6 +574,27 @@ describe('ClaudeStatusBarComponent', () => {
     ]);
     fixture.detectChanges();
     expect(fixture.componentInstance.selectedModelLabel()).toBe('Agent default');
+  });
+
+  it('includes newly reported thinking levels without offering unsupported levels', async () => {
+    const fixture = await render();
+    fixture.componentRef.setInput('currentProvider', 'codex');
+    fixture.componentRef.setInput('availableModels', [
+      {
+        id: 'model',
+        displayName: 'Model',
+        supportsEffort: true,
+        reasoningEfforts: ['low', 'high', 'ultra'],
+      },
+    ]);
+    fixture.componentRef.setInput('selectedModel', 'model');
+    fixture.detectChanges();
+    expect(fixture.componentInstance.reasoningEffortOptions().map((option) => option.id)).toEqual([
+      '',
+      'low',
+      'high',
+      'ultra',
+    ]);
   });
 
   it.each(['light', 'dark'])(
@@ -624,15 +634,15 @@ describe('ClaudeStatusBarComponent', () => {
         fixture.detectChanges();
         const overlay = TestBed.inject(OverlayContainer).getContainerElement();
         const modelOptions = overlay.querySelectorAll<HTMLButtonElement>(
-          '[aria-label="Model"] [role="menuitemradio"]',
+          '[aria-label="Model"] [role="radio"]',
         );
         expect(modelOptions[1].getAttribute('aria-checked')).toBe('true');
-        const options = overlay.querySelectorAll<HTMLButtonElement>(
-          '[aria-label="Thinking"] [role="menuitemradio"]',
-        );
-        expect(options).toHaveLength(4);
-        expect(options[3].getAttribute('aria-checked')).toBe('true');
-        options[1].click();
+        const slider = overlay.querySelector<HTMLInputElement>('[aria-label="Thinking effort"]')!;
+        expect(slider.max).toBe('3');
+        expect(slider.getAttribute('aria-valuetext')).toBe('High');
+        slider.value = '1';
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+        slider.dispatchEvent(new Event('change', { bubbles: true }));
         expect(changes).toEqual(['low']);
 
         fixture.componentRef.setInput('reasoningEffort', 'low');
@@ -663,7 +673,7 @@ describe('ClaudeStatusBarComponent', () => {
     expect(fixture.componentInstance.selectedModelSupportsEffort()).toBe(false);
   });
 
-  it('leaves a menu with Shift+Tab without toggling plan mode', async () => {
+  it('keeps Shift+Tab inside the selector without toggling plan mode', async () => {
     const fixture = await render();
     const planChanges: boolean[] = [];
     fixture.componentInstance.planModeChange.subscribe((value) => planChanges.push(value));
@@ -673,14 +683,13 @@ describe('ClaudeStatusBarComponent', () => {
     ) as HTMLButtonElement;
     trigger.click();
     fixture.detectChanges();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     const overlay = TestBed.inject(OverlayContainer).getContainerElement();
-    const menu = overlay.querySelector('[role="menu"]') as HTMLElement;
+    const menu = overlay.querySelector('[role="dialog"]') as HTMLElement;
     menu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
     fixture.detectChanges();
 
-    expect(overlay.querySelector('[role="menu"]')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    expect(overlay.querySelector('[role="dialog"]')).not.toBeNull();
     expect(planChanges).toEqual([]);
   });
 

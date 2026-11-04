@@ -1144,6 +1144,38 @@ describe('ClaudeWorkspaceComponent', () => {
     expect(fixture.componentInstance.runtime.runtimeStarted()).toBe(false);
   });
 
+  it('applies a model from cross-agent search after switching providers', async () => {
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('hasStartedAgentRuntime', false);
+    fixture.detectChanges();
+    await flushPromises();
+    const pendingInitialState = new Subject<ClaudeRuntimeState>();
+    apiMock.getRuntimeState.mockReturnValueOnce(pendingInitialState);
+    const selected = { ...runtimeState(), claudeSessionId: null, selectedModel: 'codex-model' };
+    apiMock.setSelectedModel.mockReturnValueOnce(of(selected));
+
+    await fixture.componentInstance.runtime.onProviderModelChange({
+      provider: 'codex', model: 'codex-model',
+    });
+    pendingInitialState.next({ ...runtimeState(), claudeSessionId: null, selectedModel: 'old-model' });
+    expect(fixture.componentInstance.runtime.currentProvider()).toBe('codex');
+    expect(apiMock.setSelectedModel).toHaveBeenCalledWith(7, 'codex-model');
+    expect(fixture.componentInstance.runtime.selectedModel()).toBe('codex-model');
+  });
+
+  it('ignores a cross-agent model selection if another provider switch supersedes it', async () => {
+    const fixture = createWorkspace();
+    fixture.componentRef.setInput('hasStartedAgentRuntime', false);
+    fixture.detectChanges();
+    await flushPromises();
+    const runtime = fixture.componentInstance.runtime;
+    const selection = runtime.onProviderModelChange({ provider: 'codex', model: 'codex-model' });
+    const newerSwitch = runtime.onProviderChange('pi');
+    await Promise.all([selection, newerSwitch]);
+    expect(runtime.currentProvider()).toBe('pi');
+    expect(apiMock.setSelectedModel).not.toHaveBeenCalled();
+  });
+
   it('preserves composer input when applying a preset for another provider', async () => {
     const savedPrompt = 'Typed before applying preset';
     composerDraftsMock.load.mockResolvedValueOnce(null).mockResolvedValueOnce({

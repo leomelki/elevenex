@@ -825,7 +825,7 @@ export class SessionRuntime {
     );
   }
 
-  onProviderChange(provider: AgentProviderId): void {
+  async onProviderChange(provider: AgentProviderId): Promise<void> {
     if (this.readOnlyTranscript) return;
     if (provider === this.currentProvider()) return;
     if (this.runtimeStarted()) {
@@ -842,7 +842,29 @@ export class SessionRuntime {
       this.sessionsService.updateActiveAgentProvider(this.sessionId, provider),
     ).catch(() => undefined);
     this.reset();
-    void this.bootstrap().then(() => this.notify({ type: 'restore-draft' }));
+    const sessionId = this.sessionId;
+    const bootstrap = this.bootstrap();
+    const version = this.bootstrapVersion;
+    await bootstrap;
+    if (this.isCurrentConversation(version) && this.sessionId === sessionId)
+      this.notify({ type: 'restore-draft' });
+  }
+
+  async onProviderModelChange(choice: { provider: AgentProviderId; model: string }): Promise<void> {
+    if (this.isTranscriptReadOnly() || this.runtimeStarted()) return;
+    const sessionId = this.sessionId;
+    // Finish provider initialization before applying the model, otherwise a late
+    // bootstrap response could overwrite the selection from cross-agent search.
+    const change = this.onProviderChange(choice.provider);
+    const version = this.bootstrapVersion;
+    await change;
+    if (
+      !this.isCurrentConversation(version) ||
+      this.sessionId !== sessionId ||
+      this.currentProvider() !== choice.provider ||
+      this.runtimeStarted()
+    ) return;
+    await this.onModelChange(choice.model);
   }
 
   /** A login card reported success — confirm it against the backend. */
