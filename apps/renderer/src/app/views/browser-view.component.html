@@ -1,5 +1,5 @@
 <section class="browser" tabindex="-1" aria-label="Task browser" (keydown)="keydown($event)">
-  @if (showTabs()) { <ex-view-tabs label="Browser tabs" newLabel="New browser tab (⌘T)" [items]="tabItems()" [active]="current()?.id" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()">
+  @if (showTabs()) { <ex-view-tabs label="Browser tabs" newLabel="New browser tab (⌘T)" [reorderable]="reorderable()" [detachable]="detachable()" [tabsBusy]="tabsBusy() || detachBusy()" (moved)="tabMoved.emit($event)" (windowRequested)="tabWindowRequested.emit($event)" [items]="tabItems()" [active]="current()?.id" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()">
     @if (detachable()) { <ex-icon-button icon="window" [label]="detachLabel()" size="sm" [disabled]="!current() || detachBusy()" (pressed)="detachRequested.emit()" /> }
   </ex-view-tabs> }
   <div class="toolbar">

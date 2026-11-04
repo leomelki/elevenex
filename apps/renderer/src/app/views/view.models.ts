@@ -116,3 +116,5 @@ export const CHANGE_STATUS_LABEL: Readonly<Record<ChangeStatus, string>> = {
 
 export function fileName(path: string): string { return path.split('/').at(-1) ?? path; }
 export function folderName(path: string): string { return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''; }
+/** Stable insertion intent; null appends without replacing concurrently opened tabs. */
+export interface ViewTabMove { readonly tabId: string; readonly beforeTabId: string | null }

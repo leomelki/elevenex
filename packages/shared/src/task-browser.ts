@@ -77,6 +77,8 @@ export interface TaskBrowserState {
   readonly capabilities?: TaskBrowserCapabilities;
   /** Older remote runtimes omit this capability. */
   readonly canDetach?: boolean;
+  /** Human tab ordering; absent on older machine hosts. */
+  readonly canReorder?: boolean;
   readonly scopeId: string;
   readonly taskId: number;
   readonly revision: number;
@@ -98,6 +100,8 @@ export type TaskBrowserCommand =
   | { readonly kind: 'dismiss-attention' }
   | { readonly kind: 'new-tab' }
   | { readonly kind: 'open'; readonly url: string }
+  /** Move an existing tab before another, or to the end. Never replaces the tab set. */
+  | { readonly kind: 'move-tab'; readonly tabId: string; readonly beforeTabId: string | null }
   | { readonly kind: 'select' | 'close' | 'back' | 'reload' | 'takeover' | 'outside' | 'focus'; readonly tabId: string }
   | { readonly kind: 'handoff'; readonly tabId: string; readonly sessionId: number }
   | { readonly kind: 'navigate'; readonly tabId: string; readonly url: string }

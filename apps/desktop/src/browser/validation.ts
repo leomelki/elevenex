@@ -70,6 +70,7 @@ export function command(value: unknown): TaskBrowserCommand {
   if (kind === 'open') { exact(raw, ['kind', 'url']); return { kind, url: browserUrl(raw['url']) }; }
   if (kind === 'pick' || kind === 'feedback') { exact(raw, ['kind', 'enabled']); if (typeof raw['enabled'] !== 'boolean') throw new Error('Invalid browser toggle'); return { kind, enabled: raw['enabled'] }; }
   const tabId = browserId(raw['tabId']);
+  if (kind === 'move-tab') { exact(raw, ['kind', 'tabId', 'beforeTabId']); return { kind, tabId, beforeTabId: raw['beforeTabId'] === null ? null : browserId(raw['beforeTabId']) }; }
   if (kind === 'handoff') { exact(raw, ['kind', 'tabId', 'sessionId']); return { kind, tabId, sessionId: taskId(raw['sessionId']) }; }
   if (kind === 'navigate') { exact(raw, ['kind', 'tabId', 'url']); return { kind, tabId, url: browserUrl(raw['url']) }; }
   if (kind === 'width') { exact(raw, ['kind', 'tabId', 'width']); if (raw['width'] !== 'phone' && raw['width'] !== 'full') throw new Error('Invalid width'); return { kind, tabId, width: raw['width'] }; }

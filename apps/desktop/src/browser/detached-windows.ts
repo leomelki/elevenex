@@ -75,7 +75,7 @@ export class DetachedBrowserWindows {
   snapshot(entry: DetachedTab, state = entry.browser.snapshot()): TaskBrowserState {
     const view = entry.browser.detachedSnapshot(entry.info.tabId, state);
     const ownsPicker = view.active === entry.info.tabId;
-    return { ...view, picked: ownsPicker ? view.picked : null, picking: ownsPicker && view.picking, pickerMessage: ownsPicker ? view.pickerMessage : null, attention: !view.attention?.tabId || view.attention.tabId === entry.info.tabId ? view.attention : undefined, tabs: view.tabs.filter(tab => tab.id === entry.info.tabId).map(tab => ({ ...tab, detached: false })), active: entry.info.tabId };
+    return { ...view, canReorder: false, picked: ownsPicker ? view.picked : null, picking: ownsPicker && view.picking, pickerMessage: ownsPicker ? view.pickerMessage : null, attention: !view.attention?.tabId || view.attention.tabId === entry.info.tabId ? view.attention : undefined, tabs: view.tabs.filter(tab => tab.id === entry.info.tabId).map(tab => ({ ...tab, detached: false })), active: entry.info.tabId };
   }
   command(entry: DetachedTab, input: TaskBrowserCommand): void {
     if (input.kind === 'dismiss-attention') {
@@ -84,7 +84,7 @@ export class DetachedBrowserWindows {
       if (!attention?.tabId || attention.tabId === entry.info.tabId) return;
       throw new Error('This notice belongs to another browser tab');
     }
-    if (!('tabId' in input) || input.tabId !== entry.info.tabId || input.kind === 'select' || input.kind === 'close') throw new Error('This window controls only its own tab');
+    if (!('tabId' in input) || input.tabId !== entry.info.tabId || input.kind === 'select' || input.kind === 'close' || input.kind === 'move-tab') throw new Error('This window controls only its own tab');
   }
   surfaces(id: number): readonly TaskBrowserSurface[] { const entry = this.tabs.get(id); return entry?.info.available ? entry.browser.detachedSurfaces(entry.info.tabId) : []; }
   publish(browser: BrowserTask, state: TaskBrowserState): void {

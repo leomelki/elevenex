@@ -35,7 +35,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   private rehostPage(previous: BrowserPage, window?: BrowserWindow): BrowserPage {
     const { id, url, documentUrl, width, theme, slowNetwork } = previous;
     const generation = previous.lease.generation + 1, by = previous.lease.by, sessionId = previous.lease.agentSessionId;
-    previous.destroy(); this.pages.delete(id);
+    previous.destroy();
     // Electron cannot transfer an attached guest between renderer documents.
     // Rehost with the same task profile and tab identity, without reading forms,
     // page text or storage into the app. Location loads explicitly with user control.
@@ -131,7 +131,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     if (this.active) { const active = this.pages.get(this.active); if (active?.url) void this.navigate(active, active.url).catch(() => { active.error = 'Task server unavailable. Retry to reconnect.'; this.emit(); }); }
     this.emit();
   }
-  snapshot(): TaskBrowserState { return { capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, canDetach: true, scopeId: this.scopeId, taskId: this.taskId, revision: this.revision, surfaceEpoch: this.surfaceEpoch, controlsFocus: this.controlsFocus,
+  snapshot(): TaskBrowserState { return { capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, canDetach: true, canReorder: true, scopeId: this.scopeId, taskId: this.taskId, revision: this.revision, surfaceEpoch: this.surfaceEpoch, controlsFocus: this.controlsFocus,
     active: this.active, tabs: [...this.pages.values()].map(page => {
       const tab = { ...page.snapshot(), detached: this.detached.has(page.id) };
       try { const url = new URL(tab.url); if (loopback(url) && this.ports.includes(Number(url.port || (url.protocol === 'https:' ? 443 : 80)))) return { ...tab, server: 'Task server' }; } catch { /* Empty tab. */ }
@@ -140,7 +140,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     picking: this.picking, pickerMessage: this.pickerMessage, feedback: this.feedback, ports: this.ports, privacy: 'content-withheld', ...(this.attention ? { attention: this.attention } : {}) }; }
   private create(by: 'you' | 'agent', sessionId: number | null = null, tabId?: string): BrowserPage {
     this.assertScope();
-    if (this.pages.size >= 12) throw new Error('A task can have up to 12 browser tabs. Close a tab first.');
+    if (this.pages.size >= 12 && (!tabId || !this.pages.has(tabId))) throw new Error('A task can have up to 12 browser tabs. Close a tab first.');
     const page = new BrowserPage({ window: this.window, scopeId: this.scopeId, taskId: this.taskId, frame: this.frame, session: this.profile.session, partition: this.profile.partition,
       resourceUrl: url => this.network.allowed(url) ? url : null, logicalUrl: url => url, configure: () => this.profile.configure(),
       authorized: () => this.selected() && this.client.state(this.window.webContents.id).scope?.id === this.scopeId,
@@ -160,7 +160,15 @@ export class TaskBrowser implements DesktopBrowserHost {
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
     this.assertScope();
-    if (input.kind === 'dismiss-attention') this.attention=undefined;
+    if (input.kind === 'move-tab') {
+      const page = this.page(input.tabId);
+      if (input.beforeTabId !== null) this.page(input.beforeTabId);
+      if (input.beforeTabId === page.id) return this.snapshot();
+      const ordered = [...this.pages.values()].filter(item => item !== page);
+      ordered.splice(input.beforeTabId === null ? ordered.length : ordered.findIndex(item => item.id === input.beforeTabId), 0, page);
+      this.pages.clear(); for (const item of ordered) this.pages.set(item.id, item);
+    }
+    else if (input.kind === 'dismiss-attention') this.attention=undefined;
     else if (input.kind === 'new-tab') this.select(this.create('you'));
     else if (input.kind === 'open') {
       const page = this.create('you'); page.userDownloadIntent = true; this.select(page); await this.navigate(page, input.url);

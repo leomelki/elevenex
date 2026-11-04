@@ -16,7 +16,7 @@ class BrowserWindowFixture extends StartTabFixture {
   async taskBrowserWindow() { return this.info; }
   async taskBrowserWindowAction() { /* Native window behavior is covered by the Electron smoke. */ }
   onTaskBrowserWindowChanged(listener: (info: TaskBrowserWindowInfo) => void) { this.infoListener = listener; return () => { this.infoListener = undefined; }; }
-  onTaskBrowserChanged(listener: (state: TaskBrowserState) => void) { this.stateListener = listener; return () => { this.stateListener = undefined; }; }
+  override onTaskBrowserChanged(listener: (state: TaskBrowserState) => void) { this.stateListener = listener; return () => { this.stateListener = undefined; }; }
   setState(driver: 'you' | 'agent' | 'needs') {
     this.state = { ...this.state, revision: this.state.revision + 1, tabs: this.state.tabs.map(tab => ({ ...tab, driver, agentSessionId: driver === 'you' ? null : 2, waiting: false, step: driver === 'agent' ? { n: 2, total: 4, text: 'Checking the checkout flow' } : undefined })) };
     this.stateListener?.(this.state);

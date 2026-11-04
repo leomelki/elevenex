@@ -158,6 +158,7 @@ void (async () => {
   assert.equal(await window.webContents.executeJavaScript('window.elevenex.openMachineWindow({kind:"remote",hostId:"unknown"}).then(()=>false,()=>true)'), true);
   const firstScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.equal(firstScope.scope.environment.kind, 'local');
+  await require('./browser-order-native.cjs')();
   await require('./browser-machine-native.cjs')();
   const browserSite = await require('./browser-site.cjs')();
   window.once('closed', () => { void browserSite.close(); });

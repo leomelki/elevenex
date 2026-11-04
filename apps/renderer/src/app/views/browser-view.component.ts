@@ -1,6 +1,6 @@
 import { afterRenderEffect, ChangeDetectionStrategy, Component, computed, ElementRef, input, output, signal, viewChild } from '@angular/core';
 import { ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconButtonComponent } from '../ui';
-import { BrowserDriver, BrowserQuestion, BrowserStep, BrowserTab, BrowserTarget, ViewTab } from './view.models';
+import { BrowserDriver, BrowserQuestion, BrowserStep, BrowserTab, BrowserTarget, ViewTab, type ViewTabMove } from './view.models';
 import { ViewTabsComponent } from './view-tabs.component';
 
 /** Browser chrome. The owner supplies a trusted platform adapter through the preview slot. */
@@ -19,6 +19,10 @@ export class BrowserViewComponent {
   readonly detachBusy = input(false);
   readonly detachLabel = input('Open tab in new window');
   readonly detachRequested = output<void>();
+  readonly reorderable = input(false);
+  readonly tabsBusy = input(false);
+  readonly tabMoved = output<ViewTabMove>();
+  readonly tabWindowRequested = output<string>();
   readonly tabs = input<readonly BrowserTab[]>([]);
   readonly active = input<string>();
   readonly clipPreview = input(false);

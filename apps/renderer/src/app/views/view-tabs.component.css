@@ -26,6 +26,10 @@ button[role="tab"] { max-width: 160px; }
 .tab-shell:hover .close, .tab-shell:focus-within .close, .on .close { opacity: 1; }
 .close:hover, .new:hover { background: var(--surface-sunken); }
 .new { flex: none; justify-content: center; width: var(--control-height); height: var(--control-height); padding: 0; border-radius: var(--radius-sm); }
+.cdk-drag-preview { box-sizing: border-box; background: var(--surface-raised); color: var(--ink); box-shadow: var(--shadow-pop); }
+.cdk-drag-placeholder { opacity: .25; }
+.tabs.cdk-drop-list-dragging .tab-shell:not(.cdk-drag-placeholder), .cdk-drag-animating { transition: transform var(--dur-base) var(--ease-out); }
+.announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .agent { display: grid; place-items: center; width: var(--space-4); height: var(--space-4); border-radius: var(--radius-xs); color: var(--accent); background: var(--accent-soft); font-size: 8px; font-weight: 600; flex: none; }
 .agent.driving { position: relative; }
 .agent.driving::after { content: ''; position: absolute; inset: -3px; border-radius: var(--radius-sm); box-shadow: 0 0 0 1px var(--accent); animation: agent-breathe calc(var(--dur-base) * 8) var(--ease-in-out) infinite; }
@@ -37,4 +41,5 @@ button[role="tab"] { max-width: 160px; }
 @keyframes tab-in { from { max-width: 0; opacity: 0; overflow: hidden; } }
 @keyframes tab-out { to { max-width: 0; opacity: 0; overflow: hidden; } }
 @media (hover: none) { .close { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .tabs.cdk-drop-list-dragging .tab-shell, .cdk-drag-animating { transition: none; } }
 @media (prefers-reduced-motion: reduce) { .enter, .leave, .agent.driving::after { animation: none; } .tab-shell, .tab-shell::before, .close, .tabs { transition: none; } }

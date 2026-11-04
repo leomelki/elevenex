@@ -305,6 +305,12 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
       : this.panel.surfaces();
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
+    if (input.kind === 'move-tab') {
+      if (!this.state?.canReorder) throw new Error('Update the task machine to reorder browser tabs.');
+      // Ordering does not change any document, viewport or driver generation.
+      this.accept(await this.request('command', input, 200000));
+      return this.snapshot();
+    }
     if (input.kind === "outside") {
       const tab = this.state?.tabs.find((tab) => tab.id === input.tabId);
       if (!tab) throw new Error("Browser tab closed");

@@ -168,6 +168,15 @@ tab as the destination.
 
 ## Detached tab windows
 
+Drag tabs along the strip to reorder them, or use Alt+Shift+Left/Right while a
+tab is focused. Drag a tab vertically out of the strip to open its companion;
+the existing window button remains available. Local and remote engines own tab
+order and persist it with safe navigation metadata. Moves use a stable insertion
+anchor, preserve page/driver/selection identities, and reject closed anchors
+without partially mutating order. Rehosting and returning keep the same position.
+Older remote hosts omit `canReorder` and retain ordinary tab selection/detaching.
+Companions cannot reorder the source task's tabs.
+
 `TaskBrowserComponent.windowContext` supplies bounded project/task/branch/machine
 labels, stage and hue. With the optional bridge capability, **Open tab in new
 window** opens the selected tab through named, scope-bound IPC. `BrowserWindowComponent`

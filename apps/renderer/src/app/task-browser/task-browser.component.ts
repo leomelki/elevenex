@@ -118,7 +118,7 @@ export class TaskBrowserComponent {
   newTab(): void { if (!this.detachedWindow() && !this.store.pending()) this.command({ kind: 'new-tab' }); }
   async moveToWindow(tabId = this.current()?.id): Promise<void> {
     const scope = this.scopeId(), task = this.taskId(), context = this.windowContext();
-    if (!scope || !task || !tabId || !context || this.moving()) return;
+    if (!scope || !task || !tabId || !context || this.moving() || this.detachedWindow() || this.store.state()?.canDetach === false || !this.store.state()?.tabs.some(tab => tab.id === tabId)) return;
     this.moving.set(true);
     try { await this.store.bridge.taskBrowserDetach?.(scope, task, tabId, context); }
     catch { if (this.scopeId() === scope && this.taskId() === task) this.notice.set('Could not open this tab in a window. Try again.'); }

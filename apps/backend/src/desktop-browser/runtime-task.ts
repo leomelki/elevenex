@@ -124,6 +124,7 @@ export class RuntimeBrowserTask {
   state(): TaskBrowserState {
     return {
       canDetach: true,
+      canReorder: true,
       layoutLanes: true,
       scopeId: this.id,
       taskId: this.taskId,
@@ -477,7 +478,15 @@ export class RuntimeBrowserTask {
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
     this.touch();
-    if (input.kind === 'dismiss-attention') this.attention = undefined;
+    if (input.kind === 'move-tab') {
+      const page = this.page(input.tabId);
+      if (input.beforeTabId !== null) this.page(input.beforeTabId);
+      if (input.beforeTabId === page.id) return this.state();
+      const ordered = [...this.tabs.values()].filter(item => item !== page);
+      ordered.splice(input.beforeTabId === null ? ordered.length : ordered.findIndex(item => item.id === input.beforeTabId), 0, page);
+      this.tabs.clear(); for (const item of ordered) this.tabs.set(item.id, item);
+    }
+    else if (input.kind === 'dismiss-attention') this.attention = undefined;
     else if (input.kind === 'new-tab') {
       const page = await this.create('you', null, '', this.controller.signal);
       await this.select(page.id);

@@ -8,6 +8,13 @@ const { browserUrl, command, agentCommand, layout, intersect, loopback } = requi
 const { BrowserPersistence } = require('../dist/browser/persistence');
 const id = '11111111-1111-4111-8111-111111111111';
 
+test('tab moves validate stable anchors and remain unavailable to agent commands', () => {
+  for (const beforeTabId of [null, id]) assert.deepEqual(command({ kind: 'move-tab', tabId: id, beforeTabId }), { kind: 'move-tab', tabId: id, beforeTabId });
+  for (const beforeTabId of [undefined, 0, 'missing', [], {}]) assert.throws(() => command({ kind: 'move-tab', tabId: id, beforeTabId }));
+  assert.throws(() => command({ kind: 'move-tab', tabId: id, beforeTabId: null, tabs: [] }));
+  assert.throws(() => agentCommand({ kind: 'move-tab', tabId: id, generation: 1, beforeTabId: null }));
+});
+
 test('user tabs require explicit handoff; takeover invalidates every previously queued generation', () => {
   const lease = new BrowserDriverLease('you');
   assert.throws(() => lease.assert(1));

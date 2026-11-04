@@ -8,6 +8,17 @@ module.exports = async function detachedBrowserSmoke(source, original, scope, ta
   const context = { projectName: 'Elevenex', taskName: 'Polish checkout flow', branchName: 'feat/checkout', machineName: 'This Mac', stage: 'active', hue: 'ocean' };
   const call = (window, method, ...args) => window.webContents.executeJavaScript(`window.elevenex.${method}(...${JSON.stringify(args)})`);
   const profile = original.session, url = original.getURL();
+  const initial = (await call(source, 'taskBrowserRead', scope, 1)).value;
+  assert.equal(initial.canReorder, true);
+  const spare = (await call(source, 'taskBrowserCommand', scope, 1, { kind: 'new-tab' })).value.active;
+  const moved = (await call(source, 'taskBrowserCommand', scope, 1, { kind: 'move-tab', tabId: spare, beforeTabId: tabId })).value;
+  assert.equal(moved.tabs.findIndex(tab => tab.id === spare) + 1, moved.tabs.findIndex(tab => tab.id === tabId));
+  assert.equal(moved.active, spare, 'Reordering preserves selection');
+  assert.equal(original.isDestroyed(), false, 'Reordering keeps the live native page');
+  const invalid = await call(source, 'taskBrowserCommand', scope, 1, { kind: 'move-tab', tabId, beforeTabId: '11111111-1111-4111-8111-111111111111' });
+  assert.equal(invalid.ok, false);
+  await call(source, 'taskBrowserCommand', scope, 1, { kind: 'close', tabId: spare });
+  await call(source, 'taskBrowserCommand', scope, 1, { kind: 'select', tabId });
   const theme = nativeTheme.shouldUseDarkColors ? 'light' : 'dark';
   await call(source, 'taskBrowserCommand', scope, 1, { kind: 'theme', tabId, theme });
   await call(source, 'taskBrowserCommand', scope, 1, { kind: 'network', tabId, slow: true });
@@ -28,7 +39,7 @@ module.exports = async function detachedBrowserSmoke(source, original, scope, ta
   const page = () => webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === url && contents.session === profile);
   await call(source, 'taskBrowserDetach', scope, 1, tabId, context);
   const companion = await until(() => BrowserWindow.getAllWindows().find(window => window !== source && window.webContents.getURL() === 'app://elevenex/browser-window'), 'Companion window was not created');
-  let otherId;
+  let otherId, beforeReturn;
   try {
     await until(() => companion.webContents.executeJavaScript('!!document.querySelector("ex-browser-window ex-task-browser .native-page")'), 'Companion route did not mount');
     await until(async () => (await call(companion, 'taskBrowserRead', scope, 1)).value.tabs[0]?.ready, 'Companion native page is not interactive');
@@ -49,6 +60,7 @@ module.exports = async function detachedBrowserSmoke(source, original, scope, ta
     assert.equal((await call(source, 'taskBrowserRead', scope, 1)).value.tabs.find(tab => tab.id === tabId).detached, true);
     assert.equal((await call(companion, 'taskBrowserRead', scope, 999)).ok, false);
     assert.equal((await call(companion, 'taskBrowserCommand', scope, 1, {kind:'new-tab'})).ok, false);
+    assert.equal((await call(companion, 'taskBrowserCommand', scope, 1, {kind:'move-tab', tabId, beforeTabId:null})).ok, false);
     const other = await call(source, 'taskBrowserCommand', scope, 1, {kind:'new-tab'});
     assert.equal(other.ok, true); assert.notEqual(other.value.active, tabId); otherId = other.value.active;
     assert.equal((await call(companion, 'taskBrowserRead', scope, 1)).value.active, tabId);
@@ -71,12 +83,14 @@ module.exports = async function detachedBrowserSmoke(source, original, scope, ta
     assert.ok(viewport.width > 600 && viewport.height > 300, JSON.stringify(viewport));
     await guest.executeJavaScript('document.querySelector("input").value="private-in-window"');
     assert.equal(JSON.stringify((await call(companion, 'taskBrowserRead', scope, 1)).value).includes('private-in-window'), false);
+    beforeReturn = (await call(source, 'taskBrowserRead', scope, 1)).value.tabs.map(tab => tab.id);
   } finally {
     if (!source.isDestroyed()) await source.webContents.executeJavaScript('document.body.style.display=""');
     if (!companion.isDestroyed()) companion.close();
   }
   await call(source, 'taskBrowserCommand', scope, 1, {kind:'select',tabId});
   await until(sourceReady, 'Native close did not return a working page');
+  assert.deepEqual((await call(source, 'taskBrowserRead', scope, 1)).value.tabs.map(tab => tab.id), beforeReturn, 'Returning preserves the tab order');
   if (otherId) await call(source, 'taskBrowserCommand', scope, 1, {kind:'close',tabId:otherId});
   await call(source, 'taskBrowserDetach', scope, 1, tabId, context);
   const reopened = await until(() => BrowserWindow.getAllWindows().find(window => window !== source && window.webContents.getURL() === 'app://elevenex/browser-window'), 'Companion did not reopen');

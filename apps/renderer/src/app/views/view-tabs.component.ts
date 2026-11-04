@@ -1,13 +1,14 @@
 import { afterNextRender, afterRenderEffect, ChangeDetectionStrategy, Component, computed, DestroyRef, ElementRef, inject, input, output, signal, viewChild, type AnimationCallbackEvent } from '@angular/core';
 import { IconComponent, StatusGlyphComponent } from '../ui';
-import { ViewTab } from './view.models';
+import { CdkDrag, CdkDragHandle, CdkDropList, type CdkDragDrop } from '@angular/cdk/drag-drop';
+import { ViewTab, type ViewTabMove } from './view.models';
 
 /** Matches the strip's edge mask in view-tabs.component.css. */
 const FADE_WIDTH = 24;
 
 @Component({
   selector: 'ex-view-tabs',
-  imports: [IconComponent, StatusGlyphComponent],
+  imports: [IconComponent, StatusGlyphComponent, CdkDrag, CdkDragHandle, CdkDropList],
   templateUrl: './view-tabs.component.html',
   styleUrl: './view-tabs.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -19,6 +20,14 @@ export class ViewTabsComponent {
   readonly newLabel = input('New tab');
   readonly closable = input(true);
   readonly disabled = input(false);
+  readonly reorderable = input(false);
+  readonly detachable = input(false);
+  readonly tabsBusy = input(false);
+  readonly moved = output<ViewTabMove>();
+  readonly windowRequested = output<string>();
+  protected readonly announcement = signal('');
+  private dragIds: readonly string[] = [];
+  private dragCancelled = false;
   readonly selected = output<string>();
   readonly closed = output<string>();
   readonly added = output<void>();
@@ -168,8 +177,14 @@ export class ViewTabsComponent {
   }
   protected keydown(event: KeyboardEvent, id: string): void {
     if (this.disabled()) return;
+    if (event.key === 'Escape' && this.dragIds.length) { this.dragCancelled = true; event.preventDefault(); event.stopPropagation(); return; }
     const items = this.items();
     const index = items.findIndex(tab => tab.id === id);
+    if (event.altKey && event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault(); event.stopPropagation();
+      if (this.reorderable() && !this.tabsBusy()) this.move(id, index + (event.key === 'ArrowLeft' ? -1 : 1));
+      return;
+    }
     let next: number;
     if (event.key === 'ArrowRight') next = (index + 1) % items.length;
     else if (event.key === 'ArrowLeft') next = (index - 1 + items.length) % items.length;
@@ -188,5 +203,33 @@ export class ViewTabsComponent {
 
   protected middleClick(event: MouseEvent, id: string): void {
     if (event.button === 1 && !this.disabled() && this.closable()) { event.preventDefault(); this.close(id); }
+  }
+
+  protected dragStarted(): void {
+    this.dragIds = this.items().map(item => item.id);
+    this.dragCancelled = false;
+  }
+
+  protected dropped(event: CdkDragDrop<unknown, unknown, string>): void {
+    const ids = this.dragIds;
+    this.dragIds = [];
+    // A tab can close or arrive during a drag. Cancel rather than reinterpret old indices.
+    if (this.dragCancelled || this.disabled() || this.tabsBusy() || JSON.stringify(ids) !== this.itemIds()) return;
+    const id = event.item.data;
+    if (event.isPointerOverContainer) {
+      if (this.reorderable() && event.currentIndex !== event.previousIndex) this.move(id, event.currentIndex);
+    } else if (this.detachable()) {
+      const box = this.list()?.nativeElement.getBoundingClientRect();
+      // Horizontal overflow is browsing, not tear-off. Require a deliberate vertical exit.
+      if (box && (event.dropPoint.y < box.top - 48 || event.dropPoint.y > box.bottom + 48)) this.windowRequested.emit(id);
+    }
+  }
+
+  private move(id: string, index: number): void {
+    const items = this.items();
+    if (index < 0 || index >= items.length || !items.some(item => item.id === id)) return;
+    const remaining = items.filter(item => item.id !== id);
+    this.moved.emit({ tabId: id, beforeTabId: remaining[index]?.id ?? null });
+    this.announcement.set(`${items.find(item => item.id === id)?.title} moved to position ${index + 1} of ${items.length}`);
   }
 }

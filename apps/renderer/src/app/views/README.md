@@ -137,3 +137,12 @@ bound page and ignores the new-tab shortcut. `controlsDisabled` disables page
 controls for a tab displayed elsewhere while preserving its tab-strip identity.
 `pickerAvailable=false` hides picking when the owner has no composer destination.
 All defaults preserve existing preview and product callers.
+
+`ViewTabs.reorderable` enables CDK dragging and Alt+Shift+Left/Right on a focused
+tab. Its `moved` output carries `{tabId, beforeTabId}` (null appends); the owner
+applies authoritative order. `detachable` emits `windowRequested` with the dragged
+tab ID on a deliberate vertical drop at least 48px outside the strip. Horizontal
+overflow never detaches. Escape cancels a gesture; tab membership changes cancel
+stale indices. `tabsBusy` gates both gestures while a mutation is pending.
+`BrowserView` forwards these as `tabMoved` and `tabWindowRequested`, alongside its
+existing current-tab window button. Terminal retains its existing defaults.

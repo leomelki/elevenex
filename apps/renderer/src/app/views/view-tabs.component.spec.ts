@@ -1,5 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { ViewTabsComponent } from './view-tabs.component';
+import { By } from '@angular/platform-browser';
+import { CdkDrag, CdkDropList, type CdkDragDrop } from '@angular/cdk/drag-drop';
 
 describe('View tab scrolling', () => {
   it('maps vertical wheel units to horizontal browsing without selecting a tab', () => {
@@ -61,5 +63,56 @@ describe('View tab scrolling', () => {
       button.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
     }
     expect(intent).not.toHaveBeenCalled();
+  });
+});
+
+describe('View tab ordering', () => {
+  function setup() {
+    const fixture = TestBed.createComponent(ViewTabsComponent);
+    fixture.componentRef.setInput('items', ['app', 'docs', 'logs'].map(id => ({ id, title: id })));
+    fixture.componentRef.setInput('active', 'docs');
+    fixture.componentRef.setInput('reorderable', true);
+    fixture.componentRef.setInput('detachable', true);
+    fixture.detectChanges();
+    const moved = vi.fn(), detached = vi.fn(), selected = vi.fn();
+    fixture.componentInstance.moved.subscribe(moved);
+    fixture.componentInstance.windowRequested.subscribe(detached);
+    fixture.componentInstance.selected.subscribe(selected);
+    const drag: CdkDrag<string> = fixture.debugElement.queryAll(By.directive(CdkDrag))[1]!.injector.get(CdkDrag);
+    const list: CdkDropList = fixture.debugElement.query(By.directive(CdkDropList)).injector.get(CdkDropList);
+    const start = () => drag.started.emit({ source: drag, event: new MouseEvent('mousedown') });
+    const drop = (inside = true, y = 0) => list.dropped.emit({ item: drag, previousIndex: 1, currentIndex: 0, isPointerOverContainer: inside, dropPoint: { x: 10, y } } as CdkDragDrop<unknown, unknown, string>);
+    return { fixture, moved, detached, selected, start, drop };
+  }
+  it('moves the focused tab by stable identity without selecting another tab', () => {
+    const { fixture, moved, selected } = setup();
+    const tab = fixture.nativeElement.querySelector('[data-tab-id="docs"]') as HTMLButtonElement;
+    tab.focus();
+    tab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, shiftKey: true, bubbles: true }));
+    expect(moved).toHaveBeenCalledExactlyOnceWith({ tabId: 'docs', beforeTabId: 'app' });
+    expect(selected).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(tab);
+    fixture.componentRef.setInput('tabsBusy', true); fixture.detectChanges();
+    tab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, shiftKey: true, bubbles: true }));
+    expect(moved).toHaveBeenCalledTimes(1);
+  });
+  it('emits insertion and deliberate vertical tear-off intents separately', () => {
+    const { moved, detached, start, drop } = setup();
+    start(); drop();
+    expect(moved).toHaveBeenCalledExactlyOnceWith({ tabId: 'docs', beforeTabId: 'app' });
+    start(); drop(false, 20);
+    expect(detached).not.toHaveBeenCalled();
+    start(); drop(false, 100);
+    expect(detached).toHaveBeenCalledExactlyOnceWith('docs');
+    expect(moved).toHaveBeenCalledTimes(1);
+  });
+  it('cancels a drop when tab membership changes or Escape is pressed', () => {
+    const { fixture, moved, detached, start, drop } = setup();
+    start();
+    fixture.componentRef.setInput('items', [{ id: 'docs', title: 'docs' }, { id: 'logs', title: 'logs' }]); fixture.detectChanges();
+    drop(); expect(moved).not.toHaveBeenCalled();
+    start();
+    fixture.nativeElement.querySelector('[data-tab-id="docs"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    drop(false, 100); expect(detached).not.toHaveBeenCalled();
   });
 });
