@@ -1,4 +1,5 @@
 import { DesktopTerminalStream } from './desktop-terminal-stream.js';
+import { randomUUID } from 'node:crypto';
 import { desktopShellIntegration } from './desktop-shell-integration.js';
 import {
   Injectable,
@@ -61,7 +62,10 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     cwd: string,
     shell: string,
     script: DesktopTerminalStream['script'] = null,
+    generation = this.getGeneration(id),
   ): Promise<void> {
+    if (this.shuttingDown || this.strictStops.has(id) || generation !== this.getGeneration(id))
+      throw new Error('Terminal startup was cancelled');
     if (
       this.desktopStreams.has(id) ||
       this.isAlive(id) ||
@@ -75,8 +79,8 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       if (expired !== undefined) this.desktopStreams.delete(expired);
       else throw new Error('User terminal process limit reached');
     }
-    const stream = new DesktopTerminalStream(script),
-      generation = this.getGeneration(id);
+    const promptToken = randomUUID();
+    const stream = new DesktopTerminalStream(script, promptToken);
     this.desktopStreams.set(id, stream);
     const promise = Promise.resolve()
       .then(async () => {
@@ -89,6 +93,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
           : await desktopShellIntegration(
               normalizeShellForPlatform(shell),
               baseEnv,
+              promptToken,
             );
         this.desktopCleanup.set(id, integration.cleanup);
         if (

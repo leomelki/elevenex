@@ -39,8 +39,28 @@ function generation(value: unknown): string {
 export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
   private readonly engineOwner = randomUUID();
   private stopping = false;
-  private readonly launches = new Set<Promise<unknown>>();
+  private readonly pendingWork = new Set<Promise<unknown>>();
   private readonly closingOwners = new Set<string>();
+  private readonly mutations = new Map<number, Promise<unknown>>();
+
+  /** Close, input and replacement share one terminal lifetime, across all clients. */
+  private mutate<T>(id: number, operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutations.get(id) ?? Promise.resolve();
+    const pending = previous.catch(() => {}).then(operation);
+    this.mutations.set(id, pending);
+    void pending
+      .finally(() => {
+        if (this.mutations.get(id) === pending) this.mutations.delete(id);
+      })
+      .catch(() => {});
+    return pending;
+  }
+
+  private trackWork<T>(work: Promise<T>): Promise<T> {
+    this.pendingWork.add(work);
+    void work.finally(() => this.pendingWork.delete(work)).catch(() => {});
+    return work;
+  }
 
   async onModuleInit() {
     // Direct desktop PTYs cannot survive an engine restart, including a crash.
@@ -51,7 +71,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy() {
     this.stopping = true;
-    await Promise.allSettled(this.launches);
+    await Promise.allSettled(this.pendingWork);
     await this.closeOwned();
   }
 
@@ -59,7 +79,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
     if (owner !== undefined) generation(owner);
     if (owner !== undefined) this.closingOwners.add(owner);
     try {
-      await Promise.allSettled(this.launches);
+      await Promise.allSettled(this.pendingWork);
       // Bounded batches include exited tabs, whose scrollback was only in memory.
       const condition =
         owner === undefined
@@ -73,13 +93,15 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
           .limit(16);
         if (!rows.length) break;
         await Promise.all(
-          rows.map(async ({ id }) => {
-            await this.ptys.destroy(id, true);
-            await this.db
-              .delete(schema.userTerminals)
-              .where(eq(schema.userTerminals.id, id));
-            this.ptys.forgetDesktop(id);
-          }),
+          rows.map(({ id }) =>
+            this.mutate(id, async () => {
+              await this.ptys.destroy(id, true);
+              await this.db
+                .delete(schema.userTerminals)
+                .where(eq(schema.userTerminals.id, id));
+              this.ptys.forgetDesktop(id);
+            }),
+          ),
         );
       }
       return { accepted: true as const };
@@ -238,10 +260,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
   create(taskId: number, value: unknown) {
     if (this.stopping)
       throw new ConflictException('Terminal service is stopping');
-    const launch = this.createInternal(taskId, value);
-    this.launches.add(launch);
-    void launch.finally(() => this.launches.delete(launch)).catch(() => {});
-    return launch;
+    return this.trackWork(this.createInternal(taskId, value));
   }
   private async createInternal(taskId: number, value: unknown) {
     const input = terminalObject(value);
@@ -336,7 +355,14 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
           }),
     };
   }
-  async command(taskId: number, id: number, value: unknown) {
+  command(taskId: number, id: number, value: unknown) {
+    const command = this.mutate(id, () =>
+      this.commandInternal(taskId, id, value),
+    );
+    // Shutdown must also await replacements already accepted by this service.
+    return this.trackWork(command);
+  }
+  private async commandInternal(taskId: number, id: number, value: unknown) {
     const input = terminalObject(value);
     const type = input.type;
     const keys: Record<string, string[]> = {
@@ -355,14 +381,56 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
     const stream = this.ptys.desktopStream(id);
     if (!stream || stream.generation !== generation(input.generation))
       throw new ConflictException('Terminal process changed');
+    if (
+      type === 'rerun' &&
+      (this.stopping ||
+        (terminal.desktopOwner &&
+          this.closingOwners.has(terminal.desktopOwner)))
+    )
+      throw new ConflictException('Terminal application is closing');
     if (type === 'rerun' && stream.canRerun && stream.script) {
+      const fence = this.ptys.getGeneration(id);
       const script = (await this.scripts(task.path, true)).find(
         (script) => script.id === stream.script?.id,
       );
       if (!script) throw new ConflictException('Script no longer exists');
+      if (
+        this.ptys.getGeneration(id) !== fence ||
+        this.ptys.desktopStream(id) !== stream
+      )
+        throw new ConflictException('Terminal process changed');
       await this.ptys.destroy(id, true);
+      // Task finishing and legacy cleanup also advance this manager-owned fence.
+      // A replacement may never acquire a newer fence after asynchronous work.
+      const latest = await this.owned(taskId, id, true);
+      if (
+        latest.task.path !== task.path ||
+        this.ptys.getGeneration(id) !== fence + 1 ||
+        this.stopping ||
+        (terminal.desktopOwner && this.closingOwners.has(terminal.desktopOwner))
+      )
+        throw new ConflictException(
+          'Terminal ownership changed during restart',
+        );
       this.ptys.forgetDesktop(id);
-      await this.ptys.spawnDesktop(id, task.path, terminal.shell, script);
+      await this.ptys.spawnDesktop(
+        id,
+        task.path,
+        terminal.shell,
+        script,
+        fence + 1,
+      );
+      try {
+        const final = await this.owned(taskId, id, true);
+        if (final.task.path !== task.path)
+          throw new ConflictException('Task checkout changed');
+      } catch (error) {
+        if (this.ptys.getGeneration(id) === fence + 1) {
+          await this.ptys.destroy(id, true);
+          this.ptys.forgetDesktop(id);
+        }
+        throw error;
+      }
     } else {
       if (!this.ptys.isAlive(id))
         throw new ConflictException('Terminal has exited');
@@ -394,11 +462,13 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
     }
     return { accepted: true as const };
   }
-  async close(taskId: number, id: number) {
-    await this.owned(taskId, id);
-    await this.ptys.destroy(id, true);
-    await this.terminals.remove(id);
-    this.ptys.forgetDesktop(id);
-    return { accepted: true as const };
+  close(taskId: number, id: number) {
+    return this.mutate(id, async () => {
+      await this.owned(taskId, id);
+      await this.ptys.destroy(id, true);
+      await this.terminals.remove(id);
+      this.ptys.forgetDesktop(id);
+      return { accepted: true as const };
+    });
   }
 }

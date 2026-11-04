@@ -103,4 +103,20 @@ export default async function* (capture) {
   assert.equal(await owner(component => component.input()), 'xxy');
   assert((await owner(component => component.surface.context())).includes('box drawing'));
   yield { name: 'gpu-loss-fallback', selector: '.terminal[data-ready]' };
+
+  // Find follows logical text even when the panel wraps it across physical rows.
+  for (const theme of ['light', 'dark']) {
+    await capture.theme(theme);
+    await viewport(420, 600);
+    const result = await owner(async component => {
+      const surface = component.surface, terminal = surface.terminal;
+      surface.reset();
+      await surface.write(' '.repeat(terminal.cols - 3) + 'needle');
+      const found = surface.search('needle');
+      return { ...found, selected: terminal.getSelection() };
+    });
+    assert.deepEqual(result, { matches: 1, current: 1, selected: 'needle' });
+    yield { name: `${theme}-find-wrapped-text`, selector: '.terminal[data-ready]', metadata: result };
+  }
+
 }

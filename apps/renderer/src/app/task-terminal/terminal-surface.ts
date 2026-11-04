@@ -1,6 +1,7 @@
 import type { TerminalStyleLease } from "./terminal-style-nonce";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { findTerminalMatches } from "./terminal-search";
 import { TerminalCellRenderer } from "./terminal-cell-renderer";
 
 /** DOM/ANSI ownership only. No transport, process or Angular output subscriptions. */
@@ -147,8 +148,7 @@ export class TerminalSurface {
     query: string,
     backwards = false,
   ): { matches: number; current: number } {
-    const buffer = this.terminal.buffer.active,
-      matches: { row: number; col: number; length: number }[] = [];
+    const buffer = this.terminal.buffer.active;
     const needle = query.toLocaleLowerCase();
     if (!needle) {
       this.terminal.clearSelection();
@@ -156,36 +156,7 @@ export class TerminalSurface {
       this.searchPosition = -1;
       return { matches: 0, current: 0 };
     }
-    for (let row = 0; row < buffer.length && matches.length < 1000; row++) {
-      const line =
-        buffer.getLine(row)?.translateToString(false).toLocaleLowerCase() ?? "";
-      // String offsets differ from terminal columns for wide/combined Unicode cells.
-      if (!line.includes(needle)) continue;
-      const columns: number[] = [],
-        ends: number[] = [];
-      const bufferLine = buffer.getLine(row);
-      for (let column = 0; bufferLine && column < bufferLine.length; column++) {
-        const cell = bufferLine.getCell(column);
-        if (!cell || cell.getWidth() === 0) continue;
-        const text = (cell.getChars() || " ").toLocaleLowerCase();
-        for (let unit = 0; unit < text.length; unit++) {
-          columns.push(column);
-          ends.push(column + cell.getWidth());
-        }
-      }
-      let from = 0,
-        col: number;
-      while ((col = line.indexOf(needle, from)) >= 0 && matches.length < 1000) {
-        const column = columns[col] ?? col;
-        matches.push({
-          row,
-          col: column,
-          length:
-            (ends[col + needle.length - 1] ?? column + query.length) - column,
-        });
-        from = col + Math.max(1, needle.length);
-      }
-    }
+    const matches = findTerminalMatches(buffer, needle, this.terminal.cols);
     this.searchPosition =
       query !== this.query
         ? backwards

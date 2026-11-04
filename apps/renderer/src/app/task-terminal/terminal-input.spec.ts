@@ -1,5 +1,7 @@
 import { TerminalInputQueue } from "./terminal-input";
 
+const target = { scopeId: "scope", taskId: 1, terminalId: 1, generation: "original" };
+
 describe("User terminal input ownership", () => {
   it("serializes input without losing large Unicode pastes", async () => {
     const sent: string[] = [];
@@ -11,6 +13,7 @@ describe("User terminal input ownership", () => {
       running--;
       return true;
     }, vi.fn());
+    queue.bind(target);
     const data = "echo hello\r" + "🙂".repeat(18000);
     queue.push(data);
     await vi.waitFor(() => expect(sent.join("")).toBe(data));
@@ -20,6 +23,7 @@ describe("User terminal input ownership", () => {
     const failed = vi.fn(),
       send = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
     const queue = new TerminalInputQueue(send, failed);
+    queue.bind(target);
     queue.push("first");
     queue.push("pending");
     await vi.waitFor(() => expect(queue.blocked).toBe(true));
@@ -28,7 +32,7 @@ describe("User terminal input ownership", () => {
     expect(failed).toHaveBeenCalled();
     queue.resume();
     queue.push("new");
-    await vi.waitFor(() => expect(send).toHaveBeenLastCalledWith("new"));
+    await vi.waitFor(() => expect(send).toHaveBeenLastCalledWith("new", target));
     queue.dispose();
   });
   it("clears pending input when the connection generation changes during a dispatch", async () => {
@@ -40,6 +44,7 @@ describe("User terminal input ownership", () => {
         }),
     );
     const queue = new TerminalInputQueue(send, vi.fn());
+    queue.bind(target);
     queue.push("a".repeat(16000));
     await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
     queue.resume();
@@ -62,6 +67,7 @@ it("keeps interrupted input blocked across reconnect until the person resumes", 
     ),
     failed = vi.fn();
   const queue = new TerminalInputQueue(send, failed);
+  queue.bind(target);
   queue.push("not replayed");
   await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
   queue.reconnect();
@@ -71,5 +77,27 @@ it("keeps interrupted input blocked across reconnect until the person resumes", 
   expect(failed).toHaveBeenCalled();
   queue.push("blocked");
   expect(send).toHaveBeenCalledTimes(1);
+  queue.dispose();
+});
+
+it("discards the rest of a paste on process replacement and binds new typing explicitly", async () => {
+  let resolve!: (accepted: boolean) => void;
+  const send = vi.fn(() => new Promise<boolean>(done => { resolve = done; }));
+  const queue = new TerminalInputQueue(send, vi.fn());
+  queue.bind(target);
+  queue.push("x".repeat(9000));
+  await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+  const replacement = { ...target, generation: "replacement" };
+  queue.bind(replacement);
+  resolve(true);
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(queue.blocked).toBe(true);
+  expect(send).toHaveBeenCalledExactlyOnceWith("x".repeat(4096), target);
+  queue.push("discarded");
+  queue.resume();
+  queue.push("new");
+  await vi.waitFor(() => expect(send).toHaveBeenLastCalledWith("new", replacement));
+  resolve(true);
   queue.dispose();
 });

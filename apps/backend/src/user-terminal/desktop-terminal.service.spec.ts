@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { existsSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
 import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -411,4 +412,84 @@ describe('Desktop task terminals with real PTYs', () => {
     }
     expect(ptys.isAlive(terminal.id)).toBe(false);
   });
+  it.each(['close', 'owner cleanup', 'task finish'] as const)(
+    'fences a pending script rerun against %s',
+    async (action) => {
+      const owner = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      const terminal = await service.create(task, { owner, scriptId: 'fail' });
+      ids.push(terminal.id);
+      await waitFor(() => ptys.desktopStream(terminal.id)?.canRerun === true);
+      let release!: () => void;
+      let entered!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const open = fs.open.bind(fs);
+      const discovery = jest
+        .spyOn(fs, 'open')
+        .mockImplementation(async (...args) => {
+          if (String(args[0]).endsWith('/package.json')) {
+            entered();
+            await gate;
+          }
+          return open(...args);
+        });
+      const rerun = service.command(task, terminal.id, {
+        type: 'rerun',
+        generation: terminal.generation,
+      });
+      // Attach rejection handling before triggering the race.
+      const outcome = rerun.then(
+        () => null,
+        (error: unknown) => error,
+      );
+      try {
+        await started;
+        let closing: Promise<unknown> | undefined;
+        if (action === 'close') closing = service.close(task, terminal.id);
+        else if (action === 'owner cleanup')
+          closing = service.closeOwned(owner);
+        else {
+          await db.db
+            .update(schema.workspaces)
+            .set({ taskState: 'finishing' })
+            .where(eq(schema.workspaces.id, task));
+          await ptys.destroy(terminal.id, true);
+        }
+        release();
+        const error = await outcome;
+        await closing;
+        if (action !== 'close') expect(error).toBeInstanceOf(Error);
+        expect(ptys.isAlive(terminal.id)).toBe(false);
+        if (action !== 'task finish') {
+          expect(
+            (await service.list(task)).terminals.some(
+              (row) => row.id === terminal.id,
+            ),
+          ).toBe(false);
+          expect(ptys.desktopStream(terminal.id)).toBeUndefined();
+        }
+      } finally {
+        release();
+        discovery.mockRestore();
+        await outcome;
+      }
+    },
+  );
+  it('rejects a delayed desktop launch using a fence retired by task cleanup', async () => {
+    const terminal = await service.create(task, { scriptId: 'fail' });
+    ids.push(terminal.id);
+    await waitFor(() => !ptys.isAlive(terminal.id));
+    const fence = ptys.getGeneration(terminal.id);
+    await ptys.destroy(terminal.id, true);
+    ptys.forgetDesktop(terminal.id);
+    await expect(ptys.spawnDesktop(terminal.id, root, '/bin/bash', null, fence))
+      .rejects.toThrow('cancelled');
+    expect(ptys.isAlive(terminal.id)).toBe(false);
+    expect(ptys.desktopStream(terminal.id)).toBeUndefined();
+  });
+
 });

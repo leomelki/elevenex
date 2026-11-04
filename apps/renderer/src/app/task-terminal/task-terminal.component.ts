@@ -29,7 +29,6 @@ interface SurfaceEntry {
   target: TerminalSelection;
   terminal: TaskTerminal;
   notice: string;
-  inputScope: string;
   resizing: boolean;
   desiredSize?: { cols: number; rows: number };
   size?: string;
@@ -222,18 +221,11 @@ export class TaskTerminalComponent {
         () => this.styles.retain(),
       );
       const input = new TerminalInputQueue(
-        async (data) => {
-          const active = this.surfaces.get(key);
-          if (
-            !active ||
-            !active.terminal.generation ||
-            active.inputScope !== active.target.scopeId
-          )
-            return false;
+        async (data, target) => {
           const reply = await this.store.input(
-            active.target,
-            terminal.id,
-            active.terminal.generation,
+            target,
+            target.terminalId,
+            target.generation,
             data,
           );
           return reply.ok;
@@ -256,19 +248,18 @@ export class TaskTerminalComponent {
         input,
         target,
         terminal,
-        inputScope: target.scopeId,
         notice: "",
         resizing: false,
       };
     }
     if (this.disposed || revision !== this.revision) return;
     if (entry.target.scopeId !== target.scopeId) {
-      entry.input.reconnect();
-      entry.inputScope = target.scopeId;
       entry.size = undefined;
     }
     entry.target = target;
     entry.terminal = terminal;
+    if (terminal.generation)
+      entry.input.bind({ ...target, terminalId: terminal.id, generation: terminal.generation });
     this.surfaces.delete(key);
     this.surfaces.set(key, entry);
     while (this.surfaces.size > 8) {
@@ -311,6 +302,9 @@ export class TaskTerminalComponent {
         return;
       }
       entry.terminal = reply.terminal;
+      if (reply.generation)
+        entry.input.bind({ ...entry.target, terminalId: entry.terminal.id, generation: reply.generation });
+      else entry.input.reconnect();
       if (reply.gap) {
         const firstAttach = entry.surface.generation === null;
         const changed =

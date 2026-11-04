@@ -46,6 +46,11 @@ excluded from metadata refreshes, including after task switches. Completion
 reconciles the backend list without replaying close; failed or uncertain closes
 restore any surviving tab and show an error without replacing the current selection.
 
+Terminal mutations serialize per process, including explicit close and owner cleanup.
+Reruns revalidate durable ownership and carry the manager generation captured before
+asynchronous work, so task finishing and legacy cleanup can cancel replacement.
+App cleanup also waits for accepted reruns.
+
 Main exposes named runtime-validated operations on its existing per-window
 backend lease. The additive backend routes live in `user-terminal`, reuse
 `UserTerminalService` and `UserPtyManager`, and resolve the durable workspace
@@ -69,8 +74,10 @@ coalesced/cached for three seconds. Launch and rerun rediscover it.
 Input dispatch is serialized, capped at 128 KiB per pending paste and split into
 small Unicode-safe requests. Oversize pastes are refused visibly. Input is never
 retried. Unknown input outcomes clear pending data, disable typing and require
-an explicit Resume typing after inspection. New connection generations invalidate
-pending input. Resize is fit-to-container, frame-coalesced and single-flight.
+an explicit Resume typing after inspection. Connection and process generation
+changes invalidate pending input. Queued chunks retain their original scope and
+process identity; replacement requires explicit Resume typing if a dispatch was
+interrupted. Resize is fit-to-container, frame-coalesced and single-flight.
 
 ANSI is rendered by the installed xterm 6 adapter, loaded lazily. Its matching
 WebGL addon draws Powerline caps/separators, box drawing and blocks to cell edges,
@@ -86,16 +93,23 @@ renderer's finite RGB/underline declarations to CSSOM. xterm 6.0 otherwise uses
 CSP-blocked style attributes for truecolor and selections. Arbitrary CSS, raw HTML
 and non-span attributes keep the browser's normal CSP path. Leases restore the
 DOM factory after the last surface closes; production CSP is unchanged. Native user selection/copy and paste
-remain available. Find searches at most the retained 2,000 rows / 1,000 matches;
-Enter/Shift-Enter moves between matches, Escape restores focus. The theme maps
+remain available. Find searches retained scrollback with at most 1,000 matches,
+joining soft wraps while preserving Unicode cell coordinates. Enter/Shift-Enter
+moves between matches; Escape restores focus. The theme maps
 the specification's ANSI palette to authoritative tokens and local Geist Mono.
 A bundled symbols-only Nerd Font fallback covers Powerline, Git, Node.js and other
 private-use prompt icons; it and the regular/bold text faces load before cell
 measurement and leave ordinary text in Geist Mono. See the
 [font provenance and licenses](../../../public/fonts/README.md).
 
-Bash/zsh prompt hooks report command start/completion and exit status. They source
-the normal user rc then explicitly enter the resolved task worktree. Other shells
+Bash/zsh prompt hooks report command start/completion and exit status using a
+random per-process token, distinct from the public generation. The token lives in
+private temporary rc files and is not exported to child environments. Ordinary or
+foreign OSC 133 output cannot enable command capture. This separates untrusted
+output; it is not isolation from hostile programs with same-user filesystem/process
+access. Bash preserves string/array prompt hooks and their incoming exit status,
+and enables capture only after those hooks finish. Both integrations source the
+normal user rc then explicitly enter the resolved task worktree. Other shells
 remain interactive; per-command status requires their prompt integration. Rerun
 uses only a discovered script ID or a reliably captured plain user input line,
 including single-line bracketed paste (even when its markers span input requests),

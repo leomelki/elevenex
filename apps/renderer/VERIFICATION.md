@@ -2795,3 +2795,45 @@ scenario measures the terminal output rather than Fold's internal content, and
 checks visible control bounds rather than its intentional focus-ring overflow.
 This verifies real components with supplied preview data, not live PTYs or a
 packaged app.
+
+
+### Terminal adversary fixes (2026-11-04)
+
+Reproduced and fixed all six terminal review findings. Terminal mutations serialize
+per process, reruns retain the manager's cancellation fence and revalidate durable
+ownership, and app cleanup awaits accepted replacements. Input queues bind each
+paste to immutable scope/task/process identity and discard remaining input on
+replacement. Shell hooks use private per-process tokens instead of trusting ordinary
+OSC 133, preserve Bash string/array hooks and exit status, and signal readiness
+after prompt hooks finish. URL hints and completion are consumed in wire order.
+Find now joins soft wraps with bounded Unicode-aware cell mapping.
+
+The desktop lint and production build passed. The full desktop runner passed 138
+platform tests, 7 capture-tool tests and 656 renderer tests, including the renderer
+TypeScript contract check. Backend production TypeScript passed. The full
+user-terminal suite passed 58 tests; the final focused desktop-terminal suites
+passed 30 tests after adding the retired-launch regression. Real Bash/zsh PTYs
+cover cwd, failures, rerun, shutdown and prompt preservation; deterministic gates
+cover close, owner cleanup and task-finish races. Backend tests used a 20-second
+per-test deadline for native process startup/termination.
+
+The broad backend spec TypeScript check still reports 146 existing diagnostics.
+A disposable compiler-host comparison against HEAD found the identical 146
+diagnostics and zero added diagnostics; production code and the focused tests pass.
+The repository desktop runners were invoked directly through Node 24 because the
+system pnpm shim stalled. The first sandboxed production build aborted; the same
+runner passed outside the sandbox with two Angular workers.
+
+Native macOS captures at `artifacts/desktop-capture/terminal-adversary-fixes/`
+report `verified: true` across 11 checkpoints, with no errors. Inspected PNGs cover
+both themes, cell geometry, narrow/reduced-motion layouts, retained selection,
+GPU release/fallback and exact Find selection across wrapped rows. The sole warning
+comes from intentionally losing the GPU context. These component captures use
+isolated ANSI data; backend PTY regressions separately verify real processes.
+They do not certify live SSH terminals or a packaged application.
+
+The native Electron smoke also passed with the built production renderer: real
+sandboxed preload, scoped terminal IPC validation/cleanup, multiple windows and
+`app://` history/CSP. Its backend is a disposable transport fixture, separate from
+the real backend PTY tests above. The final shell regression additionally checks
+that exported PS0/allexport profiles cannot leak hook tokens through child environments.

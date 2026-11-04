@@ -27,6 +27,7 @@ export class DesktopTerminalStream {
       args: string[];
       cmd: string;
     } | null = null,
+    private readonly promptToken: string | null = null,
   ) {
     this.command = script?.cmd ?? '';
   }
@@ -35,42 +36,43 @@ export class DesktopTerminalStream {
     this.output.append(data);
     const tailLength = this.parserTail.length;
     const text = this.parserTail + data;
-    // Prompt integration only reports status; output is never interpreted as a command or URL.
-    // OSC status delimiters are literal ESC/BEL; payloads are never executed.
+    // Consume status and service hints in wire order. Only our process-specific
+    // hook token can enable command capture; ordinary/nested OSC 133 is display data.
+    // This distinguishes untrusted output, not hostile programs with same-user OS access.
     // eslint-disable-next-line no-control-regex
-    for (const match of text.matchAll(/\x1b\]133;([CD])(?:;(\d{1,3}))?\x07/g)) {
-      if (this.script) break;
-      if (match[1] === 'C') {
-        this.promptReady = false;
-        this.status = 'running';
-        this.exitCode = null;
-        this.port = null;
+    const events =
+      /\x1b\]133;([BCD]);([a-f\d-]{36})(?:;(\d{1,3}))?\x07|(https?):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{1,5})(?=[/\s\x1b]|$)/g;
+    for (const match of text.matchAll(events)) {
+      if ((match.index ?? 0) + match[0].length <= tailLength) continue;
+      if (match[1]) {
+        if (this.script || this.processExited || match[2] !== this.promptToken)
+          continue;
+        if (match[1] === 'B') this.promptReady = true;
+        else {
+          this.promptReady = false;
+          this.port = null;
+          this.protocol = undefined;
+          if (match[1] === 'C') {
+            this.status = 'running';
+            this.exitCode = null;
+          } else {
+            this.exitCode = Math.min(255, Number(match[3] ?? 0));
+            this.status = this.exitCode ? 'failed' : 'idle';
+          }
+        }
       } else {
-        this.promptReady = true;
-        this.exitCode = Number(match[2] ?? 0);
-        this.status = this.exitCode ? 'failed' : 'idle';
-        this.port = null;
+        const port = Number(match[5]);
+        if (
+          port > 0 &&
+          port <= 65535 &&
+          !this.processExited &&
+          (this.status === 'running' || this.status === 'serving')
+        ) {
+          this.port = port;
+          this.protocol = match[4] === 'https' ? 'https' : 'http';
+          this.status = 'serving';
+        }
       }
-    }
-    const serving = [
-      ...text.matchAll(
-        // Recognize a URL before an ANSI color reset, without accepting output navigation.
-        // eslint-disable-next-line no-control-regex
-        /(https?):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{1,5})(?=[/\s\x1b]|$)/g,
-      ),
-    ]
-      .filter((match) => (match.index ?? 0) + match[0].length > tailLength)
-      .at(-1);
-    const port = serving?.[2];
-    if (
-      port &&
-      Number(port) > 0 &&
-      Number(port) <= 65535 &&
-      this.status !== 'exited'
-    ) {
-      this.port = Number(port);
-      this.protocol = serving?.[1] === 'https' ? 'https' : 'http';
-      this.status = 'serving';
     }
     // Only retain an incomplete suffix. Complete status markers cannot run twice.
     const start = text.lastIndexOf('\x1b]133;');

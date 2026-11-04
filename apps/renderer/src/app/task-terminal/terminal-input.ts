@@ -1,5 +1,13 @@
-/** Ordered, bounded, single-dispatch input. Unknown outcomes are never retried. */
+export interface TerminalInputTarget {
+  readonly scopeId: string;
+  readonly taskId: number;
+  readonly terminalId: number;
+  readonly generation: string;
+}
+
+/** Ordered, bounded input. A queued chunk can never acquire a replacement process. */
 export class TerminalInputQueue {
+  private target?: TerminalInputTarget;
   private pending = "";
   private pendingBytes = 0;
   private readonly encoder = new TextEncoder();
@@ -8,11 +16,18 @@ export class TerminalInputQueue {
   private revision = 0;
   blocked = false;
   constructor(
-    private readonly send: (data: string) => Promise<boolean>,
+    private readonly send: (data: string, target: TerminalInputTarget) => Promise<boolean>,
     private readonly failed: (message: string) => void,
   ) {}
+  bind(target: TerminalInputTarget): void {
+    const old = this.target;
+    if (old && old.scopeId === target.scopeId && old.taskId === target.taskId &&
+        old.terminalId === target.terminalId && old.generation === target.generation) return;
+    this.reconnect();
+    this.target = { ...target };
+  }
   push(data: string): void {
-    if (this.closed || this.blocked) return;
+    if (this.closed || this.blocked || !this.target) return;
     if (this.pending.length + data.length > 128 * 1024) {
       this.failed("Paste is too large. Send at most 128 KiB at a time.");
       return;
@@ -27,6 +42,8 @@ export class TerminalInputQueue {
     if (!this.sending) void this.flush();
   }
   private async flush(): Promise<void> {
+    const target = this.target;
+    if (!target) return;
     this.sending = true;
     const revision = this.revision;
     // Coalesce keyboard/paste events in this task before crossing IPC.
@@ -47,7 +64,7 @@ export class TerminalInputQueue {
         const data = this.pending.slice(0, end);
         this.pending = this.pending.slice(end);
         this.pendingBytes -= this.encoder.encode(data).byteLength;
-        if (!(await this.send(data)))
+        if (!(await this.send(data, target)))
           throw new Error("Input outcome is unknown");
       }
     } catch {
