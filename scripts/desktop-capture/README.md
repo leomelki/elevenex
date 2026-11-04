@@ -616,7 +616,8 @@ scrubs interrupted expansions/collapses, measures exactly one real iframe
 viewport resize per toggle at the predicted destination while a native scoped
 snapshot is retained, records click-to-resize latency, holds back the real
 child-layout acknowledgement, checks stable pane geometry through the blur/fade,
-asserts continuous shell width motion with an overlapping blur/crossfade,
+asserts immediate uncovered Code visibility during ordinary panel opening,
+continuous shell width motion with a blur/crossfade starting one third into it,
 checks stretched editor bounds at the shell midpoint in both directions, and
 asserts zero launch-viewport scrolling and matching iframe/workbench widths. Compact Files coverage includes the initial
 empty tree, single-click acceptance of an already-open file, Escape/Back state,

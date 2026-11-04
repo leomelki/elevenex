@@ -1,6 +1,6 @@
 import { DOCUMENT } from '@angular/common';
 import { afterNextRender, afterRenderEffect, DestroyRef, Directive, ElementRef, inject, input, output, signal } from '@angular/core';
-import { codeDestinationWidth, supportsCodeTransition } from './code-view-transition';
+import { codeBlendDelay, codeDestinationWidth, supportsCodeTransition } from './code-view-transition';
 
 /** Resize the live viewport once, then stretch its compositor image with the
  * shell's glide. Blend layouts after a child-layout acknowledgement.
@@ -49,17 +49,45 @@ export class CodeViewportDirective {
     let generation = 0;
     let snapshotReady = false;
     let snapshotAcknowledged = false;
+    let blendAncestor: HTMLElement | undefined;
+    let blurHold = 0;
     const snapshotAnimations = () => (scope.getAnimations?.({subtree: true}) ?? []).filter(animation =>
       // Angular prefixes component keyframes in production builds.
       'animationName' in animation && typeof animation.animationName === 'string'
       && (animation.animationName.endsWith('code-layout-out') || animation.animationName.endsWith('code-layout-in')));
+    const stopBlurHold = () => { window.cancelAnimationFrame(blurHold); blurHold = 0; };
+    const holdBlurUntilReady = () => {
+      blurHold = 0;
+      if (!snapshot || snapshotAcknowledged) return;
+      const animations = snapshotAnimations();
+      const first = animations[0];
+      const timing = first?.effect?.getComputedTiming();
+      if (first && timing && typeof timing.duration === 'number' && typeof first.currentTime === 'number'
+        && first.currentTime >= (timing.delay ?? 0) + timing.duration / 2) {
+        // Blur on the shell clock; keep the old image opaque at the midpoint
+        // until the real child is ready. No unblurred layout can leak through.
+        for (const animation of animations) {
+          animation.pause(); animation.currentTime = (timing.delay ?? 0) + timing.duration / 2;
+        }
+      } else blurHold = window.requestAnimationFrame(holdBlurUntilReady);
+    };
+    const playSnapshots = () => {
+      const delay = blendAncestor ? codeBlendDelay(blendAncestor) : 0;
+      for (const animation of snapshotAnimations()) {
+        animation.effect?.updateTiming({ delay });
+        animation.play();
+      }
+      if (!snapshotAcknowledged) blurHold = window.requestAnimationFrame(holdBlurUntilReady);
+    };
 
     const cancelSnapshot = () => {
       generation++;
+      stopBlurHold();
       snapshot?.skipTransition();
       snapshot = undefined;
       snapshotReady = false;
       snapshotAcknowledged = false;
+      blendAncestor = undefined;
       preparedWidth = 0;
       this.frame.style.removeProperty('transform');
       this.frame.classList.remove('crossfading');
@@ -111,7 +139,10 @@ export class CodeViewportDirective {
       if (snapshot && preparedWidth) {
         awaitingLayout = false;
         snapshotAcknowledged = true;
-        if (snapshotReady) for (const animation of snapshotAnimations()) animation.play();
+        stopBlurHold();
+        if (snapshotReady) for (const animation of snapshotAnimations()) {
+          if (animation.playState === 'paused') animation.play();
+        }
         return;
       }
       if (frozenWidth) return;
@@ -132,7 +163,7 @@ export class CodeViewportDirective {
       if (event.type === 'transitionrun') {
         // Use the last settled measurement: reading layout here would flush
         // the first animated width into the child before we can freeze it.
-        if (reduced.matches || width <= 0) return;
+        if (reduced.matches || width <= 0 || this.frame.hidden) return;
         transitions.add(ancestor);
         if (preparedWidth) { cancelSnapshot(); frozenWidth = 0; }
         if (!frozenWidth && width > 0) {
@@ -143,9 +174,18 @@ export class CodeViewportDirective {
           this.frame.style.width = `${width}px`;
           this.frame.classList.add('resizing');
           const destination = typeof KeyframeEffect === 'undefined' ? null : codeDestinationWidth(ancestor, viewport);
-          if (destination && destination !== width && supportsCodeTransition(scope)) {
+          if (destination === width) {
+            // Sliding a panel over its retained viewport is not an editor
+            // resize. Keep Code visible from the very first opening frame.
+            transitions.delete(ancestor);
+            frozenWidth = 0;
+            this.frame.classList.remove('resizing', 'reflowing', 'cover-immediate');
+            return;
+          }
+          if (destination && supportsCodeTransition(scope)) {
             const version = generation;
             preparedWidth = destination;
+            blendAncestor = ancestor;
             this.frame.classList.add('crossfading');
             const transition = scope.startViewTransition(async () => {
               if (version !== generation) return;
@@ -165,22 +205,23 @@ export class CodeViewportDirective {
             void transition.ready.then(() => {
               if (snapshot !== transition) return;
               snapshotReady = true;
-              // Keep the old browser snapshot opaque while the new live image
-              // renders underneath. Release both animations together on ack.
+              // Begin the blur one third into the glide. Its opaque midpoint
+              // waits for acknowledgement before fading into the ready image.
               for (const animation of snapshotAnimations()) {
                 animation.pause(); animation.currentTime = 0;
-                if (snapshotAcknowledged) animation.play();
               }
+              playSnapshots();
             }).catch(() => { if (snapshot === transition) this.frame.classList.add('reflowing'); });
             void transition.finished.finally(() => {
               if (snapshot !== transition) return;
+              stopBlurHold();
               snapshot = undefined;
               this.frame.classList.remove('crossfading', 'reflowing', 'cover-immediate');
             }).catch(() => undefined);
           } else this.frame.classList.add('reflowing');
         }
       } else {
-        transitions.delete(ancestor);
+        if (!transitions.delete(ancestor)) return;
         window.cancelAnimationFrame(pending);
         // A reversal cancels one transition and starts its replacement in the
         // same rendering update. Keep the original viewport through that pair.

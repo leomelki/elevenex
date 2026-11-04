@@ -1,6 +1,35 @@
 # New Code workbench verification
 
-## Smooth panel glide with overlapping blur/crossfade — current motion
+## Immediate panel opening and staged expand/collapse — current motion
+
+Verified on 2026-11-04 on macOS arm64 / Electron 45 with the real Code OSS
+workbench and disposable Nest backend/task. Ordinary opening/closing no longer
+starts the resize fallback or covers the retained editor. Expand/collapse keeps
+its 280ms shell glide and one early viewport resize. The 140ms visual transition
+starts its blur one third into the shell clock, holds an opaque blurred midpoint
+until the child acknowledges layout, then crossfades and clears the new image.
+
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`: passed.
+  Full suite: 158 desktop cases, seven capture cases, TypeScript contract checks,
+  and 641 renderer cases in 94 files. Regression tests cover unchanged opening,
+  interrupted reopening, shell-clock timing and the opaque midpoint hold.
+- `artifacts/desktop-capture/code-instant-staged-verified/report.json`:
+  **49 checkpoints, verified: true**, no renderer errors. Opening captures at
+  90ms show the retained workbench with no cover or snapshot in both themes.
+  Natural-frame probes observe first blur at **117–133ms** and first opacity
+  blend at **183–200ms** of the 280ms glide on this host. These are observations,
+  not a general rendering-performance guarantee.
+- Both directions/themes retain exactly one child viewport resize and zero pane
+  movement through reveal. Held acknowledgements remain opaque. Native keyboard
+  input, toolbar hit testing, repeated reopening, interrupted width transitions,
+  narrow/reduced motion, retained edits, search and auto-save passed. Inspected
+  opening and halfway expanded PNGs from the actual renderer.
+- `git diff --check`: passed. No dependencies, bridge contracts or security
+  capabilities changed. The owned disposable backend was stopped. This verifies
+  unpackaged macOS behavior; packaged and Windows/Linux launches were not run.
+
+
+## Smooth panel glide with overlapping blur/crossfade (superseded)
 
 Verified on 2026-11-04 on macOS arm64 / Electron 45 with the genuine Code OSS
 workbench and isolated disposable Nest backend/task. Removed the snapshot's

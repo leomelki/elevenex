@@ -35,6 +35,14 @@ export default async function* (capture) {
   // Hold the real extension bootstrap to inspect the document-loading phase.
   // This adapter lives only in the disposable capture process.
   const { CodeProtocol } = require('../../../apps/desktop/dist/code/protocol.js');
+  const { CodeFrame } = require('../../../apps/desktop/dist/code/frame.js');
+  const settleLayout = CodeFrame.prototype.settleLayout;
+  let layoutSequence = 0, settledSequence = 0;
+  CodeFrame.prototype.settleLayout = async function(width) {
+    const sequence = ++layoutSequence;
+    await settleLayout.call(this,width);
+    if (sequence === layoutSequence) settledSequence = sequence;
+  };
   const handle = CodeProtocol.prototype.handle;
   let resumeBootstrap;
   const bootstrap = new Promise(resolve => { resumeBootstrap = resolve; });
@@ -261,7 +269,8 @@ export default async function* (capture) {
         window.codeGlide = [];
         const start = performance.now();
         const sample = () => {
-          window.codeGlide.push({time:performance.now()-start,width:panel.getBoundingClientRect().width,opacity:Number(getComputedStyle(scope,'::view-transition-old(code-editor)').opacity),active:scope.matches(':active-view-transition'),blur:getComputedStyle(scope,'::view-transition-old(code-editor)').filter});
+          const glide=panel.getAnimations().find(animation=>animation.transitionProperty==='width');
+          window.codeGlide.push({motionTime:glide?.currentTime ?? null,time:performance.now()-start,width:panel.getBoundingClientRect().width,opacity:Number(getComputedStyle(scope,'::view-transition-old(code-editor)').opacity),active:scope.matches(':active-view-transition'),blur:getComputedStyle(scope,'::view-transition-old(code-editor)').filter});
           if (performance.now()-start<650) requestAnimationFrame(sample);
         };
         sample();
@@ -274,10 +283,15 @@ export default async function* (capture) {
       const intermediate=samples.filter(s=>Math.abs(s.width-first)>1 && Math.abs(s.width-last)>1);
       assert.ok(intermediate.length>=5,'Panel snapped instead of using the original width glide: '+JSON.stringify(samples));
       assert.ok(intermediate.some(s=>s.active && s.opacity>0 && s.opacity<1 && s.blur!=='none'),'Blur/crossfade did not overlap panel motion: '+JSON.stringify(samples));
+      const firstBlur=intermediate.find(s=>s.active && s.blur!=='none' && s.blur!=='blur(0px)');
+      assert.ok(firstBlur?.motionTime>=280/3-2 && firstBlur.motionTime<180,'Blur should start around one third into the glide: '+JSON.stringify(samples));
+      const firstBlend=intermediate.find(s=>s.active && s.opacity>0 && s.opacity<1);
+      assert.ok(firstBlend.motionTime>=280/3-2,'Crossfade started before the first third of the panel glide: '+JSON.stringify(samples));
+      assert.ok(!intermediate.some(s=>s.active && s.motionTime<280/3-2 && s.opacity<1),'Outgoing Code faded too early: '+JSON.stringify(samples));
       const largestStep=Math.max(...samples.slice(1).map((s,i)=>Math.abs(s.width-samples[i].width)));
       assert.ok(largestStep<distance*0.65,'Panel width jumped during crossfade: '+JSON.stringify(samples));
       await finish(); await geometry();
-      return {intermediateFrames:intermediate.length,largestStep,distance};
+      return {intermediateFrames:intermediate.length,largestStep,distance,firstBlendAtMs:firstBlend.motionTime,firstBlurAtMs:firstBlur.motionTime};
     };
     const viewportMotion = async function* (selector, name) {
       const { CodeFrame } = require('../../../apps/desktop/dist/code/frame.js');
@@ -368,7 +382,24 @@ export default async function* (capture) {
       yield { name: `${theme}-single-editor-resize`, inspect: ['ex-code-panel .editor-surface'], metadata: { expansion, collapse } };
       for (let cycle=0;cycle<3;cycle++) {
         await capture.click('ex-workspace-panels [aria-label="Close side panel"]'); await finish();
-        await capture.click('ex-workspace-task-header [aria-label="Toggle side panel"]'); await finish();
+        if (cycle===0) await capture.motion.freeze();
+        await capture.click('ex-workspace-task-header [aria-label="Toggle side panel"]');
+        if (cycle===0) {
+          await capture.evaluate(() => {
+            for (const region of document.querySelector('ex-app-shell .workspace').children) {
+              for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=90;
+            }
+          });
+          await capture.settle();
+          assert.deepEqual(await capture.evaluate(() => {
+            const scope=document.querySelector('ex-code-panel .frame-container');
+            return {visible:!scope.hidden && !!scope.querySelector('iframe'),cover:getComputedStyle(scope,'::after').opacity,reflowing:scope.classList.contains('reflowing'),crossfading:scope.classList.contains('crossfading'),resizing:scope.classList.contains('resizing')};
+          }),{visible:true,cover:'0',reflowing:false,crossfading:false,resizing:false},'Code must be visible during the opening slide without a resize cover or crossfade');
+          assert.equal(capture.window.webContents.mainFrame.frames.find(child=>child.url===frame.url),frame,'Reopening recreated the editor');
+          yield {name:`${theme}-instant-panel-opening`,inspect:['.panel','ex-code-panel .frame-container','iframe']};
+          await capture.motion.finish(); await capture.motion.play();
+        }
+        await finish();
         await capture.waitFor(()=>document.querySelector('ex-code-panel')?.getAttribute('aria-busy')==='false');
         await capture.evaluate(target=>window.elevenex.codeFocus(target),target); await finish();
         await geometry();
@@ -377,14 +408,17 @@ export default async function* (capture) {
       }
       yield {name:`${theme}-reopened-without-right-gap`,inspect:['ex-machine-launch .launch','ex-app-shell','.panel','iframe']};
       await capture.motion.freeze();
+      const beforeExpansion = layoutSequence;
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
       await capture.waitFor(() => document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true}).some(a=>a.animationName?.endsWith('code-layout-out') && a.playState==='running'));
+      await waitMain(() => layoutSequence > beforeExpansion && settledSequence === layoutSequence, 'Expansion layout did not settle');
+      await capture.settle();
       const heldWidth = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth);
       await capture.evaluate(() => {
         for (const region of document.querySelector('ex-app-shell .workspace').children) {
           for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=140;
         }
-        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=100;
+        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=Number(animation.effect.getComputedTiming().delay)+105;
       });
       await capture.settle();
       assert.equal(await capture.evaluate(()=>!!document.querySelector('ex-code-panel .launch-card')),false);
@@ -400,14 +434,17 @@ export default async function* (capture) {
       await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]'); await finish(); await geometry();
       await capture.motion.freeze();
+      const beforeCollapse = layoutSequence;
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]');
       await capture.waitFor(() => document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true}).some(a=>a.animationName?.endsWith('code-layout-out') && a.playState==='running'));
+      await waitMain(() => layoutSequence > beforeCollapse && settledSequence === layoutSequence, 'Collapse layout did not settle');
+      await capture.settle();
       const wideWidth = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth);
       await capture.evaluate(() => {
         for (const region of document.querySelector('ex-app-shell .workspace').children) {
           for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=140;
         }
-        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=100;
+        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=Number(animation.effect.getComputedTiming().delay)+105;
       });
       await capture.settle();
       assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth),wideWidth,'Collapse midpoint reflowed the editor');
@@ -435,5 +472,5 @@ export default async function* (capture) {
     await capture.click('ex-workspace-panels [aria-label="Close side panel"]'); await finish();
     assert.equal(await capture.evaluate(() => document.querySelector('ex-code-frame iframe')?.checkVisibility() ?? false), false);
     yield { name: 'closed-panel-focus', inspect: ['ex-app-shell .panel'] };
-  } finally { holdBootstrap=false; resumeBootstrap(); CodeProtocol.prototype.handle=handle; ipc.broadcast=broadcast; Object.assign(BackendManager.prototype, previous); }
+  } finally { holdBootstrap=false; resumeBootstrap(); CodeProtocol.prototype.handle=handle; CodeFrame.prototype.settleLayout=settleLayout; ipc.broadcast=broadcast; Object.assign(BackendManager.prototype, previous); }
 }

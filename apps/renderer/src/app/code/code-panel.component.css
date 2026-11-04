@@ -5,10 +5,10 @@
 .frame-container::view-transition { pointer-events: none; }
 .frame-container::view-transition-group(code-editor) { animation: none; width: 100%; height: 100%; }
 .frame-container::view-transition-old(code-editor), .frame-container::view-transition-new(code-editor) { width: 100%; height: 100%; object-fit: fill; object-position: right top; mix-blend-mode: normal; }
-.frame-container::view-transition-old(code-editor) { z-index: 2; background: var(--surface); animation: code-layout-out var(--dur-base) var(--ease-in-out) both; }
-.frame-container::view-transition-new(code-editor) { z-index: 1; opacity: 1; animation: code-layout-in var(--dur-base) var(--ease-in-out) both; }
-@keyframes code-layout-out { to { opacity: 0; filter: blur(var(--blur-glass)); } }
-@keyframes code-layout-in { from { filter: blur(var(--blur-glass)); } to { filter: blur(0); } }
+.frame-container::view-transition-old(code-editor) { z-index: 2; background: var(--surface); animation: code-layout-out var(--dur-fast) var(--ease-in-out) both; }
+.frame-container::view-transition-new(code-editor) { z-index: 1; opacity: 1; animation: code-layout-in var(--dur-fast) var(--ease-in-out) both; }
+@keyframes code-layout-out { 0% { opacity: 1; filter: blur(0); } 50% { opacity: 1; filter: blur(var(--blur-glass)); } 100% { opacity: 0; filter: blur(var(--blur-glass)); } }
+@keyframes code-layout-in { 0%, 50% { filter: blur(var(--blur-glass)); } 100% { filter: blur(0); } }
 .frame-container::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--surface); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
 .frame-container.resizing { left: auto; }
 /* Cover the iframe instead of making it transparent: Chromium throttles a

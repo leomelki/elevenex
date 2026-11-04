@@ -1,6 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { CodeViewportDirective } from './code-viewport.directive';
+import { codeBlendDelay } from './code-view-transition';
 
 @Component({ imports: [CodeViewportDirective], template: '<section><div><div exCodeViewport [contextKey]="context()" [layoutReady]="ready()" (viewportWidth)="width.set($event)" (layoutRequested)="requested()"></div></div></section>' })
 class Host { readonly width = signal(0); readonly ready = signal(true); readonly context = signal('task-one'); requests = 0; requested() { this.requests++; } }
@@ -37,6 +38,41 @@ describe('Code viewport transition ownership', () => {
   }
   const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
+  it('keeps the retained editor visible throughout ordinary opening, closing and interrupted reopening', async () => {
+    const { fixture, frame, section, transition } = await setup();
+    fixture.componentInstance.ready.set(false); await fixture.whenStable();
+    let destination = '440px';
+    class Effect { getKeyframes() { return [{width:'0px'},{width:destination}]; } }
+    vi.stubGlobal('KeyframeEffect',Effect);
+    Object.defineProperty(section,'getAnimations',{value:()=>[{transitionProperty:'width',effect:new Effect()}]});
+    let panelWidth = 80;
+    vi.spyOn(HTMLElement.prototype,'clientWidth','get').mockImplementation(function(this:HTMLElement) { return this === section ? panelWidth : width; });
+    for (destination of ['440px','0px','440px']) {
+      transition('transitionrun'); resize();
+      expect(frame.style.width).toBe('432px');
+      expect(frame.classList.contains('reflowing')).toBe(false);
+      expect(frame.classList.contains('resizing')).toBe(false);
+      expect(frame.classList.contains('crossfading')).toBe(false);
+      transition('transitioncancel'); await nextFrame();
+    }
+    // Also ignore a closing transition when the shell has nearly settled.
+    panelWidth = 440;
+    destination='0px'; transition('transitionrun'); transition('transitionend'); await nextFrame();
+    expect(frame.classList.contains('reflowing')).toBe(false);
+    expect(fixture.componentInstance.requests).toBe(0);
+  });
+
+  it('starts blending one third into the actual shell clock without delaying a late acknowledgement', () => {
+    const ancestor = document.createElement('section');
+    let elapsed = 0;
+    Object.defineProperty(ancestor,'getAnimations',{value:()=>[{transitionProperty:'width',get currentTime() { return elapsed; },effect:{getComputedTiming:()=>({duration:280})}}]});
+    expect(codeBlendDelay(ancestor)).toBeCloseTo(280/3);
+    elapsed=70; expect(codeBlendDelay(ancestor)).toBeCloseTo(280/3-70);
+    elapsed=140; expect(codeBlendDelay(ancestor)).toBe(0);
+    elapsed=280; expect(codeBlendDelay(ancestor)).toBe(0);
+    expect(codeBlendDelay(document.createElement('section'))).toBe(0);
+  });
+
   it('releases retained transition state when the owning task or visibility context changes', async () => {
     const { fixture, frame, transition } = await setup();
     transition('transitionrun');
@@ -50,9 +86,19 @@ describe('Code viewport transition ownership', () => {
   it('resizes to the predicted destination behind an old snapshot before the shell finishes moving', async () => {
     const { fixture, frame, section, transition } = await setup();
     fixture.componentInstance.ready.set(false); await fixture.whenStable();
-    class Effect { getKeyframes() { return [{width:'440px'},{width:'100%'}]; } }
+    class Effect {
+      getKeyframes() { return [{width:'440px'},{width:'100%'}]; }
+      getComputedTiming() { return {duration:280}; }
+    }
     vi.stubGlobal('KeyframeEffect',Effect);
-    Object.defineProperty(section,'getAnimations',{value:()=>[{transitionProperty:'width',effect:new Effect()}]});
+    Object.defineProperty(section,'getAnimations',{value:()=>[{transitionProperty:'width',currentTime:42,effect:new Effect()}]});
+    const play = vi.fn(), pause = vi.fn(), updateTiming = vi.fn();
+    const animation = {
+      animationName:'code-layout-out',currentTime:0,playState:'idle',
+      play() { play(); this.playState='running'; }, pause() { pause(); this.playState='paused'; },
+      effect:{updateTiming,getComputedTiming:()=>({duration:140,delay:280/3-42})},
+    };
+    Object.defineProperty(frame,'getAnimations',{value:()=>[animation]});
     const containingBlock = document.createElement('div');
     Object.defineProperty(section,'offsetParent',{value:containingBlock});
     vi.spyOn(HTMLElement.prototype,'clientWidth','get').mockImplementation(function(this:HTMLElement) { return this === containingBlock ? 1080 : this === section ? width + 8 : width; });
@@ -75,11 +121,19 @@ describe('Code viewport transition ownership', () => {
     expect(fixture.componentInstance.requests).toBe(1);
     expect(frame.classList.contains('reflowing')).toBe(false);
     expect(frame.classList.contains('crossfading')).toBe(true);
+    expect(pause).toHaveBeenCalledOnce();
+    expect(play).toHaveBeenCalledOnce();
     width=700; resize();
     expect(frame.style.width).toBe('1072px');
     expect(frame.style.transform).toBe(`scaleX(${700 / 1072})`);
     expect(fixture.componentInstance.requests).toBe(1);
+    animation.currentTime=200; await nextFrame();
+    expect(animation.playState).toBe('paused');
+    expect(animation.currentTime).toBeCloseTo(280/3-42+70);
     fixture.componentInstance.ready.set(true); await fixture.whenStable(); await update;
+    expect(play).toHaveBeenCalledTimes(2);
+    expect(updateTiming).toHaveBeenCalledOnce();
+    expect(updateTiming).toHaveBeenCalledWith({delay:280/3-42});
     width=1072; transition('transitionend'); await nextFrame();
     expect(frame.style.width).toBe(`${width}px`);
     expect(frame.style.transform).toBe('');

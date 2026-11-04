@@ -31,9 +31,20 @@ export function codeDestinationWidth(ancestor: HTMLElement, viewport: HTMLElemen
     try { pixels = probe.clientWidth; } finally { probe.remove(); }
   } else return null;
   const gap = ancestor.clientWidth - viewport.clientWidth;
-  // Opening/closing an ordinary panel clips a minimum-width inner surface.
-  // Its negative gap cannot predict an actual workbench resize.
-  if (gap < 0) return null;
+  // Ordinary opening/closing clips a minimum-width inner surface without
+  // resizing Code. Return that unchanged viewport so it stays visible.
+  if (gap < 0 || pixels === 0) return viewport.clientWidth;
   const width = Math.round(pixels - gap);
   return width > 0 && width <= 20_000 ? width : null;
+}
+
+/** Start the blur one third into the shell glide, or immediately if snapshot
+ * capture finishes later. Read its animation clock so reversals and scrubbing
+ * use the actual remaining motion rather than a second wall-clock timer. */
+export function codeBlendDelay(ancestor: HTMLElement): number {
+  const transition = ancestor.getAnimations?.().find(animation => 'transitionProperty' in animation && animation.transitionProperty === 'width');
+  const duration = transition?.effect?.getComputedTiming().duration;
+  const elapsed = transition?.currentTime;
+  return typeof duration === 'number' && typeof elapsed === 'number'
+    ? Math.max(0, duration / 3 - elapsed) : 0;
 }

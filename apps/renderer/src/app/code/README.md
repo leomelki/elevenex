@@ -105,15 +105,24 @@ here** or **Focus editor** rather than silently stealing it. Four hot workbenche
 are retained; clean hidden instances may close only after upstream permits unload.
 Dirty instances stay retained. Shutdown respects backup vetoes.
 
+Ordinary panel opening/closing clips the retained editor at its existing width.
+It adds no resize cover or snapshot and does not wait for layout acknowledgement
+to reveal: a loaded workbench is visible immediately during the slide. Only a
+change in the editor viewport uses the resize transition below.
+
 Expansion/collapse predicts the destination from the shell's actual width
 transition, including percentage widths, and resizes the iframe once at the start.
 An element-scoped View Transition retains the old editor image while the new one
 renders underneath. The shell retains its original 280ms width/opacity glide;
 Code never finishes it early. ResizeObserver fits the outer compositor surface to
 the moving viewport using scaleX, without relaying intermediate widths to the
-iframe. Both images stretch with that surface and blend in a 200ms token-driven
-fade with the 20px glass blur after the child's layout acknowledgement. At the
-end, scale is already 1, so removing it cannot expose a final resize jump. The
+iframe. Both images stretch with that surface and blend in a 140ms token-driven
+effect with the 20px glass blur. Blur starts one third into the shell glide
+(about 93ms). Its opaque midpoint holds the old image until the child's layout
+acknowledgement, then the remaining half crossfades and clears the new image.
+An early acknowledgement adds no wait; a later one resumes immediately. Timing
+follows the shell's actual animation clock, including interrupted transitions.
+At the end, scale is already 1, so removing it cannot expose a final resize jump. The
 old image stays visible instead of a blank hide/show phase. Panel controls and
 the surrounding application stay outside the snapshot's hit-test boundary. No
 screenshot/pixel API is added to the bridge.
