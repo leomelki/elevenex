@@ -43,8 +43,10 @@ export class CodeWatch implements OnModuleDestroy {
     this.observe(workspace, workspace.root);
     const state = this.workspaces.get(workspace.identity)!;
     let reset = after > state.sequence || (state.events.length > 0 && after < state.events[0].sequence - 1);
-    let paths = [...new Set(state.events.filter(e => e.sequence > after).map(e => e.path))].slice(0, 128);
-    if (Buffer.byteLength(JSON.stringify(paths)) > 192 * 1024) { paths = ['/']; reset = true; }
+    let paths = [...new Set(state.events.filter(e => e.sequence > after).map(e => e.path))];
+    // The cursor acknowledges the whole batch. Never omit paths while allowing
+    // that cursor to advance past invalidations the client has not reconciled.
+    if (reset || paths.length > 128 || Buffer.byteLength(JSON.stringify(paths)) > 192 * 1024) { paths = ['/']; reset = true; }
     return { sequence: state.sequence, reset, paths };
   }
   onModuleDestroy(): void { clearInterval(this.timer); for (const id of this.workspaces.keys()) this.release(id); }

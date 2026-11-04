@@ -16,8 +16,11 @@ const { CodeSearch } = require('../../backend/dist/code-workspace/code-search.se
 const { CodeWatch } = require('../../backend/dist/code-workspace/code-watch.service');
 const execute = promisify(execFile);
 protocol.registerSchemesAsPrivileged([{scheme:'app',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
+// The test owns shutdown, including asynchronous profile cleanup after its
+// window is destroyed. Do not let Electron quit before that cleanup completes.
+app.on('window-all-closed', () => {});
 const deadline = setTimeout(() => { console.error('Code workbench smoke deadline'); app.exit(1); }, 180_000);
-let root, server, code, search, watches, currentView;
+let root, server, code, search, watches, currentView, window, stopRouting;
 let rejectWrites = false;
 async function wait(predicate, message, timeout = 30_000) {
   const start = Date.now();
@@ -68,7 +71,7 @@ app.whenReady().then(async () => {
     } catch (error) { response.statusCode = error.getStatus?.() ?? (error.code === 'ENOENT' ? 404 : 500); response.end(JSON.stringify(error.getResponse?.() ?? { error: error.message })); }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const window = new BrowserWindow({ width: 1250, height: 900, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  window = new BrowserWindow({ width: 1250, height: 900, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
   protocol.handle('app', () => new globalThis.Response('<html><body><div id=editor style="height:780px"></div></body></html>', {headers:{'Content-Type':'text/html'}}));
   await window.loadURL('app://elevenex/'); window.show();
   const client = new BackendClient(() => ({ url: `http://127.0.0.1:${server.address().port}`, version: 'b'.repeat(40), headers: {}, identity: 'smoke', environment: { kind: 'local' } }), () => {});
@@ -83,7 +86,7 @@ app.whenReady().then(async () => {
   code = new CodeSurfaces(client, runtimeRoot, join(process.cwd(), 'apps/renderer/public/fonts'), (_id, _target, state) => { codeState = state; console.log('CODE_STATE', state.phase, state.message); });
   window.webContents.on('console-message', event => console.log('FRAME_CONSOLE',event.message));
   window.webContents.on('did-fail-load', (_event,...args)=>console.log('FRAME_LOAD',...args));
-  code.attachWindow(window.webContents);
+  stopRouting = code.attachWindow(window.webContents);
   const opened = await code.open(window.webContents.id, target); assert.equal(opened.ok, true, JSON.stringify(opened));
   code.layout(window.webContents.id, target, { x: 60, y: 60, width: 1100, height: 780 });
   await window.webContents.executeJavaScript(`{const f=document.createElement('iframe');f.src=${JSON.stringify(opened.value.frameUrl)};f.sandbox='allow-scripts allow-same-origin';f.style='width:1100px;height:780px;border:0';document.querySelector('#editor').append(f);}`);
@@ -176,8 +179,26 @@ app.whenReady().then(async () => {
   assert.equal(await view.webContents.executeJavaScript('!!document.querySelector(".tab.dirty") && document.querySelector(".monaco-editor")?.textContent.includes("retainedAfterSaveFailure")'), true);
   await view.webContents.capturePage().then(image => writeFile(join(process.cwd(), 'artifacts/code-autosave-failure.png'), image.toPNG()));
   view.webContents.debugger.detach();
-  console.log('CODE_WORKBENCH_SMOKE_PASSED');
-  client.dispose(); clearTimeout(deadline); await code.dispose(); watches.onModuleDestroy(); search.onModuleDestroy();
+  await code.dispose(); client.dispose(); stopRouting();
+  // Stop Chromium's profile writer before removing its files. The workbench
+  // may have just persisted configuration or hot-exit state during shutdown.
+  const session = window.webContents.session;
+  window.destroy(); await session.clearStorageData();
+  watches.onModuleDestroy(); search.onModuleDestroy();
   await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
-  await rm(root, { recursive: true, force: true }); app.exit(0);
-}).catch(async error => { console.error(error); if (currentView && !currentView.webContents.isDestroyed()) { console.log('FAILED_EDITOR_DOM', await currentView.webContents.executeJavaScript('document.body.innerText.slice(-4000)')); await currentView.webContents.capturePage().then(image => writeFile(join(process.cwd(), 'artifacts/code-workbench-failed.png'), image.toPNG())).catch(() => undefined); } try { await code?.dispose(); } catch (cleanupError) { console.error('Editor cleanup failed',cleanupError.message); } clearTimeout(deadline); watches?.onModuleDestroy(); search?.onModuleDestroy(); server?.close(); if (root) await rm(root, { recursive: true, force: true }).catch(() => {}); app.exit(1); });
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  console.log('CODE_WORKBENCH_SMOKE_PASSED'); clearTimeout(deadline); app.exit(0);
+}).catch(async error => {
+  console.error(error);
+  if (currentView && !currentView.webContents.isDestroyed()) {
+    try {
+      console.log('FAILED_EDITOR_DOM', await currentView.webContents.executeJavaScript('document.body.innerText.slice(-4000)'));
+      await currentView.webContents.capturePage().then(image => writeFile(join(process.cwd(), 'artifacts/code-workbench-failed.png'), image.toPNG()));
+    } catch (diagnosticError) { console.error('Editor diagnostics unavailable', diagnosticError.message); }
+  }
+  try { await code?.dispose(); } catch (cleanupError) { console.error('Editor cleanup failed', cleanupError.message); }
+  stopRouting?.(); if (window && !window.isDestroyed()) window.destroy();
+  watches?.onModuleDestroy(); search?.onModuleDestroy(); server?.close(); server?.closeAllConnections();
+  if (root) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => {});
+  clearTimeout(deadline); app.exit(1);
+});

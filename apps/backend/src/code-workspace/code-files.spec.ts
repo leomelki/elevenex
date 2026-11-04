@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, realpath, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, mkdir, realpath, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { codeDelete, codeDirectory, codeMkdir, codeRead, codeRename, codeStat, codeWrite, confinedPath } from './code-files.js';
@@ -52,6 +52,36 @@ describe('new task filesystem public behavior', () => {
     expect((await codeStat(workspace, path)).permissions).toBe(1);
     await expect(codeWrite(workspace, { path, revision: original.revision, content: Buffer.from('changed').toString('base64') }, async () => undefined)).rejects.toThrow('read-only');
     expect(await readFile(join(workspace.root, 'readonly'), 'utf8')).toBe('original');
+  });
+  it('preserves an existing file mode when atomically replacing its contents', async () => {
+    if (process.platform === 'win32') return;
+    const target = join(workspace.root, 'shared-script');
+    await writeFile(target, 'original'); await chmod(target, 0o777);
+    const original = await codeRead(workspace, '/shared-script');
+    await codeWrite(workspace, { path: '/shared-script', revision: original.revision, content: Buffer.from('changed').toString('base64') }, async () => undefined);
+    expect((await lstat(target)).mode & 0o777).toBe(0o777);
+  });
+  it('does not leave an empty destination when publishing a new file fails', async () => {
+    const filesystem = jest.requireActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const failure = Object.assign(new Error('Publication failed'), { code: 'EIO' });
+    const moving = jest.spyOn(filesystem, 'rename').mockRejectedValue(failure);
+    const linking = jest.spyOn(filesystem, 'link').mockRejectedValue(failure);
+    try {
+      await expect(codeWrite(workspace, { path: '/new', revision: null, content: Buffer.from('created').toString('base64') }, async () => undefined)).rejects.toThrow('Publication failed');
+      expect((await codeDirectory(workspace, '/')).entries).toEqual([]);
+      await expect(lstat(join(workspace.root, 'new'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { moving.mockRestore(); linking.mockRestore(); }
+  });
+  it('does not overwrite another creator at the new-file publication boundary', async () => {
+    const filesystem = jest.requireActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const move = filesystem.rename, publish = filesystem.link;
+    const moving = jest.spyOn(filesystem, 'rename').mockImplementation(async (source, target) => { await writeFile(target, 'external'); await move(source, target); });
+    const linking = jest.spyOn(filesystem, 'link').mockImplementation(async (source, target) => { await writeFile(target, 'external'); await publish(source, target); });
+    try {
+      await expect(codeWrite(workspace, { path: '/new', revision: null, content: Buffer.from('mine').toString('base64') }, async () => undefined)).rejects.toMatchObject({ code: 'EEXIST' });
+      expect(await readFile(join(workspace.root, 'new'), 'utf8')).toBe('external');
+      expect((await codeDirectory(workspace, '/')).entries.map(entry => entry.name)).toEqual(['new']);
+    } finally { moving.mockRestore(); linking.mockRestore(); }
   });
   it('creates, renames and deletes files with conflict checks', async () => {
     await codeMkdir(workspace, '/folder');

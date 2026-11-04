@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodeWatch } from './code-watch.service.js';
@@ -8,6 +8,27 @@ import type { CodeWorkspace } from './code-authorization.service.js';
 jest.mock('@vscode/ripgrep', () => ({ rgPath: '' }));
 
 describe('task directory watch reconciliation', () => {
+  it('requests root reconciliation instead of acknowledging omitted folder invalidations', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'code-watch-batch-'));
+    const workspace: CodeWorkspace = { taskId: 1, identity: 'a'.repeat(64), storageIdentity: 'b'.repeat(64), root: await realpath(directory), name: 'Task', branch: 'task' };
+    const search = new CodeSearch(), watches = new CodeWatch(search);
+    const native = jest.spyOn(jest.requireActual<typeof import('node:fs')>('node:fs'), 'watch');
+    try {
+      const folders = Array.from({ length: 129 }, (_, index) => join(workspace.root, `folder-${index}`));
+      await Promise.all(folders.map(folder => mkdir(folder)));
+      for (const folder of folders) {
+        watches.observe(workspace, folder);
+        // Deliver one native event per directory, independent of OS coalescing.
+        const watcher = native.mock.results.at(-1)!;
+        if (watcher.type !== 'return') throw new Error('Directory watcher did not start.');
+        watcher.value.emit('change', 'created.txt');
+      }
+      const batch = watches.changes(workspace, 0);
+      expect(batch.reset).toBe(true);
+      expect(batch.paths).toEqual(['/']);
+      expect(watches.changes(workspace, batch.sequence).paths).toEqual([]);
+    } finally { native.mockRestore(); watches.onModuleDestroy(); search.onModuleDestroy(); await rm(directory, { recursive: true, force: true }); }
+  });
   it('reports real changes, releases ownership and bounds repeated watcher failures', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'code-watch-'));
     const workspace: CodeWorkspace = { taskId: 1, identity: 'a'.repeat(64), storageIdentity: 'b'.repeat(64), root: await realpath(directory), name: 'Task', branch: 'task' };

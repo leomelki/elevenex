@@ -22,6 +22,7 @@ async function mount(persisted, disk, options = {}) {
     static Unavailable(message) { return new FileError(message, 'Unavailable'); }
     static NoPermissions(message) { return new FileError(message, 'NoPermissions'); }
     static FileNotFound() { return new FileError('missing', 'FileNotFound'); }
+    static FileExists() { return new FileError('exists', 'FileExists'); }
   }
   class Disposable { constructor(dispose) { this.dispose = dispose; } }
   class Emitter {
@@ -48,18 +49,25 @@ async function mount(persisted, disk, options = {}) {
     if (operation === 'presentation') return json({accepted:true});
     if (operation === 'ready') return json({ accepted: true });
     if (operation === 'changes') return json({ sequence: 0, reset: false, paths: [], paused: options.pausedChanges ?? true });
-    if (operation === 'stat') return json({ type: 1, size: disk.text.length, ctime: 1, mtime: 1 });
+    if (operation === 'stat') {
+      if (body.path !== '/' && options.statFailure) return new globalThis.Response(null, { status: options.statFailure });
+      return body.path !== '/' && disk.exists === false ? new globalThis.Response(null, { status: 404 }) : json({ type: body.path === '/' ? 2 : 1, size: disk.text.length, ctime: 1, mtime: 1 });
+    }
     if (operation === 'read') {
+      if (disk.exists === false) return new globalThis.Response(null, { status: 404 });
       if (options.unreachable) return new globalThis.Response(null, { status: 503 });
       return json({ content: Buffer.from(disk.text).toString('base64'), revision: digest(disk.text) });
     }
     if (operation === 'write') {
       writes++;
       if (options.dropWrite) return new globalThis.Response(null, { status: 503 });
-      if (body.revision !== digest(disk.text)) return globalThis.Response.json({ error: 'file-conflict' }, { status: 409 });
+      if (body.revision !== (disk.exists === false ? null : digest(disk.text))) return globalThis.Response.json({ error: 'file-conflict' }, { status: 409 });
+      disk.exists = true;
       disk.text = Buffer.from(body.content, 'base64').toString();
       return json({ revision: digest(disk.text) });
     }
+    if (operation === 'delete') { disk.exists = false; return json({ accepted: true }); }
+    if (operation === 'rename') return json({ accepted: true });
     throw new Error('Unexpected provider operation ' + operation);
   };
   vm.runInNewContext(code, { module, exports: module.exports, require: name => { assert.equal(name, 'vscode'); return vscode; }, fetch, URL, Uint8Array, TextEncoder: globalThis.TextEncoder, TextDecoder: globalThis.TextDecoder, AbortController, AbortSignal, crypto: webcrypto, atob: globalThis.atob, btoa: globalThis.btoa, setTimeout, clearTimeout, console });
@@ -79,6 +87,56 @@ test('the native Find file action opens upstream Quick Open without a platform r
     assert.equal(editor.comparisons.length, 1);
     assert.equal(editor.comparisons[0][0], 'workbench.action.quickOpen');
     assert.equal(editor.writes(), 0);
+  } finally { editor.close(); }
+});
+
+test('deleting and recreating a file clears its obsolete save baseline across restart', async () => {
+  const persisted = {}, disk = { text: 'original' };
+  let editor = await mount(persisted, disk);
+  try {
+    await editor.provider.readFile(editor.uri);
+    await editor.provider.delete(editor.uri);
+    editor.close();
+    editor = await mount(persisted, disk);
+    await editor.provider.writeFile(editor.uri, Buffer.from('recreated'), { create: true, overwrite: false });
+    assert.equal(disk.text, 'recreated');
+    assert.equal(editor.writes(), 1);
+    assert.equal(persisted.value[0].revision, digest('recreated'));
+  } finally { editor.close(); }
+});
+
+test('renaming a folder carries retained file revisions to their new paths and frees the old paths', async () => {
+  const persisted = {}, disk = { text: 'original' };
+  const editor = await mount(persisted, disk);
+  try {
+    const oldFile = editor.uri.with({ path: '/folder/file.ts' });
+    await editor.provider.readFile(oldFile);
+    await editor.provider.rename(editor.uri.with({ path: '/folder' }), editor.uri.with({ path: '/renamed' }), { overwrite: false });
+    assert.equal(persisted.value.some(entry => entry.path === oldFile.path), false);
+    assert.equal(persisted.value.find(entry => entry.path === '/renamed/file.ts')?.revision, digest('original'));
+    await editor.provider.writeFile(editor.uri.with({ path: '/renamed/file.ts' }), Buffer.from('saved after rename'), { create: true, overwrite: true });
+    assert.equal(disk.text, 'saved after rename');
+  } finally { editor.close(); }
+});
+
+test('a folder with an unconfirmed child save cannot be renamed around the recovery guard', async () => {
+  const persisted = { value: [{ path: '/folder/file.ts', generation: 'a'.repeat(64), revision: digest('original'), pending: digest('retained'), dirty: true }] };
+  const editor = await mount(persisted, { text: 'original' });
+  try {
+    await assert.rejects(editor.provider.rename(editor.uri.with({ path: '/folder' }), editor.uri.with({ path: '/renamed' }), { overwrite: false }), /Inspect/);
+    assert.equal(persisted.value[0].path, '/folder/file.ts');
+  } finally { editor.close(); }
+});
+
+test('provider write options forbid overwriting existing files and creating missing files', async () => {
+  const disk = { text: 'original' }, editor = await mount({}, disk);
+  try {
+    await editor.provider.readFile(editor.uri);
+    await assert.rejects(editor.provider.writeFile(editor.uri, Buffer.from('replacement'), { create: true, overwrite: false }), { code: 'FileExists' });
+    disk.exists = false;
+    await assert.rejects(editor.provider.writeFile(editor.uri.with({ path: '/missing.ts' }), Buffer.from('created'), { create: false, overwrite: true }), { code: 'FileNotFound' });
+    assert.equal(editor.writes(), 0);
+    assert.equal(disk.text, 'original');
   } finally { editor.close(); }
 });
 
@@ -172,5 +230,20 @@ test('a reattached transport reconciles Explorer once without a filesystem chang
     events.length = 0;
     await editor.commands.get('elevenex.code.reconnect')();
     assert.equal(events.filter(event => event.uri.path === '/').length, 0);
+  } finally { listener.dispose(); editor.close(); }
+});
+
+test('a transient open-file stat failure retains the file; an authoritative 404 still reports deletion', async () => {
+  const options = { pausedChanges: false };
+  const editor = await mount({}, { text: 'original' }, options);
+  const events = [], listener = editor.provider.onDidChangeFile(changes => events.push(...changes));
+  try {
+    await editor.provider.stat(editor.uri);
+    options.statFailure = 503;
+    await editor.commands.get('elevenex.code.reconnect')();
+    assert.equal(events.some(event => event.type === 3 && event.uri.path === editor.uri.path), false);
+    options.statFailure = 404;
+    await editor.commands.get('elevenex.code.reconnect')();
+    assert.equal(events.some(event => event.type === 3 && event.uri.path === editor.uri.path), true);
   } finally { listener.dispose(); editor.close(); }
 });

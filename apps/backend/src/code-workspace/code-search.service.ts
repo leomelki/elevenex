@@ -75,7 +75,6 @@ export class CodeSearch implements OnModuleDestroy {
     return { paths: paths.slice(0, limit), limited: byteLimited || index.limited || paths.length > limit };
   }
   async start(workspace: CodeWorkspace, input: Record<string, unknown>, signal?: AbortSignal) {
-    if (this.searches.size >= 16 || [...this.searches.values()].filter(s => s.workspace === workspace.identity).length >= 2) throw new ServiceUnavailableException('Cancel the previous search before starting another.');
     signal?.throwIfAborted();
     for (const flag of ['regex', 'caseSensitive', 'word', 'useIgnoreFiles']) if (input[flag] !== undefined && typeof input[flag] !== 'boolean') throw new BadRequestException('Invalid search flag.');
     const query = codeText(input.query, 1000);
@@ -93,6 +92,10 @@ export class CodeSearch implements OnModuleDestroy {
       for (const value of patterns) { const pattern = codeText(value, 256); if (pattern) args.push('--glob', prefix + pattern); }
     }
     args.push('--iglob', '!.git', '--glob', '!.git/**', '--glob', '!**/.git/**', '--glob', '!.elevenex-save-*', '--regexp', query, '--', '.');
+    // Path validation awaits filesystem work. Reserve the budget only after it,
+    // with no await between checking capacity and registering the new child.
+    signal?.throwIfAborted();
+    if (this.searches.size >= 16 || [...this.searches.values()].filter(s => s.workspace === workspace.identity).length >= 2) throw new ServiceUnavailableException('Cancel the previous search before starting another.');
     const child = this.child(root, args, workspace.identity);
     const search: Search = { workspace: workspace.identity, process: child, rows: [], done: false, limited: false, used: Date.now(), count: 0 };
     const id = randomUUID(); this.searches.set(id, search);

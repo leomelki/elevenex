@@ -1,5 +1,49 @@
 # New Code workbench verification
 
+## Code workspace review (2026-11-04)
+
+Reviewed the task filesystem, search/watch lifetimes, private frame routing,
+transport generations, save recovery and renderer/frame ownership. Added ten
+regression cases and fixed the following edge cases:
+
+- Watch batches with more than 128 distinct directories now request root
+  reconciliation instead of advancing past omitted invalidations.
+- Concurrent searches check the task/global budget after asynchronous path
+  validation, immediately before registering their subprocess.
+- Atomic saves preserve existing POSIX permissions. New-file publication uses
+  a same-directory hard link, rejecting concurrent creators and leaving no empty
+  destination if publication fails. Unsupported filesystems fail safely.
+- Confirmed deletes clear obsolete save baselines. Folder/file rename moves
+  descendant revisions and generation metadata, and rejects unconfirmed child
+  saves or retained destination edits. Provider create/overwrite flags apply.
+- Transient stat failures retain open files; only authoritative file-not-found
+  replies emit deletion. The native smoke now waits for profile cleanup before
+  reporting success and exiting.
+
+Validation passed: `desktop:lint`, `desktop:test` (163 desktop cases, seven capture
+cases and 647 renderer cases, plus TypeScript contract checks), `desktop:build`,
+backend TypeScript compilation and 23 focused backend cases. The native Electron
+preload/protocol smoke passed. The real Code OSS smoke passed and exited cleanly
+with 12,001 files, including keyboard editing, search, auto-save, retained failed
+saves and crash recovery. On this warm-cache macOS arm64 run, file opening took
+1,638ms, crash recovery 906ms, cold/warm filename queries 18/3ms and the first
+text-search page 8ms; these are local observations, not performance guarantees.
+
+`artifacts/desktop-capture/code-review/report.json` verified all **83 checkpoints**
+with no renderer errors. Inspected new light/dark expanded, compact auto-save and
+narrow reduced-motion PNGs. The run covers genuine Files/Quick Open/Quick Search,
+focus, settings overlays, interrupted panel transitions and retained writing.
+Its sole warning is Chromium's generic scripts-plus-same-origin iframe warning;
+the editor remains cross-origin from its parent. Capture used a new disposable
+Nest database/task and stopped its backend and helpers afterward. The checkout's
+missing Express package symlink required a test-only `NODE_PATH` to its already
+installed, declared package; no dependency or lockfile changes were made.
+
+`git diff --check` passed. Physical SSH, packaged live editing and Windows/Linux
+launches remain unverified. The documented adversarial filesystem-race limitation
+and unsupported operations below still apply; new-file creation additionally
+requires filesystem hard-link support.
+
 ## Closing-edge compositor clipping
 
 On 2026-11-04, added an explicit rounded clip to the shell panel so retained

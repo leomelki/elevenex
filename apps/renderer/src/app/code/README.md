@@ -336,9 +336,22 @@ are limited to 200 filenames; text search streams pages of at most 100 rows /
 explicit. Task-local ignore files apply; global/parent ignores are excluded from
 the task boundary. Search is single-line ripgrep/Rust-regex search.
 
+Saving preserves existing POSIX permission bits. New files publish complete bytes
+with an atomic hard link from a temporary file in the same directory, so a failed
+publication leaves no empty file and a concurrent creator is never overwritten.
+Filesystems without hard-link support cannot create files through Code; the save
+fails and retains the editor buffer. Existing-file saves still use atomic rename.
+Create/overwrite flags are enforced by the filesystem provider. Confirmed deletion
+clears the old save baseline; file/folder rename moves descendant baselines and
+generation metadata. A folder with an unconfirmed or pending child save must be
+reconciled before renaming. Nonempty recursive deletion and replacing a rename
+destination are intentionally unsupported.
+
 Only browsed directories are watched (64 per task, eight tasks); active clean
 text documents also reconcile stat changes. Cursor overflow requests visible
-resource reconciliation. Closed views/tasks release subprocesses, requests,
+resource reconciliation, including a batch with more than 128 distinct folders.
+Connection failures retain open files; only a file-not-found reply reports deletion.
+Closed views/tasks release subprocesses, requests,
 subscriptions and observers; idle backend watches/searches expire. Symlinks and
 invalid platform names are not editor resources. POSIX Unicode, quotes, spaces,
 newlines and ordinary literal backslashes are transported as data, never shell.

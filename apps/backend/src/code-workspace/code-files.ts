@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { constants } from 'node:fs';
-import { access, lstat, mkdir, open, opendir, realpath, rename, rmdir, unlink } from 'node:fs/promises';
+import { access, link, lstat, mkdir, open, opendir, realpath, rename, rmdir, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { codePath, codeRevision, codeText } from './code-values.js';
@@ -95,9 +95,13 @@ export async function codeWrite(workspace: CodeWorkspace, input: Record<string, 
   const temporary = join(dirname(path), '.elevenex-save-' + randomUUID());
   const info = await lstat(path).catch(e => { if (isMissing(e)) return null; throw e; });
   if (info && !await access(path, constants.W_OK).then(() => true, () => false)) throw new ForbiddenException('This file is read-only.');
-  const file = await open(temporary, 'wx', info ? info.mode & 0o777 : 0o600);
+  const file = await open(temporary, 'wx', 0o600);
   try {
-    await file.writeFile(bytes); await file.sync(); await file.close();
+    await file.writeFile(bytes);
+    // open() applies the process umask; restore existing permissions explicitly
+    // so saving a shared file does not silently remove group write access.
+    if (info && process.platform !== 'win32') await file.chmod(info.mode & 0o777);
+    await file.sync(); await file.close();
     await assertCurrent();
     await confinedPath(workspace, input.path, true);
     let latest: string | null = null;
@@ -105,11 +109,12 @@ export async function codeWrite(workspace: CodeWorkspace, input: Record<string, 
     if (latest !== expected) throw new ConflictException({ code: 'file-conflict', message: 'File changed during save. Compare your unsaved copy.' });
     signal?.throwIfAborted();
     if (expected === null) {
-      // link would be atomic no-clobber, but not portable across all filesystems;
-      // reserve the destination exclusively before replacement.
-      const reservation = await open(path, 'wx', 0o600); await reservation.close();
-    }
-    await rename(temporary, path);
+      // Publish complete bytes without clobbering a concurrent creator or leaving
+      // an empty reservation on failure. Both names are on the same filesystem.
+      // Filesystems without hard-link support fail safely; never emulate this
+      // with an empty destination followed by an overwriting rename.
+      await link(temporary, path);
+    } else await rename(temporary, path);
     return { revision };
   } finally { await file.close().catch(() => undefined); await unlink(temporary).catch(() => undefined); }
 }

@@ -3,6 +3,10 @@ import * as vscode from 'vscode';
 import type { Changes, DirectoryPage, FileRead, SearchPage } from './contracts';
 
 const SCHEME = 'elevenex-task';
+const containsPath = (parent: string, path: string) => path === parent || path.startsWith(parent + '/');
+function movePaths<T>(values: Map<string, T>, source: string, target: string): void {
+  for (const [path, value] of [...values]) if (containsPath(source, path)) { values.delete(path); values.set(target + path.slice(source.length), value); }
+}
 interface SaveEntry { readonly path: string; readonly generation: string; readonly revision: string | null; readonly pending: string | null; readonly dirty: boolean }
 /** Durable digests accompany upstream hot-exit buffers. Persist before dispatch,
  * so a crashed/unknown write can never be blindly replayed after reopening. */
@@ -30,6 +34,21 @@ class SaveLedger {
     await this.save({ path, generation, revision, pending: digest, dirty: this.entries.get(path)?.dirty ?? false });
   }
   async markDirty(path: string, dirty: boolean): Promise<void> { const entry = this.entries.get(path); if (entry && entry.dirty !== dirty) await this.save({ ...entry, dirty }); }
+  async forget(path: string): Promise<void> {
+    this.entries.delete(path);
+    await this.storage.update('task-save-ledger', [...this.entries.values()]);
+  }
+  assertRename(source: string, target: string): void {
+    if ([...this.entries.values()].some(entry => containsPath(target, entry.path) && !containsPath(source, entry.path) && (entry.dirty || entry.pending !== null))) throw vscode.FileSystemError.Unavailable('The destination has retained edits. Inspect them before renaming.');
+  }
+  async rename(source: string, target: string): Promise<void> {
+    const next = new Map(this.entries);
+    movePaths(next, source, target);
+    const entries = [...next].map(([path, entry]) => ({ ...entry, path }));
+    if (JSON.stringify(entries).length > 128 * 1024) throw vscode.FileSystemError.Unavailable('The renamed save journal exceeds its limit. Inspect retained edits before saving.');
+    this.entries.clear(); for (const entry of entries) this.entries.set(entry.path, entry);
+    await this.storage.update('task-save-ledger', entries);
+  }
   private async save(entry: SaveEntry): Promise<void> {
     if (!this.valid) throw vscode.FileSystemError.Unavailable('The save journal is unavailable. Retain your unsaved copy and inspect disk before saving.');
     const previous = this.entries.get(entry.path); this.entries.delete(entry.path); this.entries.set(entry.path, entry);
@@ -175,6 +194,14 @@ class TaskFiles implements vscode.FileSystemProvider, vscode.Disposable {
     if (this.blockedSaves.has(path)) throw vscode.FileSystemError.Unavailable('Inspect the unconfirmed save before retrying. Click the editor status to compare with disk.');
     const generation = this.resourceGeneration(path), transportRevision = this.transportRevision;
     if (generation !== this.generation) { this.blockedSaves.add(path); this.unknownSave = true; this.status.command = 'elevenex.code.reconcile-save'; this.state('$(warning) Workspace changed · inspect retained edits'); throw vscode.FileSystemError.NoPermissions('Workspace changed. Compare the retained file with disk before saving.'); }
+    if (!options.create || !options.overwrite) {
+      const exists = await this.stat(uri).then(() => true, error => {
+        if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') return false;
+        throw error;
+      });
+      if (exists && !options.overwrite) throw vscode.FileSystemError.FileExists(uri);
+      if (!exists && !options.create) throw vscode.FileSystemError.FileNotFound(uri);
+    }
     if (revision === undefined && (!options.create || options.overwrite)) {
       // Untitled Save As may create a new resource, but must never overwrite an
       // existing resource whose original revision this document has not read.
@@ -236,15 +263,20 @@ class TaskFiles implements vscode.FileSystemProvider, vscode.Disposable {
     if (this.blockedSaves.has(path)) throw vscode.FileSystemError.Unavailable('Inspect the unconfirmed save before deleting this file.');
     if (generation !== this.generation) throw vscode.FileSystemError.NoPermissions('Workspace changed. Reload the folder before deleting this file.');
     if (revision === undefined && (await this.stat(uri)).type === vscode.FileType.File) revision = (await this.call<FileRead>('read', { path })).revision;
-    await this.call('delete', { path, revision, generation, transportRevision }); this.revisions.delete(path); this.changed.fire([{ type: vscode.FileChangeType.Deleted, uri }]);
+    await this.call('delete', { path, revision, generation, transportRevision });
+    await this.ledger.forget(path);
+    this.revisions.delete(path); this.versions.delete(path); this.candidateReads.delete(path); this.directoryGenerations.delete(path);
+    this.changed.fire([{ type: vscode.FileChangeType.Deleted, uri }]);
   }
   async rename(oldUri: vscode.Uri, newUri: vscode.Uri, options: { overwrite: boolean }): Promise<void> {
     if (options.overwrite) throw vscode.FileSystemError.NoPermissions('Choose a new name; replacing another file is not supported.');
-    if (this.blockedSaves.has(this.path(oldUri))) throw vscode.FileSystemError.Unavailable('Inspect the unconfirmed save before renaming this file.');
-    await this.call('rename', { path: this.path(oldUri), target: this.path(newUri), generation: this.resourceGeneration(this.path(oldUri)) });
-    const oldPath = this.path(oldUri), revision = this.revisions.get(oldPath);
-    if (revision) { await this.ledger.remember(this.path(newUri), revision, this.resourceGeneration(this.path(oldUri))); this.remember(this.path(newUri), revision); }
-    this.revisions.delete(oldPath);
+    const source = this.path(oldUri), target = this.path(newUri);
+    if ([...this.blockedSaves, ...this.pendingWrites].some(path => containsPath(source, path))) throw vscode.FileSystemError.Unavailable('Inspect or finish retained saves before renaming this file or folder.');
+    this.ledger.assertRename(source, target);
+    await this.call('rename', { path: source, target, generation: this.resourceGeneration(source) });
+    await this.ledger.rename(source, target);
+    movePaths(this.revisions, source, target); movePaths(this.versions, source, target);
+    movePaths(this.directoryGenerations, source, target); movePaths(this.candidateReads, source, target);
     this.changed.fire([{ type: vscode.FileChangeType.Deleted, uri: oldUri }, { type: vscode.FileChangeType.Created, uri: newUri }]);
   }
   async reconnect(): Promise<void> { if (this.failures) this.reconcileRoot = true; this.failures = 0; clearTimeout(this.timer); await this.poll(); }
@@ -267,7 +299,12 @@ class TaskFiles implements vscode.FileSystemProvider, vscode.Disposable {
       // Open documents reconcile their own revisions without replacing dirty text.
       for (const document of vscode.workspace.textDocuments.slice(0, 32)) {
         if (document.uri.scheme !== SCHEME || document.isDirty) continue;
-        const stat = await this.stat(document.uri).catch(() => null);
+        const stat = await this.stat(document.uri).catch(error => {
+          if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') return null;
+          // A transport or workspace failure says nothing about file existence.
+          // Retain the model and let the owning poll report disconnection.
+          throw error;
+        });
         const path = document.uri.path, previous = this.versions.get(path);
         if (!stat) { if (previous) this.changed.fire([{ type: vscode.FileChangeType.Deleted, uri: document.uri }]); this.versions.delete(path); continue; }
         const version = `${stat.mtime}:${stat.size}`;

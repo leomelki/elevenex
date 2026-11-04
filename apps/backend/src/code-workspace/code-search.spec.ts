@@ -41,6 +41,11 @@ describe('new task search with actual ripgrep', () => {
     await expect(search.page({ ...workspace, identity: 'b'.repeat(64) }, page.id)).rejects.toThrow('expired');
     search.cancel(workspace, page.id); await expect(search.page(workspace, page.id)).rejects.toThrow('expired');
   });
+  it('enforces the per-task search budget for concurrently arriving requests', async () => {
+    const results = await Promise.allSettled(Array.from({ length: 3 }, () => search.start(workspace, { query: 'needle' })));
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(2);
+    expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
+  });
   it('reuses bounded filename indexes across keystrokes', async () => {
     const first = await search.filenames(workspace, { query: 'file', limit: 20 });
     expect(first.paths).toHaveLength(20); expect(first.limited).toBe(true);
