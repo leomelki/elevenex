@@ -128,6 +128,13 @@ checks must inspect the isolated child separately.
 
 ## Motion
 
+`scenarios/browser-tabs.mjs` checks the shared Browser/Terminal tab strip through
+the Browser preview: middle selection, idle dividers and hover suppression,
+natural wheel/trackpad scrolling, metadata refreshes, keyboard selection/closing,
+animated and interrupted new-tab entry, empty state and narrow reduced motion
+in both themes. Run it against `pnpm desktop:preview` with
+`--url http://127.0.0.1:4310`.
+
 `scenarios/composer-queue-motion.mjs` checks optimistic queue receipt handoffs
 through the connected workspace preview. It samples each real animation frame
 for excess rows, changing DOM identity and height overshoot, with repeated text,

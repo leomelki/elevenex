@@ -1,8 +1,21 @@
 :host { display: block; flex: none; min-width: 0; }
 .row { display: flex; align-items: flex-end; gap: var(--space-1); padding: var(--space-2) var(--space-2) 0; background: var(--surface-sunken); }
-.tabs { display: flex; align-items: flex-end; gap: var(--space-1); overflow-x: auto; scrollbar-width: thin; min-width: 0; }
-.tab-shell { display: flex; flex: 0 0 auto; align-items: center; max-width: 190px; height: var(--control-height); border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: transparent; color: var(--ink-muted); transition: background var(--dur-fast) var(--ease-out); }
-.tab-shell:hover { background: var(--glass); color: var(--ink); }
+.tabs { --fade-before: 0px; --fade-after: 0px; display: flex; flex: 1; align-items: flex-end; gap: var(--space-1); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; min-width: 0;
+  /* Edge fades replace a scrollbar or arrow buttons as the "more tabs" cue; 24px matches FADE_WIDTH. */
+  mask-image: linear-gradient(to right, transparent, #000 var(--fade-before), #000 calc(100% - var(--fade-after)), transparent);
+  transition: --fade-before var(--dur-fast) var(--ease-out), --fade-after var(--dur-fast) var(--ease-out); }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs.more-before { --fade-before: var(--space-6); }
+.tabs.more-after { --fade-after: var(--space-6); }
+@property --fade-before { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --fade-after { syntax: '<length>'; inherits: false; initial-value: 0px; }
+.tab-shell { position: relative; display: flex; flex: 0 0 auto; align-items: center; max-width: min(190px, 100%); height: var(--control-height); border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: transparent; color: var(--ink-muted); transition: background var(--dur-fast) var(--ease-out); }
+/* Hover stays quieter than the selected surface so it never reads as a second selection. */
+.tab-shell:hover { background: color-mix(in srgb, var(--surface) 50%, transparent); color: var(--ink); }
+/* Short dividers separate idle tabs; they vanish beside the selected or hovered tab so its shape stays clean. */
+.tab-shell + .tab-shell::before { content: ''; position: absolute; left: calc(var(--space-1) / -2 - 0.5px); top: 50%; width: 1px; height: var(--space-4); translate: 0 -50%; background: var(--line-strong); opacity: .45; pointer-events: none; transition: opacity var(--dur-fast) var(--ease-out); }
+/* Same compound shape as the rule above so the hide wins under Angular's scoped attribute selectors. */
+.tab-shell + .tab-shell:is(.on, :hover, .leave)::before, .tab-shell:is(.on, :hover, .leave) + .tab-shell::before { opacity: 0; }
 .tab-shell.on { background: var(--surface); color: var(--ink); box-shadow: inset 0 1px 0 var(--line); }
 button { display: flex; align-items: center; gap: var(--space-2); min-width: 0; height: 100%; padding: 0 var(--space-2); border: 0; border-radius: inherit; color: inherit; background: transparent; font: inherit; font-size: var(--text-caption-size); cursor: pointer; }
 button:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
@@ -24,4 +37,4 @@ button[role="tab"] { max-width: 160px; }
 @keyframes tab-in { from { max-width: 0; opacity: 0; overflow: hidden; } }
 @keyframes tab-out { to { max-width: 0; opacity: 0; overflow: hidden; } }
 @media (hover: none) { .close { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .enter, .leave, .agent.driving::after { animation: none; } .tab-shell, .close { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .enter, .leave, .agent.driving::after { animation: none; } .tab-shell, .tab-shell::before, .close, .tabs { transition: none; } }

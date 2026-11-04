@@ -7,6 +7,13 @@ generate diffs, or access the filesystem. Outputs carry stable IDs, not position
 `ViewTabs` provides arrow/Home/End selection, Delete and middle-click close, native
 focus and animated entry/exit. Browser and Terminal reserve Command/Ctrl-T while
 focused and expose `selected`, `closed` and `added`.
+Both views share the same strip: short dividers separate idle tabs and disappear
+beside the selected or hovered tab. Hover is softer than selection. Edge fades
+indicate overflow without numbered controls or a scrollbar; trackpad swipes and
+ordinary mouse wheels browse tabs without selecting them. Selection and new-tab
+entry reveal the whole tab inside this strip without moving the page or stealing
+focus. Metadata updates preserve manual browsing. Reduced motion reveals tabs
+instantly and disables the fades' transitions.
 
 `BrowserView` accepts a trusted `[browserPreview]` projection. It does not create
 iframes, webviews, or turn arbitrary URLs into privileged content. Every navigation

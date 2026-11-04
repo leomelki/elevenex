@@ -2,6 +2,9 @@ import { afterNextRender, afterRenderEffect, ChangeDetectionStrategy, Component,
 import { IconComponent, StatusGlyphComponent } from '../ui';
 import { ViewTab } from './view.models';
 
+/** Matches the strip's edge mask in view-tabs.component.css. */
+const FADE_WIDTH = 24;
+
 @Component({
   selector: 'ex-view-tabs',
   imports: [IconComponent, StatusGlyphComponent],
@@ -21,6 +24,12 @@ export class ViewTabsComponent {
   readonly added = output<void>();
   protected readonly animationsReady = signal(false);
   protected readonly list = viewChild<ElementRef<HTMLElement>>('list');
+  private readonly itemIds = computed(() => JSON.stringify(this.items().map(item => item.id)));
+  /** Edge fades show that tabs continue past either side of the strip. */
+  protected readonly moreBefore = signal(false);
+  protected readonly moreAfter = signal(false);
+  private revealSelection = true;
+  private layoutFrame = 0;
   private readonly newButton = viewChild<ElementRef<HTMLButtonElement>>('newButton');
   private pendingClose?: { id: string; index: number; focus: HTMLElement };
   private readonly exits = new Set<Animation>();
@@ -28,9 +37,27 @@ export class ViewTabsComponent {
 
   constructor() {
     inject(DestroyRef).onDestroy(() => {
+      cancelAnimationFrame(this.layoutFrame);
       for (const animation of this.exits) animation.cancel();
     });
     afterNextRender(() => this.animationsReady.set(true));
+    afterRenderEffect(() => {
+      this.selectedId();
+      this.revealSelection = true;
+      this.layout(true);
+    });
+    afterRenderEffect((onCleanup) => {
+      this.itemIds();
+      const list = this.list()?.nativeElement;
+      if (!list || typeof ResizeObserver === 'undefined') return;
+      // Observe the animated shells too: a new tab starts at zero width, and
+      // following its growth frame by frame already reads as a smooth slide.
+      const observer = new ResizeObserver(() => this.scheduleLayout());
+      observer.observe(list);
+      for (const shell of list.children) observer.observe(shell);
+      this.scheduleLayout();
+      onCleanup(() => observer.disconnect());
+    });
     afterRenderEffect(() => {
       const items = this.items();
       const pending = this.pendingClose;
@@ -43,6 +70,73 @@ export class ViewTabsComponent {
         .find(button => button.dataset['tabId'] === next?.id);
       (tab ?? this.newButton()?.nativeElement)?.focus({ preventScroll: true });
     });
+  }
+
+  private scheduleLayout(): void {
+    cancelAnimationFrame(this.layoutFrame);
+    this.layoutFrame = requestAnimationFrame(() => this.layout(false));
+  }
+
+  protected browseTabs(): void {
+    // Manual browsing must remain possible while the selected tab is offscreen.
+    this.revealSelection = false;
+  }
+
+  protected scrolled(): void {
+    // Only refresh the fades here; revealing from scroll events would fight
+    // the person's own scrolling and cancel smooth revelation.
+    const list = this.list()?.nativeElement;
+    if (list) this.updateEdges(list);
+  }
+
+  protected wheel(event: WheelEvent): void {
+    const list = this.list()?.nativeElement;
+    if (event.ctrlKey || !list || list.scrollWidth <= list.clientWidth) return;
+    this.browseTabs();
+    // Trackpads scroll horizontally on their own; map a plain mouse wheel too.
+    if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+    event.preventDefault();
+    const unit = event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? list.clientWidth
+      : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
+    list.scrollLeft += event.deltaY * unit;
+  }
+
+  protected select(id: string): void {
+    if (this.disabled()) return;
+    this.selected.emit(id);
+    // Reselecting the current tab settles manual browsing immediately, even
+    // when a previous smooth reveal is still being interrupted.
+    if (id === this.selectedId()) {
+      this.revealSelection = true;
+      this.layout(false);
+    }
+  }
+
+  private layout(selectionChanged: boolean): void {
+    const list = this.list()?.nativeElement;
+    if (!list || !list.clientWidth) return;
+    const selected = Array.from(list.children).find((shell): shell is HTMLElement => shell instanceof HTMLElement
+      && !shell.hasAttribute('inert')
+      && shell.querySelector<HTMLButtonElement>('[role="tab"]')?.dataset['tabId'] === this.selectedId());
+    if (this.revealSelection && selected) this.revealTab(list, selected, selectionChanged);
+    this.updateEdges(list);
+  }
+
+  private updateEdges(list: HTMLElement): void {
+    this.moreBefore.set(list.scrollLeft > 1);
+    this.moreAfter.set(list.scrollLeft + list.clientWidth < list.scrollWidth - 1);
+  }
+
+  private revealTab(list: HTMLElement, shell: HTMLElement, smooth: boolean): void {
+    const bounds = list.getBoundingClientRect(), tab = shell.getBoundingClientRect();
+    // Keep the tab clear of the edge fade; the first/last tab clamps to the end.
+    const inset = Math.min(FADE_WIDTH, Math.max(0, (bounds.width - tab.width) / 2));
+    const delta = tab.left < bounds.left + inset ? tab.left - bounds.left - inset
+      : Math.max(0, tab.right - bounds.right + inset);
+    if (Math.abs(delta) <= 0.5) return;
+    // Scroll only this strip; scrollIntoView can also move the workspace/chat.
+    const behavior = smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'instant';
+    list.scrollBy({ left: delta, behavior });
   }
 
   protected leave(event: AnimationCallbackEvent): void {
@@ -86,9 +180,10 @@ export class ViewTabsComponent {
     const tab = items[next];
     if (!tab) return;
     event.preventDefault();
-    this.selected.emit(tab.id);
+    // Let focus settle before the after-render selection reveal.
     Array.from(this.list()?.nativeElement.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
-      .find(button => button.dataset['tabId'] === tab.id && !button.closest('[inert]'))?.focus();
+      .find(button => button.dataset['tabId'] === tab.id && !button.closest('[inert]'))?.focus({ preventScroll: true });
+    this.select(tab.id);
   }
 
   protected middleClick(event: MouseEvent, id: string): void {
