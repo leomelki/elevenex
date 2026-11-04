@@ -26,8 +26,6 @@
         <div class="page-state" role="alert"><ex-icon name="globe" [size]="24" /><p>{{ current()?.error }}</p><button exButton (click)="tabCommand('reload')">Retry page</button></div>
       } @else if (store.state()?.picked) {
         <div class="page-state"><ex-icon name="target" [size]="24" /><p>Element selected. Page paused while you write.</p><small>Structural selector and viewport bounds only. Screenshots, page text and source location are unavailable for this untrusted surface.</small></div>
-      } @else if (current()?.loading) {
-        <div class="page-state" role="status"><p>Loading page…</p></div>
       } @else if (!current()?.url && current()) {
         <div class="page-state start-page">
           <ex-icon name="globe" [size]="40" /><h2>New tab</h2><p>Where would you like to go?</p>

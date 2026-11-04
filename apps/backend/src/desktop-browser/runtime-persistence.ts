@@ -39,7 +39,7 @@ interface Write {
   readonly result: Promise<boolean>;
   resolve(saved: boolean): void;
 }
-/** Private bounded metadata. Writes coalesce by task; no cookies, queries, form data or frames reach disk. */
+/** Private bounded metadata. Writes coalesce by task; no cookies, queries, form data or frames reach this metadata file. */
 @Injectable()
 export class RuntimeBrowserPersistence {
   private readonly root = join(getElevenexDataRoot(), 'task-browser-state');

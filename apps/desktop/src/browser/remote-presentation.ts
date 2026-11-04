@@ -114,7 +114,7 @@ export class RemoteBrowserPresentation {
         generation: tab.generation,
         driver: tab.driver,
         visible:
-          this.visible && this.host.ready() && !tab.error && !tab.loading,
+          this.visible && this.host.ready() && !tab.error,
         interactive: this.interactive && this.host.ready(),
         presentation: "stream",
       },
@@ -183,7 +183,6 @@ export class RemoteBrowserPresentation {
       tab = this.host.state()?.tabs.find((tab) => tab.id === tabId);
     if (
       !tabId ||
-      tab?.loading ||
       tab?.error ||
       this.framePending ||
       this.waitingAck ||

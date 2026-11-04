@@ -1,3 +1,4 @@
+import { chromium } from 'playwright-core';
 import { RuntimeBrowserPersistence } from './runtime-persistence.js';
 import { createServer, request as httpRequest, type Server } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -28,6 +29,7 @@ describe('Remote browser public HTTP behavior', () => {
   let runtime: RuntimeBrowserService;
   let pool: RuntimeBrowserPool;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
+  const launches = jest.spyOn(chromium, 'launchPersistentContext');
   let oldRoot: string | undefined;
   const request = async (
     path: string,
@@ -182,11 +184,11 @@ describe('Remote browser public HTTP behavior', () => {
   });
   it('waits for cancelled startup during host disposal and never restarts a disposed host', async () => {
     const owned = new RuntimeBrowserPool();
-    const opening = owned.acquire();
+    const opening = owned.acquire('a'.repeat(64), {});
     const stopped = owned.onModuleDestroy();
     await expect(opening).rejects.toThrow('Browser runtime stopped');
     await stopped;
-    await expect(owned.acquire()).rejects.toThrow('Browser runtime stopped');
+    await expect(owned.acquire('a'.repeat(64), {})).rejects.toThrow('Browser runtime stopped');
   });
   it('opens sandboxed task-hosted Chromium, streams bounded binary frames, types privately and reconciles ownership', async () => {
     const connected = await request('connect', {
@@ -445,7 +447,7 @@ describe('Remote browser public HTTP behavior', () => {
       clientId: '22222222-2222-4222-8222-222222222222',
     });
     expect(contested.status).toBe(409);
-    await (await pool.acquire()).close();
+    await (await launches.mock.results.at(-1)!.value).browser()!.close();
     const crashed = await request('state').then((r) => r.json());
     expect(crashed.tabs[0].driver).toBe('needs');
     expect(crashed.tabs[0].error).toBeTruthy();

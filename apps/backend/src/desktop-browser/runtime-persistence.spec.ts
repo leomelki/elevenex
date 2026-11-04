@@ -61,10 +61,13 @@ describe('Runtime browser retention and viewer authority', () => {
   it('retains user ownership when an old agent launch fails after takeover', async () => {
     const pool = new RuntimeBrowserPool();
     let rejectStartup: (error: Error) => void = () => undefined;
+    let markStarting: () => void = () => undefined;
+    const starting = new Promise<void>(resolve => { markStarting = resolve; });
     jest.spyOn(pool, 'acquire').mockImplementation(
       () =>
         new Promise((_resolve, reject) => {
           rejectStartup = reject;
+          markStarting();
         }),
     );
     const service = new RuntimeBrowserService(pool, store);
@@ -78,6 +81,7 @@ describe('Runtime browser retention and viewer authority', () => {
         controller.signal,
       );
       void opening.catch(() => undefined);
+      await starting;
       const tabId = task.state().tabs[0]!.id;
       await task.command({ kind: 'takeover', tabId });
       controller.abort();

@@ -76,8 +76,8 @@ export class BrowserPage {
     if (process.env['ELECTRON_ENABLE_LOGGING'] || app.commandLine.hasSwitch('enable-logging')) throw new Error('Private browsing is unavailable while Chromium page logging is enabled. Disable page logging before opening a tab.');
     this.lease = new BrowserDriverLease(by, sessionId);
     if (by === 'agent') this.step = { n: 1, text: 'Opening page' };
-    // The task owns a shared ephemeral profile; other tasks/windows cannot share it.
-    // Closing a page keeps sibling sign-in state; destroying the task clears storage.
+    // The task owns a durable profile shared by its tabs; Chromium keeps site data
+    // across task eviction and application restarts.
     this.pageSession = host.session;
 
   }
@@ -218,7 +218,7 @@ export class BrowserPage {
       if (hadViewport && this.lease.driver === 'agent') { if (responsiveChange) this.lease.takeOver(); else this.lease.generation++; this.host.changed(); }
     }
     this.bounds = bounds; this.viewport = viewport; this.zoom = zoom;
-    if (this.destroyed || !this.hasContents || this.loading || this.error || bounds.width < 2 || bounds.height < 2) { this.hide(); return; }
+    if (this.destroyed || !this.hasContents || this.error || bounds.width < 2 || bounds.height < 2) { this.hide(); return; }
     if (this.contents.getZoomFactor() !== zoom) this.contents.setZoomFactor(zoom);
     this.contents.setAudioMuted(false);this.attached = true; this.frames?.setActive(this.presentation === 'stream');
   }

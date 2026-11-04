@@ -65,6 +65,21 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   assert.deepEqual(await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible).bounds'), layout.bounds);
   assert.equal(await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible).presentation'), 'stream');
   await call('taskBrowserPresentation', scope, 1, first, 'embedded');
+  // Hold a real link navigation before response headers: the old document stays visible.
+  await call('taskBrowserLayout', scope, 1, layout);
+  await native.executeJavaScript(`document.body.insertAdjacentHTML('afterbegin', '<a id="next-page" href="/browser-test?held-navigation">Next page</a>')`);
+  const link = await native.executeJavaScript(`(() => { const box = document.querySelector('#next-page').getBoundingClientRect(); return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }; })()`);
+  native.sendInputEvent({ type: 'mouseDown', ...link, button: 'left', clickCount: 1 });
+  native.sendInputEvent({ type: 'mouseUp', ...link, button: 'left', clickCount: 1 });
+  await until(async () => (await read()).tabs[0]?.loading, 'Link did not start navigation');
+  await call('taskBrowserLayout', scope, 1, layout);
+  assert.equal(await visibleCount(), 1, 'Navigation must keep the existing guest visible');
+  assert.equal(native.getURL(), url + '/browser-test', 'Previous document must remain until navigation commits');
+  await until(async () => await fetch(url + '/browser-navigation-pending').then(response => response.text()) === '1', 'Navigation request did not reach fixture');
+  await fetch(url + '/release-browser-navigation');
+  await until(async () => !(await read()).tabs[0]?.loading && native.getURL().includes('navigation-finished'), 'Link navigation did not complete');
+  await command({ kind: 'navigate', tabId: first, url: url + '/browser-test' });
+  await until(async () => !(await read()).tabs[0]?.loading, 'Original fixture did not reload');
   native = await require('./browser-detached-native.cjs')(window, native, scope, first);
   // Page strings/secret controls never appear in state or automation-facing tab titles.
   await native.executeJavaScript(`document.title='password-secret';document.querySelector('input').value='password-secret';console.error('password-secret')`);
@@ -212,7 +227,7 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   let remoteActive = true;
   const remoteTask = new TaskBrowser(remoteClient.state(remoteWindow.webContents.id).scope.id, 10, remoteWindow, remoteClient,
     { browserForward: async (windowId, port) => { forwarded.push({ windowId, port }); return { port: Number(new URL(url).port), close: async () => { released = true; } }; } },
-    { read: async () => null, save: () => undefined }, 'remote-task', true, () => undefined, () => remoteActive);
+    { read: async () => null, save: () => undefined }, 'remote-task', new (require('../dist/browser/task-session').BrowserTaskProfiles)(), true, () => undefined, () => remoteActive);
   await remoteTask.agent({ kind: 'open', url: 'http://localhost:40001/browser-test' }, 2);
   const remotePage = [...remoteTask.pages.values()][0];
   const remoteView = new WebContentsView({webPreferences:{session:session.fromPartition(remotePage.partition),additionalArguments:['--elevenex-task-tab='+remotePage.id],sandbox:true,contextIsolation:true,nodeIntegration:false}});

@@ -1,5 +1,5 @@
 import type { DesktopBrowserHost } from './host';
-import { BrowserTaskSession } from './task-session';
+import { BrowserTaskSession, type BrowserTaskProfiles } from './task-session';
 import { TaskBrowserNetwork } from './network';
 import type { BrowserAgentCommand, BrowserAgentState, BrowserElement, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserState, TaskBrowserSurface, TaskBrowserStreamInput, TaskBrowserFrame } from '@elevenex/shared';
 import { shell, type BrowserWindow } from 'electron';
@@ -90,11 +90,12 @@ export class TaskBrowser implements DesktopBrowserHost {
   constructor(readonly scopeId: string, readonly taskId: number,
     private readonly window: BrowserWindow, private readonly client: BackendClient,
     remote: RemoteManager, private readonly persistence: BrowserPersistence,
-    private readonly key: string, readonly isRemote: boolean,
+    private readonly key: string, profiles: BrowserTaskProfiles, readonly isRemote: boolean,
     private readonly changed: (state: TaskBrowserState) => void, private readonly selected: () => boolean,
     private readonly surfacesChanged: () => void = () => undefined, private readonly frame: (frame: TaskBrowserFrame) => void = () => undefined, private readonly applicationPort: number | null = null, private readonly defaultPresentation: 'embedded' | 'stream' = 'embedded') {
     this.network = new TaskBrowserNetwork(isRemote, port => remote.browserForward(window.webContents.id, port), () => !this.disposed && this.client.state(this.window.webContents.id).scope?.id === this.scopeId, selected, port => port === this.applicationPort);
     this.profile = new BrowserTaskSession(
+      key, profiles,
       session => this.network.configure(session),
       url => this.network.allowed(url),
       contentsId => {
@@ -355,7 +356,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   private async navigate(page: BrowserPage, url: string, generation?: number): Promise<void> {
     if (this.active === page.id) { this.picked = null; this.picking = false; page.picking = false; this.pickerMessage = null; }
     const logical = browserUrl(url), expectedGeneration = page.lease.generation;
-    page.url = logical; page.loading = true; page.error = null; page.hide(); this.emit();
+    page.url = logical; page.loading = true; page.error = null; this.emit();
     try {
       await this.network.outside(logical);
       await page.configureNetwork(); this.assertScope();

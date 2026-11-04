@@ -35,6 +35,9 @@ export class TaskBrowserNetwork {
     try { proxy = await pending; } catch (error) { if (this.proxy === pending) this.proxy = undefined; throw error; }
     if (this.closed || !this.current()) { await proxy.close(); throw new Error('Task browser transport changed'); }
     await session.setProxy({ mode: 'fixed_servers', proxyRules: `socks5://127.0.0.1:${proxy.port}`, proxyBypassRules: '<-loopback>' });
+    // Chromium may still resolve against its previous configuration after setProxy.
+    // Reused durable profiles must activate the task proxy before any navigation.
+    await session.forceReloadProxyConfig();
     const route = await session.resolveProxy('http://localhost:40001/');
     if (route.trim() !== `SOCKS5 127.0.0.1:${proxy.port}`) throw new Error('This Chromium runtime cannot isolate remote loopback routing');
     this.assertCurrent();

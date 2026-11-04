@@ -9,6 +9,7 @@ import type { RemoteManager } from '../remote/manager';
 import { handleForWindow, sendToWindow, type TrustedSender } from '../ipc';
 import { RemoteTaskBrowser } from './remote-task';
 import { TaskBrowser } from './task';
+import { BrowserTaskProfiles } from './task-session';
 import { BrowserPersistence } from './persistence';
 import { browserId, command, layout, record, taskId, streamInput, windowContext } from './validation';
 import { BrowserAutomation } from './automation';
@@ -19,6 +20,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
   const windows = new Map<number, WindowBrowsers>();
   const detached = new DetachedBrowserWindows(createBrowserWindow, (id, scope) => client.state(id).scope?.id === scope);
   const persistence = new BrowserPersistence(root);
+  const profiles = new BrowserTaskProfiles();
   const surfaces = (id: number) => detached.get(id) ? detached.surfaces(id) : [...(windows.get(id)?.tasks.values() ?? [])].flatMap(task => task.surfaces());
   const publishSurfaces = (id: number) => { const current = surfaces(id); const claims = windows.get(id)?.attaching; if (claims) for (const partition of claims) if (!current.some(surface => surface.tabId === partition)) claims.delete(partition); const owner=windows.get(id),signature=JSON.stringify(current);if(owner&&owner.surfaceSnapshot!==signature){owner.surfaceSnapshot=signature;sendToWindow(id, 'task-browser:surfaces-changed', current);} };
   const windowOwner = (id: number) => {
@@ -43,7 +45,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
       const attach = (event: Electron.Event, preferences: Electron.WebPreferences, params: Record<string, string>) => {
         const expected = surfaces(id).find(surface => surface.partition === params['partition'] && surface.bootstrap === params['src']);
         // The app can only instantiate main-issued task guests. Never accept a page
-        // URL, preload, persistent/default partition, or renderer-selected privileges.
+        // URL, preload, unissued partition, or renderer-selected privileges.
         if (!expected || owner!.attaching.has(expected.tabId) || !trusted(window.webContents.mainFrame, window.webContents) ||
           [...owner!.tasks.values()].filter((task): task is DesktopBrowserHost => task.engine === 'desktop').some(task => task.hasContents(expected.tabId)) ||
           !hardenTaskGuest(preferences, params, expected.partition, expected.bootstrap)) { event.preventDefault(); return; }
@@ -104,7 +106,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
           // the existing guest producer; only a remote private host owns Chromium.
           const created: BrowserTask = placement === 'machine' && environment.kind === 'remote'
             ? new RemoteTaskBrowser(scope, task, window, client, onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, remote, environment.kind === 'remote')
-            : new TaskBrowser(scope, task, window, client, remote, persistence, placement === 'desktop' ? identity : identity + ':' + placement, placement === 'desktop-proxy' && environment.kind === 'remote', onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, Number(reply.value['applicationPort']), placement === 'machine' ? 'stream' : 'embedded');
+            : new TaskBrowser(scope, task, window, client, remote, persistence, placement === 'desktop' ? identity : identity + ':' + placement, profiles, placement === 'desktop-proxy' && environment.kind === 'remote', onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, Number(reply.value['applicationPort']), placement === 'machine' ? 'stream' : 'embedded');
           if (created.engine === 'desktop') created.setPorts(reply.value.ports);
           try { await created.restore(); } catch (error) { created.destroy(); throw error; }
           const previous = owner.tasks.get(key);
@@ -255,5 +257,5 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
     }),
   ];
   const timer = setInterval(() => { for (const owner of windows.values()) for (const task of owner.tasks.values()) { task.maintain(); if (task !== owner.selected && !detached.has(task)) { if (task.engine === 'desktop') owner.automation.get(task)?.deactivate(task); } } detached.maintain(); }, 250);
-  return { permitsGuest(id: number, params: Record<string, string>) { return surfaces(id).some(surface => surface.partition === params['partition'] && surface.bootstrap === params['src']); }, dispose() { clearInterval(timer); detached.dispose(); for (const stop of stops) stop(); for (const owner of [...windows.values()]) owner.cleanup(); windows.clear(); }, flush: () => persistence.flush() };
+  return { permitsGuest(id: number, params: Record<string, string>) { return surfaces(id).some(surface => surface.partition === params['partition'] && surface.bootstrap === params['src']); }, dispose() { clearInterval(timer); detached.dispose(); for (const stop of stops) stop(); for (const owner of [...windows.values()]) owner.cleanup(); windows.clear(); }, flush: () => Promise.all([persistence.flush(), profiles.flush()]) };
 }

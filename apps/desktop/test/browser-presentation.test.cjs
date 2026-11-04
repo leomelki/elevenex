@@ -2,12 +2,12 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { RemoteBrowserPresentation } = require('../dist/browser/remote-presentation');
 
-function fixture(tabId) {
+function fixture(tabId, loading = false) {
   const frames = [], layouts = [], cancelled = [], failures = [];
   let resolveFrame, reads = 0;
   const host = {
     scopeId: 'scope', taskId: 1,
-    state: () => ({ active: 'panel-tab', tabs: [{ id: 'panel-tab', url: 'https://example.com', generation: 1, driver: 'you' }, { id: 'companion-tab', url: 'https://example.com', generation: 1, driver: 'you' }] }),
+    state: () => ({ active: 'panel-tab', tabs: [{ id: 'panel-tab', url: 'https://example.com', generation: 1, driver: 'you', loading }, { id: 'companion-tab', url: 'https://example.com', generation: 1, driver: 'you', loading }] }),
     ready: () => true, changed: () => undefined,
     layout: async (tabId, value) => { layouts.push({ tabId, ...value }); },
     frame: () => { reads++; return new Promise(resolve => { resolveFrame = resolve; }); },
@@ -18,6 +18,16 @@ function fixture(tabId) {
   return { view, position, frames, layouts, cancelled, failures, reads: () => reads, resolve: n => resolveFrame({ sequence: n, width: 800, height: 600, jpeg: new Uint8Array([1]) }) };
 }
 const settle = async () => { for (let n = 0; n < 8; n++) await Promise.resolve(); };
+
+test('loading pages stay visible and continue receiving streamed frames', async () => {
+  const f = fixture(undefined, true);
+  f.position(); await settle();
+  assert.equal(f.view.surfaces()[0].visible, true);
+  assert.equal(f.reads(), 1);
+  f.resolve(1); await settle();
+  assert.equal(f.frames.length, 1);
+  f.view.destroy();
+});
 
 test('panel and companion own independent layout, frame receipts, visibility and cleanup', async () => {
   const panel = fixture(), companion = fixture('companion-tab');

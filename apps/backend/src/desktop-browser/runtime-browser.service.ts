@@ -97,7 +97,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
         this.identities.delete(evict[0]);
         this.saved.delete(evict[0]);
       }
-      task = new RuntimeBrowserTask(taskId, this.pool);
+      task = new RuntimeBrowserTask(taskId, this.pool, identity);
       this.tasks.set(taskId, task);
       this.identities.set(taskId, identity);
       const saved = await this.persistence.read(identity);

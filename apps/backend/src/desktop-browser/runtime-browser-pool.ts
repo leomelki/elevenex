@@ -1,5 +1,5 @@
 import { installRuntimeBrowser } from './runtime-install.js';
-import { chromium, type Browser } from 'playwright-core';
+import { chromium, type BrowserContext, type BrowserContextOptions } from 'playwright-core';
 import { mkdir } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import { Injectable, type OnModuleDestroy } from '@nestjs/common';
@@ -33,7 +33,7 @@ export function privateBrowserLoggingEnabled(
 }
 const unsafeLoggingAtLoad = privateBrowserLoggingEnabled(process.env);
 
-/** One supervised Chromium process, a private CDP pipe, and isolated contexts per task/tab. */
+/** At most four sandboxed Chromium profiles, each owned by one task over a private pipe. */
 @Injectable()
 export class RuntimeBrowserPool implements OnModuleDestroy {
   private readonly applicationPorts = new Set<number>();
@@ -50,23 +50,25 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
   isApplicationPort(port: number): boolean {
     return this.applicationPorts.has(port);
   }
-  private pending?: Promise<Browser>;
-  private browser?: Browser;
+  private readonly pending = new Map<string, Promise<BrowserContext>>();
+  private readonly contexts = new Map<string, BrowserContext>();
   private readonly lifetime = new AbortController();
   private disposed = false;
   private readonly cache = join(getElevenexDataRoot(), 'browser-runtime');
-  async acquire(): Promise<Browser> {
+  async acquire(identity: string, contextOptions: BrowserContextOptions): Promise<BrowserContext> {
+    if (!/^[a-f0-9]{64}$/.test(identity)) throw new Error('Invalid browser profile identity');
     if (unsafeLoggingAtLoad || privateBrowserLoggingEnabled(process.env))
       throw new Error(
         'Private browser streaming is unavailable while browser protocol debug logging is enabled.',
       );
     if (this.disposed) throw new Error('Browser runtime stopped');
-    if (this.browser?.isConnected()) return this.browser;
-    return (this.pending ??= this.launch().finally(() => {
-      this.pending = undefined;
-    }));
+    if (this.contexts.has(identity) || this.pending.has(identity)) throw new Error('Browser profile is already open');
+    if (this.contexts.size + this.pending.size >= 4) throw new Error('Browser profile limit reached');
+    const opening = this.launch(identity, contextOptions).finally(() => this.pending.delete(identity));
+    this.pending.set(identity, opening);
+    return opening;
   }
-  private async launch(): Promise<Browser> {
+  private async launch(identity: string, contextOptions: BrowserContextOptions): Promise<BrowserContext> {
     // Install into application data, never a repository or a user browser profile.
     await mkdir(this.cache, { recursive: true, mode: 0o700 });
     if (this.disposed) throw new Error('Browser runtime stopped');
@@ -75,7 +77,10 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
     if (index < 0)
       throw new Error('Browser distribution is not supported on this host');
     const executablePath = join(this.cache, ...parts.slice(index));
+    const profile = join(getElevenexDataRoot(), 'task-browser-profiles', identity);
+    await mkdir(profile, { recursive: true, mode: 0o700 });
     const options = {
+      ...contextOptions,
       executablePath,
       headless: true,
       chromiumSandbox: true,
@@ -89,12 +94,12 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
         '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
       ],
     };
-    let browser: Browser;
+    let context: BrowserContext;
     try {
-      browser = await chromium.launch(options);
+      context = await chromium.launchPersistentContext(profile, options);
     } catch {
       try {
-        browser = await chromium.launch({
+        context = await chromium.launchPersistentContext(profile, {
           ...options,
           executablePath: undefined,
           channel: 'chrome',
@@ -103,7 +108,7 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
         await this.install();
         if (this.disposed) throw new Error('Browser runtime stopped');
         try {
-          browser = await chromium.launch(options);
+          context = await chromium.launchPersistentContext(profile, options);
         } catch {
           throw new Error(
             'This host cannot start sandboxed Chromium. Its browser system libraries or OS sandbox need setup. No sandbox bypass is used.',
@@ -112,14 +117,16 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
       }
     }
     if (this.disposed) {
-      await browser.close();
+      await context.close();
       throw new Error('Browser runtime stopped');
     }
-    this.browser = browser;
-    browser.once('disconnected', () => {
-      if (this.browser === browser) this.browser = undefined;
+    // Persistent Chromium starts with about:blank. Only task-owned pages may stay alive.
+    await Promise.all(context.pages().map(page => page.close()));
+    this.contexts.set(identity, context);
+    context.once('close', () => {
+      if (this.contexts.get(identity) === context) this.contexts.delete(identity);
     });
-    return browser;
+    return context;
   }
   private install(): Promise<void> {
     return installRuntimeBrowser(this.cache, this.lifetime.signal);
@@ -127,7 +134,7 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     this.disposed = true;
     this.lifetime.abort();
-    await this.pending?.catch(() => undefined);
-    await this.browser?.close();
+    await Promise.allSettled(this.pending.values());
+    await Promise.allSettled([...this.contexts.values()].map(context => context.close()));
   }
 }

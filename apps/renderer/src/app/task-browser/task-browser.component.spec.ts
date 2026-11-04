@@ -37,6 +37,13 @@ async function render(fixture: ComponentFixture<TaskBrowserComponent>): Promise<
 }
 afterEach(() => TestBed.resetTestingModule());
 describe('Task browser start tabs', () => {
+  it('keeps the page slot clear of replacement content during navigation', async () => {
+    const { fixture } = setup([{ ...tab(), url: 'https://example.com/next', loading: true }]);
+    fixture.componentRef.setInput('active', true); await render(fixture);
+    expect(fixture.nativeElement.querySelector('.native-page')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('.page-state')).toBeNull();
+    expect(fixture.nativeElement.textContent).not.toContain('Loading page');
+  });
   it('waits until the browser is active, then creates one start tab with address focus', async () => {
     const { fixture, bridge } = setup();
     await render(fixture);

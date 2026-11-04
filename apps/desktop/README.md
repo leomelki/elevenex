@@ -429,5 +429,11 @@ Remote task backends own sandboxed Chromium and provide bounded JPEG display and
 typed human input over their managed private IPC/SSH transport. Pages never
 receive the app bridge or credentials; app CSP stays unchanged.
 See [the feature guide](../renderer/src/app/task-browser/README.md) for driver,
-privacy, ephemeral profile, network, resource and capability policies, and
+privacy, persistent task profile, network, resource and capability policies, and
 [the host guide](../backend/src/desktop-browser/README.md) for installation/transport.
+
+Task browser site data survives conversation changes, task eviction and app
+restarts in Chromium-owned task profiles. Navigation keeps pages visible while
+loading. Run `node apps/desktop/test/browser-profile-native.cjs` from the repository
+root after building to check cookies, localStorage, IndexedDB and cache storage
+across two isolated Electron launches.

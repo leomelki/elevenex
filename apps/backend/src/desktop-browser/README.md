@@ -8,8 +8,9 @@ arbitrary CDP. Driver generations are rechecked after every await; input is neve
 replayed after interruption.
 
 The remote host uses pinned `playwright-core@1.61.0` over a private Chromium pipe.
-`RuntimeBrowserPool` owns the sandboxed process and bounded managed installation;
-`RuntimeBrowserTask` owns its ephemeral shared profile, task SOCKS connector,
+`RuntimeBrowserPool` owns up to four sandboxed Chromium processes, persistent
+task profiles and the bounded managed installation;
+`RuntimeBrowserTask` owns its persistent shared profile, task SOCKS connector,
 persistence and twelve tabs; `RuntimeBrowserTab` owns its page, debugger, viewport,
 human-input generation and bounded JPEG producer. Four tasks may be retained.
 Startup tries the managed browser, installed Chrome, then an owned, cancellable
@@ -31,7 +32,10 @@ pauses on slow or hidden viewers. Logical viewport caps at 2560×1600, DPR at tw
 Human key/text/IME/clipboard/mouse/scroll input is bounded, ordered and gated by
 current driver and visibility. Disconnect revokes agent generations; reconnect
 returns user control. No queued automation resumes. Viewer TTL is ten seconds;
-idle contexts are retained five minutes then destroyed. Safe metadata contains
+idle contexts are retained five minutes then closed. Cookies, localStorage,
+IndexedDB, service workers and cache storage remain in task-incarnation profiles
+under `task-browser-profiles/` in application data, including across backend
+restarts. Profiles never share the user’s ordinary browser directory. Safe metadata contains
 only committed locations, without query/hash, never page storage or frames.
 
 Task server grants are explicit. Port discovery is only a suggestion. Public DNS

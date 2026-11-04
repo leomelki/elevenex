@@ -67,6 +67,7 @@ export class RuntimeBrowserTask {
   constructor(
     readonly taskId: number,
     private readonly pool: RuntimeBrowserPool,
+    private readonly profileIdentity: string,
   ) {
     this.network = new RuntimeBrowserNetwork(
       () => this.alive,
@@ -222,10 +223,9 @@ export class RuntimeBrowserTask {
   }
   private contextForTask(): Promise<BrowserContext> {
     return (this.context ??= (async () => {
-      const browser = await this.pool.acquire();
       if (this.disposed || !this.alive) throw new Error('Browser task closed');
       const proxy = await this.network.start();
-      const context = await browser.newContext({
+      const context = await this.pool.acquire(this.profileIdentity, {
         viewport: this.viewport,
         // Playwright maps an explicit empty grant list to Chromium's reject-all
         // override. Omitting it would leave browser permission prompts pending.

@@ -22,7 +22,7 @@ tasks default to this device; remote tasks default to the task-machine stream.
 See [the architecture review and extension boundaries](../../../../../docs/task-browser-architecture.md).
 
 Desktop-hosted tasks use a real Electron guest `<webview>`. `EmbeddedPageComponent` creates
-only the fixed element; main issues its ephemeral partition and bootstrap identity,
+only the fixed element; main issues its task profile partition and bootstrap identity,
 validates `will-attach-webview`, forces hardened preferences, and adopts the exact
 contents through `taskBrowserAttach`. There is no page preload, Node, app bridge,
 nested guest, arbitrary renderer webPreferences, or renderer network permission.
@@ -93,16 +93,23 @@ counts only while that session owns the tab; it never injects autonomous prompts
 ## Resources, storage and navigation
 
 Each window retains at most four tasks and each task twelve tabs. A task's tabs
-share one ephemeral profile for cookies, localStorage, IndexedDB and normal web
-APIs; other tasks/windows/launches are isolated. Closing a tab destroys its page;
-evicting the task destroys the profile and closes its network resources. Switching
+share one persistent Chromium profile for cookies, localStorage, IndexedDB,
+service workers, cache storage and normal web APIs. Profiles are isolated by
+backend destination, task incarnation and browser location, and survive task
+eviction, conversation changes and app restarts. Local profiles live in Electron's
+private application data; task-machine profiles live in that backend's application
+data. Closing a tab destroys its page; eviction closes pages and network resources
+without clearing site data. A local profile has one owning app window at a time,
+so another window cannot replace its task network policy. Switching
 conversations or panels retains live history, forms and scroll. Returning to a
-retained task preserves its live page but reconnects with user control.
+retained task preserves its live page but reconnects with user control. Navigation
+keeps the existing page visible while Chromium loads the next document; loading
+status stays in browser chrome rather than replacing the page.
 
 Bounded metadata stores only committed HTTP(S) locations (without query/fragment),
 selection, width and creator provenance. Failed navigations and download attempts
 are never restored as documents. Reopening after destruction restores lazy tabs
-with user control, not actions or credentials. Task/repository identity and actual
+with user control and the same site profile; queued actions never resume. Task/repository identity and actual
 SSH configuration distinguish recreated tasks/edited destinations.
 
 The task-owned SOCKS connector preserves logical origins, TLS, CORS and WebSockets.
@@ -178,7 +185,7 @@ task. Other tabs remain usable. Missing/closed tasks and changed source scopes
 leave an inert Task unavailable surface instead of silently closing the window.
 At most twelve companions are open, and their tasks are pinned against eviction.
 
-**Local moves reload the page**, retaining the same tab ID and ephemeral task
+**Local moves reload the page**, retaining the same tab ID and persistent task
 profile (including sign-in). Electron cannot adopt an already attached guest in
 another renderer. Rehosting never reads or copies forms/page text/storage into
 application state. Unsubmitted forms, scroll and live document state do not carry

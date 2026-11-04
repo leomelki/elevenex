@@ -1,20 +1,44 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { session, type Session, type DownloadItem } from "electron";
 
-/** One nonpersistent task profile, shared by its tabs and isolated from other tasks/windows. */
+/** Application-owned leases prevent competing windows from replacing a profile's network policy. */
+export class BrowserTaskProfiles {
+  private readonly active = new Set<string>();
+  private readonly closing = new Map<string, Promise<void>>();
+  acquire(partition: string): Promise<void> {
+    if (this.active.has(partition)) throw new Error("This task browser is open in another window. Close the other window before opening it here.");
+    this.active.add(partition);
+    return this.closing.get(partition) ?? Promise.resolve();
+  }
+  release(partition: string, cleanup: Promise<void>): void {
+    this.active.delete(partition);
+    this.closing.set(partition, cleanup);
+    void cleanup.finally(() => {
+      if (this.closing.get(partition) === cleanup) this.closing.delete(partition);
+    });
+  }
+  async flush(): Promise<void> { await Promise.all(this.closing.values()); }
+}
+
+/** Chromium owns durable site data; application metadata never contains cookies or storage. */
 export class BrowserTaskSession {
-  readonly partition = "task-browser-" + randomUUID();
+  readonly partition: string;
   readonly session: Session;
+  private readonly previous: Promise<void>;
   private pending?: Promise<void>;
   private disposed = false;
   private readonly downloads = new Set<DownloadItem>();
   constructor(
+    identity: string,
+    private readonly profiles: BrowserTaskProfiles,
     private readonly configureNetwork: (session: Session) => Promise<void>,
     allowed: (url: string) => boolean,
     observe: (contentsId: number) => void,
     canDownload: (contentsId: number) => boolean,
     notify: (contentsId: number, message: string, outside?: boolean) => void,
   ) {
+    this.partition = "persist:task-browser-" + createHash("sha256").update(identity).digest("hex");
+    this.previous = profiles.acquire(this.partition);
     this.session = session.fromPartition(this.partition);
     this.session.setPermissionRequestHandler(
       (_contents, _permission, callback) => callback(false),
@@ -94,7 +118,10 @@ export class BrowserTaskSession {
   configure(): Promise<void> {
     if (this.disposed)
       return Promise.reject(new Error("Task browser profile closed"));
-    return (this.pending ??= this.configureNetwork(this.session).catch(
+    return (this.pending ??= this.previous.then(() => {
+      if (this.disposed) throw new Error("Task browser profile closed");
+      return this.configureNetwork(this.session);
+    }).catch(
       (error) => {
         this.pending = undefined;
         throw error;
@@ -106,14 +133,16 @@ export class BrowserTaskSession {
     this.disposed = true;
     for (const item of this.downloads) item.cancel();
     this.downloads.clear();
-    void Promise.allSettled([
-      this.session.clearStorageData(),
-      this.session.closeAllConnections(),
-    ]).finally(() => {
-      this.session.webRequest.onBeforeRequest(null);
-      this.session.webRequest.onErrorOccurred(null);
-      this.session.webRequest.onCompleted(null);
-      this.session.removeAllListeners();
+    // Detach synchronously: a new owner may reuse this Session before disk flush completes.
+    this.session.webRequest.onBeforeRequest((_details, callback) => callback({ cancel: true }));
+    this.session.webRequest.onErrorOccurred(null);
+    this.session.webRequest.onCompleted(null);
+    this.session.removeAllListeners("will-download");
+    const cleanup = this.previous.then(async () => {
+      await this.pending?.catch(() => undefined);
+      this.session.flushStorageData();
+      await Promise.allSettled([this.session.cookies.flushStore(), this.session.closeAllConnections()]);
     });
+    this.profiles.release(this.partition, cleanup);
   }
 }
