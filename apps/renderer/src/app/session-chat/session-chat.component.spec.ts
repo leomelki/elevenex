@@ -153,6 +153,38 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it.each(["claude", "codex", "opencode", "pi", "custom-agent"])(
+    "uses the %s harness identity for the reply mark",
+    async (provider) => {
+      const labels: Readonly<Record<string, string>> = {
+        claude: "Claude Code", codex: "Codex", opencode: "OpenCode", pi: "Pi",
+      };
+      const { fixture, root } = setup([
+        item("prompt", "user", "Hello"),
+        item("answer", "assistant", "Ready to help."),
+      ], {
+        ...state,
+        provider,
+        providers: Object.entries(labels).map(([id, label]) => ({ id, label })),
+      });
+      await settle(fixture);
+      const mark = root.querySelector("ex-turn .mark");
+      // Catalog labels name the agent; unlisted harnesses fall back to their ID.
+      const name = labels[provider] ?? provider;
+      expect(mark?.getAttribute("role")).toBe("img");
+      expect(mark?.getAttribute("aria-label")).toBe(name);
+      expect(mark?.getAttribute("title")?.startsWith(name)).toBe(true);
+      expect(mark?.querySelector("ex-agent-mark")?.getAttribute("aria-hidden")).toBe("true");
+      if (provider === "custom-agent") {
+        expect(mark?.querySelector("svg")).toBeNull();
+        expect(mark?.textContent?.trim()).toBe("CU");
+      } else {
+        expect(mark?.querySelector("svg path")).not.toBeNull();
+        expect(mark?.textContent?.trim()).toBe("");
+      }
+    },
+  );
+
   it("keeps the live turn mounted when its durable prompt receipt arrives with completion", async () => {
     const { fixture, root, publish, complete } = setup();
     await settle(fixture);

@@ -2,6 +2,17 @@
 
 One agent reply, in the chat's reply column: the agent's mark sits in a narrow 28px gutter (its tooltip names the agent and the time), and everything it says starts at one left edge. Top to bottom, always: **work line → thread → answer → what it changed**.
 
+The renderer accepts an optional `harness` ID for the shared bundled logo
+(Claude Code, Codex, OpenCode or Pi). `ReplyMark` draws every agent on the same
+28px tinted tile: peach/terracotta for Claude, periwinkle with an app-inspired
+gradient for Codex, and a neutral tint with `ink` for OpenCode/Pi. The shared
+`AgentMark` balances each logo's optical size and uses theme-aware `harness-*`
+tokens. The `mark` monogram fallback (missing or unknown ID) uses the neutral
+tile and `ink-muted`. Brand colour identifies the harness; the live teal ring
+remains a separate activity signal and stops under reduced motion. `author` is the
+harness display name ("Claude Code", not its ID) and the tile's `img` name. The
+same treatment applies to standalone agent `Message`s.
+
 **While it works:** the mark breathes; the work line reads *Working · 1m 12s · 5 steps* with a Stop chip. Below it the thread (`WorkTimeline`): what the agent says between steps as prose in ink, the steps under it as small muted rows, condensed to the latest message plus the last four steps (“N earlier steps” for the rest). Then the `NowLine` with the action in progress (while it thinks: the thought's title and the last lines of its reasoning), then the reply as it streams. A line runs down the gutter beside the thread.
 **When it finishes:** the work line crossfades to **Worked 4m 12s**, the mark's ring lets go, the thread folds away, the answer completes and the footer opens: the files it changed as `FileChip`s, then side chat · fork · copy (on hover or focus) and Review. The facts behind the work line (“Edited 3 files +92 −12 · 200/200 passed · Ran 1 command”) fade in one by one when you hover or focus the reply, and stay while its thread is open; unresolved failures always show; on touch screens they always show. Click the line to unfold the thread.
 **Stopped / failed:** *Stopped after 1m 2s* (with Continue) or *Failed after 2m* (in `danger`, with the error and Retry).

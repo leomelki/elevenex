@@ -242,6 +242,7 @@ export class ConversationDemoComponent {
         "Can you make refund retries respect Retry-After without delaying successful requests?",
       time: "10:42",
       author: "Codex",
+      harness: "codex",
       mark: "CX",
       status: "done",
       steps: this.steps,
@@ -255,6 +256,7 @@ export class ConversationDemoComponent {
       prompt: "What happens when the header is invalid?",
       time: "10:47",
       author: "Codex",
+      harness: "codex",
       mark: "CX",
       status: "done",
       steps: [],
@@ -267,6 +269,7 @@ export class ConversationDemoComponent {
       prompt: "Add a regression test for a past date too.",
       time: "10:48",
       author: "Codex",
+      harness: "codex",
       mark: "CX",
       status: "live",
       steps: [...this.steps.slice(0, 3), this.liveStep],
@@ -325,6 +328,7 @@ export class ConversationDemoComponent {
       this.exchanges.update(items => [...items, {
         id: `sent-${items.length}`, prompt: value.text, sendOrigin: value.sendOrigin,
         isNew: true, status: "live", steps: [], answer: "",
+        harness: this.agent().harness, mark: this.agent().mark,
       }]);
     }
   }

@@ -220,6 +220,8 @@ export interface ChatExchange {
   readonly attachments?: readonly ConversationAttachment[];
   readonly time?: string;
   readonly author?: string;
+  /** Exact harness ID for the bundled logo; mark remains the fallback. */
+  readonly harness?: string;
   readonly mark?: string;
   readonly status: TurnStatus;
   readonly steps: readonly WorkStep[];

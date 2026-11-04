@@ -1,6 +1,7 @@
 /**
  * Harness brand marks, bundled so the composer never requests a third-party asset.
- * They render in `currentColor`: one calm monochrome treatment in both themes.
+ * Plain marks render in `currentColor`; tinted reply marks use theme-aware
+ * identity colours. The Codex gradient is app-inspired, not an official asset.
  *
  * Claude, Codex and OpenCode paths come from Lobe Icons
  * (https://github.com/lobehub/lobe-icons, MIT License, Copyright (c) 2023 LobeHub).

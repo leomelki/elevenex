@@ -1,7 +1,11 @@
 @if (role() === "agent") {
-  <div class="mark" [title]="author() + (time() ? ' · ' + time() : '')">
-    {{ mark() }}
-  </div>
+  <ex-reply-mark
+    class="mark"
+    [author]="author()"
+    [time]="time()"
+    [mark]="mark()"
+    [harness]="harness()"
+  />
 }
 <div class="body">
   <div class="content"><ng-content /></div>

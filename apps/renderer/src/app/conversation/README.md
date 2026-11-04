@@ -7,6 +7,7 @@ These standalone OnPush components consume renderer view models and emit typed i
 - `ChatComponent` composes `ChatScroll`, user messages, turns, Markdown and turn navigation from `readonly ChatExchange[]`. Project a composer with `chatComposer`, and optional decision cards with `chatContent`.
 - `ChatExchange.mentions` supplies read-only context chips inside the corresponding user message. These reuse the composer mention appearance, retain stable IDs and full labels, and expose no removal controls in history. The owner supplies these for optimistic and restored messages; snapshot contents and transcript paths never belong in this view model.
 - `TurnComponent` owns only expanded evidence and a 700ms current-step hold. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
+- `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. Both render through the internal `ReplyMark` (`turns/reply-mark.component.ts`): a 28px tinted tile (peach for Claude, periwinkle with a gradient glyph for Codex, neutral for OpenCode/Pi and monograms), exposed as `role="img"` named by `author`. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
 - `WorkTimeline` groups adjacent successful discovery steps. Failed work stays visible. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
 - `ComposerComponent` owns the draft (`[(draft)]` is optional), mention query, local overlay state and file-drop feedback. It emits `ComposerSubmission` with `send`, `queue` or `steer`. Queue mutations, context additions/removals, recording and all agent settings are controlled by the owner. File attachment outputs contain user-selected browser `File` objects, which the integration must resolve through the permitted platform boundary.
 - `QueuedMessage.renderId` optionally preserves an optimistic queue row through its saved receipt. Keep that key stable while the row remains present; `id` remains the durable identity emitted by queue actions. Replacing the mounted key would retain the outgoing row during its exit and briefly inflate the composer's measured height.
@@ -223,8 +224,12 @@ thinking level beside it. The accessible name still includes the harness.
   rather than claiming the first level.
 - Internal `AgentMark` renders the bundled harness logo (`agent-logos.ts`:
   Claude Code, Codex, OpenCode, Pi; MIT/published marks, attribution in the
-  file) in `currentColor`, sized by `--agent-mark-size`, or the `mark` monogram
-  for any other harness. Logos match exact harness IDs only.
+  file), sized by `--agent-mark-size`, or the `mark` monogram for any other
+  harness. Logos match exact harness IDs only. The default `plain` appearance
+  inherits `currentColor` for compact picker/preset controls. `appearance="tinted"`
+  provides the reply tile, theme-aware `harness-*` colours and optical logo sizing.
+  Codex uses a locally scoped SVG gradient with a unique ID per instance; it is
+  app-inspired, not an official coloured asset. No animation belongs to this mark.
 - `agent-config.ts` holds the shared config transitions (`withHarness`,
   `withModel`, `thinkingLabel`). The menu and the preset form's
   `AgentSettings` both use them, so a manual change always leaves the preset

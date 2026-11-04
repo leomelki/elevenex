@@ -7,53 +7,31 @@ import {
 import { agentLogo } from "./agent-logos";
 
 /**
- * A harness's brand mark in `currentColor`, sized by the host (`--agent-mark-size`).
- * Harnesses without a bundled logo keep the neutral two-letter monogram.
+ * Bundled harness identity, sized by `--agent-mark-size`. Plain marks inherit
+ * colour; tinted marks use the theme's identity palette, never status colours.
  */
 @Component({
   selector: "ex-agent-mark",
   host: {
     "aria-hidden": "true",
     "[class.monogram]": "!logo()",
+    "[attr.data-harness]": "logo() ? harness() : null",
+    "[class.tinted]": "appearance() === 'tinted'",
   },
-  template: `
-    @if (logo(); as logo) {
-      <svg [attr.viewBox]="logo.viewBox" fill="currentColor" fill-rule="evenodd">
-        @for (path of logo.paths; track $index) {
-          <path [attr.d]="path" />
-        }
-      </svg>
-    } @else {
-      {{ mark() }}
-    }
-  `,
-  styles: `
-    :host {
-      --agent-mark-size: var(--space-4);
-      flex: none;
-      display: grid;
-      place-items: center;
-      width: var(--agent-mark-size);
-      height: var(--agent-mark-size);
-    }
-    svg {
-      display: block;
-      width: 86%;
-      height: 86%;
-    }
-    :host(.monogram) {
-      border-radius: calc(var(--radius-xs) + 1px);
-      background: var(--accent-soft);
-      color: var(--accent);
-      font: 700 calc(var(--agent-mark-size) / 2) / 1 var(--font-sans);
-      letter-spacing: var(--text-display-tracking);
-    }
-  `,
+  templateUrl: "./agent-mark.component.html",
+  styleUrl: "./agent-mark.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AgentMarkComponent {
   /** Monogram fallback for harnesses without a bundled logo. */
   readonly mark = input.required<string>();
   readonly harness = input<string>();
+  readonly appearance = input<"plain" | "tinted">("plain");
   protected readonly logo = computed(() => agentLogo(this.harness()));
+  protected readonly gradient = computed(() =>
+    this.appearance() === "tinted" && this.harness() === "codex",
+  );
+  // SVG paint servers share the document's ID space, including across replies
+  // and overlays. Each mounted mark must own its gradient reference.
+  protected readonly gradientId = `agent-codex-${crypto.randomUUID()}`;
 }

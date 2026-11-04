@@ -1,5 +1,41 @@
 # Component system verification
 
+## Tinted reply harness tiles, 2026-11-04
+
+Implemented the selected Option 3 on the shared reply mark: Claude uses a
+peach/terracotta tile, Codex a periwinkle tile with an app-inspired gradient,
+and OpenCode/Pi neutral tiles. Optical sizing balances the four silhouettes.
+Theme-aware identity colours live in the authoritative tokens and their JSON
+source; compact picker/preset marks retain their plain appearance. Each Codex
+instance owns a unique SVG gradient reference, including when another reply
+unmounts. Accessible author names and the turn-owned live/arrival motion remain.
+
+`pnpm desktop:lint`, `pnpm desktop:test` (134 desktop, seven capture-tool and
+627 renderer tests, plus TypeScript contracts) and `pnpm desktop:build` passed.
+The sandbox blocked localhost test listeners and aborted the first Angular
+production build; both passed when rerun outside the sandbox with the cached
+project-pinned pnpm 8.15.4. No dependencies changed.
+
+Three final native preview reports have `verified: true`, with no errors or
+warnings (45 checkpoints total):
+
+- `artifacts/desktop-capture/reply-tinted-final-2/report.json`: connected
+  replies, all four supported harnesses, fallback compatibility, standalone
+  messages, accessible names, keyboard copy, both themes and narrow reduced
+  motion. Canvas-resolved glyph/tile contrast is at least 3.34:1 in light mode
+  and 3.81:1 in dark mode, including each Codex gradient stop.
+- `artifacts/desktop-capture/reply-tinted-motion/report.json`: frozen entrance
+  frames, stable geometry/identity, keyboard Stop, interrupted navigation and
+  narrow reduced motion in both themes.
+- `artifacts/desktop-capture/reply-tinted-agent-picker/report.json`: shared
+  marks, locked/unlocked harnesses, keyboard selection, model search, focus
+  restoration, interrupted closing, busy/disabled states and narrow reduced
+  motion in both themes.
+
+Light/dark supported-harness, connected entrance, narrow and standalone PNGs
+were inspected. These are real components with controlled preview data, not a
+packaged-app launch or live-provider verification.
+
 ## Offline queue review fixes, 2026-11-02
 
 Queued writing now carries its original SSH configuration identity in the
@@ -2432,3 +2468,40 @@ The stdin native capture in `artifacts/desktop-capture/run-KgXsFu` is verified,
 covering both themes, presets, no thinking, narrow/reduced motion, the accessible
 name and menu focus restoration. Relevant PNGs were inspected. This used the real
 component preview, without a live provider or packaged-app launch.
+
+## Agent reply harness marks — 2026-11-04
+
+Connected chat exchanges now supply their harness ID to the shared `AgentMark`
+in turns. Standalone agent messages use the same logos. Claude Code, Codex,
+OpenCode and Pi render in neutral ink; missing/unknown IDs retain monograms.
+The 28px gutter, accessible author/time, live ring and entry animations remain.
+The conversation guide and Turn specification document the optional input, and
+design question 13 is resolved.
+
+Desktop lint, test (626 renderer tests plus desktop/capture suites), build and
+`git diff --check` pass. Native captures in
+`artifacts/desktop-capture/reply-harness-marks-final` and
+`artifacts/desktop-capture/reply-marks-motion-final` report `verified: true`, with
+no errors or warnings. Relevant PNGs were inspected in light/dark, narrow and
+reduced-motion states. Coverage includes the connected production chat with
+preview transport, all logos and both fallback cases, exact inner/outer sizing,
+standalone messages, keyboard reply actions/Stop, scrubbed entrance frames and
+navigation during entry. These are unpackaged macOS preview checks; no live
+provider, packaged-app launch or Windows/Linux runtime was verified.
+
+## Reply mark design review — 2026-11-04
+
+Design review of the reply harness marks above. Full-size 28px solid-ink logos
+outweighed the reply text, gave the gutter four unrelated silhouettes beside
+accent monogram tiles, and left the live ring around empty space. Connected
+replies also named the agent by raw ID ("claude"), on a role-less element.
+`ReplyMark` now draws every agent on one 28px raised tile with a hairline border
+(18px logo in `ink`; monogram in `ink-muted`, not accent), is `role="img"`, and
+replaces the duplicated Turn/Message markup and CSS. Connected chat uses the
+catalog's harness label as `author`.
+
+Captures in `artifacts/desktop-capture/reply-mark-tiles` and
+`artifacts/desktop-capture/reply-mark-tiles-motion` report `verified: true`; light/dark,
+narrow/reduced-motion, connected and standalone PNGs were inspected. Reply
+history still follows the session's current harness, because transcript items
+carry no per-turn provider.

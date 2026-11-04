@@ -11,9 +11,10 @@ import {
 import { animateMessageSend } from "./message-send-animation";
 import type { MessageSendOrigin, TurnAction } from "../conversation.models";
 import { TurnActsComponent } from "../turns/turn-acts.component";
+import { ReplyMarkComponent } from "../turns/reply-mark.component";
 @Component({
   selector: "ex-message",
-  imports: [TurnActsComponent],
+  imports: [ReplyMarkComponent, TurnActsComponent],
   templateUrl: "./message.component.html",
   styleUrl: "./message.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -57,6 +58,7 @@ export class MessageComponent {
   readonly time = input("");
   readonly author = input("Agent");
   readonly mark = input("EX");
+  readonly harness = input<string>();
   readonly sideChats = input(0);
   readonly pinned = input(false);
   readonly isNew = input(false);

@@ -1,0 +1,59 @@
+:host {
+  --agent-mark-size: var(--space-4);
+  --agent-logo-scale: 1;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--agent-mark-size);
+  height: var(--agent-mark-size);
+}
+svg {
+  display: block;
+  width: calc(86% * var(--agent-logo-scale));
+  height: calc(86% * var(--agent-logo-scale));
+}
+:host(.monogram) {
+  border-radius: calc(var(--radius-xs) + 1px);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: 700 calc(var(--agent-mark-size) / 2) / 1 var(--font-sans);
+  letter-spacing: var(--text-display-tracking);
+}
+:host(.tinted) {
+  box-sizing: border-box;
+  /* Keep the mock's 18px glyph box inside the 28px tile, at every size. */
+  padding: calc(var(--agent-mark-size) * 5 / 28);
+  border-radius: var(--radius-sm);
+  background: var(--harness-neutral-soft);
+  color: var(--ink);
+}
+/* Optical balance: thin rays need more room than dense/block-shaped marks. */
+:host(.tinted[data-harness="claude"]) {
+  --agent-logo-scale: 1.04;
+  background: var(--harness-claude-soft);
+  color: var(--harness-claude);
+}
+:host(.tinted[data-harness="codex"]) {
+  --agent-logo-scale: 0.9;
+  background: var(--harness-codex-soft);
+}
+:host(.tinted[data-harness="opencode"]) {
+  --agent-logo-scale: 0.78;
+}
+:host(.tinted[data-harness="pi"]) {
+  --agent-logo-scale: 0.76;
+}
+:host(.tinted.monogram) {
+  color: var(--ink-muted);
+  font: var(--text-overline-weight) var(--text-overline-size) / 1 var(--font-sans);
+  letter-spacing: 0;
+}
+.gradient-start {
+  stop-color: var(--harness-codex-start);
+}
+.gradient-middle {
+  stop-color: var(--harness-codex-middle);
+}
+.gradient-end {
+  stop-color: var(--harness-codex-end);
+}

@@ -246,7 +246,13 @@ export function chatExchanges(
           ? steps.find((step) => followingIds.has(step.id))?.id
           : undefined,
       answer: [answer, ...attachments.map(media => `![${media.caption.replace(/[[\]\r\n]/g, " ")}](${media.path})`)].filter(Boolean).join("\n\n"),
-      author: state?.provider ?? "Agent",
+      // Name the harness as the picker does ("Claude Code", not "claude").
+      author:
+        state?.providers?.find((provider) => provider.id === state.provider)
+          ?.label ??
+        state?.provider ??
+        "Agent",
+      harness: state?.provider,
       mark: (state?.provider ?? "EX").slice(0, 2).toUpperCase(),
       error: index === groups.length - 1 ? (state?.error ?? "") : "",
     };

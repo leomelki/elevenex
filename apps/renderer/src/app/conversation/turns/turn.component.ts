@@ -29,6 +29,7 @@ import { NowLineComponent } from "./now-line.component";
 import { OutcomeBarComponent } from "./outcome-bar.component";
 import { TurnActsComponent } from "./turn-acts.component";
 import { formatDuration, isProse, summarizeWork } from "./work-summary";
+import { ReplyMarkComponent } from "./reply-mark.component";
 @Component({
   selector: "ex-turn",
   imports: [
@@ -39,6 +40,7 @@ import { formatDuration, isProse, summarizeWork } from "./work-summary";
     WorkTimelineComponent,
     NowLineComponent,
     OutcomeBarComponent,
+    ReplyMarkComponent,
     TurnActsComponent,
   ],
   templateUrl: "./turn.component.html",
@@ -71,6 +73,7 @@ export class TurnComponent implements OnChanges {
   readonly maxVisible = input(4);
   readonly author = input("Agent");
   readonly mark = input("EX");
+  readonly harness = input<string>();
   readonly time = input("");
   readonly reach = input<{ readonly machine: string; readonly since: number }>();
   protected readonly reachTime = computed(() => { const since = this.reach()?.since; return since ? new Date(since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'the connection was lost'; });

@@ -36,6 +36,7 @@
         [error]="exchange.error || ''"
         [author]="exchange.author || 'Agent'"
         [mark]="exchange.mark || 'EX'"
+        [harness]="exchange.harness"
         (action)="turnAction.emit({ id: exchange.id, action: $event })"
         (openFile)="openFile.emit($event); fileReview.emit({ id: exchange.id, path: $event })"
         (review)="review.emit(exchange.id)"

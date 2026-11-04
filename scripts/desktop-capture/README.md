@@ -554,6 +554,14 @@ mark spring, immediate receipts, keyboard Stop, navigation during entry, both
 themes and a narrow reduced-motion fade. Run against the component preview URL
 and sequentially with other native motion captures.
 
+`scenarios/agent-reply-marks.mjs` checks the connected reply's harness identity,
+all four bundled logos, missing/unknown harness monograms, accessible names,
+28px tinted tiles with optically balanced glyphs, theme-resolved glyph/tile
+contrast (including each Codex gradient stop), `img` roles, keyboard reply
+actions and standalone agent messages.
+It covers both themes and narrow reduced-motion layouts against the component
+preview URL. Pair it with `message-working.mjs` for reply entrance/cleanup checks.
+
 
 `scenarios/message-bottom-scroll.mjs` starts at the bottom of a full history
 window. Natural frames begin before submission and check the first painted row,
