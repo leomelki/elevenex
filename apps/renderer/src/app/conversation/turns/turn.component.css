@@ -9,18 +9,7 @@
   border-radius: var(--radius-sm);
   box-shadow: var(--focus-ring);
 }
-.mark {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  display: grid;
-  place-items: center;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: var(--text-overline-size);
-  font-weight: 600;
-  user-select: none;
-}
+/* ReplyMark owns the tile; the turn owns its entry and live ring. */
 :host.live .mark {
   animation: breathe calc(var(--dur-deliberate) * 4) var(--ease-in-out) infinite;
 }

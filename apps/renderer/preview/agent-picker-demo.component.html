@@ -36,11 +36,12 @@
   <section class="stage" aria-label="Agent picker specimen">
     <ex-agent-picker
       [value]="agent()"
-      [harnesses]="harnesses"
+      [harnesses]="harnesses()"
       [locked]="locked()"
       [busy]="busy()"
       [disabled]="disabled()"
       [canCompact]="true"
+      [fastAvailable]="fastAvailable()"
       (changed)="agent.set($event)"
       (fork)="notice.set('Fork requested in preview')"
       (savePreset)="save($event)"

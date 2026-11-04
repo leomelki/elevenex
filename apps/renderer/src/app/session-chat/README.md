@@ -181,6 +181,9 @@ settings and preset catalogs carry these same per-model capabilities.
 The connected chat now uses `Composer`’s Plan/Code switch, agent chip and
 permission picker directly. Harness, model, thinking and fast mode live inside
 the agent popover; the toolbar stays on one row. All choices use authoritative
+model catalog entries; chat and preset selectors never add a synthetic provider
+default with unknown capabilities. An unresolved model prompts Choose model
+without guessing its identity or thinking support. All changes use authoritative
 state with busy/error handling, retain the draft, and reject archived/historical
 edits. Harness changes retain the agent menu and its focus while the new catalog
 loads; settings and sending stay blocked until the new provider is confirmed.

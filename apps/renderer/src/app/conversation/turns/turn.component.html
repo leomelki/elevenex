@@ -1,10 +1,10 @@
-<div
+<ex-reply-mark
   class="mark"
-  [title]="author() + (time() ? ' · ' + time() : '')"
-  [attr.aria-label]="author()"
->
-  {{ mark() }}
-</div>
+  [author]="author()"
+  [time]="time()"
+  [mark]="mark()"
+  [harness]="harness()"
+/>
 <div class="body">
   <ex-fold #workRegion class="work-region" [open]="showWork()">
     @if (workHeader(); as header) {
@@ -78,8 +78,8 @@
         />
       </div>
     </ex-fold>
-    <ex-fold #nowRegion [open]="status() === 'live' && heldStep() !== null">
-      @for (step of heldStep() ? [heldStep()!] : []; track step.id) {
+    <ex-fold #nowRegion [open]="nowStep() !== null">
+      @for (step of nowStep() ? [nowStep()!] : []; track step.id) {
         <div class="preceding-work">
           <ex-now-line [step]="step" [streaming]="activeStep()?.id === step.id" />
         </div>

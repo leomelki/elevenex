@@ -156,15 +156,14 @@ export class SessionChatComponent {
       this.archived() ||
       !this.store.state(),
   );
-  readonly models = computed<readonly AgentModel[]>(() => [
-    { id: "", label: "Provider default", thinking: [] },
-    ...(this.store.state()?.models ?? []).map((model) => ({
+  readonly models = computed<readonly AgentModel[]>(() =>
+    (this.store.state()?.models ?? []).map((model) => ({
       id: model.id,
       label: model.label,
       thinking: model.reasoningEfforts ?? [],
       supportsFastMode: model.supportsFastMode,
     })),
-  ]);
+  );
   readonly providers = computed(() => this.store.state()?.providers ?? []);
   readonly harnesses = computed<readonly AgentHarness[]>(() => {
     const state = this.store.state();

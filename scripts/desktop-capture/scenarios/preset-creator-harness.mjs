@@ -42,6 +42,10 @@ export default async function* (capture) {
     await settle(); yield { name: theme + '-retry', inspect: ['.preset-creator', '.catalog-error'] };
     await behavior(0); await capture.click('.catalog-error button');
     await capture.waitFor(() => document.querySelector('.preset-creator button[aria-label^="Model:"]')?.textContent.includes('Sonnet'));
+    await capture.click('.preset-creator button[aria-label^="Model:"]');
+    await capture.waitFor(() => !!document.querySelector('[role="menuitemradio"]'));
+    assert.equal(await capture.evaluate(() => [...document.querySelectorAll('[role="menuitemradio"]')].some(option => option.textContent.includes('Provider default'))), false);
+    await capture.press('Escape');
     await capture.click('.preset-creator [aria-label="Thinking level"] button[aria-label="Low"]');
     await chooseHarness('Codex'); await chooseHarness('Claude Code');
     assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator [aria-label="Thinking level"] button[aria-checked="true"]').getAttribute('aria-label')), 'Low');

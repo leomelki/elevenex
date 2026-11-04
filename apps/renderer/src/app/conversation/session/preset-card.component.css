@@ -65,10 +65,20 @@ button:focus-visible:not(:disabled) {
   display: grid;
   place-items: center;
   border-radius: var(--radius-xs);
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--surface-sunken);
+  color: var(--ink);
   font-size: var(--text-overline-size);
   font-weight: 600;
+}
+.mark ex-agent-mark {
+  --agent-mark-size: 14px;
+}
+/* A harness without a logo shows its monogram tile in place of the well. */
+.mark:has(ex-agent-mark.monogram) {
+  background: none;
+}
+.mark ex-agent-mark.monogram {
+  --agent-mark-size: 20px;
 }
 .grow {
   flex: 1;

@@ -1,0 +1,378 @@
+@property --list-fade {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+:host {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1);
+  min-width: 0;
+}
+:host(.with-rail) {
+  grid-template-columns: 40px minmax(0, 1fr);
+}
+
+/* Harnesses: a sunken well of logos whose raised thumb glides to the choice. */
+.rail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  --highlight-radius: calc(var(--radius-sm) - 2px);
+}
+.agent {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+  --agent-mark-size: 18px;
+}
+.agent:hover:not(:disabled),
+.agent[aria-checked="true"] {
+  color: var(--ink);
+}
+/* Before the highlight measures, the chosen tile is still visibly raised. */
+.rail:not(.has-fitted-highlight) .agent[aria-checked="true"] {
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+}
+.agent:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.agent[aria-disabled="true"] {
+  cursor: progress;
+}
+.agent:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.agent:active:not(:disabled) ex-agent-mark {
+  transform: scale(0.92);
+}
+ex-agent-mark {
+  transition: transform var(--dur-instant) var(--ease-out);
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--row-height);
+  padding: 0 var(--space-2);
+}
+.heading {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--text-ui-size);
+  line-height: var(--text-ui-line);
+  font-weight: var(--text-title-weight);
+  white-space: nowrap;
+}
+/* Focus rests on the heading only as a stable anchor while choices are busy. */
+.heading:focus {
+  outline: none;
+}
+.heading .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lock {
+  flex: none;
+  color: var(--ink-muted);
+}
+.preset {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  font-weight: var(--text-body-weight);
+}
+.status {
+  flex: none;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+  font-variant-numeric: tabular-nums;
+}
+.plan[data-tone="attention"] {
+  color: var(--attention);
+}
+.plan[data-tone="danger"] {
+  color: var(--danger);
+}
+.updating {
+  animation: fade-in var(--dur-base) var(--ease-out) 150ms both;
+}
+
+.filter {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-1) * 1.5);
+  height: 28px;
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  cursor: text;
+}
+.filter:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.filter input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-ui-size);
+}
+.filter input::placeholder {
+  color: var(--ink-muted);
+}
+
+/* Models: one quiet row each; the check alone marks the choice. */
+.models {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+/* While harnesses can change, the list keeps one height so the menu never jumps.
+   A soft fade marks more rows below and leaves once the end is reached. */
+.models.fixed {
+  height: calc(6 * 30px + 5 * 2px);
+  max-height: none;
+  mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - var(--list-fade)),
+    transparent
+  );
+  animation: list-fade linear both;
+  animation-timeline: scroll(self);
+}
+.model {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-ui-size);
+  line-height: var(--text-ui-line);
+  text-align: left;
+  transition: background-color var(--dur-instant) var(--ease-out);
+}
+.model:hover:not(:disabled),
+.model:focus-visible {
+  background: var(--surface-sunken);
+}
+.model:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.model[aria-disabled="true"] {
+  cursor: progress;
+}
+.model:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.check {
+  flex: none;
+  color: var(--accent);
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-base) var(--ease-spring);
+}
+.model[aria-selected="true"] .check {
+  opacity: 1;
+  transform: none;
+}
+.model[aria-selected="true"] .label {
+  font-weight: var(--text-ui-weight);
+}
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empty {
+  margin: 0;
+  padding: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+
+/* Thinking and fast mode: how hard and how quickly the agent works. */
+.tune {
+  margin-top: var(--space-1);
+  padding: calc(var(--space-1) / 2) var(--space-2) var(--space-2);
+  border-top: 1px solid var(--line);
+}
+.fast-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height);
+}
+.fast-label {
+  color: var(--ink);
+  font-size: var(--text-ui-size);
+  font-weight: var(--text-ui-weight);
+}
+.fast-hint {
+  flex: 1;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.fast {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 var(--space-2) 0 calc(var(--space-1) * 1.5);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink-muted);
+  box-shadow: inset 0 0 0 1px var(--line);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-caption-size);
+  font-weight: var(--text-ui-weight);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+.fast:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
+.fast[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: none;
+}
+.fast:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.fast:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.fast:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transition: opacity var(--dur-base) var(--ease-out) 150ms;
+}
+
+.context {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  padding: 0 calc(var(--space-1) / 2) 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-caption-size);
+}
+.context span {
+  flex: 1;
+}
+.context[data-tone="attention"] {
+  background: var(--attention-soft);
+  color: var(--attention);
+}
+.context[data-tone="danger"] {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.context .compact {
+  color: inherit;
+}
+
+footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--line);
+}
+footer button {
+  flex: none;
+}
+
+@keyframes list-fade {
+  from {
+    --list-fade: 24px;
+  }
+  95% {
+    --list-fade: 24px;
+  }
+  to {
+    --list-fade: 0px;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent,
+  ex-agent-mark,
+  .model,
+  .check,
+  .fast,
+  .updating {
+    transition: none;
+    animation: none;
+  }
+}

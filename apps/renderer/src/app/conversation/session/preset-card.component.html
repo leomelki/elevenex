@@ -11,8 +11,8 @@
     ><span class="mark">
       @if (custom()) {
         <ex-icon name="plus" [size]="14" />
-      } @else {
-        {{ preset()?.mark }}
+      } @else if (preset(); as preset) {
+        <ex-agent-mark [mark]="preset.mark" [harness]="preset.harness" />
       }</span
     ><span class="grow"></span>
     @if (shortcut()) {

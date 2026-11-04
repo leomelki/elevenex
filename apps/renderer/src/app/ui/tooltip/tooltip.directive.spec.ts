@@ -33,4 +33,36 @@ describe('tooltip ownership', () => {
     fixture.destroy();
     expect(labels()).toEqual([]);
   });
+  it('stops following and clears the accessible description when scrolling detaches the tooltip', async () => {
+    vi.useFakeTimers();
+    await TestBed.configureTestingModule({ imports: [TooltipHostComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(TooltipHostComponent);
+    fixture.detectChanges();
+    const button = fixture.nativeElement.querySelector('button') as HTMLButtonElement;
+    const readAnchor = vi.spyOn(button, 'getBoundingClientRect');
+    button.focus();
+    vi.advanceTimersByTime(40);
+    fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')).not.toBeNull();
+    expect(button.hasAttribute('aria-describedby')).toBe(true);
+    document.dispatchEvent(new Event('scroll'));
+    fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')).toBeNull();
+    expect(button.hasAttribute('aria-describedby')).toBe(false);
+    const reads = readAnchor.mock.calls.length;
+    vi.advanceTimersByTime(100);
+    expect(readAnchor.mock.calls).toHaveLength(reads);
+    // A new focus can create and clean up another tooltip after detachment.
+    button.blur();
+    button.focus();
+    vi.advanceTimersByTime(40);
+    fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')).not.toBeNull();
+    fixture.destroy();
+    expect(button.hasAttribute('aria-describedby')).toBe(false);
+    const destroyedReads = readAnchor.mock.calls.length;
+    vi.advanceTimersByTime(100);
+    expect(readAnchor.mock.calls).toHaveLength(destroyedReads);
+    readAnchor.mockRestore();
+  });
 });

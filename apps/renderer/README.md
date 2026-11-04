@@ -179,8 +179,8 @@ Toast defaults still dismiss after an action. For asynchronous Undo, use
 toast after confirmed success. The session archive owner retains a dismissible
 notification (`duration=0`) so a failed/uncertain restore remains reviewable.
 
-The `/agent-picker` preview compares the supplied AgentPicker layout and usage
-variants. `Switch` accepts `size="sm"` for its reference 28×16 agent-setting form;
+The `/agent-picker` preview exercises the agent chip and menu (harness logos,
+model list and filter, thinking track, usage) with every supported state. `Switch` accepts `size="sm"` for its reference 28×16 agent-setting form;
 its default size remains unchanged. Both sizes expose native switch semantics,
 visible focus and reduced-motion behavior.
 

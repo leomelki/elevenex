@@ -14,7 +14,7 @@
           : 'The harness is fixed for this conversation'
       "
     >
-      <ex-agent-mark [mark]="value().mark" />{{
+      <ex-agent-mark [mark]="value().mark" [harness]="value().harness" />{{
         harness()?.label || value().harness
       }}
     </span>
@@ -59,7 +59,7 @@
     label="Model"
     [options]="models()"
     [value]="value().model"
-    placeholder="Provider default"
+    placeholder="Choose model"
     [disabled]="modelUnavailable()"
     (changed)="modelChange($event)"
   />

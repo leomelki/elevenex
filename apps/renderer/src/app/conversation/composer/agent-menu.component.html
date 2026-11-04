@@ -1,0 +1,197 @@
+@if (showRail()) {
+  <div
+    class="rail"
+    role="radiogroup"
+    aria-label="Harness"
+    aria-orientation="vertical"
+    exFittedHighlight='[aria-checked="true"]'
+    [highlightKey]="value().harness + ':' + harnesses().length"
+  >
+    @for (item of harnesses(); track item.id) {
+      @let chosen = item.id === value().harness;
+      <button
+        type="button"
+        role="radio"
+        class="agent"
+        [attr.aria-checked]="chosen"
+        [attr.aria-label]="item.label"
+        [attr.aria-disabled]="busy() || null"
+        [tabindex]="chosen ? 0 : -1"
+        [disabled]="disabled()"
+        [exTooltip]="item.label"
+        tooltipSide="end"
+        (click)="harnessChange(item.id)"
+        (keydown)="railKey($event, $index)"
+      >
+        <ex-agent-mark [mark]="item.mark" [harness]="item.id" />
+      </button>
+    }
+  </div>
+}
+<div class="main">
+  <header>
+    <h2
+      class="heading"
+      tabindex="-1"
+      [attr.cdkFocusInitial]="initialModel() === undefined ? '' : null"
+    >
+      @if (!showRail()) {
+        <ex-agent-mark [mark]="value().mark" [harness]="value().harness" />
+      }
+      <span class="name">{{ harnessLabel() }}</span>
+      @if (locked()) {
+        <ex-icon class="lock" name="lock" [size]="12" />
+        <span class="visually-hidden">, fixed for this conversation</span>
+      }
+      @if (value().preset; as preset) {
+        <span class="preset">{{ preset }}</span>
+      }
+    </h2>
+    <span class="status" role="status">
+      @if (busy()) {
+        <span class="updating">Updating…</span>
+      } @else if (plan(); as plan) {
+        <span
+          class="plan"
+          [attr.data-tone]="plan.tone"
+          [attr.aria-label]="plan.detail"
+          [exTooltip]="plan.detail"
+          >{{ plan.text }}</span
+        >
+      }
+    </span>
+  </header>
+  @if (filterable()) {
+    <label class="filter">
+      <ex-icon name="search" [size]="13" />
+      <input
+        type="text"
+        placeholder="Filter models"
+        aria-label="Filter models"
+        autocomplete="off"
+        spellcheck="false"
+        [value]="query()"
+        [disabled]="disabled()"
+        (input)="filter($event)"
+        (keydown)="filterKey($event)"
+      />
+    </label>
+  }
+  <div
+    class="models"
+    role="listbox"
+    aria-label="Model"
+    [class.fixed]="showRail()"
+    [attr.aria-busy]="busy() || null"
+  >
+    @for (model of visible(); track model.id) {
+      @let chosen = model.id === value().model;
+      <button
+        type="button"
+        role="option"
+        class="model"
+        [attr.data-label]="model.label"
+        [attr.aria-selected]="chosen"
+        [attr.aria-disabled]="busy() || null"
+        [attr.cdkFocusInitial]="initialModel() === model.id ? '' : null"
+        [tabindex]="model.id === tabbableModel() ? 0 : -1"
+        [disabled]="disabled()"
+        (click)="modelChange(model)"
+        (keydown)="listKey($event, $index)"
+      >
+        <ex-icon class="check" name="check" [size]="14" />
+        <span class="label">{{ model.label }}</span>
+      </button>
+    } @empty {
+      @if (busy()) {
+        <ex-skeleton [count]="3" />
+      } @else {
+        <p class="empty">
+          {{
+            query()
+              ? "No model matches “" + query() + "”"
+              : "No models reported yet"
+          }}
+        </p>
+      }
+    }
+  </div>
+  @if (levels().length > 1 || fastAvailable()) {
+    <div class="tune">
+      @if (levels().length > 1) {
+        <ex-thinking-slider
+          [levels]="levels()"
+          [value]="value().thinking"
+          [disabled]="disabled() || busy()"
+          (changed)="thinkingChange($event)"
+        >
+          @if (fastAvailable()) {
+            <ng-container *ngTemplateOutlet="fast" />
+          }
+        </ex-thinking-slider>
+      } @else {
+        <div class="fast-row">
+          <span class="fast-label">Fast mode</span>
+          <span class="fast-hint">Quicker replies</span>
+          <ng-container *ngTemplateOutlet="fast" />
+        </div>
+      }
+    </div>
+  }
+  @if (contextNotice(); as notice) {
+    <div class="context" [attr.data-tone]="notice.tone">
+      <span>Context {{ notice.percent }} full</span>
+      <button
+        exButton
+        variant="ghost"
+        size="sm"
+        class="compact"
+        [disabled]="disabled() || busy()"
+        (click)="compact()"
+      >
+        Compact
+      </button>
+    </div>
+  }
+  @if (showForkAction() || showSave()) {
+    <footer>
+      @if (showForkAction()) {
+        <button
+          exButton
+          variant="ghost"
+          size="sm"
+          [disabled]="disabled() || busy()"
+          exTooltip="Continue this session with another harness"
+          (click)="fork.emit()"
+        >
+          <ex-icon name="fork" [size]="13" />Fork to…
+        </button>
+      }
+      @if (showSave()) {
+        <button
+          exButton
+          variant="ghost"
+          size="sm"
+          class="save"
+          [disabled]="disabled() || busy()"
+          (click)="savePreset.emit(value())"
+        >
+          <ex-icon name="plus" [size]="13" />Save as preset
+        </button>
+      }
+    </footer>
+  }
+</div>
+<ng-template #fast>
+  <button
+    type="button"
+    class="fast"
+    aria-label="Fast mode"
+    [attr.aria-pressed]="!!value().fast"
+    [disabled]="disabled() || busy()"
+    exTooltip="Quicker replies"
+    (click)="fastToggle()"
+  >
+    <ex-icon name="bolt" [size]="12" />Fast
+  </button>
+</ng-template>

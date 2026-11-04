@@ -64,6 +64,7 @@ beforeEach(() => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -94,6 +95,15 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
   };
   let resolve!: (value: BackendResult<SessionChatCommandReply>) => void;
   const bridge = {
+    sessionChatCatalog: vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        provider: "claude", label: "Claude Code",
+        models: [{ id: "sonnet", label: "Sonnet", reasoningEfforts: ["low", "high"], supportsFastMode: false }],
+        model: "sonnet", reasoning: "high", fast: false,
+        reasoningAvailable: true, fastAvailable: false, error: null,
+      },
+    })),
     sessionChatMedia: vi.fn(async (_scope: string, input: { itemId: string; mediaId: string }) => ({ ok: true as const, value: { ...input, source: 'data:image/png;base64,iVBORw0KGgo=' } })),
     sessionChatRead: vi.fn(async () => ({ ok: true as const, value: page })),
     sessionChatCommand: vi.fn(
@@ -143,6 +153,38 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it.each(["claude", "codex", "opencode", "pi", "custom-agent"])(
+    "uses the %s harness identity for the reply mark",
+    async (provider) => {
+      const labels: Readonly<Record<string, string>> = {
+        claude: "Claude Code", codex: "Codex", opencode: "OpenCode", pi: "Pi",
+      };
+      const { fixture, root } = setup([
+        item("prompt", "user", "Hello"),
+        item("answer", "assistant", "Ready to help."),
+      ], {
+        ...state,
+        provider,
+        providers: Object.entries(labels).map(([id, label]) => ({ id, label })),
+      });
+      await settle(fixture);
+      const mark = root.querySelector("ex-turn .mark");
+      // Catalog labels name the agent; unlisted harnesses fall back to their ID.
+      const name = labels[provider] ?? provider;
+      expect(mark?.getAttribute("role")).toBe("img");
+      expect(mark?.getAttribute("aria-label")).toBe(name);
+      expect(mark?.getAttribute("title")?.startsWith(name)).toBe(true);
+      expect(mark?.querySelector("ex-agent-mark")?.getAttribute("aria-hidden")).toBe("true");
+      if (provider === "custom-agent") {
+        expect(mark?.querySelector("svg")).toBeNull();
+        expect(mark?.textContent?.trim()).toBe("CU");
+      } else {
+        expect(mark?.querySelector("svg path")).not.toBeNull();
+        expect(mark?.textContent?.trim()).toBe("");
+      }
+    },
+  );
+
   it("keeps the live turn mounted when its durable prompt receipt arrives with completion", async () => {
     const { fixture, root, publish, complete } = setup();
     await settle(fixture);
@@ -600,8 +642,38 @@ describe("connected composer controls", () => {
     );
     expect(root.querySelectorAll(".bar ex-dropdown")).toHaveLength(0);
     expect(
-      fixture.componentInstance.harnesses()[0]?.models[1]?.thinking,
+      fixture.componentInstance.harnesses()[0]?.models[0]?.thinking,
     ).toEqual(["low", "high"]);
+    root.querySelector<HTMLButtonElement>("ex-agent-picker > button")!.click();
+    await settle(fixture);
+    const options = document.querySelectorAll('.agent-settings [role="option"]');
+    expect([...options].map((option) => option.textContent?.trim())).toEqual(["GPT"]);
+    expect(options[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(document.querySelector('.agent-settings [aria-label="Thinking level"]')).not.toBeNull();
+  });
+  it("offers only named models with their thinking levels in a fetched preset catalog", async () => {
+    const { fixture, bridge } = setup([], { ...capabilities, presets: [], presetCatalogs: true });
+    await settle(fixture);
+    const flow = fixture.componentInstance.presetFlow;
+    flow.openPresetCreator();
+    const catalog = await flow.presetDraft()!.catalogProvider!("claude", new AbortController().signal);
+    expect(bridge.sessionChatCatalog).toHaveBeenCalledWith("scope", expect.objectContaining({ provider: "claude" }));
+    expect(catalog.harness.models).toEqual([
+      { id: "sonnet", label: "Sonnet", thinking: ["low", "high"], supportsFastMode: false },
+    ]);
+    expect(catalog.initial.model).toBe("sonnet");
+    expect(catalog.initial.thinking).toBe("high");
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+  it("asks for a model when an older engine has not reported one", async () => {
+    const { fixture, root } = setup();
+    await settle(fixture);
+    const trigger = root.querySelector<HTMLButtonElement>("ex-agent-picker > button")!;
+    expect(trigger.textContent).toContain("Choose model");
+    trigger.click();
+    await settle(fixture);
+    expect(document.querySelectorAll('.agent-settings [role="option"]')).toHaveLength(0);
+    expect(document.querySelector(".agent-settings")?.textContent).toContain("No models reported yet");
   });
   it("submits only the changed agent setting and retains a draft during reconciliation", async () => {
     const { fixture, bridge, complete } = setup([], capabilities);
@@ -690,7 +762,8 @@ describe("connected composer controls", () => {
       expect(surface.getAttribute("aria-busy")).toBe("false");
       expect(surface.contains(document.activeElement)).toBe(true);
       expect(
-        surface.querySelector('[aria-label^="Model:"]')?.textContent,
+        surface.querySelector('[role="option"][aria-selected="true"]')
+          ?.textContent,
       ).toContain(accepted ? "Sonnet" : "GPT");
       expect(fixture.componentInstance.store.draft()).toBe("Keep this draft");
       surface.dispatchEvent(

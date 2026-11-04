@@ -23,17 +23,22 @@ export default async function* (capture) {
     // Keyboard access, nested menu dismissal and retained textarea focus.
     await capture.press('j', 4);
     await capture.waitFor(() => document.querySelector('.agent-settings'));
-    assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings [aria-label="Thinking level"] button[aria-label="Max"]')?.disabled), true);
-    await capture.click('.agent-settings [aria-label="Thinking level"] button[aria-label="Low"]');
+    assert.equal(await capture.evaluate(() => [...document.querySelectorAll('.agent-settings [role="option"]')].some(option => option.textContent.includes('Provider default'))), false);
+    // Focus starts on the chosen model; the track holds only the model's levels.
+    assert.equal(await capture.evaluate(() => document.activeElement?.matches('.agent-settings [role="option"][aria-selected="true"]')), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('.agent-settings [aria-label="Thinking level"]')?.max), '3');
+    await capture.evaluate(() => document.querySelector('.agent-settings [aria-label="Thinking level"]').focus());
+    await capture.press('Home');
     await capture.waitFor(() => document.querySelector('ex-agent-picker > button .sub')?.textContent.trim().endsWith('Low'));
     assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-settings')), true);
     await capture.click('.agent-settings button[aria-label="Fast mode"]');
     await capture.waitFor(() => document.querySelector('ex-agent-picker ex-icon[name="bolt"]'));
     await finish();
     yield { name: theme + '-agent-settings', inspect: ['.agent-settings', 'ex-agent-picker'] };
-    await capture.click('.agent-settings button[aria-label^="Model:"]');
-    await capture.press('Escape');
-    assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-settings')), true);
+    // Arrow keys move through models without choosing one.
+    await capture.evaluate(() => document.querySelector('.agent-settings [role="option"][aria-selected="true"]').focus());
+    await capture.press('ArrowDown');
+    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-selected')), 'false');
     await capture.press('Escape');
     await capture.waitFor(() => !document.querySelector('.agent-settings'));
     assert.equal(await capture.evaluate(() => document.activeElement?.tagName), 'TEXTAREA');
@@ -80,7 +85,7 @@ export default async function* (capture) {
     await capture.viewport(760, 760); await capture.reducedMotion(true); await finish(); await assertRow();
     yield { name: theme + '-narrow-reduced', inspect: ['ex-composer', 'ex-composer .bar', 'ex-mode-toggle', 'ex-agent-picker', 'ex-permission-picker'] };
     await capture.click('ex-agent-picker > button'); await finish();
-    yield { name: theme + '-narrow-settings', inspect: ['.agent-settings', '.field'] };
+    yield { name: theme + '-narrow-settings', inspect: ['.agent-settings', '.models', '.tune'] };
     await capture.press('Escape'); await capture.reducedMotion(false);
     await mode('running');
     await capture.click('ex-composer textarea'); await capture.press('.', 4);

@@ -28,17 +28,6 @@
   grid-template-columns: 28px minmax(0, 1fr);
   gap: 10px;
 }
-.mark {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: var(--text-overline-size);
-  font-weight: 600;
-}
 .body {
   min-width: 0;
 }

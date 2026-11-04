@@ -11,9 +11,11 @@
   [attr.title]="hasUsage() ? null : 'Agent · ⌘J'"
   (click)="toggle()"
 >
-  <ex-agent-mark [mark]="value().mark" />
-  <span class="name">{{ value().preset || modelLabel() }}</span
-  ><span class="sub">{{ subtitle() }}</span>
+  <ex-agent-mark [mark]="value().mark" [harness]="value().harness" />
+  <span class="name">{{ value().preset || modelLabel() }}</span>
+  @if (subtitle(); as subtitle) {
+    <span class="sub">{{ subtitle }}</span>
+  }
   @if (value().fast) {
     <ex-icon class="fast" name="bolt" [size]="12" />
   }
@@ -38,7 +40,7 @@
   #settingsOverlay="cdkConnectedOverlay"
   [cdkConnectedOverlayOrigin]="origin"
   [cdkConnectedOverlayOpen]="menu.rendered()"
-  cdkConnectedOverlayWidth="min(368px, calc(100vw - var(--space-8)))"
+  [cdkConnectedOverlayWidth]="menuWidth()"
   [cdkConnectedOverlayFlexibleDimensions]="true"
   [cdkConnectedOverlayGrowAfterOpen]="true"
   cdkConnectedOverlayMinWidth="0px"
@@ -67,31 +69,25 @@
     (animationend)="menu.finish($event)"
   >
     @let data = menu.data();
-    @if (data.value.context !== undefined || data.value.plan) {
-      <div class="menu-usage">
-        <ex-agent-usage
-          [agent]="data.value"
-          [canCompact]="data.canCompact"
-          [disabled]="disabled() || busy() || !open()"
-          (compactRequested)="compact()"
-        />
-      </div>
-      <div class="separator" role="separator"></div>
-    }
-    <ex-agent-settings
-      [value]="data.value"
-      [harnesses]="data.harnesses"
-      [locked]="data.locked"
-      [disabled]="disabled() || !open()"
-      [busy]="data.busy"
-      [showFork]="data.showFork"
-      [showSavePreset]="data.showSavePreset"
-      [reasoningAvailable]="data.reasoningAvailable"
-      [fastAvailable]="data.fastAvailable"
-      (changed)="changeAgent($event)"
-      (fork)="fork.emit(); open.set(false)"
-      (savePreset)="savePreset.emit($event); open.set(false)"
-    />
+    <!-- Harness and model changes can add or remove sections: ease the height. -->
+    <div exAutoHeight>
+      <ex-agent-menu
+        [value]="data.value"
+        [harnesses]="data.harnesses"
+        [locked]="data.locked"
+        [disabled]="disabled() || !open()"
+        [busy]="data.busy"
+        [showFork]="data.showFork"
+        [showSavePreset]="data.showSavePreset"
+        [reasoningAvailable]="data.reasoningAvailable"
+        [fastAvailable]="data.fastAvailable"
+        [canCompact]="data.canCompact"
+        (changed)="changeAgent($event)"
+        (fork)="fork.emit(); open.set(false)"
+        (savePreset)="savePreset.emit($event); open.set(false)"
+        (compactRequested)="compactRequested.emit()"
+      />
+    </div>
   </section>
 </ng-template>
 <ng-template
@@ -118,7 +114,7 @@
   >
     <ex-agent-usage [agent]="usage.data()" />
     <div class="usage-footer">
-      <span>More in the agent menu</span><ex-kbd>⌘J</ex-kbd>
+      <span>Adjust the agent</span><ex-kbd>⌘J</ex-kbd>
     </div>
   </div>
 </ng-template>

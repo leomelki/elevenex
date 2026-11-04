@@ -76,8 +76,16 @@ export default async function* (capture) {
     await capture.click('ex-preset-picker ex-preset-card button[aria-pressed="true"]');
   }
   await capture.click('ex-composer ex-agent-picker > button');
-  await capture.waitFor(() => !!document.querySelector('.agent-settings'));
-  await capture.click('.agent-settings footer button');
+  await capture.waitFor(() => document.querySelector('.agent-settings')?.getAttribute('aria-hidden') === 'false');
+  await settle();
+  // Save as preset appears once the mix no longer matches a preset.
+  if (!await capture.evaluate(() => !!document.querySelector('.agent-settings .save'))) {
+    await capture.evaluate(() => document.querySelector('.agent-settings [aria-label="Thinking level"]').focus());
+    await capture.press('End');
+    await capture.waitFor(() => !!document.querySelector('.agent-settings .save'));
+    await settle();
+  }
+  await capture.click('.agent-settings .save');
   await capture.waitFor(() => !!document.querySelector('.preset-creator'));
   await settle(); yield { name: 'save-current-mix', inspect: ['.preset-creator'] };
   await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.preset-creator'));
