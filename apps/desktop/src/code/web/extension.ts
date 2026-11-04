@@ -293,6 +293,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const files = new TaskFiles(base, root, new SaveLedger(context.workspaceState));
   const layout = new CompactLayout(context.workspaceState, (filesOpen, hasEditors) => files.call('presentation', {filesOpen, hasEditors}));
   context.subscriptions.push(layout,
+    vscode.commands.registerCommand('elevenex.code.find-file', () => vscode.commands.executeCommand('workbench.action.quickOpen')),
     vscode.commands.registerCommand('elevenex.code.browse-files', () => layout.browse()),
     vscode.commands.registerCommand('elevenex.code.dismiss-files', () => layout.dismiss()),
     vscode.commands.registerCommand('elevenex.code.focus', () => layout.focus()),

@@ -50,7 +50,7 @@ license and authoritative tokens, not the downloadable runtime.
 ## UX and ownership
 
 The 440px side panel opens a genuine editor directly, alongside chat. The existing panel-tabs row
-contains icon actions for **Browse files**, **Find file**, **Search text** and a separate window,
+contains icon actions for **Browse files**, **Search text** and a separate window,
 alongside expand/close. There is no additional task/branch/status/focus toolbar. File tabs,
 selection and save feedback remain native VS Code. Files auto-save after one second
 of inactivity using upstream `files.autoSave: afterDelay`; Command/Ctrl-S still
@@ -62,7 +62,13 @@ or extra save status in the panel header.
 Below 600px usable width, editing uses the full panel and long lines wrap.
 **Browse files** (folder icon, Command/Ctrl-Shift-E) temporarily fills that same
 Code area with the genuine VS Code file tree. It never squeezes the file into
-another narrow column. Folder clicks/arrow keys keep browsing; a single file
+another narrow column. **Find file…** replaces the `/` folder title at the left
+of the native file-tree header, with New File/New Folder remaining on the right.
+Its VS Code `view/title` action opens the same Quick Open picker as Command/Ctrl-P,
+retaining native click handling, keyboard focus, tooltips and themes. The action is scoped to compact Files; expanded
+Explorer keeps its usual controls. No extra shell search row occupies editor space.
+Command/Ctrl-P remains available in the workbench at every size.
+Folder clicks/arrow keys keep browsing; a single file
 click or Enter opens it and returns to full-width editing. Selecting the already
 open file does the same. On macOS, compact Enter accepts a file rather than
 starting rename; expanded mode retains upstream bindings.
@@ -230,9 +236,14 @@ malicious concurrent directory replacement; see the verification limitations.
 `CompactLayout` owns the file-view placement, compact preference journal, tab
 subscriptions and restoration. A small workbench-owned `FilesFocus` adapter
 handles accessible tree-item activation and editor focus: the public extension
-API does not report accepting the already active editor. It changes no upstream
-DOM/styles, excludes folder expansion, rename inputs and modified clicks, and
-releases both listeners on pagehide. Keep its native mouse/keyboard regressions
+API does not report accepting the already active editor. It sets one document
+class for the compact header presentation, excludes folder
+expansion, rename inputs and modified clicks, and removes that class and both
+listeners on pagehide. The scoped header CSS hides the redundant folder title and
+aligns the existing native Find file action at the left and restores the original
+header outside compact browsing. Native controls keep their own event and
+keyboard handling.
+Keep its native mouse/keyboard regressions
 when upgrading the pinned workbench. Main validates generation/transport-bound
 presentation booleans before publishing Files/Back state to the selected task.
 

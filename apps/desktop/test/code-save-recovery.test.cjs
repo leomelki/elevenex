@@ -72,6 +72,16 @@ async function mount(persisted, disk, options = {}) {
   return { provider, uri, document, commands, choices, comparisons, opened, themes, writes: () => writes, close: () => { for (const disposable of disposables.reverse()) disposable.dispose(); } };
 }
 
+test('the native Find file action opens upstream Quick Open without a platform request', async () => {
+  const editor = await mount({}, { text: 'original' });
+  try {
+    await editor.commands.get('elevenex.code.find-file')();
+    assert.equal(editor.comparisons.length, 1);
+    assert.equal(editor.comparisons[0][0], 'workbench.action.quickOpen');
+    assert.equal(editor.writes(), 0);
+  } finally { editor.close(); }
+});
+
 test('a save cannot leave the workbench before its durable sending claim is confirmed', async () => {
   const persisted = {}, disk = { text: 'original' }, options = {};
   const editor = await mount(persisted, disk, options);

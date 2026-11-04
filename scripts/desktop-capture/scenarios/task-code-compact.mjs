@@ -47,7 +47,14 @@ export default async function* (capture) {
     await cp(join(process.env.ELEVENEX_CODE_SMOKE_CACHE, '1.144.0'), join(app.getPath('userData'), 'code-runtimes/1.144.0'), { recursive: true });
     const finish = async () => { await capture.settle(); await capture.waitFor(() => document.getAnimations().every(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running')); };
     await capture.viewport(1440, 900);
+    await capture.cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
     await capture.waitFor(() => document.querySelector('button[data-machine="local"]'));
+    // Publish a newer real machine revision after installing the test adapter;
+    // reselecting also refreshes a client that observed failed startup earlier.
+    await capture.evaluate(() => window.elevenex.selectEnvironment({ kind: 'local' }));
+    await capture.waitFor(async () => !!(await window.elevenex.backendClientState()).scope);
+    await capture.evaluate(() => window.elevenex.markMachineOpened({ kind: 'local' }));
+    await finish();
     await capture.click('button[data-machine="local"]'); await finish();
     await capture.waitFor(id => document.querySelector(`[data-project-id="${id}"]`), projectId);
     await capture.click(`[data-project-id="${projectId}"]`); await finish();
@@ -63,7 +70,8 @@ export default async function* (capture) {
     yield {name:'iframe-loading-without-fallback',inspect:['ex-code-panel','.editor-surface','iframe']};
     holdBootstrap = false; resumeBootstrap();
     const waitMain = async (predicate, message) => { const deadline = Date.now() + 45000; while (!await predicate()) { if (Date.now() > deadline) throw new Error(message); await new Promise(resolve => setTimeout(resolve, 40)); } };
-    await waitMain(() => capture.evaluate(() => !!document.querySelector('ex-workspace-panels .find-file')), 'Compact editor did not open');
+    await waitMain(() => capture.evaluate(() => !!document.querySelector('ex-workspace-panels .browse-files')), 'Compact editor did not open');
+    assert.equal(await capture.evaluate(() => !!document.querySelector('ex-workspace-panels .find-file')), false);
     const frame = capture.window.webContents.mainFrame.frames.find(frame => frame.url.includes('code.elevenex.invalid'));
     assert.ok(frame); assert.equal(capture.window.contentView.children.length, 0);
     await waitMain(()=>frame.executeJavaScript('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16'),'Empty compact workbench did not show its tree');
@@ -77,11 +85,18 @@ export default async function* (capture) {
     assert.ok(await frame.executeJavaScript('innerWidth <= 440'));
     assert.equal(await frame.executeJavaScript('typeof window.elevenex'), 'undefined');
     assert.equal(await capture.evaluate(() => document.querySelector('ex-app-shell .main').hasAttribute('inert')), false);
-    await capture.cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
     const press = async (key, code, vk, modifiers = 0) => { for (const type of ['keyDown', 'keyUp']) await capture.cdp('Input.dispatchKeyEvent', { type, key, code, windowsVirtualKeyCode: vk, modifiers }); };
     const waitNative = async expression => { try { await waitMain(() => frame.executeJavaScript(expression), expression); } catch (error) { console.log('COMPACT_NATIVE_STATE', await frame.executeJavaScript('JSON.stringify({text:document.body.innerText.slice(-1800),inputs:[...document.querySelectorAll(".quick-input-widget input")].map(e=>({value:e.value,rect:e.getBoundingClientRect().toJSON()}))})')); throw error; } };
     const typeQuery = async text => { await press('a', 'KeyA', 65, process.platform === 'darwin' ? 4 : 2); await capture.cdp('Input.insertText', { text }); };
+    const findSelector = '.part.auxiliarybar .action-label[aria-label^="Find file"]';
+    const clickFind = async () => {
+      const button = await frame.executeJavaScript(`(() => { const find = document.querySelector('${findSelector}'); const create = document.querySelector('.part.auxiliarybar .codicon-new-file'); if (!find || !create) throw Error('Native Files actions missing'); const r = find.getBoundingClientRect(), other = create.getBoundingClientRect(); const title = find.closest('.title'), label = title.querySelector('.title-label'); if (Math.abs(r.y - other.y) > 4 || r.x - title.getBoundingClientRect().x > 20 || label.getBoundingClientRect().width !== 0) throw Error('Find file must replace the folder title on the left'); if (!getComputedStyle(find, '::after').content.includes('Find file')) throw Error('Find file label missing'); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+      const host = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').getBoundingClientRect().toJSON());
+      for (const type of ['mousePressed', 'mouseReleased']) await capture.cdp('Input.dispatchMouseEvent', { type, x: host.x + button.x, y: host.y + button.y, button: 'left', clickCount: 1 });
+    };
     const clickTree = async name => {
+      await capture.settle();
+      await frame.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
       const row = await frame.executeJavaScript(`(()=>{const row=[...document.querySelectorAll('.part.auxiliarybar [role="treeitem"]')].find(row=>row.querySelector('.label-name')?.textContent===${JSON.stringify(name)});if(!row)throw Error('Tree item missing');const r=row.getBoundingClientRect();return {x:r.x+Math.min(90,r.width/2),y:r.y+r.height/2};})()`);
       const host = await capture.evaluate(()=>document.querySelector('ex-code-panel iframe').getBoundingClientRect().toJSON());
       for(const type of ['mousePressed','mouseReleased']) await capture.cdp('Input.dispatchMouseEvent',{type,x:host.x+row.x,y:host.y+row.y,button:'left',clickCount:1});
@@ -93,6 +108,7 @@ export default async function* (capture) {
       await capture.click('ex-workspace-panels .browse-files');
       await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16');
       await capture.waitFor(()=>document.querySelector('ex-workspace-panels .browse-files button')?.getAttribute('aria-label')==='Back to editor · Esc');
+      await waitNative(`!!document.querySelector('${findSelector}')`);
       yield {name:`${theme}-files-over-editor`,inspect:['ex-workspace-panels .browse-files','ex-code-panel','iframe']};
       await press('Escape','Escape',27);
       await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width === 0');
@@ -104,19 +120,32 @@ export default async function* (capture) {
       yield {name:`${theme}-tree-file-accepted`,inspect:['ex-code-panel','ex-workspace-panels .browse-files','iframe']};
       await press('e','KeyE',69,(process.platform==='darwin'?4:2)|8);
       await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16');
+      await waitNative('!!document.activeElement?.closest(".part.auxiliarybar")');
       await press('Home','Home',36); await press('ArrowRight','ArrowRight',39); await press('ArrowDown','ArrowDown',40); await press('Enter','Enter',13);
       await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width === 0 && document.activeElement?.classList.contains("inputarea")');
       yield {name:`${theme}-keyboard-tree-accepted`,inspect:['ex-code-panel','iframe']};
       yield { name: `${theme}-compact-editing`, inspect: ['ex-code-panel', 'ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface', 'ex-app-shell .main'] };
-      await capture.evaluate(() => document.querySelector('ex-workspace-panels .find-file button').focus());
-      await capture.waitFor(() => document.querySelector('[role="tooltip"]')?.textContent.includes('Find file'));
-      yield { name: `${theme}-find-icon-focus`, inspect: ['ex-workspace-panels .find-file button', '[role="tooltip"]'] };
-      await capture.click('ex-workspace-panels .find-file');
+      assert.equal(await capture.evaluate(() => !!document.querySelector('ex-code-panel .find-file, ex-code-panel .files-toolbar')), false);
+      await capture.click('ex-workspace-panels .browse-files');
+      await waitNative(`!!document.querySelector('${findSelector}')`);
+      await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16 && !!document.activeElement?.closest(".part.auxiliarybar .monaco-list")');
+      await capture.evaluate(() => document.querySelector('ex-code-panel iframe').focus());
+      await frame.executeJavaScript(`document.querySelector('${findSelector}').focus()`);
+      await press('ArrowRight', 'ArrowRight', 39); await press('ArrowLeft', 'ArrowLeft', 37);
+      assert.equal(await frame.executeJavaScript(`document.activeElement?.matches('${findSelector}')`), true);
+      yield { name: `${theme}-native-find-file-focus`, inspect: ['ex-code-panel .editor-surface'] };
+      assert.equal(await frame.executeJavaScript(`document.activeElement?.matches('${findSelector}')`), true, 'Browse must finish focusing the tree before moving to the header');
+      await press('Enter', 'Enter', 13);
+      await waitNative('!!document.activeElement?.closest(".quick-input-widget")');
+      await press('Escape', 'Escape', 27);
+      await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16');
+      await clickFind();
       await waitNative('!!document.activeElement?.closest(".quick-input-widget")');
       await typeQuery('README');
       await waitNative('document.querySelector(".quick-input-list")?.textContent.includes("README.md")');
       yield { name: `${theme}-compact-find-file`, inspect: ['ex-code-panel .editor-surface'] };
-      await press('Escape', 'Escape', 27);
+      await press('Enter', 'Enter', 13);
+      await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width === 0 && document.activeElement?.classList.contains("inputarea")');
       await capture.click('ex-workspace-panels [aria-label="Search text in files"]');
       await waitNative('!!document.activeElement?.closest(".quick-input-widget")');
       await typeQuery('%describeWorkspace');
@@ -155,6 +184,7 @@ export default async function* (capture) {
       await waitNative('document.querySelector(".monaco-editor")?.textContent.includes("verification")');
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]'); await finish();
       await waitNative('(document.querySelector(".part.sidebar")?.getBoundingClientRect().width ?? 0) > 0');
+      await waitNative('!document.body.classList.contains("elevenex-compact-files")');
       assert.equal(capture.window.webContents.mainFrame.frames.find(child => child.url === frame.url), frame);
       await capture.click('ex-workspace-panels [role="tab"][aria-label="Browser"]'); await finish();
       await capture.click('ex-workspace-panels [role="tab"][aria-label="Code"]'); await finish();

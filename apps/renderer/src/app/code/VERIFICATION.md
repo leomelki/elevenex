@@ -1,5 +1,35 @@
 # New Code workbench verification
 
+## Native compact Find file action
+
+Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0 with Code OSS
+1.144.0. **Find file…** replaces `/` at the left of the compact file-tree header.
+New File/New Folder remain at the right. The existing native `view/title` action
+opens upstream Quick Open; scoped CSS presents it as a text action in the title
+position. The separate shell icon and additional search row are removed.
+
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`: passed.
+  Tests include 154 main cases, seven capture-tool cases, IPC/shared type checks
+  and 627 renderer cases. The extension regression exercises the registered
+  native command and confirms it opens Quick Open without writing files. Focus
+  tests verify that the compact presentation class is removed on acceptance and
+  disposal. Compact Enter bindings also require list focus.
+- `artifacts/desktop-capture/code-title-find-settled/report.json`:
+  **28 checkpoints, verified: true**, no renderer errors. Inspected the native
+  header, keyboard focus and Quick Open in both themes, plus narrow/reduced-motion
+  layout. Real input verifies mouse/Enter activation, cancelling back to Files,
+  result acceptance, tree navigation, retained edits, expansion/reopen and modals.
+  The scenario asserts Find file occupies the left title position, `/` is hidden,
+  no shell search row exists, and expansion removes the compact presentation.
+  Its disposable setup reselects the backend to refresh stale startup scope,
+  publishes a new machine revision and awaits onboarding. Header keyboard checks
+  wait for Browse to finish focusing the tree before moving focus to the action;
+  this avoids a late native tree-focus command consuming the test's Enter.
+- Native `electron-smoke.cjs`: passed. The existing cross-origin iframe sandbox
+  advisory remains in captures; no security settings or contracts changed.
+- `git diff --check`: passed. No dependencies changed. These are unpackaged
+  macOS checks; no packaged or Windows/Linux launch was run.
+
 ## Auto-save and native save alerts — current verification
 
 Verified on 2026-11-03 on macOS arm64 / Electron 45.0.0 with Code OSS
