@@ -109,7 +109,7 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
       sandbox: true,
       webSecurity: true,
       allowRunningInsecureContent: false,
-      webviewTag: false,
+      webviewTag: true,
       devTools: !app.isPackaged,
     },
   });
@@ -162,7 +162,7 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
   window.webContents.on('will-redirect', (event, url) => {
     if (!isAppUrl(url, devUrl)) event.preventDefault();
   });
-  window.webContents.on('will-attach-webview', (event) => event.preventDefault());
+  window.webContents.on('will-attach-webview', (event, _preferences, params) => { if (!taskBrowser?.permitsGuest(window.webContents.id, params)) event.preventDefault(); });
   void window.loadURL(editorContext ? `${devUrl ?? APP_ORIGIN}/code-window` : devUrl ?? `${APP_ORIGIN}/`).catch((error: unknown) => {
     console.error('Could not load the renderer:', error);
     window.destroy();

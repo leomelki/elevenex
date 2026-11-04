@@ -29,7 +29,7 @@ export default tseslint.config(
   },
   {
     basePath,
-    files: ['apps/desktop/src/**/*.ts', 'packages/shared/src/**/*.ts', 'apps/renderer/src/**/*.ts', 'apps/renderer/capture/**/*.ts', 'apps/renderer/preview/**/*.ts'],
+    files: ['apps/desktop/src/**/*.ts', 'packages/shared/src/**/*.ts', 'packages/browser-network/src/**/*.ts', 'apps/renderer/src/**/*.ts', 'apps/renderer/capture/**/*.ts', 'apps/renderer/preview/**/*.ts'],
     extends: [eslint.configs.recommended, ...tseslint.configs.recommended],
   },
   {

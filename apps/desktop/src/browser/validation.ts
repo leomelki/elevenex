@@ -1,4 +1,32 @@
-import type { BrowserAgentCommand, BrowserRect, TaskBrowserCommand, TaskBrowserLayout } from '@elevenex/shared';
+import { browserLoopbackHost } from '@elevenex/browser-network';
+import type { BrowserAgentCommand, BrowserRect, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserStreamInput, TaskBrowserStreamEvent } from '@elevenex/shared';
+
+export function streamInput(value: unknown): TaskBrowserStreamInput {
+  const raw = record(value);
+  if (raw['kind'] !== 'batch') return streamEvent(value);
+  exact(raw, ['kind', 'events']);
+  if (!Array.isArray(raw['events']) || !raw['events'].length || raw['events'].length > 32) throw new Error('Invalid input batch');
+  const events = raw['events'].map(streamEvent);
+  if (events.some(event => event.kind === 'clipboard') || events.reduce((size, event) => size + (event.kind === 'text' || event.kind === 'composition' ? event.text.length : 0), 0) > 65536) throw new Error('Input batch exceeded its bounds');
+  return { kind: 'batch', events };
+}
+function streamEvent(value: unknown): TaskBrowserStreamEvent {
+  const raw = record(value), kind = raw['kind'];
+  const number = (key: string, min: number, max: number): number => { const n = raw[key]; if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) throw new Error('Invalid browser input'); return n; };
+  const text = (key: string, max: number): string => { const s = raw[key]; if (typeof s !== 'string' || s.length > max) throw new Error('Invalid browser input'); return s; };
+  if (kind === 'text') { exact(raw, ['kind', 'text']); return { kind, text: text('text', 65536) }; }
+  if (kind === 'composition') { exact(raw, ['kind', 'text', 'selectionStart', 'selectionEnd']); const value=text('text',4096);return {kind,text:value,selectionStart:number('selectionStart',0,value.length),selectionEnd:number('selectionEnd',0,value.length)}; }
+  if (kind === 'edit') { exact(raw, ['kind', 'operation']); const operation=raw['operation'];if(operation!=='undo'&&operation!=='redo')throw new Error('Invalid edit operation');return {kind,operation}; }
+  if (kind === 'clipboard') { exact(raw, ['kind', 'operation']); const operation = raw['operation']; if (operation !== 'copy' && operation !== 'cut' && operation !== 'paste' && operation !== 'selectAll') throw new Error('Invalid clipboard action'); return { kind, operation }; }
+  if (kind === 'key') { exact(raw, ['kind', 'type', 'key', 'code', 'keyCode', 'modifiers']); const type = raw['type']; if (type !== 'down' && type !== 'up') throw new Error('Invalid key action'); return { kind, type, key: text('key', 80), code: text('code', 80), keyCode: number('keyCode', 0, 255), modifiers: number('modifiers', 0, 15) }; }
+  const x = number('x', 0, 16384), y = number('y', 0, 16384), modifiers = number('modifiers', 0, 15);
+  if (kind === 'wheel') { exact(raw, ['kind', 'x', 'y', 'deltaX', 'deltaY', 'modifiers']); return { kind, x, y, modifiers, deltaX: number('deltaX', -10000, 10000), deltaY: number('deltaY', -10000, 10000) }; }
+  if (kind !== 'pointer') throw new Error('Unsupported browser input');
+  exact(raw, ['kind', 'type', 'x', 'y', 'button', 'buttons', 'clicks', 'modifiers']);
+  const type = raw['type'], button = raw['button'];
+  if ((type !== 'down' && type !== 'up' && type !== 'move') || (button !== 'left' && button !== 'right' && button !== 'middle' && button !== 'none')) throw new Error('Invalid pointer action');
+  return { kind, type, button, x, y, modifiers, buttons: number('buttons', 0, 31), clicks: number('clicks', 0, 3) };
+}
 
 export function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid browser input');
@@ -21,22 +49,19 @@ export function browserUrl(value: unknown): string {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Only HTTP and HTTPS pages without credentials are allowed');
   return url.href;
 }
-export function loopback(url: URL): boolean {
-  // URL canonicalizes legacy numeric IPv4 and IPv6 forms before this check.
-  const host = url.hostname.toLowerCase().replace(/\.$/, '');
-  if (host === 'localhost' || host.endsWith('.localhost') || host === '0.0.0.0' || /^127\./.test(host) || host === '[::1]' || host === '[::]') return true;
-  const mapped = /^\[::ffff:([a-f0-9]{1,4}):([a-f0-9]{1,4})\]$/.exec(host);
-  return !!mapped && ((parseInt(mapped[1]!, 16) >>> 8) === 127 || (parseInt(mapped[1]!, 16) === 0 && parseInt(mapped[2]!, 16) === 0));
-}
+export function loopback(url: URL): boolean { return browserLoopbackHost(url.hostname); }
 export function layout(value: unknown): TaskBrowserLayout {
-  const raw = record(value); exact(raw, ['sequence', 'surfaceEpoch', 'visible', 'inputReady', 'ownerGeneration', 'bounds', 'reducedMotion']);
+  const raw = record(value); exact(raw, ['sequence', 'surfaceEpoch', 'visible', 'inputReady', 'ownerGeneration', 'bounds', 'reducedMotion', 'viewport']);
   const box = record(raw['bounds']); exact(box, ['x', 'y', 'width', 'height']);
   if (typeof raw['inputReady'] !== 'boolean' || !Number.isSafeInteger(raw['ownerGeneration']) || Number(raw['ownerGeneration']) < 0 || !Number.isSafeInteger(raw['surfaceEpoch']) || Number(raw['surfaceEpoch']) < 0 || typeof raw['reducedMotion'] !== 'boolean' || typeof raw['visible'] !== 'boolean' || !Number.isSafeInteger(raw['sequence']) || Number(raw['sequence']) < 0) throw new Error('Invalid browser layout');
   for (const key of ['x', 'y', 'width', 'height']) if (typeof box[key] !== 'number' || !Number.isFinite(box[key]) || Number(box[key]) < 0 || Number(box[key]) > 16384) throw new Error('Invalid browser bounds');
-  return { inputReady: raw['inputReady'], ownerGeneration: Number(raw['ownerGeneration']), surfaceEpoch: Number(raw['surfaceEpoch']), sequence: Number(raw['sequence']), reducedMotion: raw['reducedMotion'], visible: raw['visible'], bounds: { x: Number(box['x']), y: Number(box['y']), width: Number(box['width']), height: Number(box['height']) } };
+  const viewport = raw['viewport'] === undefined ? undefined : record(raw['viewport']);
+  if (viewport) { exact(viewport, ['width', 'height']); for (const key of ['width','height']) if(typeof viewport[key] !== 'number' || !Number.isFinite(viewport[key]) || Number(viewport[key]) < 0 || Number(viewport[key]) > 16384) throw new Error('Invalid browser viewport'); }
+  return { ...(viewport ? { viewport: { width: Number(viewport['width']), height: Number(viewport['height']) } } : {}), inputReady: raw['inputReady'], ownerGeneration: Number(raw['ownerGeneration']), surfaceEpoch: Number(raw['surfaceEpoch']), sequence: Number(raw['sequence']), reducedMotion: raw['reducedMotion'], visible: raw['visible'], bounds: { x: Number(box['x']), y: Number(box['y']), width: Number(box['width']), height: Number(box['height']) } };
 }
 export function command(value: unknown): TaskBrowserCommand {
   const raw = record(value), kind = raw['kind'];
+  if (kind === 'dismiss-attention') { exact(raw, ['kind']); return { kind }; }
   if (kind === 'open') { exact(raw, ['kind', 'url']); return { kind, url: browserUrl(raw['url']) }; }
   if (kind === 'pick' || kind === 'feedback') { exact(raw, ['kind', 'enabled']); if (typeof raw['enabled'] !== 'boolean') throw new Error('Invalid browser toggle'); return { kind, enabled: raw['enabled'] }; }
   const tabId = browserId(raw['tabId']);

@@ -30,7 +30,7 @@
     </div>
   </ex-fold>
   <div #preview class="preview" tabindex="0" aria-label="Page preview" [class.agent-driving]="driver() === 'agent'" [attr.aria-busy]="loading()" (pointerdown)="takeOver()" (keydown)="takeOver()">
-    <div class="page" [hidden]="!current()" [class.phone]="width() === 'phone'">
+    <div class="page" [class.clipped]="clipPreview()" [hidden]="!current() && !keepPreviewMounted()" [class.keeping-empty]="!current()" [attr.inert]="!current() ? '' : null" [class.phone]="width() === 'phone'">
       <ng-content select="[browserPreview]" />
       @if (target(); as target) {
         <span class="target" [class.picked]="!!picked()" [style.transform]="targetTransform()" [style.width.px]="coordinate(target.w) + 8" [style.height.px]="coordinate(target.h) + 8" aria-hidden="true">
@@ -57,20 +57,18 @@
     }
     @if (!current()) { <div class="empty"><ex-icon name="globe" [size]="24" /><p>Open a page for this task.</p><button exButton variant="secondary" (click)="added.emit()">New tab</button></div> }
   </div>
-  <ex-fold [open]="!!current() && driver() === 'agent' && !!step()">
-    @if (step(); as step) {
+  <ex-fold [open]="!!current() && ((driver() === 'agent' && !!step()) || (driver() === 'you' && agentWaiting()))">
       <div class="foot agent-step">
-        <span class="agent-mark" aria-hidden="true">Ag</span>
-        <span class="step-copy" role="status"><b>Step {{ step.n }}@if (step.total) { of {{ step.total }} }</b><span class="separator" aria-hidden="true">·</span><ex-ease-swap [value]="step.text" /></span>
-        <span class="step-dots" aria-hidden="true">@for (dot of stepDots(); track $index) { <i [class.done]="dot === 'done'" [class.now]="dot === 'now'"></i> }</span>
-        <button exButton size="sm" variant="secondary" (click)="takeOverFromBar()">Take over</button>
+        <span class="agent-mark" [class.waiting]="driver() !== 'agent'" aria-hidden="true">@if (driver() === 'agent') { Ag } @else { <ex-icon name="cursor" [size]="14" /> }</span>
+        <span class="step-copy" role="status">@if (driver() === 'agent') { @if (step(); as step) { <b>Step {{ step.n }}@if (step.total) { of {{ step.total }} }</b><span class="separator" aria-hidden="true">·</span><ex-ease-swap [value]="step.text" /> } } @else { You’re driving; the agent waits }</span>
+        <span class="step-dots" aria-hidden="true">@if (driver() === 'agent') { @for (dot of stepDots(); track $index) { <i [class.done]="dot === 'done'" [class.now]="dot === 'now'"></i> } }</span>
+        <span class="workflow-actions">
+          <button exButton size="sm" variant="secondary" [attr.aria-label]="driver() === 'agent' ? 'Take over browser' : 'Hand back browser'" (click)="driver() === 'agent' ? takeOverFromBar() : handBack()">{{ driver() === 'agent' ? 'Take over' : 'Hand back' }}</button>
+          @if (errors() > 0) { <button exButton size="sm" variant="secondary" class="workflow-errors" [attr.aria-label]="'Send ' + errors() + ' error counts to agent'" (click)="sendErrorsRequested.emit()"><ex-icon name="bug" [size]="14" />{{ errors() }} {{ errors() === 1 ? 'error' : 'errors' }}</button> }
+        </span>
       </div>
-    }
   </ex-fold>
-  <ex-fold [open]="!!current() && driver() === 'you' && agentWaiting()">
-    <div class="foot"><ex-icon name="cursor" [size]="14" /><span>You’re driving; the agent waits</span><button exButton size="sm" variant="secondary" (click)="handBack()">Hand back</button></div>
-  </ex-fold>
-  <ex-fold [open]="!!current() && driver() !== 'agent' && errors() > 0">
+  <ex-fold [open]="!!current() && driver() !== 'agent' && !agentWaiting() && errors() > 0">
     <div class="foot errors" role="status"><ex-icon name="bug" [size]="14" /><span><b>{{ errors() }} {{ errors() === 1 ? 'error' : 'errors' }}</b> {{ errorText() }}</span><button exButton size="sm" variant="secondary" (click)="sendErrorsRequested.emit()">Send to agent</button></div>
   </ex-fold>
 </section>

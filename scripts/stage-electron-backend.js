@@ -24,6 +24,7 @@ const stageBaseRoot =
 const stageBackendRoot = path.join(stageBaseRoot, "backend");
 const backendPackageJson = require(path.join(backendRoot, "package.json"));
 const NATIVE_RUNTIME_DEPENDENCIES = [
+  "playwright-core",
   "better-sqlite3",
   "node-pty",
   "@vscode/ripgrep",

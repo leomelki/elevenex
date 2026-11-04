@@ -1,0 +1,10 @@
+@for (surface of surfaces(); track surface.tabId) {
+  @let placement = frame(surface);
+  <div class="guest" [class.inactive]="!surface.visible || !interactive()"
+    [attr.inert]="surface.visible && surface.interactive && interactive() ? null : ''"
+    [style.left.px]="placement.x" [style.top.px]="placement.y"
+    [style.width.px]="placement.width" [style.height.px]="placement.height">
+    @if (surface.partition) { <ex-embedded-page [surface]="surface" /> }
+    @if (surface.presentation === 'stream' && surface.visible && interactive()) { <ex-browser-stream [surface]="surface" (shortcutRequested)="shortcutRequested.emit($event)" /> }
+  </div>
+}

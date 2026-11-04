@@ -19,7 +19,7 @@ tasks and sessions through scope-bound named bridge operations. It includes
 project creation/settings, task creation/preparation/recovery, task stages, safe
 git operations and close/reopen flows. Selected sessions render streaming chat
 with tool activity, decisions, queue controls and retained drafts. Completed
-replies expose their changed files and a paginated Changes review; Browser uses a task-owned isolated native page with explicit driver handoff;
+replies expose their changed files and a paginated Changes review; Browser uses a task-owned hardened local guest or remote Chromium stream with explicit driver handoff;
 see [the production browser boundary and privacy policy](../renderer/src/app/task-browser/README.md).
 Code provides a genuine task-confined web workbench; see [Code architecture, distribution and recovery](../renderer/src/app/code/README.md). Other side views provide their frames only. See [chat ownership](../renderer/src/app/session-chat/README.md)
 and the [workspace guide](../renderer/src/app/workspace/README.md).
@@ -420,3 +420,14 @@ the sending window's selected machine and a main-issued configuration identity,
 so offline persistence needs no live backend scope. Backend dispatch still uses
 its ordinary current-scope and resource validation. Task creation reconciliation
 uses the additive, capability-gated `workspaceTaskRequest` read.
+
+## Task browser surfaces
+
+Local task pages use main-authorized sandboxed Electron guests, with no preload
+or Node privileges. Trusted Angular overlays compose above the stable guest DOM.
+Remote task backends own sandboxed Chromium and provide bounded JPEG display and
+typed human input over their managed private IPC/SSH transport. Pages never
+receive the app bridge or credentials; app CSP stays unchanged.
+See [the feature guide](../renderer/src/app/task-browser/README.md) for driver,
+privacy, ephemeral profile, network, resource and capability policies, and
+[the host guide](../backend/src/desktop-browser/README.md) for installation/transport.

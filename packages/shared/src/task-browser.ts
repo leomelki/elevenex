@@ -1,6 +1,42 @@
 /** Task-owned browser contracts. Page content never receives this bridge. */
 export interface BrowserRect { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
 export interface BrowserElement extends BrowserRect { readonly selector: string; readonly tag: string }
+/** Trusted presentation descriptors. Never supplied to a website or agent tool. */
+export interface TaskBrowserSurface {
+  readonly scopeId: string;
+  readonly taskId: number;
+  readonly tabId: string;
+  readonly partition: string;
+  readonly bootstrap: string;
+  readonly bounds: BrowserRect;
+  readonly viewport?: { readonly width: number; readonly height: number };
+  readonly zoom: number;
+  readonly visible: boolean;
+  readonly generation: number;
+  readonly interactive: boolean;
+  readonly driver: 'you' | 'agent' | 'needs';
+  readonly presentation: 'embedded' | 'stream';
+}
+export interface TaskBrowserFrame {
+  readonly scopeId: string;
+  readonly taskId: number;
+  readonly tabId: string;
+  readonly streamId: string;
+  readonly sequence: number;
+  readonly width: number;
+  readonly height: number;
+  readonly jpeg: Uint8Array;
+}
+export type TaskBrowserStreamEvent =
+  | { readonly kind: 'pointer'; readonly type: 'down' | 'up' | 'move'; readonly x: number; readonly y: number; readonly button: 'left' | 'middle' | 'right' | 'none'; readonly buttons: number; readonly clicks: number; readonly modifiers: number }
+  | { readonly kind: 'wheel'; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number; readonly modifiers: number }
+  | { readonly kind: 'key'; readonly type: 'down' | 'up'; readonly key: string; readonly code: string; readonly keyCode: number; readonly modifiers: number }
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'composition'; readonly text: string; readonly selectionStart: number; readonly selectionEnd: number }
+  | { readonly kind: 'edit'; readonly operation: 'undo' | 'redo' }
+  | { readonly kind: 'clipboard'; readonly operation: 'copy' | 'cut' | 'paste' | 'selectAll' };
+/** Human-only ordered input. No nesting; clipboard operations travel separately. */
+export type TaskBrowserStreamInput = TaskBrowserStreamEvent | { readonly kind: 'batch'; readonly events: readonly TaskBrowserStreamEvent[] };
 export interface TaskBrowserTab {
   readonly id: string;
   readonly title: string;
@@ -28,6 +64,8 @@ export interface TaskBrowserState {
   readonly revision: number;
   readonly surfaceEpoch: number;
   readonly controlsFocus: number;
+  readonly attention?: { readonly kind: 'popup' | 'dialog' | 'file-picker' | 'download'; readonly message: string; readonly outside: boolean; readonly tabId?: string };
+  readonly connection?: { readonly phase: 'idle' | 'connecting' | 'ready' | 'blocked'; readonly message?: string };
   readonly active: string | null;
   readonly tabs: readonly TaskBrowserTab[];
   readonly picked: BrowserElement | null;
@@ -39,6 +77,7 @@ export interface TaskBrowserState {
   readonly privacy: 'content-withheld';
 }
 export type TaskBrowserCommand =
+  | { readonly kind: 'dismiss-attention' }
   | { readonly kind: 'open'; readonly url: string }
   | { readonly kind: 'select' | 'close' | 'back' | 'reload' | 'takeover' | 'outside' | 'focus'; readonly tabId: string }
   | { readonly kind: 'handoff'; readonly tabId: string; readonly sessionId: number }
@@ -57,6 +96,7 @@ export interface TaskBrowserLayout {
   readonly inputReady: boolean;
   readonly ownerGeneration: number;
   readonly bounds: BrowserRect;
+  readonly viewport?: { readonly width: number; readonly height: number };
 }
 export type BrowserAgentCommand =
   | { readonly kind: 'list' }

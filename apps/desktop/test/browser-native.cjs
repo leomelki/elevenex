@@ -1,10 +1,16 @@
+const {mkdtemp,readFile,rm,access}=require('node:fs/promises');
+const {tmpdir}=require('node:os');
+const {join}=require('node:path');
+const {setInterval,clearInterval}=require('node:timers');
 const assert = require('node:assert/strict');
-const { webContents, BrowserWindow, net, app } = require('electron');
+const { webContents, BrowserWindow, WebContentsView, session, net, app } = require('electron');
 const { setTimeout: delay } = require('node:timers/promises');
 async function until(check, message) { const end = Date.now() + 6000; while (Date.now() < end) { const value = await check(); if (value) return value; await delay(25); } throw new Error(message); }
-module.exports = async function browserSmoke(window, scope, url) {
+module.exports = async function browserSmoke(window, scope, url, backendUrl = url) {
   const call = async (method, ...args) => {
     if (method === 'taskBrowserLayout') {
+      if (!args[2].testStale) args[2].sequence=Math.floor(performance.now()*1000);
+      delete args[2].testStale;
       const snapshot = await window.webContents.executeJavaScript(`window.elevenex.taskBrowserRead(...${JSON.stringify(args.slice(0, 2))})`);
       args[2] = { inputReady: true, ownerGeneration: snapshot.value.tabs.find(tab => tab.id === snapshot.value.active)?.generation ?? 0, ...args[2], surfaceEpoch: args[2].surfaceEpoch ?? snapshot.value.surfaceEpoch };
     }
@@ -12,21 +18,36 @@ module.exports = async function browserSmoke(window, scope, url) {
   };
   const read = async (task = 1) => { const result = await call('taskBrowserRead', scope, task); assert.equal(result.ok, true, JSON.stringify(result)); return result.value; };
   const command = async input => { const result = await call('taskBrowserCommand', scope, 1, input); assert.equal(result.ok, true, JSON.stringify(result)); return result.value; };
+  // A trusted test host exercises the same fixed guest attributes as the Angular host.
+  await window.webContents.executeJavaScript(`(() => {
+    const guests = new Map();
+    const render = surfaces => {
+      window.__browserSurfaces = surfaces;
+      for (const surface of surfaces) {
+        let guest = guests.get(surface.tabId);
+        if (!guest) { guest = document.createElement('webview'); guest.setAttribute('partition', surface.partition); guest.setAttribute('src', surface.bootstrap); guest.addEventListener('dom-ready', () => { void window.elevenex.taskBrowserAttach(surface.scopeId, surface.taskId, surface.tabId, guest.getWebContentsId()); }, { once: true }); document.body.append(guest); guests.set(surface.tabId, guest); }
+        Object.assign(guest.style, { position: 'fixed', display: 'flex', left: surface.visible ? surface.bounds.x / surface.zoom + 'px' : '-20000px', top: surface.bounds.y / surface.zoom + 'px', width: (surface.bounds.width / surface.zoom || 800) + 'px', height: (surface.bounds.height / surface.zoom || 600) + 'px' });
+      }
+      for (const [id, guest] of guests) if (!surfaces.some(surface => surface.tabId === id)) { guest.remove(); guests.delete(id); }
+    };
+    window.elevenex.onTaskBrowserSurfacesChanged(render); window.elevenex.taskBrowserSurfaces().then(render);
+  })()`);
+  const visibleCount = () => window.webContents.executeJavaScript('(window.__browserSurfaces || []).filter(surface=>surface.visible).length');
   await read();
   let state = await command({ kind: 'open', url: url + '/browser-test' });
   const first = state.active;
   const native = await until(() => webContents.getAllWebContents().find(contents => contents !== window.webContents && contents.getURL().includes('/browser-test')), 'Browser page did not load');
   await until(async () => (await read()).tabs[0]?.loading === false, 'Browser page still loading');
   const prefs = native.getLastWebPreferences();
-  assert.equal(prefs.sandbox, true); assert.equal(prefs.contextIsolation, true); assert.equal(prefs.nodeIntegration, false); assert.equal(prefs.preload, undefined); assert.equal(prefs.webSecurity, true);
+  assert.equal(prefs.sandbox, true); assert.equal(prefs.contextIsolation, true); assert.equal(prefs.nodeIntegration, false); assert.equal(prefs.preload, undefined); assert.equal(prefs.webSecurity, true); assert.equal(native.getWebRTCIPHandlingPolicy(),'disable_non_proxied_udp');
   let clientCertificatePrevented = false, clientCertificate = 'not-called';
   native.emit('select-client-certificate', { preventDefault: () => { clientCertificatePrevented = true; } }, 'https://untrusted.example', [], certificate => { clientCertificate = certificate; });
   assert.equal(clientCertificatePrevented, true); assert.equal(clientCertificate, undefined);
   assert.deepEqual(await native.executeJavaScript('({node:typeof require,bridge:typeof window.elevenex})'), { node: 'undefined', bridge: 'undefined' });
   const layout = { inputReady: true, sequence: 1, visible: true, reducedMotion: false, bounds: { x: 400, y: 200, width: 390, height: 350 } };
   await call('taskBrowserLayout', scope, 1, layout);
-  assert.equal(window.contentView.children.length, 1);
-  assert.deepEqual(window.contentView.children[0].getBounds(), layout.bounds);
+  await until(async()=>await visibleCount() === 1, 'Guest was not presented');
+  assert.deepEqual(await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible).bounds'), layout.bounds);
   // Page strings/secret controls never appear in state or automation-facing tab titles.
   await native.executeJavaScript(`document.title='password-secret';document.querySelector('input').value='password-secret';console.error('password-secret')`);
   state = await read(); assert.equal(JSON.stringify(state).includes('password-secret'), false);
@@ -34,6 +55,27 @@ module.exports = async function browserSmoke(window, scope, url) {
   assert.equal(state.tabs[0].theme, 'dark'); assert.equal(await native.executeJavaScript("matchMedia('(prefers-color-scheme: dark)').matches"), true);
   state = await command({ kind: 'network', tabId: first, slow: true }); assert.equal(state.tabs[0].slowNetwork, true);
   await command({ kind: 'network', tabId: first, slow: false }); await command({ kind: 'theme', tabId: first, theme: 'system' });
+  // Streamed display uses the same engine and no native child surface.
+  await window.webContents.executeJavaScript(`void window.elevenex.onTaskBrowserFrame(frame=>{ window.__browserFrame = {streamId:frame.streamId,sequence:frame.sequence,bytes:frame.jpeg.byteLength,width:frame.width,height:frame.height}; })`);
+  await call('taskBrowserPresentation', scope, 1, first, 'stream');
+  await call('taskBrowserLayout', scope, 1, {...layout, sequence:2});
+  const streamHeartbeat=setInterval(()=>{void call('taskBrowserLayout',scope,1,{...layout,sequence:Math.floor(performance.now()*1000)});},200);
+  const frame = await until(()=>window.webContents.executeJavaScript('window.__browserFrame'), 'Stream produced no browser frame');
+  assert.ok(frame.bytes > 100);assert.equal(frame.width,390);assert.equal(window.contentView.children.length,0);
+  await call('taskBrowserFrameAck',scope,1,first,frame.streamId,frame.sequence);
+  await native.executeJavaScript('document.querySelector("input").value="";document.querySelector("input").scrollIntoView({block:"center"})');
+  await call('taskBrowserLayout', scope, 1, {...layout, sequence:3});
+  let humanGeneration=(await read()).tabs[0].generation;
+  const textPoint=await native.executeJavaScript(`(()=>{const r=document.querySelector('input').getBoundingClientRect();return {x:r.x+5,y:r.y+5}})()`);
+  humanGeneration=await call('taskBrowserInput',scope,1,first,humanGeneration,{kind:'pointer',type:'down',...textPoint,button:'left',buttons:1,clicks:1,modifiers:0});
+  humanGeneration=await call('taskBrowserInput',scope,1,first,humanGeneration,{kind:'pointer',type:'up',...textPoint,button:'left',buttons:0,clicks:1,modifiers:0});
+  await call('taskBrowserInput',scope,1,first,humanGeneration,{kind:'text',text:'Unicode 世界'});
+  await until(async()=>await native.executeJavaScript('document.querySelector("input").value')==='Unicode 世界','Streamed Unicode text was not delivered');
+  await native.executeJavaScript('scrollTo(0,0)');
+  await assert.rejects(()=>call('taskBrowserInput',scope,1,first,humanGeneration,{kind:'eval',code:'unsafe'}));
+  clearInterval(streamHeartbeat);
+  await call('taskBrowserPresentation', scope, 1, first, 'embedded');
+  await call('taskBrowserLayout', scope, 1, {...layout, sequence:4});
   state = await command({ kind: 'handoff', tabId: first, sessionId: 2 }); const generation = state.tabs[0].generation;
   assert.equal(state.tabs[0].driver, 'agent');
   native.sendInputEvent({ type: 'mouseDown', x: 30, y: 30, button: 'left', clickCount: 1 });
@@ -42,37 +84,49 @@ module.exports = async function browserSmoke(window, scope, url) {
   assert.ok((await read()).tabs[0].generation > generation);
   await native.executeJavaScript("document.querySelector('input').value='';document.querySelector('input').focus()");
   await command({ kind: 'handoff', tabId: first, sessionId: 2 });
-  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 2 });
+  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 4 });
   app.focus({ steal: true }); window.show(); window.focus();
   native.focus(); native.sendInputEvent({ type: 'keyDown', keyCode: 'A' }); native.sendInputEvent({ type: 'char', keyCode: 'a' }); native.sendInputEvent({ type: 'keyUp', keyCode: 'A' });
   await until(async () => (await read()).tabs[0].driver === 'you', 'Native keyboard input did not take control');
   const controlFocus = (await read()).controlsFocus;
-  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 3 });
+  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 5 });
   native.sendInputEvent({ type: 'keyDown', keyCode: 'Escape', modifiers: ['shift'] });
   await until(async () => (await read()).controlsFocus > controlFocus, 'Shift+Escape did not request browser chrome focus');
   await command({ kind: 'focus', tabId: first });
-  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 4 });
+  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 6 });
   assert.equal((await read()).tabs[0].driver, 'you');
+  const gesturePoint=await native.executeJavaScript(`(()=>{const r=document.querySelector('button').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+  const beforeGesture=await native.executeJavaScript('window.clicks');
+  native.sendInputEvent({type:'mouseDown',...gesturePoint,button:'left',clickCount:1});
+  await call('taskBrowserLayout',scope,1,{...layout,inputReady:false});
+  native.sendInputEvent({type:'mouseUp',...gesturePoint,button:'left',clickCount:1});
+  await until(async()=>await native.executeJavaScript('window.clicks')===beforeGesture+1,'A visible gesture lost its release during chrome motion');
+  await native.executeJavaScript('window.clicks=0');
+  await call('taskBrowserLayout',scope,1,{...layout,inputReady:true});
   await command({ kind: 'pick', enabled: true });
-  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 5 });
+  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 7 });
   const rect = await native.executeJavaScript(`(() => {const r=document.querySelector('button').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
   native.sendInputEvent({ type: 'mouseDown', ...rect, button: 'left', clickCount: 1 });
   native.sendInputEvent({ type: 'mouseUp', ...rect, button: 'left', clickCount: 1 });
   state = await until(async () => { const state = await read(); return state.picked ? state : null; }, 'Element picker did not return');
-  assert.match(state.picked.selector, /button:nth-child/); assert.equal(window.contentView.children.length, 0);
+  assert.match(state.picked.selector, /button:nth-child/); await delay(50); assert.equal(await visibleCount(), 0);
   assert.equal(await native.executeJavaScript('window.clicks'), 0, 'Picker must consume page input');
   await command({ kind: 'pick', enabled: false });
   await command({ kind: 'navigate', tabId: first, url: url + '/browser-test?next=1' });
   await until(async () => (await read()).tabs[0].canGoBack, 'Navigation did not retain history');
+  await native.executeJavaScript("localStorage.setItem('profile-probe','task-profile-value')");
   await command({ kind: 'open', url: url + '/browser-test?second=1' });
+  const secondPage=await until(()=>webContents.getAllWebContents().find(contents=>contents.getURL().includes('second=1')),'Second profile tab did not load');
+  assert.equal(await secondPage.executeJavaScript("localStorage.getItem('profile-probe')"),'task-profile-value');
   assert.equal((await read()).tabs.length, 2);
   await command({ kind: 'select', tabId: first });
-  await read(3); assert.equal(window.contentView.children.length, 0, 'Task switch must detach pages');
+  await read(3); await delay(50); assert.equal(await visibleCount(), 0, 'Task switch must detach pages');
   state = await read(); assert.equal(state.tabs.length, 2); assert.equal(state.active, first); assert.equal(state.tabs[0].canGoBack, true);
   window.webContents.setZoomFactor(1.25);
-  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 6 });
+  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 8 });
   assert.equal(native.getZoomFactor(), 1.25);
-  assert.equal(window.contentView.children[0].getBounds().x, 500, 'App CSS bounds must be converted to native DIPs');
+  await until(async()=>await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible)?.bounds.x') === 500, 'Zoom layout not published');
+  assert.equal(await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible).bounds.x'), 500, 'App CSS bounds must be converted to native DIPs');
   await command({ kind: 'pick', enabled: true });
   const zoomed = await native.executeJavaScript(`(() => {const r=document.querySelector('button').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()`);
   const zoomedPoint = { x: Math.round((zoomed.x + zoomed.width / 2) * 1.25), y: Math.round((zoomed.y + zoomed.height / 2) * 1.25) };
@@ -82,7 +136,7 @@ module.exports = async function browserSmoke(window, scope, url) {
   assert.ok(Math.abs(zoomPick.x - zoomed.x) < 1); assert.ok(Math.abs(zoomPick.y - zoomed.y) < 1);
   await command({ kind: 'pick', enabled: false });
   window.webContents.setZoomFactor(1);
-  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 7 });
+  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 9 });
   native.forcefullyCrashRenderer();
   await until(async () => (await read()).tabs[0].driver === 'needs', 'Crash did not revoke agent control');
   assert.ok((await read()).tabs[0].error);
@@ -91,12 +145,13 @@ module.exports = async function browserSmoke(window, scope, url) {
   assert.equal((await read()).tabs[0].driver, 'you');
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 10 });
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 11, visible: false });
-  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 10 });
-  assert.equal(window.contentView.children.length, 0, 'Late layout must not reopen hidden page');
+  await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 10, testStale:true });
+  await delay(50); assert.equal(await visibleCount(), 0, 'Late layout must not reopen hidden page');
   assert.equal((await call('taskBrowserCommand', scope, 3, { kind: 'open', url: 'https://example.com' })).ok, false, 'Stale task commands must not change selected task');
   assert.equal(await call('taskBrowserCommand', scope, 1, { kind: 'open', url: 'file:///etc/passwd' }).then(() => false, () => true), true);
   for (const tab of state.tabs) await command({ kind: 'close', tabId: tab.id });
   await until(() => native.isDestroyed(), 'Closed tab WebContents survived');
+  console.log('Browser smoke: native lifecycle and scope checks passed');
   const selfClosing = await command({ kind: 'open', url: url + '/browser-test?self-close=1' });
   const closingContents = await until(() => webContents.getAllWebContents().find(contents => contents.getURL().includes('self-close')), 'Self-closing page not loaded');
   closingContents.close({ waitForBeforeUnload: false });
@@ -104,12 +159,35 @@ module.exports = async function browserSmoke(window, scope, url) {
   const replacement = await command({ kind: 'reload', tabId: selfClosing.active });
   assert.notEqual(replacement.active, selfClosing.active); assert.equal(replacement.tabs[0].driver, 'you');
   await command({ kind: 'close', tabId: replacement.active });
+  console.log('Browser smoke: destroyed guest recovery passed');
+  const downloadRoot=await mkdtemp(join(tmpdir(),'elevenex-browser-download-'));
+  window.once('closed',()=>{void rm(downloadRoot,{recursive:true,force:true});});
+  const downloadTab=await command({kind:'open',url:url+'/browser-test?download-owner=1'});
+  const downloadPage=await until(()=>webContents.getAllWebContents().find(contents=>contents.getURL().includes('download-owner')),'Download owner did not load');
+  await until(async()=>!(await read()).tabs.find(tab=>tab.id===downloadTab.active)?.loading,'Download owner is still loading');
+  await call('taskBrowserLayout',scope,1,{...layout,sequence:40});
+  const savedFile=join(downloadRoot,'report.txt');
+  downloadPage.session.on('will-download',(event,item)=>{if(!event.defaultPrevented)item.setSavePath(savedFile);});
+  console.log('Browser smoke: download owner ready');
+  await command({kind:'handoff',tabId:downloadTab.active,sessionId:2});
+  await downloadPage.executeJavaScript('location.href='+JSON.stringify(url+'/download-test'));
+  await until(async()=>(await read()).tabs.find(tab=>tab.id===downloadTab.active)?.driver==='needs','Agent-initiated download did not require the user');
+  console.log('Browser smoke: agent download denied');
+  await assert.rejects(()=>access(savedFile));
+  await call('taskBrowserLayout',scope,1,{...layout,sequence:41});
+  await command({kind:'navigate',tabId:downloadTab.active,url:url+'/download-test'});
+  await until(async()=>await readFile(savedFile,'utf8').catch(()=>null)==='browser download fixture','Explicit user download was not saved');
+  assert.equal(JSON.stringify(await read()).includes(downloadRoot),false,'Save paths must not enter window state');
+  console.log('Browser smoke: user download saved');
+  await command({kind:'close',tabId:downloadTab.active});
+  console.log('Browser smoke: download tab closed');
   // A simulated remote transport lease resolves to a real isolated HTTP server.
   // The logical port stays in the page URL; the task proxy routes its real TCP connection.
   const { BackendClient } = require('../dist/backend-client/client');
   const { TaskBrowser } = require('../dist/browser/task');
-  const remoteClient = new BackendClient(() => ({ identity: 'remote-fixture', url, version: 'a'.repeat(40), headers: {}, environment: { kind: 'remote', hostId: 'fixture' } }), () => undefined);
+  const remoteClient = new BackendClient(() => ({ identity: 'remote-fixture', url: backendUrl, version: 'a'.repeat(40), headers: {}, environment: { kind: 'remote', hostId: 'fixture' } }), () => undefined);
   const remoteWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  await remoteWindow.loadURL('about:blank');
   remoteClient.attach(remoteWindow.webContents.id);
   const forwarded = []; let released = false;
   let remoteActive = true;
@@ -118,10 +196,15 @@ module.exports = async function browserSmoke(window, scope, url) {
     { read: async () => null, save: () => undefined }, 'remote-task', true, () => undefined, () => remoteActive);
   await remoteTask.agent({ kind: 'open', url: 'http://localhost:40001/browser-test' }, 2);
   const remotePage = [...remoteTask.pages.values()][0];
+  const remoteView = new WebContentsView({webPreferences:{session:session.fromPartition(remotePage.partition),additionalArguments:['--elevenex-task-tab='+remotePage.id],sandbox:true,contextIsolation:true,nodeIntegration:false}});
+  remotePage.attach(remoteView.webContents);
+  console.log('Browser smoke: forwarded guest attached');
   const forwardedOrigin = 'http://localhost:40001';
   await until(() => remotePage.contents.getURL() === forwardedOrigin + '/browser-test' && !remotePage.loading, 'Remote URL was not forwarded to the allocated listener');
+  console.log('Browser smoke: forwarded guest loaded');
   const resourceStatus = await remotePage.contents.executeJavaScript("fetch('http://localhost:40001/browser-test?resource=1').then(r=>r.status).catch(()=>0)");
   assert.equal(resourceStatus, 200, 'Known remote subresources must use the allocated listener');
+  console.log('Browser smoke: forwarded HTTP passed');
   const socketStatus = await remotePage.contents.executeJavaScript(`new Promise(resolve => {
     const socket = new WebSocket('ws://localhost:40001/browser-socket');
     const timer = setTimeout(() => { socket.close(); resolve('timeout'); }, 3000);
@@ -130,7 +213,13 @@ module.exports = async function browserSmoke(window, scope, url) {
     socket.onerror = () => { clearTimeout(timer); resolve('failed'); };
   })`);
   assert.equal(socketStatus, 'task-browser-probe', 'Remote WebSockets must preserve the logical origin through the task connector');
+  console.log('Browser smoke: forwarded socket passed');
   remoteTask.setPorts([40002]);
+  assert.equal(await remotePage.contents.executeJavaScript("fetch('http://localhost:40002/browser-test').then(r=>r.status).catch(()=>0)"),0,'Log suggestions must not grant network authority');
+  console.log('Browser smoke: implicit ports denied');
+  const explicitApi=await remoteTask.agent({kind:'open',url:'http://localhost:40002/browser-test'},2);
+  const apiTab=explicitApi.tabs.find(tab=>tab.id!==remotePage.id);
+  await remoteTask.agent({kind:'close',tabId:apiTab.id,generation:apiTab.generation},2);
   assert.equal(await remotePage.contents.executeJavaScript("fetch('http://localhost:40002/browser-test').then(r=>r.status).catch(()=>0)"), 200, 'Discovered task API ports must be routed without changing origins');
   const unknown = await remotePage.contents.executeJavaScript("fetch('http://localhost:40003/browser-test').then(r=>r.status).catch(()=>0)");
   assert.equal(unknown, 0, 'Unknown desktop localhost must not be reachable');
@@ -144,30 +233,40 @@ module.exports = async function browserSmoke(window, scope, url) {
   remoteActive = true;
   assert.equal(await remotePage.contents.executeJavaScript("fetch('/browser-test?resumed=1').then(r=>r.status).catch(()=>0)"), 200);
   assert.equal(remoteTask.snapshot().tabs[0].url, 'http://localhost:40001/browser-test');
+  const staleOutside = remoteTask.command({kind:'outside',tabId:remotePage.id});
+  remoteActive=false;
+  await assert.rejects(()=>staleOutside,/selection changed/);
+  remoteActive=true;
   assert.deepEqual(forwarded, [{ windowId: remoteWindow.webContents.id, port: 40001 }, { windowId: remoteWindow.webContents.id, port: 40002 }]);
+  console.log('Browser smoke: remote network boundaries passed');
   const openedViewport = await remoteTask.agent({ kind: 'open', url: 'http://localhost:40001/browser-test?viewport=1' }, 2);
+  console.log('Browser smoke: viewport tab requested');
   const viewportId = openedViewport.tabs.find(tab => tab.id !== remotePage.id).id;
   assert.equal(remoteTask.active, remotePage.id, 'Agent-created tabs must not interrupt a user-controlled active tab');
   await assert.rejects(() => remoteTask.agent({ kind: 'select', tabId: viewportId, generation: 1 }, 2), /handoff/);
   await remoteTask.command({ kind: 'select', tabId: viewportId });
+  console.log('Browser smoke: viewport tab selected');
   const viewportPage = remoteTask.pages.get(viewportId);
+  const viewportView = new WebContentsView({webPreferences:{session:session.fromPartition(viewportPage.partition),additionalArguments:['--elevenex-task-tab='+viewportPage.id],sandbox:true,contextIsolation:true,nodeIntegration:false}});
+  viewportPage.attach(viewportView.webContents); viewportView.setBounds(layout.bounds);remoteWindow.contentView.addChildView(viewportView);
   await until(() => !viewportPage.loading, 'Viewport test page did not load');
-  remoteWindow.showInactive(); remoteTask.position({ ...layout, surfaceEpoch: remoteTask.snapshot().surfaceEpoch, ownerGeneration: viewportPage.lease.generation, inputReady: true, sequence: 1 });
-  const scrollPoint = await viewportPage.contents.executeJavaScript(`(() => {const r=document.querySelector('#scroll-target').getBoundingClientRect();return {atX:r.x+r.width/2,atY:r.y+r.height/2}})()`);
-  await remoteTask.agent({ kind: 'scroll', tabId: viewportPage.id, generation: viewportPage.lease.generation, x: 0, y: 100, ...scrollPoint }, 2);
-  await until(async () => await viewportPage.contents.executeJavaScript("document.querySelector('#scroll-target').scrollTop > 0"), 'Agent scroll did not reach the selected nested container');
+  console.log('Browser smoke: viewport guest loaded');
+  remoteWindow.show(); remoteWindow.focus(); viewportPage.contents.focus(); remoteTask.position({ ...layout, surfaceEpoch: remoteTask.snapshot().surfaceEpoch, ownerGeneration: viewportPage.lease.generation, inputReady: true, sequence: 1 });
+  viewportPage.lease.handBack(2);
+  remoteTask.position({ ...layout, surfaceEpoch: remoteTask.snapshot().surfaceEpoch, ownerGeneration: viewportPage.lease.generation, inputReady: true, sequence: 2 });
   const viewportGeneration = viewportPage.lease.generation;
-  remoteTask.position({ ...layout, surfaceEpoch: remoteTask.snapshot().surfaceEpoch, ownerGeneration: viewportPage.lease.generation, inputReady: true, sequence: 2, bounds: { ...layout.bounds, width: 420 } });
+  remoteTask.position({ ...layout, surfaceEpoch: remoteTask.snapshot().surfaceEpoch, ownerGeneration: viewportPage.lease.generation, inputReady: true, sequence: 3, bounds: { ...layout.bounds, width: 420 } });
   assert.equal(viewportPage.lease.driver, 'you', 'Viewport changes must invalidate queued coordinate input');
   assert.ok(viewportPage.lease.generation > viewportGeneration);
   remoteWindow.once('closed', () => remoteTask.destroy()); remoteWindow.destroy(); await delay(0); assert.equal(released, true, 'Task teardown must close its forwarding lease'); remoteClient.dispose();
+  console.log('Browser smoke: forwarded teardown passed');
   await command({ kind: 'open', url: url + '/browser-test?private-query=not-persisted' });
   const resumed = await until(() => webContents.getAllWebContents().find(contents => contents !== window.webContents && contents.getURL().includes('private-query')), 'Reconnection test tab did not load');
   await command({ kind: 'handoff', tabId: (await read()).active, sessionId: 2 });
   const oldPresentation = await read();
   await call('taskBrowserHide', scope, 1);
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 50, surfaceEpoch: oldPresentation.surfaceEpoch });
-  assert.equal(window.contentView.children.length, 0, 'A higher sequence from an old presentation must not reattach over an overlay');
+  await delay(50); assert.equal(await visibleCount(), 0, 'A higher sequence from an old presentation must not reattach over an overlay');
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 51 });
   await call('taskBrowserHide', scope, 1);
   return resumed;

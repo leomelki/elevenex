@@ -18,14 +18,14 @@ export async function compileMain(root, processes) {
   const desktop = join(root, 'apps/desktop');
   const desktopRequire = createRequire(join(desktop, 'package.json'));
   const stamp = join(desktop, 'dist/.capture-compiled');
-  const inputs = ['apps/desktop/src', 'packages/shared/src', 'apps/desktop/tsconfig.json', 'packages/shared/tsconfig.json', 'apps/desktop/package.json', 'packages/shared/package.json', 'tsconfig.desktop.json', 'pnpm-lock.yaml'];
+  const inputs = ['packages/browser-network/src', 'packages/browser-network/tsconfig.json', 'packages/browser-network/package.json', 'apps/desktop/src', 'packages/shared/src', 'apps/desktop/tsconfig.json', 'packages/shared/tsconfig.json', 'apps/desktop/package.json', 'packages/shared/package.json', 'tsconfig.desktop.json', 'pnpm-lock.yaml'];
   const changed = await latest(inputs.map(path => join(root, path)));
   const previous = await stat(stamp).catch(() => undefined);
   const outputs = ['main.js', 'preload.js', 'ipc.js', 'security.js', 'window-state.js'];
   const complete = (await Promise.all(outputs.map(file => stat(join(desktop, 'dist', file)).catch(() => undefined)))).every(Boolean);
   if (previous && previous.mtimeMs >= changed && complete) return;
   const tsc = desktopRequire.resolve('typescript/bin/tsc');
-  for (const project of ['packages/shared', 'apps/desktop']) await processes.start(process.execPath, [tsc, '-p', join(root, project, 'tsconfig.json')], root).done;
+  for (const project of ['packages/browser-network', 'packages/shared', 'apps/desktop']) await processes.start(process.execPath, [tsc, '-p', join(root, project, 'tsconfig.json')], root).done;
   await stageCodeAssets(root);
   await writeFile(stamp, 'Only source/config/lockfile changes require recompilation.\n');
 }

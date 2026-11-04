@@ -69,6 +69,8 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
   });
+  // The application, rather than a browser library, owns child-process shutdown.
+  app.enableShutdownHooks(['SIGINT', 'SIGTERM']);
   app.setGlobalPrefix('api');
 
   // A user-requested restart (Settings → Backend) exits with a code the

@@ -149,7 +149,7 @@ model catalogs or read history for unselected sessions. Only semantic activity
 changes invalidate navigation; streamed text and tool progress do not reload
 the sidebar. Session pages supply authoritative activity for the visible window.
 
-Browser now uses a narrow task-owned native adapter; see the
+Browser uses narrow task-owned local guest and remote streaming adapters; see the
 [production browser guide](../apps/renderer/src/app/task-browser/README.md) for
 its mailbox, forwarding, ownership, bounded resources and conservative privacy
 policy. Remaining side views keep their existing integration boundaries. The implementation does not
@@ -386,3 +386,10 @@ Automatic SSH retries stop after ten minutes of transient outage. Wake and
 bounded main-owned network-interface/online-state observation resume that stop;
 authentication and host-trust failures always require a person. Existing
 main-owned transport credentials, CSP and the named bridge remain unchanged.
+
+Remote Browser viewer routes require the managed private IPC transport and a
+rotated exclusive viewer lease; they are unavailable on the legacy TCP API. Main
+owns credentials, frame transport and narrowly typed input. The renderer does
+not fetch remote frames or expose pixels to MCP. Disconnect invalidates driver
+generations and queued work; metadata reconciliation never replays an action.
+See [the browser host](../apps/backend/src/desktop-browser/README.md).

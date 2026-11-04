@@ -16,6 +16,12 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.296
         version: 0.3.296(@anthropic-ai/sdk@0.133.0)(@modelcontextprotocol/sdk@1.29.0)(zod@3.25.76)
+      '@elevenex/browser-network':
+        specifier: workspace:*
+        version: link:../../packages/browser-network
+      '@elevenex/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@huggingface/transformers':
         specifier: ^4.2.0
         version: 4.2.0
@@ -85,6 +91,9 @@ importers:
       parse5:
         specifier: ^8.0.0
         version: 8.0.0
+      playwright-core:
+        specifier: 1.61.0
+        version: 1.61.0
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -193,6 +202,10 @@ importers:
         version: 8.59.0(eslint@9.39.4)(typescript@5.9.3)
 
   apps/desktop:
+    dependencies:
+      '@elevenex/browser-network':
+        specifier: workspace:*
+        version: link:../../packages/browser-network
     devDependencies:
       '@elevenex/shared':
         specifier: workspace:*
@@ -424,6 +437,69 @@ importers:
 
   packages/shared:
     devDependencies:
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  vscode-filesystem-provider:
+    devDependencies:
+      '@types/mocha':
+        specifier: ^10.0.0
+        version: 10.0.10
+      '@types/vscode':
+        specifier: ^1.85.0
+        version: 1.116.0
+      '@vscode/test-electron':
+        specifier: ^2.3.0
+        version: 2.5.2
+      mocha:
+        specifier: ^10.2.0
+        version: 10.8.2
+      ts-loader:
+        specifier: ^9.5.0
+        version: 9.5.7(typescript@5.9.3)(webpack@5.106.2)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+      webpack:
+        specifier: ^5.90.0
+        version: 5.106.2(webpack-cli@5.1.4)
+      webpack-cli:
+        specifier: ^5.1.0
+        version: 5.1.4(webpack@5.106.2)
+
+  vscode-scm-extension:
+    devDependencies:
+      '@types/mocha':
+        specifier: ^10.0.0
+        version: 10.0.10
+      '@types/vscode':
+        specifier: ^1.85.0
+        version: 1.116.0
+      '@vscode/test-electron':
+        specifier: ^2.3.0
+        version: 2.5.2
+      mocha:
+        specifier: ^10.2.0
+        version: 10.8.2
+      ts-loader:
+        specifier: ^9.5.0
+        version: 9.5.7(typescript@5.9.3)(webpack@5.106.2)
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+      webpack:
+        specifier: ^5.90.0
+        version: 5.106.2(webpack-cli@5.1.4)
+      webpack-cli:
+        specifier: ^5.1.0
+        version: 5.1.4(webpack@5.106.2)
+
+  packages/browser-network:
+    devDependencies:
+      '@types/node':
+        specifier: 26.6.5
+        version: 26.6.5
       typescript:
         specifier: 6.0.3
         version: 6.0.3

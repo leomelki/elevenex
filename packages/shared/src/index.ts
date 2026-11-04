@@ -1,6 +1,6 @@
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
-import type { TaskBrowserState, TaskBrowserCommand, TaskBrowserLayout } from './task-browser';
+import type { TaskBrowserState, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserSurface, TaskBrowserFrame, TaskBrowserStreamInput } from './task-browser';
 export type * from './task-browser';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
@@ -49,6 +49,11 @@ export interface InvokeContracts {
   'code:focus': { args: [target: CodeTarget]; result: void };
   'code:release': { args: [target: CodeTarget]; result: void };
 
+  'task-browser:attach': { args: [scopeId: string, taskId: number, tabId: string, contentsId: number]; result: void };
+  'task-browser:surfaces': { args: []; result: readonly TaskBrowserSurface[] };
+  'task-browser:presentation': { args: [scopeId: string, taskId: number, tabId: string, presentation: 'embedded' | 'stream']; result: void };
+  'task-browser:frame-ack': { args: [scopeId: string, taskId: number, tabId: string, streamId: string, sequence: number]; result: void };
+  'task-browser:input': { args: [scopeId: string, taskId: number, tabId: string, generation: number, input: TaskBrowserStreamInput]; result: number };
   'task-browser:read': { args: [scopeId: string, taskId: number]; result: BackendResult<TaskBrowserState> };
   'task-browser:command': { args: [scopeId: string, taskId: number, input: TaskBrowserCommand]; result: BackendResult<TaskBrowserState> };
   'task-browser:layout': { args: [scopeId: string, taskId: number, input: TaskBrowserLayout]; result: void };
@@ -131,6 +136,8 @@ export interface EventContracts {
   'code:exit-requested': CodeTarget;
   'code:changed': { readonly target: CodeTarget; readonly state: CodeSurfaceState };
   'task-browser:changed': TaskBrowserState;
+  'task-browser:surfaces-changed': readonly TaskBrowserSurface[];
+  'task-browser:frame': TaskBrowserFrame;
   'machines:changed': MachineState;
   'theme:changed': Theme;
   'backend:changed': BackendStatus;
@@ -163,6 +170,13 @@ export interface ElevenexBridge {
   codeFocus(target: CodeTarget): Promise<void>;
   codeRelease(target: CodeTarget): Promise<void>;
 
+  taskBrowserAttach?(scopeId: string, taskId: number, tabId: string, contentsId: number): Promise<void>;
+  taskBrowserSurfaces?(): Promise<readonly TaskBrowserSurface[]>;
+  taskBrowserPresentation?(scopeId: string, taskId: number, tabId: string, presentation: 'embedded' | 'stream'): Promise<void>;
+  taskBrowserFrameAck?(scopeId: string, taskId: number, tabId: string, streamId: string, sequence: number): Promise<void>;
+  taskBrowserInput?(scopeId: string, taskId: number, tabId: string, generation: number, input: TaskBrowserStreamInput): Promise<number>;
+  onTaskBrowserSurfacesChanged?(listener: (surfaces: readonly TaskBrowserSurface[]) => void): () => void;
+  onTaskBrowserFrame?(listener: (frame: TaskBrowserFrame) => void): () => void;
   taskBrowserRead(scopeId: string, taskId: number): Promise<BackendResult<TaskBrowserState>>;
   taskBrowserCommand(scopeId: string, taskId: number, input: TaskBrowserCommand): Promise<BackendResult<TaskBrowserState>>;
   taskBrowserLayout(scopeId: string, taskId: number, input: TaskBrowserLayout): Promise<void>;

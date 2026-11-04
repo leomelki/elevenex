@@ -3,7 +3,7 @@ import { ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconB
 import { BrowserDriver, BrowserQuestion, BrowserStep, BrowserTab, BrowserTarget, ViewTab } from './view.models';
 import { ViewTabsComponent } from './view-tabs.component';
 
-/** A safe preview host. The owner supplies trusted rendered content, never an arbitrary iframe/webview. */
+/** Browser chrome. The owner supplies a trusted platform adapter through the preview slot. */
 @Component({
   selector: 'ex-browser-view',
   imports: [ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconButtonComponent, ViewTabsComponent],
@@ -14,6 +14,8 @@ import { ViewTabsComponent } from './view-tabs.component';
 export class BrowserViewComponent {
   readonly tabs = input<readonly BrowserTab[]>([]);
   readonly active = input<string>();
+  readonly clipPreview = input(false);
+  readonly keepPreviewMounted = input(false);
   readonly driver = input<BrowserDriver>('you');
   readonly step = input<BrowserStep>();
   readonly action = input<BrowserTarget>();
@@ -119,7 +121,13 @@ export class BrowserViewComponent {
   }
   protected askKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); this.ask(); }
-    if (event.key === 'Escape') { event.stopPropagation(); this.pickingChange.emit(false); }
+    if (event.key === 'Escape') {
+      event.preventDefault(); event.stopPropagation();
+      // Restore before Angular removes the focused textarea. A removed focused
+      // node otherwise drops focus to body before the after-render callback.
+      this.returnFocus?.focus({ preventScroll: true });
+      this.pickingChange.emit(false);
+    }
   }
   protected keydown(event: KeyboardEvent): void {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 't') { event.preventDefault(); this.added.emit(); }

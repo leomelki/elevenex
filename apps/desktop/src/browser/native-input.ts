@@ -4,9 +4,12 @@ import type { WebContents } from 'electron';
 /** Confirm our own trusted mouse delivery, never page content, text or field values. */
 export async function nativeBrowserInput(contents: WebContents, dispatch: () => Promise<void>, assertCurrent: () => void, kind: 'click' | 'wheel'): Promise<boolean> {
   const token = randomUUID();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Page input confirmation timed out')), 1200); });
+  const bounded = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, expired]);
   try {
     assertCurrent();
-    await contents.executeJavaScriptInIsolatedWorld(1003, [{ code: `(() => {
+    await bounded(contents.executeJavaScriptInIsolatedWorld(1003, [{ code: `(() => {
       globalThis.__elevenexInputReceipt?.remove();
       const receipt = { token: ${JSON.stringify(token)}, down: false, up: false, wheel: false, notify: () => {}, finish: undefined, remove: () => { window.removeEventListener('mousedown', down, true); window.removeEventListener('mouseup', up, true); window.removeEventListener('wheel', wheel, true); receipt.finish?.(false); } };
       const down = event => { if (event.isTrusted) receipt.down = true; receipt.notify(); };
@@ -14,9 +17,9 @@ export async function nativeBrowserInput(contents: WebContents, dispatch: () => 
       const wheel = event => { if (event.isTrusted) receipt.wheel = true; receipt.notify(); };
       window.addEventListener('mousedown', down, true); window.addEventListener('mouseup', up, true); window.addEventListener('wheel', wheel, true);
       globalThis.__elevenexInputReceipt = receipt;
-    })()` }]);
-    assertCurrent(); await dispatch(); assertCurrent();
-    const delivered: unknown = await contents.executeJavaScriptInIsolatedWorld(1003, [{ code: `new Promise(resolve => {
+    })()` }]));
+    assertCurrent(); await bounded(dispatch()); assertCurrent();
+    const delivered: unknown = await bounded(contents.executeJavaScriptInIsolatedWorld(1003, [{ code: `new Promise(resolve => {
       const r = globalThis.__elevenexInputReceipt;
       const done = () => r?.token === ${JSON.stringify(token)} && (${JSON.stringify(kind)} === 'click' ? r.down === true && r.up === true : r.wheel === true);
       if (done()) { resolve(true); return; }
@@ -24,9 +27,12 @@ export async function nativeBrowserInput(contents: WebContents, dispatch: () => 
       const timer = setTimeout(() => r.finish(false), 500);
       r.finish = value => { clearTimeout(timer); r.notify = () => {}; resolve(value); };
       r.notify = () => { if (done()) r.finish(true); };
-    })` }]);
+    })` }]));
     assertCurrent(); return delivered === true;
+  } catch {
+    assertCurrent(); return false;
   } finally {
+    clearTimeout(timer);
     if (!contents.isDestroyed()) void contents.executeJavaScriptInIsolatedWorld(1003, [{ code: `(() => {
       const r = globalThis.__elevenexInputReceipt;
       if (r?.token === ${JSON.stringify(token)}) { r.remove(); delete globalThis.__elevenexInputReceipt; }

@@ -112,3 +112,14 @@ nonnegative and the preview clips the ring naturally.
 `pageFocusRequested` lets a platform owner focus its actual page from the driver
 pill or Take over. `pageFocusAvailable=false` disables that action for unavailable
 surfaces. The projected HTML preview retains ordinary keyboard focus behavior.
+
+Production Browser sets `keepPreviewMounted` so its trusted platform slot stays
+measurable before the first navigation, and `clipPreview` so page scrolling stays
+inside the browser. Both default to false for existing decorative consumers.
+Platform guests/streams and their ownership live in `task-browser/`, outside this
+presentational family.
+
+The workflow uses one retained footer for driving and waiting, with a reserved
+progress row at narrow widths. Error counts stay in the workflow controls during agent work.
+This avoids a page resize in the middle of the user's takeover click. These are
+presentation choices; driver authority is always enforced by the platform adapter.

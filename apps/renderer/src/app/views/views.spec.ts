@@ -181,12 +181,17 @@ describe('Side-view interactions', () => {
     expect(root.querySelector('[data-tab-id="checkout"] .driving')).not.toBeNull();
     expect(root.querySelector('.agent-cursor')).not.toBeNull();
     expect(root.querySelector('.driving-frame')).not.toBeNull();
+    const workflow = root.querySelector('.agent-step');
+    const sendErrors = vi.fn(); fixture.componentInstance.sendErrorsRequested.subscribe(sendErrors);
+    root.querySelector<HTMLButtonElement>('[aria-label="Send 2 error counts to agent"]')!.click();
+    expect(sendErrors).toHaveBeenCalledOnce();
     expect(root.querySelector('.errors')?.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
     fixture.componentRef.setInput('driver', 'you');
     fixture.detectChanges();
     expect(root.querySelector('.agent-cursor, .driving-frame, .agent.driving')).toBeNull();
-    expect(root.querySelector('.errors')?.closest('ex-fold')?.hasAttribute('inert')).toBe(false);
+    expect(root.querySelector('.errors')?.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
     expect(root.textContent).toContain('You’re driving; the agent waits');
+    expect(root.querySelector('.agent-step')).toBe(workflow);
     fixture.componentRef.setInput('step', { n: 1, total: Infinity, text: 'Invalid total' });
     fixture.detectChanges();
     expect(root.querySelectorAll('.step-dots i')).toHaveLength(0);

@@ -45,6 +45,8 @@ const TARGETS = [
   },
 ];
 const NATIVE_RUNTIME_DEPENDENCIES = [
+  // Externalized browser driver, including its managed Chromium installer assets.
+  "playwright-core",
   "better-sqlite3",
   "node-pty",
   "@openai/codex-sdk",

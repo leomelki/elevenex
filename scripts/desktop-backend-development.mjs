@@ -11,9 +11,9 @@ import { buildLinuxDevelopmentRuntime } from './desktop-backend-linux.mjs';
 export async function developmentRevision(root) {
   const git = promisify(execFile);
   const paths = (await git('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--',
-    'apps/backend/src', 'apps/backend/drizzle', 'apps/backend/package.json', 'packages/shared/src',
+    'apps/backend/src', 'apps/backend/drizzle', 'apps/backend/package.json', 'packages/shared/src', 'packages/browser-network/src', 'packages/browser-network/package.json', 'packages/browser-network/tsconfig.json',
     'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/frontend/proxy.conf.json', 'scripts/bundle-electron-backend.js',
-    'scripts/stage-electron-backend.js', 'scripts/runtime-stage-utils.js',
+    'scripts/stage-electron-backend.js', 'scripts/prepare-vscode-web-runtime.js',
     'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-runtime.mjs',
     'scripts/desktop-backend-linux.mjs', 'scripts/desktop-backend-linux.Dockerfile', 'config/vscode-web-runtime.json',
     'scripts/archive-electron-backend.js', 'scripts/rebuild-electron-backend-natives.js',
@@ -41,6 +41,9 @@ export async function prepareDevelopmentBackend(root, run, { linuxArchitecture, 
   // TypeScript's stack while resolving Drizzle's recursive schema types.
   // The TypeScript CLI checks first and uses the same backend build config.
   await rm(join(backend, 'dist'), { recursive: true, force: true });
+  const networkRequire=createRequire(join(root,'packages/browser-network/package.json'));
+  await run(networkRequire.resolve('typescript/bin/tsc'), ['-p',join(root,'packages/browser-network/tsconfig.json')]);
+  await run(networkRequire.resolve('typescript/bin/tsc'), ['-p',join(root,'packages/shared/tsconfig.json')]);
   await run(require.resolve('typescript/bin/tsc'), ['-p', 'tsconfig.build.json'], backend);
   await run(join(root, 'scripts/bundle-electron-backend.js'));
 

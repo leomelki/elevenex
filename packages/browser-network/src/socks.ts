@@ -55,6 +55,7 @@ export async function browserSocks(resolve: (host: string, port: number) => Prom
       phase = 'connecting'; client.pause(); client.removeListener('data', data);
       void resolve(host, port).then(target => {
         if (closing || client.destroyed) return;
+        if (sockets.size >= 128) { fail(); return; }
         upstream = createConnection({ host: target.host, port: target.port });
         sockets.add(upstream);
         const peer = upstream;

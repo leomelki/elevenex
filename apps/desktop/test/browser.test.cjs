@@ -69,7 +69,7 @@ test('automation expiry and disposal revoke a late action before input and stop 
 });
 
 test('public proxy destinations reject private, rebound and reserved addresses', () => {
-  const { publicBrowserAddress } = require('../dist/browser/public-address');
+  const { publicBrowserAddress } = require('@elevenex/browser-network');
   for (const value of ['127.0.0.1', '0.0.0.0', '10.1.2.3', '172.16.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '192.0.2.1', '198.18.0.1', '203.0.113.1', '224.0.0.1', '::1', '::ffff:127.0.0.1', 'fd00::1', 'fe80::1', '2001:db8::1', '2001::1', '3fff::1']) assert.equal(publicBrowserAddress(value), false, value);
   for (const value of ['8.8.8.8', '1.1.1.1', '192.0.78.24', '2001:4860:4860::8888']) assert.equal(publicBrowserAddress(value), true, value);
 });
@@ -77,7 +77,7 @@ test('public proxy destinations reject private, rebound and reserved addresses',
 test('task SOCKS transport bounds handshakes, preserves streams and closes owned sockets', async context => {
   const { createServer, createConnection } = require('node:net');
   const { once } = require('node:events');
-  const { browserSocks } = require('../dist/browser/socks');
+  const { browserSocks } = require('@elevenex/browser-network');
   const echo = createServer(socket => socket.pipe(socket));
   await new Promise(resolve => echo.listen(0, '127.0.0.1', resolve));
   context.after(() => new Promise(resolve => echo.close(resolve)));
@@ -93,4 +93,59 @@ test('task SOCKS transport bounds handshakes, preserves streams and closes owned
   assert.equal((await connected)[0][1], 0);
   const response = once(client, 'data'); client.write('opaque task data'); assert.equal((await response)[0].toString(), 'opaque task data');
   const closed = once(client, 'close'); proxy.disconnect(); await closed; assert.equal(resolutions, 1);
+});
+
+test('stream input rejects unrestricted commands, unbounded text, invalid pointers and clipboard verbs', () => {
+  const { streamInput } = require('../dist/browser/validation');
+  for (const value of [{kind:'eval',code:'secret'}, {kind:'text',text:'x'.repeat(65537)}, {kind:'clipboard',operation:'readAll'}, {kind:'pointer',type:'down',x:-1,y:1,button:'left',buttons:1,clicks:1,modifiers:0}]) assert.throws(()=>streamInput(value));
+  assert.deepEqual(streamInput({kind:'text',text:'世界'}), {kind:'text',text:'世界'});
+});
+
+test('display stream bounds pending frames, authenticates receipts, adapts to slow consumers and stops on disposal', async context => {
+  const { EventEmitter } = require('node:events');
+  const { BrowserFrameStream } = require('../dist/browser/frame-stream');
+  context.mock.timers.enable({apis:['setTimeout']});
+  const debuggerApi=new EventEmitter();const commands=[];
+  debuggerApi.isAttached=()=>true; debuggerApi.sendCommand=async(method,params)=>{commands.push({method,params});};
+  const contents={debugger:debuggerApi,isDestroyed:()=>false};
+  const frames=[];const stream=new BrowserFrameStream(contents,{scopeId:id,taskId:1,tabId:id},frame=>frames.push(frame));
+  stream.setActive(true);await Promise.resolve();
+  const frame=n=>debuggerApi.emit('message',{},'Page.screencastFrame',{sessionId:n,data:Buffer.from('image'+n).toString('base64'),metadata:{deviceWidth:390,deviceHeight:600}});
+  frame(1);frame(2);frame(3);assert.equal(frames.length,1);
+  stream.acknowledge('unrelated',1);assert.equal(frames.length,1);
+  stream.acknowledge(frames[0].streamId,1);assert.equal(frames.length,2);assert.equal(Buffer.from(frames[1].jpeg).toString(),'image3');
+  context.mock.timers.tick(1000);await Promise.resolve();assert.equal(commands.at(-1).method,'Page.stopScreencast');
+  stream.destroy();assert.equal(debuggerApi.listenerCount('message'),0);frame(4);assert.equal(frames.length,2);
+});
+
+test('guest attachment accepts only a main-issued blank partition and removes inherited privileges', () => {
+  const { hardenTaskGuest } = require('../dist/browser/guest-policy');
+  for (const params of [{src:'https://evil.example',partition:id},{src:'about:blank',partition:'persist:default'},{src:'about:blank',partition:id,preload:'/unsafe'},{src:'about:blank',partition:id,webpreferences:'nodeIntegration=true'}]) assert.equal(hardenTaskGuest({},params,id),false);
+  const prefs={preload:'/app-preload',nodeIntegration:true,sandbox:false,contextIsolation:false,webSecurity:false};
+  assert.equal(hardenTaskGuest(prefs,{src:'about:blank',partition:id},id),true);
+  assert.equal(prefs.preload,undefined);assert.equal(prefs.sandbox,true);assert.equal(prefs.contextIsolation,true);assert.equal(prefs.nodeIntegration,false);assert.equal(prefs.webSecurity,true);assert.equal(prefs.webviewTag,false);
+});
+
+const {remoteBrowserState}=require('../dist/browser/remote-state');
+test('remote browser replies are bounded, resource matched and content allowlisted',()=>{
+  const value={taskId:1,revision:1,surfaceEpoch:1,controlsFocus:0,tabs:[],active:null,ports:[],privacy:'content-withheld',picked:null,picking:false,pickerMessage:null,feedback:false,pageText:'never forward this'};
+  assert.equal(remoteBrowserState(value,'scope',1).scopeId,'scope');
+  assert.equal('pageText' in remoteBrowserState(value,'scope',1),false);
+  for(const invalid of [{...value,taskId:2},{...value,ports:Array(33).fill(80)},{...value,ports:[0]},{...value,privacy:'masked'},{...value,revision:Infinity},{...value,picked:{selector:'input[value=secret]',tag:'input',x:0,y:0,width:1,height:1}},{...value,attention:{kind:'eval',message:'x',outside:true}}])assert.throws(()=>remoteBrowserState(invalid,'scope',1));
+});
+
+const {nativeBrowserInput}=require('../dist/browser/native-input');
+test('unresponsive page observation expires without dispatching late native input',async()=>{
+  let dispatched=0,release;
+  const pending=new Promise(resolve=>{release=resolve;});
+  const contents={executeJavaScriptInIsolatedWorld:()=>pending,isDestroyed:()=>true};
+  const result=await nativeBrowserInput(contents,async()=>{dispatched++;},()=>undefined,'click');
+  assert.equal(result,false);release();await Promise.resolve();assert.equal(dispatched,0);
+});
+
+test('human input batches exclude nesting and clipboard, and bound events and aggregate text',()=>{
+  const {streamInput}=require('../dist/browser/validation');
+  const event={kind:'text',text:'界'};
+  assert.deepEqual(streamInput({kind:'batch',events:[event,event]}),{kind:'batch',events:[event,event]});
+  for(const events of [[],Array(33).fill(event),[{kind:'batch',events:[event]}],[{kind:'clipboard',operation:'paste'}],[{kind:'text',text:'x'.repeat(65536)},event]])assert.throws(()=>streamInput({kind:'batch',events}));
 });

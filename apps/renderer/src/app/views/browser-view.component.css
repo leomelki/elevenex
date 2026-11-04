@@ -10,6 +10,7 @@
 .driver[data-driver="agent"] { color: var(--accent); background: var(--accent-soft); }
 .driver[data-driver="needs"] { color: var(--attention); background: var(--attention-soft); }
 .agent-mark { display: inline-grid; place-items: center; flex: none; width: var(--space-4); height: var(--space-4); border-radius: var(--radius-xs); color: var(--accent); background: var(--accent-soft); font: 600 8px/1 var(--font-sans); }
+.agent-mark.waiting { color: var(--ink-muted); background: transparent; }
 .needs { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); color: var(--ink); background: var(--attention-soft); }
 .needs ex-icon { color: var(--attention); flex: none; }
 .needs > span { display: flex; flex: 1; flex-direction: column; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
@@ -46,12 +47,14 @@ footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .foot { padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); color: var(--ink); }
 .foot > ex-icon { flex: none; color: var(--accent); }
 .foot > .agent-mark { flex: none; }
+.foot > .workflow-actions { display: flex; flex: none; gap: var(--space-2); grid-column: 1 / -1; justify-self: start; }
+.workflow-errors { color: var(--danger); }
 .foot > button, .needs > button { flex: none; }
 .step-copy { display: flex; align-items: center; min-width: 0; overflow: hidden; }
 .step-copy b { flex: none; }
 .separator { margin-inline: var(--space-1); color: var(--ink-muted); }
 .step-copy ex-ease-swap { flex: 0 1 auto; min-width: 0; overflow: hidden; }
-.foot > .step-dots { display: flex; flex: none; gap: var(--space-1); }
+.foot > .step-dots { display: flex; flex: none; gap: var(--space-1); min-height: var(--space-1); }
 .step-dots i { width: var(--space-1); height: var(--space-1); border-radius: var(--radius-full); background: var(--line-strong); opacity: .45; transition: background var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
 .step-dots .done { background: var(--accent); opacity: .55; }
 .step-dots .now { background: var(--accent); opacity: 1; box-shadow: 0 0 0 2px var(--accent-soft); }
@@ -60,9 +63,8 @@ footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); color: var(--ink-muted); font-size: var(--text-ui-size); }
 .empty p { margin: 0; }
 @container (max-width: 540px) {
-  .agent-step { flex-wrap: wrap; column-gap: var(--space-2); row-gap: var(--space-1); }
-  .agent-step .step-copy { flex-basis: calc(100% - var(--space-6)); }
-  .agent-step > .step-dots { flex: 1; padding-left: calc(var(--space-4) + var(--space-2)); }
+  .agent-step { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto var(--space-1); column-gap: var(--space-2); row-gap: var(--space-1); }
+  .agent-step > .step-dots { grid-column: 2; }
 }
 @container (max-width: 360px) {
   .toolbar { flex-wrap: wrap; padding-block: var(--space-1); }
@@ -75,3 +77,7 @@ footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 }
 
 .address > input { width: 100%; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ink); font: inherit; outline-offset: var(--space-1); }
+
+.page.keeping-empty { background: transparent; }
+
+.page.clipped { overflow: clip; }

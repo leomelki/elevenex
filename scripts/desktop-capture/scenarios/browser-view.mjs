@@ -104,9 +104,9 @@ export default async function* (capture) {
     await capture.click('ex-browser-demo .shop-header b');
     await settled();
     assert.equal(await capture.evaluate(() => !!document.querySelector('ex-browser-demo .agent-cursor, ex-browser-demo .driving-frame, ex-browser-demo .agent.driving')), false);
-    assert.equal(await capture.evaluate(() => document.querySelector('ex-browser-demo .errors').closest('ex-fold').hasAttribute('inert')), false);
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-browser-demo .errors').closest('ex-fold').hasAttribute('inert')), true);
     yield { name: `${theme}-you-drive`, selector: 'ex-browser-demo' };
-    await capture.click('ex-browser-demo ex-fold.open .foot:has(ex-icon[name="cursor"]) button');
+    await capture.click('ex-browser-demo [aria-label="Hand back browser"]');
     await settled();
     assert.equal(await capture.evaluate(() => document.activeElement?.matches('ex-browser-demo .driver')), true, 'Hand back retains focus in browser controls');
     aligned(await geometry());

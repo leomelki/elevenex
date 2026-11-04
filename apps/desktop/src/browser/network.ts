@@ -1,7 +1,6 @@
 import { net, type Session } from 'electron';
 import { isIP } from 'node:net';
-import { publicBrowserAddress } from './public-address';
-import { browserSocks } from './socks';
+import { browserSocks, publicBrowserAddress } from '@elevenex/browser-network';
 import { browserUrl, loopback } from './validation';
 export interface BrowserForwardLease { readonly port: number; close(): Promise<void> }
 /** Task networking keeps logical origins intact, including CORS, cookies, TLS and WebSockets. */
@@ -9,23 +8,23 @@ export class TaskBrowserNetwork {
   private readonly forwards = new Map<number, Promise<BrowserForwardLease>>();
   private proxy?: ReturnType<typeof browserSocks>;
   private closed = false;
-  private discovered = new Set<number>();
   private readonly lookups = new Map<string, Promise<string>>();
-  constructor(readonly remote: boolean, private readonly forward: (port: number) => Promise<BrowserForwardLease>, private readonly current: () => boolean, private readonly active: () => boolean) {}
+  constructor(readonly remote: boolean, private readonly forward: (port: number) => Promise<BrowserForwardLease>, private readonly current: () => boolean, private readonly active: () => boolean, private readonly applicationPort: (port: number) => boolean = () => false) {}
   async outside(value: string): Promise<string> {
     const url = new URL(browserUrl(value));
-    if (!this.remote || !loopback(url)) return url.href;
+    if (!loopback(url)) return url.href;
     const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
     const lease = await this.service(port, true);
+    if (!this.remote) return url.href;
     url.hostname = url.hostname === 'localhost' || url.hostname.endsWith('.localhost') ? url.hostname : '127.0.0.1';
     url.port = String(lease.port); return url.href;
   }
   async configure(session: Session): Promise<void> {
-    if (!this.remote) return;
     this.assertCurrent();
     this.proxy ??= browserSocks(async (host, port) => {
       this.assertCurrent();
       if (!this.active()) throw new Error('This task is not active');
+      if (this.applicationPort(port)) throw new Error('Application control ports are not browser destinations');
       const authority = host.includes(':') ? `[${host}]` : host;
       if (!loopback(new URL(`http://${authority}:${port}`))) return { host: await this.publicHost(host), port };
       const lease = await this.service(port, false);
@@ -40,21 +39,24 @@ export class TaskBrowserNetwork {
     if (route.trim() !== `SOCKS5 127.0.0.1:${proxy.port}`) throw new Error('This Chromium runtime cannot isolate remote loopback routing');
     this.assertCurrent();
   }
-  authorizePorts(ports: readonly number[]): void { this.discovered = new Set(ports); }
+  authorizePorts(ports: readonly number[]): void { void ports; /* Discovery supplies UI suggestions, never network authority. */ }
   allowed(value: string): boolean {
     if (this.closed || !this.current() || !this.active()) return false;
     const url = new URL(value);
-    if (!this.remote || !loopback(url)) return true;
+    const destination = Number(url.port || (url.protocol === 'https:' || url.protocol === 'wss:' ? 443 : 80));
+    if (this.applicationPort(destination)) return false;
+    if (!loopback(url)) return true;
     const port = Number(url.port || (url.protocol === 'https:' || url.protocol === 'wss:' ? 443 : 80));
-    return this.forwards.has(port) || this.discovered.has(port);
+    return this.forwards.has(port);
   }
   private async service(port: number, create: boolean): Promise<BrowserForwardLease> {
     this.assertCurrent();
+    if (this.applicationPort(port)) throw new Error('Application control ports are not browser destinations');
     let pending = this.forwards.get(port);
     if (!pending) {
-      if (!create && !this.discovered.has(port)) throw new Error('Open this task server explicitly before connecting to it');
+      if (!create) throw new Error('Open this task server explicitly before connecting to it');
       if (this.forwards.size >= 12) throw new Error('Task browser forwarding limit reached');
-      pending = this.forward(port); this.forwards.set(port, pending);
+      pending = this.remote ? this.forward(port) : Promise.resolve({ port, close: async () => undefined }); this.forwards.set(port, pending);
       void pending.catch(() => { if (this.forwards.get(port) === pending) this.forwards.delete(port); });
     }
     let timer: ReturnType<typeof setTimeout> | undefined;

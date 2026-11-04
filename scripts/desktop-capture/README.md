@@ -659,3 +659,11 @@ the viewport; use `capture.window.setContentSize(width, height)` together with
 Native page assertions remain separate from app accessibility/layout diagnostics,
 which inspect only the trusted app renderer. This capture-only capability does
 not expose screenshot or DOM observation to agents driving task pages.
+
+Local Browser guests are DOM-composited and use ordinary checkpoints, unlike
+child WebContentsView compositions. For a native guest capture, resize the real
+window and root viewport together, then call
+`await capture.cdp('Emulation.clearDeviceMetricsOverride')`. Root-only device-scale
+emulation otherwise gives a guest a different DPR from the host display and
+misrepresents its size. App layout/AX diagnostics still inspect the trusted app
+only; they do not establish page accessibility or agent observation permission.

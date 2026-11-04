@@ -1,3 +1,5 @@
+import { RuntimeBrowserService } from './runtime-browser.service.js';
+import type { BrowserAgentCommand } from '@elevenex/shared';
 import { browserReply } from './browser-reply.js';
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -16,7 +18,7 @@ interface Lease { readonly taskId: number; readonly desktopId: string; readonly 
 export class DesktopBrowserService implements OnModuleDestroy {
   private readonly leases = new Map<string, Lease>();
   private readonly timer = setInterval(() => this.expire(), 1000);
-  constructor() { this.timer.unref(); }
+  constructor(private readonly runtime?:RuntimeBrowserService) { this.timer.unref(); }
   poll(taskId: number, desktopId: string, token: string, receipt?: { id: string; value?: unknown; failed?: boolean }) {
     this.expire();
     let lease = this.leases.get(desktopId);
@@ -37,6 +39,8 @@ export class DesktopBrowserService implements OnModuleDestroy {
   }
   async request(taskId: number, sessionId: number, command: Record<string, unknown>, signal: AbortSignal, desktopId?: string): Promise<unknown> {
     this.expire(); signal.throwIfAborted();
+    const hosted=this.runtime?.active(taskId);
+    if(hosted&&(!desktopId||desktopId===hosted.id)){if(!desktopId&&[...this.leases.values()].some(lease=>lease.taskId===taskId))throw new Error('Several task browsers are connected. Supply desktopId.');return this.runtimeRequest(hosted,command as BrowserAgentCommand,sessionId,signal);}
     const matches = [...this.leases.values()].filter(item => item.taskId === taskId && (!desktopId || item.desktopId === desktopId));
     if (matches.length !== 1) throw new Error(matches.length ? 'Several task browsers are connected. Supply desktopId.' : 'Open this task’s Browser in the desktop. No task browser is connected.');
     const lease = matches[0]!;
@@ -50,7 +54,12 @@ export class DesktopBrowserService implements OnModuleDestroy {
       lease.pending.set(id, entry); signal.addEventListener('abort', fail, { once: true });
     });
   }
-  desktops(taskId: number) { this.expire(); return [...this.leases.values()].filter(lease => lease.taskId === taskId).map(lease => ({ desktopId: lease.desktopId })); }
+  desktops(taskId: number) { this.expire(); const hosted=this.runtime?.active(taskId);return [...[...this.leases.values()].filter(lease => lease.taskId === taskId).map(lease => ({ desktopId: lease.desktopId })),...(hosted?[{desktopId:hosted.id}]:[])]; }
+  private async runtimeRequest(hosted:import('./runtime-task.js').RuntimeBrowserTask,input:BrowserAgentCommand,sessionId:number,signal:AbortSignal):Promise<unknown>{
+    const controller=new AbortController();const abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});const timer=setTimeout(abort,2000);
+    let stop:()=>void=()=>undefined;const cancelled=new Promise<never>((_resolve,reject)=>{stop=()=>reject(new Error('Browser action stopped'));controller.signal.addEventListener('abort',stop,{once:true});});
+    try{return browserReply(await Promise.race([hosted.agent(input,sessionId,controller.signal),cancelled]));}catch{throw new Error('Browser action stopped. Inspect the page before retrying.');}finally{clearTimeout(timer);signal.removeEventListener('abort',abort);controller.signal.removeEventListener('abort',stop);}
+  }
   private expire(): void { for (const lease of this.leases.values()) if (Date.now() - lease.seen > 3000) this.drop(lease); }
   private drop(lease: Lease): void {
     this.leases.delete(lease.desktopId);
