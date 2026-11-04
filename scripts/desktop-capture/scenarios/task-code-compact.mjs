@@ -45,7 +45,7 @@ export default async function* (capture) {
   };
   try {
     await cp(join(process.env.ELEVENEX_CODE_SMOKE_CACHE, '1.144.0'), join(app.getPath('userData'), 'code-runtimes/1.144.0'), { recursive: true });
-    const finish = async () => { await capture.settle(); await capture.waitFor(() => document.getAnimations().every(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running')); };
+    const finish = async () => { await capture.settle(); await capture.waitFor(() => !document.querySelector('ex-code-panel .crossfading') && document.getAnimations().every(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running')); };
     await capture.viewport(1440, 900);
     await capture.cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
     await capture.waitFor(() => document.querySelector('button[data-machine="local"]'));
@@ -234,7 +234,7 @@ export default async function* (capture) {
       yield { name: 'compact-autosave-confirmed', inspect: ['ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface'] };
     } finally { await writeFile(path, original); }
     const geometry = async () => {
-      await capture.waitFor(() => !document.querySelector('ex-code-panel .frame-container.resizing, ex-code-panel .frame-container.reflowing'));
+      await capture.waitFor(() => !document.querySelector('ex-code-panel .frame-container.resizing, ex-code-panel .frame-container.reflowing, ex-code-panel .frame-container.crossfading'));
       await capture.waitFor(() => getComputedStyle(document.querySelector('ex-code-panel .frame-container'), '::after').opacity === '0');
       const bounds = await capture.evaluate(() => {
         const launch = document.querySelector('ex-machine-launch .launch');
@@ -254,7 +254,7 @@ export default async function* (capture) {
       }, 'Workbench did not fill the resized iframe: '+JSON.stringify(bounds));
       assert.equal(capture.window.webContents.mainFrame.frames.find(child=>child.url===frame.url),frame);
     };
-    const viewportMotion = async (selector) => {
+    const viewportMotion = async function* (selector, name) {
       const { CodeFrame } = require('../../../apps/desktop/dist/code/frame.js');
       const settleLayout = CodeFrame.prototype.settleLayout;
       let acknowledge, reachedLayout = false;
@@ -274,12 +274,15 @@ export default async function* (capture) {
       await capture.evaluate(() => {
         const iframe = document.querySelector('ex-code-panel iframe');
         let width = iframe.clientWidth;
+        window.codeResizeStarted = 0;
+        window.codeResizeClick = () => { window.codeResizeStarted = performance.now(); };
+        document.addEventListener('click',window.codeResizeClick,{once:true,capture:true});
         window.codeReflowPaints = [];
         window.codeReflowObserver = new window.ResizeObserver(() => {
           if (iframe.clientWidth === width) return;
           width = iframe.clientWidth;
-          const style = getComputedStyle(iframe.closest('.frame-container'), '::after');
-          window.codeReflowPaints.push({width,opacity:style.opacity,transform:style.transform});
+          const scope = iframe.closest('.frame-container');
+          window.codeReflowPaints.push({width,transform:getComputedStyle(scope).transform,snapshot:scope.matches(':active-view-transition'),elapsed:performance.now()-window.codeResizeStarted});
         });
         window.codeReflowObserver.observe(iframe);
       });
@@ -287,7 +290,17 @@ export default async function* (capture) {
         await capture.click(selector);
         await waitMain(() => reachedLayout, 'The real child layout did not settle');
         await capture.settle();
-        assert.equal(await capture.evaluate(() => getComputedStyle(document.querySelector('ex-code-panel .frame-container'), '::after').opacity), '1', 'Editor revealed before its layout acknowledgement');
+        assert.equal(await capture.evaluate(() => getComputedStyle(document.querySelector('ex-code-panel .frame-container'), '::view-transition-old(code-editor)').opacity), '1', 'Old snapshot faded before the new layout was ready');
+        assert.ok(await capture.evaluate(() => {
+          const tab=document.querySelector('ex-workspace-panels [role="tab"][aria-label="Code"]');
+          const box=tab.getBoundingClientRect(),hit=document.elementFromPoint(box.x+box.width/2,box.y+box.height/2);
+          return tab===hit || tab.contains(hit);
+        }), 'The snapshot overlay blocked panel controls');
+        await frame.executeJavaScript(`window.codeCrossfadeKey=null;window.codeCrossfadeKeyListener=event=>{window.codeCrossfadeKey=event.key;};document.addEventListener('keydown',window.codeCrossfadeKeyListener,{once:true});`);
+        await capture.evaluate(target=>window.elevenex.codeFocus(target),target);
+        await capture.press('ArrowUp');
+        assert.equal(await frame.executeJavaScript('window.codeCrossfadeKey'),'ArrowUp','The retained snapshot blocked editor keyboard input');
+        yield {name:`${name}-old-snapshot-held`,inspect:['ex-code-panel .frame-container','iframe']};
         // Keep sampling after acknowledgement, including the actual fade-in.
         // Viewport-only checks miss Explorer/editor grid movement at one size.
         const stableLayout = frame.executeJavaScript(`new Promise(resolve => {
@@ -304,22 +317,26 @@ export default async function* (capture) {
         const widths = await frame.executeJavaScript('window.codeViewportWidths');
         assert.notEqual(widths[0], widths.at(-1), 'Editor must resize to the new viewport');
         assert.equal(new Set(widths).size, 2, 'Code must resize exactly once during panel motion: ' + JSON.stringify(widths));
-        assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel .frame-container').style.width), '', 'Frozen viewport was not released');
+        assert.ok(await capture.evaluate(() => {const frame=document.querySelector('ex-code-panel .frame-container');return !frame.classList.contains('resizing') && frame.clientWidth===frame.parentElement.clientWidth;}), 'Frozen viewport was not released');
         const paints = await capture.evaluate(() => window.codeReflowPaints);
         assert.ok(paints.length, 'No actual iframe layout change was observed');
-        for (const paint of paints) assert.deepEqual({opacity:paint.opacity,transform:paint.transform},{opacity:'1',transform:'none'},'A visible resize or stretch exposed the layout jump');
-        return widths;
+        for (const paint of paints) {
+          assert.deepEqual({snapshot:paint.snapshot,transform:paint.transform},{snapshot:true,transform:'none'},'A visible resize or stretch exposed the layout jump');
+          assert.ok(paint.elapsed < 220, 'Destination resize waited until the end of the panel glide: '+JSON.stringify(paint));
+        }
+        return {widths,destinationResizeMs:paints[0].elapsed,paneChangesDuringReveal:0};
       } finally {
         acknowledge();
         CodeFrame.prototype.settleLayout = settleLayout;
         await frame.executeJavaScript('removeEventListener("resize", window.codeViewportResize); delete window.codeViewportResize; delete window.codeViewportWidths;');
-        await capture.evaluate(() => { window.codeReflowObserver.disconnect(); delete window.codeReflowObserver; delete window.codeReflowPaints; });
+        await frame.executeJavaScript("document.removeEventListener('keydown',window.codeCrossfadeKeyListener);delete window.codeCrossfadeKey;delete window.codeCrossfadeKeyListener;");
+        await capture.evaluate(() => { window.codeReflowObserver.disconnect(); document.removeEventListener('click',window.codeResizeClick,true); delete window.codeResizeClick; delete window.codeResizeStarted; delete window.codeReflowObserver; delete window.codeReflowPaints; });
       }
     };
     for (const theme of ['light','dark']) {
       await capture.theme(theme);
-      const expansion = await viewportMotion('ex-workspace-panels [aria-label="Expand side panel"]');
-      const collapse = await viewportMotion('ex-workspace-panels [aria-label="Return to chat"]');
+      const expansion = yield* viewportMotion('ex-workspace-panels [aria-label="Expand side panel"]',`${theme}-expansion`);
+      const collapse = yield* viewportMotion('ex-workspace-panels [aria-label="Return to chat"]',`${theme}-collapse`);
       yield { name: `${theme}-single-editor-resize`, inspect: ['ex-code-panel .editor-surface'], metadata: { expansion, collapse } };
       for (let cycle=0;cycle<3;cycle++) {
         await capture.click('ex-workspace-panels [aria-label="Close side panel"]'); await finish();
@@ -332,47 +349,44 @@ export default async function* (capture) {
       }
       yield {name:`${theme}-reopened-without-right-gap`,inspect:['ex-machine-launch .launch','ex-app-shell','.panel','iframe']};
       await capture.motion.freeze();
-      const previousAnimations = new Set(capture.motion.animations);
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
-      const opening = [...capture.motion.animations].filter(id=>!previousAnimations.has(id));
-      assert.ok(opening.length,'Panel expansion animation did not start');
+      await capture.waitFor(() => document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true}).some(a=>a.animationName?.endsWith('code-layout-out') && a.playState==='running'));
       const heldWidth = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth);
-      await capture.cdp('Animation.seekAnimations',{animations:opening,currentTime:140});
-      await capture.settle();
-      // The ancestor's transitionrun creates this shorter dissolve on the next
-      // style update. Scrub its live animations too; the debugger froze them at
-      // birth after the original ancestor animation IDs were collected.
-      await capture.evaluate(() => { for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) animation.finish(); });
+      await capture.evaluate(() => { for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=70; });
       await capture.settle();
       assert.equal(await capture.evaluate(()=>!!document.querySelector('ex-code-panel .launch-card')),false);
       assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth), heldWidth, 'Midpoint reflowed the editor');
-      assert.ok(await capture.evaluate(() => document.querySelector('ex-code-panel .frame-container').classList.contains('resizing')));
+      assert.ok(await capture.evaluate(() => document.querySelector('ex-code-panel .frame-container').classList.contains('crossfading')));
       assert.deepEqual(await capture.evaluate(() => {
-        const style = getComputedStyle(document.querySelector('ex-code-panel .frame-container'), '::after');
-        return {transform:style.transform,opacity:style.opacity};
-      }), {transform:'none',opacity:'1'}, 'Editor must be covered without stretching before its one-time reflow');
+        const scope=document.querySelector('ex-code-panel .frame-container');
+        const old=getComputedStyle(scope,'::view-transition-old(code-editor)');
+        return {transform:getComputedStyle(scope).transform,blending:Number(old.opacity)>0 && Number(old.opacity)<1,fit:old.objectFit,newOpacity:getComputedStyle(scope,'::view-transition-new(code-editor)').opacity};
+      }), {transform:'none',blending:true,fit:'none',newOpacity:'1'}, 'Old and new natural-size snapshots must blend in one phase');
       yield {name:`${theme}-expansion-interrupted`,inspect:['.panel','ex-code-panel','iframe']};
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]');
       await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]'); await finish(); await geometry();
       await capture.motion.freeze();
-      const beforeCollapse = new Set(capture.motion.animations);
-      const wideWidth = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth);
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]');
-      const closing = [...capture.motion.animations].filter(id=>!beforeCollapse.has(id));
-      assert.ok(closing.length, 'Panel collapse animation did not start');
-      await capture.cdp('Animation.seekAnimations', {animations:closing,currentTime:140}); await capture.settle();
-      await capture.evaluate(() => { for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) animation.finish(); });
+      await capture.waitFor(() => document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true}).some(a=>a.animationName?.endsWith('code-layout-out') && a.playState==='running'));
+      const wideWidth = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth);
+      await capture.evaluate(() => { for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=70; });
       await capture.settle();
       assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth),wideWidth,'Collapse midpoint reflowed the editor');
       assert.deepEqual(await capture.evaluate(() => {
-        const style = getComputedStyle(document.querySelector('ex-code-panel .frame-container'), '::after');
-        return {transform:style.transform,opacity:style.opacity};
-      }), {transform:'none',opacity:'1'}, 'Collapse must also hide reflow without squeezing text');
+        const scope=document.querySelector('ex-code-panel .frame-container');
+        const old=getComputedStyle(scope,'::view-transition-old(code-editor)');
+        return {transform:getComputedStyle(scope).transform,blending:Number(old.opacity)>0 && Number(old.opacity)<1,fit:old.objectFit,newOpacity:getComputedStyle(scope,'::view-transition-new(code-editor)').opacity};
+      }), {transform:'none',blending:true,fit:'none',newOpacity:'1'}, 'Collapse must crossfade without squeezing text');
       yield {name:`${theme}-collapse-interrupted`,inspect:['.panel','ex-code-panel .frame-container','iframe']};
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
       await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]'); await finish(); await geometry();
+      await capture.viewport(900,700); await finish(); await geometry();
+      const narrowExpansion = yield* viewportMotion('ex-workspace-panels [aria-label="Expand side panel"]',`${theme}-narrow-expansion`);
+      const narrowCollapse = yield* viewportMotion('ex-workspace-panels [aria-label="Return to chat"]',`${theme}-narrow-collapse`);
+      yield {name:`${theme}-narrow-crossfade`,inspect:['ex-code-panel .editor-surface'],metadata:{expansion:narrowExpansion,collapse:narrowCollapse}};
+      await capture.viewport(1440,900); await finish(); await geometry();
     }
     await frame.executeJavaScript("import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands})=>commands.executeCommand('workbench.action.closeAllEditors'))");
     await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16');

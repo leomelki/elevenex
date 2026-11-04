@@ -613,8 +613,9 @@ The scenario checks the absence of native editor views and retains the same
 frame through tab changes and expansion. It also holds real extension bootstrap
 to check exclusive loading, repeats close/reopen and resizing in both themes,
 scrubs interrupted expansions/collapses, measures exactly one real iframe
-viewport resize per toggle under an opaque cover with no scaling, holds back the
-real child-layout acknowledgement, checks stable pane geometry through reveal,
+viewport resize per toggle at the predicted destination while a native scoped
+snapshot is retained, records click-to-resize latency, holds back the real
+child-layout acknowledgement, checks stable pane geometry through the blur/fade,
 and asserts zero launch-viewport scrolling and
 matching iframe/workbench widths. Compact Files coverage includes the initial
 empty tree, single-click acceptance of an already-open file, Escape/Back state,

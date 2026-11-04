@@ -105,19 +105,36 @@ here** or **Focus editor** rather than silently stealing it. Four hot workbenche
 are retained; clean hidden instances may close only after upstream permits unload.
 Dirty instances stay retained. Shutdown respects backup vetoes.
 
-During the shell's expand/collapse width transition, `CodeViewportDirective`
-holds the existing iframe layout width at its natural scale and fades an opaque
-surface over it. The iframe itself remains rendered: Chromium throttles layout
-frames in transparent cross-origin iframes. At settlement it releases the width
-once and requests `codePresent` with the expected `viewportWidth`. Main waits for
-compact/expanded commands, the actual child viewport and 120ms of quiet workbench
-geometry, including completion of layout animations, before acknowledging. Only
-then does the cover fade away. Caret opacity animations do not delay settlement.
-The wait is bounded to two seconds; failure exposes retained writing and an error.
-Reversals, task changes and teardown cancel stale waits/reveals. The same browsing
-context and input remain active throughout. Ordinary window resizing remains
-live. Measurements use layout pixels so launch/modal transforms cannot change
-compact preferences.
+Expansion/collapse predicts the destination from the shell's actual width
+transition, including percentage widths, and resizes the iframe once at the start.
+An element-scoped View Transition retains the old editor image while the new one
+renders underneath. After the old snapshot is captured, the shell commits its
+final geometry; old/new Code contents blend in one 140ms token-driven blur/fade.
+Both images keep their natural scale, and the old content stays visible instead
+of a blank hide/show phase. Panel controls and the surrounding application stay
+outside the snapshot's hit-test boundary. No screenshot/pixel API is added to the
+bridge.
+The iframe is a direct, temporarily named transition participant rather than
+being flattened into a wrapper snapshot; its incoming cross-origin surface stays
+live as Code paints the destination layout.
+
+`codePresent` with the expected `viewportWidth` first awaits the child's actual
+viewport commit, then applies compact/expanded commands. This order keeps new
+Explorer/wrap settings out of the old compositor surface. Two stable child paints
+and completion of layout animations acknowledge readiness, without the previous
+fixed 120ms quiet delay. The new snapshot stays opaque under the old image so
+Chromium continues rendering the cross-origin workbench. Caret opacity animations
+do not delay readiness. The bounded two-second failure path still exposes retained
+writing and an error; it is not a normal animation delay.
+
+Unsupported scoped transitions retain the covered fallback. Reversals, context
+changes, reduced motion and teardown cancel retained snapshots and pending work.
+An unexpected destination change during native window resizing reconciles under
+an immediate cover. The same iframe and input remain active throughout. Ordinary
+window resizing remains live, and launch/modal transforms never change compact
+preferences because measurements use layout pixels. ResizeObserver retains an
+explicit settled pixel width between toggles too, preventing Chromium from
+publishing a tiny first animation step before the transitionrun listener executes.
 
 ### Space and focus decisions
 

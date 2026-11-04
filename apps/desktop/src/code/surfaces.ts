@@ -132,6 +132,12 @@ export class CodeSurfaces {
     const compact = presentation.compact;
     const revision = surface.layoutRevision = (surface.layoutRevision ?? 0) + 1;
     surface.frame.cancelLayout();
+    if (presentation.viewportWidth !== undefined) {
+      // Retire the old iframe surface before changing Explorer/wrap settings;
+      // otherwise a compositor snapshot can pick up new mode at the old size.
+      await surface.frame.waitForViewport(presentation.viewportWidth);
+      if (revision !== surface.layoutRevision || this.owned(windowId, target, true) !== surface) return;
+    }
     if (surface.compact !== compact && surface.wasReady) {
       surface.compact = compact;
       surface.presentation = (surface.presentation ?? Promise.resolve()).catch(() => undefined).then(() => surface.frame.command('elevenex.code.set-compact', compact));

@@ -8,7 +8,7 @@
   <aside class="sidebar glass" aria-label="Tasks and sessions">
     <ng-content select="[shellSidebar]" />
   </aside>
-  <div class="workspace">
+  <div class="workspace" data-panel-transition-scope (panel-layout-commit)="finishPanelLayout()">
     <main
       class="main surface"
       [attr.inert]="takingOver() ? '' : null"

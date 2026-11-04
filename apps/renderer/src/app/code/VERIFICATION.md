@@ -1,6 +1,33 @@
 # New Code workbench verification
 
-## Acknowledged hidden layout — current motion
+## Immediate sizing and single blur/fade — current motion
+
+Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0 with the genuine Code OSS
+workbench and disposable Nest task/backend. The destination is predicted from
+actual CSS keyframes and applied at the start. The old editor snapshot remains
+visible while the incoming, directly named iframe renders. They blend in one
+140ms blur/fade; there is no blank hide/show phase or fixed 120ms quiet delay.
+
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`: passed.
+  Full suite: 158 desktop cases, seven capture cases, 639 renderer cases in
+  94 files and TypeScript contract checks. Tests cover early percentage sizing,
+  layout commit ownership, context cleanup, viewport ordering and two stable
+  child paints. Native `electron-smoke.cjs`: passed.
+- `artifacts/desktop-capture/code-crossfade-ready/report.json`: **45 checkpoints,
+  verified: true**, no renderer errors. Actual click-to-destination-resize readings
+  are **33–61ms** across desktop/narrow widths and both themes. These are host
+  observations, not a general performance guarantee. Each toggle resizes once.
+- Native checks hold back the real layout acknowledgement and require the old
+  snapshot to remain opaque. Toolbar hit testing and actual editor ArrowUp input
+  still work. The 350ms pane probe records **zero movement through/after reveal**.
+  Inspected old/new blend midpoints, incoming iframe opacity, natural image scale,
+  both reversal directions, narrow/reduced motion and settled states. Search,
+  settings layering, auto-save, retained buffers and repeated reopen still pass.
+- No dependency or bridge capability was added. Browser-owned snapshots are not
+  exposed as pixel data. `git diff --check`: passed. Unpackaged macOS verification;
+  no packaged or Windows/Linux launch was run.
+
+## Acknowledged hidden layout (superseded)
 
 Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0 with the actual Code OSS
 workbench and isolated Nest task/backend. Transparent cross-origin frames were

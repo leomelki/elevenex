@@ -1,11 +1,12 @@
-/** Runs only inside the owned Code frame, after upstream compact commands.
+/** Runs only inside the owned Code frame, before/after upstream compact commands.
  * Renderer paint frames cannot establish that an out-of-process workbench has
  * received its viewport or finished its own animated grid/configuration work. */
-export function waitForCodeLayout(expectedWidth: number): Promise<void> {
+export function waitForCodeLayout(expectedWidth: number, viewportOnly = false): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (viewportOnly && Math.abs(innerWidth - expectedWidth) <= 1) { resolve(); return; }
     let frame = 0;
     let previous = '';
-    let quietSince = performance.now();
+    let stableFrames = 0;
     const dispose = () => {
       cancelAnimationFrame(frame);
       clearTimeout(timeout);
@@ -15,7 +16,8 @@ export function waitForCodeLayout(expectedWidth: number): Promise<void> {
     const cancelled = () => { dispose(); resolve(); };
     const closed = () => { dispose(); reject(new Error('The editor closed while resizing.')); };
     const timeout = setTimeout(() => { dispose(); reject(new Error('The editor layout did not settle.')); }, 2000);
-    const sample = (now: number) => {
+    const sample = () => {
+      if (viewportOnly && Math.abs(innerWidth - expectedWidth) <= 1) { dispose(); resolve(); return; }
       const workbench = document.querySelector('.monaco-workbench');
       const parts = workbench ? Array.from(workbench.querySelectorAll('.part, .monaco-editor')).slice(0, 32) : [];
       const geometry = JSON.stringify([innerWidth, ...parts.map(part => {
@@ -26,11 +28,12 @@ export function waitForCodeLayout(expectedWidth: number): Promise<void> {
         animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime)
         && animation.effect instanceof KeyframeEffect && animation.effect.getKeyframes().some(keyframe =>
           Object.keys(keyframe).some(key => /^(width|height|minWidth|maxWidth|minHeight|maxHeight|left|right|top|bottom|transform|flex|grid|margin|padding)/.test(key))));
-      if (geometry !== previous || moving || !workbench || Math.abs(innerWidth - expectedWidth) > 1) quietSince = now;
+      if (geometry !== previous || moving || !workbench || Math.abs(innerWidth - expectedWidth) > 1) stableFrames = 0;
+      else stableFrames++;
       previous = geometry;
-      // Covers delayed configuration/layout notifications after command promises
-      // resolve, and samples actual child geometry throughout native transitions.
-      if (now - quietSince >= 120) { dispose(); resolve(); }
+      // Commands have completed. Confirm two stable child paints without adding
+      // a fixed quiet-time delay to every user-initiated layout change.
+      if (stableFrames >= 2) { dispose(); resolve(); }
       else frame = requestAnimationFrame(sample);
     };
     window.addEventListener('pagehide', closed, { once: true });

@@ -10,7 +10,7 @@ const validate = require('../dist/code/validation');
 const vm = require('node:vm');
 const { waitForCodeLayout } = require('../dist/code/layout-settlement');
 
-function layoutFrame() {
+function layoutFrame(viewportOnly = false) {
   let now = 0, identity = 0, moving = false, animatedProperty = 'width';
   const frames = new Map(), timers = new Map(), listeners = new Map();
   const box = { x: 0, y: 0, width: 432, height: 700 };
@@ -25,7 +25,7 @@ function layoutFrame() {
     requestAnimationFrame:callback=>{frames.set(++identity,callback);return identity;}, cancelAnimationFrame:id=>frames.delete(id),
     setTimeout:callback=>{timers.set(++identity,callback);return identity;}, clearTimeout:id=>timers.delete(id),
   };
-  const pending = vm.runInNewContext(`(${waitForCodeLayout.toString()})(1072)`,context);
+  const pending = vm.runInNewContext(`(${waitForCodeLayout.toString()})(1072,${viewportOnly})`,context);
   return {
     pending, context, box, moving:(value,property='width')=>{moving=value;animatedProperty=property;}, frames, timers, listeners,
     tick(time) { now=time;const callbacks=[...frames.values()];frames.clear();for(const callback of callbacks) callback(time); },
@@ -54,8 +54,14 @@ test('Code layout barriers release resources on deadline and frame closure',asyn
 
 test('Code layout settlement ignores caret opacity animations that cannot move panes',async()=>{
   const host=layoutFrame();host.context.innerWidth=1072;host.box.width=1072;host.moving(true,'opacity');
-  host.tick(0);host.tick(140);await host.pending;
+  host.tick(0);host.tick(16);host.tick(32);await host.pending;
   assert.equal(host.frames.size,0);assert.equal(host.timers.size,0);
+});
+
+test('Code viewport commit acknowledgement adds no layout quiet-time delay',async()=>{
+  const host=layoutFrame(true);host.moving(true);host.tick(0);
+  host.context.innerWidth=1072;host.tick(16);await host.pending;
+  assert.equal(host.frames.size,0);assert.equal(host.timers.size,0);assert.equal(host.listeners.size,0);
 });
 
 test('Code controls accept resource identities and bounded file positions, never transport or shell inputs', () => {

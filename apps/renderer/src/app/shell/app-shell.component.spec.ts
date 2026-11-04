@@ -24,6 +24,18 @@ describe("Desktop region ownership", () => {
     expect(fixture.nativeElement.querySelector('nav[aria-label="Projects"]')).not.toBeNull();
   });
 
+  it('commits only shell-owned layout transitions for a projected panel snapshot', () => {
+    const fixture = TestBed.createComponent(AppShellComponent); fixture.detectChanges();
+    const scope: HTMLElement = fixture.nativeElement.querySelector('[data-panel-transition-scope]');
+    const width = vi.fn(), opacity = vi.fn(), unrelated = vi.fn();
+    for (const region of Array.from(scope.children)) Object.defineProperty(region,'getAnimations',{value:()=>[
+      {transitionProperty:'width',finish:width},{transitionProperty:'opacity',finish:opacity},{transitionProperty:'color',finish:unrelated},
+    ]});
+    scope.dispatchEvent(new Event('panel-layout-commit'));
+    expect(width).toHaveBeenCalledTimes(2); expect(opacity).toHaveBeenCalledTimes(2);
+    expect(unrelated).not.toHaveBeenCalled();
+  });
+
   it("excludes the closed panel and the covered chat from keyboard navigation", () => {
     const fixture = TestBed.createComponent(AppShellComponent);
     fixture.detectChanges();
