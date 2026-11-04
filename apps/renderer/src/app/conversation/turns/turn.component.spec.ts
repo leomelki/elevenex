@@ -188,6 +188,63 @@ interface EvidenceObservation {
 }
 
 describe("turn evidence", () => {
+  it.each(["live", "done", "stopped", "failed"] as const)(
+    "hands thinking to the timeline once when the turn is %s",
+    (status) => {
+      const fixture = TestBed.createComponent(TurnComponent);
+      const host: HTMLElement = fixture.nativeElement;
+      const thinking = {
+        id: "thinking", kind: "think", status: "running", text: "Checking the details.",
+      } as const;
+      fixture.componentRef.setInput("status", "live");
+      fixture.componentRef.setInput("open", true);
+      fixture.componentRef.setInput("steps", [thinking]);
+      fixture.detectChanges();
+      expect(host.querySelector("ex-now-line .verb")?.textContent).toContain("Thinking");
+      expect(host.querySelectorAll("ex-tool-step")).toHaveLength(0);
+
+      fixture.componentRef.setInput("status", status);
+      fixture.componentRef.setInput("steps", [{ ...thinking, status: "done" }]);
+      fixture.detectChanges();
+      // Check the very first render, before the 700ms hold or a Fold exit ends.
+      expect(host.querySelector("ex-now-line")).toBeNull();
+      expect(host.querySelectorAll("ex-work-timeline ex-tool-step")).toHaveLength(1);
+      expect(host.querySelector("ex-work-timeline ex-tool-step")?.textContent).toContain("Thought");
+
+      fixture.componentRef.setInput("status", "live");
+      fixture.componentRef.setInput("steps", [
+        { ...thinking, status: "done" },
+        { ...thinking, id: "next-thinking" },
+      ]);
+      fixture.detectChanges();
+      expect(host.querySelectorAll("ex-now-line")).toHaveLength(1);
+      expect(host.querySelectorAll("ex-work-timeline ex-tool-step")).toHaveLength(1);
+      fixture.destroy();
+    },
+  );
+
+  it("releases a held action when it moves before commentary or after the answer", () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    const host: HTMLElement = fixture.nativeElement;
+    const running = { id: "tool", kind: "run", status: "running", detail: "Long command" } as const;
+    fixture.componentRef.setInput("status", "live");
+    fixture.componentRef.setInput("steps", [running]);
+    fixture.detectChanges();
+    expect(host.querySelectorAll("ex-now-line")).toHaveLength(1);
+    fixture.componentRef.setInput("steps", [running, { id: "say", kind: "say", text: "Still checking" }]);
+    fixture.detectChanges();
+    expect(host.querySelector("ex-now-line")).toBeNull();
+    expect(host.querySelectorAll("ex-work-timeline ex-tool-step")).toHaveLength(1);
+
+    fixture.componentRef.setInput("steps", [running]);
+    fixture.detectChanges();
+    fixture.componentRef.setInput("answerBeforeStepId", "tool");
+    fixture.detectChanges();
+    expect(host.querySelector("ex-now-line")).toBeNull();
+    expect(host.querySelectorAll(".following-work ex-tool-step")).toHaveLength(1);
+    fixture.destroy();
+  });
+
   it("restores focus when an inspected live tool completes and resets disclosure for the next tool", async () => {
     const fixture = TestBed.createComponent(TurnComponent);
     const host: HTMLElement = fixture.nativeElement;

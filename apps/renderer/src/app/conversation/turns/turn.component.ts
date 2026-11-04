@@ -109,6 +109,15 @@ export class TurnComponent implements OnChanges {
     return this.status() === "live" && last?.status === "running" ? last : null;
   });
   readonly heldStep = signal<WorkStep | null>(null);
+  readonly nowStep = computed(() => {
+    if (this.status() !== "live") return null;
+    const active = this.activeStep();
+    if (active) return active;
+    const held = this.heldStep();
+    // A step handed to either timeline must stop rendering as current in the
+    // same update. Only bridge gaps where that step has left the supplied list.
+    return held && !this.steps().some((step) => step.id === held.id) ? held : null;
+  });
   readonly timelineSteps = computed(() =>
     this.precedingSteps().filter((step) => step.id !== this.activeStep()?.id),
   );

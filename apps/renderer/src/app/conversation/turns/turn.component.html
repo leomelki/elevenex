@@ -78,8 +78,8 @@
         />
       </div>
     </ex-fold>
-    <ex-fold #nowRegion [open]="status() === 'live' && heldStep() !== null">
-      @for (step of heldStep() ? [heldStep()!] : []; track step.id) {
+    <ex-fold #nowRegion [open]="nowStep() !== null">
+      @for (step of nowStep() ? [nowStep()!] : []; track step.id) {
         <div class="preceding-work">
           <ex-now-line [step]="step" [streaming]="activeStep()?.id === step.id" />
         </div>
