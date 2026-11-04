@@ -84,6 +84,10 @@ export interface DiffFileContent {
   readonly rev?: string | number;
   readonly mode: ReviewMode;
   readonly state: 'loading' | 'ready' | 'error';
+  /** Retain ready text while a bounded page or context read is pending. */
+  readonly loading?: boolean;
+  /** The owner already bounds the retained line window (at most 1,200 rows). */
+  readonly windowed?: boolean;
   readonly hunks?: readonly DiffHunk[];
   readonly error?: string;
   readonly notice?: string;
@@ -97,7 +101,7 @@ export interface DiffFileRequest {
   readonly fileId: string;
   readonly rev?: string | number;
   readonly mode: ReviewMode;
-  readonly reason: 'visible' | 'selected' | 'retry' | 'large' | 'deleted' | 'more' | 'previous';
+  readonly reason: 'visible' | 'selected' | 'retry' | 'large' | 'deleted' | 'more' | 'previous' | 'context';
 }
 export interface DiffContextRequest {
   readonly fileId: string;

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /** Real disposable Git + HTTP + production main/preload + Angular review. No renderer mock data. */
-export default async function* (capture, { sourcesOnly = false } = {}) {
+export default async function* (capture, { sourcesOnly = false, prepare, exercise } = {}) {
   const require = createRequire(new URL('../../../apps/desktop/package.json', import.meta.url));
   const { ipcMain } = require('electron');
   const { BackendClient } = require('./dist/backend-client/client');
@@ -55,6 +55,7 @@ export default async function* (capture, { sourcesOnly = false } = {}) {
     await writeFile(join(cwd, 'src/payments.ts'), staged); await git(['add', 'src/payments.ts']);
     await writeFile(join(cwd, 'src/payments.ts'), staged.replace('value60 = 60', 'value60 = 600'));
     await writeFile(join(cwd, 'src/new-retry.ts'), 'export const retry = async () => {\n  return true;\n};\n');
+    if (prepare) await prepare(cwd);
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}`;
     const contents = capture.window.webContents;
@@ -74,6 +75,11 @@ export default async function* (capture, { sourcesOnly = false } = {}) {
       await capture.waitFor(() => !document.querySelector('ex-repository-review .feedback[role="status"]'));
       if (settleMotion) await finish();
     };
+
+    if (exercise) {
+      yield* exercise(capture, finish);
+      return;
+    }
 
     if (sourcesOnly) {
       const sourceNames = ['uncommitted', 'last-commit', 'branch'];

@@ -267,6 +267,35 @@ describe('Diff review boundaries', () => {
     expect(fixture.nativeElement.querySelector('.note')?.textContent).toContain('Why remove this?');
   });
 
+  it('retains bounded owner windows and their DOM while expansion is pending', () => {
+    const fixture = TestBed.createComponent(DiffFileComponent);
+    fixture.componentRef.setInput('file', file);
+    const window: DiffFileContent = { ...content, windowed: true, hasMoreLines: true, hunks: [{ ...content.hunks![0]!, lines: Array.from({ length: 800 }, (_, index) => ({ id: String(index), kind: 'context', newNumber: index + 1, text: `line ${index + 1}` })) }] };
+    fixture.componentRef.setInput('content', window);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('.line')).toHaveLength(800);
+    const first = fixture.nativeElement.querySelector('.line');
+    const requested = vi.fn(), context = vi.fn();
+    fixture.componentInstance.fileRequested.subscribe(requested);
+    fixture.componentInstance.contextRequested.subscribe(context);
+    const more = Array.from(fixture.nativeElement.querySelectorAll('button') as NodeListOf<HTMLButtonElement>).find(button => button.textContent?.includes('Load more lines'))!;
+    more.click();
+    expect(requested).toHaveBeenCalledWith(expect.objectContaining({ reason: 'more' }));
+    fixture.componentRef.setInput('content', { ...window, loading: true });
+    fixture.detectChanges();
+    more.click();
+    (fixture.nativeElement.querySelector('[aria-label="Show 20 lines above"]') as HTMLButtonElement).click();
+    expect(requested).toHaveBeenCalledTimes(1);
+    expect(context).not.toHaveBeenCalled();
+    expect(fixture.nativeElement.querySelector('.line')).toBe(first);
+    expect(more.getAttribute('aria-disabled')).toBe('true');
+    expect(fixture.nativeElement.querySelector('.body')?.getAttribute('aria-busy')).toBe('true');
+    fixture.componentRef.setInput('content', { ...window, error: 'Read failed' });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.line')).toBe(first);
+    expect(fixture.nativeElement.textContent).toContain('Read failed');
+  });
+
   it('reopens a file edited since viewing and bounds the rendered lines', () => {
     const fixture = TestBed.createComponent(DiffFileComponent);
     fixture.componentRef.setInput('file', { ...file, viewed: true, changedSinceViewed: true });

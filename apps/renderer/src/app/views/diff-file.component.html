@@ -22,7 +22,7 @@
     <ex-icon-button icon="code" [label]="'Open ' + file().path + ' in Code'" size="sm" (pressed)="openRequested.emit(file().id)" />
     }
   </header>
-  <ex-fold [open]="open()"><div class="body">
+  <ex-fold [open]="open()"><div class="body" [attr.aria-busy]="currentContent()?.loading || null">
     @if (file().detail) { <p class="notice">{{ file().detail }}</p> }
     @if (currentContent()?.notice) { <p class="notice">{{ currentContent()?.notice }}</p> }
     @if (file().oldPath) { <p class="notice">Renamed from <code>{{ file().oldPath }}</code></p> }
@@ -31,19 +31,25 @@
     @else if (currentContent()?.state === 'error') { <div class="load" role="status"><p>{{ currentContent()?.error || 'This file could not be loaded.' }}</p><button exButton variant="secondary" size="sm" (click)="request('retry')">Try again</button></div> }
     @else if (currentContent()?.state !== 'ready') { <div class="loading" role="status" aria-label="Loading file"><ex-skeleton [count]="skeletonRows()" variant="rows" /></div> }
     @else {
-      @if (currentContent()?.hasPreviousLines) { <div class="load"><button exButton size="sm" variant="secondary" (click)="request('previous')">Previous lines</button></div> }
+      @if (currentContent()?.error) { <p class="notice" role="status">{{ currentContent()?.error }}</p> }
+      @if (currentContent()?.hasPreviousLines) { <button class="expand-lines" type="button" aria-label="Load previous lines" [attr.aria-disabled]="currentContent()?.loading || null" (click)="request('previous')"><span class="expand-gutter"><ex-icon name="expand-up" [size]="14" /></span><span>Load previous lines</span></button> }
       @if (!totalLines() && !currentContent()?.notice) { <p class="notice">{{ file().status === 'D' ? 'File deleted' : 'No text changes' }}</p> }
       @if (linePages() > 1) { <div class="line-pages"><button exButton variant="ghost" size="sm" [disabled]="page() === 0" (click)="stepLines(-1)">Previous lines</button><span>Page {{ page() + 1 }} of {{ linePages() }}</span><button exButton variant="ghost" size="sm" [disabled]="page() >= linePages() - 1" (click)="stepLines(1)">Next lines</button></div> }
       @for (hunk of hunks(); track hunk.id) {
-        <div class="hunk"><code>{{ hunk.heading }}</code>@if (hunk.before) { <button exButton variant="ghost" size="sm" [attr.aria-label]="'Show ' + (hunk.before < 20 ? hunk.before : 20) + ' lines above'" (click)="context(hunk.id, 'before', hunk.before)"><ex-icon name="expand-up" [size]="13" />{{ hunk.before < 20 ? hunk.before : 20 }} above</button> }</div>
+        <div class="hunk" [attr.data-hunk-id]="hunk.id">
+          @if (hunk.before) {
+            <button class="expand-lines" type="button" [attr.aria-disabled]="currentContent()?.loading || null" [attr.aria-label]="'Show ' + (hunk.before < 20 ? hunk.before : 20) + ' lines above'" (click)="context(hunk.id, 'before', hunk.before)"><span class="expand-gutter"><ex-icon name="expand-up" [size]="14" /></span><span>Expand {{ hunk.before < 20 ? hunk.before : 20 }} lines above</span><code>{{ hunk.heading }}</code></button>
+          } @else { <code class="hunk-heading">{{ hunk.heading }}</code> }
+        </div>
         <div class="lines">@for (line of hunk.lines; track line.id) {
-          <div class="line" [attr.data-kind]="line.kind" [attr.data-line-id]="line.id"><span class="old-number">{{ line.oldNumber }}</span><span class="new-number">{{ line.kind === 'del' && !wide() ? line.oldNumber : line.newNumber }}</span><span class="sign">{{ line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' ' }}</span><code class="code">@if (line.spans; as spans) { @for (span of spans; track $index) { <span [attr.data-token]="span.token" [class.changed-word]="span.changed">{{ span.text }}</span> } } @else {<span>{{ line.text }}</span>}</code>@if (commentsEnabled() && (line.oldNumber !== undefined || line.newNumber !== undefined)) { <button class="comment" type="button" [attr.aria-label]="'Ask about line ' + (line.newNumber ?? line.oldNumber)" (click)="startComment(line)"><ex-icon name="plus" [size]="12" /></button> }</div>
+          <div class="line" [animate.enter]="revealLines() ? 'line-reveal' : ''" tabindex="-1" [attr.data-kind]="line.kind" [attr.data-line-id]="line.id"><span class="old-number">{{ line.oldNumber }}</span><span class="new-number">{{ line.kind === 'del' && !wide() ? line.oldNumber : line.newNumber }}</span><span class="sign">{{ line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' ' }}</span><code class="code">@if (line.spans; as spans) { @for (span of spans; track $index) { <span [attr.data-token]="span.token" [class.changed-word]="span.changed">{{ span.text }}</span> } } @else {<span>{{ line.text }}</span>}</code>@if (commentsEnabled() && (line.oldNumber !== undefined || line.newNumber !== undefined)) { <button class="comment" type="button" [attr.aria-label]="'Ask about line ' + (line.newNumber ?? line.oldNumber)" (click)="startComment(line)"><ex-icon name="plus" [size]="12" /></button> }</div>
           @if (currentDraft()?.line?.id === line.id) { <form class="comment-form" (submit)="$event.preventDefault(); sendComment()"><textarea #commentText rows="2" aria-label="Ask about this line" placeholder="Ask about this line…" [value]="draftText()" (input)="draftText.set(commentText.value)" (keydown)="commentKeydown($event)"></textarea><footer><button exButton size="sm" variant="ghost" type="button" (click)="draft.set(null)">Cancel</button><button exButton size="sm" variant="primary" type="submit" [disabled]="!draftText().trim()">Ask</button></footer></form> }
           @for (note of currentNotes(); track $index) { @if (note.lineId === line.id) { <p class="note">{{ note.text }}</p> } }
         }</div>
-        @if (hunk.after) { <div class="hunk"><button exButton variant="ghost" size="sm" [attr.aria-label]="'Show ' + (hunk.after < 20 ? hunk.after : 20) + ' lines below'" (click)="context(hunk.id, 'after', hunk.after)"><ex-icon name="expand-down" [size]="13" />{{ hunk.after < 20 ? hunk.after : 20 }} below</button></div> }
+        @if (hunk.after) { <button class="expand-lines" type="button" [attr.aria-disabled]="currentContent()?.loading || null" [attr.aria-label]="'Show ' + (hunk.after < 20 ? hunk.after : 20) + ' lines below'" (click)="context(hunk.id, 'after', hunk.after)"><span class="expand-gutter"><ex-icon name="expand-down" [size]="14" /></span><span>Expand {{ hunk.after < 20 ? hunk.after : 20 }} lines below</span></button> }
       }
-      @if (currentContent()?.remainingLines || currentContent()?.hasMoreLines) { <div class="load"><p>{{ currentContent()?.remainingLines ? currentContent()?.remainingLines + ' more lines' : 'More lines available' }}</p><button exButton size="sm" variant="secondary" (click)="request('more')">Load more lines</button></div> }
+      @if (currentContent()?.remainingLines || currentContent()?.hasMoreLines) { <button class="expand-lines" type="button" aria-label="Load more lines" [attr.aria-disabled]="currentContent()?.loading || null" (click)="request('more')"><span class="expand-gutter"><ex-icon name="expand-down" [size]="14" /></span><span>Load more lines</span>@if (currentContent()?.remainingLines) { <small>{{ currentContent()?.remainingLines }} remaining</small> }</button> }
+      <span class="visually-hidden" role="status">{{ currentContent()?.loading ? 'Loading additional lines' : '' }}</span>
     }
   </div></ex-fold>
 </article>

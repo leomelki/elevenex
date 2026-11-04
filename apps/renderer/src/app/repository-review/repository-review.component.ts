@@ -1,7 +1,5 @@
 import {
-  afterRenderEffect,
   afterNextRender,
-  viewChild,
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
@@ -80,8 +78,6 @@ export class RepositoryReviewComponent {
   readonly store = inject(RepositoryReviewStore);
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
-  private readonly review = viewChild(DiffReviewComponent);
-  private lastWindow = 0;
   protected readonly inlineSources = signal(false);
   private sourceObserver?: ResizeObserver;
   private sourceFocusFrame?: number;
@@ -151,13 +147,6 @@ export class RepositoryReviewComponent {
   );
 
   constructor() {
-    afterRenderEffect(() => {
-      const window = this.store.lineWindow();
-      if (window && window.sequence !== this.lastWindow) {
-        this.lastWindow = window.sequence;
-        this.review()?.goTo(window.fileId);
-      }
-    });
     afterNextRender(() => {
       this.measureSourceLayout();
       if (typeof ResizeObserver !== "undefined") {

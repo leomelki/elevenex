@@ -221,6 +221,128 @@ describe("task-owned repository review requests", () => {
       lineOffset: 0,
     });
   });
+  it("appends bounded pages without clearing ready lines, and can revisit an evicted page", async () => {
+    store.connect({ scopeId: scope, taskId: 1 }, true, false);
+    await flush();
+    vi.mocked(bridge.repositoryReview).mockImplementation(
+      async (_scope, input) => success(linePage(input, 1800)),
+    );
+    const request = {
+      fileId: "unstaged:file-0",
+      rev,
+      mode: "changes" as const,
+    };
+    store.request({ ...request, reason: "selected" });
+    await flush();
+    const first = store.contents()[0]!;
+    const pending = deferred<BackendResult<RepositoryReviewPage>>();
+    vi.mocked(bridge.repositoryReview).mockReturnValueOnce(pending.promise);
+    store.request({ ...request, reason: "more" });
+    store.request({ ...request, reason: "more" });
+    expect(store.contents()[0]).toMatchObject({
+      state: "ready",
+      loading: true,
+      hunks: first.hunks,
+    });
+    const input = vi.mocked(bridge.repositoryReview).mock.calls.at(-1)![1];
+    expect(input.lineOffset).toBe(400);
+    pending.resolve(success(linePage(input, 1800)));
+    await flush();
+    expect(store.contents()[0]?.hunks?.[0]?.lines).toHaveLength(800);
+    expect(store.contents()[0]?.hunks?.[0]?.lines[0]?.id).toBe("line-0");
+    for (let index = 0; index < 2; index++) {
+      store.request({ ...request, reason: "more" });
+      await flush();
+    }
+    expect(store.contents()[0]?.hunks?.[0]?.lines).toHaveLength(1200);
+    expect(store.contents()[0]?.hunks?.[0]?.lines[0]?.id).toBe("line-400");
+    expect(store.contents()[0]?.hasPreviousLines).toBe(true);
+    store.request({ ...request, reason: "previous" });
+    await flush();
+    expect(store.contents()[0]?.hunks?.[0]?.lines).toHaveLength(1200);
+    expect(store.contents()[0]?.hunks?.[0]?.lines[0]?.id).toBe("line-0");
+    expect(store.contents()[0]?.hasMoreLines).toBe(true);
+    for (let index = 0; index < 2; index++) {
+      store.request({ ...request, reason: "more" });
+      await flush();
+    }
+    expect(store.contents()[0]?.hunks?.[0]?.lines[0]?.id).toBe("line-600");
+    expect(store.contents()[0]?.hasMoreLines).toBe(false);
+    for (let index = 0; index < 2; index++) {
+      store.request({ ...request, reason: "previous" });
+      await flush();
+    }
+    const returned = store.contents()[0]?.hunks?.[0]?.lines;
+    expect(returned).toHaveLength(1200);
+    expect(returned?.[0]?.id).toBe("line-0");
+    expect(new Set(returned?.map(line => line.id)).size).toBe(1200);
+  });
+  it("keeps readable lines and pagination when an additional read fails or disconnects", async () => {
+    store.connect({ scopeId: scope, taskId: 1 }, true, false);
+    await flush();
+    vi.mocked(bridge.repositoryReview).mockImplementation(
+      async (_scope, input) => success(linePage(input, 900)),
+    );
+    const request = {
+      fileId: "unstaged:file-0",
+      rev,
+      mode: "changes" as const,
+    };
+    store.request({ ...request, reason: "selected" });
+    await flush();
+    const hunks = store.contents()[0]?.hunks;
+    vi.mocked(bridge.repositoryReview).mockResolvedValueOnce({
+      ok: false,
+      error: { code: "transport", message: "Disconnected" },
+    });
+    store.request({ ...request, reason: "more" });
+    await flush();
+    expect(store.contents()[0]).toMatchObject({
+      state: "ready",
+      loading: false,
+      hunks,
+      hasMoreLines: true,
+      error: "Disconnected",
+    });
+    const pending = deferred<BackendResult<RepositoryReviewPage>>();
+    vi.mocked(bridge.repositoryReview).mockReturnValueOnce(pending.promise);
+    store.request({ ...request, reason: "more" });
+    store.connect({ scopeId: scope, taskId: 1 }, true, true);
+    expect(store.contents()[0]).toMatchObject({
+      state: "ready",
+      loading: false,
+      hunks,
+    });
+  });
+  it("reloads retained context atomically across wire pages with stable line identities", async () => {
+    store.connect({ scopeId: scope, taskId: 1 }, true, false);
+    await flush();
+    vi.mocked(bridge.repositoryReview).mockImplementation(
+      async (_scope, input) => success(linePage(input, 900)),
+    );
+    const request = {
+      fileId: "unstaged:file-0",
+      rev,
+      mode: "changes" as const,
+    };
+    store.request({ ...request, reason: "selected" });
+    await flush();
+    store.request({ ...request, reason: "more" });
+    await flush();
+    store.context({
+      ...request,
+      hunkId: "hunk",
+      direction: "before",
+      count: 20,
+    });
+    for (let index = 0; index < 6; index++) await flush();
+    const lines = store.contents()[0]?.hunks?.[0]?.lines;
+    expect(lines).toHaveLength(920);
+    expect(lines?.[0]?.id).toBe("line--20");
+    expect(lines?.some((line) => line.id === "line-0")).toBe(true);
+    expect(store.contents()[0]?.loading).not.toBe(true);
+    expect(store.contents()[0]?.hasMoreLines).toBe(false);
+  });
   it("retains Viewed and selection when returning to an unchanged comparison", async () => {
     vi.mocked(bridge.repositoryReview).mockImplementation(
       async (_scope, query) =>
@@ -490,3 +612,35 @@ describe("task-owned repository review requests", () => {
     ).toMatchObject({ offset: 100, revision: rev });
   });
 });
+
+function linePage(
+  input: RepositoryReviewQuery,
+  total: number,
+): RepositoryReviewPage {
+  const offset = input.lineOffset ?? 0;
+  const before = input.expansions?.[0]?.before ?? 0;
+  const count = Math.min(400, total + before - offset);
+  return {
+    ...page(),
+    content: {
+      fileId: input.fileId!,
+      rev,
+      mode: input.mode ?? "changes",
+      offset,
+      nextOffset: offset + count < total + before ? offset + count : null,
+      hunks: [
+        {
+          id: "hunk",
+          heading: "@@",
+          before: 40 - before,
+          lines: Array.from({ length: count }, (_, index) => ({
+            id: `line-${offset + index - before}`,
+            kind: "context",
+            newNumber: offset + index + 1,
+            text: `line ${offset + index - before}`,
+          })),
+        },
+      ],
+    },
+  };
+}

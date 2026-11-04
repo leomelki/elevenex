@@ -2497,3 +2497,31 @@ visibly distinct. Fully loaded PNGs were inspected. The
 also passed, including reading anchors, Full files/wrap, interrupted source
 switching, retry/disconnect and reduced motion. Both runs use real disposable Git
 with an isolated transport lease through production main/preload and UI.
+
+## Incremental diff lines and context (2026-11-03)
+
+Ready text now stays mounted during additional reads and failures. Wire pages
+remain capped at 400 lines and append into a 1,200-line window, with Previous
+keeping evicted text reachable. Overlapping earlier pages after a short tail are
+merged without duplicates. Context reloads publish the retained window atomically.
+The clicked hunk/file boundary survives loading renders; manual scrolling or
+navigation releases that anchor. Exhausted keyboard controls return focus to the
+reading line, and only newly requested rows fade in.
+
+`pnpm desktop:lint`, `pnpm desktop:test` (136 desktop tests, 7 capture-tool tests,
+641 renderer tests and TypeScript contracts), `pnpm desktop:build`, and
+`git diff --check` passed. The final test/build run used
+`NG_BUILD_MAX_WORKERS=2` and `VITEST_MAX_WORKERS=2` to limit host contention.
+Earlier overlapping validation runs hit timeouts/interruption; the final
+sequential run passed.
+
+The [27 native checkpoints](../../artifacts/desktop-capture/review-lines-boundary/index.html)
+report `verified: true`: light/dark, narrow/wide, context above/below, append and
+prepend, keyboard exhaustion/focus handoff, and actual reduced-motion expansion.
+Every measured boundary displacement was 0px. The
+[short-tail regression](../../artifacts/desktop-capture/review-lines-short-tail/index.html)
+also reports `verified: true` for reaching line 1,800 then returning through
+partially overlapping earlier pages, retaining 1,200 unique lines. Both use
+real disposable Git through production main/preload/HTTP. New PNGs were inspected.
+These are unpackaged native checks; packaging and other host platforms were not
+revalidated for this renderer change.

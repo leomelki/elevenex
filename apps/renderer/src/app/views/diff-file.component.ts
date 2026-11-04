@@ -35,6 +35,7 @@ export class DiffFileComponent {
   private readonly expandedIdentity = linkedSignal<boolean, string | null>({ source: () => this.viewed(), computation: () => null });
   private readonly allowedIdentity = signal<string | null>(null);
   private readonly pageSelection = signal({ identity: '', index: 0 });
+  protected readonly revealLines = linkedSignal({ source: () => this.identity(), computation: () => false });
   protected readonly draft = signal<LineDraft | null>(null);
   protected readonly draftText = signal('');
   protected readonly notes = signal<readonly LineNote[]>([]);
@@ -47,12 +48,13 @@ export class DiffFileComponent {
     return content && content.fileId === this.file().id && content.rev === this.file().rev && content.mode === this.mode() ? content : undefined;
   });
   protected readonly totalLines = computed(() => this.currentContent()?.hunks?.reduce((sum, hunk) => sum + hunk.lines.length, 0) ?? 0);
-  protected readonly linePages = computed(() => Math.max(1, Math.ceil(this.totalLines() / 400)));
+  private readonly linePageSize = computed(() => this.currentContent()?.windowed ? 1200 : 400);
+  protected readonly linePages = computed(() => Math.max(1, Math.ceil(this.totalLines() / this.linePageSize())));
   protected readonly page = computed(() => this.pageSelection().identity === this.identity() ? Math.min(this.pageSelection().index, this.linePages() - 1) : 0);
   protected readonly hunks = computed<readonly DiffHunk[]>(() => {
     let skipped = 0;
-    const start = Math.min(this.page(), this.linePages() - 1) * 400;
-    const end = start + 400;
+    const start = Math.min(this.page(), this.linePages() - 1) * this.linePageSize();
+    const end = start + this.linePageSize();
     return (this.currentContent()?.hunks ?? []).flatMap(hunk => {
       const from = Math.max(0, start - skipped);
       const until = Math.min(hunk.lines.length, end - skipped);
@@ -102,10 +104,14 @@ export class DiffFileComponent {
     this.viewedChange.emit({ fileId: this.file().id, rev: this.file().rev, viewed: !this.viewed() });
   }
   protected request(reason: DiffFileRequest['reason']): void {
+    if (this.currentContent()?.loading) return;
+    if (reason === 'more' || reason === 'previous') this.revealLines.set(true);
     if (reason === 'large' || reason === 'deleted') this.allowedIdentity.set(this.identity());
     this.fileRequested.emit({ fileId: this.file().id, rev: this.file().rev, mode: this.mode(), reason });
   }
   protected context(hunkId: string, direction: 'before' | 'after', remaining: number): void {
+    if (this.currentContent()?.loading) return;
+    this.revealLines.set(true);
     this.contextRequested.emit({ fileId: this.file().id, rev: this.file().rev, mode: this.mode(), hunkId, direction, count: Math.min(20, remaining) });
   }
   protected startComment(line: DiffLine): void {

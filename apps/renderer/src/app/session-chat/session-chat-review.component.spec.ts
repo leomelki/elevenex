@@ -70,8 +70,8 @@ describe("selected reply review ownership", () => {
     fixture.detectChanges(); await fixture.whenStable(); fixture.detectChanges();
     fixture.componentInstance.request({ fileId: 'test.txt', rev: 'a'.repeat(64), mode: 'changes', reason: 'more' });
     await fixture.whenStable(); fixture.detectChanges();
-    const previous = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('ex-diff-file .load button');
-    expect(previous?.textContent).toContain('Previous lines');
+    const previous = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('ex-diff-file [aria-label="Load previous lines"]');
+    expect(previous?.textContent).toContain('Load previous lines');
     previous!.click(); await fixture.whenStable(); fixture.detectChanges();
     expect(client.changes.mock.calls.at(-1)?.[1].lineOffset).toBe(0);
     expect(fixture.componentInstance.contents()[0]?.hasPreviousLines).toBe(false);

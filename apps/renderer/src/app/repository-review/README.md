@@ -53,9 +53,12 @@ A full commit ID is also accepted. Missing/deleted/unrelated/ambiguous bases
 require another choice; no fallback silently changes the comparison.
 
 A 100-entry metadata window and server-side path search reach every changed file.
-DiffReview renders 12 cards and 400 lines at a time; the store permits three
-concurrent file reads, matching task/scope/source/revision/file/mode. Content
-windows replace each other with Previous/More controls. Context requests expand
+DiffReview renders 12 cards and reads 400 lines per wire page; the store permits three
+concurrent file reads, matching task/scope/source/revision/file/mode. Ready lines remain visible during additional reads and failures. New pages append
+within a 1,200-line reading window; at that bound, the distant end is evicted and
+Previous/More controls keep every line reachable. Context expansions re-read the
+retained range atomically in at most three bounded reads, preserving stable line
+IDs. Pagination never navigates back to the file header. Context requests expand
 by at most 20 context lines, capped at 200; stable line identities keep the
 existing reading anchor. The backend owns git diff generation and lexical code
 spans, outside Angular. Files above 400 changed lines or 1 MiB require explicit

@@ -68,6 +68,8 @@ export class DiffReviewComponent {
   private scrollFrame?: number;
   private alignedScrollTop?: number;
   private anchor?: ReadingAnchor;
+  private expansionFocus?: HTMLElement;
+  private expandingFileId?: string;
   private previousContents?: readonly DiffFileContent[];
   private previousMode?: ReviewMode;
   private previousWrap?: boolean;
@@ -130,6 +132,7 @@ export class DiffReviewComponent {
 
   /** Public navigation by stable identity, also usable by chips in the owning chat. */
   goTo(fileId: string, closeList = true): void {
+    this.interruptExpansion();
     const file = this.files().find(item => item.id === fileId);
     if (!file) return;
     this.targetId = fileId;
@@ -151,7 +154,34 @@ export class DiffReviewComponent {
   }
   protected setMode(mode: ReviewMode): void { if (mode !== this.mode()) { this.captureAnchor(); this.modeChange.emit(mode); } }
   protected toggleWrap(): void { this.captureAnchor(); this.wrapChange.emit(!this.wrap()); }
-  protected requestContext(request: DiffContextRequest): void { this.captureAnchor(); this.contextRequested.emit(request); }
+  protected requestContext(request: DiffContextRequest): void {
+    this.prepareExpansion();
+    this.anchorBoundary(request.fileId, request.direction, request.hunkId);
+    this.contextRequested.emit(request);
+  }
+  protected requestFile(request: DiffFileRequest): void {
+    if (request.reason === 'more' || request.reason === 'previous' || request.reason === 'retry') this.prepareExpansion();
+    if (request.reason === 'more' || request.reason === 'previous') this.anchorBoundary(request.fileId, request.reason === 'more' ? 'after' : 'before');
+    this.fileRequested.emit(request);
+  }
+  private prepareExpansion(): void {
+    this.captureAnchor();
+    this.expansionFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+  }
+  private anchorBoundary(fileId: string, direction: 'before' | 'after', hunkId?: string): void {
+    const root = this.scroller()?.nativeElement;
+    const file = this.fileElements().find(reference => reference.nativeElement.dataset['fileId'] === fileId)?.nativeElement;
+    if (!root || !file) return;
+    const content = hunkId
+      ? Array.from(file.querySelectorAll<HTMLElement>('[data-hunk-id]')).find(hunk => hunk.dataset['hunkId'] === hunkId)?.nextElementSibling
+      : file;
+    const lines = Array.from(content?.querySelectorAll<HTMLElement>('[data-line-id]') ?? []);
+    const line = direction === 'before' ? lines[0] : lines.at(-1);
+    if (line) {
+      this.anchor = { fileId, lineId: line.dataset['lineId'], offset: line.getBoundingClientRect().top - root.getBoundingClientRect().top };
+      this.expandingFileId = fileId;
+    }
+  }
   protected viewFile(event: { fileId: string; rev?: string | number; viewed: boolean }): void {
     if (event.viewed) this.prepareCollapse(event.fileId);
     else this.captureAnchor();
@@ -174,7 +204,16 @@ export class DiffReviewComponent {
       this.alignedScrollTop = options.preserveSelection ? root.scrollTop : undefined;
     }
   }
+  protected interruptExpansion(): void {
+    this.expandingFileId = undefined;
+    this.expansionFocus = undefined;
+  }
   private captureAnchor(): void {
+    const content = this.expandingFileId ? this.contentMap().get(this.expandingFileId) : undefined;
+    // Loading updates and resize/scroll observers must not replace the clicked
+    // boundary with a preceding file while the async context read is pending.
+    if (content?.loading || content?.state === 'loading') return;
+    this.expandingFileId = undefined;
     const root = this.scroller()?.nativeElement;
     if (!root) return;
     const top = root.getBoundingClientRect().top;
@@ -196,6 +235,10 @@ export class DiffReviewComponent {
     const element = line ?? file;
     root.scrollTop += element.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset;
     if (this.alignedScrollTop !== undefined) this.alignedScrollTop = root.scrollTop;
+    if (this.expansionFocus && !this.expansionFocus.isConnected) {
+      if (document.activeElement === document.body) (line ?? root).focus({ preventScroll: true });
+      this.expansionFocus = undefined;
+    }
   }
   protected scrolled(): void {
     if (this.scrollFrame !== undefined) return;
@@ -240,6 +283,7 @@ export class DiffReviewComponent {
     this.stuckFileId.set(pinned?.nativeElement.dataset['fileId']);
   }
   protected keydown(event: KeyboardEvent): void {
+    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) this.interruptExpansion();
     if ((event.target as HTMLElement).matches('input, textarea, select, [contenteditable="true"]')) return;
     if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) { event.preventDefault(); this.step(event.key === 'ArrowDown' ? 1 : -1); }
     if (event.key.toLowerCase() === 'v' && !event.metaKey && !event.ctrlKey && !event.altKey) {

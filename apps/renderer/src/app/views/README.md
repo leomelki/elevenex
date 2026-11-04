@@ -41,8 +41,9 @@ limit concurrent requests (normally three), cancel them with its task/window,
 and supply bounded pages. `contextRequested` asks for at most 20 lines at a time.
 
 The file list uses CDK virtualization. To keep repositories with thousands of
-files responsive, the review renders 12 files per page and 400 lines per file
-page. Every file is reachable through the virtualized jump list and public
+files responsive, the review renders 12 files per page and 400 lines per local
+file page by default. Owners supplying `windowed` content may retain up to 1,200
+lines as described below. Every file is reachable through the virtualized jump list and public
 `goTo(fileId)`; explicit Previous/Next controls expose every page. `remainingLines`
 supports upstream content pagination. This bounds DOM size even for a giant
 generated change. It deliberately replaces the reference's unbounded all-file
@@ -111,3 +112,16 @@ file picker. Project bounded search/pagination controls through `[reviewFileSear
 they are mounted with that dialog and inherit its focus trap. `fileFilterActive`
 marks the jump trigger with a search glyph and keeps it enabled for zero results.
 Set `active=false` when hiding a retained review to close its portaled picker. Defaults preserve the existing expanded toolbar consumers.
+
+
+For incremental repository reads, `DiffFileContent.loading=true` retains ready
+hunks and disables repeated expansion intents; `error` on ready content reports
+an additional-read failure without hiding code. `windowed=true` declares an
+owner-bounded window of at most 1,200 lines, bypassing the generic 400-line local
+pager. Keep all wire reads bounded and retain stable hunk/line IDs when appending.
+The review anchors the clicked hunk’s first/last line (or a paged file’s boundary)
+before expansion intents and restores that line after
+updates; owners must not call `goTo` on completion. If an exhausted expansion
+control disappears while focused, focus moves to the retained reading line.
+Expansion bands align directional icons with the gutters, expose loading through
+`aria-busy`/`aria-disabled`, and fade only newly requested rows (no initial motion).

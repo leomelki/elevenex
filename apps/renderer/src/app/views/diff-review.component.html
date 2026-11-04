@@ -41,7 +41,7 @@
     <aside [attr.inert]="!wide() ? '' : null" [attr.aria-hidden]="!wide() ? 'true' : null">
       <ex-change-list [items]="files()" [active]="current()?.id" (selected)="goTo($event)" />
     </aside>
-    <div #scroller class="scroller" (scroll)="scrolled()">
+    <div #scroller class="scroller" (scroll)="scrolled()" (wheel)="interruptExpansion()" (pointerdown)="interruptExpansion()" (touchstart)="interruptExpansion()">
       @if (files().length > 12) {
         <div class="pages">
           <button exButton variant="ghost" size="sm" [disabled]="pageStart() === 0" (click)="setPage(-1)">Previous files</button>
@@ -55,7 +55,7 @@
             <ex-diff-file [file]="file" [content]="contentMap().get(file.id)" [mode]="mode()" [wide]="wide()"
               [stuck]="stuckFileId() === file.id"
               [wrap]="wrap()" [commentsEnabled]="commentsEnabled()" [openFilesAvailable]="openFilesAvailable()" [largeAt]="largeAt()"
-              (viewedChange)="viewFile($event)" (fileRequested)="fileRequested.emit($event)"
+              (viewedChange)="viewFile($event)" (fileRequested)="requestFile($event)"
               (collapsing)="prepareCollapse(file.id)"
               (contextRequested)="requestContext($event)" (commented)="commented.emit($event)"
               (openRequested)="openFileRequested.emit($event)" />

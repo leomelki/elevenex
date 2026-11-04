@@ -15,6 +15,8 @@ import type {
   ReviewMode,
 } from "../views";
 
+import { lineCount, mergeHunks, sliceHunks } from "./repository-review-line-window";
+
 export interface RepositoryReviewTarget {
   readonly scopeId: string;
   readonly taskId: number;
@@ -36,11 +38,6 @@ export class RepositoryReviewStore {
   readonly busy = signal(false);
   readonly error = signal("");
   readonly pending = signal<RepositoryReviewPage | null>(null);
-  readonly lineWindow = signal<{
-    readonly fileId: string;
-    readonly sequence: number;
-  } | null>(null);
-  private windowSequence = 0;
   readonly refs = signal<readonly string[]>([]);
   readonly moreRefs = signal(false);
   readonly branchBusy = signal(false);
@@ -67,6 +64,7 @@ export class RepositoryReviewStore {
   private inFlight = new Set<string>();
   private readonly offsets = new Map<string, number>();
   private readonly nextOffsets = new Map<string, number>();
+  private readonly windowEnds = new Map<string, number>();
   private readonly contexts = new Map<
     string,
     NonNullable<RepositoryReviewQuery["expansions"]>
@@ -144,10 +142,11 @@ export class RepositoryReviewStore {
       void this.bridge.repositoryReviewCancel(scope, id).catch(() => undefined);
     this.contents.update((contents) =>
       contents.map((content) =>
-        content.state === "loading"
+        content.state === "loading" || content.loading
           ? {
               ...content,
-              state: "error",
+              loading: false,
+              state: content.state === "ready" ? "ready" : "error",
               error:
                 "Loading was interrupted. Try again when the task is available.",
             }
@@ -207,6 +206,7 @@ export class RepositoryReviewStore {
     this.offsets.clear();
     this.contexts.clear();
     this.nextOffsets.clear();
+    this.windowEnds.clear();
     this.forced.clear();
   }
   filter(value: string): void {
@@ -436,6 +436,14 @@ export class RepositoryReviewStore {
     this.files.set(files);
     this.error.set("");
     const revisions = new Map(files.map((file) => [file.id, file.rev]));
+    for (const id of this.offsets.keys())
+      if (!revisions.has(id)) {
+        this.offsets.delete(id);
+        this.nextOffsets.delete(id);
+        this.windowEnds.delete(id);
+        this.contexts.delete(id);
+        this.forced.delete(id);
+      }
     this.queue = this.queue.filter(
       (request) =>
         revisions.get(request.fileId) === request.rev &&
@@ -451,6 +459,7 @@ export class RepositoryReviewStore {
         this.offsets.delete(file.id);
         this.contexts.delete(file.id);
         this.nextOffsets.delete(file.id);
+        this.windowEnds.delete(file.id);
         this.forced.delete(file.id);
       }
     if (!files.some((file) => file.id === this.selected()))
@@ -468,6 +477,7 @@ export class RepositoryReviewStore {
     this.mode.set(mode);
     this.offsets.clear();
     this.nextOffsets.clear();
+    this.windowEnds.clear();
     this.contents.update((contents) =>
       contents.filter(
         (content) => content.mode === mode && content.state === "ready",
@@ -501,7 +511,7 @@ export class RepositoryReviewStore {
     );
   }
   context(request: DiffContextRequest): void {
-    if (!this.matches(request)) return;
+    if (!this.matches(request) || this.inFlight.has(request.fileId)) return;
     const expansions = this.contexts.get(request.fileId) ?? [];
     const previous = expansions.find(
       (item) => item.hunkId === request.hunkId,
@@ -517,7 +527,7 @@ export class RepositoryReviewStore {
       ...expansions.filter((item) => item.hunkId !== request.hunkId).slice(-31),
       updated,
     ]);
-    this.request({ ...request, reason: "retry" });
+    this.request({ ...request, reason: "context" });
   }
   request(request: DiffFileRequest): void {
     if (
@@ -541,17 +551,7 @@ export class RepositoryReviewStore {
       )
         return;
     }
-    if (
-      this.inFlight.has(request.fileId) &&
-      this.contents().some(
-        (content) =>
-          content.fileId === request.fileId &&
-          content.rev === request.rev &&
-          content.mode === request.mode &&
-          content.state === "loading",
-      )
-    )
-      return;
+    if (this.inFlight.has(request.fileId)) return;
     this.queue.push(request);
     this.pump();
   }
@@ -606,6 +606,13 @@ export class RepositoryReviewStore {
     if (!target || !page) return;
     const epoch = this.contentEpoch,
       requestId = "file-" + crypto.randomUUID();
+    const previous = this.contents().find(
+      (content) =>
+        content.fileId === request.fileId &&
+        content.rev === request.rev &&
+        content.mode === request.mode &&
+        content.state === "ready",
+    );
     const offset =
       request.reason === "more"
         ? (this.nextOffsets.get(request.fileId) ?? 0)
@@ -614,12 +621,16 @@ export class RepositoryReviewStore {
           : (this.offsets.get(request.fileId) ?? 0);
     this.inFlight.add(request.fileId);
     this.requests.set(requestId, target.scopeId);
-    this.put({
-      fileId: request.fileId,
-      rev: request.rev,
-      mode: request.mode,
-      state: "loading",
-    });
+    this.put(
+      previous
+        ? { ...previous, loading: true, error: undefined }
+        : {
+            fileId: request.fileId,
+            rev: request.rev,
+            mode: request.mode,
+            state: "loading",
+          },
+    );
     const input: RepositoryReviewQuery = {
       taskId: target.taskId,
       requestId,
@@ -636,42 +647,117 @@ export class RepositoryReviewStore {
       const result = await this.bridge.repositoryReview(target.scopeId, input);
       if (epoch !== this.contentEpoch || !this.matches(request)) return;
       if (!result.ok) {
-        this.put({ ...request, state: "error", error: result.error.message });
+        this.put(
+          previous
+            ? { ...previous, loading: false, error: result.error.message }
+            : { ...request, state: "error", error: result.error.message },
+        );
         return;
       }
-      const content = result.value.content;
+      let content = result.value.content;
       if (
         !content ||
         content.fileId !== request.fileId ||
         content.rev !== request.rev ||
         content.mode !== request.mode ||
-        result.value.revision !== page.revision
+        result.value.revision !== page.revision ||
+        content.offset !== offset ||
+        result.value.taskId !== target.taskId
       )
-        return;
-      if (request.reason === "more" || request.reason === "previous")
-        this.lineWindow.set({
-          fileId: request.fileId,
-          sequence: ++this.windowSequence,
-        });
-      this.offsets.set(request.fileId, offset);
-      if (content.nextOffset !== null)
-        this.nextOffsets.set(request.fileId, content.nextOffset);
+        throw new Error("Mismatched file page.");
+      // Context changes the flattened offsets. Re-read the retained range in
+      // bounded pages, publishing it atomically so the reading line never vanishes.
+      const retainedEnd = this.windowEnds.get(request.fileId) ?? 0;
+      let pagesRead = 1;
+      if (
+        previous &&
+        (request.reason === "context" || request.reason === "retry")
+      ) {
+        const desiredEnd = Math.min(
+          offset + 1200,
+          retainedEnd + (request.reason === "context" ? 20 : 0),
+        );
+        while (
+          pagesRead < 3 &&
+          content.nextOffset !== null &&
+          content.nextOffset < desiredEnd
+        ) {
+          pagesRead++;
+          const next = await this.bridge.repositoryReview(target.scopeId, {
+            ...input,
+            lineOffset: content.nextOffset,
+          });
+          if (epoch !== this.contentEpoch || !this.matches(request)) return;
+          if (!next.ok)
+            throw new Error("Additional context could not be loaded.");
+          const part = next.value.content;
+          if (
+            !part ||
+            part.fileId !== request.fileId ||
+            part.rev !== request.rev ||
+            part.mode !== request.mode ||
+            next.value.revision !== page.revision ||
+            part.offset !== content.nextOffset
+          )
+            throw new Error("Mismatched context page.");
+          content = {
+            ...content,
+            nextOffset: part.nextOffset,
+            hunks: mergeHunks(content.hunks, part.hunks),
+          };
+        }
+      }
+      const oldOffset = this.offsets.get(request.fileId) ?? 0;
+      let start = offset;
+      let hunks = content.hunks;
+      let nextOffset = content.nextOffset;
+      if (
+        previous?.hunks &&
+        request.reason === "more" &&
+        offset === this.nextOffsets.get(request.fileId)
+      ) {
+        start = oldOffset;
+        hunks = mergeHunks(previous.hunks, hunks);
+      } else if (
+        previous?.hunks &&
+        request.reason === "previous" &&
+        offset <= oldOffset &&
+        offset + lineCount(hunks) >= oldOffset
+      ) {
+        // A short final page can move the window off a 400-line boundary.
+        // Prepend only its unseen prefix when the earlier wire page overlaps.
+        hunks = mergeHunks(sliceHunks(hunks, 0, oldOffset - offset), previous.hunks);
+        nextOffset = this.nextOffsets.get(request.fileId) ?? null;
+      }
+      // Keep three wire pages near the reader. Earlier/later text remains reachable.
+      const count = lineCount(hunks);
+      const trimStart =
+        request.reason === "more" ? Math.max(0, count - 1200) : 0;
+      const kept = sliceHunks(hunks, trimStart, trimStart + 1200);
+      start += trimStart;
+      if (request.reason !== "more" && count > 1200)
+        nextOffset = start + lineCount(kept);
+      this.offsets.set(request.fileId, start);
+      this.windowEnds.set(request.fileId, start + lineCount(kept));
+      if (nextOffset !== null) this.nextOffsets.set(request.fileId, nextOffset);
       else this.nextOffsets.delete(request.fileId);
       this.put({
         fileId: content.fileId,
         rev: content.rev,
         mode: content.mode,
         state: "ready",
-        hunks: content.hunks,
+        hunks: kept,
         notice: content.notice,
-        hasPreviousLines: offset > 0,
-        hasMoreLines: content.nextOffset !== null,
+        hasPreviousLines: start > 0,
+        hasMoreLines: nextOffset !== null,
+        windowed: true,
       });
     } catch {
       if (epoch === this.contentEpoch)
         this.put({
-          ...request,
-          state: "error",
+          ...(previous ?? request),
+          state: previous ? "ready" : "error",
+          loading: false,
           error: "This file could not be loaded. Try again.",
         });
     } finally {
