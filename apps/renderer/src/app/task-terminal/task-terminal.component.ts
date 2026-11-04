@@ -30,6 +30,7 @@ interface SurfaceEntry {
   terminal: TaskTerminal;
   notice: string;
   resizing: boolean;
+  reading?: Promise<void>;
   desiredSize?: { cols: number; rows: number };
   size?: string;
 }
@@ -189,7 +190,12 @@ export class TaskTerminalComponent {
   private stopAttachment(): void {
     this.revision++;
     clearTimeout(this.timer);
-    this.attached?.surface.detach();
+    if (this.attached) {
+      this.attached.input.reconnect();
+      this.attached.desiredSize = undefined;
+      this.attached.size = undefined;
+      this.attached.surface.detach();
+    }
     this.attached = undefined;
   }
   private async attach(
@@ -288,6 +294,19 @@ export class TaskTerminalComponent {
     );
   }
   private async pump(entry: SurfaceEntry, revision: number): Promise<void> {
+    // A detached xterm write can still be drawing. Finish its cursor update
+    // before a new attachment reads, otherwise the same bytes can render twice.
+    await entry.reading;
+    if (this.disposed || revision !== this.revision) return;
+    const reading = this.readOutput(entry, revision);
+    entry.reading = reading;
+    try {
+      await reading;
+    } finally {
+      if (entry.reading === reading) entry.reading = undefined;
+    }
+  }
+  private async readOutput(entry: SurfaceEntry, revision: number): Promise<void> {
     let more = false;
     try {
       const reply = await this.store.read(
@@ -342,7 +361,7 @@ export class TaskTerminalComponent {
     if (entry.resizing || !entry.terminal.generation) return;
     entry.resizing = true;
     try {
-      while (entry.desiredSize && !this.disposed) {
+      while (entry.desiredSize && !this.disposed && entry === this.attached) {
         const size = entry.desiredSize;
         entry.desiredSize = undefined;
         const key = `${entry.target.scopeId}:${entry.terminal.generation}:${size.cols}:${size.rows}`;

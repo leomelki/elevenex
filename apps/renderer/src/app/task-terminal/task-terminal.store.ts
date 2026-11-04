@@ -375,12 +375,14 @@ export class TaskTerminalStore {
     gen: string,
     data: string,
   ): Promise<BackendResult<{ readonly accepted: true }>> {
-    if (!this.connected() || this.selection()?.scopeId !== target.scopeId)
+    if (
+      !this.currentSelection(target, this.revision) || this.active() !== id
+    )
       return {
         ok: false,
         error: {
           code: "stale-scope",
-          message: "Disconnected. Input was not sent.",
+          message: "Terminal selection changed or disconnected. Input was not sent.",
         },
       };
     return this.bridge.taskTerminalInput(target.scopeId, {
@@ -397,8 +399,8 @@ export class TaskTerminalStore {
     cols: number,
     rows: number,
   ): Promise<void> {
-    if (!this.connected() || this.selection()?.scopeId !== target.scopeId)
-      return;
+    if (!this.currentSelection(target, this.revision) || this.active() !== id)
+      throw new Error("Terminal selection changed or disconnected.");
     const reply = await this.bridge.taskTerminalResize(target.scopeId, {
       taskId: target.taskId,
       terminalId: id,

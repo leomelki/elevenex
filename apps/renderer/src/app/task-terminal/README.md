@@ -23,6 +23,8 @@ up to eight xterm surfaces, each with 2,000 scrollback rows, selection, reading
 position and a bounded input queue. Eviction disposes a surface, never its PTY.
 Observers belong to the visible attachment. Hidden panels are inert and stop
 output reads; reconnect and show reattach by task/terminal/generation/offset.
+Reattachment waits for a pending xterm write and its cursor update before reading
+another page, so rapid hide/show cannot duplicate output.
 Session changes within a task keep the same surface and process. Switching
 machines clears display caches. Closing an individual window detaches while other
 windows remain. Quitting the app or closing its last window closes all terminals
@@ -74,7 +76,7 @@ coalesced/cached for three seconds. Launch and rerun rediscover it.
 Input dispatch is serialized, capped at 128 KiB per pending paste and split into
 small Unicode-safe requests. Oversize pastes are refused visibly. Input is never
 retried. Unknown input outcomes clear pending data, disable typing and require
-an explicit Resume typing after inspection. Connection and process generation
+an explicit Resume typing after inspection. Detaching, connection and process generation
 changes invalidate pending input. Queued chunks retain their original scope and
 process identity; replacement requires explicit Resume typing if a dispatch was
 interrupted. Resize is fit-to-container, frame-coalesced and single-flight.

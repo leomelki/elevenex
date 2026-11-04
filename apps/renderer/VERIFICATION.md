@@ -2837,3 +2837,31 @@ sandboxed preload, scoped terminal IPC validation/cleanup, multiple windows and
 `app://` history/CSP. Its backend is a disposable transport fixture, separate from
 the real backend PTY tests above. The final shell regression additionally checks
 that exported PS0/allexport profiles cannot leak hook tokens through child environments.
+
+### Terminal attachment review (2026-11-04)
+
+Fixed queued input continuing after detachment, stale task/tab input and resize
+dispatch, and output pages being read twice when reattaching during an unfinished
+xterm write. Regression tests retain real xterm input events and control only
+layout/drawing and transport timing. Shell rerun stays disabled after ambiguous
+cursor/Ctrl-U edits or Unicode deletion. Backend operation validation also rejects
+inherited object property names as bad requests.
+
+Desktop lint, the production build, backend production TypeScript and focused
+backend lint passed. The complete desktop runner passed 138 platform tests,
+7 capture-tool tests and 659 renderer tests, including TypeScript contract checks.
+All 65 user-terminal backend tests passed with real PTYs. Native macOS Electron
+smoke passed with the built production assets and a disposable transport fixture.
+
+Native captures in `artifacts/desktop-capture/terminal-review-attachment-v3/`
+report `verified: true` for four light/dark checkpoints with no errors or warnings.
+Trusted keyboard input checks detachment with an in-flight dispatch, discarded
+queued typing, the explicit Resume typing control and new input after resuming.
+The connected workspace uses its preview-only backend adapter; large Unicode
+pastes and output drawing races are covered by focused tests.
+
+The existing rendering scenario also reports `verified: true` for 11 checkpoints
+in `artifacts/desktop-capture/terminal-review-rendering/`. Inspected PNGs cover
+both themes, narrow/reduced-motion layouts and Find across wrapped text. The only
+warning is the intentional GPU context loss. These checks do not establish live
+SSH terminal behavior, packaged-app launch, or Windows/Linux runtime behavior.

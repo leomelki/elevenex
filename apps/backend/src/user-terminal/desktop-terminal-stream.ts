@@ -39,8 +39,8 @@ export class DesktopTerminalStream {
     // Consume status and service hints in wire order. Only our process-specific
     // hook token can enable command capture; ordinary/nested OSC 133 is display data.
     // This distinguishes untrusted output, not hostile programs with same-user OS access.
-    // eslint-disable-next-line no-control-regex
     const events =
+      // eslint-disable-next-line no-control-regex -- Parse PTY protocol delimiters.
       /\x1b\]133;([BCD]);([a-f\d-]{36})(?:;(\d{1,3}))?\x07|(https?):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{1,5})(?=[/\s\x1b]|$)/g;
     for (const match of text.matchAll(events)) {
       if ((match.index ?? 0) + match[0].length <= tailLength) continue;
@@ -132,11 +132,15 @@ export class DesktopTerminalStream {
       } else if (char === '\x03') {
         this.pendingLine = '';
         this.reliableLine = true;
-      } else if (char === '\x7f' || char === '\b')
+      } else if (char === '\x7f' || char === '\b') {
+        // Readline/ZLE deletion depends on character, grapheme and key bindings.
+        // Non-ASCII deletion cannot safely reconstruct the actual shell buffer.
+        if (/[^\x20-\x7e]/.test(this.pendingLine)) this.reliableLine = false;
         this.pendingLine = this.pendingLine.slice(0, -1);
-      else if (char === '\x15') {
+      } else if (char === '\x15') {
         this.pendingLine = '';
-        this.reliableLine = true;
+        // Ctrl-U deletes up to the cursor; prior cursor/history edits may leave
+        // text after it. Only an already reliable line is known to be cleared.
       } else if (char < ' ' || this.pendingLine.length >= 4096)
         this.reliableLine = false;
       else this.pendingLine += char;

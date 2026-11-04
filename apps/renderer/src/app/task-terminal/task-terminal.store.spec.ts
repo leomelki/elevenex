@@ -340,9 +340,7 @@ describe("Task terminal selection and recovery", () => {
     expect(store.error()).toBe("");
   });
   it("does not confirm a failed resize so a later attachment can fit again", async () => {
-    const { store, bridge } = setup();
-    store.select({ scopeId: "scope", taskId: 1 });
-    await store.refresh();
+    const { store, bridge } = await setupTerminals();
     bridge.taskTerminalResize.mockResolvedValue({
       ok: false,
       error: { code: "transport", message: "Resize interrupted" },
@@ -350,5 +348,18 @@ describe("Task terminal selection and recovery", () => {
     await expect(
       store.resize({ scopeId: "scope", taskId: 1 }, 2, "generation", 100, 30),
     ).rejects.toThrow("Resize interrupted");
+  });
+  it("rejects queued input and resize after switching tasks or tabs in the same scope", async () => {
+    const { store, bridge } = await setupTerminals();
+    const target = { scopeId: "scope", taskId: 1 };
+    store.active.set(3);
+    expect((await store.input(target, 2, "generation", "old")).ok).toBe(false);
+    await expect(store.resize(target, 2, "generation", 100, 30)).rejects.toThrow("selection changed");
+    store.select({ scopeId: "scope", taskId: 2 });
+    store.active.set(2);
+    expect((await store.input(target, 2, "generation", "old")).ok).toBe(false);
+    await expect(store.resize(target, 2, "generation", 100, 30)).rejects.toThrow("selection changed");
+    expect(bridge.taskTerminalInput).not.toHaveBeenCalled();
+    expect(bridge.taskTerminalResize).not.toHaveBeenCalled();
   });
 });

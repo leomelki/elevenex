@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import { BadRequestException } from '@nestjs/common';
 import { existsSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
@@ -173,6 +174,14 @@ describe('Desktop task terminals with real PTYs', () => {
     await service.close(task, terminal.id);
     expect(ptys.desktopStream(terminal.id)).toBeUndefined();
   });
+  it.each(['constructor', 'toString', '__proto__'])(
+    'rejects inherited operation name %s as a bad request',
+    async (type) => {
+      await expect(service.command(task, 1, { type })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    },
+  );
   it.each([
     { shell: '/bin/bash', paste: false },
     ...(existsSync('/bin/zsh')
@@ -486,10 +495,10 @@ describe('Desktop task terminals with real PTYs', () => {
     const fence = ptys.getGeneration(terminal.id);
     await ptys.destroy(terminal.id, true);
     ptys.forgetDesktop(terminal.id);
-    await expect(ptys.spawnDesktop(terminal.id, root, '/bin/bash', null, fence))
-      .rejects.toThrow('cancelled');
+    await expect(
+      ptys.spawnDesktop(terminal.id, root, '/bin/bash', null, fence),
+    ).rejects.toThrow('cancelled');
     expect(ptys.isAlive(terminal.id)).toBe(false);
     expect(ptys.desktopStream(terminal.id)).toBeUndefined();
   });
-
 });

@@ -91,6 +91,30 @@ describe('Desktop terminal process stream', () => {
     expect(stream.command).toBe('false');
     expect(stream.rerunInput()).toBe('false\r');
   });
+  it('does not restore rerun after Ctrl-U when cursor edits may leave unsent text', () => {
+    const stream = new DesktopTerminalStream(null, token);
+    stream.append(prompt(0));
+    stream.input('false\r');
+    stream.append(prompt(1));
+    stream.input('unsent\x01\x15');
+    expect(stream.canRerun).toBe(false);
+    expect(stream.rerunInput()).toBeNull();
+    stream.input('false\r');
+    stream.append(prompt(1));
+    expect(stream.command).toBe('Shell command');
+    expect(stream.canRerun).toBe(false);
+  });
+  it.each(['🙂', 'e\u0301'])(
+    'refuses to guess shell deletion of %s',
+    (text) => {
+      const stream = new DesktopTerminalStream(null, token);
+      stream.append(prompt(0));
+      stream.input(`echo ${text}\x7f\r`);
+      stream.append(prompt(1));
+      expect(stream.command).toBe('Shell command');
+      expect(stream.rerunInput()).toBeNull();
+    },
+  );
   it('refuses rerun during a paste or after multiline paste and history editing', () => {
     const stream = new DesktopTerminalStream(null, token);
     stream.append(`${prompt(0)}`);

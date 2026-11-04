@@ -373,7 +373,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
     };
     if (
       typeof type !== 'string' ||
-      !keys[type] ||
+      !Object.hasOwn(keys, type) ||
       Object.keys(input).some((key) => !keys[type].includes(key))
     )
       throw new BadRequestException('Invalid terminal operation');
