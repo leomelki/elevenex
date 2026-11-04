@@ -1,0 +1,16 @@
+[
+  {"valid":true,"input":{"kind":"text","text":"世界"}},
+  {"valid":true,"input":{"kind":"composition","text":"abc","selectionStart":0,"selectionEnd":3}},
+  {"valid":true,"input":{"kind":"key","type":"down","key":"a","code":"KeyA","keyCode":65,"modifiers":15}},
+  {"valid":true,"input":{"kind":"pointer","type":"down","x":1.5,"y":2.5,"button":"left","buttons":1,"clicks":1,"modifiers":0}},
+  {"valid":false,"input":{"kind":"key","type":"down","key":"a","code":"KeyA","keyCode":65.5,"modifiers":0}},
+  {"valid":false,"input":{"kind":"key","type":"down","key":"a","code":"KeyA","keyCode":65,"modifiers":0.5}},
+  {"valid":false,"input":{"kind":"pointer","type":"down","x":1,"y":2,"button":"left","buttons":1.5,"clicks":1,"modifiers":0}},
+  {"valid":false,"input":{"kind":"pointer","type":"down","x":1,"y":2,"button":"left","buttons":1,"clicks":1.5,"modifiers":0}},
+  {"valid":false,"input":{"kind":"composition","text":"abc","selectionStart":0.5,"selectionEnd":2}},
+  {"valid":false,"input":{"kind":"composition","text":"abc","selectionStart":2,"selectionEnd":1}},
+  {"valid":false,"input":{"kind":"composition","text":"abc","selectionStart":0,"selectionEnd":4}},
+  {"valid":false,"input":{"kind":"text","text":"private","extra":true}},
+  {"valid":false,"input":{"kind":"batch","events":[{"kind":"clipboard","operation":"paste"}]}},
+  {"valid":false,"input":{"kind":"batch","events":[{"kind":"batch","events":[{"kind":"text","text":"x"}]}]}}
+]

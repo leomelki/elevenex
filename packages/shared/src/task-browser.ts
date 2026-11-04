@@ -1,6 +1,15 @@
 /** Task-owned browser contracts. Page content never receives this bridge. */
 export interface BrowserRect { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
 export interface BrowserElement extends BrowserRect { readonly selector: string; readonly tag: string }
+/** Engine placement and task-server routing, independent of embedded/stream display. */
+export type TaskBrowserPlacement = 'desktop' | 'desktop-proxy' | 'machine';
+export interface TaskBrowserCapabilities {
+  readonly embedded: boolean;
+  readonly audio: boolean;
+  readonly accessibility: boolean;
+  readonly filePicker: boolean;
+  readonly downloads: boolean;
+}
 /** Trusted presentation descriptors. Never supplied to a website or agent tool. */
 export interface TaskBrowserSurface {
   readonly scopeId: string;
@@ -8,6 +17,8 @@ export interface TaskBrowserSurface {
   readonly tabId: string;
   readonly partition: string;
   readonly bootstrap: string;
+  /** Native guest identity, absent for a machine stream. Legacy fields remain for older renderers. */
+  readonly guest?: { readonly partition: string; readonly bootstrap: string };
   readonly bounds: BrowserRect;
   readonly viewport?: { readonly width: number; readonly height: number };
   readonly zoom: number;
@@ -60,6 +71,10 @@ export interface TaskBrowserTab {
   readonly target?: BrowserElement;
 }
 export interface TaskBrowserState {
+  /** Independent panel/tab ordering; omitted by older machine hosts. */
+  readonly layoutLanes?: true;
+  readonly placement?: TaskBrowserPlacement;
+  readonly capabilities?: TaskBrowserCapabilities;
   /** Older remote runtimes omit this capability. */
   readonly canDetach?: boolean;
   readonly scopeId: string;

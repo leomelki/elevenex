@@ -14,7 +14,14 @@ action available; returning to the empty browser creates its default again.
 
 ## Rendering and composition
 
-Local tasks use a real Electron guest `<webview>`. `EmbeddedPageComponent` creates
+Browser Tools selects **This device**, **This device · task proxy**, or
+**Stream from task machine** through the scope-bound configuration operation.
+Close tabs with loaded pages before switching; profiles are separate. The proxy
+forwards task localhost servers while public traffic stays on this device. Local
+tasks default to this device; remote tasks default to the task-machine stream.
+See [the architecture review and extension boundaries](../../../../../docs/task-browser-architecture.md).
+
+Desktop-hosted tasks use a real Electron guest `<webview>`. `EmbeddedPageComponent` creates
 only the fixed element; main issues its ephemeral partition and bootstrap identity,
 validates `will-attach-webview`, forces hardened preferences, and adopts the exact
 contents through `taskBrowserAttach`. There is no page preload, Node, app bridge,
@@ -124,8 +131,8 @@ The first remote JPEG mode does **not** relay audio, page accessibility, device
 permission prompts, file picking or downloads. Tools explain those limits and
 provide Open outside. Unsupported controls do not silently succeed. No web/mobile
 client ships in this foundation; remote desktops use the same private runtime
-protocol. A future data-proxy display can replace the presentation/transport
-adapter without changing the task/driver contract or exposing generic HTTP/CDP.
+protocol. A future web/phone client can implement the presentation/transport
+adapter behind an authenticated gateway without changing the task/driver contract or exposing generic HTTP/CDP.
 
 The workflow footer keeps one DOM/geometry identity when user input takes over.
 Its progress row reserves height even before a total is known; existing error

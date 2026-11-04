@@ -1,10 +1,7 @@
 import { BrowserWindow } from 'electron';
 import type { TaskBrowserCommand, TaskBrowserFrame, TaskBrowserState, TaskBrowserSurface, TaskBrowserWindowContext, TaskBrowserWindowInfo } from '@elevenex/shared';
 import { sendToWindow } from '../ipc';
-import type { TaskBrowser } from './task';
-import type { RemoteTaskBrowser } from './remote-task';
-
-type BrowserTask = TaskBrowser | RemoteTaskBrowser;
+import type { BrowserHost as BrowserTask } from './host';
 interface DetachedTab {
   readonly sourceId: number;
   readonly browser: BrowserTask;

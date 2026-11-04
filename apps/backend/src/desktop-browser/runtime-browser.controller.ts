@@ -141,7 +141,7 @@ export class RuntimeBrowserController {
         .strict(),
       input,
     );
-    const task = this.browsers.layoutViewer(id, token, box.sequence ?? 0);
+    const task = this.browsers.layoutViewer(id, token, box.sequence ?? 0, box.tabId);
     if (box.tabId) await task?.layoutTab(box.tabId, box.width, box.height, box.visible, box.interactive, box.pixelRatio, box.colorScheme ?? 'light', box.detached ?? true);
     else {
       if (box.detached !== undefined) throw new BadRequestException('A tab is required');

@@ -29,11 +29,12 @@ export class EmbeddedPageComponent {
   constructor() {
     afterRenderEffect(() => {
       const surface = this.surface();
+      if (!surface.guest) return;
       if (!this.guest) {
         // Electron supplies this element's documented API; no Electron/Node code enters Angular.
         const guest = document.createElement('webview') as TaskGuestElement;
-        guest.setAttribute('partition', surface.partition);
-        guest.setAttribute('src', surface.bootstrap);
+        guest.setAttribute('partition', surface.guest.partition);
+        guest.setAttribute('src', surface.guest.bootstrap);
         guest.setAttribute('aria-label', 'Task browser page');
         Object.assign(guest.style, {
           display: 'flex',

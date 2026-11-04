@@ -14,7 +14,7 @@ interface Viewer {
   readonly token: string;
   readonly clientId: string;
   seen: number;
-  layoutSequence: number;
+  readonly layoutSequences: Map<string, number>;
 }
 /** One authoritative viewer lease per runtime task. New connections revoke old driver generations. */
 @Injectable()
@@ -57,7 +57,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
       clientId,
       token: randomUUID(),
       seen: Date.now(),
-      layoutSequence: -1,
+      layoutSequences: new Map<string, number>(),
     };
     this.viewers.set(taskId, viewer);
     return { token: viewer.token, state: task.state() };
@@ -123,11 +123,17 @@ export class RuntimeBrowserService implements OnModuleDestroy {
     taskId: number,
     token: string,
     sequence: number,
+    tabId?: string,
   ): RuntimeBrowserTask | null {
     const task = this.viewer(taskId, token);
     const viewer = this.viewers.get(taskId)!;
-    if (sequence <= viewer.layoutSequence) return null;
-    viewer.layoutSequence = sequence;
+    // Panel and companion layouts are independent lanes. A late update for one
+    // display must not suppress another display's visibility or viewport.
+    const key = tabId ?? 'panel';
+    if (tabId && !task.tabs.has(tabId)) throw new ForbiddenException('Browser tab closed');
+    if (sequence <= (viewer.layoutSequences.get(key) ?? -1)) return null;
+    for (const id of viewer.layoutSequences.keys()) if (id !== 'panel' && !task.tabs.has(id)) viewer.layoutSequences.delete(id);
+    viewer.layoutSequences.set(key, sequence);
     return task;
   }
   active(taskId: number): RuntimeBrowserTask | null {

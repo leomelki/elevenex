@@ -50,3 +50,25 @@ describe('Task browser ownership', () => {
     expect(store.state()?.taskId).toBe(3);
   });
 });
+
+describe('Browser placement changes', () => {
+  it('accepts a replacement engine revision domain and rejects a late replacement after task navigation', async () => {
+    const read = deferred<BackendResult<TaskBrowserState>>(), replacement = deferred<BackendResult<TaskBrowserState>>();
+    const bridge = {
+      taskBrowserRead: vi.fn(() => read.promise),
+      taskBrowserConfigure: vi.fn(() => replacement.promise),
+      taskBrowserHide: vi.fn(async () => undefined),
+    };
+    TestBed.configureTestingModule({ providers: [TaskBrowserStore, { provide: ELEVENEX_BRIDGE, useValue: bridge }] });
+    const store = TestBed.inject(TaskBrowserStore);
+    store.open('scope', 1); read.resolve({ ok: true, value: state('scope', 1, 100) }); await read.promise; await Promise.resolve();
+    const change = store.configure('machine');
+    replacement.resolve({ ok: true, value: { ...state('scope', 1, 0), placement: 'machine' } }); await change;
+    expect(store.state()?.revision).toBe(0); expect(store.state()?.placement).toBe('machine');
+    const late = deferred<BackendResult<TaskBrowserState>>(); bridge.taskBrowserConfigure.mockReturnValueOnce(late.promise);
+    const changedAgain = store.configure('desktop-proxy');
+    store.open('other-scope', 2);
+    late.resolve({ ok: true, value: state('scope', 1, 200) }); await changedAgain;
+    expect(store.state()?.scopeId).not.toBe('scope');
+  });
+});

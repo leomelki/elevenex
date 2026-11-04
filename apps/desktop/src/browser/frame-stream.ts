@@ -135,8 +135,12 @@ export class BrowserFrameStream {
         maxHeight: 1440,
         everyNthFrame: 1,
       });
-      if (this.disposed || !this.active || revision !== this.revision)
+      if (this.disposed || !this.active || revision !== this.revision) {
         await this.stop();
+        // A late start from the previous display can stop a newer start. Reconcile
+        // after that stop, so the currently visible display cannot remain frozen.
+        if (this.active && !this.disposed) await this.start();
+      }
     } catch {
       this.running = false;
     }

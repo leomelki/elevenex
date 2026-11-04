@@ -104,7 +104,8 @@ const runtimeEvent = z.union([
       selectionStart: z.number().int().min(0).max(4096),
       selectionEnd: z.number().int().min(0).max(4096),
     })
-    .strict(),
+    .strict()
+    .refine(event => event.selectionStart <= event.selectionEnd && event.selectionEnd <= event.text.length),
   z
     .object({ kind: z.literal('edit'), operation: z.enum(['undo', 'redo']) })
     .strict(),

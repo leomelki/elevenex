@@ -1,13 +1,19 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
-import type { BackendResult, ElevenexBridge, TaskBrowserCommand, TaskBrowserState, TaskBrowserTab } from '@elevenex/shared';
+import type { BackendResult, ElevenexBridge, TaskBrowserCommand, TaskBrowserState, TaskBrowserTab, TaskBrowserPlacement } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../src/app/backend/backend-client.service';
 import { TaskBrowserComponent } from '../src/app/task-browser';
 
 /** Preview-only transport for exercising the production start-tab owner. No network or guest. */
 export class StartTabFixture implements Pick<ElevenexBridge, 'taskBrowserRead' | 'taskBrowserHide' | 'taskBrowserCommand'> {
-  protected state: TaskBrowserState = { scopeId: 'preview', taskId: 1, revision: 0, surfaceEpoch: 0, controlsFocus: 0, tabs: [], active: null, picked: null, picking: false, pickerMessage: null, feedback: false, ports: [3000, 4310], privacy: 'content-withheld' };
+  protected state: TaskBrowserState = { placement: 'desktop', capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, scopeId: 'preview', taskId: 1, revision: 0, surfaceEpoch: 0, controlsFocus: 0, tabs: [], active: null, picked: null, picking: false, pickerMessage: null, feedback: false, ports: [3000, 4310], privacy: 'content-withheld' };
   private nextId = 0;
   async taskBrowserRead(): Promise<BackendResult<TaskBrowserState>> { return { ok: true, value: this.state }; }
+  async taskBrowserConfigure(_scope: string, _task: number, placement: TaskBrowserPlacement): Promise<BackendResult<TaskBrowserState>> {
+    if (this.state.tabs.some(tab => tab.url)) return { ok: false, error: { code: 'unavailable', message: 'Close loaded tabs first.' } };
+    const native = placement !== 'machine';
+    this.state = { ...this.state, placement, revision: 0, capabilities: { embedded: native, audio: native, accessibility: native, filePicker: native, downloads: native } };
+    return { ok: true, value: this.state };
+  }
   async taskBrowserHide() { /* No guest in this preview. */ }
   async taskBrowserCommand(_scope: string, _task: number, input: TaskBrowserCommand): Promise<BackendResult<TaskBrowserState>> {
     if (input.kind === 'new-tab') {

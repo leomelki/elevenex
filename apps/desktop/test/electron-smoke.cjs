@@ -114,7 +114,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -140,6 +140,7 @@ void (async () => {
   assert.equal(await window.webContents.executeJavaScript('window.elevenex.openMachineWindow({kind:"remote",hostId:"unknown"}).then(()=>false,()=>true)'), true);
   const firstScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.equal(firstScope.scope.environment.kind, 'local');
+  await require('./browser-machine-native.cjs')();
   const browserSite = await require('./browser-site.cjs')();
   window.once('closed', () => { void browserSite.close(); });
   const reconnectingBrowserPage = await require('./browser-native.cjs')(window, firstScope.scope.id, browserSite.url, backendUrl);

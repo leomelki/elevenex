@@ -1,6 +1,6 @@
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
-import type { TaskBrowserWindowInfo, TaskBrowserWindowContext, TaskBrowserState, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserSurface, TaskBrowserFrame, TaskBrowserStreamInput } from './task-browser';
+import type { TaskBrowserPlacement, TaskBrowserWindowInfo, TaskBrowserWindowContext, TaskBrowserState, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserSurface, TaskBrowserFrame, TaskBrowserStreamInput } from './task-browser';
 export type * from './task-browser';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
@@ -58,6 +58,7 @@ export interface InvokeContracts {
   'task-browser:presentation': { args: [scopeId: string, taskId: number, tabId: string, presentation: 'embedded' | 'stream']; result: void };
   'task-browser:frame-ack': { args: [scopeId: string, taskId: number, tabId: string, streamId: string, sequence: number]; result: void };
   'task-browser:input': { args: [scopeId: string, taskId: number, tabId: string, generation: number, input: TaskBrowserStreamInput]; result: number };
+  'task-browser:configure': { args: [scopeId: string, taskId: number, placement: TaskBrowserPlacement]; result: BackendResult<TaskBrowserState> };
   'task-browser:read': { args: [scopeId: string, taskId: number]; result: BackendResult<TaskBrowserState> };
   'task-browser:command': { args: [scopeId: string, taskId: number, input: TaskBrowserCommand]; result: BackendResult<TaskBrowserState> };
   'task-browser:layout': { args: [scopeId: string, taskId: number, input: TaskBrowserLayout]; result: void };
@@ -189,6 +190,7 @@ export interface ElevenexBridge {
   taskBrowserInput?(scopeId: string, taskId: number, tabId: string, generation: number, input: TaskBrowserStreamInput): Promise<number>;
   onTaskBrowserSurfacesChanged?(listener: (surfaces: readonly TaskBrowserSurface[]) => void): () => void;
   onTaskBrowserFrame?(listener: (frame: TaskBrowserFrame) => void): () => void;
+  taskBrowserConfigure?(scopeId: string, taskId: number, placement: TaskBrowserPlacement): Promise<BackendResult<TaskBrowserState>>;
   taskBrowserRead(scopeId: string, taskId: number): Promise<BackendResult<TaskBrowserState>>;
   taskBrowserCommand(scopeId: string, taskId: number, input: TaskBrowserCommand): Promise<BackendResult<TaskBrowserState>>;
   taskBrowserLayout(scopeId: string, taskId: number, input: TaskBrowserLayout): Promise<void>;

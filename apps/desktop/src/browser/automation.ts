@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { BackendClient } from '../backend-client/client';
 import { requestBackendJson } from '../backend-client/transport';
 import { agentCommand, browserId, exact, record, taskId } from './validation';
-import type { TaskBrowser } from './task';
+import type { DesktopBrowserHost as TaskBrowser } from './host';
 
 /** Main-owned mailbox loop. Never repeats delivered actions, even after an unknown receipt outcome. */
 export class BrowserAutomation {

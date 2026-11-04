@@ -33,14 +33,23 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
     };
     window.elevenex.onTaskBrowserSurfacesChanged(render); window.elevenex.taskBrowserSurfaces().then(render);
   })()`);
+  await window.webContents.executeJavaScript(`window.__autoBrowserAck = true; void window.elevenex.onTaskBrowserFrame(frame => { window.__browserFrame = {streamId:frame.streamId,sequence:frame.sequence,bytes:frame.jpeg.byteLength,width:frame.width,height:frame.height}; if (window.__autoBrowserAck) void window.elevenex.taskBrowserFrameAck(frame.scopeId,frame.taskId,frame.tabId,frame.streamId,frame.sequence); });`);
   const visibleCount = () => window.webContents.executeJavaScript('(window.__browserSurfaces || []).filter(surface=>surface.visible).length');
   await read();
+  const configured = await call('taskBrowserConfigure', scope, 1, 'desktop-proxy');
+  assert.equal(configured.ok, true); assert.equal(configured.value.placement, 'desktop-proxy');
+  assert.equal(configured.value.capabilities.embedded, true);
+  assert.equal((await call('taskBrowserConfigure', scope, 1, 'desktop')).ok, true);
+  await assert.rejects(() => call('taskBrowserConfigure', scope, 1, 'arbitrary-shell'));
+  assert.equal((await call('taskBrowserConfigure', scope, 1, 'machine')).ok, true);
+  assert.equal((await read()).placement, 'machine');
   const blank = await command({ kind: 'new-tab' });
   assert.equal(blank.tabs.length, 1);
   assert.equal(blank.tabs[0].url, '');
   assert.equal(blank.tabs[0].title, 'New tab');
   assert.equal(blank.tabs[0].loading, false);
   let state = await command({ kind: 'navigate', tabId: blank.active, url: url + '/browser-test' });
+  assert.equal((await call('taskBrowserConfigure', scope, 1, 'machine')).ok, false, 'Live pages prevent destructive placement changes');
   const first = state.active;
   let native = await until(() => webContents.getAllWebContents().find(contents => contents !== window.webContents && contents.getURL().includes('/browser-test')), 'Browser page did not load');
   await until(async () => (await read()).tabs[0]?.loading === false, 'Browser page still loading');
@@ -54,6 +63,8 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   await call('taskBrowserLayout', scope, 1, layout);
   await until(async()=>await visibleCount() === 1, 'Guest was not presented');
   assert.deepEqual(await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible).bounds'), layout.bounds);
+  assert.equal(await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible).presentation'), 'stream');
+  await call('taskBrowserPresentation', scope, 1, first, 'embedded');
   native = await require('./browser-detached-native.cjs')(window, native, scope, first);
   // Page strings/secret controls never appear in state or automation-facing tab titles.
   await native.executeJavaScript(`document.title='password-secret';document.querySelector('input').value='password-secret';console.error('password-secret')`);
@@ -63,7 +74,7 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   state = await command({ kind: 'network', tabId: first, slow: true }); assert.equal(state.tabs[0].slowNetwork, true);
   await command({ kind: 'network', tabId: first, slow: false }); await command({ kind: 'theme', tabId: first, theme: 'system' });
   // Streamed display uses the same engine and no native child surface.
-  await window.webContents.executeJavaScript(`void window.elevenex.onTaskBrowserFrame(frame=>{ window.__browserFrame = {streamId:frame.streamId,sequence:frame.sequence,bytes:frame.jpeg.byteLength,width:frame.width,height:frame.height}; })`);
+  await window.webContents.executeJavaScript('window.__autoBrowserAck = false; window.__browserFrame = null');
   await call('taskBrowserPresentation', scope, 1, first, 'stream');
   await call('taskBrowserLayout', scope, 1, {...layout, sequence:2});
   const streamHeartbeat=setInterval(()=>{void call('taskBrowserLayout',scope,1,{...layout,sequence:Math.floor(performance.now()*1000)});},200);
@@ -157,6 +168,7 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   assert.equal((await call('taskBrowserCommand', scope, 3, { kind: 'open', url: 'https://example.com' })).ok, false, 'Stale task commands must not change selected task');
   assert.equal(await call('taskBrowserCommand', scope, 1, { kind: 'open', url: 'file:///etc/passwd' }).then(() => false, () => true), true);
   for (const tab of state.tabs) await command({ kind: 'close', tabId: tab.id });
+  assert.equal((await call('taskBrowserConfigure', scope, 1, 'desktop')).ok, true);
   await until(() => native.isDestroyed(), 'Closed tab WebContents survived');
   console.log('Browser smoke: native lifecycle and scope checks passed');
   const selfClosing = await command({ kind: 'open', url: url + '/browser-test?self-close=1' });

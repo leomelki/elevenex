@@ -160,3 +160,30 @@ test('detached-window labels are bounded presentation data with no executable se
   assert.deepEqual(windowContext(context), context);
   for (const invalid of [{ ...context, preload: '/unsafe' }, { ...context, taskName: 'x'.repeat(257) }, { ...context, projectName: 'bad\nlabel' }, { ...context, stage: 'running' }, { ...context, hue: 'url(secret)' }]) assert.throws(() => windowContext(invalid));
 });
+
+test('human input satisfies the shared desktop/runtime protocol cases', () => {
+  const { streamInput } = require('../dist/browser/validation');
+  for (const { valid, input } of require('../../../test/fixtures/task-browser-input.json')) {
+    if (valid) assert.deepEqual(streamInput(input), input);
+    else assert.throws(() => streamInput(input), JSON.stringify(input));
+  }
+});
+
+test('a late native screencast start reconciles the current visible presentation', async () => {
+  const { EventEmitter } = require('node:events');
+  const { BrowserFrameStream } = require('../dist/browser/frame-stream');
+  const debuggerApi = new EventEmitter(), commands = [];
+  let release;
+  debuggerApi.isAttached = () => true;
+  debuggerApi.sendCommand = method => {
+    commands.push(method);
+    if (commands.length === 1) return new Promise(resolve => { release = resolve; });
+    return Promise.resolve();
+  };
+  const stream = new BrowserFrameStream({ debugger: debuggerApi, isDestroyed: () => false }, { scopeId: id, taskId: 1, tabId: id }, () => undefined);
+  stream.setActive(true); stream.setActive(false); stream.setActive(true);
+  release();
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  assert.equal(commands.at(-1), 'Page.startScreencast', 'An older completion must not leave a visible stream stopped');
+  stream.destroy();
+});

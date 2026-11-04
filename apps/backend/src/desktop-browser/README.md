@@ -65,3 +65,10 @@ three-second presentation freshness and the existing viewer expiry. A detached
 layout never selects another tab. Returning removes its presentation; disconnect
 clears all presentations and revokes control. The public TCP and agent boundaries
 are unchanged.
+
+Optional `layoutLanes: true` state capability advertises independent panel/tab
+layout ordering. Older clients' shared sequences remain valid. The desktop keeps
+legacy shared sequencing for hosts that omit the capability. Lane state is
+bounded to live tabs and resets with the viewer lease. See the
+[architecture review](../../../../docs/task-browser-architecture.md) for placement,
+presentation ownership and authenticated web/phone extension boundaries.

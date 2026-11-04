@@ -114,6 +114,7 @@ export class RuntimeBrowserTask {
   state(): TaskBrowserState {
     return {
       canDetach: true,
+      layoutLanes: true,
       scopeId: this.id,
       taskId: this.taskId,
       revision: this.revision,

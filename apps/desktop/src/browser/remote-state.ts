@@ -136,6 +136,7 @@ export function remoteBrowserState(
     invalid();
   return {
     canDetach: raw['canDetach'] === true,
+    ...(raw['layoutLanes'] === true ? { layoutLanes: true } : {}),
     scopeId,
     taskId,
     revision: integer(raw["revision"]),

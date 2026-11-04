@@ -38,6 +38,11 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   void invoke('code:present', {scopeId:'scope',taskId:1}, {visible:true,compact:false});
   // @ts-expect-error Frame presentation carries no arbitrary URL or native geometry.
   void invoke('code:present', {scopeId:'scope',taskId:1}, {url:'https://example.com'});
+  void invoke('task-browser:configure', 'scope', 1, 'desktop-proxy');
+  // @ts-expect-error Engine location cannot inject a proxy address or credentials.
+  void invoke('task-browser:configure', 'scope', 1, { proxy: 'http://evil' });
+  // @ts-expect-error Browser location is a closed set.
+  void invoke('task-browser:configure', 'scope', 1, 'custom-chromium');
   void invoke('task-browser:read', 'scope', 1);
   void invoke('task-browser:command', 'scope', 1, { kind: 'handoff', tabId: 'tab', sessionId: 2 });
   // @ts-expect-error Browser operations must capture the expected backend scope.

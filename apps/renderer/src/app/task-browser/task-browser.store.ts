@@ -1,5 +1,5 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
-import type { TaskBrowserCommand, TaskBrowserState } from '@elevenex/shared';
+import type { TaskBrowserCommand, TaskBrowserState, TaskBrowserPlacement } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 
 /** Task selection, bounded state and stale-reply rejection. Conversation selection never resets tabs. */
@@ -46,6 +46,20 @@ export class TaskBrowserStore {
       if (reply.ok) { this.accept(reply.value); return true; }
       this.error.set(reply.error.message); return false;
     } catch { if (this.valid(epoch)) this.error.set('Browser action interrupted. Inspect the page before trying again.'); return false; }
+    finally { this.pending.update(n => Math.max(0, n - 1)); }
+  }
+  async configure(placement: TaskBrowserPlacement): Promise<void> {
+    const selected = this.selection, epoch = this.epoch;
+    if (!selected || !this.bridge.taskBrowserConfigure || this.disposed || this.pending()) return;
+    this.error.set(''); this.pending.update(n => n + 1);
+    try {
+      const reply = await this.bridge.taskBrowserConfigure(selected.scopeId, selected.taskId, placement);
+      if (!this.valid(epoch)) return;
+      if (reply.ok && reply.value.scopeId === selected.scopeId && reply.value.taskId === selected.taskId) {
+        // A replacement engine starts a new task-state revision domain.
+        this.state.set(reply.value);
+      } else if (!reply.ok) this.error.set(reply.error.message);
+    } catch { if (this.valid(epoch)) this.error.set('Could not change browser placement. Refresh to reconcile.'); }
     finally { this.pending.update(n => Math.max(0, n - 1)); }
   }
   private valid(epoch: number): boolean { return !this.disposed && epoch === this.epoch; }

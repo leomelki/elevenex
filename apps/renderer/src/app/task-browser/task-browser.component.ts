@@ -1,15 +1,15 @@
 import { BrowserSurfacesComponent } from './browser-surfaces.component';
 import { OverlayContainer } from '@angular/cdk/overlay';
 import { ChangeDetectionStrategy, Component, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
-import type { TaskBrowserCommand, TaskBrowserWindowContext } from '@elevenex/shared';
+import type { TaskBrowserCommand, TaskBrowserWindowContext, TaskBrowserPlacement } from '@elevenex/shared';
 import { BrowserViewComponent, type BrowserQuestion, type BrowserTab, type BrowserTarget } from '../views';
-import { ButtonComponent, FoldComponent, IconComponent, ModalLayerComponent } from '../ui';
+import { ButtonComponent, DropdownComponent, FoldComponent, IconComponent, ModalLayerComponent } from '../ui';
 import { TaskBrowserStore } from './task-browser.store';
 import { NativePageLayout } from './native-page-layout';
 export interface BrowserComposerIntent { readonly scopeId: string; readonly taskId: number; readonly sessionId: number; readonly text: string }
 @Component({
   selector: 'ex-task-browser',
-  imports: [BrowserSurfacesComponent, BrowserViewComponent, ButtonComponent, FoldComponent, IconComponent, ModalLayerComponent],
+  imports: [BrowserSurfacesComponent, BrowserViewComponent, ButtonComponent, DropdownComponent, FoldComponent, IconComponent, ModalLayerComponent],
   providers: [TaskBrowserStore],
   templateUrl: './task-browser.component.html', styleUrl: './task-browser.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -29,7 +29,16 @@ export class TaskBrowserComponent {
   readonly notice = signal('');
   readonly current = this.store.current;
   readonly tabs = computed<readonly BrowserTab[]>(() => (this.store.state()?.tabs ?? []).map(tab => ({ id: tab.id, title: tab.title, url: tab.url, by: tab.by, server: tab.server, icon: tab.detached ? 'window' : 'globe', tip: tab.detached ? tab.title + ' · Open in window' : tab.title, status: tab.error ? 'failed' : tab.loading ? 'running' : 'idle' })));
-  readonly directAvailable = computed(() => this.surfaces()?.surfaces().some(surface => surface.tabId === this.current()?.id && !!surface.partition) ?? false);
+  readonly directAvailable = computed(() => this.store.state()?.capabilities?.embedded === true);
+  readonly placementLocked = computed(() => this.store.pending() > 0 || (this.store.state()?.tabs.some(tab => !!tab.url || tab.loading || tab.detached) ?? true));
+  readonly placements = [
+    { id: 'desktop', label: 'This device', detail: 'Pages and network access run here' },
+    { id: 'desktop-proxy', label: 'This device · task proxy', detail: 'Task localhost servers use machine forwarding' },
+    { id: 'machine', label: 'Stream from task machine', detail: 'Pages and network access run on the task machine' },
+  ] as const;
+  configurePlacement(value: string): void {
+    if (value === 'desktop' || value === 'desktop-proxy' || value === 'machine') void this.store.configure(value satisfies TaskBrowserPlacement);
+  }
   readonly picked = computed<BrowserTarget | undefined>(() => {
     const raw = this.store.state()?.picked;
     const element = raw ? this.surfaces()?.coordinates(this.current()?.id ?? '', raw) ?? raw : null;
@@ -54,7 +63,7 @@ export class TaskBrowserComponent {
     effect(() => {
       const state = this.store.state();
       if (!this.active()) { this.openedIdentity = ''; return; }
-      const identity = this.scopeId() + ':' + this.taskId();
+      const identity = this.scopeId() + ':' + this.taskId() + ':' + (state?.placement ?? '');
       if (!state || state.scopeId !== this.scopeId() || state.taskId !== this.taskId()) { this.openedIdentity = ''; return; }
       if (this.store.pending()) return;
       if (identity === this.openedIdentity) return;
