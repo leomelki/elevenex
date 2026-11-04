@@ -8,6 +8,7 @@ void bootstrapApplication(PreviewComponent, {
     provideZonelessChangeDetection(),
     provideRouter(
       [
+        { path: 'terminal-rendering', loadComponent: () => import('./terminal-rendering-demo.component').then(module => module.TerminalRenderingDemoComponent) },
         { path: "agent-picker", loadComponent: () => import("./agent-picker-demo.component").then(module => module.AgentPickerDemoComponent) },
         { path: 'reconnect', loadComponent: () => import('./reconnect-demo.component').then(module => module.ReconnectDemoComponent) },
         { path: 'connected-workspace', loadComponent: () => import('./connected-workspace-demo.component').then(module => module.ConnectedWorkspaceDemoComponent) },

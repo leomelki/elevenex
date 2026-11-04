@@ -77,6 +77,7 @@ export class TaskTerminalComponent {
   private openingAttempted = false;
   readonly inputBlocked = signal(false);
   readonly searchResult = signal("");
+  readonly searchMatches = signal<number | null>(null);
   readonly current = this.store.current;
   readonly tabs = computed<readonly TerminalTab[]>(() =>
     (this.store.snapshot()?.terminals ?? []).map((row) => ({
@@ -398,6 +399,7 @@ export class TaskTerminalComponent {
   selected(id: string): void {
     this.store.active.set(Number(id));
     this.searchResult.set("");
+    this.searchMatches.set(null);
   }
   resumeInput(): void {
     const entry = this.attached;
@@ -412,9 +414,10 @@ export class TaskTerminalComponent {
   }
   find(event: { query: string; backwards: boolean }): void {
     const result = this.attached?.surface.search(event.query, event.backwards);
+    this.searchMatches.set(event.query && result ? result.matches : null);
     this.searchResult.set(
       event.query && result
-        ? `${result.current} / ${result.matches}${result.matches === 1000 ? "+" : ""}`
+        ? result.matches === 0 ? "No results" : `${result.current} of ${result.matches}${result.matches === 1000 ? "+" : ""}`
         : "",
     );
   }

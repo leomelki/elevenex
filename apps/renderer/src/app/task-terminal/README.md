@@ -72,7 +72,15 @@ retried. Unknown input outcomes clear pending data, disable typing and require
 an explicit Resume typing after inspection. New connection generations invalidate
 pending input. Resize is fit-to-container, frame-coalesced and single-flight.
 
-ANSI is rendered by the installed xterm 6 adapter, loaded lazily. OSC 52 clipboard
+ANSI is rendered by the installed xterm 6 adapter, loaded lazily. Its matching
+WebGL addon draws Powerline caps/separators, box drawing and blocks to cell edges,
+independent of font ascent, line height and letter spacing. The DOM renderer's
+font-only shapes cannot guarantee continuous prompt backgrounds. GPU resources
+belong to the visible attachment: hiding/evicting a surface disposes the addon and
+explicitly releases its context, while retaining output, selection and the PTY.
+GPU initialization failure or unrecovered context loss falls back to the DOM
+renderer so shell interaction remains available; shapes then depend on font
+metrics. Reattaching attempts WebGL again. OSC 52 clipboard
 access and OSC 8 navigation are disabled. A window-owned style lease nonces generated sheets and adapts only the DOM
 renderer's finite RGB/underline declarations to CSSOM. xterm 6.0 otherwise uses
 CSP-blocked style attributes for truecolor and selections. Arbitrary CSS, raw HTML
@@ -82,8 +90,9 @@ remain available. Find searches at most the retained 2,000 rows / 1,000 matches;
 Enter/Shift-Enter moves between matches, Escape restores focus. The theme maps
 the specification's ANSI palette to authoritative tokens and local Geist Mono.
 A bundled symbols-only Nerd Font fallback covers Powerline, Git, Node.js and other
-private-use prompt icons; it loads before cell measurement and leaves ordinary
-text in Geist Mono. See the [font provenance and licenses](../../../public/fonts/README.md).
+private-use prompt icons; it and the regular/bold text faces load before cell
+measurement and leave ordinary text in Geist Mono. See the
+[font provenance and licenses](../../../public/fonts/README.md).
 
 Bash/zsh prompt hooks report command start/completion and exit status. They source
 the normal user rc then explicitly enter the resolved task worktree. Other shells

@@ -1,7 +1,15 @@
 :host { display: block; flex: none; min-width: 0; }
 .row { display: flex; align-items: flex-end; gap: var(--space-1); padding: var(--space-2) var(--space-2) 0; background: var(--surface-sunken); }
-.tabs { display: flex; align-items: flex-end; gap: var(--space-1); overflow-x: auto; scrollbar-width: thin; min-width: 0; }
-.tab-shell { display: flex; flex: 0 0 auto; align-items: center; max-width: 190px; height: var(--control-height); border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: transparent; color: var(--ink-muted); transition: background var(--dur-fast) var(--ease-out); }
+.tabs { --fade-before: 0px; --fade-after: 0px; display: flex; flex: 1; align-items: flex-end; gap: var(--space-1); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; min-width: 0;
+  /* Edge fades replace a scrollbar or arrow buttons as the "more tabs" cue; 24px matches FADE_WIDTH. */
+  mask-image: linear-gradient(to right, transparent, #000 var(--fade-before), #000 calc(100% - var(--fade-after)), transparent);
+  transition: --fade-before var(--dur-fast) var(--ease-out), --fade-after var(--dur-fast) var(--ease-out); }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs.more-before { --fade-before: var(--space-6); }
+.tabs.more-after { --fade-after: var(--space-6); }
+@property --fade-before { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --fade-after { syntax: '<length>'; inherits: false; initial-value: 0px; }
+.tab-shell { display: flex; flex: 0 0 auto; align-items: center; max-width: min(190px, 100%); height: var(--control-height); border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: transparent; color: var(--ink-muted); transition: background var(--dur-fast) var(--ease-out); }
 .tab-shell:hover { background: var(--glass); color: var(--ink); }
 .tab-shell.on { background: var(--surface); color: var(--ink); box-shadow: inset 0 1px 0 var(--line); }
 button { display: flex; align-items: center; gap: var(--space-2); min-width: 0; height: 100%; padding: 0 var(--space-2); border: 0; border-radius: inherit; color: inherit; background: transparent; font: inherit; font-size: var(--text-caption-size); cursor: pointer; }
@@ -24,4 +32,4 @@ button[role="tab"] { max-width: 160px; }
 @keyframes tab-in { from { max-width: 0; opacity: 0; overflow: hidden; } }
 @keyframes tab-out { to { max-width: 0; opacity: 0; overflow: hidden; } }
 @media (hover: none) { .close { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .enter, .leave, .agent.driving::after { animation: none; } .tab-shell, .close { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .enter, .leave, .agent.driving::after { animation: none; } .tab-shell, .close, .tabs { transition: none; } }

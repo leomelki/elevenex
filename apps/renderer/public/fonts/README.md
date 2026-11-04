@@ -20,6 +20,8 @@ Instrument Sans and Geist Mono's SIL Open Font Licenses are included beside thei
 
 The symbols-only face is restricted to symbol/private-use ranges and used only
 by the terminal. Normal terminal letters and metrics continue to use Geist Mono.
-The adapter awaits its local load before creating xterm so prompt glyph widths
-are measured correctly. This covers Nerd Font/Powerline prompts without a system
-font install or runtime CDN request.
+The adapter awaits the symbols and regular/bold text faces before creating xterm
+so glyph widths are measured correctly. The WebGL renderer draws geometric
+Powerline/box/block glyphs at cell size; the font supplies other prompt icons.
+This covers Nerd Font/Powerline prompts without a system font install or runtime
+CDN request.

@@ -331,6 +331,15 @@ focus restoration and narrow reduced-motion layouts in both themes.
 
 ## Output and failures
 
+`scenarios/terminal-rendering.mjs` runs against `/terminal-rendering` in the
+component preview. It checks actual rounded-cap pixels at compact/default/spaced
+cell sizes, native-density canvas scaling, both themes, narrow/reduced-motion
+layouts, keyboard input, Find selection, retained output/selection through
+reattachment, GPU context release and input after GPU-loss fallback. It uses the
+production `TerminalSurface` with preview-only ANSI samples. Native display
+density is retained because Chromium's device-pixel ResizeObserver boxes do not
+follow the capture driver's default 1x CDP emulation on Retina displays.
+
 `scenarios/session-mentions.mjs` checks sidebar transfer data and trusted Chromium
 drops against the connected workspace preview, with drop-entry frames, duplicate
 prevention, focus handoff, draft navigation, keyboard insertion and narrow
@@ -639,3 +648,9 @@ not verify the operating system's picker appearance. Run sequentially with other
 native captures after building. When starting a disposable backend, set both
 `DB_PATH` and `ELEVENEX_DATA_ROOT` explicitly, as well as its runtime/migrations
 directory, to avoid inheriting a running development session's database.
+
+`scenarios/terminal-tabs.mjs` verifies TerminalView's shared tab strip: repeated
+creation and automatic revelation, hidden-tab counts, selection-independent
+browsing, metadata refresh, Home/End/Delete, ancestor scroll and focus retention,
+empty strips and 320px reduced-motion layouts in both themes. Run against the
+component preview with `--url http://127.0.0.1:4310`.

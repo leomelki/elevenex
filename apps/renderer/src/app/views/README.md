@@ -33,7 +33,15 @@ latest 2,000 lines; any omitted history is labelled. It emits typed script,
 failure, port and stop intents. Ports are validated before emitting `portOpened`.
 Do not put the agent's tool output in this view. `disabled`, `askDisabled` and
 `rerunDisabled` control platform actions. `searchRequested` carries query/direction
-to the real adapter; `findStatus` displays its bounded match count. The preview
+to the real adapter; `findStatus` displays its bounded match count or “No results”.
+The optional `findMatches` count disables navigation for zero matches (null means
+unknown). The Find button lives in the tab bar beside the script picker. It
+opens a compact folding row with a single focus border, previous/next buttons
+and Close. The row collapses completely when closed unless the selected terminal
+has Open/Stop actions; those share the row and return when Find closes.
+Enter/Shift-Enter navigates; Command/Ctrl-F opens or focuses
+and selects the current query. Close/Escape clears the search and restores the
+opening control's focus, including when a search action has focus. The preview
 output contract remains available.
 
 `DiffReview` accepts metadata as `ChangeFile[]` and precomputed
@@ -100,3 +108,11 @@ For replacement content windows, set `hasPreviousLines` to expose Previous lines
 on that file. It emits `reason: 'previous'`; the owner supplies that earlier page
 with the same file/revision/mode identity. This keeps line paging attached to the
 file while scroll-based selection moves between its neighbours.
+
+`ViewTabs` reveals the controlled selection within its own horizontal strip,
+including while a newly created tab grows in. Overflow shows earlier/later
+buttons with counts of partially or fully hidden tabs. These browse the strip
+without selecting another tab; New stays fixed outside it. Wheel/drag browsing
+suspends selection following until selection changes, so metadata updates never
+pull the strip back. Resize observers and scheduled measurements are disposed
+with the component. Revelation is immediate and does not scroll any ancestor.

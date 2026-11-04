@@ -1,6 +1,7 @@
 import type { TerminalStyleLease } from "./terminal-style-nonce";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { TerminalCellRenderer } from "./terminal-cell-renderer";
 
 /** DOM/ANSI ownership only. No transport, process or Angular output subscriptions. */
 export class TerminalSurface {
@@ -12,6 +13,7 @@ export class TerminalSurface {
   private resizeFrame?: number;
   private mounted = false;
   private styleLease?: TerminalStyleLease;
+  private cellRenderer?: TerminalCellRenderer;
   private disposed = false;
   private readonly writes = new Set<() => void>();
   private searchPosition = -1;
@@ -32,6 +34,8 @@ export class TerminalSurface {
       allowProposedApi: false,
       disableStdin: true,
       logLevel: "off",
+      // The DOM renderer ignores this; the WebGL addon draws shapes to cell edges.
+      customGlyphs: true,
       // Output cannot navigate or read/write the clipboard. Browser opening is a separate typed intent.
       linkHandler: { activate: () => {} },
     });
@@ -64,6 +68,7 @@ export class TerminalSurface {
       try {
         lease.open(() => this.terminal.open(container));
         this.styleLease = lease;
+        this.cellRenderer = new TerminalCellRenderer(this.terminal, lease);
         this.mounted = true;
       } catch (error) {
         lease.release();
@@ -73,6 +78,7 @@ export class TerminalSurface {
     this.detachObservers();
     this.terminal.options.disableStdin = !enabled;
     this.applyTheme();
+    this.cellRenderer?.attach();
     this.themeObserver = new MutationObserver(() => this.applyTheme());
     this.themeObserver.observe(document.documentElement, {
       attributes: true,
@@ -85,6 +91,7 @@ export class TerminalSurface {
   detach(): void {
     this.terminal.options.disableStdin = true;
     this.detachObservers();
+    this.cellRenderer?.detach();
     this.terminal.element?.remove();
   }
   setEnabled(enabled: boolean): void {
@@ -247,6 +254,7 @@ export class TerminalSurface {
     for (const complete of this.writes) complete();
     for (const disposer of this.disposers) disposer.dispose();
     try {
+      this.cellRenderer?.detach();
       this.terminal.dispose();
     } finally {
       this.styleLease?.release();
@@ -257,14 +265,15 @@ export class TerminalSurface {
 
 /** Load bundled prompt glyphs before xterm measures and caches their cell widths. */
 export async function prepareTerminalFonts(): Promise<void> {
-  const size = getComputedStyle(document.documentElement)
-    .getPropertyValue("--text-code-size")
-    .trim();
+  const style = getComputedStyle(document.documentElement);
+  const size = style.getPropertyValue("--text-code-size").trim();
+  const textFamily = style.getPropertyValue("--font-mono").trim();
   try {
-    await document.fonts.load(
-      `${size} "Elevenex Terminal Symbols"`,
-      String.fromCodePoint(0xe0a0, 0xe718),
-    );
+    await Promise.all([
+      document.fonts.load(`${size} "Elevenex Terminal Symbols"`, String.fromCodePoint(0xe0a0, 0xe718, 0xf0001)),
+      document.fonts.load(`${size} ${textFamily}`, 'MWmw0123'),
+      document.fonts.load(`bold ${size} ${textFamily}`, 'MWmw0123'),
+    ]);
   } catch {
     /* A missing font asset must not prevent shell interaction. */
   }

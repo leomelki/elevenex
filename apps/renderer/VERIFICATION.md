@@ -2708,3 +2708,90 @@ before engine disposal; reopening finds no tabs and uses a fresh owner; app quit
 cleans again. This is lifecycle verification, not a new visual capture, live SSH
 terminal test, or packaged-app launch. Remote cleanup remains best effort if its
 transport is unavailable. No validation processes are left running.
+
+### Terminal find refinement (2026-11-03)
+
+The find bar now uses a compact search field with a single focus border instead
+of stacked native/global rings, inline match feedback, previous/next actions and
+Close. Command/Ctrl-F refocuses and selects an existing query; Escape and Close
+clear the search and restore focus from any find control. Empty searches and
+zero matches disable navigation; Enter during IME composition does not navigate.
+
+Desktop tests passed (138 platform tests, 7 capture-tool tests, 646 renderer
+tests), including the updated Find keyboard/focus regression. The focused
+side-view suite passed all 14 tests. The production build, full desktop lint
+and changed-file ESLint passed.
+
+Native Electron captures using the real TerminalView and the bounded Machines
+preview data are saved in `artifacts/desktop-capture/terminal-find-refinement/`
+and `artifacts/desktop-capture/terminal-find-motion-verified/`; both reports have
+`verified: true` with no errors or warnings. Checks cover both themes, a 320px
+terminal, empty/matched/no-results states, previous/next and Enter/Shift-Enter,
+repeated Find, keyboard Close, Escape/focus return, reduced motion, opening
+frames and interrupted closing/reopening. PNGs were inspected. Motion sampling
+uses the owning Fold's live animations because a first gallery-wide seek hit a
+stale animation ID. These captures do not verify live PTYs or a packaged app.
+
+### Terminal cell geometry (2026-11-03)
+
+Task terminals use the matching xterm WebGL renderer with custom geometric
+glyphs. Powerline rounded caps, arrows, box drawing and blocks fill their cells
+regardless of text font metrics, line height or letter spacing. Text and symbol
+fonts load before measurement. Visible attachments own GPU resources; detaching
+releases the context without losing output or selection. GPU failure retains
+interactive DOM rendering, whose geometric glyphs still depend on font metrics.
+
+Desktop lint, production build and the full desktop suite passed (138 platform,
+7 capture-tool and 649 renderer tests). The focused terminal suite passed all 34
+tests, including renderer activation failure, context loss and attachment cleanup.
+Angular validation used `NG_BUILD_MAX_WORKERS=2` after competing compiler jobs
+stalled. Tests requiring loopback listeners ran outside filesystem sandboxing.
+
+The native macOS Electron report at
+`artifacts/desktop-capture/terminal-regression-7/report.json` has `verified: true`.
+Nine checkpoints cover both themes, compact/default/spaced cells, narrow/reduced
+motion, keyboard input, Find selection, retained output and selection, explicit
+context release and GPU-loss fallback. Pixel assertions check rounded corners
+and cap/background joins. PNGs were inspected. The single warning is xterm's
+expected notification from the deliberately lost GPU context. Captures keep
+native Retina density because Chromium's device-pixel observer boxes do not
+follow CDP's 1x emulation. This verifies the real terminal surface with isolated
+ANSI data, not a live PTY connection or a packaged-app launch.
+
+### Terminal Find in the toolbar row (2026-11-03)
+
+Find now replaces the toolbar actions in their existing row. Its closed and open
+states share a fixed minimum height, including the divider, so terminal content
+does not move when opening search. Closing restores the actions and the original
+focus after they become visible. Hidden controls are inert. The previous
+separate Find fold is removed; the failure fold retains its existing behavior.
+
+Desktop lint, production build and the full test suite passed (649 renderer
+tests). Native captures in `artifacts/desktop-capture/terminal-find-one-row/`
+report `verified: true` with no errors or warnings. Inspected PNGs cover both
+themes, matching and empty searches, no results, a 320px terminal, reduced motion,
+keyboard navigation, repeated shortcuts and Close/Escape focus restoration.
+Layout assertions verify identical toolbar height and output position relative
+to the terminal before and after opening. These are real component previews with
+supplied data, rather than live PTY or packaged-app verification.
+
+### Terminal Find button in the tab bar (2026-11-03)
+
+The Find trigger now occupies the existing tab bar beside Run script. Idle,
+failed and empty terminals no longer reserve a toolbar row for it. Find expands
+the shared Fold only when opened; Open/Stop keep that row available when a
+process actually needs those actions. Close/Escape clears search and restores
+focus. Command-F and Ctrl-F open from terminal focus and refocus an existing
+query. The trigger remains accessible while search is open.
+
+Desktop lint, production build and the full desktop tests passed (651 renderer
+tests), including separate Command/Ctrl-F opening and focus-return regressions.
+Native preview captures in `artifacts/desktop-capture/terminal-find-topbar-verified/`
+report `verified: true`, without errors or warnings. Inspected PNGs cover closed,
+open and matched searches in both themes, a 320px terminal, no results, reduced
+motion, keyboard navigation and focus return. Geometry checks confirm zero space
+between the tab bar and terminal output when the idle search is closed. The
+scenario measures the terminal output rather than Fold's internal content, and
+checks visible control bounds rather than its intentional focus-ring overflow.
+This verifies real components with supplied preview data, not live PTYs or a
+packaged app.
