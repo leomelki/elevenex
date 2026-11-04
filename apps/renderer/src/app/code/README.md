@@ -120,6 +120,11 @@ and separate windows. Layout commands remain available from the workbench menu
 and Command Palette. `window.customTitleBarVisibility` is desktop-only and is not
 used by this web workbench.
 
+Expanded and standalone workbenches hide the Run and Debug and Extensions
+navigation buttons. Explorer, Search and Source Control remain visible. This
+presentation is scoped to the pinned upstream composite-bar items; it does not
+remove upstream commands or add debugger/extension support.
+
 The workbench has a uniform 4px (`space-1`) gutter on all four sides, in both
 launch and editing states. The frame remains mounted through transient opening widths and short layouts.
 Artifact preparation and genuine failures retain explicit explanations. Once

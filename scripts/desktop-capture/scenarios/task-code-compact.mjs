@@ -213,7 +213,18 @@ export default async function* (capture) {
       await capture.click('ex-workspace-panels [role="tab"][aria-label="Code"]'); await finish();
       assert.equal(capture.window.webContents.mainFrame.frames.find(child => child.url === frame.url), frame);
       assert.equal(await frame.executeJavaScript('document.querySelector(".monaco-editor")?.textContent.includes("verification")'), true);
-      yield { name: 'expanded-retained-file', inspect: ['ex-code-panel .editor-surface'] };
+      for (const theme of ['light', 'dark']) {
+        await capture.theme(theme);
+        await waitNative(`!!document.querySelector('.monaco-workbench.${theme === 'light' ? 'vs' : 'vs-dark'}')`);
+        const navigation = await frame.executeJavaScript(`(() => {
+          const item = icon => document.querySelector('.composite-bar .action-label.codicon-' + icon)?.closest('.action-item');
+          return Object.fromEntries(['run-view-icon', 'extensions-view-icon', 'explorer-view-icon', 'search-view-icon', 'source-control-view-icon'].map(icon => [icon, item(icon)?.checkVisibility() ?? false]));
+        })()`);
+        assert.equal(navigation['run-view-icon'], false, 'Run and Debug must be hidden');
+        assert.equal(navigation['extensions-view-icon'], false, 'Extensions must be hidden');
+        for (const icon of ['explorer-view-icon', 'search-view-icon', 'source-control-view-icon']) assert.equal(navigation[icon], true, `${icon} must remain visible`);
+        yield { name: `${theme}-expanded-retained-file`, inspect: ['ex-code-panel .editor-surface'], metadata: { navigation } };
+      }
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]'); await finish();
       await waitNative('(document.querySelector(".part.sidebar")?.getBoundingClientRect().width ?? 0) === 0');
       assert.equal(await frame.executeJavaScript('document.querySelector(".monaco-editor")?.textContent.includes("verification")'), true);

@@ -435,3 +435,18 @@ including inspected light/dark icon/focus/tooltip PNGs and exact bytes saved
 through the icon. The obsolete disposable backend fixture was rebuilt from the
 current checkout and launched with its required capability; it was stopped after
 verification. No backend sources, dependencies or lockfiles changed.
+
+## Fullscreen Code navigation
+
+Run and Debug and Extensions navigation buttons are hidden in the shared
+workbench document; Explorer, Search and Source Control remain visible. Native
+`task-code-compact.mjs --built` verification passed with 31 checkpoints,
+`verified: true` and no renderer errors. The light/dark expanded PNGs in
+`artifacts/desktop-capture/code-navigation-verified/` were inspected, and the
+scenario now asserts the five navigation items explicitly. Compact Files,
+search, auto-save and retained-frame resizing also passed.
+
+`desktop:lint`, `desktop:test` (627 renderer tests), `desktop:build` and the
+unpackaged Electron smoke passed. Capture used a disposable local backend/task;
+its file was restored and the owned backend was stopped. This does not establish
+packaged-app or SSH runtime verification. No dependencies or backend sources changed.
