@@ -37,6 +37,15 @@ describe('Code viewport transition ownership', () => {
   }
   const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
+  it('freezes the cached viewport before reading any animated layout', async () => {
+    const { frame, transition } = await setup();
+    const measured = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get');
+    measured.mockClear();
+    transition('transitionrun');
+    expect(measured).not.toHaveBeenCalled();
+    expect(frame.style.width).toBe('432px');
+  });
+
   it('holds one layout width through expansion and publishes the final compact boundary once', async () => {
     const { fixture, frame, transition } = await setup();
     transition('transitionrun');
@@ -45,15 +54,33 @@ describe('Code viewport transition ownership', () => {
       width = intermediate; resize();
       expect(frame.style.width).toBe('432px');
       expect(fixture.componentInstance.width()).toBe(432);
-      expect(frame.style.transform).toContain('scaleX(');
+      expect(frame.style.transform).toBe('');
+      expect(frame.classList.contains('reflowing')).toBe(true);
     }
     transition('transitionend'); await nextFrame();
     expect(frame.style.width).toBe('');
     expect(frame.style.transform).toBe('');
     expect(frame.classList.contains('resizing')).toBe(false);
+    expect(frame.classList.contains('reflowing')).toBe(true);
     expect(fixture.componentInstance.width()).toBe(1064);
+    await nextFrame(); await nextFrame();
+    expect(frame.classList.contains('reflowing')).toBe(false);
     width = 800; resize();
     expect(fixture.componentInstance.width()).toBe(800); // Native window resizing stays live.
+  });
+
+  it('keeps a new transition faded if it interrupts the previous resize paint boundary', async () => {
+    const { frame, transition } = await setup();
+    transition('transitionrun'); width = 1064; resize();
+    transition('transitionend'); await nextFrame();
+    expect(frame.classList.contains('reflowing')).toBe(true);
+    transition('transitionrun'); await nextFrame(); await nextFrame();
+    expect(frame.classList.contains('reflowing')).toBe(true);
+    expect(frame.style.width).toBe('1064px');
+    width = 432; resize(); transition('transitionend');
+    await nextFrame(); await nextFrame(); await nextFrame();
+    expect(frame.classList.contains('reflowing')).toBe(false);
+    expect(frame.style.width).toBe('');
   });
 
   it('keeps the original viewport across interrupted reversals and cleans up cancellation', async () => {
@@ -77,6 +104,7 @@ describe('Code viewport transition ownership', () => {
     transition('transitionrun'); width = 1000; resize();
     reduced = true; mediaChanged();
     expect(frame.style.width).toBe('');
+    expect(frame.classList.contains('reflowing')).toBe(false);
     expect(fixture.componentInstance.width()).toBe(1000);
     transition('transitionrun'); expect(frame.style.width).toBe('');
     width = 432; resize(); expect(fixture.componentInstance.width()).toBe(432);
@@ -90,6 +118,7 @@ describe('Code viewport transition ownership', () => {
     expect(removeMedia).toHaveBeenCalledOnce();
     expect(frame.style.width).toBe('');
     expect(frame.classList.contains('resizing')).toBe(false);
+    expect(frame.classList.contains('reflowing')).toBe(false);
     transition('transitionrun'); expect(frame.style.width).toBe('');
   });
 });

@@ -1,9 +1,9 @@
 import { DOCUMENT } from '@angular/common';
 import { afterNextRender, DestroyRef, Directive, ElementRef, inject, output } from '@angular/core';
 
-/** Keep the expensive child browsing context out of the shell's width animation.
- * Only its composited surface follows intermediate sizes; upstream lays out once
- * at the end. Ordinary window resizing remains live. No iframe is recreated. */
+/** Keep text at its natural scale while the shell glides. Fade out the retained
+ * viewport, resize once under that fade, then reveal after a paint boundary.
+ * Ordinary window resizing remains live. No iframe is recreated. */
 @Directive({ selector: '[exCodeViewport]' })
 export class CodeViewportDirective {
   readonly viewportWidth = output<number>();
@@ -25,12 +25,16 @@ export class CodeViewportDirective {
     let width = viewport.clientWidth;
     let frozenWidth = 0;
     let pending = 0;
+    let reveal = 0;
+
+    const cancelReveal = () => {
+      window.cancelAnimationFrame(reveal);
+      reveal = 0;
+    };
 
     const measure = () => {
       const next = viewport.clientWidth;
-      if (frozenWidth) {
-        if (next > 0) this.frame.style.transform = `scaleX(${next / frozenWidth})`;
-      } else if (next > 0) {
+      if (!frozenWidth && next > 0) {
         width = next;
         this.viewportWidth.emit(width);
       }
@@ -38,9 +42,22 @@ export class CodeViewportDirective {
     const release = () => {
       frozenWidth = 0;
       this.frame.style.removeProperty('width');
-      this.frame.style.removeProperty('transform');
       this.frame.classList.remove('resizing');
       measure();
+      cancelReveal();
+      if (reduced.matches) {
+        this.frame.classList.remove('reflowing');
+      } else {
+        // The out-of-process editor paints after its parent changes viewport.
+        // Keep it faded through that update, rather than exposing one stale
+        // frame between releasing the width and the new layout's first paint.
+        reveal = window.requestAnimationFrame(() => {
+          reveal = window.requestAnimationFrame(() => {
+            reveal = 0;
+            this.frame.classList.remove('reflowing');
+          });
+        });
+      }
     };
     const changed = (event: Event) => {
       const ancestor = event.target;
@@ -49,13 +66,15 @@ export class CodeViewportDirective {
       // hold the editor's viewport. No shell-private selectors are needed.
       if (!('propertyName' in event) || event.propertyName !== 'width' || !(ancestor instanceof HTMLElement) || ancestor === this.frame || !ancestor.contains(viewport)) return;
       if (event.type === 'transitionrun') {
-        if (reduced.matches || viewport.clientWidth <= 0) return;
+        // Use the last settled measurement: reading layout here would flush
+        // the first animated width into the child before we can freeze it.
+        if (reduced.matches || width <= 0) return;
         transitions.add(ancestor);
         if (!frozenWidth && width > 0) {
+          cancelReveal();
           frozenWidth = width;
           this.frame.style.width = `${width}px`;
-          this.frame.classList.add('resizing');
-          measure();
+          this.frame.classList.add('resizing', 'reflowing');
         }
       } else {
         transitions.delete(ancestor);
@@ -83,11 +102,11 @@ export class CodeViewportDirective {
     return () => {
       observer?.disconnect();
       window.cancelAnimationFrame(pending);
+      cancelReveal();
       for (const type of ['transitionrun', 'transitionend', 'transitioncancel']) this.document.removeEventListener(type, changed, true);
       reduced.removeEventListener('change', motionChanged);
       this.frame.style.removeProperty('width');
-      this.frame.style.removeProperty('transform');
-      this.frame.classList.remove('resizing');
+      this.frame.classList.remove('resizing', 'reflowing');
     };
   }
 }

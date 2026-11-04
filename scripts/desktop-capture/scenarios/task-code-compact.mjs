@@ -234,7 +234,8 @@ export default async function* (capture) {
       yield { name: 'compact-autosave-confirmed', inspect: ['ex-workspace-panels .panel-head', 'ex-code-panel .editor-surface'] };
     } finally { await writeFile(path, original); }
     const geometry = async () => {
-      await capture.waitFor(() => !document.querySelector('ex-code-panel .frame-container.resizing'));
+      await capture.waitFor(() => !document.querySelector('ex-code-panel .frame-container.resizing, ex-code-panel .frame-container.reflowing'));
+      await capture.waitFor(() => getComputedStyle(document.querySelector('ex-code-panel .frame-container')).opacity === '1');
       const bounds = await capture.evaluate(() => {
         const launch = document.querySelector('ex-machine-launch .launch');
         const shell = document.querySelector('ex-machine-workspace ex-app-shell');
@@ -261,6 +262,18 @@ export default async function* (capture) {
         window.codeViewportResize = () => { if (window.codeViewportWidths.length < 60) window.codeViewportWidths.push(innerWidth); };
         addEventListener('resize', window.codeViewportResize);
       })()`);
+      await capture.evaluate(() => {
+        const iframe = document.querySelector('ex-code-panel iframe');
+        let width = iframe.clientWidth;
+        window.codeReflowPaints = [];
+        window.codeReflowObserver = new window.ResizeObserver(() => {
+          if (iframe.clientWidth === width) return;
+          width = iframe.clientWidth;
+          const style = getComputedStyle(iframe.closest('.frame-container'));
+          window.codeReflowPaints.push({width,opacity:style.opacity,transform:style.transform});
+        });
+        window.codeReflowObserver.observe(iframe);
+      });
       try {
         await capture.click(selector);
         await finish(); await geometry();
@@ -268,9 +281,13 @@ export default async function* (capture) {
         assert.notEqual(widths[0], widths.at(-1), 'Editor must resize to the new viewport');
         assert.equal(new Set(widths).size, 2, 'Code must resize exactly once during panel motion: ' + JSON.stringify(widths));
         assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel .frame-container').style.width), '', 'Frozen viewport was not released');
+        const paints = await capture.evaluate(() => window.codeReflowPaints);
+        assert.ok(paints.length, 'No actual iframe layout change was observed');
+        for (const paint of paints) assert.deepEqual({opacity:paint.opacity,transform:paint.transform},{opacity:'0',transform:'none'},'A visible resize or stretch exposed the layout jump');
         return widths;
       } finally {
         await frame.executeJavaScript('removeEventListener("resize", window.codeViewportResize); delete window.codeViewportResize; delete window.codeViewportWidths;');
+        await capture.evaluate(() => { window.codeReflowObserver.disconnect(); delete window.codeReflowObserver; delete window.codeReflowPaints; });
       }
     };
     for (const theme of ['light','dark']) {
@@ -296,9 +313,18 @@ export default async function* (capture) {
       const heldWidth = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth);
       await capture.cdp('Animation.seekAnimations',{animations:opening,currentTime:140});
       await capture.settle();
+      // The ancestor's transitionrun creates this shorter dissolve on the next
+      // style update. Scrub its live animations too; the debugger froze them at
+      // birth after the original ancestor animation IDs were collected.
+      await capture.evaluate(() => { for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations()) animation.finish(); });
+      await capture.settle();
       assert.equal(await capture.evaluate(()=>!!document.querySelector('ex-code-panel .launch-card')),false);
       assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth), heldWidth, 'Midpoint reflowed the editor');
       assert.ok(await capture.evaluate(() => document.querySelector('ex-code-panel .frame-container').classList.contains('resizing')));
+      assert.deepEqual(await capture.evaluate(() => {
+        const style = getComputedStyle(document.querySelector('ex-code-panel .frame-container'));
+        return {transform:style.transform,opacity:style.opacity};
+      }), {transform:'none',opacity:'0'}, 'Editor must dissolve without stretching before its one-time reflow');
       yield {name:`${theme}-expansion-interrupted`,inspect:['.panel','ex-code-panel','iframe']};
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]');
       await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();
@@ -310,7 +336,13 @@ export default async function* (capture) {
       const closing = [...capture.motion.animations].filter(id=>!beforeCollapse.has(id));
       assert.ok(closing.length, 'Panel collapse animation did not start');
       await capture.cdp('Animation.seekAnimations', {animations:closing,currentTime:140}); await capture.settle();
+      await capture.evaluate(() => { for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations()) animation.finish(); });
+      await capture.settle();
       assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth),wideWidth,'Collapse midpoint reflowed the editor');
+      assert.deepEqual(await capture.evaluate(() => {
+        const style = getComputedStyle(document.querySelector('ex-code-panel .frame-container'));
+        return {transform:style.transform,opacity:style.opacity};
+      }), {transform:'none',opacity:'0'}, 'Collapse must also hide reflow without squeezing text');
       yield {name:`${theme}-collapse-interrupted`,inspect:['.panel','ex-code-panel .frame-container','iframe']};
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
       await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();

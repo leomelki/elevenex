@@ -1,5 +1,24 @@
 # New Code workbench verification
 
+## Natural-scale dissolve — current motion
+
+Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0. Replaces the stretching
+implementation below with a natural-scale dissolve. The editor resizes while
+transparent, then fades in after two paint frames. Pending reveals are cancelled
+on another transition, reduced-motion changes and teardown.
+
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`: passed.
+  The full renderer suite passed 632 cases; all six focused viewport cases passed
+  after adding the first-frame layout-read regression.
+- `artifacts/desktop-capture/code-dissolve-final/report.json`: **35 checkpoints,
+  verified: true**, no renderer errors. Actual iframe resize observations assert
+  **zero opacity and no transform** at each reflow, with exactly one viewport
+  resize per toggle in both themes. Inspected settled and interrupted PNGs.
+  Both reversal directions, repeated reopen, retained writing, real auto-save,
+  search, focus and narrow reduced motion pass.
+- `git diff --check`: passed. No dependencies or platform contracts changed.
+  These are unpackaged macOS checks; no packaged or Windows/Linux launch ran.
+
 ## Expand/collapse viewport motion
 
 Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0 with the real Code OSS

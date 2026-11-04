@@ -106,13 +106,14 @@ are retained; clean hidden instances may close only after upstream permits unloa
 Dirty instances stay retained. Shutdown respects backup vetoes.
 
 During the shell's expand/collapse width transition, `CodeViewportDirective`
-holds the existing iframe layout width and scales its composited surface with
-a slight blur. At settlement it releases the width once, updates compact mode,
-and sharpens the editor. This avoids repeated upstream text/tree reflows without
-reloading the browsing context or blocking input. Reversals retain the original
-viewport; cancellation, reduced-motion changes and teardown release it. Normal
-window resizing remains live. Measurements use layout pixels so launch/modal
-transforms cannot change compact preferences.
+holds the existing iframe layout width at its natural scale and dissolves its
+content. At settlement it releases the width once and updates compact mode while
+the editor is transparent. After two paint frames, the new layout fades back in.
+No stretched text or visible final reflow is exposed. The same browsing context
+and input remain active throughout. Reversals retain the original viewport and
+cancel stale reveals; cancellation, reduced-motion changes and teardown release
+it. Normal window resizing remains live. Measurements use layout pixels so
+launch/modal transforms cannot change compact preferences.
 
 ### Space and focus decisions
 
