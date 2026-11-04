@@ -1,18 +1,26 @@
 import { DOCUMENT } from '@angular/common';
-import { afterNextRender, DestroyRef, Directive, ElementRef, inject, output } from '@angular/core';
+import { afterNextRender, afterRenderEffect, DestroyRef, Directive, ElementRef, inject, input, output, signal } from '@angular/core';
 
-/** Keep text at its natural scale while the shell glides. Fade out the retained
- * viewport, resize once under that fade, then reveal after a paint boundary.
+/** Keep text at its natural scale while the shell glides. Cover the retained
+ * viewport, resize once underneath, then reveal after a child-layout acknowledgement.
  * Ordinary window resizing remains live. No iframe is recreated. */
 @Directive({ selector: '[exCodeViewport]' })
 export class CodeViewportDirective {
   readonly viewportWidth = output<number>();
+  readonly layoutRequested = output<void>();
+  readonly layoutReady = input(true);
+  private readonly settlement = signal(0);
+  private revealWhenReady?: () => void;
   private readonly frame = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly document = inject(DOCUMENT);
 
   constructor() {
     let dispose: (() => void) | undefined;
     afterNextRender(() => { dispose = this.observe(); });
+    afterRenderEffect(() => {
+      this.settlement();
+      if (this.layoutReady()) this.revealWhenReady?.();
+    });
     inject(DestroyRef).onDestroy(() => dispose?.());
   }
 
@@ -26,6 +34,7 @@ export class CodeViewportDirective {
     let frozenWidth = 0;
     let pending = 0;
     let reveal = 0;
+    let awaitingLayout = false;
 
     const cancelReveal = () => {
       window.cancelAnimationFrame(reveal);
@@ -45,19 +54,19 @@ export class CodeViewportDirective {
       this.frame.classList.remove('resizing');
       measure();
       cancelReveal();
-      if (reduced.matches) {
+      awaitingLayout = true;
+      this.layoutRequested.emit();
+      this.settlement.update(value => value + 1);
+    };
+    this.revealWhenReady = () => {
+      if (!awaitingLayout || frozenWidth || reveal) return;
+      // Main acknowledges the expected child viewport, upstream compact-mode
+      // commands and quiet workbench geometry before the reveal can begin.
+      reveal = window.requestAnimationFrame(() => {
+        reveal = 0;
+        awaitingLayout = false;
         this.frame.classList.remove('reflowing');
-      } else {
-        // The out-of-process editor paints after its parent changes viewport.
-        // Keep it faded through that update, rather than exposing one stale
-        // frame between releasing the width and the new layout's first paint.
-        reveal = window.requestAnimationFrame(() => {
-          reveal = window.requestAnimationFrame(() => {
-            reveal = 0;
-            this.frame.classList.remove('reflowing');
-          });
-        });
-      }
+      });
     };
     const changed = (event: Event) => {
       const ancestor = event.target;
@@ -72,6 +81,7 @@ export class CodeViewportDirective {
         transitions.add(ancestor);
         if (!frozenWidth && width > 0) {
           cancelReveal();
+          awaitingLayout = false;
           frozenWidth = width;
           this.frame.style.width = `${width}px`;
           this.frame.classList.add('resizing', 'reflowing');
@@ -103,6 +113,7 @@ export class CodeViewportDirective {
       observer?.disconnect();
       window.cancelAnimationFrame(pending);
       cancelReveal();
+      this.revealWhenReady = undefined;
       for (const type of ['transitionrun', 'transitionend', 'transitioncancel']) this.document.removeEventListener(type, changed, true);
       reduced.removeEventListener('change', motionChanged);
       this.frame.style.removeProperty('width');

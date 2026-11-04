@@ -5,7 +5,12 @@ export interface CodeTarget {
   readonly taskId: number;
 }
 /** Frame visibility and the single compact-layout boundary. CSS owns geometry. */
-export interface CodePresentation { readonly visible: boolean; readonly compact: boolean }
+export interface CodePresentation {
+  readonly visible: boolean;
+  readonly compact: boolean;
+  /** Optional layout barrier for a hidden resize; ordinary visibility updates stay cheap. */
+  readonly viewportWidth?: number;
+}
 export interface CodeBounds {
   readonly x: number;
   readonly y: number;

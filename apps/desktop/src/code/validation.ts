@@ -24,8 +24,10 @@ export function bounds(value: unknown): CodeBounds | null {
 }
 export function presentation(value: unknown): CodePresentation {
   const raw = object(value);
-  if (Object.keys(raw).sort().join(',') !== 'compact,visible' || typeof raw['visible'] !== 'boolean' || typeof raw['compact'] !== 'boolean') throw new Error('Invalid editor presentation');
-  return { visible: raw['visible'], compact: raw['compact'] };
+  if (Object.keys(raw).some(key => !['compact', 'visible', 'viewportWidth'].includes(key)) || typeof raw['visible'] !== 'boolean' || typeof raw['compact'] !== 'boolean') throw new Error('Invalid editor presentation');
+  const width = raw['viewportWidth'];
+  if (width !== undefined && (typeof width !== 'number' || !Number.isInteger(width) || width < 1 || width > 20_000)) throw new Error('Invalid editor viewport');
+  return { visible: raw['visible'], compact: raw['compact'], ...(width === undefined ? {} : { viewportWidth: width }) };
 }
 export function action(value: unknown): CodeAction {
   if (value !== 'browse-files' && value !== 'dismiss-files' && value !== 'find-file' && value !== 'search-text' && value !== 'save') throw new Error('Invalid editor action');

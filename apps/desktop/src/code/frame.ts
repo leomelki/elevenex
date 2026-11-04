@@ -1,10 +1,12 @@
 import { webContents, type WebFrameMain } from 'electron';
+import { waitForCodeLayout } from './layout-settlement';
 
 /** Privileged control stays in main. The iframe receives no preload or message
  * dispatcher; these are fixed embedder operations, never caller-supplied code. */
 export class CodeFrame {
   constructor(public windowId: number, readonly url: string) {}
   private closing?: Promise<boolean>;
+  private layout?: Promise<unknown>;
   current(): WebFrameMain | undefined {
     const contents = webContents.fromId(this.windowId);
     if (!contents || contents.isDestroyed()) return undefined;
@@ -18,6 +20,16 @@ export class CodeFrame {
   async focus(): Promise<void> {
     const frame = this.current();
     if (frame) await frame.executeJavaScript("window.focus();import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('elevenex.code.focus'))");
+  }
+  async settleLayout(width: number): Promise<void> {
+    const frame = this.current();
+    if (!frame) throw new Error('The task editor is still opening.');
+    const layout = frame.executeJavaScript(`(${waitForCodeLayout.toString()})(${JSON.stringify(width)})`);
+    this.layout = layout;
+    try { await layout; } finally { if (this.layout === layout) this.layout = undefined; }
+  }
+  cancelLayout(): void {
+    if (this.layout) void this.current()?.executeJavaScript("document.dispatchEvent(new Event('elevenex-code-layout-cancel'))").catch(() => undefined);
   }
   async reload(): Promise<void> {
     const contents = webContents.fromId(this.windowId);

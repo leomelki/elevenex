@@ -7,6 +7,56 @@ const { BackendClient } = require('../dist/backend-client/client');
 const { CodeProtocol } = require('../dist/code/protocol');
 const { codePolicy, workbenchDocument } = require('../dist/code/document');
 const validate = require('../dist/code/validation');
+const vm = require('node:vm');
+const { waitForCodeLayout } = require('../dist/code/layout-settlement');
+
+function layoutFrame() {
+  let now = 0, identity = 0, moving = false, animatedProperty = 'width';
+  const frames = new Map(), timers = new Map(), listeners = new Map();
+  const box = { x: 0, y: 0, width: 432, height: 700 };
+  class Effect { getComputedTiming() { return {endTime:200}; } getKeyframes() { return [{[animatedProperty]:'432px'}]; } }
+  const workbench = {
+    querySelectorAll: () => [{ getBoundingClientRect: () => box }],
+    getAnimations: () => moving ? [{playState:'running',effect:new Effect()}] : [],
+  };
+  const context = {
+    innerWidth:432, KeyframeEffect:Effect, performance:{now:()=>now}, document:{querySelector:()=>workbench,addEventListener:(event,listener)=>listeners.set(event,listener),removeEventListener:event=>listeners.delete(event)},
+    window:{addEventListener:(event,listener)=>listeners.set(event,listener),removeEventListener:event=>listeners.delete(event)},
+    requestAnimationFrame:callback=>{frames.set(++identity,callback);return identity;}, cancelAnimationFrame:id=>frames.delete(id),
+    setTimeout:callback=>{timers.set(++identity,callback);return identity;}, clearTimeout:id=>timers.delete(id),
+  };
+  const pending = vm.runInNewContext(`(${waitForCodeLayout.toString()})(1072)`,context);
+  return {
+    pending, context, box, moving:(value,property='width')=>{moving=value;animatedProperty=property;}, frames, timers, listeners,
+    tick(time) { now=time;const callbacks=[...frames.values()];frames.clear();for(const callback of callbacks) callback(time); },
+  };
+}
+
+test('Code layout acknowledgement requires the expected child viewport and settled workbench, then releases its observers',async()=>{
+  const host=layoutFrame();let completed=false;void host.pending.then(()=>{completed=true;});
+  host.tick(0);host.tick(200);await Promise.resolve();assert.equal(completed,false);
+  host.context.innerWidth=1072;host.box.width=1072;host.tick(220);
+  host.moving(true);host.tick(380);await Promise.resolve();assert.equal(completed,false);
+  host.moving(false);host.box.x=240;host.tick(400);host.tick(500);await Promise.resolve();assert.equal(completed,false);
+  host.tick(540);await host.pending;
+  assert.equal(host.frames.size,0);assert.equal(host.timers.size,0);assert.equal(host.listeners.size,0);
+});
+
+test('Code layout barriers release resources on deadline and frame closure',async()=>{
+  for(const reason of ['deadline','pagehide','cancel']) {
+    const host=layoutFrame();
+    const rejected=reason==='cancel'?host.pending:assert.rejects(host.pending,/editor.*(settle|closed)/);
+    if(reason==='deadline') [...host.timers.values()][0](); else host.listeners.get(reason==='cancel'?'elevenex-code-layout-cancel':'pagehide')();
+    await rejected;
+    assert.equal(host.frames.size,0);assert.equal(host.timers.size,0);assert.equal(host.listeners.size,0);
+  }
+});
+
+test('Code layout settlement ignores caret opacity animations that cannot move panes',async()=>{
+  const host=layoutFrame();host.context.innerWidth=1072;host.box.width=1072;host.moving(true,'opacity');
+  host.tick(0);host.tick(140);await host.pending;
+  assert.equal(host.frames.size,0);assert.equal(host.timers.size,0);
+});
 
 test('Code controls accept resource identities and bounded file positions, never transport or shell inputs', () => {
   const target = { taskId: 1, scopeId: 'a'.repeat(36) };
@@ -18,6 +68,8 @@ test('Code controls accept resource identities and bounded file positions, never
   for (const action of ['browse-files', 'dismiss-files', 'find-file', 'search-text', 'save']) assert.equal(validate.action(action), action);
   for (const action of ['workbench.action.terminal.new', 'raw-shell', null, { action: 'save' }]) assert.throws(() => validate.action(action));
   assert.deepEqual(validate.presentation({visible:true,compact:false}),{visible:true,compact:false});
+  assert.deepEqual(validate.presentation({visible:true,compact:false,viewportWidth:1072}),{visible:true,compact:false,viewportWidth:1072});
+  for (const viewportWidth of [0,-1,1.5,NaN,Infinity,20001,'1072',null]) assert.throws(()=>validate.presentation({visible:true,compact:false,viewportWidth}));
   for (const value of [null,{visible:'yes',compact:false},{visible:true,compact:false,url:'https://example.com'}]) assert.throws(()=>validate.presentation(value));
   assert.throws(() => validate.bounds({ x: -1, y: 50, width: 600, height: 500 }));
   assert.throws(() => validate.reply('directory', { entries: Array(201).fill({ name: 'a', type: 1 }), next: null }));

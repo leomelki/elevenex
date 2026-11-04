@@ -1,6 +1,32 @@
 # New Code workbench verification
 
-## Natural-scale dissolve — current motion
+## Acknowledged hidden layout — current motion
+
+Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0 with the actual Code OSS
+workbench and isolated Nest task/backend. Transparent cross-origin frames were
+throttled while upstream layout was still pending. An opaque cover now keeps Code
+rendering underneath; the reveal waits for compact commands, the expected child
+width and quiet pane geometry instead of two parent-window frames.
+
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`: passed.
+  Full suite: 156 desktop cases, seven capture cases and 636 renderer cases.
+  The final focused security/layout suite also passed all seven cases, including
+  bounded payloads, delayed geometry, cancellation/deadline cleanup and ignoring
+  caret opacity animations. Renderer tests cover stale acknowledgements and
+  failure recovery without permanently hiding writing.
+- `artifacts/desktop-capture/code-layout-cover-first/report.json`: **35 checkpoints,
+  verified: true**, no renderer errors. The real layout acknowledgement is held
+  back to assert the cover remains opaque. A child-frame geometry probe requires
+  **zero pane movement for 350ms through/after acknowledgement and reveal**, in
+  both directions and both themes. Each toggle still resizes the iframe exactly
+  once, fully covered. Inspected settled and interrupted PNGs. Existing retained
+  edits, auto-save, search, focus, reopen and narrow/reduced-motion checks pass.
+- Native `electron-smoke.cjs`: passed with the installed sandboxed Electron.
+  `viewportWidth` is an optional, bounded presentation field; existing callers
+  retain their defaults. No dependencies changed. `git diff --check`: passed.
+  These are unpackaged macOS checks; no packaged or Windows/Linux launch ran.
+
+## Natural-scale dissolve (superseded)
 
 Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0. Replaces the stretching
 implementation below with a natural-scale dissolve. The editor resizes while

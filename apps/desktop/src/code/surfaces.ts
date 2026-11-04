@@ -131,12 +131,17 @@ export class CodeSurfaces {
     if (!presentation.visible) { this.hide(surface); return; }
     const compact = presentation.compact;
     const revision = surface.layoutRevision = (surface.layoutRevision ?? 0) + 1;
+    surface.frame.cancelLayout();
     if (surface.compact !== compact && surface.wasReady) {
       surface.compact = compact;
       surface.presentation = (surface.presentation ?? Promise.resolve()).catch(() => undefined).then(() => surface.frame.command('elevenex.code.set-compact', compact));
     }
-    try { await surface.presentation; } catch { surface.compact = undefined; return; }
+    try { await surface.presentation; } catch (error) { surface.compact = undefined; if (presentation.viewportWidth !== undefined) throw error; return; }
     if (revision !== surface.layoutRevision || this.owned(windowId, target, true) !== surface) return;
+    if (presentation.viewportWidth !== undefined) {
+      await surface.frame.settleLayout(presentation.viewportWidth);
+      if (revision !== surface.layoutRevision || this.owned(windowId, target, true) !== surface) return;
+    }
     surface.host.active = true; surface.visible = true;
     if (surface.reconcileExplorer) {
       surface.reconcileExplorer = false;
@@ -284,6 +289,7 @@ export class CodeSurfaces {
     return surface?.owner === windowId && surface.target.taskId === target.taskId && (surface.target.scopeId === target.scopeId || cachedDisplay && this.windowContexts.get(windowId)?.context.target.taskId === target.taskId) ? surface : undefined;
   }
   private hide(surface: Surface): void {
+    surface.frame.cancelLayout();
     surface.layoutRevision = (surface.layoutRevision ?? 0) + 1;
     surface.host.active = false; surface.visible = false;
   }

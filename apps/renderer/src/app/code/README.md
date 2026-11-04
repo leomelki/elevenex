@@ -106,14 +106,18 @@ are retained; clean hidden instances may close only after upstream permits unloa
 Dirty instances stay retained. Shutdown respects backup vetoes.
 
 During the shell's expand/collapse width transition, `CodeViewportDirective`
-holds the existing iframe layout width at its natural scale and dissolves its
-content. At settlement it releases the width once and updates compact mode while
-the editor is transparent. After two paint frames, the new layout fades back in.
-No stretched text or visible final reflow is exposed. The same browsing context
-and input remain active throughout. Reversals retain the original viewport and
-cancel stale reveals; cancellation, reduced-motion changes and teardown release
-it. Normal window resizing remains live. Measurements use layout pixels so
-launch/modal transforms cannot change compact preferences.
+holds the existing iframe layout width at its natural scale and fades an opaque
+surface over it. The iframe itself remains rendered: Chromium throttles layout
+frames in transparent cross-origin iframes. At settlement it releases the width
+once and requests `codePresent` with the expected `viewportWidth`. Main waits for
+compact/expanded commands, the actual child viewport and 120ms of quiet workbench
+geometry, including completion of layout animations, before acknowledging. Only
+then does the cover fade away. Caret opacity animations do not delay settlement.
+The wait is bounded to two seconds; failure exposes retained writing and an error.
+Reversals, task changes and teardown cancel stale waits/reveals. The same browsing
+context and input remain active throughout. Ordinary window resizing remains
+live. Measurements use layout pixels so launch/modal transforms cannot change
+compact preferences.
 
 ### Space and focus decisions
 
@@ -245,10 +249,13 @@ malicious concurrent directory replacement; see the verification limitations.
   `CodeFrameComponent` declares the iframe sandbox and has no platform calls.
   The pool validates main-issued URLs before creating a trusted resource URL.
 - `CodePanel` owns selection, measurements, frame mounting and stale focus checks.
-  `codePresent(target, {visible, compact})` is the named presentation contract.
+  `codePresent(target, {visible, compact, viewportWidth?})` is the named presentation
+  contract; the optional bounded width requests a hidden-layout acknowledgement.
   The older `codeLayout` operation remains a compatible adapter for existing callers.
 - `CodeSurfaces` owns task leases, bounded retention, recovery and window handoff.
   `CodeFrame` confines privileged commands to the exact owned direct child frame.
+  `layout-settlement` observes bounded workbench geometry inside that frame and
+  owns its deadline, animation frame and cancellation/page-hide listeners.
 - `CodeFrameRouter` owns session routing, frame navigation and permission policy.
   `CodeProtocol` owns confined assets, task operations and generation checks.
 

@@ -2,8 +2,8 @@ import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { CodeViewportDirective } from './code-viewport.directive';
 
-@Component({ imports: [CodeViewportDirective], template: '<section><div><div exCodeViewport (viewportWidth)="width.set($event)"></div></div></section>' })
-class Host { readonly width = signal(0); }
+@Component({ imports: [CodeViewportDirective], template: '<section><div><div exCodeViewport [layoutReady]="ready()" (viewportWidth)="width.set($event)"></div></div></section>' })
+class Host { readonly width = signal(0); readonly ready = signal(true); }
 
 describe('Code viewport transition ownership', () => {
   let resize: () => void;
@@ -63,10 +63,22 @@ describe('Code viewport transition ownership', () => {
     expect(frame.classList.contains('resizing')).toBe(false);
     expect(frame.classList.contains('reflowing')).toBe(true);
     expect(fixture.componentInstance.width()).toBe(1064);
-    await nextFrame(); await nextFrame();
+    await fixture.whenStable(); await nextFrame(); await nextFrame();
     expect(frame.classList.contains('reflowing')).toBe(false);
     width = 800; resize();
     expect(fixture.componentInstance.width()).toBe(800); // Native window resizing stays live.
+  });
+
+  it('holds the resized frame hidden until the current workbench layout is acknowledged', async () => {
+    const { fixture, frame, transition } = await setup();
+    fixture.componentInstance.ready.set(false); await fixture.whenStable();
+    transition('transitionrun'); width = 1064; resize();
+    transition('transitionend'); await nextFrame(); await fixture.whenStable();
+    for (let count = 0; count < 5; count++) await nextFrame();
+    expect(frame.style.width).toBe('');
+    expect(frame.classList.contains('reflowing')).toBe(true);
+    fixture.componentInstance.ready.set(true); await fixture.whenStable(); await nextFrame();
+    expect(frame.classList.contains('reflowing')).toBe(false);
   });
 
   it('keeps a new transition faded if it interrupts the previous resize paint boundary', async () => {
@@ -103,6 +115,7 @@ describe('Code viewport transition ownership', () => {
     expect(frame.style.width).toBe(''); unrelated.remove();
     transition('transitionrun'); width = 1000; resize();
     reduced = true; mediaChanged();
+    await fixture.whenStable(); await nextFrame();
     expect(frame.style.width).toBe('');
     expect(frame.classList.contains('reflowing')).toBe(false);
     expect(fixture.componentInstance.width()).toBe(1000);

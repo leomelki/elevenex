@@ -1,12 +1,15 @@
 :host { container: code-panel / inline-size; display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; color: var(--ink); background: var(--surface); }
 .editor-surface { position: relative; flex: 1; min-height: 0; min-width: 0; margin: var(--space-1); display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
 .editor-surface.loaded { overflow: hidden; }
-.frame-container { position: absolute; inset: 0; display: flex; flex: 1; min-height: 0; min-width: 0; transition: opacity var(--dur-fast) var(--ease-out), filter var(--dur-fast) var(--ease-out); }
+.frame-container { position: absolute; inset: 0; display: flex; flex: 1; min-height: 0; min-width: 0; }
+.frame-container::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--surface); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
 .frame-container.resizing { left: auto; }
-.frame-container.reflowing { opacity: 0; filter: blur(var(--space-1)); transition-duration: var(--dur-instant); }
+/* Cover the iframe instead of making it transparent: Chromium throttles a
+   transparent cross-origin document's own layout/animation frames. */
+.frame-container.reflowing::after { opacity: 1; transition-duration: var(--dur-instant); }
 .frame-container[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) {
-  .frame-container { transition: none; }
+  .frame-container::after { transition: none; }
 }
 .launch-card { box-sizing: border-box; flex: none; display: flex; align-items: stretch; flex-direction: column; width: 100%; max-width: 368px; margin: auto; padding: var(--space-8) var(--space-6); }
 .code-mark { display: grid; place-items: center; width: calc(var(--space-6) * 2); height: calc(var(--space-6) * 2); border-radius: var(--radius-md); background: var(--surface-sunken); color: var(--ink-muted); margin-bottom: var(--space-4); }

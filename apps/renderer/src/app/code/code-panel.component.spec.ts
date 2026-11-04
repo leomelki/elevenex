@@ -58,6 +58,33 @@ describe('Code panel launch and iframe focus handoff', () => {
     const acknowledge = layouts.shift(); if (!acknowledge) throw new Error('Frame presentation was not requested.'); acknowledge(); await settle(fixture);
     expect(bridge.codeFocus).not.toHaveBeenCalled();
   });
+  it('reveals only after the current viewport and compact layout are acknowledged, ignoring interrupted replies', async () => {
+    const { fixture, bridge, publish, layouts } = setup(); await settle(fixture);
+    publish(ready); await settle(fixture);
+    const old = layouts.shift();
+    fixture.componentInstance.measuredWidth.set(432); fixture.componentInstance.layoutRevision.set(1); await settle(fixture);
+    expect(bridge.codePresent).toHaveBeenLastCalledWith(target,{visible:true,compact:true,viewportWidth:432});
+    expect(fixture.componentInstance.layoutReady()).toBe(false);
+    old?.(); await settle(fixture);
+    expect(fixture.componentInstance.layoutReady()).toBe(false);
+    const compact = layouts.shift();
+    fixture.componentInstance.measuredWidth.set(1064); fixture.componentInstance.layoutRevision.set(2); await settle(fixture);
+    compact?.(); await settle(fixture);
+    expect(fixture.componentInstance.layoutReady()).toBe(false);
+    const expanded = layouts.shift(); if (!expanded) throw new Error('Expanded layout was not requested');
+    expanded(); await settle(fixture);
+    expect(fixture.componentInstance.layoutReady()).toBe(true);
+    expect(TestBed.inject(CodeFramePool).mount).toHaveBeenCalledOnce();
+  });
+  it('retains accessible writing and reports an error if layout settlement fails', async () => {
+    const { fixture, bridge, publish } = setup(); await settle(fixture);
+    publish(ready); await settle(fixture);
+    bridge.codePresent.mockRejectedValueOnce(new Error('Layout timed out'));
+    fixture.componentInstance.layoutRevision.set(1); await settle(fixture);
+    expect(fixture.componentInstance.layoutReady()).toBe(true);
+    expect(fixture.componentInstance.store.error()).toContain('finish resizing');
+    expect(fixture.nativeElement.querySelector('.frame-container').hidden).toBe(false);
+  });
   it('keeps the mounted frame and its focus when status or open replies change without changing the resource', async () => {
     const { fixture, publish } = setup(); await settle(fixture);
     const pool = TestBed.inject(CodeFramePool);

@@ -27,6 +27,9 @@ export class CodePanelComponent {
   readonly store = inject(CodeWorkspaceStore);
   readonly measuredWidth = signal(0);
   readonly compact = computed(() => this.measuredWidth() < 600);
+  readonly layoutRevision = signal(0);
+  private readonly acknowledgedLayout = signal(-1);
+  readonly layoutReady = computed(() => this.acknowledgedLayout() === this.layoutRevision());
   readonly launching = computed(() => this.store.busy() || this.store.state()?.phase === 'loading');
   readonly connectionLost = computed(() => !this.connected() || this.store.state()?.phase === 'disconnected' && !this.store.state()?.relocated && !this.store.state()?.detached);
   readonly showFrame = computed(() => !!this.frameResource() && this.store.state()?.phase !== 'failed');
@@ -75,13 +78,26 @@ export class CodePanelComponent {
     afterRenderEffect(onCleanup => {
       const target = this.target(), active = this.active(), hasSurface = this.hasSurface();
       const compact = this.compact();
+      const revision = this.layoutRevision();
       if (!target) return;
       let stopped = false;
       // CSS owns layout. Inform main only about visibility and the compact-mode
       // boundary, never every pixel/frame of panel animation.
       const visible = active && hasSurface;
       this.placedTarget.set(null);
-      void this.bridge.codePresent?.(target, { visible, compact }).then(() => { if (!stopped && visible) this.placedTarget.set(target); }).catch(() => undefined);
+      this.acknowledgedLayout.set(-1);
+      const viewportWidth = revision > 0 && visible ? untracked(() => this.measuredWidth()) : 0;
+      void this.bridge.codePresent?.(target, { visible, compact, ...(viewportWidth > 0 ? { viewportWidth } : {}) }).then(() => {
+        if (stopped) return;
+        this.acknowledgedLayout.set(revision);
+        if (visible) this.placedTarget.set(target);
+      }).catch(() => {
+        if (!stopped) {
+          // A failed barrier must not leave retained writing permanently hidden.
+          this.store.error.set('The editor could not finish resizing. Your edits are retained.');
+          this.acknowledgedLayout.set(revision);
+        }
+      });
       onCleanup(() => { stopped = true; });
     });
     afterRenderEffect(() => {
