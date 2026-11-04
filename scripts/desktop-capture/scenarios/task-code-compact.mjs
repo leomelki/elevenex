@@ -89,10 +89,24 @@ export default async function* (capture) {
     const waitNative = async expression => { try { await waitMain(() => frame.executeJavaScript(expression), expression); } catch (error) { console.log('COMPACT_NATIVE_STATE', await frame.executeJavaScript('JSON.stringify({text:document.body.innerText.slice(-1800),inputs:[...document.querySelectorAll(".quick-input-widget input")].map(e=>({value:e.value,rect:e.getBoundingClientRect().toJSON()}))})')); throw error; } };
     const typeQuery = async text => { await press('a', 'KeyA', 65, process.platform === 'darwin' ? 4 : 2); await capture.cdp('Input.insertText', { text }); };
     const findSelector = '.part.auxiliarybar .action-label[aria-label^="Find file"]';
-    const clickFind = async () => {
-      const button = await frame.executeJavaScript(`(() => { const find = document.querySelector('${findSelector}'); const create = document.querySelector('.part.auxiliarybar .codicon-new-file'); if (!find || !create) throw Error('Native Files actions missing'); const r = find.getBoundingClientRect(), other = create.getBoundingClientRect(); const title = find.closest('.title'), label = title.querySelector('.title-label'); if (Math.abs(r.y - other.y) > 4 || r.x - title.getBoundingClientRect().x > 20 || label.getBoundingClientRect().width !== 0) throw Error('Find file must replace the folder title on the left'); if (!getComputedStyle(find, '::after').content.includes('Find file')) throw Error('Find file label missing'); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    const findHitPoint = async () => {
+      const button = await frame.executeJavaScript(`(() => {
+        const find = document.querySelector('${findSelector}'), create = document.querySelector('.part.auxiliarybar .codicon-new-file');
+        if (!find || !create) throw Error('Native Files actions missing');
+        const r = find.getBoundingClientRect(), other = create.getBoundingClientRect(), title = find.closest('.title');
+        if (Math.abs(r.y + r.height / 2 - other.y - other.height / 2) > 2 || r.x - title.getBoundingClientRect().x > 20 || title.querySelector('.title-label').getBoundingClientRect().width !== 0) throw Error('Find file must replace the folder title on the left');
+        if (r.height < 30 || r.width < 140 || other.x - r.right < 8) throw Error('Find file needs a roomy target with a clear gap before New File');
+        if (!getComputedStyle(find, '::after').content.includes('Find file')) throw Error('Find file label missing');
+        const point = { x: r.right - 4, y: r.bottom - 4 };
+        if (!find.contains(document.elementFromPoint(point.x, point.y))) throw Error('The padded edge must be clickable');
+        return point;
+      })()`);
       const host = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').getBoundingClientRect().toJSON());
-      for (const type of ['mousePressed', 'mouseReleased']) await capture.cdp('Input.dispatchMouseEvent', { type, x: host.x + button.x, y: host.y + button.y, button: 'left', clickCount: 1 });
+      return { x: host.x + button.x, y: host.y + button.y };
+    };
+    const clickFind = async () => {
+      const point = await findHitPoint();
+      for (const type of ['mousePressed', 'mouseReleased']) await capture.cdp('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 });
     };
     const clickTree = async name => {
       await capture.settle();
@@ -129,8 +143,14 @@ export default async function* (capture) {
       await capture.click('ex-workspace-panels .browse-files');
       await waitNative(`!!document.querySelector('${findSelector}')`);
       await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16 && !!document.activeElement?.closest(".part.auxiliarybar .monaco-list")');
-      await capture.evaluate(() => document.querySelector('ex-code-panel iframe').focus());
-      await frame.executeJavaScript(`document.querySelector('${findSelector}').focus()`);
+      await capture.settle();
+      // Use the actual tab path; programmatically focusing the iframe can
+      // restore its last editor and dismiss Files before the action is focused.
+      const direction = await capture.evaluate(() => document.activeElement?.matches('ex-code-panel iframe')) ? 8 : 0;
+      for (let step = 0; step < 24; step++) {
+        if (await capture.evaluate(() => document.activeElement?.matches('ex-code-panel iframe')) && await frame.executeJavaScript(`document.activeElement?.matches('${findSelector}')`)) break;
+        await capture.press('Tab', direction);
+      }
       await press('ArrowRight', 'ArrowRight', 39); await press('ArrowLeft', 'ArrowLeft', 37);
       assert.equal(await frame.executeJavaScript(`document.activeElement?.matches('${findSelector}')`), true);
       yield { name: `${theme}-native-find-file-focus`, inspect: ['ex-code-panel .editor-surface'] };
@@ -139,6 +159,9 @@ export default async function* (capture) {
       await waitNative('!!document.activeElement?.closest(".quick-input-widget")');
       await press('Escape', 'Escape', 27);
       await waitNative('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16');
+      await waitNative('[...document.querySelectorAll(".quick-input-widget")].every(widget => widget.getClientRects().length === 0)');
+      await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...await findHitPoint() });
+      yield { name: `${theme}-native-find-file-hover`, inspect: ['ex-code-panel .editor-surface'] };
       await clickFind();
       await waitNative('!!document.activeElement?.closest(".quick-input-widget")');
       await typeQuery('README');

@@ -60,14 +60,17 @@ export function workbenchDocument(workspace: WorkspaceDescriptor, authority: str
   // header presentation changes. Expanded Explorer retains its upstream title.
   const header = '.elevenex-compact-files .part.auxiliarybar > .title:has(.action-label[aria-label^="Find file"])';
   const find = '.action-label[aria-label^="Find file"]';
-  const uiTokens = Object.fromEntries([...tokens.matchAll(/--(space-1|text-ui-size|text-ui-weight):\s*([^;]+);/g)].map(match => [match[1], match[2]]));
+  const uiTokens = Object.fromEntries([...tokens.matchAll(/--(space-[12]|control-height|radius-sm|text-ui-size|text-ui-weight):\s*([^;]+);/g)].map(match => [match[1], match[2]]));
   const compactHeaderCss = `
     ${header} > .title-label { display: none; }
     ${header} > .title-actions { padding-left: 0; }
     ${header} .monaco-action-bar { width: 100%; }
-    ${header} .actions-container > .action-item:has(${find}) { margin-right: auto; }
-    ${header} ${find} { display: inline-flex; align-items: center; width: auto; gap: ${uiTokens['space-1'] ?? 'normal'}; }
-    ${header} ${find}::after { content: 'Find file…'; font-family: 'Instrument Sans', sans-serif; font-size: ${uiTokens['text-ui-size'] ?? 'inherit'}; font-weight: ${uiTokens['text-ui-weight'] ?? 'inherit'}; }
+    ${header} .actions-container > .action-item:has(${find}) { display: flex; flex: 1; min-width: 0; margin: 0 ${uiTokens['space-2'] ?? '0'} 0 0; }
+    ${header} ${find} { display: inline-flex; align-items: center; box-sizing: border-box; width: 100%; height: ${uiTokens['control-height'] ?? 'auto'}; margin: 0; padding: 0 ${uiTokens['space-2'] ?? '0'}; gap: ${uiTokens['space-2'] ?? 'normal'}; border-radius: ${uiTokens['radius-sm'] ?? '0'}; background: color-mix(in srgb, var(--vscode-toolbar-hoverBackground) 45%, transparent); }
+    ${header} ${find}:hover, ${header} ${find}:focus-visible { background: var(--vscode-toolbar-hoverBackground); }
+    ${header} ${find}:active { background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground)); }
+    ${header} ${find}::before { flex: none; }
+    ${header} ${find}::after { content: 'Find file…'; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'Instrument Sans', sans-serif; font-size: ${uiTokens['text-ui-size'] ?? 'inherit'}; font-weight: ${uiTokens['text-ui-weight'] ?? 'inherit'}; }
   `;
   const json = JSON.stringify(options).replaceAll('<', '\\u003c');
   return { policy: codePolicy(authority, nonce, false, [], shellOrigin), html: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Code OSS</title><link rel="icon" href="/assets/favicon.ico"><link rel="stylesheet" href="/assets/out/vs/workbench/workbench.web.main.internal.css"><style nonce="${nonce}">html,body{height:100%;margin:0;background:${palette['surface']}}@font-face{font-family:'Geist Mono';src:url('/fonts/geist-mono.woff2');font-weight:100 900;font-display:swap}@font-face{font-family:'Instrument Sans';src:url('/fonts/instrument-sans.woff2');font-weight:100 900;font-display:swap}body,.monaco-workbench{font-family:'Instrument Sans',sans-serif}${compactHeaderCss}</style></head><body></body><script nonce="${nonce}" type="module">void navigator.storage.persist().catch(()=>false);globalThis._VSCODE_FILE_ROOT=location.origin+'/assets/out/';await import('/assets/out/nls.messages.js');const [{create,URI,commands},{FilesFocus}]=await Promise.all([import('/assets/out/vs/workbench/workbench.web.main.internal.js'),import('${CODE_EXTENSION_PATH}/files-focus.browser.js')]);const filesFocus=new FilesFocus(document,()=>commands.executeCommand('elevenex.code.dismiss-files'));addEventListener('pagehide',()=>filesFocus.dispose(),{once:true});const config=${json};const initial=config.workspace;initial.folderUri=URI.from(initial.folderUri);delete config.workspace;create(document.body,{...config,commands:[{id:'elevenex.code.files-layout',handler:(browsing)=>{if(typeof browsing==='boolean')filesFocus.setBrowsing(browsing);}}],workspaceProvider:{workspace:initial,trusted:true,open:async()=>false}});</script></html>` };

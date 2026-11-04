@@ -65,7 +65,11 @@ Code area with the genuine VS Code file tree. It never squeezes the file into
 another narrow column. **Find file…** replaces the `/` folder title at the left
 of the native file-tree header, with New File/New Folder remaining on the right.
 Its VS Code `view/title` action opens the same Quick Open picker as Command/Ctrl-P,
-retaining native click handling, keyboard focus, tooltips and themes. The action is scoped to compact Files; expanded
+retaining native click handling, keyboard focus, tooltips and themes. The target
+fills the available left header space at the standard 30px control height, with
+8px inner padding and a gap before the creation actions. Its quiet background
+strengthens on hover/focus, and long labels truncate without crowding the actions.
+The action is scoped to compact Files; expanded
 Explorer keeps its usual controls. No extra shell search row occupies editor space.
 Command/Ctrl-P remains available in the workbench at every size.
 Folder clicks/arrow keys keep browsing; a single file

@@ -1,5 +1,22 @@
 # New Code workbench verification
 
+## Find file target size and spacing
+
+Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0. The native Find file
+action now fills the available left header space, with a 30px-high target, 8px
+inner padding, separation from New File, and a quiet hover/focus surface.
+
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build` and native
+  `electron-smoke.cjs`: passed. No dependencies or platform contracts changed.
+- `artifacts/desktop-capture/code-find-target-verified/report.json`:
+  **30 checkpoints, verified: true**, no renderer errors. Inspected default,
+  hover and keyboard focus in both themes, plus narrow/reduced-motion layout.
+  Geometry checks assert target height/width, center alignment and an 8px minimum
+  gap before New File. Native clicks near the bottom-right padded edge open
+  Quick Open. Actual Tab/arrow navigation and Enter activation also pass.
+- `git diff --check`: passed. These are unpackaged macOS checks; no packaged or
+  Windows/Linux launch was run.
+
 ## Native compact Find file action
 
 Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0 with Code OSS
