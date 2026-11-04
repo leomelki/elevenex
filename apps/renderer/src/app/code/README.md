@@ -108,12 +108,15 @@ Dirty instances stay retained. Shutdown respects backup vetoes.
 Expansion/collapse predicts the destination from the shell's actual width
 transition, including percentage widths, and resizes the iframe once at the start.
 An element-scoped View Transition retains the old editor image while the new one
-renders underneath. After the old snapshot is captured, the shell commits its
-final geometry; old/new Code contents blend in one 140ms token-driven blur/fade.
-Both images keep their natural scale, and the old content stays visible instead
-of a blank hide/show phase. Panel controls and the surrounding application stay
-outside the snapshot's hit-test boundary. No screenshot/pixel API is added to the
-bridge.
+renders underneath. The shell retains its original 280ms width/opacity glide;
+Code never finishes it early. ResizeObserver fits the outer compositor surface to
+the moving viewport using scaleX, without relaying intermediate widths to the
+iframe. Both images stretch with that surface and blend in a 200ms token-driven
+fade with the 20px glass blur after the child's layout acknowledgement. At the
+end, scale is already 1, so removing it cannot expose a final resize jump. The
+old image stays visible instead of a blank hide/show phase. Panel controls and
+the surrounding application stay outside the snapshot's hit-test boundary. No
+screenshot/pixel API is added to the bridge.
 The iframe is a direct, temporarily named transition participant rather than
 being flattened into a wrapper snapshot; its incoming cross-origin surface stays
 live as Code paints the destination layout.

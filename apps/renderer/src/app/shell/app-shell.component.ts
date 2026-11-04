@@ -80,16 +80,6 @@ export class AppShellComponent {
     if (event.target instanceof HTMLElement && !event.target.closest(".panel"))
       this.returnFocus = event.target;
   }
-  /** A projected panel can retain its old view, then commit final geometry in
-   * one paint. The shell keeps ownership of its CSS motion. */
-  protected finishPanelLayout(): void {
-    const scope = this.root.querySelector('[data-panel-transition-scope]');
-    for (const region of Array.from(scope?.children ?? [])) {
-      for (const animation of region.getAnimations()) {
-        if ('transitionProperty' in animation && ['width', 'opacity', 'margin-right'].includes(String(animation.transitionProperty))) animation.finish();
-      }
-    }
-  }
   protected leaveReview(): void {
     if (this.wideReview()) this.reviewExited.emit();
     else if (this.compact() && this.panelOpen()) this.panelCloseRequested.emit();

@@ -85,13 +85,11 @@ The available workspace is a named CSS `workspace` size container. Projected
 features can use its width for responsive affordances without measuring or
 overriding the shell's private navigation geometry.
 
-The workspace also exposes `data-panel-transition-scope` as a layout commit
-boundary. A projected panel can dispatch `panel-layout-commit` on that element
-after capturing its old view; the shell finishes only its own width/opacity
-transitions. Code scopes browser-owned snapshots to its editor content so the
-toolbar and surrounding application remain live. It uses the boundary to commit
-destination geometry immediately, then blends old/new editor layouts without
-stretching the iframe or adding a screenshot capability to the bridge.
+The shell owns its width/opacity transitions for their full duration. Projected
+Code content predicts its destination viewport without finishing shell motion.
+It resizes the iframe once behind browser-owned snapshots, stretches the outer
+compositor surface to follow the animated panel, and blends the editor images
+with blur while the surrounding application and toolbar remain live.
 
 `WorkbenchComponent` composes project/task navigation around supplied content.
 Use `workbenchConversation` and `workbenchPanel` slots, readonly `projects` and

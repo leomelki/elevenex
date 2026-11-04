@@ -1,6 +1,33 @@
 # New Code workbench verification
 
-## Immediate sizing and single blur/fade — current motion
+## Smooth panel glide with overlapping blur/crossfade — current motion
+
+Verified on 2026-11-04 on macOS arm64 / Electron 45 with the genuine Code OSS
+workbench and isolated disposable Nest backend/task. Removed the snapshot's
+shell-animation finish hook, preserving the original 280ms width and chat fade.
+The iframe resizes once at the predicted destination; its outer compositor image
+follows the panel edge while old/new layouts stretch and blend with a 200ms fade
+and the 20px glass blur. A pre-capture timing regression keeps the outgoing image
+fitted before the destination width is applied.
+
+- `pnpm desktop:lint`, `pnpm desktop:test` and `pnpm desktop:build`: passed.
+  Full suite: 158 desktop cases, seven capture cases, 639 renderer cases and
+  TypeScript contract checks. Final focused Angular rerun: 13 cases passed.
+- `artifacts/desktop-capture/code-glide-verified/report.json`: **47 checkpoints,
+  verified: true**, no renderer errors. Natural frame probes require multiple
+  intermediate panel widths and an active blurred blend during the glide in
+  both directions/themes. Shell and image bounds match at scrubbed half-width
+  frames; the iframe retains one destination viewport throughout.
+- The child-layout acknowledgement hold, zero internal pane movement during
+  reveal, native keyboard input, toolbar hit testing, interrupted reversals,
+  repeated reopen, narrow/reduced motion, retained edits, search and auto-save
+  passed. Inspected actual light/dark midpoint and settled PNGs.
+- No dependencies, platform contracts or security capabilities changed.
+  `git diff --check`: passed. Validation used an unpackaged native macOS app;
+  no packaged-app or Windows/Linux launch was run.
+
+
+## Immediate sizing and single blur/fade (superseded)
 
 Verified on 2026-11-04 on macOS arm64 / Electron 45.0.0 with the genuine Code OSS
 workbench and disposable Nest task/backend. The destination is predicted from

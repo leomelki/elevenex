@@ -254,6 +254,31 @@ export default async function* (capture) {
       }, 'Workbench did not fill the resized iframe: '+JSON.stringify(bounds));
       assert.equal(capture.window.webContents.mainFrame.frames.find(child=>child.url===frame.url),frame);
     };
+    const glidingCrossfade = async selector => {
+      await capture.evaluate(() => {
+        const panel = document.querySelector('ex-app-shell .panel');
+        const scope = document.querySelector('ex-code-panel .frame-container');
+        window.codeGlide = [];
+        const start = performance.now();
+        const sample = () => {
+          window.codeGlide.push({time:performance.now()-start,width:panel.getBoundingClientRect().width,opacity:Number(getComputedStyle(scope,'::view-transition-old(code-editor)').opacity),active:scope.matches(':active-view-transition'),blur:getComputedStyle(scope,'::view-transition-old(code-editor)').filter});
+          if (performance.now()-start<650) requestAnimationFrame(sample);
+        };
+        sample();
+      });
+      await capture.click(selector);
+      await capture.waitFor(() => window.codeGlide.at(-1)?.time>=650);
+      const samples = await capture.evaluate(() => {const samples=window.codeGlide;delete window.codeGlide;return samples;});
+      const first=samples[0].width, last=samples.at(-1).width, distance=Math.abs(last-first);
+      assert.ok(distance>100,'Panel did not change width');
+      const intermediate=samples.filter(s=>Math.abs(s.width-first)>1 && Math.abs(s.width-last)>1);
+      assert.ok(intermediate.length>=5,'Panel snapped instead of using the original width glide: '+JSON.stringify(samples));
+      assert.ok(intermediate.some(s=>s.active && s.opacity>0 && s.opacity<1 && s.blur!=='none'),'Blur/crossfade did not overlap panel motion: '+JSON.stringify(samples));
+      const largestStep=Math.max(...samples.slice(1).map((s,i)=>Math.abs(s.width-samples[i].width)));
+      assert.ok(largestStep<distance*0.65,'Panel width jumped during crossfade: '+JSON.stringify(samples));
+      await finish(); await geometry();
+      return {intermediateFrames:intermediate.length,largestStep,distance};
+    };
     const viewportMotion = async function* (selector, name) {
       const { CodeFrame } = require('../../../apps/desktop/dist/code/frame.js');
       const settleLayout = CodeFrame.prototype.settleLayout;
@@ -321,7 +346,7 @@ export default async function* (capture) {
         const paints = await capture.evaluate(() => window.codeReflowPaints);
         assert.ok(paints.length, 'No actual iframe layout change was observed');
         for (const paint of paints) {
-          assert.deepEqual({snapshot:paint.snapshot,transform:paint.transform},{snapshot:true,transform:'none'},'A visible resize or stretch exposed the layout jump');
+          assert.equal(paint.snapshot,true,'An uncovered live resize exposed the layout jump');
           assert.ok(paint.elapsed < 220, 'Destination resize waited until the end of the panel glide: '+JSON.stringify(paint));
         }
         return {widths,destinationResizeMs:paints[0].elapsed,paneChangesDuringReveal:0};
@@ -335,6 +360,9 @@ export default async function* (capture) {
     };
     for (const theme of ['light','dark']) {
       await capture.theme(theme);
+      const glideExpansion=await glidingCrossfade('ex-workspace-panels [aria-label="Expand side panel"]');
+      const glideCollapse=await glidingCrossfade('ex-workspace-panels [aria-label="Return to chat"]');
+      yield {name:`${theme}-continuous-panel-glide`,metadata:{glideExpansion,glideCollapse},inspect:['.panel','iframe']};
       const expansion = yield* viewportMotion('ex-workspace-panels [aria-label="Expand side panel"]',`${theme}-expansion`);
       const collapse = yield* viewportMotion('ex-workspace-panels [aria-label="Return to chat"]',`${theme}-collapse`);
       yield { name: `${theme}-single-editor-resize`, inspect: ['ex-code-panel .editor-surface'], metadata: { expansion, collapse } };
@@ -352,7 +380,12 @@ export default async function* (capture) {
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
       await capture.waitFor(() => document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true}).some(a=>a.animationName?.endsWith('code-layout-out') && a.playState==='running'));
       const heldWidth = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth);
-      await capture.evaluate(() => { for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=70; });
+      await capture.evaluate(() => {
+        for (const region of document.querySelector('ex-app-shell .workspace').children) {
+          for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=140;
+        }
+        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=100;
+      });
       await capture.settle();
       assert.equal(await capture.evaluate(()=>!!document.querySelector('ex-code-panel .launch-card')),false);
       assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth), heldWidth, 'Midpoint reflowed the editor');
@@ -360,8 +393,8 @@ export default async function* (capture) {
       assert.deepEqual(await capture.evaluate(() => {
         const scope=document.querySelector('ex-code-panel .frame-container');
         const old=getComputedStyle(scope,'::view-transition-old(code-editor)');
-        return {transform:getComputedStyle(scope).transform,blending:Number(old.opacity)>0 && Number(old.opacity)<1,fit:old.objectFit,newOpacity:getComputedStyle(scope,'::view-transition-new(code-editor)').opacity};
-      }), {transform:'none',blending:true,fit:'none',newOpacity:'1'}, 'Old and new natural-size snapshots must blend in one phase');
+        return {followsPanel:Math.abs(scope.getBoundingClientRect().width-scope.parentElement.clientWidth)<1,blending:Number(old.opacity)>0 && Number(old.opacity)<1,fit:old.objectFit,newOpacity:getComputedStyle(scope,'::view-transition-new(code-editor)').opacity};
+      }), {followsPanel:true,blending:true,fit:'fill',newOpacity:'1'}, 'Old and new snapshots must stretch with the panel and blend in one phase');
       yield {name:`${theme}-expansion-interrupted`,inspect:['.panel','ex-code-panel','iframe']};
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]');
       await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();
@@ -370,14 +403,19 @@ export default async function* (capture) {
       await capture.click('ex-workspace-panels [aria-label="Return to chat"]');
       await capture.waitFor(() => document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true}).some(a=>a.animationName?.endsWith('code-layout-out') && a.playState==='running'));
       const wideWidth = await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth);
-      await capture.evaluate(() => { for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=70; });
+      await capture.evaluate(() => {
+        for (const region of document.querySelector('ex-app-shell .workspace').children) {
+          for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=140;
+        }
+        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=100;
+      });
       await capture.settle();
       assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth),wideWidth,'Collapse midpoint reflowed the editor');
       assert.deepEqual(await capture.evaluate(() => {
         const scope=document.querySelector('ex-code-panel .frame-container');
         const old=getComputedStyle(scope,'::view-transition-old(code-editor)');
-        return {transform:getComputedStyle(scope).transform,blending:Number(old.opacity)>0 && Number(old.opacity)<1,fit:old.objectFit,newOpacity:getComputedStyle(scope,'::view-transition-new(code-editor)').opacity};
-      }), {transform:'none',blending:true,fit:'none',newOpacity:'1'}, 'Collapse must crossfade without squeezing text');
+        return {followsPanel:Math.abs(scope.getBoundingClientRect().width-scope.parentElement.clientWidth)<1,blending:Number(old.opacity)>0 && Number(old.opacity)<1,fit:old.objectFit,newOpacity:getComputedStyle(scope,'::view-transition-new(code-editor)').opacity};
+      }), {followsPanel:true,blending:true,fit:'fill',newOpacity:'1'}, 'Collapse must crossfade while following the panel edge');
       yield {name:`${theme}-collapse-interrupted`,inspect:['.panel','ex-code-panel .frame-container','iframe']};
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
       await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();

@@ -2,8 +2,8 @@ import { DOCUMENT } from '@angular/common';
 import { afterNextRender, afterRenderEffect, DestroyRef, Directive, ElementRef, inject, input, output, signal } from '@angular/core';
 import { codeDestinationWidth, supportsCodeTransition } from './code-view-transition';
 
-/** Keep text at its natural scale while the shell glides. Cover the retained
- * viewport, resize once underneath, then reveal after a child-layout acknowledgement.
+/** Resize the live viewport once, then stretch its compositor image with the
+ * shell's glide. Blend layouts after a child-layout acknowledgement.
  * Ordinary window resizing remains live. No iframe is recreated. */
 @Directive({ selector: '[exCodeViewport]' })
 export class CodeViewportDirective {
@@ -36,7 +36,6 @@ export class CodeViewportDirective {
     const window = this.document.defaultView;
     if (!viewport || !window) return () => undefined;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const layoutOwner = this.frame.closest<HTMLElement>('[data-panel-transition-scope]');
     // Keep panel actions outside the snapshot's hit-test boundary.
     const scope = this.frame;
     const transitions = new Set<HTMLElement>();
@@ -62,8 +61,8 @@ export class CodeViewportDirective {
       snapshotReady = false;
       snapshotAcknowledged = false;
       preparedWidth = 0;
+      this.frame.style.removeProperty('transform');
       this.frame.classList.remove('crossfading');
-      scope.classList.remove('panel-layout-transition');
     };
 
     const cancelReveal = () => {
@@ -73,6 +72,12 @@ export class CodeViewportDirective {
 
     const measure = () => {
       const next = viewport.clientWidth;
+      if (frozenWidth && preparedWidth && next > 0) {
+        // Transform only the outer compositor surface: the cross-origin child
+        // keeps its destination viewport while the original shell CSS glides.
+        // Before snapshot capture completes, width is still the old viewport.
+        this.frame.style.transform = `scaleX(${next / width})`;
+      }
       if (!frozenWidth && next > 0) {
         width = next;
         // Keep the child at an explicit settled width even between toggles.
@@ -84,6 +89,7 @@ export class CodeViewportDirective {
     const release = () => {
       if (preparedWidth && Math.abs(viewport.clientWidth - preparedWidth) <= 1) {
         frozenWidth = 0;
+        this.frame.style.removeProperty('transform');
         this.frame.classList.remove('resizing');
         measure();
         return;
@@ -141,13 +147,12 @@ export class CodeViewportDirective {
             const version = generation;
             preparedWidth = destination;
             this.frame.classList.add('crossfading');
-            scope.classList.add('panel-layout-transition');
             const transition = scope.startViewTransition(async () => {
               if (version !== generation) return;
               // Lay out at the destination immediately, behind the old native
               // snapshot. Main's compact commands now overlap the panel glide.
               this.frame.style.width = `${destination}px`;
-              layoutOwner?.dispatchEvent(new Event('panel-layout-commit'));
+              this.frame.style.transform = `scaleX(${viewport.clientWidth / destination})`;
               width = destination;
               this.viewportWidth.emit(width);
               awaitingLayout = true;
@@ -171,7 +176,6 @@ export class CodeViewportDirective {
               if (snapshot !== transition) return;
               snapshot = undefined;
               this.frame.classList.remove('crossfading', 'reflowing', 'cover-immediate');
-              scope.classList.remove('panel-layout-transition');
             }).catch(() => undefined);
           } else this.frame.classList.add('reflowing');
         }

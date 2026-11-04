@@ -24,15 +24,15 @@ describe("Desktop region ownership", () => {
     expect(fixture.nativeElement.querySelector('nav[aria-label="Projects"]')).not.toBeNull();
   });
 
-  it('commits only shell-owned layout transitions for a projected panel snapshot', () => {
+  it('preserves shell motion when projected content commits its layout', () => {
     const fixture = TestBed.createComponent(AppShellComponent); fixture.detectChanges();
-    const scope: HTMLElement = fixture.nativeElement.querySelector('[data-panel-transition-scope]');
+    const scope: HTMLElement = fixture.nativeElement.querySelector('.workspace');
     const width = vi.fn(), opacity = vi.fn(), unrelated = vi.fn();
     for (const region of Array.from(scope.children)) Object.defineProperty(region,'getAnimations',{value:()=>[
       {transitionProperty:'width',finish:width},{transitionProperty:'opacity',finish:opacity},{transitionProperty:'color',finish:unrelated},
     ]});
     scope.dispatchEvent(new Event('panel-layout-commit'));
-    expect(width).toHaveBeenCalledTimes(2); expect(opacity).toHaveBeenCalledTimes(2);
+    expect(width).not.toHaveBeenCalled(); expect(opacity).not.toHaveBeenCalled();
     expect(unrelated).not.toHaveBeenCalled();
   });
 

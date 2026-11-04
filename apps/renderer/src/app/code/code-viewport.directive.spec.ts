@@ -64,7 +64,12 @@ describe('Code viewport transition ownership', () => {
       queueMicrotask(()=>{update=callback();});
       return {ready:Promise.resolve(),finished,skipTransition:skip};
     }});
-    transition('transitionrun'); await fixture.whenStable();
+    transition('transitionrun');
+    // The shell can advance before Chromium captures the outgoing surface.
+    width=500; resize();
+    expect(frame.style.width).toBe('432px');
+    expect(frame.style.transform).toBe(`scaleX(${500 / 432})`);
+    await fixture.whenStable();
     expect(frame.style.width).toBe('1072px');
     expect(fixture.componentInstance.width()).toBe(1072);
     expect(fixture.componentInstance.requests).toBe(1);
@@ -72,9 +77,12 @@ describe('Code viewport transition ownership', () => {
     expect(frame.classList.contains('crossfading')).toBe(true);
     width=700; resize();
     expect(frame.style.width).toBe('1072px');
+    expect(frame.style.transform).toBe(`scaleX(${700 / 1072})`);
+    expect(fixture.componentInstance.requests).toBe(1);
     fixture.componentInstance.ready.set(true); await fixture.whenStable(); await update;
     width=1072; transition('transitionend'); await nextFrame();
     expect(frame.style.width).toBe(`${width}px`);
+    expect(frame.style.transform).toBe('');
     expect(fixture.componentInstance.requests).toBe(1);
     complete(); await finished; await Promise.resolve();
     expect(frame.classList.contains('crossfading')).toBe(false);
