@@ -105,13 +105,17 @@ export class RuntimeBrowserController {
   ) {
     const id = await this.task(request, value);
     const command = parse(runtimeCommand, input);
+    const task = this.browsers.viewer(id, token);
     if (command.kind === 'handoff') {
+      const page = task.page(command.tabId), generation = page.generation;
       const session = await this.sessions.findOne(command.sessionId);
       if (session.workspaceId !== id || session.status === 'archived')
         throw new ForbiddenException();
+      if (this.browsers.viewer(id, token) !== task || task.tabs.get(page.id) !== page || page.generation !== generation)
+        throw new BadRequestException('Browser control changed. Hand control back explicitly when ready.');
     }
     try {
-      return await this.browsers.viewer(id, token).command(command);
+      return await task.command(command);
     } catch {
       throw new BadRequestException(
         'Browser operation failed. Inspect the page before retrying.',

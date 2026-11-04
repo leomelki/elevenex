@@ -1,6 +1,6 @@
 import { chromium } from 'playwright-core';
 import { RuntimeBrowserPersistence } from './runtime-persistence.js';
-import { createServer, request as httpRequest, type Server } from 'node:http';
+import { createServer, request as httpRequest, type Server, type ServerResponse } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,6 +30,9 @@ describe('Remote browser public HTTP behavior', () => {
   let pool: RuntimeBrowserPool;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   const launches = jest.spyOn(chromium, 'launchPersistentContext');
+  const findSession = jest.fn(async (id: number) => ({ workspaceId: id === 2 ? 1 : 9, status: 'active' }));
+  const heldNavigations = new Set<ServerResponse>();
+  let navigationStarted: () => void = () => undefined;
   let oldRoot: string | undefined;
   const request = async (
     path: string,
@@ -77,6 +80,12 @@ describe('Remote browser public HTTP behavior', () => {
     oldRoot = process.env['ELEVENEX_DATA_ROOT'];
     process.env['ELEVENEX_DATA_ROOT'] = root;
     fixture = createServer((req, res) => {
+      if (req.url === '/held') {
+        heldNavigations.add(res);
+        res.once('close', () => heldNavigations.delete(res));
+        navigationStarted();
+        return;
+      }
       if (req.url === '/dialog') {
         res.setHeader('Content-Type', 'text/html');
         res.end(
@@ -126,10 +135,7 @@ describe('Remote browser public HTTP behavior', () => {
         {
           provide: SessionsService,
           useValue: {
-            findOne: async (id: number) => ({
-              workspaceId: id === 2 ? 1 : 9,
-              status: 'active',
-            }),
+            findOne: findSession,
           },
         },
         {
@@ -599,6 +605,78 @@ describe('Remote browser public HTTP behavior', () => {
     await request('layout', { width: 800, height: 600, visible: true, interactive: true, pixelRatio: 1, sequence: 13 });
     expect((await request('frame?tabId=' + detachedId + '&after=0')).status).toBe(200);
     await request('disconnect', {});
+  });
+
+  it('rejects handoff authorization superseded by takeover, tab closure or viewer rotation', async () => {
+    const clientId = '33333333-3333-4333-8333-333333333333';
+    token = (await request('connect', { clientId }).then(reply => reply.json())).token;
+    for (const change of ['takeover', 'close', 'reconnect']) {
+      const opened = await request('command', { kind: 'new-tab' }).then(reply => reply.json());
+      const id: string = opened.active;
+      let started!: () => void, authorize!: () => void;
+      const startedAuthorization = new Promise<void>(resolve => { started = resolve; });
+      const authorization = new Promise<void>(resolve => { authorize = resolve; });
+      findSession.mockImplementationOnce(async () => {
+        started(); await authorization;
+        return { workspaceId: 1, status: 'active' };
+      });
+      const pending = request('command', { kind: 'handoff', tabId: id, sessionId: 2 });
+      await startedAuthorization;
+      if (change === 'reconnect') token = (await request('connect', { clientId }).then(reply => reply.json())).token;
+      else await request('command', { kind: change, tabId: id });
+      authorize();
+      expect((await pending).status).toBeGreaterThanOrEqual(400);
+      const state = await request('state').then(reply => reply.json());
+      expect(state.tabs.some((tab: { driver: string }) => tab.driver === 'agent')).toBe(false);
+      if (change !== 'close') await request('command', { kind: 'close', tabId: id });
+    }
+    await request('disconnect', {});
+  });
+
+  it('keeps a newer navigation usable after aborting an older load and clears picker interception on selection', async () => {
+    token = (await request('connect', { clientId: '44444444-4444-4444-8444-444444444444' }).then(reply => reply.json())).token;
+    const opened = await request('command', { kind: 'open', url: pageUrl }).then(reply => reply.json());
+    const id: string = opened.active;
+    let markStarted!: () => void;
+    const started = new Promise<void>(resolve => { markStarted = resolve; });
+    navigationStarted = markStarted;
+    const pending = request('command', { kind: 'navigate', tabId: id, url: pageUrl + '/held' });
+    try {
+      await started;
+      const next = await request('command', { kind: 'navigate', tabId: id, url: pageUrl + '/newer' }).then(reply => reply.json());
+      expect(next.tabs.find((tab: { id: string }) => tab.id === id)).toMatchObject({ url: pageUrl + '/newer', loading: false, error: null });
+      await pending;
+      await request('command', { kind: 'pick', enabled: true });
+      const other = await request('command', { kind: 'new-tab' }).then(reply => reply.json());
+      await request('command', { kind: 'select', tabId: id });
+      const layout = await request('layout', { width: 800, height: 600, visible: true, interactive: true, pixelRatio: 1 }).then(reply => reply.json());
+      expect(layout.picking).toBe(false);
+      const generation = layout.tabs.find((tab: { id: string }) => tab.id === id).generation;
+      const before = events.filter(event => event === 'clicked').length;
+      for (const type of ['down', 'up']) {
+        expect((await request('input', { tabId: id, generation, input: { kind: 'pointer', type, x: 30, y: 85, button: 'left', buttons: type === 'down' ? 1 : 0, clicks: 1, modifiers: 0 } })).status).toBe(201);
+      }
+      for (let n = 0; n < 100 && events.filter(event => event === 'clicked').length === before; n++)
+        await new Promise(resolve => setTimeout(resolve, 20));
+      expect(events.filter(event => event === 'clicked').length).toBe(before + 1);
+      expect((await request('state').then(reply => reply.json())).picked).toBeNull();
+      await request('command', { kind: 'network', tabId: id, slow: true });
+      const context = await launches.mock.results.at(-1)!.value;
+      const page = context.pages().find(page => page.url() === pageUrl + '/newer')!;
+      const elapsed = await page.evaluate(async () => {
+        const start = performance.now();
+        await fetch('/network-probe', { cache: 'no-store' }).then(response => response.text());
+        return performance.now() - start;
+      });
+      expect(elapsed).toBeGreaterThanOrEqual(100);
+      await request('command', { kind: 'network', tabId: id, slow: false });
+      await request('command', { kind: 'close', tabId: other.active });
+      await request('command', { kind: 'close', tabId: id });
+    } finally {
+      for (const response of heldNavigations) response.destroy();
+      navigationStarted = () => undefined;
+      await request('disconnect', {});
+    }
   });
 
 });

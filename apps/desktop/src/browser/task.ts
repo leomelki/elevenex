@@ -182,13 +182,14 @@ export class TaskBrowser implements DesktopBrowserHost {
         this.focusPending = page.id;
       }
       else if (input.kind === 'handoff') {
+        const generation = page.lease.generation;
         const authorized = await this.client.execute(this.window.webContents.id, this.scopeId, null, false, async (endpoint, signal) => {
           const value = record(await requestBackendJson(endpoint, { path: '/api/desktop-browser/authorize', method: 'POST', body: { taskId: this.taskId, sessionId: input.sessionId } }, signal));
           if (value['taskId'] !== this.taskId || value['sessionId'] !== input.sessionId || value['available'] !== true) throw new Error('Invalid browser session');
           return true;
         });
         this.assertScope();
-        if (!authorized.ok || !this.selected() || !this.pages.has(page.id)) throw new Error('The conversation is unavailable for browser control');
+        if (!authorized.ok || !this.selected() || this.pages.get(page.id) !== page || page.lease.generation !== generation) throw new Error('Browser control changed. Hand control back explicitly when ready.');
         page.lease.handBack(input.sessionId); page.target = undefined; page.step = { n: 1, text: 'Waiting for a browser action' };
       }
       else if (input.kind === 'width') page.width = input.width;

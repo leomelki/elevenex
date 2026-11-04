@@ -45,6 +45,14 @@ export class RuntimeBrowserTask {
   private picked: TaskBrowserState['picked'] = null;
   private pickerMessage: string | null = null;
   private picking = false;
+  private clearPicker(): void {
+    const changed = this.picked !== null || this.pickerMessage !== null || this.picking || [...this.tabs.values()].some(tab => tab.picking);
+    this.picked = null;
+    this.pickerMessage = null;
+    this.picking = false;
+    for (const tab of this.tabs.values()) tab.picking = false;
+    if (changed) this.revision++;
+  }
   private feedback = false;
   private attention: TaskBrowserState['attention'];
   private ports: readonly number[] = [];
@@ -95,6 +103,7 @@ export class RuntimeBrowserTask {
     this.selectedAt = Date.now();
   }
   reconcile(): void {
+    this.clearPicker();
     this.layoutRevision++;
     this.selectionRevision++;
     this.controller.abort();
@@ -338,6 +347,7 @@ export class RuntimeBrowserTask {
       (this.page(previous).driver === 'agent' &&
         this.page(previous).agentSessionId === sessionId)
     ) {
+      this.clearPicker();
       if (previous && !this.presentations.has(previous))
         void this.page(previous).layout(
           this.viewport.width,
@@ -398,6 +408,7 @@ export class RuntimeBrowserTask {
     const selection = ++this.selectionRevision;
     const page = this.page(id);
     const previous = this.active;
+    this.clearPicker();
     this.active = id;
     if (previous && previous !== id && !this.presentations.has(previous))
       await this.page(previous).layout(
@@ -409,8 +420,6 @@ export class RuntimeBrowserTask {
     if (selection !== this.selectionRevision || !this.alive)
       throw new Error('Browser selection changed');
     if (!page.started) {
-      this.picked = null;
-      this.picking = false;
       this.revision++;
       return;
     }
@@ -418,8 +427,6 @@ export class RuntimeBrowserTask {
     if (selection !== this.selectionRevision || !this.alive)
       throw new Error('Browser selection changed');
     this.active = id;
-    this.picked = null;
-    this.picking = false;
     if (this.presentations.has(id)) { this.revision++; return; }
     await page.layout(
       this.viewport.width,
@@ -485,14 +492,14 @@ export class RuntimeBrowserTask {
     } else if (input.kind === 'pick') {
       const page = this.page(this.active!);
       page.takeover();
+      this.clearPicker();
       this.picking = input.enabled;
       page.picking = input.enabled;
-      this.picked = null;
-      this.pickerMessage = null;
     } else if (input.kind === 'feedback') this.feedback = input.enabled;
     else {
       const page = this.page(input.tabId);
       if (input.kind === 'navigate') this.authorize(input.url);
+      if (input.kind === 'close' || (page.id === this.active && ['navigate', 'reload', 'back'].includes(input.kind))) this.clearPicker();
       if (input.kind === 'select') await this.select(page.id);
       else if (input.kind === 'close') {
         if (this.attention?.tabId === page.id) this.attention = undefined;

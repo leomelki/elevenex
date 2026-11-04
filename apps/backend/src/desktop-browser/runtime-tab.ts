@@ -41,6 +41,7 @@ export class RuntimeBrowserTab {
   private crashed = false;
   private layoutRevision = 0;
   private navigation = 0;
+  private loadRevision = 0;
   private visible = false;
   private interactive = false;
   private pixelRatio = 1;
@@ -300,20 +301,30 @@ export class RuntimeBrowserTab {
     const url = runtimeUrl(address);
     this.network.authorize(url);
     this.url = url.href;
+    await this.load((page) => page.goto(url.href, {
+      waitUntil: 'domcontentloaded',
+      timeout: 20000,
+    }));
+  }
+  /** Only the latest navigation on this engine may publish completion or failure. */
+  private async load(operation: (page: Page) => Promise<unknown>): Promise<void> {
+    const page = this.page;
+    if (!page || !this.started || this.disposed) throw new Error('Browser page is unavailable');
+    const revision = ++this.loadRevision;
+    const current = () => !this.disposed && this.page === page && revision === this.loadRevision;
     this.loading = true;
     this.error = null;
     this.changed();
     try {
-      await this.page!.goto(url.href, {
-        waitUntil: 'domcontentloaded',
-        timeout: 20000,
-      });
+      await operation(page);
     } catch {
-      this.error =
+      if (current()) this.error =
         'This page could not load. Check the address or task server, then retry.';
     } finally {
-      this.loading = false;
-      this.changed();
+      if (current()) {
+        this.loading = false;
+        this.changed();
+      }
     }
   }
   async layout(
@@ -719,6 +730,9 @@ export class RuntimeBrowserTab {
     this.theme = theme;
   }
   async networkTo(slow: boolean): Promise<void> {
+    // Network emulation is a no-op on this CDP session until its domain is
+    // enabled. The private session does not retain bodies or posted data.
+    await this.cdp!.send('Network.enable', { maxTotalBufferSize: 0, maxResourceBufferSize: 0, maxPostDataSize: 0 });
     await this.cdp!.send('Network.emulateNetworkConditions', {
       offline: false,
       latency: slow ? 150 : 0,
@@ -728,7 +742,7 @@ export class RuntimeBrowserTab {
     this.slowNetwork = slow;
   }
   async back(): Promise<void> {
-    await this.page?.goBack({ waitUntil: 'domcontentloaded', timeout: 20000 });
+    await this.load((page) => page.goBack({ waitUntil: 'domcontentloaded', timeout: 20000 }));
   }
   async destroy(): Promise<void> {
     if (this.disposed) return;

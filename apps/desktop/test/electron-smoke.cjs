@@ -28,14 +28,32 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
   release: async () => backendRelease({ version: revision, tag: `runtime-${revision}` }, process.platform, process.arch),
   install: async () => ({ directory: backendRoot, entry: '', executable: '' }),
   start: async () => {
+    let holdBrowserAuthorization = false;
+    const browserAuthorizations = new Set();
+    const authorizeBrowser = response => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ taskId: 1, sessionId: 2, available: true }));
+    };
     const http = createServer((request, response) => {
       const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+      if (pathname === '/hold-browser-authorization') { holdBrowserAuthorization = true; response.end(); return; }
+      if (pathname === '/browser-authorization-pending') { response.end(String(browserAuthorizations.size)); return; }
+      if (pathname === '/release-browser-authorization') {
+        holdBrowserAuthorization = false;
+        for (const pending of browserAuthorizations) authorizeBrowser(pending);
+        browserAuthorizations.clear(); response.end(); return;
+      }
       if (pathname === '/browser-test') {
         response.writeHead(200, { 'content-type': 'text/html', 'access-control-allow-origin': '*' });
         response.end('<!doctype html><html><body style="margin:20px"><h1>Task browser native test</h1><div id="scroll-target" style="height:80px;overflow:auto"><div style="height:500px">Nested scroll area</div></div><button style="margin:60px" onclick="window.clicks++">Pick this</button><input type="password"><input autocomplete="cc-number"><iframe src="about:blank"></iframe><script>window.clicks=0</script></body></html>'); return;
       }
       if (request.method === 'POST' && pathname === '/api/desktop-browser/authorize') {
-        request.resume(); response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ taskId: 1, sessionId: 2, available: true })); return;
+        request.resume();
+        if (holdBrowserAuthorization) {
+          browserAuthorizations.add(response);
+          response.once('close', () => browserAuthorizations.delete(response));
+        } else authorizeBrowser(response);
+        return;
       }
       if (request.method === 'POST' && pathname === '/api/desktop-browser/poll') {
         request.resume(); response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ command: null, ports: [] })); return;

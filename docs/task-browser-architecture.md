@@ -93,6 +93,23 @@ validators, task/session membership, input generations, sandbox, TLS, Origin
 checks, runtime private-socket authentication, bounded queues and destination
 policy remain trust boundaries.
 
+Handoff authorization captures the exact page and its control generation before
+awaiting backend membership checks. A newer takeover, navigation, rehost, closure
+or viewer rotation invalidates that request; an old authorization cannot restore
+agent control. The remote HTTP adapter applies the same guard before dispatch.
+
+Remote navigation completion belongs to one operation on one page engine. A
+superseded load, or a load completing after engine replacement/destruction, cannot
+publish an error or clear the newer load's busy state. Task selection and navigation
+clear both the picker UI state and every tab's input interceptor together.
+
+Local guest attachment restores tab emulation before loading the document and
+accepting input. Theme and network flags alone are not engine configuration.
+Network throttling enables its private CDP domain with zero body/post-data buffers;
+native and remote tests measure actual request latency. Failed restoration closes
+the partially configured engine and requires explicit reload. Companion commands
+permit dismissal of their displayed notice while rejecting another tab's notice.
+
 ## Review findings and decisions
 
 The review found four structural problems: remote companions recursively owned

@@ -53,6 +53,14 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   const first = state.active;
   let native = await until(() => webContents.getAllWebContents().find(contents => contents !== window.webContents && contents.getURL().includes('/browser-test')), 'Browser page did not load');
   await until(async () => (await read()).tabs[0]?.loading === false, 'Browser page still loading');
+  // Authorization arriving after a newer user decision cannot restore agent control.
+  await fetch(backendUrl + '/hold-browser-authorization');
+  const pendingHandoff = call('taskBrowserCommand', scope, 1, { kind: 'handoff', tabId: first, sessionId: 2 });
+  await until(async () => (await fetch(backendUrl + '/browser-authorization-pending').then(reply => reply.text())) === '1', 'Handoff did not reach authorization');
+  await command({ kind: 'takeover', tabId: first });
+  await fetch(backendUrl + '/release-browser-authorization');
+  assert.equal((await pendingHandoff).ok, false, 'Obsolete handoff must be rejected');
+  assert.equal((await read()).tabs[0].driver, 'you');
   const prefs = native.getLastWebPreferences();
   assert.equal(prefs.sandbox, true); assert.equal(prefs.contextIsolation, true); assert.equal(prefs.nodeIntegration, false); assert.equal(prefs.preload, undefined); assert.equal(prefs.webSecurity, true); assert.equal(native.getWebRTCIPHandlingPolicy(),'disable_non_proxied_udp');
   let clientCertificatePrevented = false, clientCertificate = 'not-called';
@@ -67,6 +75,8 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   await call('taskBrowserPresentation', scope, 1, first, 'embedded');
   // Hold a real link navigation before response headers: the old document stays visible.
   await call('taskBrowserLayout', scope, 1, layout);
+  await until(async () => (await read()).tabs.find(tab => tab.id === first)?.ready, 'Direct page is not ready for native input');
+  app.focus({ steal: true }); window.show(); window.focus(); native.focus();
   await native.executeJavaScript(`document.body.insertAdjacentHTML('afterbegin', '<a id="next-page" href="/browser-test?held-navigation">Next page</a>')`);
   const link = await native.executeJavaScript(`(() => { const box = document.querySelector('#next-page').getBoundingClientRect(); return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }; })()`);
   native.sendInputEvent({ type: 'mouseDown', ...link, button: 'left', clickCount: 1 });

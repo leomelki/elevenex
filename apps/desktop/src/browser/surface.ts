@@ -68,6 +68,7 @@ export class BrowserPage {
   private inspection?: Promise<BrowserElement | null>;
   private cancelTool?: () => void;
   private networkReady?: Promise<void>;
+  private initializing = false;
   private readonly pageSession;
 
 
@@ -85,6 +86,7 @@ export class BrowserPage {
   attach(contents: WebContents): void {
     if (!this.accepts(contents)) throw new Error('Invalid browser guest');
     this.engine = contents;
+    this.initializing = true;
     this.frames = new BrowserFrameStream(contents, { scopeId: this.host.scopeId, taskId: this.host.taskId, tabId: this.id }, this.host.frame);
     const host = this.host;
     contents.setAudioMuted(false);
@@ -158,9 +160,6 @@ export class BrowserPage {
         event.preventDefault(); host.shortcut(input.key.toLowerCase() === 't' ? 'open' : 'pick');
       }
     });
-    const pending = this.pendingLoad; this.pendingLoad = undefined;
-    if (pending) { if (host.authorized() && pending.generation === this.lease.generation) this.load(pending.logical, pending.actual); else { this.loading = false; this.error = 'Opening this page was interrupted. Retry explicitly.'; } }
-    host.changed();
     contents.on('before-mouse-event', (event, mouse) => {
       const button = mouse.button || 'left';
       const release = mouse.type === 'mouseUp' && this.heldMouse.get(button) === this.navigation;
@@ -183,6 +182,36 @@ export class BrowserPage {
         if (mouse.type === 'mouseDown') { const zoom = contents.getZoomFactor(); void this.pickAt(mouse.x / zoom, mouse.y / zoom); }
       }
     });
+    void this.initialize();
+  }
+  private async initialize(): Promise<void> {
+    try {
+      // Settings describe this tab, but CDP emulation belongs to its current
+      // WebContents. Reapply it before loading after detach/return rehosting.
+      if (this.theme !== 'system') await this.tool('theme', this.theme);
+      if (this.destroyed) return;
+      if (this.slowNetwork) await this.tool('network', true);
+      if (this.destroyed) return;
+      this.initializing = false;
+      const pending = this.pendingLoad;
+      this.pendingLoad = undefined;
+      if (pending) {
+        if (this.host.authorized() && pending.generation === this.lease.generation) this.load(pending.logical, pending.actual);
+        else { this.loading = false; this.error = 'Opening this page was interrupted. Retry explicitly.'; }
+      }
+    } catch {
+      if (this.destroyed) return;
+      this.initializing = false;
+      this.pendingLoad = undefined;
+      this.loading = false;
+      this.error = 'Page settings could not be restored. Reload before trying again.';
+      this.theme = 'system'; this.slowNetwork = false;
+      this.lease.takeOver(); this.hide();
+      // Do not retain a half-configured engine whose emulation disagrees with
+      // the controls. Reload creates a fresh guest with the default settings.
+      if (this.hasContents) this.contents.close({ waitForBeforeUnload: false });
+    }
+    this.host.changed();
   }
   decorate(): void { /* Trusted renderer chrome owns all visual decoration. */ }
   snapshot(): TaskBrowserTab {
@@ -204,12 +233,12 @@ export class BrowserPage {
       this.loadTimer = undefined; if (this.destroyed || !this.loading) return;
       if (this.hasContents) this.contents.stop(); this.loading = false; this.error = 'This page took too long to load. Check its server, then retry.'; this.hide(); this.host.changed();
     }, 20000);
-    if (!this.hasContents) { this.pendingLoad = { logical, actual, generation: this.lease.generation }; return; }
+    if (!this.hasContents || this.initializing) { this.pendingLoad = { logical, actual, generation: this.lease.generation }; return; }
     void this.contents.loadURL(actual).catch(() => { /* did-fail-load supplies safe display text. */ });
   }
   show(bounds: Rectangle, zoom = 1, ownerGeneration = this.lease.generation, inputReady = true, viewport = { width: bounds.width / zoom, height: bounds.height / zoom }): void {
     if (this.inputReady && !inputReady && this.lease.driver === 'agent') { this.lease.generation++; this.target = undefined; this.host.changed(); }
-    this.layoutGeneration = ownerGeneration; this.inputReady = inputReady;
+    this.layoutGeneration = ownerGeneration; this.inputReady = inputReady && !this.initializing;
     const responsiveChange = this.viewport.width !== viewport.width || this.zoom !== zoom;
     if (responsiveChange || this.viewport.height !== viewport.height) {
       this.viewportRevision++;
@@ -337,6 +366,9 @@ export class BrowserPage {
         await Promise.race([debuggerApi.sendCommand('Emulation.setEmulatedMedia', { features: value === 'system' ? [] : [{ name: 'prefers-color-scheme', value }] }), cancelled]);
         this.theme = value;
       } else if (kind === 'network' && typeof value === 'boolean') {
+        // Chromium accepts the emulation command without applying it until the
+        // Network domain is enabled. Retain no request bodies or posted data.
+        await Promise.race([debuggerApi.sendCommand('Network.enable', { maxTotalBufferSize: 0, maxResourceBufferSize: 0, maxPostDataSize: 0 }), cancelled]);
         await Promise.race([debuggerApi.sendCommand('Network.emulateNetworkConditions', { offline: false, latency: value ? 150 : 0, downloadThroughput: value ? 200_000 : -1, uploadThroughput: value ? 90_000 : -1 }), cancelled]);
         this.slowNetwork = value;
       } else throw new Error('Unsupported browser tool setting');
