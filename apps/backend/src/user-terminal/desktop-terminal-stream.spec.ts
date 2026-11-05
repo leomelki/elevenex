@@ -1,4 +1,8 @@
 import { DesktopTerminalStream } from './desktop-terminal-stream.js';
+import {
+  TerminalOutputEvents,
+  type TerminalOutputEvent,
+} from './terminal-output-events.js';
 
 const token = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const listener = (port: number) => ({
@@ -358,7 +362,9 @@ describe('Rich shell tracking', () => {
         stream.append(output.slice(0, split));
         stream.append(output.slice(split));
         expect(stream.port).toBeNull();
-        stream.services.reconcile([listener(4200)]);
+        // A competing lower port ensures the printed URL actually selected
+        // Angular, rather than passing via the listener-only HTTP/root default.
+        stream.services.reconcile([listener(3000), listener(4200)]);
         expect(stream.status).toBe('serving');
         expect(stream.port).toBe(4200);
         expect(stream.protocol).toBe('http');
@@ -390,6 +396,12 @@ describe('Rich shell tracking', () => {
   ])(
     'does not discover a service from invalid/styled metadata: %j',
     (output) => {
+      const receive = jest.fn<void, [TerminalOutputEvent]>();
+      const parser = new TerminalOutputEvents(null);
+      for (const char of output) parser.append(char, receive);
+      expect(
+        receive.mock.calls.some(([event]) => event.type === 'service'),
+      ).toBe(false);
       const stream = new DesktopTerminalStream();
       for (const char of output) stream.append(char);
       expect(stream.port).toBeNull();

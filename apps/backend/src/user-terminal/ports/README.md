@@ -85,3 +85,19 @@ UDP, LAN-only binds, listeners owned by external Docker/VM daemons and fully
 detached/reparented jobs are outside terminal ancestry. Permission/tool/resource
 failures leave the shell usable but cannot establish a serving port. Platform parser tests are portable;
 real PTY/socket tests establish runtime behavior only on the host OS.
+
+## Real Angular regression
+
+With backend and renderer dependencies installed, run from the repository root:
+
+```sh
+ELEVENEX_TEST_ANGULAR_TERMINAL=1 pnpm --dir apps/backend exec jest --runInBand --runTestsByPath src/user-terminal/desktop-terminal-angular.spec.ts
+```
+
+This opt-in test starts the installed Angular CLI against the actual renderer
+through `UserPtyManager`, on an allocated loopback port with a custom serve path.
+It checks plain and colored output, replays each actual URL line at every chunk
+split, verifies process-owned listener discovery, requests the discovered path
+over HTTP, and checks that stopping the PTY clears the service. It requires
+permission to start a loopback server and inspect process ancestry. It is skipped
+in ordinary backend runs so they do not require renderer dependencies or builds.
