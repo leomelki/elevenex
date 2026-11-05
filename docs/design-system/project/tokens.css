@@ -221,6 +221,8 @@
   --text-code-size: 12.5px;
   --text-code-line: 20px;
   --text-code-weight: 400;
+  --text-terminal-size: 12px;
+  --text-terminal-line: 18px;
   --text-mono-meta-size: 11.5px;
   --text-mono-meta-line: 16px;
   --text-mono-meta-weight: 500;

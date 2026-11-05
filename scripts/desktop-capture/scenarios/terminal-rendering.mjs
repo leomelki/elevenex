@@ -60,7 +60,7 @@ export default async function* (capture) {
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme);
     await viewport(1000, 600);
-    for (const [name, height, spacing] of [['compact', 1, 0], ['default', 1.6, 0], ['spaced', 2, 2]]) {
+    for (const [name, height, spacing] of [['compact', 1, 0], ['default', 1.5, 0], ['spaced', 2, 2]]) {
       await capture.component('ex-terminal-rendering-demo', (component, values) => component.metrics(...values), [height, spacing]);
       await capture.settle();
       const metrics = await geometry();
@@ -86,7 +86,7 @@ export default async function* (capture) {
     await owner(component => component.surface.terminal.clearSelection());
     await capture.reducedMotion(true);
     await viewport(420, 600);
-    await capture.component('ex-terminal-rendering-demo', component => component.metrics(1.6, 0));
+    await capture.component('ex-terminal-rendering-demo', component => component.metrics(1.5, 0));
     await capture.settle();
     yield { name: `${theme}-narrow`, selector: '.terminal[data-ready]' };
     await capture.reducedMotion(false);

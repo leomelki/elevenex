@@ -243,8 +243,8 @@ export class TerminalSurface {
     if (!this.terminal.element) return;
     const style = getComputedStyle(this.terminal.element),
       token = (name: string) => style.getPropertyValue("--" + name).trim();
-    const fontSize = Number.parseFloat(token("text-code-size"));
-    const lineHeight = Number.parseFloat(token("text-code-line"));
+    const fontSize = Number.parseFloat(token("text-terminal-size"));
+    const lineHeight = Number.parseFloat(token("text-terminal-line"));
     if (token("font-mono"))
       this.terminal.options.fontFamily = `"Elevenex Terminal Symbols", ${token("font-mono")}`;
     if (Number.isFinite(fontSize) && fontSize > 0) {
@@ -302,7 +302,7 @@ export class TerminalSurface {
 /** Load bundled prompt glyphs before xterm measures and caches their cell widths. */
 export async function prepareTerminalFonts(): Promise<void> {
   const style = getComputedStyle(document.documentElement);
-  const size = style.getPropertyValue("--text-code-size").trim();
+  const size = style.getPropertyValue("--text-terminal-size").trim();
   const textFamily = style.getPropertyValue("--font-mono").trim();
   try {
     await Promise.all([
