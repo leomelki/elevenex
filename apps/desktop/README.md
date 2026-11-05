@@ -103,6 +103,29 @@ tools. Signing/notarization is separate from this local skeleton.
 We use **electron-builder** because its configuration covers all three
 requested installer formats and the repository already uses it.
 
+## Application icons
+
+`elevenex-logo.svg` at the repository root is the source of truth. Run
+`pnpm desktop:icons` after editing it (`pnpm icons` here). The generator uses
+the installed Electron's Chromium SVG renderer, without downloading tools or
+adding dependencies. It preserves the four traced paths and their pale fill
+on a charcoal rounded square; macOS tray images use black paths on transparency
+so the system can adapt them to either menu-bar theme.
+
+Generated assets are gitignored under `assets/icons/` and
+`../renderer/public/icons/`. They cover macOS Dock/Finder/About and DMG icons,
+Windows executable/taskbar/shortcuts and NSIS install/uninstall/header icons,
+Linux launcher/package PNG sizes, window and notification icons, the tray
+(including Retina images), and renderer favicon/touch/Home icons. The tray
+offers Show, New Window and Quit; closing windows keeps the existing platform
+lifecycle (the tray does not keep Windows/Linux running).
+
+Build, dev, preview and captures check source/tool/output hashes and regenerate
+only when necessary. `pnpm desktop:icons --force` forces a render;
+`pnpm desktop:icons --check` verifies freshness without changing files or
+launching Electron. Commit the source SVG and generator; assets and their manifest
+are generated locally. The existing app's `assets:icons` command stays separate.
+
 ## Layout
 
 | Path | Responsibility |

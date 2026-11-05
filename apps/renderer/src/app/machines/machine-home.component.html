@@ -1,6 +1,6 @@
 <section class="home" tabindex="-1" (keydown)="keydown($event)" aria-label="Machines">
   <div class="column">
-    <header><div class="heading"><h1>{{ heading() }}</h1><p>{{ description() }}</p></div>
+    <header><img class="app-icon" src="icons/icon.svg" alt="Elevenex" width="48" height="48" /><div class="heading"><h1>{{ heading() }}</h1><p>{{ description() }}</p></div>
       @if (!showFirstRun()) { @if (findOpen()) { <label class="search"><ex-icon name="search" [size]="13" /><input #findInput type="search" aria-label="Find a machine" placeholder="Find a machine" [value]="query()" (input)="query.set(findInput.value)" /><ex-kbd>⌘O</ex-kbd></label> } @else { <button type="button" class="search find" [attr.aria-expanded]="findOpen()" (click)="find()"><ex-icon name="search" [size]="13" /><span>Find a machine</span><ex-kbd>⌘O</ex-kbd></button> } }
     </header>
     <div class="grid" [exMachineGridMotion]="gridKeys()" [still]="held()">

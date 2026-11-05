@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { generateDesktopIcons } from '../desktop-icons.mjs';
 
 async function latest(paths) {
   const times = await Promise.all(paths.map(async path => {
@@ -12,6 +13,7 @@ async function latest(paths) {
 }
 
 export async function compileMain(root, processes) {
+  await generateDesktopIcons(root);
   const desktop = join(root, 'apps/desktop');
   const desktopRequire = createRequire(join(desktop, 'package.json'));
   const stamp = join(desktop, 'dist/.capture-compiled');

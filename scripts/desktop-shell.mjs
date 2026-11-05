@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { stageBackendRelease } from './desktop-backend-release.mjs';
 import { prepareDevelopmentBackend } from './desktop-backend-development.mjs';
+import { generateDesktopIcons } from './desktop-icons.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const desktop = join(root, 'apps/desktop');
@@ -41,6 +42,7 @@ function run(entry, args, cwd = root) {
 }
 
 async function compileMain() {
+  await generateDesktopIcons(root);
   await run(tsc, ['-p', join(shared, 'tsconfig.json')]);
   await run(tsc, ['-p', join(desktop, 'tsconfig.json')]);
   await stageBackendRelease(root);
@@ -168,8 +170,10 @@ try {
       break;
     case 'test':
       await compileMain();
+      await run(null, ['--test', 'test/application-identity.test.cjs'], desktop);
       await run(null, ['--test', 'test/preload.test.cjs', 'test/security.test.cjs', 'test/machines.test.cjs', 'test/backend-install.test.cjs', 'test/backend-development.test.cjs', 'test/backend-manager.test.cjs', 'test/backend-process.test.cjs', 'test/backend-client.test.cjs', 'test/ipc.test.cjs', 'test/remote.test.cjs', 'test/remote-wire.test.cjs', 'test/remote-audit.test.cjs', 'test/remote-recovery.test.cjs', 'test/remote-install.test.cjs', 'test/remote-development.test.cjs', 'test/ssh-native.test.cjs'], desktop);
       await run(null, ['--test', 'scripts/desktop-capture/test/options.test.mjs', 'scripts/desktop-capture/test/lifecycle.test.mjs']);
+      await run(null, ['--test', 'scripts/desktop-icons.test.mjs']);
       // ng test transpiles TypeScript; tsc also checks the negative IPC type cases.
       await run(tsc, ['-p', join(renderer, 'tsconfig.spec.json'), '--noEmit']);
       await run(ng, ['test', '--watch=false'], renderer);
@@ -177,7 +181,7 @@ try {
     case 'lint':
       await run(join(dirname(desktopRequire.resolve('eslint/package.json')), 'bin/eslint.js'), [
         '--config', 'apps/desktop/eslint.config.mjs', 'apps/desktop/src', 'apps/renderer/src', 'packages/shared/src', '--max-warnings', '0',
-        'scripts/desktop-shell.mjs', 'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-release.mjs', 'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-capture', 'apps/renderer/capture', 'apps/renderer/preview', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
+        'scripts/desktop-shell.mjs', 'scripts/desktop-icons.mjs', 'scripts/desktop-icons-render.cjs', 'scripts/desktop-icons.test.mjs', 'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-release.mjs', 'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-capture', 'apps/renderer/capture', 'apps/renderer/preview', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
       ]);
       break;
     default: throw new Error('Use dev, preview, build, package, test or lint');

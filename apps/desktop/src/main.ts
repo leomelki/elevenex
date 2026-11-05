@@ -21,6 +21,7 @@ import type { EnvironmentSelection } from '@elevenex/shared';
 import { MachineApplication } from './machines/application';
 import { MachinePreferences } from './machines/preferences';
 import { registerMachineIpc } from './machines/ipc';
+import { applicationIcon, installApplicationIdentity } from './application-identity';
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true },
@@ -66,6 +67,7 @@ const machines = new MachineApplication(backend, remote, machinePreferences,
 // must hand control to the first instead of starting another database owner.
 const ownsInstance = app.requestSingleInstanceLock();
 let windowsReady = false;
+let disposeIdentity: (() => void) | undefined;
 if (!ownsInstance) app.exit(0);
 app.on('second-instance', () => {
   if (!windowsReady) return;
@@ -88,6 +90,7 @@ function createWindow(launchSelection?: EnvironmentSelection | null): BrowserWin
   const window = new BrowserWindow({
     ...state.options(),
     title: 'Elevenex',
+    icon: applicationIcon,
     show: false,
     frame: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
@@ -235,6 +238,12 @@ void app.whenReady().then(async () => {
   ]));
   await Promise.all([state.load(), remote.load(), machinePreferences.load()]);
   windowsReady = true;
+  disposeIdentity = installApplicationIdentity(() => {
+    const window = BrowserWindow.getAllWindows()[0] ?? createWindow();
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  }, () => { createWindow(); });
   createWindow();
   // Window creation is independent of downloading: a future frontend can read
   // the current snapshot and subscribe immediately, including after a reload.
@@ -244,6 +253,8 @@ void app.whenReady().then(async () => {
   });
 }).catch((error: unknown) => {
   console.error(error);
+  disposeIdentity?.();
+  disposeIdentity = undefined;
   backendClient.dispose();
   machines.dispose();
   void Promise.allSettled([backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]).then(() => app.exit(1));
@@ -257,6 +268,8 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
+  disposeIdentity?.();
+  disposeIdentity = undefined;
   backendClient.dispose();
   machines.dispose();
   void Promise.allSettled([state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]).then(() => app.quit());

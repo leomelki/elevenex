@@ -12,6 +12,8 @@ that production owner with controlled lifecycle replies.
 machine and `newWindow` for Command/Ctrl-click or Command/Ctrl-Enter. Disconnected
 cards show `last`, never their stale `status`. Machine colors are the named project
 tokens, so callers cannot introduce a second palette.
+Its heading uses the generated `public/icons/icon.svg` application tile; update
+the root logo through `pnpm desktop:icons`, rather than editing that asset.
 
 `MachineLaunch` keeps `[machineHome]` and `[machineView]` projections mounted and
 makes the inactive side inert. It owns and cancels all Web Animations. Stable

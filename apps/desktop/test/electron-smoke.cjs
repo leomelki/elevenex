@@ -1,6 +1,6 @@
 // Run with Electron after building. This exercises the real sandboxed preload
 // and app:// handler, rather than Node mocks. Not part of the headless unit suite.
-const { app, BrowserWindow, Menu, nativeTheme } = require('electron');
+const { app, BrowserWindow, Menu, nativeTheme, nativeImage } = require('electron');
 const assert = require('node:assert/strict');
 const { mkdtempSync } = require('node:fs');
 const { rm } = require('node:fs/promises');
@@ -75,6 +75,11 @@ require('../dist/main.js');
 
 void (async () => {
   const window = await firstWindow;
+  for (const [file, size] of [['icon.png', 512], ['trayTemplate.png', 22], ['trayTemplate@2x.png', 22]]) {
+    const icon = nativeImage.createFromPath(require.resolve(`../assets/icons/${file}`));
+    assert.equal(icon.isEmpty(), false);
+    assert.deepEqual(icon.getSize(), { width: size, height: size });
+  }
   const prefs = window.webContents.getLastWebPreferences();
   assert.equal(prefs.contextIsolation, true);
   assert.equal(prefs.nodeIntegration, false);
@@ -221,11 +226,17 @@ void (async () => {
   const assets = await window.webContents.executeJavaScript(`(async () => {
     const index = await fetch('/');
     const missing = await fetch('/missing-asset.js');
-    return { csp: index.headers.get('Content-Security-Policy'), missing: missing.status };
+    const icon = await fetch('/icons/icon.svg');
+    const favicon = await fetch('/icons/favicon.ico');
+    return { csp: index.headers.get('Content-Security-Policy'), missing: missing.status,
+      icon: icon.status, iconType: icon.headers.get('Content-Type'), favicon: favicon.status };
   })()`);
   assert.ok(assets.csp.includes("script-src 'self'"));
   assert.ok(!assets.csp.includes('unsafe-inline'));
   assert.equal(assets.missing, 404);
+  assert.equal(assets.icon, 200);
+  assert.equal(assets.iconType, 'image/svg+xml');
+  assert.equal(assets.favicon, 200);
   console.log('Electron smoke passed: sandbox, connected deferred workspace, scoped backend HTTP client/lifecycle IPC/events, runtime validation, native theme, multiple windows and app:// history/CSP. Backend runtime is a test fixture.');
   await rm(backendRoot, { recursive: true, force: true });
   clearTimeout(timeout);

@@ -9,11 +9,16 @@ export default tseslint.config(
   { basePath, ignores: ['**/node_modules/**', '**/dist/**', 'apps/desktop/renderer/**', '**/release/**', '**/.angular/**'] },
   {
     basePath,
-    files: ['scripts/desktop-shell.mjs', 'scripts/desktop-backend-*.mjs', 'scripts/desktop-capture/**/*.mjs', 'apps/desktop/test/**/*.cjs', 'apps/desktop/eslint.config.mjs'],
+    files: ['scripts/desktop-shell.mjs', 'scripts/desktop-icons*.mjs', 'scripts/desktop-icons-render.cjs', 'scripts/desktop-backend-*.mjs', 'scripts/desktop-capture/**/*.mjs', 'apps/desktop/test/**/*.cjs', 'apps/desktop/eslint.config.mjs'],
     extends: [eslint.configs.recommended],
     languageOptions: {
       globals: { console: 'readonly', process: 'readonly', URL: 'readonly', fetch: 'readonly', AbortController: 'readonly', AbortSignal: 'readonly', setTimeout: 'readonly', clearTimeout: 'readonly', performance: 'readonly', Buffer: 'readonly' },
     },
+  },
+  {
+    basePath,
+    files: ['scripts/desktop-icons-render.cjs'],
+    languageOptions: { globals: { Image: 'readonly', document: 'readonly' } },
   },
   {
     basePath,

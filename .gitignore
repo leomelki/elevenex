@@ -24,6 +24,8 @@ apps/desktop/renderer/
 apps/desktop/.stage/
 dist-runtime/
 apps/desktop/release/
+apps/desktop/assets/icons/
+apps/renderer/public/icons/
 apps/renderer/out-tsc/
 apps/renderer/src/design-system/tokens.css
 

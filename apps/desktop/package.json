@@ -7,6 +7,7 @@
   "license": "CC-BY-NC-4.0",
   "main": "dist/main.js",
   "scripts": {
+    "icons": "node ../../scripts/desktop-icons.mjs",
     "dev": "node ../../scripts/desktop-shell.mjs dev",
     "preview": "node ../../scripts/desktop-shell.mjs preview",
     "build": "node ../../scripts/desktop-shell.mjs build",

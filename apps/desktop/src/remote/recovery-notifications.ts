@@ -1,5 +1,6 @@
 import { BrowserWindow, Notification } from 'electron';
 import type { RemoteManager } from './manager';
+import { applicationIcon } from '../application-identity';
 
 /** Background asks never include SSH prompt text, credential data or endpoint addresses. */
 export function notifyRecovery(remote: RemoteManager): () => void {
@@ -17,7 +18,7 @@ export function notifyRecovery(remote: RemoteManager): () => void {
     if (seen.size > 100) { const oldest = seen.keys().next().value!; seen.delete(oldest); notices.get(oldest)?.close(); }
     notices.get(hostId)?.close();
     const name = remote.hosts().find(host => host.id === hostId)?.name ?? 'Machine';
-    const notice = new Notification({ title: `${name} needs you to reconnect`, body: 'Open Elevenex to continue the SSH connection.' });
+    const notice = new Notification({ title: `${name} needs you to reconnect`, body: 'Open Elevenex to continue the SSH connection.', icon: applicationIcon });
     const closed = () => { window.removeListener('closed', close); notice.removeAllListeners(); notices.delete(hostId); };
     const close = () => { notice.close(); closed(); };
     notices.set(hostId, { close });

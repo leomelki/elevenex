@@ -333,7 +333,10 @@ One meaning per shortcut, everywhere. Check this table before giving anything a 
 - No emoji (except a project face someone picked) and no filled icons; PRs and tickets show the `pr` / `merged` / `ticket` icons.
 - Agent harnesses are the one other place for outside marks: wherever you choose or recognise a harness (the agent chip and menu, preset cards and reply gutter), Claude Code, Codex, OpenCode and Pi show their real logos (`AgentMark`), bundled with the app, in `currentColor` for compact picker/preset controls. Reply gutters use soft 28px tinted tiles: Claude in terracotta on peach; Codex in an app-inspired periwinkle gradient on a blue tint; OpenCode and Pi in `ink` on a neutral tint. These identity colours live in the theme-aware `harness-*` tokens, separately from status colours; they do not indicate selection or activity. Optical sizing balances the thin Claude rays against the denser marks. Unknown harnesses keep a two-letter monogram (on `accent-soft` in compact controls, neutral with `ink-muted` in replies). The live turn retains its teal breathing ring; reduced motion stops it.
 - Projects are the one place for outside imagery: each may carry its own logo (`ProjectMark`), shown as given, never recolored. Without one, the face is two letters, an emoji or an icon from the set, on the project's color. The sample logos in these previews are placeholders.
-- There is no Elevenex logo yet: set “Elevenex” in Instrument Sans 600, `ink`.
+- The Elevenex logo is traced in the root `elevenex-logo.svg`. `pnpm desktop:icons`
+  generates the pale-on-charcoal application tile and monochrome system-tray
+  variants; see `apps/desktop/README.md`. Keep the name in Instrument Sans 600,
+  `ink`, when it is used as text.
 
 ## Components
 
@@ -369,6 +372,6 @@ Not designed yet:
 - Narrow windows: what collapses first.
 - Search inside a conversation, and “what changed since you last looked”.
 - Machines: a machines section in Settings. (Editing and removing a machine, and why getting ready failed, are designed: `MachineMenu`, `EditMachine`, `MachineCard`'s `error`.)
-- A logo (the name is set in type), and shipping the fonts instead of loading them from Google Fonts.
+- Shipping the fonts instead of loading them from Google Fonts (the Angular renderer already bundles them locally).
 
 How far things were checked: every card renders without errors and was looked at in light and dark. Motion was checked in the previews (layout diff, frame probe, frames paused mid-animation), never against a live agent's output.

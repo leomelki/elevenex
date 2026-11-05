@@ -8,16 +8,20 @@
     "dist/remote/askpass-helper.js"
   ],
   "directories": {
-    "output": "release"
+    "output": "release",
+    "buildResources": "assets/icons"
   },
   "files": [
     "dist/**/*.js",
     "dist/backend-release.json",
     "renderer/**/*",
+    "assets/icons/icon.png",
+    "assets/icons/tray*.png",
     "package.json"
   ],
   "npmRebuild": false,
   "mac": {
+    "icon": "assets/icons/icon.icns",
     "category": "public.app-category.developer-tools",
     "target": [
       "dmg",
@@ -25,11 +29,21 @@
     ]
   },
   "win": {
+    "icon": "assets/icons/icon.ico",
     "target": [
       "nsis"
     ]
   },
+  "nsis": {
+    "installerIcon": "assets/icons/icon.ico",
+    "uninstallerIcon": "assets/icons/icon.ico",
+    "installerHeaderIcon": "assets/icons/icon.ico"
+  },
+  "dmg": {
+    "icon": "assets/icons/icon.icns"
+  },
   "linux": {
+    "icon": "assets/icons/png",
     "category": "Development",
     "target": [
       "AppImage",
