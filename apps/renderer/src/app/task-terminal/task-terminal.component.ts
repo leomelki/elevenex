@@ -276,7 +276,7 @@ export class TaskTerminalComponent {
     this.attached = entry;
     this.notice.set(entry.notice);
     this.inputBlocked.set(entry.input.blocked);
-    entry.surface.attach(host, this.canType(entry));
+    entry.surface.attach(host, this.canType(entry), true);
     if (this.focusOnAttach && this.available()) {
       this.focusOnAttach = false;
       entry.surface.focus();
@@ -338,7 +338,7 @@ export class TaskTerminalComponent {
           this.notice.set(entry.notice);
         }
       }
-      await entry.surface.write(reply.data);
+      await entry.surface.write(reply.data, reply.size, reply.more);
       entry.surface.generation = reply.generation;
       entry.surface.sequence = reply.next;
       if (this.disposed || revision !== this.revision) return;

@@ -147,6 +147,11 @@ export function parseTerminalOutput(
       from = integer(value["from"]),
       next = integer(value["next"]),
       data = text(value["data"], 32768);
+    const rawSize = value["size"] === undefined ? undefined : object(value["size"]);
+    const size = rawSize === undefined ? undefined : {
+      cols: integer(rawSize["cols"], 2, 500),
+      rows: integer(rawSize["rows"], 1, 300),
+    };
     if (
       terminal.generation !== gen ||
       next < from ||
@@ -165,6 +170,7 @@ export function parseTerminalOutput(
       data,
       gap: value["gap"],
       more: value["more"],
+      ...(size === undefined ? {} : { size }),
     };
   } catch {
     throw invalidResponse();

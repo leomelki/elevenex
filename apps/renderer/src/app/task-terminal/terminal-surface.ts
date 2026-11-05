@@ -1,4 +1,5 @@
 import type { TerminalStyleLease } from "./terminal-style-nonce";
+import type { TaskTerminalSize } from "@elevenex/shared";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { findTerminalMatches } from "./terminal-search";
@@ -17,6 +18,7 @@ export class TerminalSurface {
   private cellRenderer?: TerminalCellRenderer;
   private disposed = false;
   private readonly writes = new Set<() => void>();
+  private replaying = false;
   private searchPosition = -1;
   private query = "";
   sequence = 0;
@@ -43,7 +45,9 @@ export class TerminalSurface {
     this.terminal.loadAddon(this.fitAddon);
     this.disposers.push(
       this.terminal.onData(input),
-      this.terminal.onResize((size) => resized(size.cols, size.rows)),
+      this.terminal.onResize((size) => {
+        if (!this.replaying) resized(size.cols, size.rows);
+      }),
       this.terminal.parser.registerOscHandler(52, () => true),
     );
     this.terminal.attachCustomKeyEventHandler((event) => {
@@ -62,8 +66,9 @@ export class TerminalSurface {
       return true;
     });
   }
-  attach(container: HTMLElement, enabled: boolean): void {
+  attach(container: HTMLElement, enabled: boolean, replay = false): void {
     if (this.disposed) return;
+    this.replaying = replay;
     if (!this.mounted) {
       const lease = this.retainStyles();
       try {
@@ -107,6 +112,7 @@ export class TerminalSurface {
       this.resizeFrame = undefined;
       if (
         this.disposed ||
+        this.replaying ||
         !this.terminal.element?.isConnected ||
         !this.terminal.element.offsetWidth
       )
@@ -121,16 +127,29 @@ export class TerminalSurface {
       }
     });
   }
-  async write(data: string): Promise<void> {
-    if (!data || this.disposed) return;
-    await new Promise<void>((resolve) => {
-      const complete = () => {
-        this.writes.delete(complete);
-        resolve();
-      };
-      this.writes.add(complete);
-      this.terminal.write(data, complete);
-    });
+  async write(data: string, size?: TaskTerminalSize, more = false): Promise<void> {
+    if (this.disposed) return;
+    if (size) {
+      // Replay with the producer's grid, including across output pages. Local
+      // fitting resumes after catch-up; historical resizes must never reach the PTY.
+      this.replaying = true;
+      if (this.terminal.cols !== size.cols || this.terminal.rows !== size.rows)
+        this.terminal.resize(size.cols, size.rows);
+    }
+    if (data) {
+      await new Promise<void>((resolve) => {
+        const complete = () => {
+          this.writes.delete(complete);
+          resolve();
+        };
+        this.writes.add(complete);
+        this.terminal.write(data, complete);
+      });
+    }
+    if (!this.disposed && this.replaying && !more) {
+      this.replaying = false;
+      this.fit();
+    }
   }
   reset(): void {
     this.terminal.reset();

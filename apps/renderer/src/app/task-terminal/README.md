@@ -80,6 +80,13 @@ an explicit Resume typing after inspection. Detaching, connection and process ge
 changes invalidate pending input. Queued chunks retain their original scope and
 process identity; replacement requires explicit Resume typing if a dispatch was
 interrupted. Resize is fit-to-container, frame-coalesced and single-flight.
+Output pages carry their original PTY grid and stop at resize boundaries. The
+surface replays them with that grid before fitting the visible pane, without
+sending historical resizes back to the process. This keeps zsh's startup spacer
+from wrapping into blank rows in narrow panes, including on reattachment. Geometry
+history is bounded to 256 boundaries within the retained output window; expiration
+uses the existing history-gap notice. Engines without grid metadata retain the
+original output contract.
 
 ANSI is rendered by the installed xterm 6 adapter, loaded lazily. Its matching
 WebGL addon draws Powerline caps/separators, box drawing and blocks to cell edges,

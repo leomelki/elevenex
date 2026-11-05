@@ -1,10 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { TerminalOutputBuffer } from '../terminal/terminal-output-buffer.js';
 
+export const DESKTOP_TERMINAL_INITIAL_SIZE = { cols: 80, rows: 24 } as const;
+
 /** Bounded process-owned stream. Character offsets use JS UTF-16 on both ends. */
 export class DesktopTerminalStream {
   readonly generation = randomUUID();
   private readonly output = new TerminalOutputBuffer(256 * 1024);
+  // Keep resize boundaries with the bytes so replaying startup in a narrow pane
+  // cannot wrap zsh's prompt-spacer line.
+  private readonly sizes: { at: number; cols: number; rows: number }[] = [
+    { at: 0, ...DESKTOP_TERMINAL_INITIAL_SIZE },
+  ];
   sequence = 0;
   status: 'idle' | 'running' | 'serving' | 'failed' | 'exited' = 'running';
   exitCode: number | null = null;
@@ -34,6 +41,7 @@ export class DesktopTerminalStream {
   append(data: string): void {
     this.sequence += data.length;
     this.output.append(data);
+    this.trimSizes();
     const tailLength = this.parserTail.length;
     const text = this.parserTail + data;
     // Consume status and service hints in wire order. Only our process-specific
@@ -84,6 +92,24 @@ export class DesktopTerminalStream {
               ? Math.max(text.indexOf('\x07', start) + 1, text.length - 100)
               : -100,
           );
+  }
+  resize(cols: number, rows: number): void {
+    const last = this.sizes[this.sizes.length - 1];
+    if (last.cols === cols && last.rows === rows) return;
+    const size = { at: this.sequence, cols, rows };
+    if (last.at === size.at) this.sizes[this.sizes.length - 1] = size;
+    else this.sizes.push(size);
+    this.trimSizes();
+  }
+  private trimSizes(): void {
+    const first = Math.max(0, this.sequence - 256 * 1024);
+    // Bound resize-only activity as well as output. If geometry expires sooner
+    // than bytes, reads report the usual history gap rather than guessing a grid.
+    while (
+      this.sizes.length > 1 &&
+      (this.sizes[1].at <= first || this.sizes.length > 256)
+    )
+      this.sizes.shift();
   }
   input(data: string): void {
     // Keystrokes while a foreground program runs may be passwords or REPL input.
@@ -172,26 +198,34 @@ export class DesktopTerminalStream {
   }
   read(generation: string | null, after: number) {
     const data = this.output.snapshot();
-    const first = this.sequence - data.length;
+    const bufferFirst = this.sequence - data.length;
+    const first = Math.max(bufferFirst, this.sizes[0].at);
     const gap =
       generation !== this.generation || after < first || after > this.sequence;
     let from = gap ? first : after;
     // Do not split a surrogate pair at a response boundary.
-    if (from > first && /[\uDC00-\uDFFF]/.test(data[from - first] ?? ''))
+    if (from > first && /[\uDC00-\uDFFF]/.test(data[from - bufferFirst] ?? ''))
       from--;
-    let next = Math.min(this.sequence, from + 32768);
+    const index = this.sizes.findIndex((size) => size.at > from);
+    const size = this.sizes[index < 0 ? this.sizes.length - 1 : index - 1];
+    let next = Math.min(
+      this.sequence,
+      from + 32768,
+      index < 0 ? Infinity : this.sizes[index].at,
+    );
     if (
       next < this.sequence &&
-      /[\uDC00-\uDFFF]/.test(data[next - first] ?? '')
+      /[\uDC00-\uDFFF]/.test(data[next - bufferFirst] ?? '')
     )
       next--;
     return {
       generation: this.generation,
       from,
       next,
-      data: data.slice(from - first, next - first),
+      data: data.slice(from - bufferFirst, next - bufferFirst),
       gap,
       more: next < this.sequence,
+      size: { cols: size.cols, rows: size.rows },
     };
   }
 }

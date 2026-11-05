@@ -2865,3 +2865,26 @@ in `artifacts/desktop-capture/terminal-review-rendering/`. Inspected PNGs cover
 both themes, narrow/reduced-motion layouts and Find across wrapped text. The only
 warning is the intentional GPU context loss. These checks do not establish live
 SSH terminal behavior, packaged-app launch, or Windows/Linux runtime behavior.
+
+### Terminal startup geometry (2026-11-05)
+
+Reproduced zsh's startup spacer wrapping into extra rows when 80-column PTY
+output was parsed in a narrow pane. Output pages now retain the producer's grid
+and stop at resize boundaries; replay does not send historical resizes to the
+PTY. Geometry retention is bounded and optional for older engines.
+
+Desktop lint, production build, TypeScript contracts and the complete desktop
+suite passed: 138 platform tests, 7 capture-tool tests and 661 renderer tests.
+The final focused renderer run passed 44 terminal tests; four backend suites
+passed 57 tests, including real PTYs. Native macOS Electron smoke passed with
+the built assets and its disposable backend fixture.
+
+Native captures in `artifacts/desktop-capture/task85-terminal-startup-2/` report
+`verified: true` for four narrow light/dark checkpoints. Inspected PNGs show the
+initial prompt at the top and filled output using the first visible row. The
+scenario also checks detachment between pages, intentional blank lines, keyboard
+input and reduced motion. The existing rendering regression passed 11 checkpoints
+in `artifacts/desktop-capture/task85-terminal-rendering/`; inspected light/dark
+PNGs retain prompt shapes, with only the expected GPU-loss warning. These preview
+captures use the production ANSI adapter with supplied shell output; they do not
+establish a live SSH session, packaged-app launch or Windows/Linux behavior.

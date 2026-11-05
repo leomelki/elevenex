@@ -1,4 +1,7 @@
-import { DesktopTerminalStream } from './desktop-terminal-stream.js';
+import {
+  DesktopTerminalStream,
+  DESKTOP_TERMINAL_INITIAL_SIZE,
+} from './desktop-terminal-stream.js';
 import { randomUUID } from 'node:crypto';
 import { desktopShellIntegration } from './desktop-shell-integration.js';
 import {
@@ -426,8 +429,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   ): pty.IPty {
     const ptyProcess = pty.spawn(shell, args, {
       name: 'xterm-256color',
-      cols: 80,
-      rows: 24,
+      ...DESKTOP_TERMINAL_INITIAL_SIZE,
       cwd: worktreePath,
       env,
     });
@@ -488,6 +490,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     if (cols < 2 || rows < 1) return;
 
     session.pty.resize(cols, rows);
+    this.desktopStreams.get(terminalId)?.resize(cols, rows);
 
     if (session.useTmux) {
       this.queueTmuxResize(terminalId, session.tmuxSessionName, cols, rows);

@@ -14,6 +14,10 @@ test('terminal replies validate task, generation, ordered offsets and bounds', (
   assert.deepEqual(parseTaskTerminal(terminal, 1, 2), terminal);
   const output = { terminal, generation, from: 0, next: 4, data: 'test', gap: false, more: false };
   assert.deepEqual(parseTerminalOutput(output, 1, 2), output);
+  const sized = { ...output, size: { cols: 80, rows: 24 } };
+  assert.deepEqual(parseTerminalOutput(sized, 1, 2), sized);
+  for (const size of [null, {}, { cols: 0, rows: 24 }, { cols: 501, rows: 24 }, { cols: 80, rows: 301 }, { cols: 80, rows: 1.5 }, { cols: '80', rows: 24 }])
+    assert.throws(() => parseTerminalOutput({ ...output, size }, 1, 2));
   for (const raw of [{ ...output, terminal: { ...terminal, taskId: 9 } }, { ...output, next: 5 }, { ...output, generation: null }, { ...output, from: -1 }, { ...output, more: true }, { ...output, data: 'a'.repeat(32769) }]) assert.throws(() => parseTerminalOutput(raw, 1, 2));
   assert.throws(() => parseTerminalList({ taskId: 1, terminals: [terminal, terminal], scripts: [], limit: 16 }, 1));
   assert.throws(() => parseTaskTerminal({ ...terminal, status: 'serving' }, 1));

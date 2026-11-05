@@ -41,6 +41,10 @@ export interface TaskTerminalRead extends TaskTerminalTarget {
   readonly generation: string | null;
   readonly after: number;
 }
+export interface TaskTerminalSize {
+  readonly cols: number;
+  readonly rows: number;
+}
 export interface TaskTerminalOutput {
   readonly terminal: TaskTerminal;
   readonly generation: string | null;
@@ -49,6 +53,8 @@ export interface TaskTerminalOutput {
   readonly data: string;
   readonly gap: boolean;
   readonly more: boolean;
+  /** PTY geometry for this output page. Absent on older engines. */
+  readonly size?: TaskTerminalSize;
 }
 export interface TaskTerminalCreate {
   readonly taskId: number;

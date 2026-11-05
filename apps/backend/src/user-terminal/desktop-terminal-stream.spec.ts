@@ -6,6 +6,55 @@ const prompt = (code: number) =>
   `\x1b]133;D;${token};${code}\x07\x1b]133;B;${token}\x07`;
 
 describe('Desktop terminal process stream', () => {
+  it('pages at resize boundaries and carries the grid that produced each page', () => {
+    const stream = new DesktopTerminalStream();
+    stream.append('startup');
+    stream.resize(32, 8);
+    stream.append('prompt');
+    const first = stream.read(null, 0);
+    expect(first).toMatchObject({
+      data: 'startup',
+      size: { cols: 80, rows: 24 },
+      next: 7,
+      more: true,
+    });
+    const second = stream.read(stream.generation, first.next);
+    expect(second).toMatchObject({
+      data: 'prompt',
+      size: { cols: 32, rows: 8 },
+      from: 7,
+      more: false,
+    });
+    stream.resize(40, 10);
+    expect(stream.read(stream.generation, second.next)).toMatchObject({
+      data: '',
+      size: { cols: 40, rows: 10 },
+      more: false,
+    });
+    // Multiple resizes without intervening output retain only the latest grid.
+    stream.resize(50, 12);
+    stream.append('next');
+    expect(stream.read(stream.generation, second.next)).toMatchObject({
+      data: 'next',
+      size: { cols: 50, rows: 12 },
+    });
+  });
+  it('bounds geometry history and reports a gap when earlier resize boundaries expire', () => {
+    const stream = new DesktopTerminalStream();
+    for (let index = 0; index < 1000; index++) {
+      stream.append('x');
+      stream.resize(32 + (index % 2), 8);
+    }
+    const first = stream.read(stream.generation, 0);
+    expect(first.gap).toBe(true);
+    expect(first.from).toBe(745);
+    expect(first.size).toEqual({ cols: 32, rows: 8 });
+    stream.append('y'.repeat(300_000));
+    const expired = stream.read(stream.generation, 0);
+    expect(expired.from).toBe(stream.sequence - 256 * 1024);
+    expect(expired.size).toEqual({ cols: 33, rows: 8 });
+    expect(expired.data).toBe('y'.repeat(32768));
+  });
   it('orders bounded windows, reports expired offsets and never changes generation on read', () => {
     const stream = new DesktopTerminalStream(null, token);
     stream.append('a'.repeat(300_000));

@@ -108,6 +108,7 @@ describe('Desktop task terminals with real PTYs', () => {
     await service.list(task);
     expect(ptys.desktopStream(terminal.id)?.generation).toBe(generation);
     expect(ptys.isAlive(terminal.id)).toBe(true);
+    const resizedAfter = ptys.desktopStream(terminal.id)!.sequence;
     await service.command(task, terminal.id, {
       type: 'resize',
       generation,
@@ -115,6 +116,12 @@ describe('Desktop task terminals with real PTYs', () => {
       rows: 31,
     });
     await waitFor(() => ptys.desktopStream(terminal.id)?.status === 'idle');
+    expect((await service.read(task, terminal.id, generation, 0)).size).toEqual(
+      { cols: 80, rows: 24 },
+    );
+    expect(
+      (await service.read(task, terminal.id, generation, resizedAfter)).size,
+    ).toEqual({ cols: 101, rows: 31 });
     await service.command(task, terminal.id, {
       type: 'input',
       generation,
@@ -130,9 +137,9 @@ describe('Desktop task terminals with real PTYs', () => {
       data: "printf 'WAIT_%s\\n' READY; sleep 30\r",
     });
     await waitFor(async () =>
-      (await service.read(task, terminal.id, generation, 0)).data.includes(
-        'WAIT_READY',
-      ),
+      (
+        await service.read(task, terminal.id, generation, resizedAfter)
+      ).data.includes('WAIT_READY'),
     );
     await service.command(task, terminal.id, { type: 'interrupt', generation });
     await waitFor(() => ptys.desktopStream(terminal.id)?.exitCode === 130);
