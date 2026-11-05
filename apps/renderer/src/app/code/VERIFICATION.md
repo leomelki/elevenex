@@ -1,19 +1,8 @@
 # New Code workbench verification
 
-## Loading bar through presentation (2026-11-05)
-
-The opening indicator and `aria-busy` now remain active while the iframe is
-covered, including the interval after the extension connects and before main
-acknowledges the skinned layout. They clear when the reveal begins. Retained
-layout changes do not show a new opening indicator.
-
-`pnpm desktop:lint`, `pnpm desktop:test` (648 renderer cases) and
-`pnpm desktop:build` passed. The startup regression checks the visible progress
-fold and busy state on both sides of presentation acknowledgement. Real editor
-captures under `artifacts/desktop-capture/code-loading-bar-{dark,light}/` hold
-presentation after skin/layout readiness to inspect the still-active 2px bar.
-Both reports say **verified: true**, with no renderer errors. Inspected the
-covered-editor PNGs in both themes.
+> Historical reference. Do not append routine task results. Report current checks
+> in chat/PR descriptions and keep run artifacts under ignored `artifacts/`, as
+> described in the root `AGENTS.md`. Earlier results do not verify current code.
 
 ## Quick startup fade (2026-11-05)
 

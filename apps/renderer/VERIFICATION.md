@@ -1,5 +1,9 @@
 # Component system verification
 
+> Historical reference. Do not append routine task results. Report current checks
+> in chat/PR descriptions and keep run artifacts under ignored `artifacts/`, as
+> described in the root `AGENTS.md`. Earlier results do not verify current code.
+
 ## Agent picker review fixes, 2026-11-04
 
 Model search stays mounted for its current harness after a catalog shrinks,

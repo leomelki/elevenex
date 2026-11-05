@@ -1,7 +1,9 @@
 # Task Code workbench
 
-See [historical verification, measurements and remaining limits](./VERIFICATION.md) for the
-actual checks and platform coverage; this guide describes the implementation.
+See [historical verification, measurements and remaining limits](./VERIFICATION.md)
+for earlier checks and platform coverage; this guide describes the implementation.
+The log is a frozen reference. Routine new results belong in chat/PR descriptions
+and ignored `artifacts/`, as described in the root `AGENTS.md`.
 
 Code is the genuine **Code OSS Web workbench**, not a Monaco replacement. It
 belongs to the task across conversations. Its stable virtual folder/storage ID is
