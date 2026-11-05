@@ -56,7 +56,7 @@ export interface InvokeContracts {
   'task-browser:attach': { args: [scopeId: string, taskId: number, tabId: string, contentsId: number]; result: void };
   'task-browser:surfaces': { args: []; result: readonly TaskBrowserSurface[] };
   'task-browser:presentation': { args: [scopeId: string, taskId: number, tabId: string, presentation: 'embedded' | 'stream']; result: void };
-  'task-browser:frame-ack': { args: [scopeId: string, taskId: number, tabId: string, streamId: string, sequence: number]; result: void };
+  'task-browser:frame-ack': { args: [scopeId: string, taskId: number, tabId: string, streamId: string, sequence: number, decoded?: boolean]; result: void };
   'task-browser:input': { args: [scopeId: string, taskId: number, tabId: string, generation: number, input: TaskBrowserStreamInput]; result: number };
   'task-browser:configure': { args: [scopeId: string, taskId: number, placement: TaskBrowserPlacement]; result: BackendResult<TaskBrowserState> };
   'task-browser:read': { args: [scopeId: string, taskId: number]; result: BackendResult<TaskBrowserState> };
@@ -186,7 +186,7 @@ export interface ElevenexBridge {
   taskBrowserAttach?(scopeId: string, taskId: number, tabId: string, contentsId: number): Promise<void>;
   taskBrowserSurfaces?(): Promise<readonly TaskBrowserSurface[]>;
   taskBrowserPresentation?(scopeId: string, taskId: number, tabId: string, presentation: 'embedded' | 'stream'): Promise<void>;
-  taskBrowserFrameAck?(scopeId: string, taskId: number, tabId: string, streamId: string, sequence: number): Promise<void>;
+  taskBrowserFrameAck?(scopeId: string, taskId: number, tabId: string, streamId: string, sequence: number, decoded?: boolean): Promise<void>;
   taskBrowserInput?(scopeId: string, taskId: number, tabId: string, generation: number, input: TaskBrowserStreamInput): Promise<number>;
   onTaskBrowserSurfacesChanged?(listener: (surfaces: readonly TaskBrowserSurface[]) => void): () => void;
   onTaskBrowserFrame?(listener: (frame: TaskBrowserFrame) => void): () => void;

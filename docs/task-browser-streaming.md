@@ -8,18 +8,166 @@ Use one authenticated, full-duplex WebSocket per task viewer over the existing
 private SSH tunnel. Keep the renderer's named preload methods and restrictive CSP.
 The browser's private CDP pipe is never an application API.
 
-This change implements that lifetime boundary and the persistent channel. It does
-not claim that JPEG streaming equals a native browser's video, audio or operating
-system integration, or that a transport change alone proves lower WAN latency.
+Presentations negotiate H.264 video, with JPEG for older hosts or a failed codec.
+Control and task ownership stay independent of the media producer. The current
+SSH connection is reliable TCP: video compression reduces bytes but cannot remove
+TCP head-of-line blocking or establish native-browser parity on a WAN.
 
 ```mermaid
 flowchart LR
   Agent[Authenticated task MCP] --> Task[Backend task browser]
   Task --> Chromium[Sandboxed persistent Chromium profile]
-  Task <--> Stream[Private WebSocket: state, input, frame credits]
+  Chromium --> Capture[Bounded compositor JPEG source]
+  Capture --> Encoder[Presentation-owned FFmpeg: H.264]
+  Encoder --> Stream[Private WebSocket: video window and reliable control]
   Stream <--> Main[Desktop main: credentials and scope]
   Main <--> Renderer[Typed preload: panel and companions]
+  Renderer --> Decode[WebCodecs decoder and canvas]
 ```
+
+## Video decision and implementation
+
+The implemented path is **H.264 Annex B access units → private WebSocket over
+SSH → typed main/preload delivery → WebCodecs**. Use independent, bounded
+producers/encoders/receivers/decoders rather than a recording API or a video file.
+There is no MP4/WebM fragment accumulation, playback timeline, MSE buffer or frame
+polling on this path. Decode requests use `optimizeForLatency`; each returned
+`VideoFrame` is drawn and closed. Actual display receipts release capacity.
+
+| Boundary | Implementation and budget |
+| --- | --- |
+| Capture | Existing private CDP compositor events; one latest JPEG, quality 95, adaptive resolution bounded to 1920×1440 and the H.264 level ceiling; at most 60 updates/second; static seeding only when necessary |
+| Encoder | One persistent FFmpeg subprocess per visible presentation; baseline H.264, one reference and no B frames; GPU-specific low-latency profiles with libx264 `ultrafast`/`zerolatency` fallback; adaptive FPS, bitrate and thread budget |
+| Local encoder I/O | Length-delimited multipart JPEG input prevents waiting for a subsequent image; encoded packet sizes use FFmpeg's private `stats_mux_pre` pipe, so output never waits for another Annex B delimiter or a container fragment |
+| Delivery | Three packets for older peers; newer peers negotiate up to eight, paced by recent display latency; 3 MB per packet; pause capture/encoding above 512 KiB socket buffering or 3 MB in flight; five-second stalled-viewer deadline |
+| Receiver | Scoped subscription ID, strict contiguous sequence, bounded queue, cumulative display receipts; no replay after transport failure |
+| Decoder | Fresh epoch begins with a keyframe; validate baseline SPS allocation bounds before decoding; one pending decode/output; two-second output deadline; close decoder and frames on replacement/destruction |
+
+Resizing or changing pixel density replaces the encoder and sends a new keyframe
+epoch while preserving the presentation's delivery sequence. Physical resolution
+honors device pixel ratio within the capture cap. The reliable control lane is
+multiplexed on the socket; it shares TCP congestion, so this is not a separate
+network priority channel. The negotiated delivery window avoids the former one-frame-per-RTT limit. The
+frame-rate policy also accounts for the window/RTT ceiling; no configuration
+guarantees 60 FPS on an arbitrary device or network.
+
+`videoStream: 'h264'` is additive. Older clients continue using `frame`, and older
+hosts retain their existing socket/HTTP behavior. A `video` start/ack/stop command
+uses a fresh subscription UUID. Binary video events include tab/subscription,
+sequence, CSS dimensions, decoder epoch, key/delta flag and microsecond timestamp.
+Hosts advertising `videoWindow: 8` also support one-way ACK/stop receipts. Encoder
+start remains a request/response operation. This avoids accumulating per-frame
+RPC timers and exhausting the control-request budget with multiple high-RTT views.
+Older hosts receive the original receipt shape and responses.
+An encoder failure rotates to another probed GPU or software target with a new
+keyframe epoch; only exhausted candidates end the subscription and select JPEG. A decoder
+failure sends an optional `decoded: false` frame receipt, replacing only that
+presentation with JPEG and a fresh display identity. Ordinary five-argument frame
+receipts remain compatible. No failed media request retries a browser mutation.
+
+`ffmpeg-static@5.3.0` is the approved, exact-pinned managed runtime (Node >=16;
+no Angular peers). Its postinstall downloads the target platform's executable.
+Backend bundles keep the package external; local and remote runtime assembly
+include its binary, README and license. Remote assembly permits its download
+script even when native Node addons cannot be built on the staging host. There
+is no renderer-controlled executable path. Compatible host FFmpeg binaries are
+also queried and probed to enable hardware codecs omitted from the managed
+build. The
+package and redistributed binaries have their own GPL license/source obligations;
+retain the upstream notices and source references with release artifacts.
+
+### Hardware selection and resource adaptation
+
+| Host | Automatically probed hardware adapters |
+| --- | --- |
+| macOS | VideoToolbox (OS-managed encoder device) |
+| Windows | NVIDIA NVENC, Intel QSV, AMD AMF, hardware Media Foundation |
+| Linux | NVENC, QSV and VA-API render nodes, V4L2 M2M where available |
+| Any host with a compatible FFmpeg | Software libx264 fallback |
+
+The selected FFmpeg must actually include the encoder and have access to a working
+driver/device. Discovery checks the managed binary, an optional administrator
+override and compatible absolute PATH entries (at most three distinct binaries).
+Each `-encoders` query is bounded; compiled-in names alone grant no capability.
+Selection coalesces a page-free synthetic JPEG encode, requires immediate IDR and
+baseline SPS output, then decodes that access unit to a fixed 16×16 RGB result.
+No real page enters probes or capability caches. FFREPORT file output is stripped.
+Positive results cache for five minutes, failures for thirty seconds; session
+failures are excluded for that presentation. New presentations can retry after
+cooldown without interrupting working streams to benchmark a recovering driver.
+Bounded multi-device enumeration and active-device counts prefer less occupied
+hardware; failed hardware can fall through to another adapter or software.
+
+The module boundaries are explicit:
+
+* `runtime-video-profiles`: fixed, validated argv and upload formats per encoder.
+* `runtime-video-catalog`: executable/device discovery, coalesced probes and cooldowns.
+* `runtime-video-resources`: CPU affinity/quota, available memory and sampled CPU load.
+* `runtime-video-host`: application-owned catalog, device occupancy, encoder lifetime
+  and FIFO work admission shared across tasks/windows.
+* `runtime-video-quality`: presentation feedback, resolution/FPS/bitrate selection,
+  macroblock/level limits and recovery hysteresis.
+* `runtime-video`: stream ownership, keyframe epochs, delivery window and cancellation.
+
+Software begins conservatively (at most 1280×720/30 FPS); hardware can reach the
+configured 60 FPS/resolution ceiling. Concurrent views share a pixel-work budget.
+Low CPU quota, high load, low memory, slow encoding or growing display latency
+reduce work. Resolution reduction reaches the CDP producer as well as FFmpeg,
+reducing intermediate JPEG costs. The logical browser viewport and input coordinate
+generation remain unchanged. Recovery waits before increasing resolution; actual
+viewport changes immediately replace the encoder without retaining the old aspect.
+Recent RTT is distinguished from excess display queuing, and the baseline ages
+so a route change is not treated as permanent congestion.
+
+The host admits at most one queued encoding operation per presentation, up to 48
+presentations, with one to four concurrent operations based on available cores.
+CPU affinity is supplemented with cgroup v1/v2 CPU and memory limits where mounted.
+Sampling happens on demand at most once a second, without a background timer.
+These are conservative scheduling heuristics, not hard OS CPU/RSS quotas or a
+promise of optimal performance on every driver. Capture/copies still cost CPU
+even with hardware encoding. No app changes device permissions or installs drivers.
+
+Advanced host-administrator overrides are optional; auto is the normal mode:
+
+| Environment variable | Accepted value/default |
+| --- | --- |
+| `ELEVENEX_BROWSER_VIDEO_ENCODER` | `auto` (default), `software`, `videotoolbox`, `nvenc`, `qsv`, `amf`, `vaapi`, `mediafoundation`, `v4l2` |
+| `ELEVENEX_BROWSER_FFMPEG` | Absolute executable path; probed, with managed fallback |
+| `ELEVENEX_BROWSER_VIDEO_DEVICE` | GPU index 0–9 for NVENC/Windows QSV, or `/dev/dri/renderD…` for Linux QSV/VA-API |
+| `ELEVENEX_BROWSER_VIDEO_MAX_FPS` | 5–60, default 60 |
+| `ELEVENEX_BROWSER_VIDEO_MAX_WIDTH` | 640–1920, default 1920 |
+| `ELEVENEX_BROWSER_VIDEO_MAX_HEIGHT` | 360–1440, default 1440; level constraints can reduce it further |
+| `ELEVENEX_BROWSER_VIDEO_MAX_BITRATE` | 250,000–16,000,000 bits/s, default 8,000,000 |
+| `ELEVENEX_BROWSER_VIDEO_CPU_THREADS` | 1–4, default up to 2; further reduced by the shared budget |
+
+Set these on the machine running the browser backend, not on its remote viewer.
+The local desktop supervisor forwards only these named video settings; endpoint,
+data-root and Node/Electron injection overrides remain stripped. Remote launchers
+do not forward the viewer's hardware preferences to another machine. Configure
+the remote daemon environment instead. Explicit encoder choices retain software
+fallback; `software` disables hardware probing. The selected executable must support
+FFmpeg's packet-statistics pipe (normally FFmpeg 6+). No dependency upgrade or
+system package installation occurs during a viewer connection.
+
+### Remaining capture and network boundaries
+
+CDP supplies compressed still images, so this implementation still incurs JPEG
+capture/decode before video encoding. It substantially reduces network traffic
+for repeated content, but is **not a zero-copy capture pipeline**. The next real
+CPU improvement is a native raw/compositor capture producer feeding the same
+encoder/delivery boundary, with explicit per-platform packaging and sandbox tests.
+Do not inject a capture script/bridge into arbitrary sites, weaken the task network
+policy, or silently adopt recording APIs that buffer output to obtain that change.
+Hardware adapters run only after a bounded real encode/decode probe. Actual
+NVIDIA/Intel/AMD/ARM device and Windows/Linux runtime validation require those
+hosts; macOS checks do not establish successful operation on other GPUs.
+
+WebRTC is the next transport only when an authenticated direct UDP or TURN path
+is provided. Keep signaling on this reliable control channel, define ICE/TURN
+credential ownership and egress policy, and reuse the same task/viewer contract.
+Putting WebRTC inside the same TCP SSH tunnel preserves its blocking behavior.
+WebTransport also requires a new QUIC/UDP listener and does not solve the current
+SSH deployment constraint. Neither transport is advertised as implemented.
 
 ## Owners and lifetimes
 
@@ -137,18 +285,8 @@ and cleanup tests, and real UI/native verification before its capability is enab
 | Multiple viewers | Separate viewer identities and frame credit/quality state; one explicit human controller lease; spectator viewports cannot resize the authoritative page; no shared global ACK |
 | Cursor/touch/drag | Narrow typed pointer/cursor state and touch gestures; local cursor rendering, coalesced motion, preserved button/key boundaries; OS drag/drop needs an explicit file policy |
 | Accessibility/find | Named, permissioned AX/find operations with bounded results; never mirror untrusted DOM into application UI or silently change agent observation policy |
-| Video/audio | Negotiated media capability and encoder owner; separate media delivery from reliable input/control; explicit audio ownership/mute and echo behavior |
+| Audio | Separately negotiated capture/codec and explicit ownership/mute/echo policy; H.264 video does not imply audio support |
 | Web/mobile | Authenticated gateway with scoped expiring viewer credentials, Origin checks and TLS; reuse domain/presentation protocol without exposing the Unix socket or CDP |
-
-For high-motion video and audio, evaluate WebRTC with a real encoder rather than
-sending JPEGs faster. Its congestion control and media channels are useful, but
-CDP screencast is compressed still images: it does not supply an encoded video/
-audio track. WebRTC therefore requires capture/encoding, signaling and a network
-policy (ICE/TURN); it cannot simply replace this socket. The existing SSH path has
-no direct browser-to-server UDP and keeps all page/network credentials in main.
-A future media adapter should negotiate independently and retain this control
-protocol. WebCodecs over a reliable socket is another option, with TCP
-head-of-line blocking and codec availability measured explicitly.
 
 Before choosing another codec, collect page-free counters: encode/decode/display
 latency, ACK delay, bytes/second, dropped/replaced frames, socket buffered bytes,
@@ -158,6 +296,18 @@ concurrent companions and a disconnected viewer. Report p50/p95 and quality; a
 loopback smoke test cannot establish WAN smoothness or native-browser parity.
 
 ## Research
+
+* [FFmpeg codecs](https://ffmpeg.org/ffmpeg-codecs.html),
+  [FFmpeg packet statistics](https://ffmpeg.org/ffmpeg.html#stats_005fenc_005fpre),
+  and the [managed runtime](https://github.com/eugeneware/ffmpeg-static) establish
+  the encoder configuration, packet-boundary sideband and distribution boundary.
+* [WebCodecs](https://www.w3.org/TR/webcodecs/) defines asynchronous codec support,
+  decoder lifetime, latency optimization and explicit frame resource ownership.
+* [RFC 8835](https://www.rfc-editor.org/rfc/rfc8835.html) describes WebRTC's
+  transport/connectivity requirements. The current SSH tunnel supplies no UDP path.
+* [Selkies architecture](https://docs.selkies.io/latest/component/) demonstrates
+  that video codecs and media transport are independent choices; adopting its
+  capture/server stack would be a separate deployment and security decision.
 
 * [T3 Code stream source](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/preview/ServerBrowserStream.ts)
   demonstrates persistent streaming, bounded replacement frames and paced receipts.
@@ -174,6 +324,47 @@ loopback smoke test cannot establish WAN smoothness or native-browser parity.
   service/dependency is introduced.
 
 ## Verification
+
+Hardware/adaptive revision (2026-11-06): 36 focused backend regressions, 162 desktop
+tests, seven capture-tool tests and 651 renderer tests pass. This includes actual
+managed-FFmpeg encode/decode probing and cache coalescing, actual software output,
+capture throttling with unchanged logical input coordinates, device/path validation,
+simulated Windows/Linux candidate inventories and hardware rejection, CPU/memory
+and multi-view adaptation, RTT/window feedback, resize recovery and shutdown.
+The final automatic probe selected **VideoToolbox** on this Mac. Backend production
+TypeScript, typed lint, bundling, desktop lint/build and native Electron smoke pass.
+The current light/dark/narrow/decode-failure captures are inspected at
+`artifacts/desktop-capture/hardware-adaptive-video/`; its report is verified with
+no errors or warnings. These captures exercise the actual component and final
+software bitstream through an isolated preview provider, not an external SSH host.
+
+Physical Intel/NVIDIA/AMD/ARM devices on Windows/Linux, GPU exhaustion/recovery
+under real driver load, packaged launches and WAN benchmarks remain unverified.
+Candidate/profile tests establish selection and failure behavior, not those
+platforms' native runtime performance. The earlier H.264 baseline below records
+the preceding validation state and its narrowly scoped performance sample.
+
+H.264 verification on macOS includes immediate static-frame output from managed
+FFmpeg, dependent-frame compression, the three-packet window, cumulative receipts,
+resize/keyframe epoch recovery and encoder cleanup. Real sandboxed Chromium sends
+video over the private Unix WebSocket and keeps agent execution alive after viewer
+disconnect. Desktop tests cover pushed packet ordering, cancellation and optional
+decode-failure IPC; renderer tests cover real baseline SPS parsing and absent
+WebCodecs. `desktop:test` passes 160 desktop tests, seven capture-tool tests and
+651 renderer tests. Desktop lint/build, backend production TypeScript compilation,
+backend bundling and focused backend regressions pass.
+
+Native Electron captures of the production `BrowserStreamComponent` use real
+Chromium JPEG input and managed-FFmpeg H.264 packets in an isolated preview provider.
+Light keyframe, dark dependent frame, narrow view and failed-decode receipt were
+inspected; `artifacts/desktop-capture/browser-video-final/report.json` reports
+`verified: true`, with no errors/warnings. The native preload/security smoke passes.
+The preview route is `/browser-video`; fixtures remain outside production imports.
+A three-frame 800×600 text-page probe encoded its two small updates to 841/1037
+bytes versus 31,394/31,590 JPEG bytes, at about 2 ms software encoding after startup.
+This tiny loopback probe measures neither general quality nor WAN performance.
+Raw capture, external SSH/WAN benchmarks and packaged/foreign-OS launches remain
+unverified. The earlier JPEG baseline validation below remains historical context.
 
 Regression suites cover the private WebSocket/TCP boundary, runtime validation,
 pushed state, request-ID replay rejection, binary frames, cancellation, unknown

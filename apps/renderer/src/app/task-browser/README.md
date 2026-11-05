@@ -47,9 +47,9 @@ inert and without input; hidden panels also stop page audio and frame production
 
 A remote backend hosts real sandboxed Chromium. Main owns its private transport,
 viewer lease and credentials; the renderer receives only typed state and bounded
-JPEG display frames. Remote pages always use `BrowserStreamComponent`. The
+H.264 access units (JPEG on older hosts or codec failure). Remote pages always use `BrowserStreamComponent`. The
 legacy local stream IPC remains compatible but is not exposed in Browser Tools.
-The streamed display has one decoding frame and one latest replacement. Explicit
+The streamed display has one decoding frame and a bounded video delivery window. Explicit
 acks, adaptive resolution/quality and host backpressure avoid growing a frame queue
 on slow links. A typed, bounded input lane coalesces motion/scroll, preserves key
 and text order, and drops queued work on hidden/disconnected/changed authority.
@@ -156,7 +156,7 @@ browser reports capacity instead of silently exceeding the bound.
 Theme and slow-network tools use private, fixed CDP commands, with no CDP bridge.
 Local guests support native accessibility, audio, file inputs and user-initiated
 OS downloads (two concurrent, 32 MB each); agent downloads require the user.
-The first remote JPEG mode does **not** relay audio, page accessibility, device
+The remote display does **not** relay audio, page accessibility, device
 permission prompts, file picking or downloads. Tools explain those limits and
 provide Open outside. Unsupported controls do not silently succeed. No web/mobile
 client ships in this foundation; remote desktops use the same private runtime
@@ -243,3 +243,17 @@ the remote daemon stays alive. Agents can start their own runtime tabs without a
 viewer. Backend restarts restore profiles and safe locations, not live documents
 or automation grants. Local native guests retain desktop-process lifetimes.
 See [the design and feature roadmap](../../../../../docs/task-browser-streaming.md).
+
+Hosts advertising `videoStream: 'h264'` use bounded pushed Annex B packets and the
+same typed frame event. `BrowserVideoDecoder` validates baseline SPS bounds, owns
+one WebCodecs decoder/output and resets on a keyframe epoch. The component draws
+and closes each `VideoFrame`; a failed decode sends an optional false receipt so
+main selects JPEG for that presentation. Legacy five-argument receipts and JPEG
+hosts remain compatible. The isolated `/browser-video` preview accepts externally
+encoded fixtures for native capture; it adds no production bridge/test hook.
+
+`videoWindow: 8` optionally enables a larger bounded delivery window. Main sends
+the new start field only to hosts advertising it; older H.264 hosts retain their
+original strict command shape and three-packet window. The backend adapts pixel
+resolution while preserving frame metadata in logical page CSS coordinates, so
+the input lane never treats an encoder quality change as a new page viewport.

@@ -1,6 +1,7 @@
 import { WebSocket } from "ws";
 import type { BackendEndpoint } from "../backend-client/transport";
 import { record } from "./validation";
+import { RemoteBrowserVideo } from './remote-video';
 
 interface Pending {
   resolve(value: unknown): void;
@@ -16,6 +17,7 @@ export class RemoteBrowserStream {
   private stopped = false;
   readonly opened: Promise<void>;
   readonly closed: Promise<void>;
+  readonly video = new RemoteBrowserVideo(body => this.request('video', body), body => this.notifyVideo(body));
   constructor(
     endpoint: BackendEndpoint,
     taskId: number,
@@ -67,6 +69,7 @@ export class RemoteBrowserStream {
           );
         }
         this.pending.clear();
+        this.video.destroy();
         resolve();
       });
     });
@@ -102,6 +105,8 @@ export class RemoteBrowserStream {
             Number(value["height"]) > 1600
           )
             throw new Error();
+          const payload = new Uint8Array(bytes.buffer, bytes.byteOffset + 4 + length, bytes.length - 4 - length);
+          if (value['event'] === 'video') { this.video.receive(value, payload); return; }
           value = {
             id: value["id"],
             result: {
@@ -123,6 +128,7 @@ export class RemoteBrowserStream {
           state(value["state"]);
           return;
         }
+        if (value['event'] === 'video-ended') { this.video.end(value['subscription']); return; }
         if (!Number.isSafeInteger(value["id"]) || Number(value["id"]) < 1)
           throw new Error();
         const entry = this.pending.get(Number(value["id"]));
@@ -143,8 +149,15 @@ export class RemoteBrowserStream {
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) this.destroy();
   }
+  private notifyVideo(body: unknown): void {
+    if (this.stopped || this.socket.readyState !== WebSocket.OPEN || this.socket.bufferedAmount > 512 * 1024)
+      throw new Error('Browser stream unavailable');
+    const data = JSON.stringify({ id: ++this.sequence, method: 'video', body });
+    if (Buffer.byteLength(data) > 1024) throw new Error('Invalid video receipt');
+    this.socket.send(data, error => { if (error) this.destroy(); });
+  }
   request(
-    method: "command" | "layout" | "input" | "frame" | "ping",
+    method: "command" | "layout" | "input" | "frame" | "ping" | 'video',
     body?: unknown,
     timeout = 10000,
     key?: string,
@@ -169,6 +182,7 @@ export class RemoteBrowserStream {
     });
   }
   cancel(key: string): void {
+    this.video.cancel(key);
     for (const [id, entry] of this.pending)
       if (entry.key === key) {
         this.pending.delete(id);

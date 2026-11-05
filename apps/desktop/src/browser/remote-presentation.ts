@@ -34,6 +34,7 @@ export interface RemotePresentationHost {
     "scopeId" | "taskId" | "tabId" | "streamId"
   > | null>;
   cancel(requestId: string): void;
+  rejectVideo?(requestId: string): void;
   deliver(frame: TaskBrowserFrame): void;
   failed(error: unknown): void;
 }
@@ -224,13 +225,17 @@ export class RemoteBrowserPresentation {
       this.framePending = false;
     }
   }
-  acknowledge(tabId: string, streamId: string, sequence: number): void {
+  acknowledge(tabId: string, streamId: string, sequence: number, decoded = true): void {
     if (
       tabId !== this.active ||
       streamId !== this.streamId ||
       sequence !== this.waitingAck
     )
       return;
+    if (!decoded) {
+      this.host.rejectVideo?.(this.requestId);
+      this.reset();
+    }
     this.waitingAck = 0;
     void this.readFrame();
   }

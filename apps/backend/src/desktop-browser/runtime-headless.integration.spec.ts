@@ -134,6 +134,16 @@ it('starts agent tabs without a viewer and retains the live document, network an
     expect(packet.subarray(4 + headerSize, 6 + headerSize)).toEqual(
       Buffer.from([255, 216]),
     );
+    const video = new Promise<Buffer>((resolve, reject) => {
+      viewer!.on('message', (bytes, binary) => {
+        if (binary && Buffer.isBuffer(bytes)) resolve(bytes);
+        else if (!binary && bytes.toString().includes('video-ended')) reject(new Error('Video encoder failed'));
+      });
+    });
+    viewer.send(JSON.stringify({ id: 2, method: 'video', body: { action: 'start', tabId: opened.tabs[0].id, subscription: '11111111-1111-4111-8111-111111111111', sequence: 0 } }));
+    const videoPacket = await video;
+    const videoHeaderLength = videoPacket.readUInt32BE(0);
+    expect(JSON.parse(videoPacket.subarray(4, 4 + videoHeaderLength).toString())).toMatchObject({ event: 'video', width: 800, height: 600, video: { codec: 'avc1.42E02A', key: true } });
     runtime.disconnect(1, view.token);
     viewer.terminate();
     expect(task.page(opened.tabs[0].id).generation).toBe(before);
@@ -174,7 +184,7 @@ it('starts agent tabs without a viewer and retains the live document, network an
     expect(await page.evaluate<string>('window.retained')).toBe(marker);
   } finally {
     viewer?.terminate();
-    gateway?.onModuleDestroy();
+    await gateway?.onModuleDestroy();
     await new Promise<void>((resolve) =>
       channel ? channel.close(() => resolve()) : resolve(),
     );

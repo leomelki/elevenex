@@ -21,6 +21,7 @@ createServer((request, response) => {
     db: process.env.DB_PATH, dataRoot: process.env.ELEVENEX_DATA_ROOT, bind: process.env.ELEVENEX_BIND_HOST,
     nodeOptions: process.env.NODE_OPTIONS, supervised: process.env.ELEVENEX_BACKEND_SUPERVISED,
     runtimeRoot: process.env.ELEVENEX_BACKEND_RUNTIME_ROOT, inheritedOverride: process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN,
+    videoEncoder: process.env.ELEVENEX_BROWSER_VIDEO_ENCODER, unknownVideo: process.env.ELEVENEX_BROWSER_VIDEO_COMMAND,
   }));
 }).listen(Number(process.env.ELEVENEX_PROXY_PORT), process.env.ELEVENEX_BIND_HOST);
 `;
@@ -52,6 +53,12 @@ test('starts on loopback with isolated data, verifies readiness, and stops the w
   const { root, installation } = await setup(t);
   const oldOverride = process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN;
   process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN = 'https://untrusted.test';
+  const oldVideo = process.env.ELEVENEX_BROWSER_VIDEO_ENCODER, oldUnknown = process.env.ELEVENEX_BROWSER_VIDEO_COMMAND;
+  process.env.ELEVENEX_BROWSER_VIDEO_ENCODER = 'software'; process.env.ELEVENEX_BROWSER_VIDEO_COMMAND = 'untrusted';
+  t.after(() => {
+    if (oldVideo === undefined) delete process.env.ELEVENEX_BROWSER_VIDEO_ENCODER; else process.env.ELEVENEX_BROWSER_VIDEO_ENCODER = oldVideo;
+    if (oldUnknown === undefined) delete process.env.ELEVENEX_BROWSER_VIDEO_COMMAND; else process.env.ELEVENEX_BROWSER_VIDEO_COMMAND = oldUnknown;
+  });
   t.after(() => { if (oldOverride === undefined) delete process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN; else process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN = oldOverride; });
   const running = await startBackend(installation, root, version, new AbortController().signal);
   t.after(() => running.stop());
@@ -62,6 +69,7 @@ test('starts on loopback with isolated data, verifies readiness, and stops the w
   assert.equal(info.supervised, '1');
   assert.equal(info.runtimeRoot, root);
   assert.equal(info.inheritedOverride, undefined);
+  assert.equal(info.videoEncoder, 'software'); assert.equal(info.unknownVideo, undefined);
   assert.equal(info.nodeOptions, undefined);
   await running.stop();
   await running.stop();

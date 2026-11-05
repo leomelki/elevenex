@@ -62,3 +62,69 @@ test('malformed or oversized binary metadata closes the stream and rejects pendi
     await rejected;
   } finally { await f.cleanup(); }
 });
+
+for (const window of [3, 8]) test(`video window ${window} negotiates compatibly and retains every dependent packet`, async () => {
+  const f = await fixture();
+  try {
+    const commands = [];
+    f.socket.on('message', bytes => {
+      const request = JSON.parse(bytes);
+      commands.push(request);
+      if (!request.body.oneWay) f.socket.send(JSON.stringify({ id: request.id, result: null }));
+    });
+    const requested = once(f.socket, 'message');
+    const first = f.stream.video.next('tab', 0, 'panel', window);
+    const [request] = await requested;
+    const subscription = JSON.parse(request).body.subscription;
+    assert.equal(JSON.parse(request).body.maxInFlight, window === 8 ? 8 : undefined);
+    const send = n => {
+      const header = Buffer.from(JSON.stringify({ event: 'video', tabId: 'tab', subscription, sequence: n, width: 800, height: 600,
+        video: { codec: 'avc1.42E02A', epoch: '11111111-1111-4111-8111-111111111111', key: n === 1, timestamp: n * 33333 } }));
+      const length = Buffer.alloc(4); length.writeUInt32BE(header.length);
+      f.socket.send(Buffer.concat([length, header, Buffer.from([n])]));
+    };
+    for (let n = 1; n <= window; n++) send(n);
+    assert.equal((await first).video.data[0], 1);
+    for (let n = 2; n <= window; n++) assert.equal((await f.stream.video.next('tab', n - 1, 'panel')).video.data[0], n);
+    assert.equal(commands.filter(c => c.body.action === 'start').length, 1);
+    // Expanded-window receipts have no reply and cannot accumulate RPC deadlines.
+    while (commands.filter(c => c.body.action === 'ack').length < window - 1) await once(f.socket, 'message');
+    assert.ok(commands.filter(c => c.body.action === 'ack').every(c => c.body.oneWay === (window === 8 ? true : undefined)));
+    f.stream.video.fallback('panel');
+    assert.equal(f.stream.video.available('panel'), false);
+    assert.equal(f.stream.video.available('companion'), true);
+  } finally { await f.cleanup(); }
+});
+
+test('one-way video receipts cannot fill the control RPC limit on a delayed link', async () => {
+  const f = await fixture();
+  try {
+    f.socket.on('message', bytes => {
+      const request = JSON.parse(bytes);
+      if (request.method === 'ping' || request.body?.action === 'start') f.socket.send(JSON.stringify({ id: request.id, result: null }));
+      // Deliberately never reply to receipts.
+    });
+    const start = once(f.socket, 'message');
+    let next = f.stream.video.next('tab', 0, 'panel', 8);
+    const [body] = await start;
+    const subscription = JSON.parse(body).body.subscription;
+    for (let sequence = 1; sequence <= 64; sequence++) {
+      const header = Buffer.from(JSON.stringify({ event: 'video', tabId: 'tab', subscription, sequence, width: 800, height: 600,
+        video: { codec: 'avc1.42E02A', epoch: '11111111-1111-4111-8111-111111111111', key: sequence === 1, timestamp: sequence * 33333 } }));
+      const size = Buffer.alloc(4); size.writeUInt32BE(header.length);
+      f.socket.send(Buffer.concat([size, header, Buffer.from([sequence])]));
+      assert.equal((await next).sequence, sequence);
+      if (sequence < 64) next = f.stream.video.next('tab', sequence, 'panel', 8);
+    }
+    assert.equal(await f.stream.request('ping'), null);
+  } finally { await f.cleanup(); }
+});
+
+test('cancelling a video waiter releases it without interpreting late packets as a new display', async () => {
+  const f = await fixture();
+  try {
+    const frame = f.stream.video.next('tab', 0, 'panel');
+    f.stream.cancel('panel');
+    assert.equal(await frame, null);
+  } finally { await f.cleanup(); }
+});

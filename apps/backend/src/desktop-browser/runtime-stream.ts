@@ -5,21 +5,42 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
 import type { RuntimeBrowserController } from './runtime-browser.controller.js';
 import { RuntimeBrowserService } from './runtime-browser.service.js';
+import { RuntimeBrowserVideo } from './runtime-video.js';
+import { RuntimeVideoHost } from './runtime-video-host.js';
 
 const message = z
   .object({
     id: z.number().int().positive().safe(),
-    method: z.enum(['command', 'layout', 'input', 'frame', 'ping', 'cancel']),
+    method: z.enum([
+      'command',
+      'layout',
+      'input',
+      'frame',
+      'ping',
+      'cancel',
+      'video',
+    ]),
     body: z.unknown().optional(),
   })
   .strict();
 const credit = z
   .object({ tabId: z.string().uuid(), after: z.number().int().min(0).safe() })
   .strict();
+const videoCommand = z
+  .object({
+    tabId: z.string().uuid(),
+    subscription: z.string().uuid(),
+    action: z.enum(['start', 'ack', 'stop']),
+    sequence: z.number().int().min(0).safe(),
+    maxInFlight: z.number().int().min(3).max(8).optional(),
+    oneWay: z.literal(true).optional(),
+  })
+  .strict();
 
 /** Private full-duplex transport. Existing HTTP routes remain compatible. */
 @Injectable()
 export class RuntimeBrowserStream implements OnModuleDestroy {
+  private readonly videoHost = new RuntimeVideoHost();
   private readonly server = new WebSocketServer({
     noServer: true,
     maxPayload: 512 * 1024,
@@ -107,6 +128,10 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
     this.channels.set(taskId, { token, socket: ws });
     const pending = new Map<number, AbortController>();
     const frames = new Map<string, AbortController>();
+    const videos = new Map<
+      string,
+      { subscription: string; stream: RuntimeBrowserVideo }
+    >();
     let lastId = 0,
       seen = Date.now(),
       stateRevision = -1;
@@ -148,6 +173,8 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
         this.channels.delete(taskId);
       clearInterval(timer);
       unsubscribe();
+      for (const video of videos.values()) video.stream.stop();
+      videos.clear();
       for (const controller of pending.values()) controller.abort();
       pending.clear();
       try {
@@ -200,6 +227,71 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
             // cadence; no per-frame task/database/HTTP request is necessary.
             await routes.state(request, id, token, String(stateRevision));
             result = null;
+          } else if (parsed.method === 'video') {
+            const command = videoCommand.parse(parsed.body);
+            if (command.oneWay && command.action === 'start') throw new Error();
+            const previous = videos.get(command.tabId);
+            if (command.action === 'start') {
+              if (!task.isPresented(command.tabId) || frames.has(command.tabId))
+                throw new Error();
+              previous?.stream.stop();
+              const stream = new RuntimeBrowserVideo(
+                task.page(command.tabId),
+                () =>
+                  ws.readyState === WebSocket.OPEN &&
+                  this.browsers.viewer(taskId, token) === task &&
+                  task.isPresented(command.tabId),
+                (packet) => {
+                  if (ws.bufferedAmount > 4 * 1024 * 1024)
+                    throw new Error('Video transport congested');
+                  const { data, ...video } = packet.video;
+                  const header = Buffer.from(
+                    JSON.stringify({
+                      event: 'video',
+                      tabId: command.tabId,
+                      subscription: command.subscription,
+                      sequence: packet.sequence,
+                      width: packet.width,
+                      height: packet.height,
+                      video,
+                    }),
+                  );
+                  const length = Buffer.alloc(4);
+                  length.writeUInt32BE(header.length);
+                  ws.send(Buffer.concat([length, header, data]));
+                },
+                {
+                  host: this.videoHost,
+                  maxInFlight: command.maxInFlight,
+                  bufferedBytes: () => ws.bufferedAmount,
+                },
+              );
+              videos.set(command.tabId, {
+                subscription: command.subscription,
+                stream,
+              });
+              void stream.done
+                .catch(() => {
+                  if (videos.get(command.tabId)?.stream === stream)
+                    send({
+                      event: 'video-ended',
+                      subscription: command.subscription,
+                    });
+                })
+                .finally(() => {
+                  if (videos.get(command.tabId)?.stream === stream)
+                    videos.delete(command.tabId);
+                });
+            } else if (previous?.subscription === command.subscription) {
+              if (command.action === 'ack')
+                previous.stream.acknowledge(command.sequence);
+              else {
+                previous.stream.stop();
+                videos.delete(command.tabId);
+              }
+            }
+            if (command.oneWay) return;
+            result = null;
           } else if (parsed.method === 'cancel') {
             const target = z
               .number()
@@ -214,6 +306,7 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
             const { tabId, after } = credit.parse(parsed.body);
             if (
               (frames.has(tabId) && !frames.get(tabId)!.signal.aborted) ||
+              videos.has(tabId) ||
               !task.isPresented(tabId)
             )
               throw new Error();
@@ -269,9 +362,10 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
     });
     publish();
   }
-  onModuleDestroy(): void {
+  async onModuleDestroy(): Promise<void> {
     this.http?.off('upgrade', this.upgrade);
     for (const ws of this.server.clients) ws.terminate();
     this.server.close();
+    await this.videoHost.destroy();
   }
 }

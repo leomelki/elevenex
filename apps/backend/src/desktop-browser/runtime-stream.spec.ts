@@ -58,7 +58,7 @@ describe('private persistent browser channel', () => {
   });
   afterEach(async () => {
     for (const ws of sockets.splice(0)) ws.terminate();
-    gateway.onModuleDestroy();
+    await gateway.onModuleDestroy();
     await service.onModuleDestroy();
     await Promise.all([
       new Promise<void>((resolve) => server.close(() => resolve())),
@@ -161,6 +161,37 @@ describe('private persistent browser channel', () => {
     expect(first.readyState).toBe(WebSocket.OPEN);
     first.close();
     await once(first, 'close');
+  });
+  it('accepts one-way video receipts without replies and keeps starts request/response', async () => {
+    const ws = open(),
+      received: Record<string, unknown>[] = [];
+    ws.on('message', (data) => {
+      if (!Buffer.isBuffer(data)) throw new Error('Unexpected test packet');
+      const value: unknown = JSON.parse(data.toString());
+      if (typeof value === 'object' && value !== null)
+        received.push({ ...value });
+    });
+    await once(ws, 'open');
+    const body = {
+      tabId: '11111111-1111-4111-8111-111111111111',
+      subscription: '22222222-2222-4222-8222-222222222222',
+      action: 'ack',
+      sequence: 0,
+      oneWay: true,
+    };
+    ws.send(JSON.stringify({ id: 1, method: 'video', body }));
+    ws.send(JSON.stringify({ id: 2, method: 'ping' }));
+    while (!received.some((item) => item.id === 2)) await once(ws, 'message');
+    expect(received.some((item) => item.id === 1)).toBe(false);
+    ws.send(
+      JSON.stringify({
+        id: 3,
+        method: 'video',
+        body: { ...body, action: 'start' },
+      }),
+    );
+    while (!received.some((item) => item.id === 3)) await once(ws, 'message');
+    expect(received.find((item) => item.id === 3)?.failed).toBe(true);
   });
   it('closes duplicate request IDs and rejects a superseded lease without replay', async () => {
     const ws = open();

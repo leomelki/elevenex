@@ -42,6 +42,10 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   await bridge.backendInfo('scope');
   assert.deepEqual(calls, [['backend-client:state'], ['backend-client:info', 'scope']]);
   calls.length = 0;
+  await bridge.taskBrowserFrameAck('scope', 1, 'tab', 'stream', 1);
+  await bridge.taskBrowserFrameAck('scope', 1, 'tab', 'stream', 2, false);
+  assert.deepEqual(calls, [['task-browser:frame-ack', 'scope', 1, 'tab', 'stream', 1], ['task-browser:frame-ack', 'scope', 1, 'tab', 'stream', 2, false]]);
+  calls.length = 0;
   for (const [method, , args] of remote.calls) await bridge[method](...args);
   assert.deepEqual(calls, remote.calls.map(([, channel, args]) => [channel, ...args]));
   calls.length = 0;

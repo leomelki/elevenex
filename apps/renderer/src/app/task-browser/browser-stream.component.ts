@@ -1,4 +1,5 @@
 import { browserFrameSize } from './browser-frame';
+import { BrowserVideoDecoder } from './browser-video';
 import { BrowserInputLane } from './browser-input-lane';
 import {
   ChangeDetectionStrategy,
@@ -39,6 +40,7 @@ export class BrowserStreamComponent {
   private latest?: TaskBrowserFrame;
   private stream = '';
   private sequence = 0;
+  private readonly videoDecoder = new BrowserVideoDecoder();
   readonly viewport = signal({ width: 1, height: 1 });
   readonly hasFrame = signal(false);
   private readonly inputLane = new BrowserInputLane(
@@ -79,7 +81,10 @@ export class BrowserStreamComponent {
         frame.sequence < 1 ||
         typeof frame.streamId !== 'string' ||
         !/^[a-f0-9-]{36}$/.test(frame.streamId) ||
-        !browserFrameSize(frame.jpeg) ||
+        (!frame.video && !browserFrameSize(frame.jpeg)) ||
+        (frame.video && (!(frame.video.data instanceof Uint8Array) || frame.video.data.byteLength > 3_000_000 ||
+          typeof frame.video.key !== 'boolean' || !Number.isSafeInteger(frame.video.timestamp) || frame.video.timestamp < 0 ||
+          !/^[a-f0-9-]{36}$/.test(frame.video.epoch))) ||
         frame.width < 1 ||
         frame.height < 1 ||
         frame.width > 16384 ||
@@ -87,6 +92,7 @@ export class BrowserStreamComponent {
       )
         return;
       if (frame.streamId !== this.stream) {
+        this.videoDecoder.reset();
         this.stream = frame.streamId;
         this.sequence = 0;
       }
@@ -101,6 +107,7 @@ export class BrowserStreamComponent {
       this.disposed = true;
       stop?.();
       this.latest = undefined;
+      this.videoDecoder.destroy();
       this.inputLane.destroy();
     });
   }
@@ -109,9 +116,10 @@ export class BrowserStreamComponent {
     this.decoding = true;
     const frame = this.latest;
     this.latest = undefined;
-    let bitmap: ImageBitmap | undefined;
+    let bitmap: ImageBitmap | VideoFrame | undefined;
+    let decoded = false;
     try {
-      bitmap = await createImageBitmap(
+      bitmap = frame.video ? await this.videoDecoder.decode(frame.video) : await createImageBitmap(
         new Blob([frame.jpeg.slice().buffer], { type: 'image/jpeg' }),
       );
       const canvas = this.canvas()?.nativeElement;
@@ -122,14 +130,14 @@ export class BrowserStreamComponent {
         frame.sequence <= this.sequence
       )
         return;
+      const width = 'displayWidth' in bitmap ? bitmap.displayWidth : bitmap.width;
+      const height = 'displayHeight' in bitmap ? bitmap.displayHeight : bitmap.height;
       if (
-        bitmap.width > 4096 ||
-        bitmap.height > 4096 ||
-        bitmap.width * bitmap.height > 8_000_000
+        width > 4096 || height > 4096 || width * height > 8_000_000
       )
         throw new Error('Frame too large');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
+      canvas.width = width;
+      canvas.height = height;
       canvas.getContext('2d', { alpha: false })?.drawImage(bitmap, 0, 0);
       if (
         this.viewport().width !== frame.width ||
@@ -138,6 +146,7 @@ export class BrowserStreamComponent {
         this.viewport.set({ width: frame.width, height: frame.height });
       this.hasFrame.set(true);
       this.sequence = frame.sequence;
+      decoded = true;
       this.status.set(this.inputLane.needsInteraction ? 'Input interrupted. Click the page or Focus page to resume.' : '');
       this.updateAuthority();
     } catch {
@@ -157,6 +166,7 @@ export class BrowserStreamComponent {
             surface.tabId,
             frame.streamId,
             frame.sequence,
+            ...(frame.video ? [decoded] : []),
           )
           .catch(() => undefined);
         if (this.latest) void this.paint();

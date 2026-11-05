@@ -33,7 +33,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   taskBrowserAttach: (scope, task, tab, contentsId) => invoke('task-browser:attach', scope, task, tab, contentsId),
   taskBrowserSurfaces: () => invoke('task-browser:surfaces'),
   taskBrowserPresentation: (scope, task, tab, presentation) => invoke('task-browser:presentation', scope, task, tab, presentation),
-  taskBrowserFrameAck: (scope, task, tab, stream, sequence) => invoke('task-browser:frame-ack', scope, task, tab, stream, sequence),
+  taskBrowserFrameAck: (scope, task, tab, stream, sequence, decoded) => decoded === undefined ? invoke('task-browser:frame-ack', scope, task, tab, stream, sequence) : invoke('task-browser:frame-ack', scope, task, tab, stream, sequence, decoded),
   taskBrowserInput: (scope, task, tab, generation, input) => invoke('task-browser:input', scope, task, tab, generation, input),
   onTaskBrowserSurfacesChanged: listener => subscribe('task-browser:surfaces-changed', listener),
   onTaskBrowserFrame: listener => subscribe('task-browser:frame', listener),

@@ -37,6 +37,8 @@ export interface TaskBrowserFrame {
   readonly width: number;
   readonly height: number;
   readonly jpeg: Uint8Array;
+  /** Negotiated Annex B access unit. JPEG is empty for video packets. */
+  readonly video?: { readonly epoch: string; readonly codec: 'avc1.42E02A'; readonly key: boolean; readonly timestamp: number; readonly data: Uint8Array };
 }
 export type TaskBrowserStreamEvent =
   | { readonly kind: 'pointer'; readonly type: 'down' | 'up' | 'move'; readonly x: number; readonly y: number; readonly button: 'left' | 'middle' | 'right' | 'none'; readonly buttons: number; readonly clicks: number; readonly modifiers: number }
@@ -83,6 +85,10 @@ export interface TaskBrowserState {
   readonly canDetach?: boolean;
   /** Private persistent stream protocol; omitted by older runtime hosts. */
   readonly streamVersion?: 1;
+  /** Optional push video; older clients continue to request JPEG frames. */
+  readonly videoStream?: 'h264';
+  /** Negotiated maximum video delivery window; older hosts use three. */
+  readonly videoWindow?: 8;
   /** Human tab ordering; absent on older machine hosts. */
   readonly canReorder?: boolean;
   readonly scopeId: string;

@@ -113,6 +113,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
         this.stream?.cancel(requestId);
         this.client.cancel(this.ownerId, this.scopeId, requestId);
       },
+      rejectVideo: requestId => this.stream?.video.fallback(requestId),
       deliver: this.deliver,
       failed: (error) => this.fail(error),
     };
@@ -412,11 +413,12 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     this.emit();
     return accepted;
   }
-  acknowledge(tabId: string, streamId: string, sequence: number): void {
+  acknowledge(tabId: string, streamId: string, sequence: number, decoded = true): void {
     (this.detached.get(tabId) ?? this.panel).acknowledge(
       tabId,
       streamId,
       sequence,
+      decoded,
     );
   }
   position(input: TaskBrowserLayout): void {
@@ -560,6 +562,12 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
   > | null> {
     const revision = this.connectionRevision;
     if (this.stream) {
+      if (this.state?.videoStream === 'h264' && this.stream.video.available(requestId)) {
+        const frame = await this.stream.video.next(tabId, after, requestId, this.state.videoWindow ?? 3);
+        if (revision !== this.connectionRevision) return null;
+        if (frame) return frame;
+        if (this.stream.video.available(requestId)) return null;
+      }
       const value = await this.stream.request('frame', { tabId, after }, 35000, requestId);
       if (revision !== this.connectionRevision) return null;
       if (value === null) return null;

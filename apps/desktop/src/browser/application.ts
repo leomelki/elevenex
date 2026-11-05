@@ -210,9 +210,9 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
       selectedBrowser(id, browserId(args[0]), taskId(args[1])).presentation(browserId(args[2]), args[3]);
     }),
     handleForWindow('task-browser:frame-ack', trusted, (id, ...args) => {
-      if (args.length !== 5 || !Number.isSafeInteger(args[4]) || args[4] < 1) throw new Error('Invalid frame receipt');
+      if ((args.length !== 5 && args.length !== 6) || (args.length === 6 && typeof args[5] !== 'boolean') || !Number.isSafeInteger(args[4]) || args[4] < 1) throw new Error('Invalid frame receipt');
       const tab = browserId(args[2]), entry = detached.get(id); if (entry && entry.info.tabId !== tab) throw new Error('Browser tab changed');
-      selectedBrowser(id, browserId(args[0]), taskId(args[1])).acknowledge(tab, browserId(args[3]), args[4]);
+      selectedBrowser(id, browserId(args[0]), taskId(args[1])).acknowledge(tab, browserId(args[3]), args[4], args[5]);
     }),
     handleForWindow('task-browser:input', trusted, (id, ...args) => {
       if (args.length !== 5 || !Number.isSafeInteger(args[3]) || args[3] < 1) throw new Error('Invalid browser control');

@@ -47,6 +47,7 @@ const TARGETS = [
 const NATIVE_RUNTIME_DEPENDENCIES = [
   // Externalized browser driver, including its managed Chromium installer assets.
   "playwright-core",
+  "ffmpeg-static",
   "better-sqlite3",
   "node-pty",
   "@openai/codex-sdk",
@@ -154,8 +155,8 @@ function shouldBuildNativeDependenciesOnHost(target) {
 
 function buildRuntimePackageJson(target) {
   const onlyBuiltDependencies = shouldBuildNativeDependenciesOnHost(target)
-    ? ["better-sqlite3", "node-pty"]
-    : [];
+    ? ["better-sqlite3", "node-pty", "ffmpeg-static"]
+    : ["ffmpeg-static"];
 
   return {
     name: "elevenex-remote-runtime",

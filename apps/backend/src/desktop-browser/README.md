@@ -46,7 +46,7 @@ is pinned to validated public addresses; private/rebinding/control destinations
 are denied. HTTP(S), WebSockets and ordinary site storage/API behavior use actual
 Chromium. Permissions/client certificates/popups/dialogs are denied with truthful
 needs-user attention. Remote audio/accessibility/file selection/download relay
-are unavailable in this first JPEG mode. Open outside uses a separate profile.
+are unavailable in the remote display. Open outside uses a separate profile.
 
 Tests include the real Nest private-socket transport and sandboxed Chromium,
 plus driver/mailbox/persistence/logging/validation boundaries. This does not
@@ -92,3 +92,15 @@ presentation ownership and authenticated web/phone extension boundaries.
 
 See [the persistent streaming design](../../../../docs/task-browser-streaming.md)
 for protocol bounds, persistence guarantees, extension slices and research.
+
+`videoStream: 'h264'` optionally negotiates push video on the private socket.
+`runtime-video` owns a negotiated display window and presentation lifetime;
+`runtime-video-host` owns the shared capability catalog, fair work budget and
+encoder cleanup. VideoToolbox, NVENC, QSV, AMF, VA-API, hardware Media Foundation
+and V4L2 profiles are selected only after real synthetic encode/decode probes,
+with managed/host FFmpeg discovery and software fallback. Per-view quality adapts
+to CPU quota, memory, concurrent views and encoding/display feedback. New clients
+negotiate up to eight packets through `videoWindow: 8`; older peers retain three.
+Hiding/disconnecting a viewer closes encoders while retaining task pages. Older
+clients retain JPEG. CDP capture still supplies JPEG input to the encoder; no raw
+or zero-copy capture, audio or WebRTC is implied by this capability.

@@ -11,8 +11,10 @@ export interface RuntimeFrame {
   readonly sequence: number;
   readonly width: number;
   readonly height: number;
+  readonly pixelRatio?: number;
   readonly jpeg: Buffer;
 }
+export interface RuntimeVideoCapture { readonly width: number; readonly height: number; readonly fps: number }
 /** A tab has one driver, one navigation generation, one frame waiter and no text observation. */
 export class RuntimeBrowserTab {
   readonly id = randomUUID();
@@ -63,6 +65,8 @@ export class RuntimeBrowserTab {
   private frameSent = 0;
   private quality = 85;
   private maxWidth = 1920;
+  private maxHeight = 1440;
+  private everyNthFrame = 2;
   constructor(
     readonly by: 'you' | 'agent',
     sessionId: number | null,
@@ -278,6 +282,7 @@ export class RuntimeBrowserTab {
           sequence: ++this.frameSequence,
           width: this.viewport.width,
           height: this.viewport.height,
+          pixelRatio: this.pixelRatio,
           jpeg: Buffer.from(event.data, 'base64'),
         };
         this.flushFrame();
@@ -444,8 +449,8 @@ export class RuntimeBrowserTab {
         format: 'jpeg',
         quality: this.quality,
         maxWidth: this.maxWidth,
-        maxHeight: 1440,
-        everyNthFrame: 2,
+        maxHeight: this.maxHeight,
+        everyNthFrame: this.everyNthFrame,
       });
     } catch {
       this.streaming = false;
@@ -459,17 +464,24 @@ export class RuntimeBrowserTab {
     after: number,
     signal: AbortSignal,
     waitMs = 5000,
+    video: boolean | RuntimeVideoCapture = false,
   ): Promise<RuntimeFrame | null> {
     signal.throwIfAborted();
     if (this.waiter) throw new Error('A frame read is already pending');
-    if (this.outstanding) {
+    if (this.outstanding || video) {
       const elapsed = Date.now() - this.frameSent,
-        quality = elapsed > 250 ? 65 : 85,
-        width = elapsed > 250 ? 1280 : 1920;
+        // Video congestion is handled by its packet window. Degrading the
+        // intermediate JPEG as well would compound loss around small text.
+        quality = video ? 95 : elapsed > 250 ? 65 : 85,
+        width = typeof video === 'object' ? video.width : video ? 1920 : elapsed > 250 ? 1280 : 1920,
+        height = typeof video === 'object' ? video.height : 1440,
+        everyNthFrame = typeof video === 'object' ? Math.max(1, Math.round(60 / video.fps)) : 2;
       this.outstanding = false;
-      if (quality !== this.quality || width !== this.maxWidth) {
+      if (quality !== this.quality || width !== this.maxWidth || height !== this.maxHeight || everyNthFrame !== this.everyNthFrame) {
         this.quality = quality;
         this.maxWidth = width;
+        this.maxHeight = height;
+        this.everyNthFrame = everyNthFrame;
         this.frame = undefined;
         this.needsSnapshot = true;
         await this.stopFrames();
@@ -522,7 +534,7 @@ export class RuntimeBrowserTab {
           scale: Math.min(
             1,
             this.maxWidth / (this.viewport.width * this.pixelRatio),
-            1440 / (this.viewport.height * this.pixelRatio),
+            this.maxHeight / (this.viewport.height * this.pixelRatio),
           ),
         },
       })
@@ -540,6 +552,7 @@ export class RuntimeBrowserTab {
           sequence: ++this.frameSequence,
           width: this.viewport.width,
           height: this.viewport.height,
+          pixelRatio: this.pixelRatio,
           jpeg: Buffer.from(reply.data, 'base64'),
         };
         this.flushFrame();

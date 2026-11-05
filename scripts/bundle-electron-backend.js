@@ -8,6 +8,7 @@ const backendBundleRoot = path.join(backendRoot, 'bundle');
 const backendBundleEntry = path.join(backendBundleRoot, 'main.cjs');
 const EXTERNAL_MODULES = [
   'playwright-core',
+  'ffmpeg-static',
   'better-sqlite3',
   'node-pty',
   '@vscode/ripgrep',

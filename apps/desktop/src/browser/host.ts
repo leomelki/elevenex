@@ -24,7 +24,7 @@ export interface BrowserTaskHost {
     generation: number,
     input: TaskBrowserStreamInput,
   ): Promise<number>;
-  acknowledge(tabId: string, streamId: string, sequence: number): void;
+  acknowledge(tabId: string, streamId: string, sequence: number, decoded?: boolean): void;
   position(input: TaskBrowserLayout): void;
   applicationInput(x?: number, y?: number): void;
   maintain(): void;

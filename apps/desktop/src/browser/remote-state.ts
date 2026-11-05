@@ -139,6 +139,8 @@ export function remoteBrowserState(
     canDetach: raw['canDetach'] === true,
     canReorder: raw['canReorder'] === true,
     ...(raw['streamVersion'] === 1 ? { streamVersion: 1 as const } : {}),
+    ...(raw['videoStream'] === 'h264' ? { videoStream: 'h264' as const } : {}),
+    ...(raw['videoWindow'] === 8 ? { videoWindow: 8 as const } : {}),
     ...(raw['layoutLanes'] === true ? { layoutLanes: true } : {}),
     scopeId,
     taskId,

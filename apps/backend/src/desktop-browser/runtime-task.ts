@@ -129,6 +129,8 @@ export class RuntimeBrowserTask {
   state(): TaskBrowserState {
     return {
       streamVersion: 1,
+      videoStream: 'h264',
+      videoWindow: 8,
       canDetach: true,
       canReorder: true,
       layoutLanes: true,
