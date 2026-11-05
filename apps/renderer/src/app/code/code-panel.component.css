@@ -5,8 +5,10 @@
 .frame-container::view-transition { pointer-events: none; }
 .frame-container::view-transition-group(code-editor) { animation: none; width: 100%; height: 100%; transform: none; }
 .frame-container::view-transition-old(code-editor), .frame-container::view-transition-new(code-editor) { width: 100%; height: 100%; object-fit: fill; object-position: right top; mix-blend-mode: normal; }
-.frame-container::view-transition-old(code-editor) { z-index: 2; background: var(--surface); animation: code-layout-out var(--dur-fast) var(--ease-in-out) both; }
-.frame-container::view-transition-new(code-editor) { z-index: 1; opacity: 1; animation: code-layout-in var(--dur-fast) var(--ease-in-out) both; }
+/* Each half gets dur-fast: blur first, then a full 140ms blend. Splitting
+   dur-fast in half left only a few visible frames for the layout handoff. */
+.frame-container::view-transition-old(code-editor) { z-index: 2; background: var(--surface); animation: code-layout-out var(--dur-slow) var(--ease-in-out) both; }
+.frame-container::view-transition-new(code-editor) { z-index: 1; opacity: 1; animation: code-layout-in var(--dur-slow) var(--ease-in-out) both; }
 /* A compositor animation can advance before the JS midpoint pause commits.
    Keep collapse opaque/blurred, and retain the native snapshot with a paused
    group animation until both the compact layout and panel width are ready. */

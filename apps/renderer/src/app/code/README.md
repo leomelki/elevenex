@@ -127,9 +127,10 @@ renders underneath. The shell retains its original 280ms width/opacity glide;
 Code never finishes it early. The snapshot scope follows the panel's CSS width;
 the inner frame keeps its explicitly assigned pixel width, without receiving
 intermediate panel widths or a scale transform. Only the browser-owned snapshot
-images fit the moving panel and blend in a 140ms token-driven
-effect with a 16px blur derived from the glass and spacing tokens. Blur starts
-one third into the shell glide (about 93ms). Its opaque midpoint holds the old image until the child's layout
+images fit the moving panel and blend in a 280ms token-driven
+effect (140ms to blur, then a full 140ms crossfade and unblur), with a 16px blur
+derived from the glass and spacing tokens. Blur starts one third into the shell
+glide (about 93ms). Its opaque midpoint holds the old image until the child's layout
 acknowledgement, then the remaining half crossfades and clears the new image.
 During collapse, that midpoint also waits for the panel to reach its destination:
 the incoming compact image stays blurred until its temporary magnification is

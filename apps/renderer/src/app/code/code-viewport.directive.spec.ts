@@ -96,7 +96,7 @@ describe('Code viewport transition ownership', () => {
     const animation = {
       animationName:'code-layout-out',currentTime:0,playState:'idle',
       play() { play(); this.playState='running'; }, pause() { pause(); this.playState='paused'; },
-      effect:{updateTiming,getComputedTiming:()=>({duration:140,delay:280/3-42})},
+      effect:{updateTiming,getComputedTiming:()=>({duration:280,delay:280/3-42})},
     };
     Object.defineProperty(frame,'getAnimations',{value:()=>[animation]});
     const containingBlock = document.createElement('div');
@@ -128,9 +128,9 @@ describe('Code viewport transition ownership', () => {
     expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('1072px');
     expect(frame.style.transform).toBe('');
     expect(fixture.componentInstance.requests).toBe(1);
-    animation.currentTime=200; await nextFrame();
+    animation.currentTime=300; await nextFrame();
     expect(animation.playState).toBe('paused');
-    expect(animation.currentTime).toBeCloseTo(280/3-42+70);
+    expect(animation.currentTime).toBeCloseTo(280/3-42+140);
     fixture.componentInstance.ready.set(true); await fixture.whenStable(); await update;
     expect(play).toHaveBeenCalledTimes(2);
     expect(updateTiming).toHaveBeenCalledOnce();
@@ -184,7 +184,7 @@ describe('Code viewport transition ownership', () => {
     const animation = {
       animationName:'code-layout-out',currentTime:0,playState:'idle',
       play() { this.playState='running'; }, pause() { this.playState='paused'; },
-      effect:{updateTiming:vi.fn(),getComputedTiming:()=>({duration:140,delay:280/3})},
+      effect:{updateTiming:vi.fn(),getComputedTiming:()=>({duration:280,delay:280/3})},
     };
     Object.defineProperty(frame, 'getAnimations', {value:()=>[animation]});
     let complete!: () => void;
@@ -196,9 +196,9 @@ describe('Code viewport transition ownership', () => {
     transition('transitionrun'); await fixture.whenStable();
     expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('432px');
     expect(frame.classList.contains('holding-collapse')).toBe(true);
-    width=700; resize(); animation.currentTime=200; await nextFrame();
+    width=700; resize(); animation.currentTime=300; await nextFrame();
     expect(animation.playState).toBe('paused');
-    expect(animation.currentTime).toBeCloseTo(280/3+70);
+    expect(animation.currentTime).toBeCloseTo(280/3+140);
     if (layoutFirst) { fixture.componentInstance.ready.set(true); await fixture.whenStable(); }
     expect(animation.playState).toBe('paused');
     expect(frame.style.transform).toBe('');
@@ -209,7 +209,7 @@ describe('Code viewport transition ownership', () => {
       fixture.componentInstance.ready.set(true); await fixture.whenStable();
     }
     expect(animation.playState).toBe('running');
-    expect(animation.currentTime).toBeCloseTo(280/3+70);
+    expect(animation.currentTime).toBeCloseTo(280/3+140);
     expect(frame.classList.contains('holding-collapse')).toBe(false);
     expect(fixture.componentInstance.requests).toBe(1);
     complete(); await finished; await Promise.resolve();

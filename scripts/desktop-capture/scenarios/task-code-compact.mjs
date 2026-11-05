@@ -273,12 +273,12 @@ export default async function* (capture) {
           const glide=panel.getAnimations().find(animation=>animation.transitionProperty==='width');
           const iframe=scope.querySelector('iframe');
           window.codeGlide.push({motionTime:glide?.currentTime ?? null,time:performance.now()-start,width:panel.getBoundingClientRect().width,liveScale:iframe.getBoundingClientRect().width/iframe.clientWidth,opacity:Number(getComputedStyle(scope,'::view-transition-old(code-editor)').opacity),active:scope.matches(':active-view-transition'),blur:getComputedStyle(scope,'::view-transition-old(code-editor)').filter});
-          if (performance.now()-start<650) requestAnimationFrame(sample);
+          if (performance.now()-start<1200) requestAnimationFrame(sample);
         };
         sample();
       });
       await capture.click(selector);
-      await capture.waitFor(() => window.codeGlide.at(-1)?.time>=650);
+      await capture.waitFor(() => window.codeGlide.at(-1)?.time>=1200);
       const samples = await capture.evaluate(() => {const samples=window.codeGlide;delete window.codeGlide;return samples;});
       const first=samples[0].width, last=samples.at(-1).width, distance=Math.abs(last-first);
       assert.ok(samples.every(s=>Math.abs(s.liveScale-1)<0.001),'Live editor was stretched, including before snapshot readiness: '+JSON.stringify(samples));
@@ -294,13 +294,16 @@ export default async function* (capture) {
       assert.ok(firstBlur?.motionTime>=280/3-2 && firstBlur.motionTime<180,'Blur should start around one third into the glide: '+JSON.stringify(samples));
       const firstBlend=samples.find(s=>s.active && s.opacity>0.01 && s.opacity<0.99);
       assert.ok(firstBlend,'No editor crossfade was observed: '+JSON.stringify(samples));
+      const visibleBlend=samples.filter(s=>s.active && s.opacity>0.01 && s.opacity<0.99);
+      const visibleBlendMs=visibleBlend.at(-1).time-visibleBlend[0].time;
+      assert.ok(visibleBlend.length>=4 && visibleBlendMs>=50,'Editor handoff snapped through too few visible fade frames: '+JSON.stringify(samples));
       if (shrinking) assert.ok(Math.abs(firstBlend.width-last)<=1,'Collapse crossfade started before the final width: '+JSON.stringify(samples));
-      else assert.ok(firstBlend.motionTime>=280/3-2,'Crossfade started before the first third of the panel glide: '+JSON.stringify(samples));
+      else assert.ok((firstBlend.motionTime ?? firstBlend.time)>=280/3-2,'Crossfade started before the first third of the panel glide: '+JSON.stringify(samples));
       assert.ok(!intermediate.some(s=>s.active && s.motionTime<280/3-2 && s.opacity<1),'Outgoing Code faded too early: '+JSON.stringify(samples));
       const largestStep=Math.max(...samples.slice(1).map((s,i)=>Math.abs(s.width-samples[i].width)));
       assert.ok(largestStep<distance*0.65,'Panel width jumped during crossfade: '+JSON.stringify(samples));
       await finish(); await geometry();
-      return {intermediateFrames:intermediate.length,largestStep,distance,firstBlendAtMs:firstBlend.motionTime ?? firstBlend.time,firstBlurAtMs:firstBlur.motionTime};
+      return {intermediateFrames:intermediate.length,visibleBlendMs,largestStep,distance,firstBlendAtMs:firstBlend.motionTime ?? firstBlend.time,firstBlurAtMs:firstBlur.motionTime};
     };
     const viewportMotion = async function* (selector, name) {
       const { CodeFrame } = require('../../../apps/desktop/dist/code/frame.js');
@@ -478,7 +481,7 @@ export default async function* (capture) {
         for (const region of document.querySelector('ex-app-shell .workspace').children) {
           for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=140;
         }
-        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=Number(animation.effect.getComputedTiming().delay)+105;
+        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=Number(animation.effect.getComputedTiming().delay)+Number(animation.effect.getComputedTiming().duration)*0.75;
       });
       await capture.settle();
       assert.equal(await capture.evaluate(()=>!!document.querySelector('ex-code-panel .launch-card')),false);
@@ -504,7 +507,7 @@ export default async function* (capture) {
         for (const region of document.querySelector('ex-app-shell .workspace').children) {
           for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=140;
         }
-        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=Number(animation.effect.getComputedTiming().delay)+105;
+        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=Number(animation.effect.getComputedTiming().delay)+Number(animation.effect.getComputedTiming().duration)*0.75;
       });
       await capture.settle();
       assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth),wideWidth,'Collapse midpoint reflowed the editor');
