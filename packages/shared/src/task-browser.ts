@@ -81,6 +81,8 @@ export interface TaskBrowserState {
   readonly capabilities?: TaskBrowserCapabilities;
   /** Older remote runtimes omit this capability. */
   readonly canDetach?: boolean;
+  /** Private persistent stream protocol; omitted by older runtime hosts. */
+  readonly streamVersion?: 1;
   /** Human tab ordering; absent on older machine hosts. */
   readonly canReorder?: boolean;
   readonly scopeId: string;

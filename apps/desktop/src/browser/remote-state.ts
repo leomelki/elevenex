@@ -138,6 +138,7 @@ export function remoteBrowserState(
   return {
     canDetach: raw['canDetach'] === true,
     canReorder: raw['canReorder'] === true,
+    ...(raw['streamVersion'] === 1 ? { streamVersion: 1 as const } : {}),
     ...(raw['layoutLanes'] === true ? { layoutLanes: true } : {}),
     scopeId,
     taskId,

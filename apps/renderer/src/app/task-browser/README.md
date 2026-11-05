@@ -75,8 +75,8 @@ reload/click/scroll/needs-user operations, not arbitrary JS, CDP, text entry,
 filesystem, snapshots or screenshots. Agent replies are independently allowlisted
 on the backend. The local at-most-once mailbox permits 64 desktop leases and 16
 pending requests per lease; the remote engine permits eight requests per task
-and one observation/action per tab. Remote viewer reconnects rotate the lease,
-return control to the user and abort previous automation generations.
+and one observation/action per tab. Remote viewer reconnects rotate the viewer lease
+and preserve task execution and current agent control. Reconnect never replays input.
 
 Complete secret redaction cannot be established for arbitrary DOM, accessibility,
 canvas, frames, closed shadow roots, console strings or screenshots. **All those
@@ -110,7 +110,7 @@ data. Closing a tab destroys its page; eviction closes pages and network resourc
 without clearing site data. A local profile has one owning app window at a time,
 so another window cannot replace its task network policy. Switching
 conversations or panels retains live history, forms and scroll. Returning to a
-retained task preserves its live page but reconnects with user control. Navigation
+retained remote task preserves its live page and current agent ownership. Navigation
 keeps the existing page visible while Chromium loads the next document; loading
 status stays in browser chrome rather than replacing the page.
 
@@ -134,7 +134,7 @@ observation listeners and timers. Frame payloads cap at 3 MB; decoding also chec
 JPEG dimensions before allocating. History caps at 100 entries. Layouts carry a
 presentation epoch and monotonic sequence; a 750 ms heartbeat makes hidden or
 unresponsive app surfaces noninteractive. Remote viewers have exclusive leases,
-a ten-second heartbeat expiry and five-minute idle context retention. A competing
+a ten-second heartbeat expiry independent of retained task execution. A competing
 viewer gets a visible conflict and explicit Reconnect, never silent takeover.
 
 Explicit Reload after a crashed or closed local engine retains the tab ID, order,
@@ -232,3 +232,14 @@ frames and scope subscriptions are released by their creators. Entry and explici
 return use token durations and reduced-motion handling; page input waits for
 stable geometry. The detached production route is covered by
 `apps/desktop/test/browser-detached-native.cjs` within the Electron smoke.
+
+## Remote channel and background execution
+
+Remote hosts advertising `streamVersion: 1` use one private main-owned WebSocket
+for frames, input, layout and state events; older hosts retain HTTP fallback. The
+renderer uses the same narrow bridge and display acknowledgments. A remote task's
+live tabs, network and agent control survive viewer disconnect/desktop exit while
+the remote daemon stays alive. Agents can start their own runtime tabs without a
+viewer. Backend restarts restore profiles and safe locations, not live documents
+or automation grants. Local native guests retain desktop-process lifetimes.
+See [the design and feature roadmap](../../../../../docs/task-browser-streaming.md).

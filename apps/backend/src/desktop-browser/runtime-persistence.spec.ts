@@ -132,7 +132,7 @@ describe('Runtime browser retention and viewer authority', () => {
       const next = await service.connect(1, 'second', identity);
       expect(next.token).not.toBe(view.token);
       expect(() => service.viewer(1, view.token)).toThrow();
-      expect(next.state.tabs[0]?.generation).toBeGreaterThan(
+      expect(next.state.tabs[0]?.generation).toBe(
         view.state.tabs[0]!.generation,
       );
     } finally {

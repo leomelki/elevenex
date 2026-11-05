@@ -134,8 +134,7 @@ export class RemoteBrowserPresentation {
     this.pump();
   }
   pump(): void {
-    void this.pushLayout();
-    void this.readFrame();
+    void this.pushLayout().then(() => this.readFrame());
   }
   private async pushLayout(): Promise<void> {
     if (
@@ -185,6 +184,7 @@ export class RemoteBrowserPresentation {
       !tabId ||
       tab?.error ||
       this.framePending ||
+      this.layoutPending ||
       this.waitingAck ||
       !this.visible ||
       this.disposed ||

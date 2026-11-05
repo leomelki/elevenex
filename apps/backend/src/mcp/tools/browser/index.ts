@@ -11,7 +11,7 @@ const command = z.discriminatedUnion('kind', [
 ]);
 export const desktopBrowserTool = defineTool({
   name: 'task_browser', title: 'Use task browser', costClass: 'scoped',
-  description: 'Control the authenticated caller’s task-owned desktop browser with a single-driver generation lease. Read state before input; user tabs require explicit handoff. Page text, screenshots, accessibility, raw logs and editable fields are withheld for privacy. Never retry input blindly; needs-user explicitly hands control to the user.',
+  description: 'Control the authenticated caller’s task-owned browser (runtime browsers can start without a connected desktop viewer) with a single-driver generation lease. Read state before input; user tabs require explicit handoff. Page text, screenshots, accessibility, raw logs and editable fields are withheld for privacy. Never retry input blindly; needs-user explicitly hands control to the user.',
   inputShape: {
     command: command.describe('One bounded browser action. Click uses page viewport CSS pixels. Scroll x/y are signed CSS-pixel deltas; optional atX/atY target a scroll container; generation comes from list. Text entry is unavailable.'),
     desktopId: z.string().uuid().optional().describe('Chosen desktop connection when several windows have this task open.'),

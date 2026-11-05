@@ -1,3 +1,4 @@
+import { RemoteBrowserStream } from './remote-stream';
 import type { MachineBrowserHost } from "./host";
 import { remoteBrowserState } from "./remote-state";
 import {
@@ -39,6 +40,8 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
   private readonly clientId = randomUUID();
   private state?: TaskBrowserState;
   private token = "";
+  private stream?: RemoteBrowserStream;
+  private lastHeartbeat = 0;
   private revision = 0;
   private serverRevision = -1;
   private connectionRevision = 0;
@@ -106,8 +109,10 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
         }
       },
       frame: (tab, after, requestId) => this.readFrame(tab, after, requestId),
-      cancel: (requestId) =>
-        this.client.cancel(this.ownerId, this.scopeId, requestId),
+      cancel: (requestId) => {
+        this.stream?.cancel(requestId);
+        this.client.cancel(this.ownerId, this.scopeId, requestId);
+      },
       deliver: this.deliver,
       failed: (error) => this.fail(error),
     };
@@ -211,6 +216,11 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
   ): Promise<unknown> {
     if (this.disposed) throw new Error("Remote browser closed");
     const revision = this.connectionRevision;
+    if (this.stream && (path === 'command' || path === 'layout' || path === 'input')) {
+      const value = await this.stream.request(path, body, timeout);
+      if (revision !== this.connectionRevision) throw new Error('Browser connection changed');
+      return value;
+    }
     const result = await this.client.execute(
       this.ownerId,
       this.scopeId,
@@ -452,11 +462,33 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     this.token = browserId(reply["token"]);
     this.panel.reset();
     for (const view of this.detached.values()) view.reset();
-    this.reconnect = false;
-    this.connection = { phase: "ready" };
+    this.connection = { phase: "connecting", message: "Connecting browser…" };
+    this.reconnect = true;
     this.accept(reply["state"]);
+    if (this.state?.streamVersion === 1) await this.openStream();
+    this.reconnect = false;
+    this.connection = { phase: 'ready' };
+    this.emit();
     if (this.visible()) this.pump();
     else this.disconnect();
+  }
+  private async openStream(): Promise<void> {
+    const revision = this.connectionRevision;
+    let opened!: () => void, rejected!: (error: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => { opened = resolve; rejected = reject; });
+    void this.client.execute(this.ownerId, this.scopeId, 'browser-stream:' + this.taskId, false, async (endpoint, signal) => {
+      const stream = new RemoteBrowserStream(endpoint, this.taskId, this.token, signal, value => {
+        if (!this.disposed && revision === this.connectionRevision) this.accept(value);
+      });
+      this.stream = stream;
+      await stream.opened;
+      opened();
+      await stream.closed;
+    }, null).then(() => {
+      rejected(new Error('Browser stream interrupted'));
+      if (!this.disposed && revision === this.connectionRevision && !this.reconnect) this.fail();
+    });
+    await ready;
   }
   private schedule(): void {
     if (!this.disposed)
@@ -464,7 +496,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
         () => {
           void this.poll();
         },
-        this.state?.tabs.some((tab) => tab.driver === "agent") ? 300 : 1200,
+        this.stream ? 3000 : this.state?.tabs.some((tab) => tab.driver === "agent") ? 300 : 1200,
       );
   }
   private async poll(): Promise<void> {
@@ -476,8 +508,12 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
         this.connection.phase !== "blocked"
       ) {
         if (this.reconnect) this.ensureConnection();
-        else
-          this.accept(await this.request("state?after=" + this.serverRevision));
+        else if (this.stream) {
+          if (Date.now() - this.lastHeartbeat >= 3000) {
+            this.lastHeartbeat = Date.now();
+            await this.stream.request('ping');
+          }
+        } else this.accept(await this.request("state?after=" + this.serverRevision));
       }
     } catch (error) {
       if (revision === this.connectionRevision) this.fail(error);
@@ -488,13 +524,15 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
   private fail(error?: unknown): void {
     if (this.disposed) return;
     this.connectionRevision++;
+    this.stream?.destroy();
+    this.stream = undefined;
     this.connection =
       error instanceof RemoteBrowserConflict
         ? { phase: "blocked", message: error.message }
         : {
             phase: "connecting",
             message:
-              "Browser connection interrupted. Reconnecting with user control…",
+              "Browser connection interrupted. Reconnecting…",
           };
     this.reconnect = true;
     this.panel.reset();
@@ -504,11 +542,10 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
         ...this.state,
         tabs: this.state.tabs.map((tab) => ({
           ...tab,
-          driver: "you",
           ready: false,
           error:
             tab.error ??
-            "Browser disconnected. Reconnecting with user control…",
+            "Browser disconnected. Reconnecting…",
         })),
       };
     this.emit();
@@ -522,6 +559,14 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     "scopeId" | "taskId" | "tabId" | "streamId"
   > | null> {
     const revision = this.connectionRevision;
+    if (this.stream) {
+      const value = await this.stream.request('frame', { tabId, after }, 35000, requestId);
+      if (revision !== this.connectionRevision) return null;
+      if (value === null) return null;
+      const frame = record(value);
+      if (typeof frame['sequence'] !== 'number' || frame['sequence'] <= after || typeof frame['width'] !== 'number' || typeof frame['height'] !== 'number' || !(frame['jpeg'] instanceof Uint8Array)) throw new Error('Invalid remote frame');
+      return { sequence: frame['sequence'], width: frame['width'], height: frame['height'], jpeg: frame['jpeg'] };
+    }
     const result = await this.client.execute(
       this.ownerId,
       this.scopeId,
@@ -624,6 +669,8 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     if (this.reconnect) return;
     this.connection = { phase: "idle" };
     this.reconnect = true;
+    this.stream?.destroy();
+    this.stream = undefined;
     this.disconnecting = this.request("disconnect", {}).then(
       () => undefined,
       () => undefined,

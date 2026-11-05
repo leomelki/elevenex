@@ -13,7 +13,7 @@ import { RuntimeBrowserTab } from './runtime-tab.js';
 import type { RuntimeBrowserPool } from './runtime-browser-pool.js';
 import { randomUUID } from 'node:crypto';
 
-/** Runtime task data survives viewer reconnects; only explicit handoff can restore automation. */
+/** The task owns browser execution. A viewer owns only presentation and human input. */
 export class RuntimeBrowserTask {
   readonly id = randomUUID();
   readonly tabs = new Map<string, RuntimeBrowserTab>();
@@ -40,7 +40,24 @@ export class RuntimeBrowserTask {
     if (this.presentations.get(tabId) !== view || !this.alive) return;
     await page.layout(width, height, visible, interactive, pixelRatio);
   }
-  private revision = 0;
+  private stateRevision = 0;
+  private notifying = false;
+  private readonly listeners = new Set<() => void>();
+  private get revision(): number { return this.stateRevision; }
+  private set revision(value: number) {
+    this.stateRevision = value;
+    if (this.notifying || this.disposed) return;
+    this.notifying = true;
+    queueMicrotask(() => {
+      this.notifying = false;
+      if (!this.disposed) for (const listener of this.listeners) listener();
+    });
+  }
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  get retained(): boolean { return this.tabs.size > 0 || this.starting.size > 0 || this.agentPending > 0; }
   private controlsFocus = 0;
   private picked: TaskBrowserState['picked'] = null;
   private pickerMessage: string | null = null;
@@ -57,8 +74,7 @@ export class RuntimeBrowserTask {
   private attention: TaskBrowserState['attention'];
   private ports: readonly number[] = [];
   private readonly starting = new Map<string, Promise<void>>();
-  private controller = new AbortController();
-  private connected = false;
+  private readonly controller = new AbortController();
   private readonly authorizedPorts = new Set<number>();
   private disposed = false;
   private visible = false;
@@ -66,7 +82,6 @@ export class RuntimeBrowserTask {
   private pixelRatio = 1;
   private colorScheme: 'light' | 'dark' = 'light';
   private viewport = { width: 800, height: 600 };
-  private selectedAt = Date.now();
   private context?: Promise<BrowserContext>;
   private ownedContext?: BrowserContext;
   private layoutRevision = 0;
@@ -83,37 +98,25 @@ export class RuntimeBrowserTask {
     );
   }
   get alive(): boolean {
-    return (
-      !this.disposed && this.connected && Date.now() - this.selectedAt < 10000
-    );
-  }
-  get expired(): boolean {
-    return Date.now() - this.selectedAt > 300000;
+    return !this.disposed;
   }
   private expirePresentations(): void {
     for (const [tabId, view] of this.presentations) if (view.visible && Date.now() - view.seen >= 3000) {
       view.visible = false; view.interactive = false;
-      const page = this.tabs.get(tabId); page?.takeover();
+      const page = this.tabs.get(tabId);
       void page?.layout(view.width, view.height, false); this.revision++;
     }
   }
   touch(): void {
     this.expirePresentations();
-    this.connected = true;
-    this.selectedAt = Date.now();
   }
   reconcile(): void {
     this.clearPicker();
     this.layoutRevision++;
     this.selectionRevision++;
-    this.controller.abort();
-    this.controller = new AbortController();
-    this.connected = false;
-    this.network.pause();
     this.visible = false;
     this.presentations.clear();
     for (const tab of this.tabs.values()) {
-      tab.takeover();
       void tab.layout(this.viewport.width, this.viewport.height, false);
     }
     this.revision++;
@@ -125,6 +128,7 @@ export class RuntimeBrowserTask {
   }
   state(): TaskBrowserState {
     return {
+      streamVersion: 1,
       canDetach: true,
       canReorder: true,
       layoutLanes: true,
@@ -727,7 +731,7 @@ export class RuntimeBrowserTask {
         agentSessionId: page.agentSessionId,
         generation: page.generation,
         loading: page.loading,
-        ready: page.ready,
+        ready: page.agentReady,
         error: page.error
           ? 'Page unavailable; ask the user to inspect it.'
           : null,
@@ -764,6 +768,8 @@ export class RuntimeBrowserTask {
   async destroy(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.controller.abort();
+    this.listeners.clear();
     this.presentations.clear();
     await Promise.allSettled(
       [...this.tabs.values()].map((page) => page.destroy()),

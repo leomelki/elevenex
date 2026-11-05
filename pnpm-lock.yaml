@@ -206,6 +206,9 @@ importers:
       '@elevenex/browser-network':
         specifier: workspace:*
         version: link:../../packages/browser-network
+      ws:
+        specifier: 8.20.0
+        version: 8.20.0
     devDependencies:
       '@elevenex/shared':
         specifier: workspace:*
@@ -216,6 +219,9 @@ importers:
       '@types/node':
         specifier: 26.6.5
         version: 26.6.5
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
       angular-eslint:
         specifier: 22.6.0
         version: 22.6.0(eslint@10.13.0)(typescript-eslint@8.72.0)(typescript@6.0.3)

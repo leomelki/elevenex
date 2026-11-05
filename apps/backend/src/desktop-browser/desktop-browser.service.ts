@@ -1,8 +1,10 @@
+import { TasksService } from '../tasks/tasks.service.js';
+import { TaskBrowserServers } from './task-browser-servers.js';
 import { RuntimeBrowserService } from './runtime-browser.service.js';
 import type { BrowserAgentCommand } from '@elevenex/shared';
 import { browserReply } from './browser-reply.js';
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 interface Pending {
   readonly id: string; readonly sessionId: number; readonly command: Record<string, unknown>;
@@ -13,12 +15,12 @@ interface Pending {
 }
 interface Lease { readonly taskId: number; readonly desktopId: string; readonly token: string; seen: number; readonly pending: Map<string, Pending> }
 
-/** Bounded at-most-once mailbox. Desktop owns browser control; backend never fabricates handoff. */
+/** Bounded desktop mailbox and task-runtime routing. Neither path fabricates user handoff. */
 @Injectable()
 export class DesktopBrowserService implements OnModuleDestroy {
   private readonly leases = new Map<string, Lease>();
   private readonly timer = setInterval(() => this.expire(), 1000);
-  constructor(private readonly runtime?:RuntimeBrowserService) { this.timer.unref(); }
+  constructor(private readonly runtime?:RuntimeBrowserService, private readonly tasks?:TasksService, private readonly servers?:TaskBrowserServers) { this.timer.unref(); }
   poll(taskId: number, desktopId: string, token: string, receipt?: { id: string; value?: unknown; failed?: boolean }) {
     this.expire();
     let lease = this.leases.get(desktopId);
@@ -39,7 +41,17 @@ export class DesktopBrowserService implements OnModuleDestroy {
   }
   async request(taskId: number, sessionId: number, command: Record<string, unknown>, signal: AbortSignal, desktopId?: string): Promise<unknown> {
     this.expire(); signal.throwIfAborted();
-    const hosted=this.runtime?.active(taskId);
+    let hosted=this.runtime?.active(taskId);
+    if (this.runtime && this.tasks) {
+      const task = await this.tasks.record(taskId);
+      if (task.archivedAt || task.taskState !== 'ready') throw new Error('Task is not active');
+      if (hosted || (!desktopId && ![...this.leases.values()].some(lease => lease.taskId === taskId))) {
+        const identity = createHash('sha256').update(JSON.stringify([task.repoId, task.id, task.createdAt])).digest('hex');
+        hosted = await this.runtime.prepare(taskId, identity);
+        hosted.setPorts(await this.servers?.ports(taskId) ?? []);
+      }
+    }
+    signal.throwIfAborted();
     if(hosted&&(!desktopId||desktopId===hosted.id)){if(!desktopId&&[...this.leases.values()].some(lease=>lease.taskId===taskId))throw new Error('Several task browsers are connected. Supply desktopId.');return this.runtimeRequest(hosted,command as BrowserAgentCommand,sessionId,signal);}
     const matches = [...this.leases.values()].filter(item => item.taskId === taskId && (!desktopId || item.desktopId === desktopId));
     if (matches.length !== 1) throw new Error(matches.length ? 'Several task browsers are connected. Supply desktopId.' : 'Open this task’s Browser in the desktop. No task browser is connected.');
@@ -56,7 +68,7 @@ export class DesktopBrowserService implements OnModuleDestroy {
   }
   desktops(taskId: number) { this.expire(); const hosted=this.runtime?.active(taskId);return [...[...this.leases.values()].filter(lease => lease.taskId === taskId).map(lease => ({ desktopId: lease.desktopId })),...(hosted?[{desktopId:hosted.id}]:[])]; }
   private async runtimeRequest(hosted:import('./runtime-task.js').RuntimeBrowserTask,input:BrowserAgentCommand,sessionId:number,signal:AbortSignal):Promise<unknown>{
-    const controller=new AbortController();const abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});const timer=setTimeout(abort,2000);
+    const controller=new AbortController();const abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});const timer=setTimeout(abort,['open','navigate','reload'].includes(input.kind)?200000:30000);
     let stop:()=>void=()=>undefined;const cancelled=new Promise<never>((_resolve,reject)=>{stop=()=>reject(new Error('Browser action stopped'));controller.signal.addEventListener('abort',stop,{once:true});});
     try{return browserReply(await Promise.race([hosted.agent(input,sessionId,controller.signal),cancelled]));}catch{throw new Error('Browser action stopped. Inspect the page before retrying.');}finally{clearTimeout(timer);signal.removeEventListener('abort',abort);controller.signal.removeEventListener('abort',stop);}
   }

@@ -7,6 +7,9 @@ network adapter decides how explicitly granted task-server connections reach the
 server. These responsibilities must not be inferred from the selected machine or
 from an empty guest partition.
 
+See [persistent streaming and browser lifetime](task-browser-streaming.md) for the
+current channel, viewer-independent execution, guarantees and feature roadmap.
+
 ## Placement and display
 
 | Browser location | Engine | Task localhost | Display |
@@ -47,7 +50,7 @@ restart returns to the default; no new persistence format is introduced.
   document and local frame producer. Electron cannot move an attached guest across
   windows; rehosting reloads the document with user control.
 - `RemoteTaskBrowser` owns exactly one machine viewer identity/token, connection
-  generation, metadata poll, tab state and outside-link forwards. Companion
+  generation, persistent private channel (legacy metadata polling fallback), tab state and outside-link forwards. Companion
   windows never instantiate another task, network owner or connection.
 - `RemoteBrowserPresentation` owns exactly one layout, document-local epoch and
   sequence, frame request/cancellation identity, stream identity, acknowledgment
@@ -55,7 +58,7 @@ restart returns to the default; no new persistence format is introduced.
   Electron nor backend networking. Panel and companion instances share task
   metadata without copying a tab collection. Destroying one cancels its own work.
 - Backend `RuntimeBrowserService` owns bounded task contexts and exclusive viewer
-  leases; `RuntimeBrowserTask` owns profile/tabs/grants and active presentations;
+  leases (independent of task execution); `RuntimeBrowserTask` owns profile/tabs/grants and active presentations;
   `RuntimeBrowserTab` owns its Playwright page, driver and bounded JPEG producer.
 - Renderer feature state owns selected-task reconciliation. Reusable frame/input
   components own decode/input queues. Engine capabilities drive availability;
@@ -84,7 +87,8 @@ receipt before requesting another. Hide, tab change, reconnect and destruction
 cancel the request, rotate stream identity and reject late frames. A 750 ms local
 layout heartbeat and backend presentation freshness guard stale input. Visible
 companions keep the one task connection alive when the panel is hidden. When all
-displays hide, disconnect revokes automation. Reconnection waits for an in-flight
+displays hide, disconnect releases presentation/input authority; task execution and
+agent ownership remain alive. Reconnection waits for an in-flight
 disconnect before acquiring another token. Commands and human input never replay;
 unknown outcomes require reconciliation and fresh user authority. The native
 screencast source also reconciles after a stale start finishes, so an old display

@@ -51,6 +51,7 @@ export class RuntimeBrowserTab {
   private network: RuntimeBrowserNetwork;
   private frame?: RuntimeFrame;
   private frameSequence = 0;
+  private needsSnapshot = true;
   private waiter?: {
     after: number;
     resolve(frame: RuntimeFrame | null): void;
@@ -94,12 +95,12 @@ export class RuntimeBrowserTab {
     this.generation++;
     this.step = { n: 1, text: 'Waiting for a browser action' };
   }
-  assertAgent(generation: number, sessionId: number, visible = false): void {
+  assertAgent(generation: number, sessionId: number, requireReady = false): void {
     if (
       this.driver !== 'agent' ||
       this.generation !== generation ||
       this.agentSessionId !== sessionId ||
-      (visible && !this.ready)
+      (requireReady && !this.agentReady)
     )
       throw new Error('Browser control changed; wait for explicit handoff');
   }
@@ -119,6 +120,9 @@ export class RuntimeBrowserTab {
       !this.error &&
       !this.disposed
     );
+  }
+  get agentReady(): boolean {
+    return this.active() && this.started && !this.loading && !this.error && !this.disposed;
   }
   async start(context: BrowserContext): Promise<void> {
     this.context = context;
@@ -213,6 +217,7 @@ export class RuntimeBrowserTab {
       this.error =
         'The browser disconnected. Reload to reopen with user control.';
       this.frame = undefined;
+      this.needsSnapshot = true;
       this.streaming = false;
       this.completeFrame(null);
       this.changed();
@@ -268,6 +273,7 @@ export class RuntimeBrowserTab {
           !matches(event.metadata.deviceHeight, this.viewport.height)
         )
           return;
+        this.needsSnapshot = false;
         this.frame = {
           sequence: ++this.frameSequence,
           width: this.viewport.width,
@@ -385,16 +391,12 @@ export class RuntimeBrowserTab {
     const current = () => revision === this.layoutRevision && !this.disposed;
     const changed =
       this.visible !== visible || this.interactive !== interactive;
-    if (this.interactive && !interactive && this.driver === 'agent') {
-      this.generation++;
-      this.target = undefined;
-    }
     this.visible = visible;
     this.interactive = interactive;
     if (changed) this.changed();
     if (!visible) {
-      this.takeover();
       this.frame = undefined;
+      this.needsSnapshot = true;
       this.completeFrame(null);
       await this.stopFrames();
       return;
@@ -410,6 +412,7 @@ export class RuntimeBrowserTab {
       await this.stopFrames();
       if (!current()) return;
       this.frame = undefined;
+      this.needsSnapshot = true;
       this.completeFrame(null);
     }
     if (resized) {
@@ -455,6 +458,7 @@ export class RuntimeBrowserTab {
   async nextFrame(
     after: number,
     signal: AbortSignal,
+    waitMs = 5000,
   ): Promise<RuntimeFrame | null> {
     signal.throwIfAborted();
     if (this.waiter) throw new Error('A frame read is already pending');
@@ -467,6 +471,7 @@ export class RuntimeBrowserTab {
         this.quality = quality;
         this.maxWidth = width;
         this.frame = undefined;
+        this.needsSnapshot = true;
         await this.stopFrames();
         await this.startFrames();
       }
@@ -481,9 +486,9 @@ export class RuntimeBrowserTab {
     signal.throwIfAborted();
     return new Promise((resolve) => {
       const abort = () => this.completeFrame(null);
-      const timer = setTimeout(abort, 5000);
+      const timer = setTimeout(abort, waitMs);
       const fallback = setTimeout(() => {
-        void this.staticFrame();
+        if (after === 0 || this.needsSnapshot) void this.staticFrame();
       }, 300);
       this.waiter = {
         after,
@@ -530,6 +535,7 @@ export class RuntimeBrowserTab {
           reply.data.length > 4000000
         )
           return;
+        this.needsSnapshot = false;
         this.frame = {
           sequence: ++this.frameSequence,
           width: this.viewport.width,
@@ -815,6 +821,7 @@ export class RuntimeBrowserTab {
     this.pixelRatio = 1;
     this.viewport = { width: 0, height: 0 };
     this.frame = undefined;
+    this.needsSnapshot = true;
     this.streaming = false;
     this.outstanding = false;
     this.snapshotPending = undefined;

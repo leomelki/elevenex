@@ -744,3 +744,21 @@ test('task request reconciliation is scoped, read-only and validates repository 
   reply.task.repoId = 9; assert.equal((await read({ repoId: 2, requestId: 'stable' })).error.code, 'invalid-response');
   client.reset(42); assert.equal((await read({ repoId: 2, requestId: 'stable' })).error.code, 'stale-scope'); assert.equal(requests, 3);
 });
+
+test('persistent channels have scope-owned cancellation without a request deadline', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const client = new BackendClient(() => local('http://127.0.0.1:1'), () => undefined);
+  client.attach(1);
+  const scope = client.state(1).scope.id;
+  let signal;
+  const pending = client.execute(1, scope, 'browser-stream:1', false, async (_endpoint, owned) => {
+    signal = owned;
+    await new Promise(resolve => owned.addEventListener('abort', resolve, { once: true }));
+  }, null);
+  context.mock.timers.tick(3600000);
+  assert.equal(signal.aborted, false);
+  client.reset(1);
+  assert.equal(signal.aborted, true);
+  assert.equal((await pending).error.code, 'stale-scope');
+  client.dispose();
+});

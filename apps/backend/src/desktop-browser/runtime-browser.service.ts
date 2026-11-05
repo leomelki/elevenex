@@ -1,6 +1,8 @@
+import { TasksService } from '../tasks/tasks.service.js';
 import { RuntimeBrowserPersistence } from './runtime-persistence.js';
 import {
   Injectable,
+  Optional,
   ForbiddenException,
   ConflictException,
   type OnModuleDestroy,
@@ -16,7 +18,7 @@ interface Viewer {
   seen: number;
   readonly layoutSequences: Map<string, number>;
 }
-/** One authoritative viewer lease per runtime task. New connections revoke old driver generations. */
+/** Viewer authority rotates independently of retained task execution and agent drivers. */
 @Injectable()
 export class RuntimeBrowserService implements OnModuleDestroy {
   private readonly tasks = new Map<number, RuntimeBrowserTask>();
@@ -29,6 +31,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
   constructor(
     private readonly pool: RuntimeBrowserPool,
     private readonly persistence: RuntimeBrowserPersistence,
+    @Optional() private readonly taskRecords?: TasksService,
   ) {
     this.timer.unref();
   }
@@ -98,7 +101,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
     }
     if (!task) {
       if (this.tasks.size >= 4) {
-        const evict = [...this.tasks].find(([id]) => !this.viewers.has(id));
+        const evict = [...this.tasks].find(([id, owner]) => !this.viewers.has(id) && !owner.retained);
         if (!evict) throw new Error('Remote browser task limit reached');
         const previousIdentity = this.identities.get(evict[0]);
         if (previousIdentity)
@@ -153,14 +156,40 @@ export class RuntimeBrowserService implements OnModuleDestroy {
   }
   active(taskId: number): RuntimeBrowserTask | null {
     const task = this.tasks.get(taskId);
-    return !this.stopped && task?.alive && this.viewers.has(taskId) ? task : null;
+    return !this.stopped && task?.alive ? task : null;
   }
   disconnect(taskId: number, token: unknown): void {
     const task = this.viewer(taskId, token);
     task.reconcile();
     this.viewers.delete(taskId);
   }
+  private checking?: Promise<void>;
+  private async checkTasks(): Promise<void> {
+    if (!this.taskRecords || this.stopped) return;
+    try {
+      for (const [id, task] of this.tasks) {
+        const record = await this.taskRecords.record(id).catch(() => null);
+        if (this.tasks.get(id) !== task || this.stopped) continue;
+        if (record && !record.archivedAt && record.taskState === 'ready') continue;
+        // A retained browser must not outlive task finish/archive or keep its
+        // workspace connections open. Never evict a live task for viewer idleness.
+        const retirement = this.preparing.then(async () => {
+          if (this.tasks.get(id) !== task || this.stopped) return;
+          const identity = this.identities.get(id);
+          if (identity) await this.persistence.save(identity, task.saved());
+          await task.destroy();
+          this.tasks.delete(id);
+          this.viewers.delete(id);
+          this.identities.delete(id);
+          this.saved.delete(id);
+        });
+        this.preparing = retirement.catch(() => undefined);
+        await retirement;
+      }
+    } catch { /* Retry bounded lifecycle reconciliation on the next sweep. */ }
+  }
   private sweep(): void {
+    this.checking ??= this.checkTasks().finally(() => { this.checking = undefined; });
     for (const [id, task] of this.tasks) {
       task.sweep();
       const saved = task.saved(),
@@ -176,18 +205,13 @@ export class RuntimeBrowserService implements OnModuleDestroy {
         viewer.task.reconcile();
         this.viewers.delete(id);
       }
-    for (const [id, task] of this.tasks)
-      if (task.expired) {
-        this.tasks.delete(id);
-        this.identities.delete(id);
-        this.saved.delete(id);
-        void task.destroy();
-      }
+
   }
   async onModuleDestroy(): Promise<void> {
     this.stopped = true;
     clearInterval(this.timer);
     await this.preparing;
+    await this.checking;
     for (const [id, task] of this.tasks) {
       const identity = this.identities.get(id);
       if (identity) await this.persistence.save(identity, task.saved());

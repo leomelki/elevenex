@@ -118,3 +118,52 @@ it('orders layout lanes independently and rejects expired viewer tokens', async 
     expect(service.layoutViewer(1, replacement.token, 0, tabId)).toBe(task);
   } finally { await service.onModuleDestroy(); }
 });
+
+it('retains task execution and agent ownership after viewer disconnect and lease expiry', async () => {
+  jest.useFakeTimers();
+  const persistence = { read: async () => null, save: async () => true, flush: async () => undefined };
+  const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence);
+  try {
+    const { token } = await service.connect(1, 'viewer', 'identity');
+    const task = service.viewer(1, token);
+    const tab = await task.create('agent', 2, '');
+    const generation = tab.generation;
+    service.disconnect(1, token);
+    jest.advanceTimersByTime(3600000);
+    expect(service.active(1)).toBe(task);
+    const state = await task.agent({ kind: 'list' }, 2, new AbortController().signal);
+    expect(state.tabs[0]).toMatchObject({ driver: 'agent', generation });
+    const reconnect = await service.connect(1, 'viewer', 'identity');
+    expect(reconnect.state.tabs[0]).toMatchObject({ driver: 'agent', generation });
+    expect(() => service.viewer(1, token)).toThrow();
+  } finally { await service.onModuleDestroy(); jest.useRealTimers(); }
+});
+
+it('refuses capacity pressure instead of silently destroying retained browser tabs', async () => {
+  const persistence = { read: async () => null, save: async () => true, flush: async () => undefined };
+  const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence);
+  try {
+    for (let id = 1; id <= 4; id++) {
+      const task = await service.prepare(id, 'identity-' + id);
+      await task.create('agent', 2, '');
+    }
+    await expect(service.prepare(5, 'identity-5')).rejects.toThrow('limit');
+    expect(service.active(1)?.tabs.size).toBe(1);
+  } finally { await service.onModuleDestroy(); }
+});
+
+it('closes retained browser resources when the durable task is archived', async () => {
+  jest.useFakeTimers();
+  let archived = false;
+  const records = { record: async () => ({ taskState: 'ready', archivedAt: archived ? 'now' : null }) };
+  const persistence = { read: async () => null, save: async () => true, flush: async () => undefined };
+  const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence, records as unknown as import('../tasks/tasks.service.js').TasksService);
+  try {
+    const task = await service.prepare(1, 'identity');
+    await task.create('agent', 2, '');
+    archived = true;
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(service.active(1)).toBeNull();
+    expect(task.alive).toBe(false);
+  } finally { await service.onModuleDestroy(); jest.useRealTimers(); }
+});

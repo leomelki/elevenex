@@ -34,7 +34,7 @@ export class RuntimeBrowserController {
     private readonly sessions: SessionsService,
     private readonly ports: TaskBrowserServers,
   ) {}
-  private async task(request: Request, value: string): Promise<number> {
+  private async task(request: Pick<Request, 'socket' | 'headers'>, value: string): Promise<number> {
     // Display pixels require the managed private IPC transport. Originless TCP
     // requests (including local agent processes) are not proof of UI authority.
     if (
@@ -51,8 +51,13 @@ export class RuntimeBrowserController {
       throw new BadRequestException('Task is not active');
     return id;
   }
+  /** Shared upgrade authorization; upgrades do not pass through Express guards. */
+  async authorizeStream(request: Pick<Request, 'socket' | 'headers'>, id: number, token: string): Promise<void> {
+    await this.task(request, String(id));
+    this.browsers.viewer(id, token);
+  }
   @Get('initial') async initial(
-    @Req() request: Request,
+    @Req() request: Pick<Request, 'socket' | 'headers'>,
     @Param('taskId') value: string,
   ) {
     const id = await this.task(request, value);
@@ -65,7 +70,7 @@ export class RuntimeBrowserController {
     return task.state();
   }
   @Post('connect') async connect(
-    @Req() request: Request,
+    @Req() request: Pick<Request, 'socket' | 'headers'>,
     @Param('taskId') value: string,
     @Body() input: unknown,
   ) {
@@ -83,7 +88,7 @@ export class RuntimeBrowserController {
     return result;
   }
   @Get('state') async state(
-    @Req() request: Request,
+    @Req() request: Pick<Request, 'socket' | 'headers'>,
     @Param('taskId') value: string,
     @Headers('x-elevenex-browser-view') token: string,
     @Query('after') after?: string,
@@ -98,7 +103,7 @@ export class RuntimeBrowserController {
       : state;
   }
   @Post('command') async command(
-    @Req() request: Request,
+    @Req() request: Pick<Request, 'socket' | 'headers'>,
     @Param('taskId') value: string,
     @Headers('x-elevenex-browser-view') token: string,
     @Body() input: unknown,
@@ -123,7 +128,7 @@ export class RuntimeBrowserController {
     }
   }
   @Post('layout') async layout(
-    @Req() request: Request,
+    @Req() request: Pick<Request, 'socket' | 'headers'>,
     @Param('taskId') value: string,
     @Headers('x-elevenex-browser-view') token: string,
     @Body() input: unknown,
@@ -154,7 +159,7 @@ export class RuntimeBrowserController {
     return this.browsers.viewer(id, token).state();
   }
   @Post('input') async input(
-    @Req() request: Request,
+    @Req() request: Pick<Request, 'socket' | 'headers'>,
     @Param('taskId') value: string,
     @Headers('x-elevenex-browser-view') token: string,
     @Body() input: unknown,
@@ -181,7 +186,7 @@ export class RuntimeBrowserController {
     }
   }
   @Post('disconnect') async disconnect(
-    @Req() request: Request,
+    @Req() request: Pick<Request, 'socket' | 'headers'>,
     @Param('taskId') value: string,
     @Headers('x-elevenex-browser-view') token: string,
   ) {
@@ -189,7 +194,7 @@ export class RuntimeBrowserController {
     return { disconnected: true };
   }
   @Get('frame') async frame(
-    @Req() request: Request,
+    @Req() request: Pick<Request, 'socket' | 'headers'>,
     @Res() response: Response,
     @Param('taskId') value: string,
     @Headers('x-elevenex-browser-view') token: string,

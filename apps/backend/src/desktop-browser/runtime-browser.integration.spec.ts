@@ -635,7 +635,7 @@ describe('Remote browser public HTTP behavior', () => {
     const now = Date.now(), clock = jest.spyOn(Date, 'now').mockReturnValue(now + 3100);
     try {
       const expired = await runtime.viewer(1, token).agent({ kind: 'list' }, 2, new AbortController().signal);
-      expect(expired.tabs.find(tab => tab.id === detachedId)?.driver).toBe('you');
+      expect(expired.tabs.find(tab => tab.id === detachedId)?.driver).toBe('agent');
       expect((await request('frame?tabId=' + detachedId + '&after=0')).status).toBe(400);
     } finally { clock.mockRestore(); }
     await request('layout', { ...box, detached: false, visible: false, interactive: false, sequence: 12 });
@@ -665,7 +665,7 @@ describe('Remote browser public HTTP behavior', () => {
       authorize();
       expect((await pending).status).toBeGreaterThanOrEqual(400);
       const state = await request('state').then(reply => reply.json());
-      expect(state.tabs.some((tab: { driver: string }) => tab.driver === 'agent')).toBe(false);
+      expect(state.tabs.find((tab: { id: string; driver: string }) => tab.id === id)?.driver).not.toBe('agent');
       if (change !== 'close') await request('command', { kind: 'close', tabId: id });
     }
     await request('disconnect', {});
