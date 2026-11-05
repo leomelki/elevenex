@@ -27,12 +27,13 @@ export interface BrowserPageHost {
 /** One sandboxed, unprivileged page. The creating task owns and destroys it explicitly. */
 export class BrowserPage {
   readonly id: string;
+  readonly bootstrap: string;
   displayWindow?: BrowserWindow;
   readonly lease: BrowserDriverLease;
   private engine?: WebContents;
   get contents(): WebContents { if (!this.engine) throw new Error('The page is still connecting'); return this.engine; }
   get requested(): boolean { return !!this.engine || !!this.pendingLoad; }
-  get hasContents(): boolean { return !!this.engine && !this.engine.isDestroyed(); }
+  get hasContents(): boolean { return !!this.engine && !this.engine.isDestroyed() && !this.crashed; }
   get partition(): string { return this.host.partition; }
   presentation: 'embedded' | 'stream' = 'embedded';
   private frames?: BrowserFrameStream;
@@ -56,6 +57,7 @@ export class BrowserPage {
   private zoom = 1;
   bounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 };
   private destroyed = false;
+  private crashed = false;
   private syntheticInput = false;
   private navigation = 0;
   private viewportRevision = 0;
@@ -74,6 +76,8 @@ export class BrowserPage {
 
   constructor(private readonly host: BrowserPageHost, by: 'you' | 'agent', sessionId: number | null = null, id: string = randomUUID()) {
     this.id = id;
+    // A tab survives engine recovery; a main-issued guest identity does not.
+    this.bootstrap = 'about:blank#' + id + ':' + randomUUID();
     if (process.env['ELECTRON_ENABLE_LOGGING'] || app.commandLine.hasSwitch('enable-logging')) throw new Error('Private browsing is unavailable while Chromium page logging is enabled. Disable page logging before opening a tab.');
     this.lease = new BrowserDriverLease(by, sessionId);
     if (by === 'agent') this.step = { n: 1, text: 'Opening page' };
@@ -134,7 +138,7 @@ export class BrowserPage {
       this.hide(); host.changed();
     });
     contents.on('render-process-gone', () => {
-      this.theme = 'system'; this.slowNetwork = false;
+      this.crashed = true;
       this.lease.takeOver(true); this.loading = false;
       this.error = 'The page stopped. Reload to recover; agent control stays paused.';
       this.hide(); host.changed();
@@ -384,11 +388,12 @@ export class BrowserPage {
     return operation;
   }
   private async pickAt(x: number, y: number): Promise<void> {
-    const navigation = this.navigation, viewport = this.viewportRevision;
+    const navigation = this.navigation, viewport = this.viewportRevision, generation = this.lease.generation;
+    const current = () => !this.destroyed && this.picking && this.attached && this.navigation === navigation && this.viewportRevision === viewport && this.lease.generation === generation;
     try {
       const element = await this.inspectAt(x, y);
-      if (!this.destroyed && this.picking && this.attached && this.navigation === navigation && this.viewportRevision === viewport) { this.hide(); this.host.pick(element); }
-    } catch { if (!this.destroyed) this.host.pick(null); }
+      if (current()) { this.hide(); this.host.pick(element); }
+    } catch { if (current()) this.host.pick(null); }
   }
   countError(): void { if (this.destroyed || !this.host.authorized() || this.errors >= 999) return; this.errors++; this.host.changed(); }
   destroy(): void {

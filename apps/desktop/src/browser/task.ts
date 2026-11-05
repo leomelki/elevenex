@@ -20,6 +20,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   detachTab(tabId: string, window: BrowserWindow): void {
     const page = this.page(tabId);
     if (this.detached.has(tabId)) throw new Error('Tab already detached');
+    if (this.active === tabId) this.clearPicker();
     page.hide(); page.lease.takeOver();
     this.detached.set(tabId, { window, heartbeat: 0, sequence: -1, controlsFocus: 0, presentation: page.presentation });
     this.rehostPage(page, window); this.surfaceEpoch++; this.emit();
@@ -56,7 +57,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   }
   detachedSurfaces(tabId: string): readonly TaskBrowserSurface[] {
     const view = this.detached.get(tabId), page = this.pages.get(tabId);
-    return view && page ? this.surfaces().filter(surface => surface.tabId === tabId).map(surface => ({ ...surface, guest: { partition: page.partition, bootstrap: 'about:blank#' + tabId }, partition: this.pages.get(tabId)?.partition ?? '', bootstrap: 'about:blank#' + tabId, visible: this.pages.get(tabId)?.attached ?? false, interactive: view.layout?.inputReady === true && !!this.pages.get(tabId)?.attached, zoom: view.window.webContents.getZoomFactor() })) : [];
+    return view && page ? this.surfaces().filter(surface => surface.tabId === tabId).map(surface => ({ ...surface, guest: { partition: page.partition, bootstrap: page.bootstrap }, partition: page.partition, bootstrap: page.bootstrap, visible: page.attached, interactive: view.layout?.inputReady === true && page.attached, zoom: view.window.webContents.getZoomFactor() })) : [];
   }
   detachedSnapshot(tabId: string, state = this.snapshot()): TaskBrowserState { return { ...state, controlsFocus: this.detached.get(tabId)?.controlsFocus ?? state.controlsFocus }; }
   applicationInputDetached(tabId: string, x?: number, y?: number): void {
@@ -173,16 +174,13 @@ export class TaskBrowser implements DesktopBrowserHost {
     else if (input.kind === 'open') {
       const page = this.create('you'); page.userDownloadIntent = true; this.select(page); await this.navigate(page, input.url);
     } else if (input.kind === 'pick') {
-      const page = this.current(); page.lease.takeOver(); this.picked = null; this.pickerMessage = null; this.picking = input.enabled; page.picking = input.enabled;
+      const page = this.current(); page.lease.takeOver(); this.clearPicker(); this.picking = input.enabled; page.picking = input.enabled;
     } else if (input.kind === 'feedback') this.feedback = input.enabled;
     else {
       const page = this.page(input.tabId);
       if (input.kind === 'select') { this.select(page); if (page.url && (!page.hasContents || !page.contents.getURL() || page.contents.getURL() === 'about:blank')) await this.navigate(page, page.url); }
       else if (input.kind === 'close') {
-        if (this.attention?.tabId === page.id) this.attention = undefined;
-        this.returnTab(page.id); page.destroy(); this.pages.delete(page.id);
-        if (this.active === page.id) { this.hide(); this.active = [...this.pages.keys()].at(-1) ?? null; }
-        this.picked = null; this.picking = false;
+        await this.closePage(page);
       } else if (input.kind === 'takeover') page.lease.takeOver();
       else if (input.kind === 'focus') {
         if (!page.url || page.loading || page.error) throw new Error('Wait for the page to finish loading');
@@ -207,17 +205,15 @@ export class TaskBrowser implements DesktopBrowserHost {
         if (!this.selected() || this.pages.get(page.id) !== page) throw new Error('Browser selection changed');
         // Opening outside is an explicit, validated user intent, including a remote forward.
         await shell.openExternal(actual);
-      } else if (input.kind === 'back') { page.lease.takeOver(); if (page.hasContents && page.contents.navigationHistory.canGoBack()) page.contents.navigationHistory.goBack(); }
+      } else if (input.kind === 'back') { if (this.active === page.id) this.clearPicker(); page.lease.takeOver(); if (page.hasContents && page.contents.navigationHistory.canGoBack()) page.contents.navigationHistory.goBack(); }
       else if (input.kind === 'reload') {
         if (!page.url) return this.snapshot();
         page.userDownloadIntent = true; page.lease.takeOver();
         if (!page.hasContents) {
-          const wasActive = this.active === page.id, url = page.url;
-          this.returnTab(page.id); page.destroy(); this.pages.delete(page.id);
-          const replacement = this.create(page.lease.by, page.lease.agentSessionId);
-          replacement.width = page.width; replacement.lease.takeOver();
-          if (wasActive) this.select(replacement);
-          await this.navigate(replacement, url);
+          if (this.active === page.id) this.clearPicker();
+          // Replace only the engine. Tab position, settings and any companion
+          // remain attached to the same task-owned resource identity.
+          this.rehostPage(page, page.displayWindow);
         } else await this.navigate(page, page.url);
       }
       else if (input.kind === 'theme') await page.tool('theme', input.theme);
@@ -254,8 +250,7 @@ export class TaskBrowser implements DesktopBrowserHost {
           this.select(page);
         } else if (input.kind === 'close') {
           if (page.lease.by === 'you') throw new Error('User-created tabs can only be closed in the desktop');
-          this.returnTab(page.id); page.destroy(); this.pages.delete(page.id);
-          if (this.active === page.id) { this.hide(); this.active = [...this.pages.keys()].at(-1) ?? null; }
+          await this.closePage(page);
         } else if (input.kind === 'needs-user') { page.lease.takeOver(true); page.step = undefined; page.target = undefined; }
         else if (input.kind === 'navigate') await this.navigate(page, input.url, input.generation);
         else if (input.kind === 'reload') await this.navigate(page, page.url, input.generation);
@@ -280,7 +275,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   }
   surfaces(): readonly TaskBrowserSurface[] {
     if (this.disposed) return [];
-    return [...this.pages.values()].filter(page => page.requested).map(page => ({ scopeId: this.scopeId, taskId: this.taskId, tabId: page.id, ...(this.detached.has(page.id) ? {} : { guest: { partition: page.partition, bootstrap: 'about:blank#' + page.id } }), partition: this.detached.has(page.id) ? '' : page.partition, bootstrap: 'about:blank#' + page.id,
+    return [...this.pages.values()].filter(page => page.requested).map(page => ({ scopeId: this.scopeId, taskId: this.taskId, tabId: page.id, ...(this.detached.has(page.id) ? {} : { guest: { partition: page.partition, bootstrap: page.bootstrap } }), partition: this.detached.has(page.id) ? '' : page.partition, bootstrap: page.bootstrap,
       bounds: page.bounds, viewport: page.viewport, zoom: this.window.webContents.getZoomFactor(), visible: page.attached && !this.detached.has(page.id), generation: page.lease.generation, driver: page.lease.driver, interactive: this.layout?.inputReady === true && !this.picked && page.attached, presentation: page.presentation }));
   }
   attach(contents: import('electron').WebContents, tabId: string): boolean {
@@ -316,7 +311,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     if (this.disposed) return;
     try { this.assertScope(); } catch { this.destroy(); return; }
     for (const [tabId, view] of this.detached) if (view.layout && (Date.now() - view.heartbeat > 750 || !view.window.isVisible() || view.window.isMinimized())) this.hideDetached(tabId);
-    if ((Date.now() - this.heartbeat > 750 || !this.window.isVisible() || this.window.isMinimized()) && (this.layout || [...this.pages.values()].some(page => page.attached))) this.hide();
+    if ((Date.now() - this.heartbeat > 750 || !this.window.isVisible() || this.window.isMinimized()) && (this.layout || [...this.pages.values()].some(page => page.attached && !this.detached.has(page.id)))) this.hide();
   }
   applicationInput(x?: number,y?: number):void {
     const layout=this.layout;if(!layout?.visible||!layout.inputReady)return;
@@ -327,6 +322,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   hide(): void { this.layout = undefined; this.focusPending = null; this.surfaceEpoch++; for (const page of this.pages.values()) if (!this.detached.has(page.id)) page.hide(); this.emit(); }
   suspend(): void { this.revoke(true); if (!this.hasDetached()) { this.network.pause(); for (const page of this.pages.values()) page.pauseNetwork(); } }
   revoke(retainDetached = false): void {
+    this.clearPicker();
     this.hide();
     if (!retainDetached) for (const tabId of this.detached.keys()) this.hideDetached(tabId);
     for (const page of this.pages.values()) {
@@ -358,12 +354,25 @@ export class TaskBrowser implements DesktopBrowserHost {
     page.show(intersect({ x: layout.bounds.x * zoom, y: layout.bounds.y * zoom, width: layout.bounds.width * zoom, height: layout.bounds.height * zoom }, viewport.width, viewport.height), zoom, layout.ownerGeneration, layout.inputReady && !this.picked, layout.viewport);
     if (this.focusPending === page.id && page.attached) { this.focusPending = null; page.focus(); }
   }
-  private select(page: BrowserPage): void {
-    this.hide(); this.active = page.id; this.picked = null; this.pickerMessage = null; this.picking = false;
+  private clearPicker(): void {
+    this.picked = null; this.pickerMessage = null; this.picking = false;
     for (const other of this.pages.values()) other.picking = false;
   }
+  private async closePage(page: BrowserPage): Promise<void> {
+    this.clearPicker();
+    if (this.attention?.tabId === page.id) this.attention = undefined;
+    // Closing a companion tab must not rehost a replacement page on the way out.
+    this.detached.delete(page.id); page.destroy(); this.pages.delete(page.id);
+    if (this.active !== page.id) return;
+    this.hide(); this.active = [...this.pages.keys()].at(-1) ?? null;
+    const next = this.active ? this.pages.get(this.active) : undefined;
+    if (next?.url && !next.requested) await this.navigate(next, next.url);
+  }
+  private select(page: BrowserPage): void {
+    this.hide(); this.active = page.id; this.clearPicker();
+  }
   private async navigate(page: BrowserPage, url: string, generation?: number): Promise<void> {
-    if (this.active === page.id) { this.picked = null; this.picking = false; page.picking = false; this.pickerMessage = null; }
+    if (this.active === page.id) this.clearPicker();
     const logical = browserUrl(url), expectedGeneration = page.lease.generation;
     page.url = logical; page.loading = true; page.error = null; this.emit();
     try {

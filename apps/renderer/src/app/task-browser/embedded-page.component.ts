@@ -25,11 +25,17 @@ export class EmbeddedPageComponent {
   private readonly host =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private guest?: TaskGuestElement;
+  private guestIdentity?: TaskBrowserSurface['guest'];
   private cleanup?: () => void;
   constructor() {
     afterRenderEffect(() => {
       const surface = this.surface();
       if (!surface.guest) return;
+      if (this.guest && (this.guestIdentity?.bootstrap !== surface.guest.bootstrap || this.guestIdentity?.partition !== surface.guest.partition)) {
+        this.cleanup?.();
+        this.guest.remove();
+        this.guest = undefined;
+      }
       if (!this.guest) {
         // Electron supplies this element's documented API; no Electron/Node code enters Angular.
         const guest = document.createElement('webview') as TaskGuestElement;
@@ -56,6 +62,7 @@ export class EmbeddedPageComponent {
         this.cleanup = () => guest.removeEventListener('dom-ready', attach);
         this.host.append(guest);
         this.guest = guest;
+        this.guestIdentity = surface.guest;
       }
       const stream = surface.presentation === 'stream';
       this.guest.tabIndex = stream ? -1 : 0;

@@ -61,6 +61,15 @@ Nest owns SIGINT/SIGTERM shutdown, including contexts and browser children.
 Playwright's global process signal handlers are disabled so they cannot swallow
 backend termination. This also preserves application-owned process supervision.
 
+Host allocation serializes metadata preparation and eviction, with at most eight
+pending task preparations. Concurrent opens cannot dispose the same retained task
+twice or exceed the four-task limit. Shutdown rejects new work, drains in-flight
+preparation, then saves and closes retained owners; a late preparation cannot
+publish another viewer or overwrite saved navigation with an uninitialized task.
+Discovered server changes advance the state revision without granting network
+access, so incremental polling updates suggestions while unrelated polls stay
+unchanged.
+
 The private layout route accepts optional `tabId` and `detached` fields for
 companion presentations. Omitted fields retain the original active-tab behavior.
 All views share the original viewer token; a companion does not acquire another

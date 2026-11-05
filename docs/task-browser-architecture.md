@@ -157,3 +157,20 @@ TypeScript; native Electron smoke; six browser-location captures with
 keyboard selection and focus restoration. The broader backend `tsconfig.json`
 check includes unrelated failing spec types outside `desktop-browser`; the
 production `tsconfig.build.json` check passes. No dependencies or lockfiles changed.
+
+The follow-up review adds regressions for placement replacement after navigation
+or task selection, picker exit and stale observations, stable local tab recovery,
+lazy selection after closure, pinned-task capacity, concurrent runtime eviction,
+shutdown during preparation, malformed viewer tokens and discovered-port
+invalidations. Native guests now have an engine-specific bootstrap identity;
+the stable tab ID survives engine replacement. Runtime owner allocation is
+serialized and bounded independently of ongoing viewer operations.
+
+Follow-up checks passed: desktop lint/test/build (154 main tests, seven capture
+tool tests and 643 renderer tests), 27 backend browser tests including real
+Chromium/private-socket integration, backend production TypeScript and native
+Electron smoke. Six [placement captures](../artifacts/desktop-capture/run-PmeLOc/report.json)
+and ten [new-tab captures](../artifacts/desktop-capture/run-6NYGTI/report.json)
+report `verified: true`; inspected images cover both themes, keyboard focus,
+narrow/reduced-motion, empty and error states. Remote transport fixtures and local
+Chromium do not establish a deployed SSH host or a packaged-app launch.

@@ -30,12 +30,30 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
   start: async () => {
     let holdBrowserAuthorization = false;
     const browserAuthorizations = new Set();
+    let holdBrowserTask = false;
+    const browserTaskReads = new Set();
+    const browserTask = response => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ id: 1, repoId: 1, state: 'ready', identity: 'c'.repeat(64) }));
+    };
     const authorizeBrowser = response => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ taskId: 1, sessionId: 2, available: true }));
     };
     const http = createServer((request, response) => {
       const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+      if (pathname === '/hold-browser-task') { holdBrowserTask = true; response.end(); return; }
+      if (pathname === '/browser-task-pending') { response.end(String(browserTaskReads.size)); return; }
+      if (pathname === '/release-browser-task') {
+        holdBrowserTask = false;
+        for (const pending of browserTaskReads) browserTask(pending);
+        browserTaskReads.clear(); response.end(); return;
+      }
+      if (pathname === '/api/desktop-browser/tasks/1' && holdBrowserTask) {
+        browserTaskReads.add(response);
+        response.once('close', () => browserTaskReads.delete(response));
+        return;
+      }
       if (pathname === '/hold-browser-authorization') { holdBrowserAuthorization = true; response.end(); return; }
       if (pathname === '/browser-authorization-pending') { response.end(String(browserAuthorizations.size)); return; }
       if (pathname === '/release-browser-authorization') {
@@ -73,6 +91,9 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         '/api/desktop-workspace/tasks': { items: [], nextCursor: null },
         '/api/desktop-browser/tasks/1': { id: 1, repoId: 1, state: 'ready', identity: 'c'.repeat(64) },
         '/api/desktop-browser/tasks/3': { id: 3, repoId: 1, state: 'ready', identity: 'd'.repeat(64) },
+        '/api/desktop-browser/tasks/4': { id: 4, repoId: 1, state: 'ready', identity: 'e'.repeat(64) },
+        '/api/desktop-browser/tasks/5': { id: 5, repoId: 1, state: 'ready', identity: 'f'.repeat(64) },
+        '/api/desktop-browser/tasks/6': { id: 6, repoId: 1, state: 'ready', identity: 'a'.repeat(64) },
         '/api/desktop-workspace/tasks/1/git': { taskId: 1, branch: 'work', upstream: null, ahead: 0, behind: 0, files: 1, additions: 3, deletions: 1, conflicted: false, changesRevision: 'b'.repeat(64) },
         '/api/desktop-workspace/folders': [],
         '/api/desktop-workspace/tasks/1/sessions/2/chat/changes': { turnId: 'reply', revision: 'a'.repeat(64), offset: 0, files: [], total: 0, nextOffset: null, content: null },

@@ -129,6 +129,20 @@ unresponsive app surfaces noninteractive. Remote viewers have exclusive leases,
 a ten-second heartbeat expiry and five-minute idle context retention. A competing
 viewer gets a visible conflict and explicit Reconnect, never silent takeover.
 
+Explicit Reload after a crashed or closed local engine retains the tab ID, order,
+width, theme, network setting and companion placement. Main issues a fresh blank
+guest identity for the replacement engine; the renderer replaces that guest while
+keeping the tab stable. Ordinary site navigation and layout updates retain the
+existing guest. Closing a companion tab destroys its engine directly, and closing
+a restored active tab starts the next lazy page. Picker exit clears native input
+interception together with the visible picker state.
+
+Location changes prepare the target before replacing the current host, then
+recheck task selection, tab identities, control generations and loaded/pending
+pages. A concurrent user action cancels the replacement. Companions pin their
+task owners; when all four retained task slots are pinned, opening another task
+browser reports capacity instead of silently exceeding the bound.
+
 ## Capabilities and extension boundaries
 
 Theme and slow-network tools use private, fixed CDP commands, with no CDP bridge.

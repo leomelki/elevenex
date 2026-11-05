@@ -119,7 +119,9 @@ export class RuntimeBrowserTask {
     this.revision++;
   }
   setPorts(ports: readonly number[]): void {
-    this.ports = ports;
+    if (ports.length === this.ports.length && ports.every((port, index) => port === this.ports[index])) return;
+    this.ports = [...ports];
+    this.revision++;
   }
   state(): TaskBrowserState {
     return {

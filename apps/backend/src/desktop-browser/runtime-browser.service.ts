@@ -23,6 +23,8 @@ export class RuntimeBrowserService implements OnModuleDestroy {
   private readonly identities = new Map<number, string>();
   private readonly saved = new Map<number, string>();
   private readonly viewers = new Map<number, Viewer>();
+  private stopped = false;
+  private preparing: Promise<void> = Promise.resolve();
   private readonly timer = setInterval(() => this.sweep(), 1000);
   constructor(
     private readonly pool: RuntimeBrowserPool,
@@ -42,6 +44,8 @@ export class RuntimeBrowserService implements OnModuleDestroy {
     state: ReturnType<RuntimeBrowserTask['state']>;
   }> {
     const task = await this.prepare(taskId, identity);
+    if (this.stopped || this.tasks.get(taskId) !== task)
+      throw new Error('Browser task preparation was interrupted');
     const old = this.viewers.get(taskId);
     if (old && old.clientId !== clientId && Date.now() - old.seen < 10000)
       throw new ConflictException({
@@ -64,12 +68,18 @@ export class RuntimeBrowserService implements OnModuleDestroy {
   }
   private readonly opening = new Map<string, Promise<RuntimeBrowserTask>>();
   prepare(taskId: number, identity: string): Promise<RuntimeBrowserTask> {
+    if (this.stopped) return Promise.reject(new Error('Browser runtime stopped'));
     const key = taskId + ':' + identity;
     const pending = this.opening.get(key);
     if (pending) return pending;
-    const operation = this.prepareTask(taskId, identity).finally(() =>
+    if (this.opening.size >= 8) return Promise.reject(new Error('Browser task preparation limit reached'));
+    // Task allocation includes asynchronous profile disposal and metadata reads.
+    // Serialize this boundary so competing callers cannot evict the same owner
+    // or publish more than four tasks. Ordinary viewer operations remain independent.
+    const operation = this.preparing.then(() => this.prepareTask(taskId, identity)).finally(() =>
       this.opening.delete(key),
     );
+    this.preparing = operation.then(() => undefined, () => undefined);
     this.opening.set(key, operation);
     return operation;
   }
@@ -77,6 +87,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
     taskId: number,
     identity: string,
   ): Promise<RuntimeBrowserTask> {
+    if (this.stopped) throw new Error('Browser runtime stopped');
     let task = this.tasks.get(taskId);
     if (task && this.identities.get(taskId) !== identity) {
       this.viewers.delete(taskId);
@@ -97,22 +108,26 @@ export class RuntimeBrowserService implements OnModuleDestroy {
         this.identities.delete(evict[0]);
         this.saved.delete(evict[0]);
       }
+      if (this.stopped) throw new Error('Browser runtime stopped');
+      const saved = await this.persistence.read(identity);
+      if (this.stopped) throw new Error('Browser runtime stopped');
       task = new RuntimeBrowserTask(taskId, this.pool, identity);
+      if (saved) task.restore(saved);
       this.tasks.set(taskId, task);
       this.identities.set(taskId, identity);
-      const saved = await this.persistence.read(identity);
-      if (saved) task.restore(saved);
     }
     return task;
   }
   viewer(taskId: number, token: unknown): RuntimeBrowserTask {
     const viewer = this.viewers.get(taskId);
+    const bytes = typeof token === 'string' ? Buffer.from(token) : null;
     if (
-      typeof token !== 'string' ||
-      token.length !== 36 ||
+      this.stopped ||
+      !bytes ||
+      bytes.length !== 36 ||
       !viewer ||
       Date.now() - viewer.seen > 10000 ||
-      !timingSafeEqual(Buffer.from(token), Buffer.from(viewer.token))
+      !timingSafeEqual(bytes, Buffer.from(viewer.token))
     )
       throw new ForbiddenException('Browser viewer lease expired');
     viewer.seen = Date.now();
@@ -138,7 +153,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
   }
   active(taskId: number): RuntimeBrowserTask | null {
     const task = this.tasks.get(taskId);
-    return task?.alive && this.viewers.has(taskId) ? task : null;
+    return !this.stopped && task?.alive && this.viewers.has(taskId) ? task : null;
   }
   disconnect(taskId: number, token: unknown): void {
     const task = this.viewer(taskId, token);
@@ -170,7 +185,9 @@ export class RuntimeBrowserService implements OnModuleDestroy {
       }
   }
   async onModuleDestroy(): Promise<void> {
+    this.stopped = true;
     clearInterval(this.timer);
+    await this.preparing;
     for (const [id, task] of this.tasks) {
       const identity = this.identities.get(id);
       if (identity) await this.persistence.save(identity, task.saved());

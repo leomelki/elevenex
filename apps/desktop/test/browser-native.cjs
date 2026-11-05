@@ -26,7 +26,8 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
       for (const surface of surfaces) {
         if (!surface.partition) { guests.get(surface.tabId)?.remove(); guests.delete(surface.tabId); continue; }
         let guest = guests.get(surface.tabId);
-        if (!guest) { guest = document.createElement('webview'); guest.setAttribute('partition', surface.partition); guest.setAttribute('src', surface.bootstrap); guest.addEventListener('dom-ready', () => { void window.elevenex.taskBrowserAttach(surface.scopeId, surface.taskId, surface.tabId, guest.getWebContentsId()); }, { once: true }); document.body.append(guest); guests.set(surface.tabId, guest); }
+        if (guest && guest.__bootstrap !== surface.bootstrap) { guest.remove(); guests.delete(surface.tabId); guest = undefined; }
+        if (!guest) { guest = document.createElement('webview'); guest.__bootstrap = surface.bootstrap; guest.setAttribute('partition', surface.partition); guest.setAttribute('src', surface.bootstrap); guest.addEventListener('dom-ready', () => { void window.elevenex.taskBrowserAttach(surface.scopeId, surface.taskId, surface.tabId, guest.getWebContentsId()); }, { once: true }); document.body.append(guest); guests.set(surface.tabId, guest); }
         Object.assign(guest.style, { position: 'fixed', display: 'flex', left: surface.visible ? surface.bounds.x / surface.zoom + 'px' : '-20000px', top: surface.bounds.y / surface.zoom + 'px', width: (surface.bounds.width / surface.zoom || 800) + 'px', height: (surface.bounds.height / surface.zoom || 600) + 'px' });
       }
       for (const [id, guest] of guests) if (!surfaces.some(surface => surface.tabId === id)) { guest.remove(); guests.delete(id); }
@@ -48,7 +49,23 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   assert.equal(blank.tabs[0].url, '');
   assert.equal(blank.tabs[0].title, 'New tab');
   assert.equal(blank.tabs[0].loading, false);
+  await fetch(backendUrl + '/hold-browser-task');
+  const supersededPlacement = call('taskBrowserConfigure', scope, 1, 'desktop-proxy');
+  await until(async () => (await fetch(backendUrl + '/browser-task-pending').then(reply => reply.text())) === '1', 'Placement did not begin preparation');
+  await read(3);
+  await fetch(backendUrl + '/release-browser-task');
+  assert.equal((await supersededPlacement).ok, false, 'Task selection must invalidate pending placement replacement');
+  assert.equal((await call('taskBrowserCommand', scope, 3, { kind: 'feedback', enabled: false })).ok, true);
+  assert.equal((await read()).active, blank.active);
+  // Preparing another host must not destroy a page opened in the meantime.
+  await fetch(backendUrl + '/hold-browser-task');
+  const pendingPlacement = call('taskBrowserConfigure', scope, 1, 'desktop-proxy');
+  await until(async () => (await fetch(backendUrl + '/browser-task-pending').then(reply => reply.text())) === '1', 'Placement did not begin preparation');
   let state = await command({ kind: 'navigate', tabId: blank.active, url: url + '/browser-test' });
+  await fetch(backendUrl + '/release-browser-task');
+  assert.equal((await pendingPlacement).ok, false, 'A live page must invalidate pending placement replacement');
+  assert.equal((await read()).placement, 'machine');
+  assert.equal((await read()).active, blank.active);
   assert.equal((await call('taskBrowserConfigure', scope, 1, 'machine')).ok, false, 'Live pages prevent destructive placement changes');
   const first = state.active;
   let native = await until(() => webContents.getAllWebContents().find(contents => contents !== window.webContents && contents.getURL().includes('/browser-test')), 'Browser page did not load');
@@ -163,8 +180,26 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   assert.equal(await secondPage.executeJavaScript("localStorage.getItem('profile-probe')"),'task-profile-value');
   assert.equal((await read()).tabs.length, 2);
   await command({ kind: 'select', tabId: first });
+  // Every picker exit must release native interception, including closing a sibling.
+  const sibling = await command({ kind: 'new-tab' });
+  await command({ kind: 'select', tabId: first });
+  for (const exit of [{ kind: 'close', tabId: sibling.active }, { kind: 'reload', tabId: first }, { kind: 'back', tabId: first }]) {
+    await command({ kind: 'pick', enabled: true });
+    await command(exit);
+    await until(async () => !(await read()).tabs.find(tab => tab.id === first)?.loading, 'Picker exit navigation did not finish');
+    await call('taskBrowserLayout', scope, 1, layout);
+    await until(async () => (await read()).tabs.find(tab => tab.id === first)?.ready && await visibleCount() === 1, 'Picker exit page is not presented');
+    const point = await native.executeJavaScript(`new Promise(resolve => { window.clicks = 0; document.querySelector('button').scrollIntoView({ block: 'center' }); requestAnimationFrame(() => requestAnimationFrame(() => { const r = document.querySelector('button').getBoundingClientRect(); resolve({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }); })); })`);
+    native.focus();
+    native.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 });
+    native.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 });
+    await until(async () => await native.executeJavaScript('window.clicks') === 1, 'Picker interception survived ' + exit.kind);
+    assert.equal((await read()).picking, false);
+    assert.equal((await read()).picked, null);
+  }
+  const retainedBack = (await read()).tabs[0].canGoBack;
   await read(3); await delay(50); assert.equal(await visibleCount(), 0, 'Task switch must detach pages');
-  state = await read(); assert.equal(state.tabs.length, 2); assert.equal(state.active, first); assert.equal(state.tabs[0].canGoBack, true);
+  state = await read(); assert.equal(state.tabs.length, 2); assert.equal(state.active, first); assert.equal(state.tabs[0].canGoBack, retainedBack);
   window.webContents.setZoomFactor(1.25);
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 8 });
   assert.equal(native.getZoomFactor(), 1.25);
@@ -180,12 +215,19 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   await command({ kind: 'pick', enabled: false });
   window.webContents.setZoomFactor(1);
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 9 });
+  await command({ kind: 'theme', tabId: first, theme: 'dark' });
+  await command({ kind: 'network', tabId: first, slow: true });
   native.forcefullyCrashRenderer();
   await until(async () => (await read()).tabs[0].driver === 'needs', 'Crash did not revoke agent control');
   assert.ok((await read()).tabs[0].error);
   await command({ kind: 'reload', tabId: first });
   await until(async () => !(await read()).tabs[0].loading && !(await read()).tabs[0].error, 'Crashed page did not recover on explicit reload');
   assert.equal((await read()).tabs[0].driver, 'you');
+  assert.equal((await read()).tabs[0].id, first);
+  assert.equal((await read()).tabs[0].theme, 'dark');
+  assert.equal((await read()).tabs[0].slowNetwork, true);
+  native = await until(() => webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getURL() === (state.tabs.find(tab => tab.id === first)?.url)), 'Crashed guest was not replaced');
+  assert.equal(await native.executeJavaScript("matchMedia('(prefers-color-scheme: dark)').matches"), true);
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 10 });
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 11, visible: false });
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 10, testStale:true });
@@ -198,11 +240,22 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   console.log('Browser smoke: native lifecycle and scope checks passed');
   const selfClosing = await command({ kind: 'open', url: url + '/browser-test?self-close=1' });
   const closingContents = await until(() => webContents.getAllWebContents().find(contents => contents.getURL().includes('self-close')), 'Self-closing page not loaded');
+  await until(async () => !(await read()).tabs[0]?.loading, 'Recovery fixture is still loading');
+  await command({ kind: 'theme', tabId: selfClosing.active, theme: 'dark' });
+  await command({ kind: 'network', tabId: selfClosing.active, slow: true });
+  const recoverySibling = await command({ kind: 'new-tab' });
+  await command({ kind: 'select', tabId: selfClosing.active });
   closingContents.close({ waitForBeforeUnload: false });
   await until(async () => (await read()).tabs[0]?.error, 'Unexpected WebContents closure was not reconciled');
   const replacement = await command({ kind: 'reload', tabId: selfClosing.active });
-  assert.notEqual(replacement.active, selfClosing.active); assert.equal(replacement.tabs[0].driver, 'you');
+  assert.equal(replacement.active, selfClosing.active);
+  assert.deepEqual(replacement.tabs.map(tab => tab.id), [selfClosing.active, recoverySibling.active]);
+  assert.equal(replacement.tabs[0].theme, 'dark'); assert.equal(replacement.tabs[0].slowNetwork, true);
+  assert.equal(replacement.tabs[0].driver, 'you');
+  const recoveredContents = await until(() => webContents.getAllWebContents().find(contents => contents !== closingContents && contents.getURL().includes('self-close')), 'Replacement guest did not load');
+  assert.equal(await recoveredContents.executeJavaScript("matchMedia('(prefers-color-scheme: dark)').matches"), true);
   await command({ kind: 'close', tabId: replacement.active });
+  await command({ kind: 'close', tabId: recoverySibling.active });
   console.log('Browser smoke: destroyed guest recovery passed');
   const downloadRoot=await mkdtemp(join(tmpdir(),'elevenex-browser-download-'));
   window.once('closed',()=>{void rm(downloadRoot,{recursive:true,force:true});});
@@ -302,8 +355,53 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   remoteTask.position({ ...layout, surfaceEpoch: remoteTask.snapshot().surfaceEpoch, ownerGeneration: viewportPage.lease.generation, inputReady: true, sequence: 3, bounds: { ...layout.bounds, width: 420 } });
   assert.equal(viewportPage.lease.driver, 'you', 'Viewport changes must invalidate queued coordinate input');
   assert.ok(viewportPage.lease.generation > viewportGeneration);
+  // A failed observation from an earlier picker must not cancel a fresh picker.
+  const inspect = viewportPage.contents.executeJavaScriptInIsolatedWorld;
+  let failInspection, markInspection;
+  const inspecting = new Promise(resolve => { markInspection = resolve; });
+  viewportPage.contents.executeJavaScriptInIsolatedWorld = (world, ...args) => world === 1001
+    ? new Promise((_resolve, reject) => { failInspection = reject; markInspection(); })
+    : Reflect.apply(inspect, viewportPage.contents, [world, ...args]);
+  try {
+    await remoteTask.command({ kind: 'pick', enabled: true });
+    remoteTask.position({ ...layout, surfaceEpoch: remoteTask.snapshot().surfaceEpoch, ownerGeneration: viewportPage.lease.generation, sequence: 4, bounds: { ...layout.bounds, width: 420 } });
+    viewportPage.contents.sendInputEvent({ type: 'mouseDown', x: 30, y: 30, button: 'left', clickCount: 1 });
+    await inspecting;
+    await remoteTask.command({ kind: 'pick', enabled: false });
+    await remoteTask.command({ kind: 'pick', enabled: true });
+    failInspection(new Error('Obsolete inspection'));
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+    assert.equal(remoteTask.snapshot().picking, true, 'An obsolete picker failure must not dismiss the current picker');
+    assert.equal(remoteTask.snapshot().pickerMessage, null);
+  } finally {
+    viewportPage.contents.executeJavaScriptInIsolatedWorld = inspect;
+    await remoteTask.command({ kind: 'pick', enabled: false });
+  }
   remoteWindow.once('closed', () => remoteTask.destroy()); remoteWindow.destroy(); await delay(0); assert.equal(released, true, 'Task teardown must close its forwarding lease'); remoteClient.dispose();
   console.log('Browser smoke: forwarded teardown passed');
+  // Four pinned tasks leave no eviction candidate. A fifth must fail without
+  // exceeding the resource bound or replacing the selected task.
+  const pinned = [];
+  const context = { projectName: 'Smoke', taskName: 'Pinned task', branchName: 'test', machineName: 'This Mac', stage: 'active', hue: 'ocean' };
+  try {
+    for (const task of [1, 3, 4, 5]) {
+      await read(task);
+      const tab = (await call('taskBrowserCommand', scope, task, { kind: 'new-tab' })).value.active;
+      const before = new Set(BrowserWindow.getAllWindows());
+      await call('taskBrowserDetach', scope, task, tab, context);
+      pinned.push({ task, tab, window: BrowserWindow.getAllWindows().find(item => !before.has(item)) });
+    }
+    assert.equal((await call('taskBrowserRead', scope, 6)).ok, false, 'Pinned tasks must not bypass the task bound');
+    assert.equal((await call('taskBrowserCommand', scope, 5, { kind: 'feedback', enabled: false })).ok, true, 'Capacity failure preserves the selected host');
+  } finally {
+    for (const item of pinned) {
+      if (item.window && !item.window.isDestroyed()) item.window.close();
+      await read(item.task);
+      await call('taskBrowserCommand', scope, item.task, { kind: 'close', tabId: item.tab });
+    }
+  }
+  console.log('Browser smoke: pinned task capacity passed');
+  await read();
   await command({ kind: 'open', url: url + '/browser-test?private-query=not-persisted' });
   const resumed = await until(() => webContents.getAllWebContents().find(contents => contents !== window.webContents && contents.getURL().includes('private-query')), 'Reconnection test tab did not load');
   await command({ kind: 'handoff', tabId: (await read()).active, sessionId: 2 });

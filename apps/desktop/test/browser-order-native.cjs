@@ -44,6 +44,20 @@ module.exports = async function browserOrderSmoke() {
     await browser.command({ kind: 'close', tabId: second });
     await assert.rejects(() => browser.command({ kind: 'move-tab', tabId: second, beforeTabId: null }));
     assert.deepEqual(ids(), fullOrder.filter(id => id !== second));
+    const restored = new TaskBrowser(scope, 2, source, client, {}, {
+      read: async () => ({ active: 0, tabs: [
+        { url: 'https://one.example/', width: 'full' },
+        { url: 'https://two.example/', width: 'phone' },
+      ] }), save: () => undefined,
+    }, randomUUID(), profiles, false, () => undefined, () => true);
+    try {
+      await restored.restore();
+      const initial = restored.snapshot(), next = initial.tabs[1];
+      await restored.command({ kind: 'close', tabId: initial.active });
+      assert.equal(restored.snapshot().active, next.id);
+      assert.equal(restored.snapshot().tabs[0].loading, true);
+      assert.equal(restored.surfaces().some(surface => surface.tabId === next.id), true, 'Closing the active restored tab must start the newly selected lazy page');
+    } finally { restored.destroy(); }
   } finally {
     browser.destroy(); client.dispose(); source.destroy(); companion.destroy();
     await Promise.all([persistence.flush(), profiles.flush()]);

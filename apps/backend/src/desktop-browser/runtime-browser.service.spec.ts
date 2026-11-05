@@ -3,6 +3,73 @@ import type { RuntimeBrowserPool } from './runtime-browser-pool.js';
 import type { RuntimeBrowserPersistence } from './runtime-persistence.js';
 import { RuntimeBrowserTask } from './runtime-task.js';
 import { randomUUID } from 'node:crypto';
+import { ForbiddenException } from '@nestjs/common';
+
+it('serializes competing task evictions and releases each old owner only once', async () => {
+  let releaseSave!: () => void;
+  let markSaving!: () => void;
+  const saving = new Promise<void>(resolve => { markSaving = resolve; });
+  const gate = new Promise<void>(resolve => { releaseSave = resolve; });
+  const persistence = { read: async () => null, save: async () => { markSaving(); await gate; }, flush: async () => undefined };
+  const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence);
+  try {
+    const one = await service.prepare(1, 'one');
+    const two = await service.prepare(2, 'two');
+    await service.prepare(3, 'three');
+    await service.prepare(4, 'four');
+    const destroyOne = jest.spyOn(one, 'destroy'), destroyTwo = jest.spyOn(two, 'destroy');
+    const fifth = service.prepare(5, 'five');
+    await saving;
+    const sixth = service.prepare(6, 'six');
+    releaseSave();
+    await Promise.all([fifth, sixth]);
+    expect(destroyOne).toHaveBeenCalledTimes(1);
+    expect(destroyTwo).toHaveBeenCalledTimes(1);
+  } finally { releaseSave(); await service.onModuleDestroy(); }
+});
+
+it('does not install or return an owner after shutdown starts during preparation', async () => {
+  let releaseRead!: () => void;
+  let markReading!: () => void;
+  const reading = new Promise<void>(resolve => { markReading = resolve; });
+  const pendingRead = new Promise<null>(resolve => { releaseRead = () => resolve(null); });
+  const persistence = { read: async () => { markReading(); return pendingRead; }, save: jest.fn(async () => undefined), flush: async () => undefined };
+  const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence);
+  const opening = service.connect(1, 'viewer', 'identity');
+  await reading;
+  const stopped = service.onModuleDestroy();
+  const rejected = expect(opening).rejects.toThrow();
+  releaseRead();
+  await rejected;
+  await stopped;
+  expect(persistence.save).not.toHaveBeenCalled();
+  expect(service.active(1)).toBeNull();
+  await expect(service.prepare(2, 'other')).rejects.toThrow();
+});
+
+it('rejects malformed multibyte viewer tokens as unauthorized', async () => {
+  const persistence = { read: async () => null, save: async () => undefined, flush: async () => undefined };
+  const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence);
+  try {
+    await service.connect(1, 'viewer', 'identity');
+    expect(() => service.viewer(1, '界'.repeat(36))).toThrow(ForbiddenException);
+  } finally { await service.onModuleDestroy(); }
+});
+
+it('invalidates state when discovered task servers change without granting access', async () => {
+  const task = new RuntimeBrowserTask(1, {} as RuntimeBrowserPool, 'identity');
+  const initial = task.state();
+  task.setPorts([4310]);
+  expect(task.state().revision).toBeGreaterThan(initial.revision);
+  expect(task.state().ports).toEqual([4310]);
+  const revision = task.state().revision;
+  task.setPorts([4310]);
+  expect(task.state().revision).toBe(revision);
+  task.setPorts([]);
+  expect(task.state().revision).toBeGreaterThan(revision);
+  expect(task.state().ports).toEqual([]);
+  await task.destroy();
+});
 
 it('orders existing tabs atomically, preserves selection and ownership, and saves that order', async () => {
   const persistence = { read: async () => null, save: async () => undefined, flush: async () => undefined };
