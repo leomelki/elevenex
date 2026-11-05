@@ -130,7 +130,10 @@ iframe. Both images stretch with that surface and blend in a 140ms token-driven
 effect with a 16px blur derived from the glass and spacing tokens. Blur starts
 one third into the shell glide (about 93ms). Its opaque midpoint holds the old image until the child's layout
 acknowledgement, then the remaining half crossfades and clears the new image.
-An early acknowledgement adds no wait; a later one resumes immediately. Timing
+During collapse, that midpoint also waits for the panel to reach its destination:
+the incoming compact image stays blurred until its temporary magnification is
+removed. Expansion can blend during the glide. A later acknowledgement resumes
+immediately once both layout and the required panel geometry are ready. Timing
 follows the shell's actual animation clock, including interrupted transitions.
 At the end, scale is already 1, so removing it cannot expose a final resize jump. The
 old image stays visible instead of a blank hide/show phase. Panel controls and

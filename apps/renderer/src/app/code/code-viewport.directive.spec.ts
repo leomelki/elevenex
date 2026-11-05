@@ -143,6 +143,52 @@ describe('Code viewport transition ownership', () => {
     expect(skip).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])('keeps the compact incoming image blurred until both collapse and layout finish (layout first: %s)', async layoutFirst => {
+    width = 1072;
+    const { fixture, frame, section, transition } = await setup();
+    fixture.componentInstance.ready.set(false); await fixture.whenStable();
+    class Effect {
+      getKeyframes() { return [{width:'1080px'},{width:'440px'}]; }
+      getComputedTiming() { return {duration:280}; }
+    }
+    vi.stubGlobal('KeyframeEffect', Effect);
+    Object.defineProperty(section, 'getAnimations', {value:()=>[{transitionProperty:'width',currentTime:0,effect:new Effect()}]});
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function(this: HTMLElement) { return this === section ? width + 8 : width; });
+    const animation = {
+      animationName:'code-layout-out',currentTime:0,playState:'idle',
+      play() { this.playState='running'; }, pause() { this.playState='paused'; },
+      effect:{updateTiming:vi.fn(),getComputedTiming:()=>({duration:140,delay:280/3})},
+    };
+    Object.defineProperty(frame, 'getAnimations', {value:()=>[animation]});
+    let complete!: () => void;
+    const finished = new Promise<void>(resolve=>{complete=resolve;});
+    Object.defineProperty(frame, 'startViewTransition', {value:(update:()=>Promise<void>)=>{
+      queueMicrotask(()=>void update());
+      return {ready:Promise.resolve(),finished,skipTransition:complete};
+    }});
+    transition('transitionrun'); await fixture.whenStable();
+    expect(frame.style.width).toBe('432px');
+    expect(frame.classList.contains('holding-collapse')).toBe(true);
+    width=700; resize(); animation.currentTime=200; await nextFrame();
+    expect(animation.playState).toBe('paused');
+    expect(animation.currentTime).toBeCloseTo(280/3+70);
+    if (layoutFirst) { fixture.componentInstance.ready.set(true); await fixture.whenStable(); }
+    expect(animation.playState).toBe('paused');
+    expect(frame.style.transform).toBe(`scaleX(${700/432})`);
+    width=432; transition('transitionend'); await nextFrame();
+    expect(frame.style.transform).toBe('');
+    if (!layoutFirst) {
+      expect(animation.playState).toBe('paused');
+      fixture.componentInstance.ready.set(true); await fixture.whenStable();
+    }
+    expect(animation.playState).toBe('running');
+    expect(animation.currentTime).toBeCloseTo(280/3+70);
+    expect(frame.classList.contains('holding-collapse')).toBe(false);
+    expect(fixture.componentInstance.requests).toBe(1);
+    complete(); await finished; await Promise.resolve();
+    expect(frame.classList.contains('crossfading')).toBe(false);
+  });
+
   it('keeps the current viewport while inactive closing contents remain painted, then resumes measurement', async () => {
     const {fixture,frame,transition}=await setup();
     fixture.componentInstance.active.set(false); await fixture.whenStable();

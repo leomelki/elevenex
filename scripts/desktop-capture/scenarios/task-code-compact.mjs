@@ -83,6 +83,7 @@ export default async function* (capture) {
     const frame = capture.window.webContents.mainFrame.frames.find(frame => frame.url.includes('code.elevenex.invalid'));
     assert.ok(frame); assert.equal(capture.window.contentView.children.length, 0);
     await waitMain(()=>frame.executeJavaScript('document.querySelector(".part.auxiliarybar")?.getBoundingClientRect().width >= innerWidth - 16'),'Empty compact workbench did not show its tree');
+    await capture.waitFor(() => !document.querySelector('ex-code-panel .frame-container.loading') && document.querySelector('ex-code-panel')?.getAttribute('aria-busy') === 'false');
     for (const theme of ['light','dark']) {
       await capture.theme(theme);
       yield {name:`${theme}-empty-editor-files`,inspect:['ex-code-panel','ex-workspace-panels .browse-files','iframe']};
@@ -282,16 +283,22 @@ export default async function* (capture) {
       assert.ok(distance>100,'Panel did not change width');
       const intermediate=samples.filter(s=>Math.abs(s.width-first)>1 && Math.abs(s.width-last)>1);
       assert.ok(intermediate.length>=5,'Panel snapped instead of using the original width glide: '+JSON.stringify(samples));
-      assert.ok(intermediate.some(s=>s.active && s.opacity>0 && s.opacity<1 && s.blur!=='none'),'Blur/crossfade did not overlap panel motion: '+JSON.stringify(samples));
+      const shrinking=last<first;
+      // Compositor sampling can land fractionally beyond the held keyframe
+      // before its pause commits; reject visible blending, not rounding noise.
+      if (shrinking) assert.ok(!intermediate.some(s=>s.active && s.opacity<0.99),'Compact image faded in while still magnified: '+JSON.stringify(samples));
+      else assert.ok(intermediate.some(s=>s.active && s.opacity>0 && s.opacity<1 && s.blur!=='none'),'Blur/crossfade did not overlap panel motion: '+JSON.stringify(samples));
       const firstBlur=intermediate.find(s=>s.active && s.blur!=='none' && s.blur!=='blur(0px)');
       assert.ok(firstBlur?.motionTime>=280/3-2 && firstBlur.motionTime<180,'Blur should start around one third into the glide: '+JSON.stringify(samples));
-      const firstBlend=intermediate.find(s=>s.active && s.opacity>0 && s.opacity<1);
-      assert.ok(firstBlend.motionTime>=280/3-2,'Crossfade started before the first third of the panel glide: '+JSON.stringify(samples));
+      const firstBlend=samples.find(s=>s.active && s.opacity>0.01 && s.opacity<0.99);
+      assert.ok(firstBlend,'No editor crossfade was observed: '+JSON.stringify(samples));
+      if (shrinking) assert.ok(Math.abs(firstBlend.width-last)<=1,'Collapse crossfade started before the final width: '+JSON.stringify(samples));
+      else assert.ok(firstBlend.motionTime>=280/3-2,'Crossfade started before the first third of the panel glide: '+JSON.stringify(samples));
       assert.ok(!intermediate.some(s=>s.active && s.motionTime<280/3-2 && s.opacity<1),'Outgoing Code faded too early: '+JSON.stringify(samples));
       const largestStep=Math.max(...samples.slice(1).map((s,i)=>Math.abs(s.width-samples[i].width)));
       assert.ok(largestStep<distance*0.65,'Panel width jumped during crossfade: '+JSON.stringify(samples));
       await finish(); await geometry();
-      return {intermediateFrames:intermediate.length,largestStep,distance,firstBlendAtMs:firstBlend.motionTime,firstBlurAtMs:firstBlur.motionTime};
+      return {intermediateFrames:intermediate.length,largestStep,distance,firstBlendAtMs:firstBlend.motionTime ?? firstBlend.time,firstBlurAtMs:firstBlur.motionTime};
     };
     const viewportMotion = async function* (selector, name) {
       const { CodeFrame } = require('../../../apps/desktop/dist/code/frame.js');
@@ -502,8 +509,9 @@ export default async function* (capture) {
       assert.deepEqual(await capture.evaluate(() => {
         const scope=document.querySelector('ex-code-panel .frame-container');
         const old=getComputedStyle(scope,'::view-transition-old(code-editor)');
-        return {followsPanel:Math.abs(scope.getBoundingClientRect().width-scope.parentElement.clientWidth)<1,blending:Number(old.opacity)>0 && Number(old.opacity)<1,fit:old.objectFit,newOpacity:getComputedStyle(scope,'::view-transition-new(code-editor)').opacity};
-      }), {followsPanel:true,blending:true,fit:'fill',newOpacity:'1'}, 'Collapse must crossfade while following the panel edge');
+        const incoming=getComputedStyle(scope,'::view-transition-new(code-editor)');
+        return {followsPanel:Math.abs(scope.getBoundingClientRect().width-scope.parentElement.clientWidth)<1,oldOpaque:Number(old.opacity)===1,incomingBlurred:incoming.filter!=='none' && incoming.filter!=='blur(0px)',fit:old.objectFit,newOpacity:incoming.opacity};
+      }), {followsPanel:true,oldOpaque:true,incomingBlurred:true,fit:'fill',newOpacity:'1'}, 'Collapse must keep the magnified compact image blurred behind the opaque old snapshot');
       yield {name:`${theme}-collapse-interrupted`,inspect:['.panel','ex-code-panel .frame-container','iframe']};
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
       await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();
