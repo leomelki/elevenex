@@ -107,7 +107,7 @@ remain available. Find searches retained scrollback with at most 1,000 matches,
 joining soft wraps while preserving Unicode cell coordinates. Enter/Shift-Enter
 moves between matches; Escape restores focus. The theme maps
 the specification's ANSI palette to authoritative tokens and local Geist Mono.
-Terminal-specific type tokens use 12px text with an 18px target line height
+Terminal-specific type tokens use 11.5px text with a 17.25px target line height
 (xterm line-height ratio 1.5), independently of code blocks and diffs.
 A bundled symbols-only Nerd Font fallback covers Powerline, Git, Node.js and other
 private-use prompt icons; it and the regular/bold text faces load before cell
