@@ -130,6 +130,7 @@ export class CodeSurfaces {
     if (!surface || surface.detached && surface.detached.webContents.id !== windowId) return;
     if (!presentation.visible) { this.hide(surface); return; }
     const compact = presentation.compact;
+    const starting = surface.wasReady === true && surface.compact === undefined;
     const revision = surface.layoutRevision = (surface.layoutRevision ?? 0) + 1;
     surface.frame.cancelLayout();
     if (presentation.viewportWidth !== undefined) {
@@ -140,11 +141,14 @@ export class CodeSurfaces {
     }
     if (surface.compact !== compact && surface.wasReady) {
       surface.compact = compact;
-      surface.presentation = (surface.presentation ?? Promise.resolve()).catch(() => undefined).then(() => surface.frame.command('elevenex.code.set-compact', compact));
+      surface.presentation = (surface.presentation ?? Promise.resolve()).catch(() => undefined).then(() => Promise.all([
+        surface.frame.command('elevenex.code.set-compact', compact),
+        ...(starting ? [surface.frame.command('elevenex.code.set-theme', nativeTheme.shouldUseDarkColors)] : []),
+      ]));
     }
-    try { await surface.presentation; } catch (error) { surface.compact = undefined; if (presentation.viewportWidth !== undefined) throw error; return; }
+    try { await surface.presentation; } catch (error) { surface.compact = undefined; if (starting || presentation.viewportWidth !== undefined) throw error; return; }
     if (revision !== surface.layoutRevision || this.owned(windowId, target, true) !== surface) return;
-    if (presentation.viewportWidth !== undefined) {
+    if (presentation.viewportWidth !== undefined || starting) {
       await surface.frame.settleLayout(presentation.viewportWidth);
       if (revision !== surface.layoutRevision || this.owned(windowId, target, true) !== surface) return;
     }
@@ -221,7 +225,7 @@ export class CodeSurfaces {
   }
   releaseWindow(windowId: number, cleanup: () => void): void {
     this.active.delete(windowId); this.windowContexts.delete(windowId); this.offered.delete(windowId);
-    for (const surface of this.surfaces.values()) if (surface.owner === windowId) { surface.wasReady = false; surface.host.reset(); surface.state = { ...surface.state, phase: 'loading', message: 'Restoring retained editor…' }; }
+    for (const surface of this.surfaces.values()) if (surface.owner === windowId) { surface.wasReady = false; surface.compact = undefined; surface.host.reset(); surface.state = { ...surface.state, phase: 'loading', message: 'Restoring retained editor…' }; }
     cleanup();
   }
   detachWindow(windowId: number): void {

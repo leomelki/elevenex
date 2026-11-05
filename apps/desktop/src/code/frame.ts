@@ -21,16 +21,16 @@ export class CodeFrame {
     const frame = this.current();
     if (frame) await frame.executeJavaScript("window.focus();import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('elevenex.code.focus'))");
   }
-  async settleLayout(width: number): Promise<void> {
+  async settleLayout(width?: number): Promise<void> {
     await this.waitForLayout(width, false);
   }
   async waitForViewport(width: number): Promise<void> {
     await this.waitForLayout(width, true);
   }
-  private async waitForLayout(width: number, viewportOnly: boolean): Promise<void> {
+  private async waitForLayout(width: number | undefined, viewportOnly: boolean): Promise<void> {
     const frame = this.current();
     if (!frame) throw new Error('The task editor is still opening.');
-    const layout = frame.executeJavaScript(`(${waitForCodeLayout.toString()})(${JSON.stringify(width)},${JSON.stringify(viewportOnly)})`);
+    const layout = frame.executeJavaScript(`(${waitForCodeLayout.toString()})(${width === undefined ? 'innerWidth' : JSON.stringify(width)},${JSON.stringify(viewportOnly)})`);
     this.layout = layout;
     try { await layout; } finally { if (this.layout === layout) this.layout = undefined; }
   }

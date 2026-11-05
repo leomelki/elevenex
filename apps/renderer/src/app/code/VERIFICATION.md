@@ -1,5 +1,28 @@
 # New Code workbench verification
 
+## Startup presentation (2026-11-05)
+
+The iframe stays mounted behind a token-colored opaque cover, with input inert,
+until main acknowledges its initial theme, compact mode and stable child layout.
+Theme and layout configuration run together. Reveal has no fade or fixed delay;
+later layout changes retain the existing editor image.
+
+- `pnpm desktop:lint`, `pnpm desktop:build` and `pnpm desktop:test` passed with
+  host access for loopback servers and native build workers. The final focused
+  Code panel suite passed all 13 cases, including startup/reload coverage,
+  interrupted acknowledgements, retained layouts and the error fallback.
+- Installed-Electron `electron-smoke.cjs` and the genuine Code OSS
+  `code-workbench-smoke.cjs` passed, including editing, compact/expanded layouts
+  and crash recovery.
+- `artifacts/desktop-capture/code-startup-dark/report.json` and
+  `artifacts/desktop-capture/code-startup-light/report.json` both report
+  **verified: true**, four checkpoints each, with no renderer errors. A disposable
+  backend task and the genuine pinned Code OSS iframe were used. Bootstrap and
+  presentation were held separately to verify that both loading and fully
+  skinned-but-unacknowledged content remain covered. Inspected the startup,
+  immediate reveal and retained expansion PNGs in both themes. The existing
+  Chromium iframe sandbox warning remains. These are unpackaged native captures.
+
 ## Code workspace review (2026-11-04)
 
 Reviewed the task filesystem, search/watch lifetimes, private frame routing,

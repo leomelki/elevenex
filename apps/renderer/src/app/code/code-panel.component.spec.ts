@@ -67,6 +67,7 @@ describe('Code panel launch and iframe focus handoff', () => {
     expect(fixture.componentInstance.layoutReady()).toBe(false);
     old?.(); await settle(fixture);
     expect(fixture.componentInstance.layoutReady()).toBe(false);
+    expect(fixture.componentInstance.frameLoading()).toBe(true);
     const compact = layouts.shift();
     fixture.componentInstance.measuredWidth.set(1064); fixture.componentInstance.layoutRevision.set(2); await settle(fixture);
     compact?.(); await settle(fixture);
@@ -74,6 +75,7 @@ describe('Code panel launch and iframe focus handoff', () => {
     const expanded = layouts.shift(); if (!expanded) throw new Error('Expanded layout was not requested');
     expanded(); await settle(fixture);
     expect(fixture.componentInstance.layoutReady()).toBe(true);
+    expect(fixture.componentInstance.frameLoading()).toBe(false);
     expect(TestBed.inject(CodeFramePool).mount).toHaveBeenCalledOnce();
   });
   it('retains accessible writing and reports an error if layout settlement fails', async () => {
@@ -83,7 +85,19 @@ describe('Code panel launch and iframe focus handoff', () => {
     fixture.componentInstance.layoutRevision.set(1); await settle(fixture);
     expect(fixture.componentInstance.layoutReady()).toBe(true);
     expect(fixture.componentInstance.store.error()).toContain('finish resizing');
+    expect(fixture.componentInstance.frameLoading()).toBe(false);
+    await settle(fixture);
     expect(fixture.nativeElement.querySelector('.frame-container').hidden).toBe(false);
+    expect(fixture.nativeElement.querySelector('.frame-container').hasAttribute('inert')).toBe(false);
+  });
+  it('keeps an already presented frame uncovered during later layout changes', async () => {
+    const { fixture, publish, layouts } = setup(); await settle(fixture);
+    publish(ready); await settle(fixture);
+    layouts.shift()?.(); await settle(fixture);
+    fixture.componentInstance.measuredWidth.set(432); await settle(fixture);
+    expect(layouts).toHaveLength(1);
+    expect(fixture.componentInstance.frameLoading()).toBe(false);
+    expect(fixture.nativeElement.querySelector('.frame-container.loading')).toBeNull();
   });
   it('keeps the mounted frame and its focus when status or open replies change without changing the resource', async () => {
     const { fixture, publish } = setup(); await settle(fixture);
@@ -107,15 +121,23 @@ describe('Code panel launch and iframe focus handoff', () => {
     expect(fixture.nativeElement.querySelector('.frame-container').hidden).toBe(true);
     expect(park).toHaveBeenCalledOnce();
   });
-  it('shows only the iframe while its document is loading and keeps the same mount when ready', async () => {
-    const { fixture, publish } = setup(); await settle(fixture);
+  it('covers startup paints and input until the skinned frame is presented, keeping the same mount', async () => {
+    const { fixture, publish, layouts } = setup(); await settle(fixture);
     publish({ ...loading, frameUrl }); await settle(fixture);
     const root: HTMLElement = fixture.nativeElement;
     expect(root.querySelector('.launch-card')).toBeNull();
     expect(root.querySelector('.frame-container')?.hasAttribute('hidden')).toBe(false);
     expect(root.querySelector('ex-progress-line')).not.toBeNull();
+    expect(root.querySelector('.frame-container.loading[inert]')).not.toBeNull();
     publish(ready); await settle(fixture);
+    expect(root.querySelector('.frame-container.loading[inert]')).not.toBeNull();
+    const acknowledge = layouts.shift(); if (!acknowledge) throw new Error('Frame presentation was not requested.');
+    acknowledge(); await settle(fixture);
+    expect(root.querySelector('.frame-container.loading')).toBeNull();
+    expect(root.querySelector('.frame-container')?.hasAttribute('inert')).toBe(false);
     expect(TestBed.inject(CodeFramePool).mount).toHaveBeenCalledOnce();
+    publish({ ...loading, frameUrl }); await settle(fixture);
+    expect(root.querySelector('.frame-container.loading[inert]')).not.toBeNull();
   });
   it('opens without a native size minimum and never replaces a retained iframe with an Expand prompt', async () => {
     const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(0);

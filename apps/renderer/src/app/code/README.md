@@ -179,8 +179,13 @@ remove upstream commands or add debugger/extension support.
 The workbench has a uniform 4px (`space-1`) gutter on all four sides, in both
 launch and editing states. The frame remains mounted through transient opening widths and short layouts.
 Artifact preparation and genuine failures retain explicit explanations. Once
-main supplies an editor URL, document loading shows only the iframe and progress
-line: the launch card never occupies space beside or underneath it. Short
+main supplies an editor URL, the mounted iframe loads behind an opaque `surface`
+cover and the progress line. The cover also keeps startup controls inert. Main
+applies the native theme and compact layout together, then checks stable child
+layout frames before acknowledging presentation. The cover disappears immediately
+on that acknowledgement, with no fixed startup delay or fade; retained editors
+stay uncovered during later layout changes. The launch card never occupies space
+beside or underneath the iframe. Short
 windows scroll launch/recovery actions into reach.
 Shortcuts show only the desktop platform's keys. No redundant task identity row consumes editor height.
 

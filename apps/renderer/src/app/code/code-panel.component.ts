@@ -38,6 +38,8 @@ export class CodePanelComponent {
   readonly connectionLost = computed(() => !this.connected() || this.store.state()?.phase === 'disconnected' && !this.store.state()?.relocated && !this.store.state()?.detached);
   readonly showFrame = computed(() => !!this.frameResource() && this.store.state()?.phase !== 'failed');
   readonly hasSurface = computed(() => this.showFrame() && this.store.state()?.phase !== 'loading');
+  private readonly presentedFrame = signal<string | null>(null);
+  readonly frameLoading = computed(() => this.store.state()?.phase === 'loading' || this.presentedFrame() !== this.frameResource());
   readonly title = computed(() => this.launching() ? 'Opening your workspace' : this.store.error() || this.store.state()?.phase === 'failed' ? 'Code couldn’t open' : !this.target() ? 'Choose a task to open Code' : this.store.state() ? 'Continue in your editor' : 'Your task, in Code');
   readonly modifier = computed(() => this.bridge.platform === 'darwin' ? '⌘' : 'Ctrl+');
   readonly browsing = computed(() => this.compact() && this.store.state()?.filesOpen === true && this.store.state()?.hasEditors === true);
@@ -88,18 +90,21 @@ export class CodePanelComponent {
       // CSS owns layout. Inform main only about visibility and the compact-mode
       // boundary, never every pixel/frame of panel animation.
       const visible = active && hasSurface;
+      if (!hasSurface) this.presentedFrame.set(null);
+      const frame = this.frameResource();
       this.placedTarget.set(null);
       this.acknowledgedLayout.set(-1);
       const viewportWidth = revision > 0 && visible ? untracked(() => this.measuredWidth()) : 0;
       void this.bridge.codePresent?.(target, { visible, compact, ...(viewportWidth > 0 ? { viewportWidth } : {}) }).then(() => {
         if (stopped) return;
         this.acknowledgedLayout.set(revision);
-        if (visible) this.placedTarget.set(target);
+        if (visible) { this.presentedFrame.set(frame); this.placedTarget.set(target); }
       }).catch(() => {
         if (!stopped) {
           // A failed barrier must not leave retained writing permanently hidden.
           this.store.error.set('The editor could not finish resizing. Your edits are retained.');
           this.acknowledgedLayout.set(revision);
+          if (visible) this.presentedFrame.set(frame);
         }
       });
       onCleanup(() => { stopped = true; });
