@@ -1,5 +1,19 @@
 # New Code workbench verification
 
+## Quick startup fade (2026-11-05)
+
+The startup cover now fades away over `dur-fast` (140ms) with `ease-out` once
+the skinned workbench is ready. Input is available during the fade. Returning to
+loading restores the opaque cover immediately; reduced motion reveals instantly.
+Retained layout changes do not restart the startup fade.
+
+`pnpm desktop:lint`, `pnpm desktop:test` (648 renderer cases) and
+`pnpm desktop:build` passed. Real Code OSS captures under
+`artifacts/desktop-capture/code-startup-fade-{dark,light}-verified/` check the
+covered startup, fade start/35ms/140ms, retained expansion and reduced motion.
+Both reports say **verified: true**, with seven checkpoints and no renderer
+errors each. Inspected the midpoint and settled PNGs in both themes.
+
 ## Startup presentation (2026-11-05)
 
 The iframe stays mounted behind a token-colored opaque cover, with input inert,
