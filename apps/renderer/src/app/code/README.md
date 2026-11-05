@@ -127,16 +127,15 @@ renders underneath. The shell retains its original 280ms width/opacity glide;
 Code never finishes it early. The snapshot scope follows the panel's CSS width;
 the inner frame keeps its explicitly assigned pixel width, without receiving
 intermediate panel widths or a scale transform. Only the browser-owned snapshot
-images fit the moving panel and blend in a 280ms token-driven
-effect (140ms to blur, then a full 140ms crossfade and unblur), with a 16px blur
-derived from the glass and spacing tokens. Blur starts one third into the shell
-glide (about 93ms). Its opaque midpoint holds the old image until the child's layout
-acknowledgement, then the remaining half crossfades and clears the new image.
-During collapse, that midpoint also waits for the panel to reach its destination:
-the incoming compact image stays blurred until its temporary magnification is
-removed. Expansion can blend during the glide. A later acknowledgement resumes
-immediately once both layout and the required panel geometry are ready. Timing
-follows the shell's actual animation clock, including interrupted transitions.
+images fit the moving panel. Blur, crossfade and panel width share the same native
+animation start time and duration (normally 280ms, shorter on a reversal).
+Snapshot capture joins that existing clock without a delay. The outgoing layout
+blurs as it fades, the images cross at the midpoint, and the incoming layout
+unblurs during the second half, becoming sharp at the panel's final width.
+Collapse uses the same timeline; it does not hold the old image or add a reveal
+after resizing. The 16px maximum blur derives from glass and spacing tokens.
+Child layout preparation runs in parallel. Its acknowledgement owns readiness,
+focus and errors, and never pauses or restarts the visual transition.
 The live iframe is never magnified, including while its new viewport is committing. The
 old image stays visible instead of a blank hide/show phase. Panel controls and
 the surrounding application stay outside the snapshot's hit-test boundary. No
@@ -303,7 +302,7 @@ malicious concurrent directory replacement; see the verification limitations.
   The pool validates main-issued URLs before creating a trusted resource URL.
 - `CodePanel` owns selection, measurements, frame mounting and stale focus checks.
   `codePresent(target, {visible, compact, viewportWidth?})` is the named presentation
-  contract; the optional bounded width requests a hidden-layout acknowledgement.
+  contract; the optional bounded width requests viewport-commit and layout acknowledgement.
   The older `codeLayout` operation remains a compatible adapter for existing callers.
 - `CodeSurfaces` owns task leases, bounded retention, recovery and window handoff.
   `CodeFrame` confines privileged commands to the exact owned direct child frame.

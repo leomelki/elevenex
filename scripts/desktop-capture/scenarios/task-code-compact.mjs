@@ -272,7 +272,7 @@ export default async function* (capture) {
         const sample = () => {
           const glide=panel.getAnimations().find(animation=>animation.transitionProperty==='width');
           const iframe=scope.querySelector('iframe');
-          window.codeGlide.push({motionTime:glide?.currentTime ?? null,time:performance.now()-start,width:panel.getBoundingClientRect().width,liveScale:iframe.getBoundingClientRect().width/iframe.clientWidth,opacity:Number(getComputedStyle(scope,'::view-transition-old(code-editor)').opacity),active:scope.matches(':active-view-transition'),blur:getComputedStyle(scope,'::view-transition-old(code-editor)').filter});
+          window.codeGlide.push({motionTime:glide?.currentTime ?? null,time:performance.now()-start,width:panel.getBoundingClientRect().width,liveScale:iframe.getBoundingClientRect().width/iframe.clientWidth,opacity:Number(getComputedStyle(scope,'::view-transition-old(code-editor)').opacity),active:scope.matches(':active-view-transition'),incomingBlur:getComputedStyle(scope,'::view-transition-new(code-editor)').filter,blur:getComputedStyle(scope,'::view-transition-old(code-editor)').filter});
           if (performance.now()-start<1200) requestAnimationFrame(sample);
         };
         sample();
@@ -285,21 +285,17 @@ export default async function* (capture) {
       assert.ok(distance>100,'Panel did not change width');
       const intermediate=samples.filter(s=>Math.abs(s.width-first)>1 && Math.abs(s.width-last)>1);
       assert.ok(intermediate.length>=5,'Panel snapped instead of using the original width glide: '+JSON.stringify(samples));
-      const shrinking=last<first;
-      // Compositor sampling can land fractionally beyond the held keyframe
-      // before its pause commits; reject visible blending, not rounding noise.
-      if (shrinking) assert.ok(!intermediate.some(s=>s.active && s.opacity<0.99),'Compact image faded in while still magnified: '+JSON.stringify(samples));
-      else assert.ok(intermediate.some(s=>s.active && s.opacity>0 && s.opacity<1 && s.blur!=='none'),'Blur/crossfade did not overlap panel motion: '+JSON.stringify(samples));
+      const middle=intermediate.filter(s=>s.motionTime>=100 && s.motionTime<=180);
+      assert.ok(middle.some(s=>s.active && s.opacity>0.1 && s.opacity<0.9),'Editor crossfade missed the middle of the panel glide: '+JSON.stringify(samples));
       const firstBlur=intermediate.find(s=>s.active && s.blur!=='none' && s.blur!=='blur(0px)');
-      assert.ok(firstBlur?.motionTime>=280/3-2 && firstBlur.motionTime<180,'Blur should start around one third into the glide: '+JSON.stringify(samples));
-      const firstBlend=samples.find(s=>s.active && s.opacity>0.01 && s.opacity<0.99);
-      assert.ok(firstBlend,'No editor crossfade was observed: '+JSON.stringify(samples));
+      assert.ok(firstBlur && firstBlur.motionTime<100,'Blur did not begin with the panel glide: '+JSON.stringify(samples));
       const visibleBlend=samples.filter(s=>s.active && s.opacity>0.01 && s.opacity<0.99);
-      const visibleBlendMs=visibleBlend.at(-1).time-visibleBlend[0].time;
+      const firstBlend=visibleBlend[0];
+      const visibleBlendMs=visibleBlend.at(-1).time-firstBlend.time;
       assert.ok(visibleBlend.length>=4 && visibleBlendMs>=50,'Editor handoff snapped through too few visible fade frames: '+JSON.stringify(samples));
-      if (shrinking) assert.ok(Math.abs(firstBlend.width-last)<=1,'Collapse crossfade started before the final width: '+JSON.stringify(samples));
-      else assert.ok((firstBlend.motionTime ?? firstBlend.time)>=280/3-2,'Crossfade started before the first third of the panel glide: '+JSON.stringify(samples));
-      assert.ok(!intermediate.some(s=>s.active && s.motionTime<280/3-2 && s.opacity<1),'Outgoing Code faded too early: '+JSON.stringify(samples));
+      const late=samples.filter(s=>s.motionTime>=260);
+      assert.ok(late.length && late.every(s=>s.opacity<0.02 && (s.incomingBlur==='none' || parseFloat(s.incomingBlur.slice(5))<0.5)),'Code did not finish sharp on the panel clock: '+JSON.stringify(samples));
+      assert.ok(!samples.some(s=>s.active && s.motionTime===null && s.time>350),'Editor added a second reveal after the panel glide: '+JSON.stringify(samples));
       const largestStep=Math.max(...samples.slice(1).map((s,i)=>Math.abs(s.width-samples[i].width)));
       assert.ok(largestStep<distance*0.65,'Panel width jumped during crossfade: '+JSON.stringify(samples));
       await finish(); await geometry();
@@ -340,8 +336,8 @@ export default async function* (capture) {
       try {
         await capture.click(selector);
         await waitMain(() => reachedLayout, 'The real child layout did not settle');
-        await capture.settle();
-        assert.equal(await capture.evaluate(() => getComputedStyle(document.querySelector('ex-code-panel .frame-container'), '::view-transition-old(code-editor)').opacity), '1', 'Old snapshot faded before the new layout was ready');
+        await finish();
+        assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel .frame-container').matches(':active-view-transition')), false, 'Child acknowledgement extended the panel animation');
         assert.ok(await capture.evaluate(() => {
           const tab=document.querySelector('ex-workspace-panels [role="tab"][aria-label="Code"]');
           const box=tab.getBoundingClientRect(),hit=document.elementFromPoint(box.x+box.width/2,box.y+box.height/2);
@@ -351,8 +347,8 @@ export default async function* (capture) {
         await capture.evaluate(target=>window.elevenex.codeFocus(target),target);
         await capture.press('ArrowUp');
         assert.equal(await frame.executeJavaScript('window.codeCrossfadeKey'),'ArrowUp','The retained snapshot blocked editor keyboard input');
-        yield {name:`${name}-old-snapshot-held`,inspect:['ex-code-panel .frame-container','iframe']};
-        // Keep sampling after acknowledgement, including the actual fade-in.
+        yield {name:`${name}-layout-acknowledgement-pending`,inspect:['ex-code-panel .frame-container','iframe']};
+        // A late acknowledgement must not trigger another layout or reveal.
         // Viewport-only checks miss Explorer/editor grid movement at one size.
         const stableLayout = frame.executeJavaScript(`new Promise(resolve => {
           const parts = [...document.querySelectorAll('.monaco-workbench .part, .monaco-workbench .monaco-editor')].slice(0,32);
@@ -481,7 +477,7 @@ export default async function* (capture) {
         for (const region of document.querySelector('ex-app-shell .workspace').children) {
           for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=140;
         }
-        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=Number(animation.effect.getComputedTiming().delay)+Number(animation.effect.getComputedTiming().duration)*0.75;
+        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=Number(animation.effect.getComputedTiming().delay)+Number(animation.effect.getComputedTiming().duration)*0.5;
       });
       await capture.settle();
       assert.equal(await capture.evaluate(()=>!!document.querySelector('ex-code-panel .launch-card')),false);
@@ -507,7 +503,7 @@ export default async function* (capture) {
         for (const region of document.querySelector('ex-app-shell .workspace').children) {
           for (const animation of region.getAnimations()) if ('transitionProperty' in animation) animation.currentTime=140;
         }
-        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=Number(animation.effect.getComputedTiming().delay)+Number(animation.effect.getComputedTiming().duration)*0.75;
+        for (const animation of document.querySelector('ex-code-panel .frame-container').getAnimations({subtree:true})) if(animation.animationName?.includes('code-layout-')) animation.currentTime=Number(animation.effect.getComputedTiming().delay)+Number(animation.effect.getComputedTiming().duration)*0.5;
       });
       await capture.settle();
       assert.equal(await capture.evaluate(() => document.querySelector('ex-code-panel iframe').clientWidth),wideWidth,'Collapse midpoint reflowed the editor');
@@ -515,8 +511,8 @@ export default async function* (capture) {
         const scope=document.querySelector('ex-code-panel .frame-container');
         const old=getComputedStyle(scope,'::view-transition-old(code-editor)');
         const incoming=getComputedStyle(scope,'::view-transition-new(code-editor)');
-        return {followsPanel:Math.abs(scope.getBoundingClientRect().width-scope.parentElement.clientWidth)<1,oldOpaque:Number(old.opacity)===1,incomingBlurred:incoming.filter!=='none' && incoming.filter!=='blur(0px)',fit:old.objectFit,newOpacity:incoming.opacity};
-      }), {followsPanel:true,oldOpaque:true,incomingBlurred:true,fit:'fill',newOpacity:'1'}, 'Collapse must keep the magnified compact image blurred behind the opaque old snapshot');
+        return {followsPanel:Math.abs(scope.getBoundingClientRect().width-scope.parentElement.clientWidth)<1,blending:Number(old.opacity)>0.1 && Number(old.opacity)<0.9,incomingBlurred:incoming.filter!=='none' && incoming.filter!=='blur(0px)',fit:old.objectFit,newOpacity:incoming.opacity};
+      }), {followsPanel:true,blending:true,incomingBlurred:true,fit:'fill',newOpacity:'1'}, 'Collapse must blend blurred snapshots at the panel midpoint');
       yield {name:`${theme}-collapse-interrupted`,inspect:['.panel','ex-code-panel .frame-container','iframe']};
       await capture.click('ex-workspace-panels [aria-label="Expand side panel"]');
       await capture.motion.finish(); await capture.motion.play(); await finish(); await geometry();

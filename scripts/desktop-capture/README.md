@@ -615,9 +615,11 @@ to check exclusive loading, repeats close/reopen and resizing in both themes,
 scrubs interrupted expansions/collapses, measures exactly one real iframe
 viewport resize per toggle at the predicted destination while a native scoped
 snapshot is retained, records click-to-resize latency, holds back the real
-child-layout acknowledgement, checks stable pane geometry through the blur/fade,
+child-layout acknowledgement without extending the visual animation, checks
+stable pane geometry,
 asserts immediate uncovered Code visibility during ordinary panel opening,
-continuous shell width motion with a blur/crossfade starting one third into it,
+continuous shell width motion with blur/crossfade on the same clock, a midpoint
+handoff and a sharp final editor without a second reveal,
 checks stretched editor bounds at the shell midpoint in both directions,
 checks opaque retained Code at early/middle/late closing frames in compact/wide
 layouts plus interrupted reopening, and

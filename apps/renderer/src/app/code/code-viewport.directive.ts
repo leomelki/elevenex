@@ -1,9 +1,9 @@
 import { DOCUMENT } from '@angular/common';
 import { afterNextRender, afterRenderEffect, DestroyRef, Directive, ElementRef, inject, input, output, signal } from '@angular/core';
-import { codeBlendDelay, codeDestinationWidth, supportsCodeTransition } from './code-view-transition';
+import { codeDestinationWidth, codeTransitionClock, supportsCodeTransition } from './code-view-transition';
 
 /** Resize the live viewport once, then fit browser-owned snapshots to the
- * shell's glide without transforming the live iframe. Blend after acknowledgement.
+ * shell's glide without transforming the live iframe. One clock owns the blend.
  * Ordinary window resizing remains live. No iframe is recreated. */
 @Directive({ selector: '[exCodeViewport]' })
 export class CodeViewportDirective {
@@ -56,65 +56,31 @@ export class CodeViewportDirective {
     let snapshot: ViewTransition | undefined;
     let preparedWidth = 0;
     let generation = 0;
-    let snapshotReady = false;
-    let snapshotAcknowledged = false;
-    let shrinking = false;
     let blendAncestor: HTMLElement | undefined;
-    let blurHold = 0;
+    // Angular prefixes component keyframes in production builds.
     const snapshotAnimations = () => (scope.getAnimations?.({subtree: true}) ?? []).filter(animation =>
-      // Angular prefixes component keyframes in production builds.
       'animationName' in animation && typeof animation.animationName === 'string'
-      && (animation.animationName.endsWith('code-layout-out') || animation.animationName.endsWith('code-layout-in')));
-    const stopBlurHold = () => { window.cancelAnimationFrame(blurHold); blurHold = 0; };
-    const canRevealSnapshot = () => snapshotAcknowledged && (!shrinking || !frozenWidth);
-    const resumeSnapshot = () => {
-      if (!snapshotReady || !canRevealSnapshot()) return;
-      stopBlurHold();
-      const held = this.frame.classList.contains('holding-collapse');
-      this.frame.classList.remove('holding-collapse');
-      for (const animation of snapshotAnimations()) {
-        if (held) {
-          const timing = animation.effect?.getComputedTiming();
-          if (typeof timing?.duration === 'number') animation.currentTime = (timing.delay ?? 0) + timing.duration / 2;
-          animation.play();
-        } else if (animation.playState === 'paused') animation.play();
-      }
-    };
-    const holdBlurUntilReady = () => {
-      blurHold = 0;
-      if (!snapshot || canRevealSnapshot()) return;
-      const animations = snapshotAnimations();
-      const first = animations[0];
-      const timing = first?.effect?.getComputedTiming();
-      if (first && timing && typeof timing.duration === 'number' && typeof first.currentTime === 'number'
-        && first.currentTime >= (timing.delay ?? 0) + timing.duration / 2) {
-        // Blur on the shell clock; keep the old image opaque at the midpoint
-        // until the child and required destination geometry are ready.
-        for (const animation of animations) {
-          animation.pause(); animation.currentTime = (timing.delay ?? 0) + timing.duration / 2;
-        }
-      } else blurHold = window.requestAnimationFrame(holdBlurUntilReady);
-    };
+      && /code-layout-(out|in)$/.test(animation.animationName));
     const playSnapshots = () => {
-      const delay = blendAncestor ? codeBlendDelay(blendAncestor) : 0;
+      if (!blendAncestor) return;
+      const clock = codeTransitionClock(blendAncestor);
       for (const animation of snapshotAnimations()) {
-        animation.effect?.updateTiming({ delay });
+        animation.effect?.updateTiming({ duration: clock.duration, delay: 0 });
         animation.play();
+        // Native snapshot capture takes a few frames. Join the panel's existing
+        // timeline instead of starting a second animation after capture/layout.
+        if (clock.startTime !== null) animation.startTime = clock.startTime;
+        else animation.currentTime = clock.elapsed;
       }
-      if (!canRevealSnapshot()) blurHold = window.requestAnimationFrame(holdBlurUntilReady);
     };
 
     const cancelSnapshot = () => {
       generation++;
-      stopBlurHold();
       snapshot?.skipTransition();
       snapshot = undefined;
-      snapshotReady = false;
-      snapshotAcknowledged = false;
-      shrinking = false;
       blendAncestor = undefined;
       preparedWidth = 0;
-      this.frame.classList.remove('crossfading', 'holding-collapse');
+      this.frame.classList.remove('crossfading');
     };
 
     const cancelReveal = () => {
@@ -138,7 +104,6 @@ export class CodeViewportDirective {
         frozenWidth = 0;
         this.frame.classList.remove('resizing');
         measure();
-        resumeSnapshot();
         return;
       }
       // A native window resize can change a percentage destination mid-glide.
@@ -155,10 +120,10 @@ export class CodeViewportDirective {
     };
     this.revealWhenReady = () => {
       if (!awaitingLayout || reveal) return;
-      if (snapshot && preparedWidth) {
+      if (preparedWidth) {
+        // Child acknowledgement still owns focus/error handling. It must not
+        // restart or extend the shell-owned visual transition.
         awaitingLayout = false;
-        snapshotAcknowledged = true;
-        resumeSnapshot();
         return;
       }
       if (frozenWidth) return;
@@ -202,10 +167,6 @@ export class CodeViewportDirective {
           if (destination && supportsCodeTransition(scope)) {
             const version = generation;
             preparedWidth = destination;
-            // A compact incoming image is magnified while the panel shrinks.
-            // Keep it blurred behind the opaque old image until scale is 1.
-            shrinking = destination < frozenWidth;
-            this.frame.classList.toggle('holding-collapse', shrinking);
             blendAncestor = ancestor;
             this.frame.classList.add('crossfading');
             const transition = scope.startViewTransition(async () => {
@@ -224,19 +185,12 @@ export class CodeViewportDirective {
             snapshot = transition;
             void transition.ready.then(() => {
               if (snapshot !== transition) return;
-              snapshotReady = true;
-              // Begin the blur one third into the glide. Its opaque midpoint
-              // waits for acknowledgement before fading into the ready image.
-              for (const animation of snapshotAnimations()) {
-                animation.pause(); animation.currentTime = 0;
-              }
               if (this.active()) playSnapshots();
             }).catch(() => { if (snapshot === transition) this.frame.classList.add('reflowing'); });
             void transition.finished.finally(() => {
               if (snapshot !== transition) return;
-              stopBlurHold();
               snapshot = undefined;
-              this.frame.classList.remove('crossfading', 'holding-collapse', 'reflowing', 'cover-immediate');
+              this.frame.classList.remove('crossfading', 'reflowing', 'cover-immediate');
             }).catch(() => undefined);
           } else this.frame.classList.add('reflowing');
         }
@@ -265,7 +219,7 @@ export class CodeViewportDirective {
       // while the shell clips it away. Platform actions are already inactive.
       transitions.clear();
       window.cancelAnimationFrame(pending); pending = 0;
-      cancelReveal(); stopBlurHold();
+      cancelReveal();
       awaitingLayout = false;
       for (const animation of snapshotAnimations()) animation.pause();
     };

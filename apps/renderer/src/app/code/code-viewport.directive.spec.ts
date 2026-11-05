@@ -1,7 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { CodeViewportDirective } from './code-viewport.directive';
-import { codeBlendDelay } from './code-view-transition';
+import { codeTransitionClock } from './code-view-transition';
 
 @Component({ imports: [CodeViewportDirective], template: '<section><div><div exCodeViewport [active]="active()" [contextKey]="context()" [layoutReady]="ready()" (viewportWidth)="width.set($event)" (layoutRequested)="requested()"></div></div></section>' })
 class Host { readonly active = signal(true); readonly width = signal(0); readonly ready = signal(true); readonly context = signal('task-one'); requests = 0; requested() { this.requests++; } }
@@ -62,15 +62,14 @@ describe('Code viewport transition ownership', () => {
     expect(fixture.componentInstance.requests).toBe(0);
   });
 
-  it('starts blending one third into the actual shell clock without delaying a late acknowledgement', () => {
+  it('joins the actual shell clock, including shortened reversals and delayed snapshot capture', () => {
     const ancestor = document.createElement('section');
-    let elapsed = 0;
-    Object.defineProperty(ancestor,'getAnimations',{value:()=>[{transitionProperty:'width',get currentTime() { return elapsed; },effect:{getComputedTiming:()=>({duration:280})}}]});
-    expect(codeBlendDelay(ancestor)).toBeCloseTo(280/3);
-    elapsed=70; expect(codeBlendDelay(ancestor)).toBeCloseTo(280/3-70);
-    elapsed=140; expect(codeBlendDelay(ancestor)).toBe(0);
-    elapsed=280; expect(codeBlendDelay(ancestor)).toBe(0);
-    expect(codeBlendDelay(document.createElement('section'))).toBe(0);
+    let elapsed = 42, duration = 280;
+    Object.defineProperty(ancestor,'getAnimations',{value:()=>[{transitionProperty:'width',startTime:100,get currentTime() { return elapsed; },effect:{getComputedTiming:()=>({duration})}}]});
+    expect(codeTransitionClock(ancestor)).toEqual({duration:280,elapsed:42,startTime:100});
+    elapsed=140; duration=180;
+    expect(codeTransitionClock(ancestor)).toEqual({duration:180,elapsed:140,startTime:100});
+    expect(codeTransitionClock(document.createElement('section'))).toEqual({duration:0,elapsed:0,startTime:null});
   });
 
   it('releases retained transition state when the owning task or visibility context changes', async () => {
@@ -91,10 +90,10 @@ describe('Code viewport transition ownership', () => {
       getComputedTiming() { return {duration:280}; }
     }
     vi.stubGlobal('KeyframeEffect',Effect);
-    Object.defineProperty(section,'getAnimations',{value:()=>[{transitionProperty:'width',currentTime:42,effect:new Effect()}]});
+    Object.defineProperty(section,'getAnimations',{value:()=>[{transitionProperty:'width',startTime:100,currentTime:42,effect:new Effect()}]});
     const play = vi.fn(), pause = vi.fn(), updateTiming = vi.fn();
     const animation = {
-      animationName:'code-layout-out',currentTime:0,playState:'idle',
+      animationName:'code-layout-out',startTime:0,currentTime:0,playState:'idle',
       play() { play(); this.playState='running'; }, pause() { pause(); this.playState='paused'; },
       effect:{updateTiming,getComputedTiming:()=>({duration:280,delay:280/3-42})},
     };
@@ -122,19 +121,20 @@ describe('Code viewport transition ownership', () => {
     expect(fixture.componentInstance.requests).toBe(1);
     expect(frame.classList.contains('reflowing')).toBe(false);
     expect(frame.classList.contains('crossfading')).toBe(true);
-    expect(pause).toHaveBeenCalledOnce();
+    expect(pause).not.toHaveBeenCalled();
     expect(play).toHaveBeenCalledOnce();
+    expect(animation.startTime).toBe(100);
     width=700; resize();
     expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('1072px');
     expect(frame.style.transform).toBe('');
     expect(fixture.componentInstance.requests).toBe(1);
     animation.currentTime=300; await nextFrame();
-    expect(animation.playState).toBe('paused');
-    expect(animation.currentTime).toBeCloseTo(280/3-42+140);
+    expect(animation.playState).toBe('running');
+    expect(animation.currentTime).toBe(300);
     fixture.componentInstance.ready.set(true); await fixture.whenStable(); await update;
-    expect(play).toHaveBeenCalledTimes(2);
+    expect(play).toHaveBeenCalledOnce();
     expect(updateTiming).toHaveBeenCalledOnce();
-    expect(updateTiming).toHaveBeenCalledWith({delay:280/3-42});
+    expect(updateTiming).toHaveBeenCalledWith({duration:280,delay:0});
     width=1072; transition('transitionend'); await nextFrame();
     expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`);
     expect(frame.style.transform).toBe('');
@@ -170,7 +170,7 @@ describe('Code viewport transition ownership', () => {
     expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('');
   });
 
-  it.each([true, false])('keeps the compact incoming image blurred until both collapse and layout finish (layout first: %s)', async layoutFirst => {
+  it.each([true, false])('does not pause or restart collapse for child acknowledgement (layout first: %s)', async layoutFirst => {
     width = 1072;
     const { fixture, frame, section, transition } = await setup();
     fixture.componentInstance.ready.set(false); await fixture.whenStable();
@@ -195,22 +195,21 @@ describe('Code viewport transition ownership', () => {
     }});
     transition('transitionrun'); await fixture.whenStable();
     expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('432px');
-    expect(frame.classList.contains('holding-collapse')).toBe(true);
+    expect(frame.classList.contains('crossfading')).toBe(true);
     width=700; resize(); animation.currentTime=300; await nextFrame();
-    expect(animation.playState).toBe('paused');
-    expect(animation.currentTime).toBeCloseTo(280/3+140);
+    expect(animation.playState).toBe('running');
+    expect(animation.currentTime).toBe(300);
     if (layoutFirst) { fixture.componentInstance.ready.set(true); await fixture.whenStable(); }
-    expect(animation.playState).toBe('paused');
+    expect(animation.playState).toBe('running');
     expect(frame.style.transform).toBe('');
     width=432; transition('transitionend'); await nextFrame();
     expect(frame.style.transform).toBe('');
     if (!layoutFirst) {
-      expect(animation.playState).toBe('paused');
+      expect(animation.playState).toBe('running');
       fixture.componentInstance.ready.set(true); await fixture.whenStable();
     }
     expect(animation.playState).toBe('running');
-    expect(animation.currentTime).toBeCloseTo(280/3+140);
-    expect(frame.classList.contains('holding-collapse')).toBe(false);
+    expect(animation.currentTime).toBe(300);
     expect(fixture.componentInstance.requests).toBe(1);
     complete(); await finished; await Promise.resolve();
     expect(frame.classList.contains('crossfading')).toBe(false);
@@ -218,11 +217,14 @@ describe('Code viewport transition ownership', () => {
 
   it('keeps the current viewport while inactive closing contents remain painted, then resumes measurement', async () => {
     const {fixture,frame,transition}=await setup();
+    const pauseCover = vi.fn();
+    Object.defineProperty(frame,'getAnimations',{value:()=>[{animationName:'loading-cover',pause:pauseCover}]});
     fixture.componentInstance.active.set(false); await fixture.whenStable();
     width=280; resize(); transition('transitionrun'); transition('transitionend'); await nextFrame();
     expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('432px');
     expect(frame.classList.contains('reflowing')).toBe(false);
     expect(fixture.componentInstance.requests).toBe(0);
+    expect(pauseCover).not.toHaveBeenCalled();
     fixture.componentInstance.active.set(true); await fixture.whenStable();
     expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('280px');
   });

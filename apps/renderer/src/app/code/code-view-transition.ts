@@ -38,13 +38,14 @@ export function codeDestinationWidth(ancestor: HTMLElement, viewport: HTMLElemen
   return width > 0 && width <= 20_000 ? width : null;
 }
 
-/** Start the blur one third into the shell glide, or immediately if snapshot
- * capture finishes later. Read its animation clock so reversals and scrubbing
- * use the actual remaining motion rather than a second wall-clock timer. */
-export function codeBlendDelay(ancestor: HTMLElement): number {
+/** Snapshot animation uses the panel's native clock, including shortened
+ * reversal durations. Sharing startTime keeps compositor frames synchronized. */
+export function codeTransitionClock(ancestor: HTMLElement): { duration: number; elapsed: number; startTime: number | null } {
   const transition = ancestor.getAnimations?.().find(animation => 'transitionProperty' in animation && animation.transitionProperty === 'width');
   const duration = transition?.effect?.getComputedTiming().duration;
-  const elapsed = transition?.currentTime;
-  return typeof duration === 'number' && typeof elapsed === 'number'
-    ? Math.max(0, duration / 3 - elapsed) : 0;
+  return {
+    duration: typeof duration === 'number' ? duration : 0,
+    elapsed: typeof transition?.currentTime === 'number' ? transition.currentTime : 0,
+    startTime: typeof transition?.startTime === 'number' ? transition.startTime : null,
+  };
 }
