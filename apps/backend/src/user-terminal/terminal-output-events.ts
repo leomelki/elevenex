@@ -31,6 +31,7 @@ export class TerminalOutputEvents {
   private escaped = false;
   private frame: string | null = null;
   private overflow = false;
+  private csi: 'sgr' | 'other' | null = null;
   private plain = '';
   constructor(private readonly token: string | null) {}
 
@@ -54,19 +55,42 @@ export class TerminalOutputEvents {
         }
         continue;
       }
-      if (this.escaped && char === ']') {
-        this.frame = '';
-        this.plain = '';
-        this.escaped = false;
+      if (this.csi !== null && char !== '\x1b') {
+        if (char >= '@' && char <= '~') {
+          // SGR only changes styling. Vite inserts it inside URLs to bold the
+          // port; wait for a visible delimiter so styling cannot finish :4 early.
+          if (char !== 'm' || this.csi !== 'sgr') this.plain = '';
+          this.csi = null;
+        } else if (!/[\d;:]/.test(char)) {
+          this.csi = 'other';
+          this.plain = '';
+        }
         continue;
       }
-      this.escaped = char === '\x1b';
+      if (this.csi !== null) this.plain = '';
+      this.csi = null;
+      if (this.escaped) {
+        this.escaped = false;
+        if (char === ']') {
+          this.frame = '';
+          this.plain = '';
+          continue;
+        }
+        if (char === '[') {
+          this.csi = 'sgr';
+          continue;
+        }
+        this.plain = '';
+      }
+      if (char === '\x1b') {
+        this.escaped = true;
+        continue;
+      }
       this.plain = (this.plain + char).slice(-256);
       // Require a delimiter; a chunk ending with :3 may continue with 000.
       if (char > ' ' && char !== '/') continue;
       const match =
-        // eslint-disable-next-line no-control-regex -- PTY protocol delimiters.
-        /(https?):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{1,5})[/\s\x1b]$/.exec(
+        /(https?):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{1,5})[/\s]$/.exec(
           this.plain,
         );
       if (match) {

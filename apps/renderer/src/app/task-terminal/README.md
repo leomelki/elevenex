@@ -199,6 +199,9 @@ conversations cannot receive this action.
 A recognized localhost HTTP(S) serving port produces `TerminalBrowserIntent`
 with scope/task/terminal/port, never an output URL. The workspace selects Browser;
 main rechecks the live terminal and opens its service in the system browser.
+Detection ignores ANSI text styling within URLs (including Angular/Vite's bold
+port), waits for a visible delimiter, and excludes OSC metadata. Original PTY
+output remains unchanged for rendering.
 For SSH, it creates/reuses this window's managed forward and uses its actual
 bound local port. Pending handoffs track the selected service: a second explicit
 opening can proceed, and earlier replies cannot overwrite its busy/error state.

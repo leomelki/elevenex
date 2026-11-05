@@ -332,6 +332,57 @@ describe('Rich shell tracking', () => {
       expect(stream.port).toBe(4317);
     }
   });
+  it.each([false, true])(
+    'detects Angular/Vite styled URLs at every chunk split (script: %s)',
+    (script) => {
+      // Vite colors the URL and separately makes its port bold.
+      const output =
+        '  \x1b[32m➜\x1b[39m  \x1b[1mLocal\x1b[22m:   ' +
+        '\x1b[36mhttp://localhost:\x1b[1m4200\x1b[22m/\x1b[39m\r\n';
+      for (let split = 0; split <= output.length; split++) {
+        const stream = new DesktopTerminalStream(
+          script
+            ? { id: 'start', file: 'pnpm', args: ['start'], cmd: 'pnpm start' }
+            : null,
+        );
+        stream.append(output.slice(0, split));
+        stream.append(output.slice(split));
+        expect(stream.status).toBe('serving');
+        expect(stream.port).toBe(4200);
+        expect(stream.protocol).toBe('http');
+        expect(stream.read(null, 0).data).toBe(output);
+      }
+    },
+  );
+  it('waits for a visible port delimiter across styling and single-character chunks', () => {
+    const stream = new DesktopTerminalStream();
+    for (const char of 'https://[::1]:\x1b[1m4\x1b[22m200\x1b[0m') {
+      stream.append(char);
+      expect(stream.port).toBeNull();
+    }
+    stream.append('\n');
+    expect(stream.port).toBe(4200);
+    expect(stream.protocol).toBe('https');
+  });
+  it.each([
+    'http://localhost:\x1b[2J4200/\n',
+    'http://localhost:\x1b[1X4200/\n',
+    'http://localhost:\x1b[?1m4200/\n',
+    'http://localhost:\x1b[1\x1b[1m4200/\n',
+    'http://localhost:4200\x1b[2J\n',
+    'http://localhost:\x1b[1m65536\x1b[22m/\n',
+    'http://localhost:\x1b[1m0\x1b[22m/\n',
+    '\x1b]0;http://localhost:\x1b[1m4200\x1b[22m/\x07',
+  ])(
+    'does not discover a service from invalid/styled metadata: %j',
+    (output) => {
+      const stream = new DesktopTerminalStream();
+      for (const char of output) stream.append(char);
+      expect(stream.port).toBeNull();
+      stream.append('http://127.0.0.1:4317/\n');
+      expect(stream.port).toBe(4317);
+    },
+  );
 });
 
 describe('Terminal activity titles', () => {
