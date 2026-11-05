@@ -196,12 +196,18 @@ characters) to the selected conversation's existing composer draft. Existing
 writing is preserved. It restores chat focus and never sends a prompt. Archived
 conversations cannot receive this action.
 
-A recognized localhost HTTP(S) serving port produces `TerminalBrowserIntent`
+A discovered process-owned TCP listening port produces `TerminalBrowserIntent`
 with scope/task/terminal/port, never an output URL. The workspace selects Browser;
 main rechecks the live terminal and opens its service in the system browser.
-Detection ignores ANSI text styling within URLs (including Angular/Vite's bold
-port), waits for a visible delimiter, and excludes OSC metadata. Original PTY
-output remains unchanged for rendering.
+Discovery reads actual listeners belonging to the PTY and its descendants,
+including silent servers and background jobs. Printed URLs only refine the
+protocol and a confined pathname of a confirmed listener; they cannot create a
+serving badge. ANSI styling and OSC metadata do not affect discovery, and original
+PTY output remains unchanged. The primary port remains stable when possible;
+additive metadata carries up to 16 services. Closed ports disappear on the next
+metadata refresh, and opening rechecks ownership/generation with a fresh scan.
+Collector failure clears advertised ports while leaving the shell usable.
+See [discovery architecture, platform support and limits](../../../../backend/src/user-terminal/ports/README.md).
 For SSH, it creates/reuses this window's managed forward and uses its actual
 bound local port. Pending handoffs track the selected service: a second explicit
 opening can proceed, and earlier replies cannot overwrite its busy/error state.

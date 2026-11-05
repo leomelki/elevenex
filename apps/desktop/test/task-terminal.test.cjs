@@ -164,3 +164,68 @@ test('activity titles remain bounded display-only optional metadata', () => {
     assert.throws(() => parseTaskTerminal({ ...terminal, activityTitle }, 1));
   assert.equal(Object.hasOwn(parseTaskTerminal(terminal, 1), 'activityTitle'), false);
 });
+
+test('owned service addresses are additive, bounded and confined to loopback paths', () => {
+  const address = { port: 4200, host: '::1', protocol: 'https', path: '/app/' };
+  const row = { ...terminal, status: 'serving', port: 4200, protocol: 'https', services: [address], portDiscovery: 'process' };
+  assert.deepEqual(parseTaskTerminal(row, 1), row);
+  for (const patch of [
+    { services: Array(17).fill(address) }, { services: [address, address] }, { services: [] },
+    { services: undefined }, { status: 'idle' }, { alive: false }, { portDiscovery: 'output' }, { portDiscovery: 'unavailable' },
+    ...[{ host: 'example.com' }, { host: '192.168.1.2' }, { host: '127.0.0.999' }, { protocol: 'file' },
+      { path: '//example.com' }, { path: '/\\example.com' }, { path: '/?private' }, { path: '/#fragment' },
+      { path: '/bad\nline' }, { path: '/a/../b' }, { port: 65536 }]
+      .map(value => ({ services: [{ ...address, ...value }] })),
+  ]) assert.throws(() => parseTaskTerminal({ ...row, ...patch }, 1));
+  assert.equal(parseTaskTerminal({ ...terminal, services: [], portDiscovery: 'unavailable' }, 1).port, null);
+});
+
+test('browser handoff freshly verifies owned sockets, IPv6, path confinement and generation', async context => {
+  const handlers = new Map(), ipc = {}, module = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, fn) => handlers.set(channel, fn), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/terminal-ports'), 'utf8'), { exports: module, setTimeout, clearTimeout, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/' + name) });
+  const address = { port: 4200, host: '::1', protocol: 'https', path: '/app/' };
+  const row = { ...terminal, status: 'serving', port: 4200, protocol: 'https', services: [address], portDiscovery: 'process' };
+  let checked = { generation, service: address }, closed = false, calls = 0;
+  const server = createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url.includes('/service?')) {
+      calls++;
+      assert.equal(req.url, `/api/desktop-workspace/tasks/1/terminals/2/service?generation=${generation}&port=4200`);
+      res.statusCode = closed ? 409 : 200;
+      res.end(JSON.stringify(checked));
+    } else res.end(JSON.stringify({ terminal: row, generation, from: 0, next: 4, data: 'test', gap: true, more: false }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  context.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
+  const endpoint = { url: `http://127.0.0.1:${server.address().port}`, version: 'a'.repeat(40), headers: {} };
+  const opened = [], controller = new AbortController();
+  let environment = { kind: 'local' }, forwards = [];
+  const client = { state: () => ({ scope: { id: generation, environment } }), execute: async (_window, _scope, _key, _mutation, operation) => operation(endpoint, controller.signal) };
+  const remote = {
+    snapshot: () => ({ forwards }), subscribe: () => () => {},
+    addForward: async (_window, input, host) => {
+      assert.equal(host, '::1');
+      forwards = [{ remotePort: input.remotePort, phase: 'listening', boundPort: 49321 }];
+      checked = { generation, service: { ...address, host: '127.0.0.1' } };
+    },
+  };
+  const stop = module.registerTerminalPorts(client, remote, () => true, async url => { opened.push(url); });
+  context.after(stop);
+  const handler = handlers.get('task-terminal:open-port'), event = { senderFrame: {}, sender: { id: 11 } };
+  const open = () => handler(event, generation, { taskId: 1, terminalId: 2, port: 4200 });
+  await open();
+  assert.deepEqual(opened, ['https://[::1]:4200/app/']);
+  assert.equal(calls, 1);
+  closed = true;
+  await assert.rejects(open());
+  closed = false;
+  checked = { ...checked, generation: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' };
+  await assert.rejects(open());
+  checked = { generation, service: { ...address, path: '//example.com' } };
+  await assert.rejects(open());
+  checked = { generation, service: address };
+  environment = { kind: 'remote', hostId: 'remote' };
+  await assert.rejects(open(), /service address changed/);
+  assert.equal(opened.length, 1);
+});

@@ -387,6 +387,17 @@ main-owned transport credentials, CSP and the named bridge remain unchanged.
 
 ## User terminal slice
 
+Terminal replies optionally carry `portDiscovery` and at most 16 `services`.
+New engines discover actual process-owned TCP listeners using bounded,
+demand-driven OS snapshots shared across windows/tasks. Output URLs only refine
+protocol/path hints; they never establish a listener. The primary `port` and
+`protocol` fields remain compatible. Main validates loopback addresses and
+canonical paths, and rechecks the selected generation/port through the additive
+bounded `GET terminals/:id/service` before browser opening. Older engines retain
+their existing handoff. No new IPC operation, network permission or generic
+renderer request is introduced. See the
+[collector ownership and platform limits](../apps/backend/src/user-terminal/ports/README.md).
+
 Shell integration is optional. New engines advertise `shellIntegrationControl`
 on terminal lists and accept an optional boolean `shellIntegration` on creation;
 omitting it preserves existing defaults. Per-terminal state is an optional,

@@ -16,7 +16,7 @@ export interface RemoteTransport {
   readonly instance: string;
   readonly exited: Promise<void>;
   /** A reserved port value of zero addresses the private backend socket. */
-  forward(port: number, localPort: number, onServiceChanged?: (available: boolean) => void): Promise<{ port: number; reachable: boolean; authorization: string | null; close(): Promise<void> }>;
+  forward(port: number, localPort: number, onServiceChanged?: (available: boolean) => void, targetHost?: string): Promise<{ port: number; reachable: boolean; authorization: string | null; close(): Promise<void> }>;
   health(signal: AbortSignal): Promise<{ ready: boolean; instance: string }>;
   close(): Promise<void>;
 }
@@ -153,13 +153,13 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
       if (healthSignal.aborted) { aborted(); return; }
       try { channel.send({ type: 'ping', id }); } catch { closed(); }
     });
-    const forward: RemoteTransport['forward'] = async (remotePort, localPort, onServiceChanged) => {
+    const forward: RemoteTransport['forward'] = async (remotePort, localPort, onServiceChanged, targetHost) => {
       if (closing) throw new Error('Remote transport is closing');
       const sockets = new Set<import('node:net').Socket>();
       const authorization = remotePort === 0 ? `Bearer ${randomBytes(32).toString('hex')}` : null;
       const server = createServer({ highWaterMark: 16 * 1024, allowHalfOpen: true }, socket => {
         sockets.add(socket); socket.once('close', () => sockets.delete(socket));
-        if (authorization === null) { channels.open(socket, remotePort, onServiceChanged); return; }
+        if (authorization === null) { channels.open(socket, remotePort, onServiceChanged, targetHost); return; }
         // The backend is a privileged API, unlike an explicitly forwarded dev
         // service. A website probing loopback must not acquire SSH authority.
         let header = Buffer.alloc(0);
@@ -198,7 +198,7 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
         const closed = () => finish(false);
         const timer = setTimeout(() => finish(false), 4000);
         channel.on('message', receive); channel.once('closed', closed);
-        try { channel.send({ type: 'probe', id, port: remotePort }); } catch { finish(false); }
+        try { channel.send({ type: 'probe', id, port: remotePort, ...(targetHost === undefined ? {} : { host: targetHost }) }); } catch { finish(false); }
       });
       const reachable = await probe;
       if (closing) { await close(); throw new Error('Remote transport is closing'); }

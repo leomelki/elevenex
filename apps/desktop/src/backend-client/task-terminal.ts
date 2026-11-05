@@ -11,6 +11,7 @@ import type { BackendEndpoint } from './transport';
 
 import { object, text, integer, generation, keys } from './terminal-validation';
 import { parseTerminalCommands } from './terminal-commands';
+import { parseTerminalServiceAddress } from './terminal-service-address';
 export { parseTerminalCommands } from './terminal-commands';
 
 export function parseTaskTerminal(
@@ -61,6 +62,16 @@ export function parseTaskTerminal(
     const port =
       value["port"] === null ? null : integer(value["port"], 1, 65535);
     if (status === "serving" && port === null) throw invalidResponse();
+    const discovery = value['portDiscovery'];
+    if (discovery !== undefined && discovery !== 'pending' && discovery !== 'process' && discovery !== 'unavailable') throw invalidResponse();
+    const rawServices = value['services'];
+    if (rawServices !== undefined && (!Array.isArray(rawServices) || rawServices.length > 16)) throw invalidResponse();
+    const services = Array.isArray(rawServices) ? rawServices.map(parseTerminalServiceAddress) : undefined;
+    if (discovery !== undefined && services === undefined) throw invalidResponse();
+    if (services && services.length > 0 && (port === null || status !== 'serving' || !value['alive'])) throw invalidResponse();
+    if (services && (new Set(services.map(service => service.port)).size !== services.length ||
+        (port !== null && !services.some(service => service.port === port && service.protocol === (protocol ?? 'http'))) ||
+        (discovery !== undefined && discovery !== 'process' && (services.length > 0 || port !== null)))) throw invalidResponse();
     return {
       id,
       taskId,
@@ -78,6 +89,8 @@ export function parseTaskTerminal(
         value["exitCode"] === null ? null : integer(value["exitCode"], 0, 255),
       port,
       ...(protocol === undefined ? {} : { protocol }),
+      ...(services === undefined ? {} : { services }),
+      ...(discovery === undefined ? {} : { portDiscovery: discovery }),
       canRerun: value["canRerun"],
       ...(shellIntegration === undefined ? {} : { shellIntegration }),
       ...(currentCwd === undefined ? {} : { currentCwd: currentCwd === null ? null : text(currentCwd, 8192) }),

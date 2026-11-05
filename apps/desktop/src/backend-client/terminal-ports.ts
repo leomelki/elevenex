@@ -3,6 +3,9 @@ import type { RemoteManager } from "../remote/manager";
 import { handleForWindow, type TrustedSender } from "../ipc";
 import { parseTerminalOutput } from "./task-terminal";
 import { requestBackendJson } from "./transport";
+import { parseTerminalServiceAddress } from './terminal-service-address';
+import { object } from './terminal-validation';
+import type { TaskTerminalServiceAddress } from '@elevenex/shared';
 
 /** Browser handoff validates the process, then uses this window's managed SSH forward. */
 export function registerTerminalPorts(
@@ -63,14 +66,39 @@ export function registerTerminalPorts(
             task,
             id,
           );
-          if (!state.terminal.alive || state.terminal.port !== port)
+          if (
+            !state.terminal.alive ||
+            (state.terminal.port !== port &&
+              !state.terminal.services?.some(service => service.port === port))
+          )
             throw new Error("The service is no longer running");
+          let service: TaskTerminalServiceAddress = {
+            port, host: '127.0.0.1',
+            protocol: state.terminal.protocol ?? 'http', path: '/',
+          };
+          const verifyService = async (): Promise<void> => {
+            if (state.terminal.portDiscovery === undefined) return;
+            const checked = object(await requestBackendJson(
+              endpoint,
+              {
+                path: `/api/desktop-workspace/tasks/${task}/terminals/${id}/service?generation=${state.generation}&port=${port}`,
+                limit: 4096,
+              },
+              signal,
+            ));
+            if (checked['generation'] !== state.generation)
+              throw new Error('Terminal process changed');
+            service = parseTerminalServiceAddress(checked['service']);
+            if (service.port !== port) throw new Error('Terminal service changed');
+          };
+          await verifyService();
           const current = () =>
             client.state(window).scope?.id === scopeId && !signal.aborted;
           if (!current()) throw new Error("The backend changed");
           const environment = client.state(window).scope!.environment;
           let localPort = port;
           if (environment.kind === "remote") {
+            const forwardedHost = service.host;
             const existing = remote
               .snapshot(window)
               .forwards.find((forward) => forward.remotePort === port);
@@ -79,14 +107,18 @@ export function registerTerminalPorts(
                 remotePort: port,
                 localPort: 0,
                 label: `Terminal :${port}`,
-              });
-            else if (
-              existing.phase === "unavailable" ||
-              existing.phase === "conflict" ||
-              existing.phase === "stopped"
-            ) {
-              // Only this explicit user action retries a failed saved listener.
-              await remote.retryForward(window, existing.id);
+              }, state.terminal.portDiscovery === undefined ? undefined : service.host);
+            else {
+              const retargeted = state.terminal.portDiscovery !== undefined &&
+                await remote.targetForward(window, existing.id, service.host);
+              if (!retargeted && (
+                existing.phase === "unavailable" ||
+                existing.phase === "conflict" ||
+                existing.phase === "stopped"
+              )) {
+                // Only this explicit user action retries a failed saved listener.
+                await remote.retryForward(window, existing.id);
+              }
             }
             if (!current()) throw new Error("The backend changed");
             // The listener's actual allocated port is authoritative; never assume remote localhost is local.
@@ -123,14 +155,21 @@ export function registerTerminalPorts(
               signal.addEventListener("abort", aborted, { once: true });
               check();
             });
+            // Setting up a forward can take seconds. Recheck before navigation
+            // so an exited/replaced service cannot use the earlier snapshot.
+            await verifyService();
+            if (service.host !== forwardedHost)
+              throw new Error('The service address changed while forwarding');
           }
           if (!current()) throw new Error("The backend changed");
+          const host = environment.kind === 'remote' ? '127.0.0.1' : service.host;
+          const authority = host.includes(':') ? `[${host}]` : host;
           await open(
-            `${state.terminal.protocol ?? "http"}://127.0.0.1:${localPort}/`,
+            `${service.protocol}://${authority}:${localPort}${service.path}`,
           );
           return { accepted: true as const };
         },
-        15000,
+        25000,
       );
     },
   );

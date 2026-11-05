@@ -1,6 +1,12 @@
 import { DesktopTerminalStream } from './desktop-terminal-stream.js';
 
 const token = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const listener = (port: number) => ({
+  port,
+  host: '127.0.0.1',
+  pid: 10,
+  started: 1,
+});
 const start = '\x1b]133;C;' + token + '\x07';
 const prompt = (code: number) =>
   '\x1b]133;D;' + token + ';' + code + '\x07\x1b]133;B;' + token + '\x07';
@@ -194,6 +200,8 @@ describe('Desktop terminal process stream', () => {
     const plain = new DesktopTerminalStream(null, token);
     plain.configureIntegration('unsupported');
     plain.append('Listening http://localhost:4317/\n');
+    expect(plain.port).toBeNull();
+    plain.services.reconcile([listener(4317)]);
     expect(plain.port).toBe(4317);
     plain.exited(7);
     expect(plain.status).toBe('failed');
@@ -329,6 +337,8 @@ describe('Rich shell tracking', () => {
       stream.append('http://localhost:4');
       expect(stream.port).toBeNull();
       stream.append('317/');
+      expect(stream.port).toBeNull();
+      stream.services.reconcile([listener(4317)]);
       expect(stream.port).toBe(4317);
     }
   });
@@ -347,6 +357,8 @@ describe('Rich shell tracking', () => {
         );
         stream.append(output.slice(0, split));
         stream.append(output.slice(split));
+        expect(stream.port).toBeNull();
+        stream.services.reconcile([listener(4200)]);
         expect(stream.status).toBe('serving');
         expect(stream.port).toBe(4200);
         expect(stream.protocol).toBe('http');
@@ -361,6 +373,8 @@ describe('Rich shell tracking', () => {
       expect(stream.port).toBeNull();
     }
     stream.append('\n');
+    expect(stream.port).toBeNull();
+    stream.services.reconcile([listener(4200)]);
     expect(stream.port).toBe(4200);
     expect(stream.protocol).toBe('https');
   });
@@ -380,6 +394,8 @@ describe('Rich shell tracking', () => {
       for (const char of output) stream.append(char);
       expect(stream.port).toBeNull();
       stream.append('http://127.0.0.1:4317/\n');
+      expect(stream.port).toBeNull();
+      stream.services.reconcile([listener(4317)]);
       expect(stream.port).toBe(4317);
     },
   );

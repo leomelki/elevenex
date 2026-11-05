@@ -234,6 +234,28 @@ test('settings restore connections without interactive authentication and retain
   const bytes = await readFile(join(root, 'settings.json'), 'utf8'); assert.equal(bytes.includes('one-secret'), false);
 });
 
+test('terminal forward targets are exact, loopback-only, window-owned and leave saved settings compatible', async t => {
+  const { manager, remote, root, transports } = await setup(t);
+  await manager.select(1, remote); await ready(manager);
+  const targets = [], original = transports[0].forward;
+  transports[0].forward = async (...args) => { targets.push(args[3]); return original(...args); };
+  await manager.addForward(1, { remotePort: 4200, localPort: 0, label: 'Terminal :4200' }, '::1');
+  await until(() => manager.snapshot(1), value => value.forwards[0]?.phase === 'listening');
+  assert.equal(targets.at(-1), '::1');
+  const id = manager.snapshot(1).forwards[0].id;
+  await assert.rejects(manager.targetForward(1, id, '192.168.1.2'));
+  await assert.rejects(manager.targetForward(2, id, '::1'));
+  assert.equal(await manager.targetForward(1, id, '::1'), false);
+  assert.equal(await manager.targetForward(1, id, '127.0.0.1'), true);
+  await until(() => manager.snapshot(1), value => value.forwards[0]?.phase === 'listening');
+  assert.equal(targets.at(-1), '127.0.0.1');
+  const saved = JSON.parse(await readFile(join(root, 'settings.json'), 'utf8'));
+  const input = saved.windows[0].forwards[remote.hostId][0];
+  assert.deepEqual(Object.keys(input).sort(), ['id', 'label', 'localPort', 'remotePort']);
+  await manager.removeForward(1, id);
+  await assert.rejects(manager.targetForward(1, id, '::1'));
+});
+
 test('askpass broker authenticates callers, returns transient credentials and denies all background prompts', async t => {
   const controller = new AbortController(); let prompts = 0;
   const broker = await createAskpass(async prompt => { prompts++; assert.equal(prompt.kind, 'credential'); return 'secret-value'; }, true, controller.signal);

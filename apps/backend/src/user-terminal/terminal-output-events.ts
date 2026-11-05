@@ -16,12 +16,17 @@ export type TerminalOutputEvent = (
       readonly type: 'service';
       readonly port: number;
       readonly protocol: 'http' | 'https';
+      readonly path: string;
     }
 ) & {
   /** Absolute UTF-16 offset immediately after the event. */ readonly at: number;
 };
 
 const MAX_FRAME = 33_000;
+const ROOT_SERVICE =
+  /(https?):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{1,5})(\/)$/;
+const PATH_SERVICE =
+  /(https?):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{1,5})(\/[^\s<>"'`\\]*)?\s$/;
 
 /** Bounded incremental OSC parser. Every OSC (including foreign/oversize frames)
  * consumes its payload so metadata can never become a service hint. Output is
@@ -86,13 +91,12 @@ export class TerminalOutputEvents {
         this.escaped = true;
         continue;
       }
-      this.plain = (this.plain + char).slice(-256);
+      this.plain = (this.plain + char).slice(-2304);
       // Require a delimiter; a chunk ending with :3 may continue with 000.
       if (char > ' ' && char !== '/') continue;
-      const match =
-        /(https?):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{1,5})[/\s]$/.exec(
-          this.plain,
-        );
+      const match = (char === '/' ? ROOT_SERVICE : PATH_SERVICE).exec(
+        this.plain,
+      );
       if (match) {
         const port = Number(match[2]);
         if (port > 0 && port <= 65535)
@@ -100,6 +104,9 @@ export class TerminalOutputEvents {
             type: 'service',
             port,
             protocol: match[1] === 'https' ? 'https' : 'http',
+            // Only a pathname is a hint. Do not propagate credentials, query
+            // strings, fragments or output-supplied origins into navigation.
+            path: (match[3] ?? '/').split(/[?#]/, 1)[0].slice(0, 2048),
             at: this.offset,
           });
       }

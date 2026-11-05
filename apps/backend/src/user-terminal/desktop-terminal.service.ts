@@ -188,6 +188,8 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
       command: stream?.command ?? '',
       exitCode: stream?.exitCode ?? null,
       port: stream?.port ?? null,
+      services: stream?.services.services ?? [],
+      portDiscovery: stream?.services.discovery ?? 'unavailable',
       ...(stream?.protocol ? { protocol: stream.protocol } : {}),
       canRerun: stream?.canRerun ?? false,
       ...(stream?.integration ? { shellIntegration: stream.integration } : {}),
@@ -259,6 +261,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
       .orderBy(schema.userTerminals.id)
       .limit(16);
     const scripts = task.archivedAt ? [] : await this.scripts(task.path);
+    await this.ptys.refreshDesktopPorts();
     return {
       taskId,
       terminals: rows.map((row) => this.view(task, row)),
@@ -359,6 +362,9 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
     if (typeof after !== 'number' || !Number.isSafeInteger(after) || after < 0)
       throw new BadRequestException('Invalid output cursor');
     const { task, terminal } = await this.owned(taskId, id);
+    // Output delivery never waits behind an OS process scan. Metadata list
+    // polling awaits the same coalesced scan; subsequent output sees its result.
+    void this.ptys.refreshDesktopPorts();
     const stream = this.ptys.desktopStream(id);
     return {
       terminal: this.view(task, terminal),
@@ -373,6 +379,25 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
             more: false,
           }),
     };
+  }
+  async service(taskId: number, id: number, gen: unknown, port: unknown) {
+    const expected = generation(gen);
+    const target = terminalId(port);
+    if (target > 65535) throw new BadRequestException('Invalid service port');
+    await this.owned(taskId, id);
+    const stream = this.ptys.desktopStream(id);
+    if (!stream || stream.generation !== expected || !this.ptys.isAlive(id))
+      throw new ConflictException('Terminal process changed');
+    await this.ptys.refreshDesktopPorts(true);
+    // A close/replacement can finish while the platform collector is running.
+    if (this.ptys.desktopStream(id) !== stream || !this.ptys.isAlive(id))
+      throw new ConflictException('Terminal process changed');
+    const service = stream.services.services.find(
+      (entry) => entry.port === target,
+    );
+    if (!service || stream.services.discovery !== 'process')
+      throw new ConflictException('The service is no longer listening');
+    return { generation: expected, service };
   }
   async commands(taskId: number, id: number, gen: unknown, after: unknown) {
     if (gen !== null && gen !== undefined) generation(gen);

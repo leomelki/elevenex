@@ -4,6 +4,14 @@ export interface TaskTerminalTarget {
   readonly terminalId: number;
 }
 export type TaskTerminalShellIntegration = 'pending' | 'active' | 'disabled' | 'unsupported' | 'unavailable';
+export interface TaskTerminalServiceAddress {
+  readonly port: number;
+  /** A loopback address selected from an owned TCP listener. */
+  readonly host: string;
+  readonly protocol: 'http' | 'https';
+  /** Confined pathname hint; never an output-supplied origin, query or fragment. */
+  readonly path: string;
+}
 export interface TaskTerminal {
   readonly id: number;
   readonly taskId: number;
@@ -27,6 +35,9 @@ export interface TaskTerminal {
   readonly exitCode: number | null;
   readonly port: number | null;
   readonly protocol?: "http" | "https";
+  /** Optional on older engines. At most 16 actual owned listening ports. */
+  readonly services?: readonly TaskTerminalServiceAddress[];
+  readonly portDiscovery?: 'pending' | 'process' | 'unavailable';
   readonly canRerun: boolean;
   /** Optional on older engines; never required for terminal input/output. */
   readonly shellIntegration?: TaskTerminalShellIntegration;

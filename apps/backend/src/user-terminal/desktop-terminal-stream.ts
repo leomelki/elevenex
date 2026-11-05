@@ -8,6 +8,7 @@ import {
   type TerminalOutputEvent,
 } from './terminal-output-events.js';
 import type { ShellIntegrationState } from './desktop-shell-integration.js';
+import { TerminalServices } from './ports/terminal-services.js';
 
 export const DESKTOP_TERMINAL_INITIAL_SIZE = { cols: 80, rows: 24 } as const;
 
@@ -22,10 +23,20 @@ export class DesktopTerminalStream {
     { at: 0, ...DESKTOP_TERMINAL_INITIAL_SIZE },
   ];
   sequence = 0;
-  status: 'idle' | 'running' | 'serving' | 'failed' | 'exited' = 'running';
+  private commandStatus: 'idle' | 'running' | 'failed' | 'exited' = 'running';
+  readonly services = new TerminalServices();
+  get status(): 'idle' | 'running' | 'serving' | 'failed' | 'exited' {
+    return this.services.primary && !this.processExited
+      ? 'serving'
+      : this.commandStatus;
+  }
   exitCode: number | null = null;
-  port: number | null = null;
-  protocol: 'http' | 'https' | undefined;
+  get port(): number | null {
+    return this.services.primary?.port ?? null;
+  }
+  get protocol(): 'http' | 'https' | undefined {
+    return this.services.primary?.protocol;
+  }
   command: string;
   private rerunCommand: string | null = null;
   private processExited = false;
@@ -100,11 +111,7 @@ export class DesktopTerminalStream {
       return;
     }
     if (event.type === 'service') {
-      if (this.status === 'running' || this.status === 'serving') {
-        this.port = event.port;
-        this.protocol = event.protocol;
-        this.status = 'serving';
-      }
+      this.services.hint(event.port, event.protocol, event.path);
       return;
     }
     if (
@@ -141,8 +148,6 @@ export class DesktopTerminalStream {
       this.inputDuringCommand = false;
     } else {
       this.promptReady = false;
-      this.port = null;
-      this.protocol = undefined;
       if (event.type === 'started') {
         if (!this.tracking.current?.command) {
           this.command = 'Shell command';
@@ -152,12 +157,12 @@ export class DesktopTerminalStream {
         this.inputDuringCommand = this.typeahead;
         this.submittedInput = false;
         this.typeahead = false;
-        this.status = 'running';
+        this.commandStatus = 'running';
         this.exitCode = null;
       } else {
         this.commandStarted = false;
         this.exitCode = event.code;
-        this.status = event.code ? 'failed' : 'idle';
+        this.commandStatus = event.code ? 'failed' : 'idle';
       }
     }
   }
@@ -204,12 +209,12 @@ export class DesktopTerminalStream {
     this.processExited = true;
     this.promptReady = false;
     this.exitCode = Math.max(0, Math.min(255, code));
-    this.port = null;
-    this.status = code ? 'failed' : 'exited';
+    this.services.clear();
+    this.commandStatus = code ? 'failed' : 'exited';
   }
   get canRerun(): boolean {
     return (
-      this.status === 'failed' &&
+      this.commandStatus === 'failed' &&
       (!!this.script ||
         (!this.processExited && this.promptReady && !!this.rerunCommand))
     );

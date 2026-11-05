@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isIP } from 'node:net';
 import { WaitingWritingStore, type SavedWaitingWriting } from './waiting-writing-store';
 import { waitingWriting } from './waiting-writing';
 import type { WaitingWriting, WaitingWritingSnapshot } from '@elevenex/shared';
@@ -20,6 +21,8 @@ interface WindowState {
   revision: number;
   pendingHost: string | undefined;
   readonly forwards: Map<string, WindowForward>;
+  /** Exact targets for app-owned task processes; generic saved definitions stay compatible. */
+  readonly forwardTargets: Map<string, string>;
 }
 export interface RemoteManagerOptions extends Omit<ConnectionOptions, 'host' | 'changed'> { readonly settingsPath: string }
 
@@ -82,7 +85,7 @@ export class RemoteManager {
       if (this.settings.windows.length >= 32) throw new Error('Too many saved desktop windows');
       this.settings.windows.push(saved);
     }
-    this.windows.set(windowId, { saved, intent: saved.connect ? 'connected' : 'disconnected', revision: 0, pendingHost: undefined, forwards: new Map() });
+    this.windows.set(windowId, { saved, intent: saved.connect ? 'connected' : 'disconnected', revision: 0, pendingHost: undefined, forwards: new Map(), forwardTargets: new Map() });
     // Launch restoration is deliberately noninteractive. Unknown trust or a
     // locked key pauses rather than presenting a background credential dialog.
     if (saved.connect && saved.selection.kind === 'remote') this.connection(saved.selection.hostId).acquire(windowId, false);
@@ -365,12 +368,32 @@ export class RemoteManager {
   }
   diagnostics(windowId: number) { return this.connections.get(this.hostId(this.remoteWindow(windowId)))?.logs() ?? []; }
 
-  async addForward(windowId: number, input: RemoteForwardInput): Promise<EnvironmentSnapshot> {
+  async addForward(windowId: number, input: RemoteForwardInput, targetHost?: string): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.remoteWindow(windowId); const validated = validate.forward(input);
+    if (targetHost !== undefined) this.validateForwardTarget(targetHost);
+    const retained = new Set(Object.values(window.saved.forwards).flatMap(inputs => inputs.map(input => input.id)));
+    for (const id of window.forwardTargets.keys()) if (!retained.has(id)) window.forwardTargets.delete(id);
     const inputs = this.forwardInputs(window); if (inputs.length >= 32) throw new Error('Forward limit reached');
     if (inputs.some(value => value.remotePort === validated.remotePort || (validated.localPort && value.localPort === validated.localPort))) throw new Error('This service or local port already has a forward in this window');
-    inputs.push({ ...validated, id: randomUUID() }); window.saved.forwards[this.hostId(window)] = inputs;
+    const id = randomUUID();
+    if (targetHost !== undefined) window.forwardTargets.set(id, targetHost);
+    inputs.push({ ...validated, id }); window.saved.forwards[this.hostId(window)] = inputs;
     await this.save(); this.changed({ windowId }); return this.snapshot(windowId);
+  }
+  /** Main-only: bind a task's user-requested forward to its verified socket family.
+   * This override belongs to the window and never changes the legacy
+   * settings schema or grants a renderer an arbitrary destination. */
+  async targetForward(windowId: number, forwardId: string, host: string): Promise<boolean> {
+    this.assertWritable(); this.validateForwardTarget(host);
+    const window = this.remoteWindow(windowId); validate.id(forwardId);
+    if (!this.forwardInputs(window).some(input => input.id === forwardId)) throw new Error('Unknown forward');
+    if ((window.forwardTargets.get(forwardId) ?? '127.0.0.1') === host) return false;
+    window.forwardTargets.set(forwardId, host);
+    await this.retryForward(windowId, forwardId);
+    return true;
+  }
+  private validateForwardTarget(host: string): void {
+    if (host !== '::1' && !(isIP(host) === 4 && host.startsWith('127.'))) throw new Error('Invalid forward loopback address');
   }
   async retryForward(windowId: number, forwardId: string): Promise<EnvironmentSnapshot> {
     this.assertWritable();
@@ -383,6 +406,7 @@ export class RemoteManager {
     this.assertWritable(); const window = this.remoteWindow(windowId); validate.id(forwardId);
     if (!this.forwardInputs(window).some(input => input.id === forwardId)) throw new Error('Unknown forward');
     window.saved.forwards[this.hostId(window)] = this.forwardInputs(window).filter(input => input.id !== forwardId);
+    window.forwardTargets.delete(forwardId);
     const previous = window.forwards.get(forwardId); window.forwards.delete(forwardId); await previous?.running?.close();
     await this.save(); this.changed({ windowId }); return this.snapshot(windowId);
   }
@@ -463,7 +487,7 @@ export class RemoteManager {
         current.status = { ...input, phase: available ? 'listening' : 'unavailable', boundPort: current.running?.port ?? null,
           message: available ? null : 'The remote service could not accept a connection. Start the service or retry this forward.' };
         this.changed({ windowId });
-      }).then(async running => {
+      }, window.forwardTargets.get(input.id)).then(async running => {
         if (this.windows.get(windowId) !== window || window.forwards.get(input.id) !== current || connection?.currentTransport() !== transport) { await running.close(); return; }
         current.running = running;
         const available = current.available ?? running.reachable;

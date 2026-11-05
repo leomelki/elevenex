@@ -29,6 +29,7 @@ import {
 import { execFileQuiet } from '../terminal/async-process.js';
 import { shouldUseTmux } from '../config/backend-runtime-mode.js';
 import { terminatePtyAndWait } from '../terminal/pty-termination.js';
+import { TerminalPortDiscovery } from './ports/terminal-port-discovery.js';
 
 const TMUX_SESSION_PREFIX = 'elevenex-uterm';
 
@@ -39,6 +40,7 @@ interface UserPtySession {
   pid: number;
   useTmux: boolean;
   output?: TerminalOutputBuffer;
+  stopPortDiscovery?: () => void;
 }
 
 interface TmuxResizeState {
@@ -56,6 +58,16 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   // Metadata remains until explicit close. No attachment can create/restart a desktop shell.
   private readonly desktopStreams = new Map<number, DesktopTerminalStream>();
   private readonly desktopCleanup = new Map<number, () => Promise<void>>();
+  private readonly portDiscovery = new TerminalPortDiscovery(
+    undefined,
+    (error) =>
+      this.logger.warn(
+        `Terminal port discovery unavailable: ${error instanceof Error ? error.message.slice(0, 240) : 'unknown collector error'}`,
+      ),
+  );
+  refreshDesktopPorts(fresh = false): Promise<void> {
+    return this.portDiscovery.refresh(fresh);
+  }
   desktopStream(id: number): DesktopTerminalStream | undefined {
     return this.desktopStreams.get(id);
   }
@@ -450,6 +462,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       ? undefined
       : new TerminalOutputBuffer();
 
+    const stream = this.desktopStreams.get(terminalId);
     this.processes.set(terminalId, {
       pty: ptyProcess,
       terminalId,
@@ -457,6 +470,15 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       pid,
       useTmux: false,
       output,
+      ...(stream
+        ? {
+            stopPortDiscovery: this.portDiscovery.register(
+              terminalId,
+              pid,
+              (listeners) => stream.services.reconcile(listeners),
+            ),
+          }
+        : {}),
     });
 
     ptyProcess.onData((data) => {
@@ -475,6 +497,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       if (this.processes.get(terminalId)?.pty !== ptyProcess) {
         return;
       }
+      this.processes.get(terminalId)?.stopPortDiscovery?.();
       this.desktopStreams.get(terminalId)?.exited(exitCode);
       const cleanup = this.desktopCleanup.get(terminalId);
       this.desktopCleanup.delete(terminalId);
@@ -540,6 +563,8 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     const session = this.processes.get(terminalId);
 
     if (!session) return false;
+    session.stopPortDiscovery?.();
+    this.desktopStreams.get(terminalId)?.exited(0);
     this.processes.delete(terminalId);
     const cleanup = this.desktopCleanup.get(terminalId);
     this.desktopCleanup.delete(terminalId);
@@ -604,6 +629,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
           ),
         );
         if (session && this.processes.get(terminalId) === session) {
+          session.stopPortDiscovery?.();
           this.processes.delete(terminalId);
         }
       } else this.kill(terminalId);
@@ -674,6 +700,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       `Killing ${this.processes.size} user terminal PTY processes...`,
     );
     this.shuttingDown = true;
+    this.portDiscovery.dispose();
     const ids = new Set([
       ...this.processes.keys(),
       ...this.spawnInFlight.keys(),

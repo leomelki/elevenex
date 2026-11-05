@@ -48,6 +48,14 @@ export class DesktopTerminalController {
       after,
     );
   }
+  @Get(':id/service') portService(
+    @Param('taskId') task: string,
+    @Param('id') id: string,
+    @Query('generation') gen: string,
+    @Query('port') port: string,
+  ) {
+    return this.service.service(terminalId(task), terminalId(id), gen, port);
+  }
   @Post(':id') command(
     @Param('taskId') task: string,
     @Param('id') id: string,

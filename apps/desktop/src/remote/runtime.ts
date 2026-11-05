@@ -190,9 +190,9 @@ async function bridge(root: string, installation: string, version: string, port:
   const channels = new SocketChannels(wire);
   const socketPath = backendSocketPath(root, health);
   wire.on('message', (message: WireMessage) => {
-    if (message.type === 'open') channels.accept(message.id, message.port, socketPath);
+    if (message.type === 'open') channels.accept(message.id, message.port, socketPath, message.host);
     else if (message.type === 'probe') {
-      const socket = message.port === 0 ? connectSocket(socketPath) : connectSocket(message.port, '127.0.0.1');
+      const socket = message.port === 0 ? connectSocket(socketPath) : connectSocket(message.port, message.host ?? '127.0.0.1');
       let done = false;
       const finish = (available: boolean) => {
         if (done) return; done = true; socket.destroy();
