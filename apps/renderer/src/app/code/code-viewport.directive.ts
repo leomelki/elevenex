@@ -2,8 +2,8 @@ import { DOCUMENT } from '@angular/common';
 import { afterNextRender, afterRenderEffect, DestroyRef, Directive, ElementRef, inject, input, output, signal } from '@angular/core';
 import { codeBlendDelay, codeDestinationWidth, supportsCodeTransition } from './code-view-transition';
 
-/** Resize the live viewport once, then stretch its compositor image with the
- * shell's glide. Blend layouts after a child-layout acknowledgement.
+/** Resize the live viewport once, then fit browser-owned snapshots to the
+ * shell's glide without transforming the live iframe. Blend after acknowledgement.
  * Ordinary window resizing remains live. No iframe is recreated. */
 @Directive({ selector: '[exCodeViewport]' })
 export class CodeViewportDirective {
@@ -114,7 +114,6 @@ export class CodeViewportDirective {
       shrinking = false;
       blendAncestor = undefined;
       preparedWidth = 0;
-      this.frame.style.removeProperty('transform');
       this.frame.classList.remove('crossfading', 'holding-collapse');
     };
 
@@ -126,24 +125,17 @@ export class CodeViewportDirective {
     const measure = () => {
       if (!this.active()) return;
       const next = viewport.clientWidth;
-      if (frozenWidth && preparedWidth && next > 0) {
-        // Transform only the outer compositor surface: the cross-origin child
-        // keeps its destination viewport while the original shell CSS glides.
-        // Before snapshot capture completes, width is still the old viewport.
-        this.frame.style.transform = `scaleX(${next / width})`;
-      }
       if (!frozenWidth && next > 0) {
         width = next;
-        // Keep the child at an explicit settled width even between toggles.
-        // Chromium can publish the first CSS width step before transitionrun.
-        this.frame.style.width = `${width}px`;
+        // Only the child owns a fixed width. The snapshot scope follows CSS
+        // panel geometry, so an old child paint can never be magnified live.
+        this.frame.style.setProperty('--code-viewport-width', `${width}px`);
         this.viewportWidth.emit(width);
       }
     };
     const release = () => {
       if (preparedWidth && Math.abs(viewport.clientWidth - preparedWidth) <= 1) {
         frozenWidth = 0;
-        this.frame.style.removeProperty('transform');
         this.frame.classList.remove('resizing');
         measure();
         resumeSnapshot();
@@ -196,7 +188,7 @@ export class CodeViewportDirective {
           cancelSnapshot();
           awaitingLayout = false;
           frozenWidth = width;
-          this.frame.style.width = `${width}px`;
+          this.frame.style.setProperty('--code-viewport-width', `${width}px`);
           this.frame.classList.add('resizing');
           const destination = typeof KeyframeEffect === 'undefined' ? null : codeDestinationWidth(ancestor, viewport);
           if (destination === width) {
@@ -220,8 +212,7 @@ export class CodeViewportDirective {
               if (version !== generation) return;
               // Lay out at the destination immediately, behind the old native
               // snapshot. Main's compact commands now overlap the panel glide.
-              this.frame.style.width = `${destination}px`;
-              this.frame.style.transform = `scaleX(${viewport.clientWidth / destination})`;
+              this.frame.style.setProperty('--code-viewport-width', `${destination}px`);
               width = destination;
               this.viewportWidth.emit(width);
               awaitingLayout = true;
@@ -300,7 +291,7 @@ export class CodeViewportDirective {
       this.suspendViewport = undefined;
       for (const type of ['transitionrun', 'transitionend', 'transitioncancel']) this.document.removeEventListener(type, changed, true);
       reduced.removeEventListener('change', motionChanged);
-      this.frame.style.removeProperty('width');
+      this.frame.style.removeProperty('--code-viewport-width');
       this.frame.classList.remove('resizing', 'reflowing', 'cover-immediate');
     };
   }

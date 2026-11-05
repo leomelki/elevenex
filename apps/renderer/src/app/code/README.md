@@ -124,9 +124,10 @@ Expansion/collapse predicts the destination from the shell's actual width
 transition, including percentage widths, and resizes the iframe once at the start.
 An element-scoped View Transition retains the old editor image while the new one
 renders underneath. The shell retains its original 280ms width/opacity glide;
-Code never finishes it early. ResizeObserver fits the outer compositor surface to
-the moving viewport using scaleX, without relaying intermediate widths to the
-iframe. Both images stretch with that surface and blend in a 140ms token-driven
+Code never finishes it early. The snapshot scope follows the panel's CSS width;
+the inner frame keeps its explicitly assigned pixel width, without receiving
+intermediate panel widths or a scale transform. Only the browser-owned snapshot
+images fit the moving panel and blend in a 140ms token-driven
 effect with a 16px blur derived from the glass and spacing tokens. Blur starts
 one third into the shell glide (about 93ms). Its opaque midpoint holds the old image until the child's layout
 acknowledgement, then the remaining half crossfades and clears the new image.
@@ -135,13 +136,14 @@ the incoming compact image stays blurred until its temporary magnification is
 removed. Expansion can blend during the glide. A later acknowledgement resumes
 immediately once both layout and the required panel geometry are ready. Timing
 follows the shell's actual animation clock, including interrupted transitions.
-At the end, scale is already 1, so removing it cannot expose a final resize jump. The
+The live iframe is never magnified, including while its new viewport is committing. The
 old image stays visible instead of a blank hide/show phase. Panel controls and
 the surrounding application stay outside the snapshot's hit-test boundary. No
 screenshot/pixel API is added to the bridge.
-The iframe is a direct, temporarily named transition participant rather than
-being flattened into a wrapper snapshot; its incoming cross-origin surface stays
-live as Code paints the destination layout.
+The inner frame host is the named transition participant. Its outgoing snapshot
+captures the expanded content as one stable image, while the incoming view
+continues painting the new iframe layout. The snapshot group stays at the scope's
+origin, independent of the narrower frame's right-aligned position.
 
 `codePresent` with the expected `viewportWidth` first awaits the child's actual
 viewport commit, then applies compact/expanded commands. This order keeps new

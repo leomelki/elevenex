@@ -5,7 +5,7 @@ import { DomSanitizer } from '@angular/platform-browser';
 @Component({
   selector: 'ex-code-frame',
   template: '<iframe [src]="source()" title="Task Code workbench" sandbox="allow-scripts allow-same-origin" allow="clipboard-write" referrerpolicy="no-referrer"></iframe>',
-  styles: ':host { display: flex; flex: 1; min-width: 0; min-height: 0; width: 100%; height: 100%; } iframe { flex: 1; width: 100%; height: 100%; min-width: 0; border: 0; background: var(--surface); } :host-context(.crossfading) iframe { view-transition-name: code-editor; }',
+  styles: ':host { display: flex; flex: 0 0 var(--code-viewport-width, 100%); min-width: 0; min-height: 0; width: var(--code-viewport-width, 100%); height: 100%; } iframe { flex: 1; width: 100%; height: 100%; min-width: 0; border: 0; background: var(--surface); } :host-context(.crossfading) { view-transition-name: code-editor; }',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class CodeFrameComponent {

@@ -271,7 +271,8 @@ export default async function* (capture) {
         const start = performance.now();
         const sample = () => {
           const glide=panel.getAnimations().find(animation=>animation.transitionProperty==='width');
-          window.codeGlide.push({motionTime:glide?.currentTime ?? null,time:performance.now()-start,width:panel.getBoundingClientRect().width,opacity:Number(getComputedStyle(scope,'::view-transition-old(code-editor)').opacity),active:scope.matches(':active-view-transition'),blur:getComputedStyle(scope,'::view-transition-old(code-editor)').filter});
+          const iframe=scope.querySelector('iframe');
+          window.codeGlide.push({motionTime:glide?.currentTime ?? null,time:performance.now()-start,width:panel.getBoundingClientRect().width,liveScale:iframe.getBoundingClientRect().width/iframe.clientWidth,opacity:Number(getComputedStyle(scope,'::view-transition-old(code-editor)').opacity),active:scope.matches(':active-view-transition'),blur:getComputedStyle(scope,'::view-transition-old(code-editor)').filter});
           if (performance.now()-start<650) requestAnimationFrame(sample);
         };
         sample();
@@ -280,6 +281,7 @@ export default async function* (capture) {
       await capture.waitFor(() => window.codeGlide.at(-1)?.time>=650);
       const samples = await capture.evaluate(() => {const samples=window.codeGlide;delete window.codeGlide;return samples;});
       const first=samples[0].width, last=samples.at(-1).width, distance=Math.abs(last-first);
+      assert.ok(samples.every(s=>Math.abs(s.liveScale-1)<0.001),'Live editor was stretched, including before snapshot readiness: '+JSON.stringify(samples));
       assert.ok(distance>100,'Panel did not change width');
       const intermediate=samples.filter(s=>Math.abs(s.width-first)>1 && Math.abs(s.width-last)>1);
       assert.ok(intermediate.length>=5,'Panel snapped instead of using the original width glide: '+JSON.stringify(samples));

@@ -49,7 +49,7 @@ describe('Code viewport transition ownership', () => {
     vi.spyOn(HTMLElement.prototype,'clientWidth','get').mockImplementation(function(this:HTMLElement) { return this === section ? panelWidth : width; });
     for (destination of ['440px','0px','440px']) {
       transition('transitionrun'); resize();
-      expect(frame.style.width).toBe('432px');
+      expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('432px');
       expect(frame.classList.contains('reflowing')).toBe(false);
       expect(frame.classList.contains('resizing')).toBe(false);
       expect(frame.classList.contains('crossfading')).toBe(false);
@@ -80,7 +80,7 @@ describe('Code viewport transition ownership', () => {
     fixture.componentInstance.context.set('task-two'); await fixture.whenStable();
     expect(frame.classList.contains('resizing')).toBe(false);
     expect(frame.classList.contains('reflowing')).toBe(false);
-    expect(frame.style.width).toBe(`${width}px`);
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`);
   });
 
   it('resizes to the predicted destination behind an old snapshot before the shell finishes moving', async () => {
@@ -113,10 +113,11 @@ describe('Code viewport transition ownership', () => {
     transition('transitionrun');
     // The shell can advance before Chromium captures the outgoing surface.
     width=500; resize();
-    expect(frame.style.width).toBe('432px');
-    expect(frame.style.transform).toBe(`scaleX(${500 / 432})`);
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('432px');
+    expect(frame.style.transform).toBe('');
     await fixture.whenStable();
-    expect(frame.style.width).toBe('1072px');
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('1072px');
+    expect(frame.style.width).toBe('');
     expect(fixture.componentInstance.width()).toBe(1072);
     expect(fixture.componentInstance.requests).toBe(1);
     expect(frame.classList.contains('reflowing')).toBe(false);
@@ -124,8 +125,8 @@ describe('Code viewport transition ownership', () => {
     expect(pause).toHaveBeenCalledOnce();
     expect(play).toHaveBeenCalledOnce();
     width=700; resize();
-    expect(frame.style.width).toBe('1072px');
-    expect(frame.style.transform).toBe(`scaleX(${700 / 1072})`);
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('1072px');
+    expect(frame.style.transform).toBe('');
     expect(fixture.componentInstance.requests).toBe(1);
     animation.currentTime=200; await nextFrame();
     expect(animation.playState).toBe('paused');
@@ -135,12 +136,38 @@ describe('Code viewport transition ownership', () => {
     expect(updateTiming).toHaveBeenCalledOnce();
     expect(updateTiming).toHaveBeenCalledWith({delay:280/3-42});
     width=1072; transition('transitionend'); await nextFrame();
-    expect(frame.style.width).toBe(`${width}px`);
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`);
     expect(frame.style.transform).toBe('');
     expect(fixture.componentInstance.requests).toBe(1);
     complete(); await finished; await Promise.resolve();
     expect(frame.classList.contains('crossfading')).toBe(false);
     expect(skip).not.toHaveBeenCalled();
+  });
+
+  it('never scales the live editor while the old snapshot is still being captured', async () => {
+    width = 1072;
+    const { fixture, frame, section, transition } = await setup();
+    fixture.componentInstance.ready.set(false); await fixture.whenStable();
+    class Effect { getKeyframes() { return [{width:'1080px'},{width:'440px'}]; } }
+    vi.stubGlobal('KeyframeEffect', Effect);
+    Object.defineProperty(section, 'getAnimations', {value:()=>[{transitionProperty:'width',effect:new Effect()}]});
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function(this: HTMLElement) { return this === section ? width + 8 : width; });
+    let captured!: () => void, complete!: () => void;
+    const ready = new Promise<void>(resolve=>{captured=resolve;});
+    const finished = new Promise<void>(resolve=>{complete=resolve;});
+    Object.defineProperty(frame, 'startViewTransition', {value:(update:()=>Promise<void>)=>{
+      void update();
+      return {ready,finished,skipTransition:complete};
+    }});
+    transition('transitionrun'); await fixture.whenStable();
+    for (const nextWidth of [1072, 1040, 950, 700]) {
+      width=nextWidth; resize();
+      expect(fixture.componentInstance.width()).toBe(432);
+      expect(frame.style.width).toBe('');
+      expect(frame.style.transform).toBe('');
+    }
+    fixture.destroy(); captured(); await ready; await finished;
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('');
   });
 
   it.each([true, false])('keeps the compact incoming image blurred until both collapse and layout finish (layout first: %s)', async layoutFirst => {
@@ -167,14 +194,14 @@ describe('Code viewport transition ownership', () => {
       return {ready:Promise.resolve(),finished,skipTransition:complete};
     }});
     transition('transitionrun'); await fixture.whenStable();
-    expect(frame.style.width).toBe('432px');
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('432px');
     expect(frame.classList.contains('holding-collapse')).toBe(true);
     width=700; resize(); animation.currentTime=200; await nextFrame();
     expect(animation.playState).toBe('paused');
     expect(animation.currentTime).toBeCloseTo(280/3+70);
     if (layoutFirst) { fixture.componentInstance.ready.set(true); await fixture.whenStable(); }
     expect(animation.playState).toBe('paused');
-    expect(frame.style.transform).toBe(`scaleX(${700/432})`);
+    expect(frame.style.transform).toBe('');
     width=432; transition('transitionend'); await nextFrame();
     expect(frame.style.transform).toBe('');
     if (!layoutFirst) {
@@ -193,11 +220,11 @@ describe('Code viewport transition ownership', () => {
     const {fixture,frame,transition}=await setup();
     fixture.componentInstance.active.set(false); await fixture.whenStable();
     width=280; resize(); transition('transitionrun'); transition('transitionend'); await nextFrame();
-    expect(frame.style.width).toBe('432px');
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('432px');
     expect(frame.classList.contains('reflowing')).toBe(false);
     expect(fixture.componentInstance.requests).toBe(0);
     fixture.componentInstance.active.set(true); await fixture.whenStable();
-    expect(frame.style.width).toBe('280px');
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('280px');
   });
 
   it('freezes the cached viewport before reading any animated layout', async () => {
@@ -206,22 +233,22 @@ describe('Code viewport transition ownership', () => {
     measured.mockClear();
     transition('transitionrun');
     expect(measured).not.toHaveBeenCalled();
-    expect(frame.style.width).toBe('432px');
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('432px');
   });
 
   it('holds one layout width through expansion and publishes the final compact boundary once', async () => {
     const { fixture, frame, transition } = await setup();
     transition('transitionrun');
-    expect(frame.style.width).toBe('432px');
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('432px');
     for (const intermediate of [480, 610, 880, 1064]) {
       width = intermediate; resize();
-      expect(frame.style.width).toBe('432px');
+      expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('432px');
       expect(fixture.componentInstance.width()).toBe(432);
       expect(frame.style.transform).toBe('');
       expect(frame.classList.contains('reflowing')).toBe(true);
     }
     transition('transitionend'); await nextFrame();
-    expect(frame.style.width).toBe(`${width}px`);
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`);
     expect(frame.style.transform).toBe('');
     expect(frame.classList.contains('resizing')).toBe(false);
     expect(frame.classList.contains('reflowing')).toBe(true);
@@ -238,7 +265,7 @@ describe('Code viewport transition ownership', () => {
     transition('transitionrun'); width = 1064; resize();
     transition('transitionend'); await nextFrame(); await fixture.whenStable();
     for (let count = 0; count < 5; count++) await nextFrame();
-    expect(frame.style.width).toBe(`${width}px`);
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`);
     expect(frame.classList.contains('reflowing')).toBe(true);
     fixture.componentInstance.ready.set(true); await fixture.whenStable(); await nextFrame();
     expect(frame.classList.contains('reflowing')).toBe(false);
@@ -251,23 +278,23 @@ describe('Code viewport transition ownership', () => {
     expect(frame.classList.contains('reflowing')).toBe(true);
     transition('transitionrun'); await nextFrame(); await nextFrame();
     expect(frame.classList.contains('reflowing')).toBe(true);
-    expect(frame.style.width).toBe('1064px');
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('1064px');
     width = 432; resize(); transition('transitionend');
     await nextFrame(); await nextFrame(); await nextFrame();
     expect(frame.classList.contains('reflowing')).toBe(false);
-    expect(frame.style.width).toBe(`${width}px`);
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`);
   });
 
   it('keeps the original viewport across interrupted reversals and cleans up cancellation', async () => {
     const { fixture, frame, transition } = await setup();
     transition('transitionrun'); width = 700; resize();
     transition('transitioncancel'); transition('transitionrun'); await nextFrame();
-    expect(frame.style.width).toBe('432px');
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('432px');
     expect(fixture.componentInstance.width()).toBe(432);
     width = 432; resize(); transition('transitionend'); await nextFrame();
-    expect(frame.style.width).toBe(`${width}px`);
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`);
     transition('transitionrun'); width = 520; resize(); transition('transitioncancel'); await nextFrame();
-    expect(frame.style.width).toBe(`${width}px`);
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`);
     expect(fixture.componentInstance.width()).toBe(520);
   });
 
@@ -275,14 +302,14 @@ describe('Code viewport transition ownership', () => {
     const { fixture, frame, transition } = await setup();
     const unrelated = document.createElement('aside'); document.body.append(unrelated);
     transition('transitionrun', 'opacity'); transition('transitionrun', 'width', unrelated);
-    expect(frame.style.width).toBe(`${width}px`); unrelated.remove();
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`); unrelated.remove();
     transition('transitionrun'); width = 1000; resize();
     reduced = true; mediaChanged();
     await fixture.whenStable(); await nextFrame();
-    expect(frame.style.width).toBe(`${width}px`);
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`);
     expect(frame.classList.contains('reflowing')).toBe(false);
     expect(fixture.componentInstance.width()).toBe(1000);
-    transition('transitionrun'); expect(frame.style.width).toBe(`${width}px`);
+    transition('transitionrun'); expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`);
     width = 432; resize(); expect(fixture.componentInstance.width()).toBe(432);
   });
 
@@ -292,9 +319,9 @@ describe('Code viewport transition ownership', () => {
     fixture.destroy(); await nextFrame();
     expect(disconnect).toHaveBeenCalledOnce();
     expect(removeMedia).toHaveBeenCalledOnce();
-    expect(frame.style.width).toBe('');
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('');
     expect(frame.classList.contains('resizing')).toBe(false);
     expect(frame.classList.contains('reflowing')).toBe(false);
-    transition('transitionrun'); expect(frame.style.width).toBe('');
+    transition('transitionrun'); expect(frame.style.getPropertyValue('--code-viewport-width')).toBe('');
   });
 });
