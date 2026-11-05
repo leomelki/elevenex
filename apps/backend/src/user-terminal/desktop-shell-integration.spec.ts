@@ -22,7 +22,7 @@ it('starts ordinary shells without preparing files when disabled or unsupported'
     expect(disabled).toMatchObject({ args: [], env, integration: 'disabled' });
     expect(disabled.env).toBe(env);
     expect(
-      (await desktopShellIntegration('/bin/fish', env, token)).integration,
+      (await desktopShellIntegration('/bin/sh', env, token)).integration,
     ).toBe('unsupported');
     expect(
       (
@@ -209,6 +209,39 @@ it.each([
       if (terminal) await terminatePtyAndWait(terminal);
       await integration.cleanup();
       await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([
+  '/usr/bin/fish',
+  '/usr/bin/pwsh',
+  'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+  'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+])(
+  'prepares a private adapter for %s without bypassing profiles or execution policy',
+  async (shell) => {
+    const plan = await desktopShellIntegration(
+      shell,
+      { ELEVENEX_USER_CWD: '/workspace' },
+      token,
+    );
+    try {
+      expect(plan.integration).toBe('pending');
+      expect(plan.args).not.toContain('-NoProfile');
+      expect(plan.args).not.toContain('-ExecutionPolicy');
+      expect(plan.args).not.toContain('Bypass');
+      const invocation = plan.args.at(-1)!;
+      const script = invocation
+        .slice(invocation.indexOf("'") + 1, -1)
+        .replaceAll("''", "'");
+      const source = await fs.readFile(script, 'utf8');
+      expect(source).toContain(token);
+      expect(source).not.toContain('__ELEVENEX_TOKEN__');
+      await plan.cleanup();
+      await expect(fs.stat(script)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await plan.cleanup();
     }
   },
 );

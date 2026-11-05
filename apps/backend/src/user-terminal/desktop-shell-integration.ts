@@ -32,11 +32,22 @@ export async function desktopShellIntegration(
   });
   if (!enabled || env.ELEVENEX_TERMINAL_SHELL_INTEGRATION === '0')
     return plain('disabled');
-  const name = path.basename(shell).replace(/\.exe$/i, '');
-  if (name !== 'bash' && name !== 'zsh') return plain('unsupported');
+  const name = path.win32
+    .basename(path.basename(shell))
+    .replace(/\.exe$/i, '')
+    .toLowerCase();
+  if (!['bash', 'zsh', 'fish', 'pwsh', 'powershell'].includes(name))
+    return plain('unsupported');
   let root: string | undefined;
   try {
-    const files = name === 'zsh' ? ['zshenv', 'zshrc'] : ['bashrc'];
+    const files =
+      name === 'zsh'
+        ? ['zshenv', 'zshrc']
+        : name === 'bash'
+          ? ['bashrc']
+          : name === 'fish'
+            ? ['integration.fish']
+            : ['integration.ps1'];
     const sources = await Promise.all(
       files.map((file) =>
         fs.readFile(
@@ -56,11 +67,30 @@ export async function desktopShellIntegration(
         ),
       ),
     );
+    const script = path.join(root, files[0]);
+    // These are shell program arguments, never OS shell interpolation. Quote
+    // the one private script path using each interpreter's literal syntax.
+    const args =
+      name === 'bash'
+        ? ['--rcfile', script, '-i']
+        : name === 'zsh'
+          ? ['-i']
+          : name === 'fish'
+            ? [
+                '-i',
+                '--init-command',
+                "source '" +
+                  script.replaceAll('\\', '\\\\').replaceAll("'", "\\'") +
+                  "'",
+              ]
+            : [
+                '-NoLogo',
+                '-NoExit',
+                '-Command',
+                ". '" + script.replaceAll("'", "''") + "'",
+              ];
     return {
-      args:
-        name === 'bash'
-          ? ['--rcfile', path.join(root, 'bashrc'), '-i']
-          : ['-i'],
+      args,
       env:
         name === 'zsh'
           ? { ...env, ELEVENEX_USER_ZDOTDIR: env.ZDOTDIR ?? '', ZDOTDIR: root }

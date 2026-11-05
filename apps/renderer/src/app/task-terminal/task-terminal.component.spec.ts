@@ -73,6 +73,37 @@ describe('Task terminal panel lifecycle', () => {
     expect(bridge.taskTerminalCreate).toHaveBeenCalledTimes(2);
   });
 
+  it('shows observed directories while keeping older engines compatible', async () => {
+    const { fixture, component, rows } = setup([{ ...terminal(1), currentCwd: '/task/subfolder' }]);
+    fixture.componentRef.setInput('visible', true);
+    await settle(fixture);
+    expect(component.tabs()[0]?.cwd).toBe('/task/subfolder');
+    rows.set(1, [terminal(1)]);
+    await component.store.refresh(); await settle(fixture);
+    expect(component.tabs()[0]?.cwd).toBe('/task');
+  });
+
+  it('updates activity titles and restores saved names without changing tab identity or selection', async () => {
+    const row = terminal(1);
+    const { fixture, component, rows } = setup([row]);
+    fixture.componentRef.setInput('visible', true); await settle(fixture);
+    expect(component.tabs()[0]?.title).toBe('zsh');
+    rows.set(1, [{ ...row, activityTitle: 'pnpm', command: 'pnpm test --token PRIVATE', status: 'running' }]);
+    await component.store.refresh(); await settle(fixture);
+    expect(component.tabs()[0]).toMatchObject({ id: '1', title: 'pnpm', tip: 'pnpm · zsh · running' });
+    expect(component.tabs()[0]?.title).not.toContain('PRIVATE');
+    expect(component.store.active()).toBe(1);
+    rows.set(1, [{ ...row, activityTitle: 'node', status: 'serving', port: 3000 }]);
+    await component.store.refresh(); await settle(fixture);
+    expect(component.tabs()[0]?.title).toBe('node :3000');
+    rows.set(1, [{ ...row, activityTitle: null, status: 'failed', command: 'pnpm test' }]);
+    await component.store.refresh(); await settle(fixture);
+    expect(component.tabs()[0]?.title).toBe('zsh');
+    rows.set(1, [{ ...row, title: 'My server' }]);
+    await component.store.refresh(); await settle(fixture);
+    expect(component.tabs()[0]?.title).toBe('My server');
+  });
+
   it('checks the backend before starting from an empty cached task', async () => {
     const { fixture, bridge, rows } = setup();
     fixture.componentRef.setInput('available', false);

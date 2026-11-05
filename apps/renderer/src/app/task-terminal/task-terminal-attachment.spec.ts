@@ -85,7 +85,7 @@ describe('Task terminal attachment ownership', () => {
       from: 0, next: 4, data: 'page', gap: false, more: false,
     } });
     await settle(fixture);
-    expect(drawing).toHaveBeenCalledWith('page', undefined, false);
+    expect(drawing).toHaveBeenCalledWith('page', undefined, false, undefined, 0);
     fixture.componentRef.setInput('visible', false); await settle(fixture);
     fixture.componentRef.setInput('visible', true); await settle(fixture);
     expect(bridge.taskTerminalRead).toHaveBeenCalledTimes(1);

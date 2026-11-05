@@ -8,6 +8,8 @@ export interface TaskTerminal {
   readonly id: number;
   readonly taskId: number;
   readonly title: string;
+  /** Optional display-only activity label; null restores the saved title. */
+  readonly activityTitle?: string | null;
   readonly cwd: string;
   readonly branch: string;
   /** Null after server restart: an explicit new terminal is required. */
@@ -28,6 +30,10 @@ export interface TaskTerminal {
   readonly canRerun: boolean;
   /** Optional on older engines; never required for terminal input/output. */
   readonly shellIntegration?: TaskTerminalShellIntegration;
+  /** Observed directory; null when unknown. cwd remains the launch workspace. */
+  readonly currentCwd?: string | null;
+  /** Capability for the separate bounded command metadata read. */
+  readonly commandTracking?: true;
 }
 export interface TaskTerminalScript {
   readonly id: string;
@@ -59,6 +65,8 @@ export interface TaskTerminalOutput {
   readonly more: boolean;
   /** PTY geometry for this output page. Absent on older engines. */
   readonly size?: TaskTerminalSize;
+  /** Authenticated output-start boundaries within this page, at most 201. */
+  readonly commandStarts?: readonly { readonly id: number; readonly at: number }[];
 }
 export interface TaskTerminalCreate {
   readonly taskId: number;
@@ -85,4 +93,33 @@ export interface TerminalBrowserIntent {
   readonly taskId: number;
   readonly terminalId: number;
   readonly port: number;
+}
+
+/** Shell-reported metadata. Offsets refer to this process generation's output,
+ * not screen rows; missing start hooks leave timing/start offsets null. */
+export interface TaskTerminalCommand {
+  readonly id: number;
+  readonly command: string | null;
+  readonly confidence: 'exact' | 'history' | 'unavailable';
+  readonly cwd: string | null;
+  readonly startedAt: number | null;
+  readonly finishedAt: number | null;
+  readonly durationMs: number | null;
+  readonly outputStart: number | null;
+  readonly outputEnd: number | null;
+  readonly exitCode: number | null;
+  readonly state: 'running' | 'completed' | 'interrupted';
+}
+export interface TaskTerminalCommandsRead extends TaskTerminalTarget {
+  readonly generation: string | null;
+  /** Last immutable completed command ID, initially zero. */
+  readonly after: number;
+}
+export interface TaskTerminalCommands extends TaskTerminalTarget {
+  readonly generation: string | null;
+  readonly commands: readonly TaskTerminalCommand[];
+  readonly current: TaskTerminalCommand | null;
+  readonly next: number;
+  readonly more: boolean;
+  readonly gap: boolean;
 }

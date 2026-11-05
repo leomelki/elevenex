@@ -38,6 +38,11 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   void invoke('code:present', {scopeId:'scope',taskId:1}, {visible:true,compact:false});
   // @ts-expect-error Frame presentation carries no arbitrary URL or native geometry.
   void invoke('code:present', {scopeId:'scope',taskId:1}, {url:'https://example.com'});
+  void invoke('task-terminal:commands', 'scope', { taskId: 1, terminalId: 2, generation: null, after: 0 });
+  // @ts-expect-error Command metadata reads require an output generation and cursor.
+  void invoke('task-terminal:commands', 'scope', { taskId: 1, terminalId: 2 });
+  // @ts-expect-error Command reads cannot execute arbitrary command text.
+  void invoke('task-terminal:commands', 'scope', { taskId: 1, terminalId: 2, generation: null, after: 0, command: 'echo injected' });
   void invoke('session-chat:changes', 'scope', { taskId: 1, sessionId: 2, requestId: 'review', turnId: 'reply', offset: 0 });
   // @ts-expect-error Review reads require the selected task and session, never an arbitrary filesystem path.
   void invoke('session-chat:changes', 'scope', { path: '/etc/passwd', offset: 0 });

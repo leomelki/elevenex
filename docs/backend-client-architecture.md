@@ -395,6 +395,22 @@ valid. The renderer exposes a plain-shell launch only with the capability.
 PTY output, input, geometry, script execution and ownership do not depend on
 tracking. See the [adapter boundary and runtime assets](../apps/backend/src/user-terminal/shell-integration/README.md).
 
+Terminal replies may also carry optional `activityTitle` display metadata. The
+backend owns command/title lifecycle and saved-name precedence; main bounds and
+validates the label, and the renderer updates the existing keyed tab. Standard
+OSC titles never authorize execution, service discovery or navigation. Existing
+`title` and older consumers retain their original semantics. No new read, mutation
+or polling lifetime is introduced for labels.
+
+Rich command metadata uses the optional `commandTracking` capability and the
+named `task-terminal:commands` read. Generation/after-ID pages return at most 20
+immutable completions and a separate current record; main validates identities,
+ordering, bounds and nullability. Retention is process-owned (200 records/128 Ki
+text units) and read/reconnect never executes input. Output pages may include
+bounded authenticated command-start offsets for local xterm navigation. The
+optional observed `currentCwd` is display-only; existing `cwd` keeps its original
+launch-workspace semantics. Older engines may omit all of these additions.
+
 The additive `task-terminal:*` bridge operations use the existing per-window HTTP
 lease. Main validates task/process identity, bounds, generations and contiguous
 output offsets. `user-terminal/desktop-terminal` routes share the existing PTY

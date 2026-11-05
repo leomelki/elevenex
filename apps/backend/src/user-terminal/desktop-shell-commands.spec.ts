@@ -172,3 +172,59 @@ it.each(shells)(
     ).toContain('false');
   },
 );
+
+it.each(shells)(
+  'reports directory changes and command history in %s',
+  async (shell) => {
+    const session = await open(shell);
+    expect(session.stream.tracking.cwd).toBe(session.cwd);
+    await session.send('cd ..\r');
+    expect(session.stream.tracking.cwd).toBe(session.root);
+    expect(session.stream.tracking.latest).toMatchObject({
+      command: 'cd ..',
+      cwd: session.cwd,
+      state: 'completed',
+      exitCode: 0,
+    });
+    await session.send('false\r');
+    expect(session.stream.tracking.latest).toMatchObject({
+      command: 'false',
+      cwd: session.root,
+      exitCode: 1,
+      confidence: shell.endsWith('zsh') ? 'exact' : 'history',
+    });
+  },
+);
+
+if (existsSync('/bin/zsh'))
+  it('preserves status through a user zsh precmd hook', async () => {
+    const session = await open(
+      '/bin/zsh',
+      'precmd() { printf "USER_STATUS=%s\\n" "$?"; }',
+    );
+    await session.send('false\r');
+    expect(session.output()).toContain('USER_STATUS=1');
+    expect(session.stream.tracking.latest?.exitCode).toBe(1);
+  });
+
+it.each(shells)(
+  'updates and restores activity titles through real shell hooks in %s',
+  async (shell) => {
+    const session = await open(shell);
+    const command = 'sleep 0.3';
+    session.stream.input(command + '\r');
+    session.terminal.write(command + '\r');
+    await waitFor(() => session.stream.activityTitle === 'sleep');
+    expect(session.stream.activityTitle).toBe('sleep');
+    await waitFor(() => session.stream.status === 'idle');
+    expect(session.stream.activityTitle).toBeNull();
+    const code =
+      'process.stdout.write("\\x1b]2;Example editor\\x07"); setTimeout(() => {}, 300)';
+    const editor = `node -e '${code}'`;
+    session.stream.input(editor + '\r');
+    session.terminal.write(editor + '\r');
+    await waitFor(() => session.stream.activityTitle === 'Example editor');
+    await waitFor(() => session.stream.status === 'idle');
+    expect(session.stream.activityTitle).toBeNull();
+  },
+);

@@ -35,6 +35,19 @@ export class DesktopTerminalController {
       after,
     );
   }
+  @Get(':id/commands') commands(
+    @Param('taskId') task: string,
+    @Param('id') id: string,
+    @Query('generation') gen: string | undefined,
+    @Query('after') after: string,
+  ) {
+    return this.service.commands(
+      terminalId(task),
+      terminalId(id),
+      gen ?? null,
+      after,
+    );
+  }
   @Post(':id') command(
     @Param('taskId') task: string,
     @Param('id') id: string,

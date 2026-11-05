@@ -1,7 +1,10 @@
+import { commandTerminalTitle } from './terminal-title.js';
+import { TerminalCommandTracker } from './terminal-command-tracker.js';
 import { randomUUID } from 'node:crypto';
 import { TerminalOutputBuffer } from '../terminal/terminal-output-buffer.js';
 import {
   TerminalOutputEvents,
+  repeatableCommand,
   type TerminalOutputEvent,
 } from './terminal-output-events.js';
 import type { ShellIntegrationState } from './desktop-shell-integration.js';
@@ -11,6 +14,7 @@ export const DESKTOP_TERMINAL_INITIAL_SIZE = { cols: 80, rows: 24 } as const;
 /** Bounded process-owned stream. Character offsets use JS UTF-16 on both ends. */
 export class DesktopTerminalStream {
   readonly generation = randomUUID();
+  readonly tracking = new TerminalCommandTracker();
   private readonly output = new TerminalOutputBuffer(256 * 1024);
   // Keep resize boundaries with the bytes so replaying startup in a narrow pane
   // cannot wrap zsh's prompt-spacer line.
@@ -25,6 +29,11 @@ export class DesktopTerminalStream {
   command: string;
   private rerunCommand: string | null = null;
   private processExited = false;
+  private reportedTitle: {
+    readonly value: string | null;
+    readonly commandId: number | null;
+  } | null = null;
+
   private promptReady = false;
   private commandStarted = false;
   private submittedInput = false;
@@ -33,6 +42,22 @@ export class DesktopTerminalStream {
   private readonly events: TerminalOutputEvents;
   private integrationState?: ShellIntegrationState;
   private integrationStarted = Date.now();
+
+  /** Derived from the same execution record as command history. No second
+   * running/prompt state or platform polling is needed for title lifecycle. */
+  get activityTitle(): string | null {
+    if (this.script || this.processExited) return null;
+    if (this.integration === 'active') {
+      const current = this.tracking.current;
+      if (!current) return null;
+      return (
+        (this.reportedTitle?.commandId === current.id
+          ? this.reportedTitle.value
+          : null) ?? commandTerminalTitle(current.command)
+      );
+    }
+    return this.reportedTitle?.value ?? null;
+  }
 
   get integration(): ShellIntegrationState | undefined {
     return this.integrationState === 'pending' &&
@@ -66,6 +91,14 @@ export class DesktopTerminalStream {
   }
   private outputEvent(event: TerminalOutputEvent): void {
     if (this.processExited) return;
+    if (event.type === 'title') {
+      if (!this.script)
+        this.reportedTitle = {
+          value: event.title,
+          commandId: this.tracking.current?.id ?? null,
+        };
+      return;
+    }
     if (event.type === 'service') {
       if (this.status === 'running' || this.status === 'serving') {
         this.port = event.port;
@@ -81,19 +114,26 @@ export class DesktopTerminalStream {
     )
       return;
     if (event.type === 'disabled') {
+      this.tracking.event(event);
       this.integrationState = 'disabled';
       this.promptReady = false;
       this.rerunCommand = null;
       return;
     }
     this.integrationState = 'active';
+    this.tracking.event(event);
+    if (event.type === 'cwd') return;
     if (event.type === 'command') {
-      this.command = event.command ?? 'Shell command';
+      this.command = repeatableCommand(event.command)
+        ? event.command
+        : 'Shell command';
       this.rerunCommand = (
         this.commandStarted ? this.inputDuringCommand : this.typeahead
       )
         ? null
-        : event.command;
+        : repeatableCommand(event.command)
+          ? event.command
+          : null;
     } else if (event.type === 'ready') {
       this.promptReady = true;
       this.submittedInput = false;
@@ -104,6 +144,10 @@ export class DesktopTerminalStream {
       this.port = null;
       this.protocol = undefined;
       if (event.type === 'started') {
+        if (!this.tracking.current?.command) {
+          this.command = 'Shell command';
+          this.rerunCommand = null;
+        }
         this.commandStarted = true;
         this.inputDuringCommand = this.typeahead;
         this.submittedInput = false;
@@ -156,6 +200,7 @@ export class DesktopTerminalStream {
     }
   }
   exited(code: number): void {
+    this.tracking.interrupt(this.sequence);
     this.processExited = true;
     this.promptReady = false;
     this.exitCode = Math.max(0, Math.min(255, code));
@@ -203,6 +248,7 @@ export class DesktopTerminalStream {
       gap,
       more: next < this.sequence,
       size: { cols: size.cols, rows: size.rows },
+      commandStarts: this.tracking.starts(from, next),
     };
   }
 }

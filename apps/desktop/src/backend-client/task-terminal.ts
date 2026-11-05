@@ -9,40 +9,10 @@ import { invalidResponse, requestBackendJson } from "./transport";
 import type { TerminalLifetime } from './terminal-lifetime';
 import type { BackendEndpoint } from './transport';
 
-function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid terminal object");
-  return value as Record<string, unknown>;
-}
-function text(value: unknown, max: number): string {
-  if (typeof value !== "string" || value.length > max)
-    throw new Error("Invalid terminal text");
-  return value;
-}
-function integer(
-  value: unknown,
-  min = 0,
-  max = Number.MAX_SAFE_INTEGER,
-): number {
-  if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value < min ||
-    value > max
-  )
-    throw new Error("Invalid terminal number");
-  return value;
-}
-function generation(value: unknown): string {
-  const id = text(value, 36);
-  if (!/^[a-f\d-]{36}$/.test(id))
-    throw new Error("Invalid terminal generation");
-  return id;
-}
-function keys(value: Record<string, unknown>, names: string[]): void {
-  if (Object.keys(value).some((key) => !names.includes(key)))
-    throw new Error("Unexpected terminal argument");
-}
+import { object, text, integer, generation, keys } from './terminal-validation';
+import { parseTerminalCommands } from './terminal-commands';
+export { parseTerminalCommands } from './terminal-commands';
+
 export function parseTaskTerminal(
   raw: unknown,
   taskId: number,
@@ -78,6 +48,16 @@ export function parseTaskTerminal(
     if (shellIntegration !== undefined && shellIntegration !== 'pending' && shellIntegration !== 'active' &&
         shellIntegration !== 'disabled' && shellIntegration !== 'unsupported' && shellIntegration !== 'unavailable')
       throw invalidResponse();
+    const rawActivityTitle = value['activityTitle'];
+    const activityTitle = rawActivityTitle === undefined || rawActivityTitle === null ? rawActivityTitle : text(rawActivityTitle, 120);
+    // This is untrusted display metadata, never a command or path grant.
+    if (typeof activityTitle === 'string' && (!activityTitle.trim() ||
+        // eslint-disable-next-line no-control-regex -- Reject terminal control characters in display metadata.
+        /[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/.test(activityTitle) ||
+        /[\uD800-\uDFFF]/u.test(activityTitle))) throw invalidResponse();
+    const currentCwd = value['currentCwd'];
+    const commandTracking = value['commandTracking'];
+    if (commandTracking !== undefined && commandTracking !== true) throw invalidResponse();
     const port =
       value["port"] === null ? null : integer(value["port"], 1, 65535);
     if (status === "serving" && port === null) throw invalidResponse();
@@ -86,6 +66,7 @@ export function parseTaskTerminal(
       taskId,
       alive: value["alive"],
       title: text(value["title"], 120),
+      ...(activityTitle === undefined ? {} : { activityTitle }),
       cwd: text(value["cwd"], 8192),
       branch: text(value["branch"], 1024),
       generation:
@@ -99,6 +80,8 @@ export function parseTaskTerminal(
       ...(protocol === undefined ? {} : { protocol }),
       canRerun: value["canRerun"],
       ...(shellIntegration === undefined ? {} : { shellIntegration }),
+      ...(currentCwd === undefined ? {} : { currentCwd: currentCwd === null ? null : text(currentCwd, 8192) }),
+      ...(commandTracking === undefined ? {} : { commandTracking }),
     };
   } catch {
     throw invalidResponse();
@@ -171,6 +154,14 @@ export function parseTerminalOutput(
       value["more"] !== next < terminal.sequence
     )
       throw invalidResponse();
+    const rawStarts = value['commandStarts'];
+    if (rawStarts !== undefined && (!Array.isArray(rawStarts) || rawStarts.length > 201)) throw invalidResponse();
+    const commandStarts = (Array.isArray(rawStarts) ? rawStarts : undefined)?.map((raw: unknown) => {
+      const marker = object(raw);
+      return { id: integer(marker['id'], 1), at: integer(marker['at'], from + 1, next) };
+    });
+    if (commandStarts?.some((marker, index) => index > 0 &&
+      (marker.id <= commandStarts[index - 1]!.id || marker.at <= commandStarts[index - 1]!.at))) throw invalidResponse();
     return {
       terminal,
       generation: gen,
@@ -180,6 +171,7 @@ export function parseTerminalOutput(
       gap: value["gap"],
       more: value["more"],
       ...(size === undefined ? {} : { size }),
+      ...(commandStarts === undefined ? {} : { commandStarts }),
     };
   } catch {
     throw invalidResponse();
@@ -216,7 +208,7 @@ export function registerTaskTerminalIpc(
           return parseTerminalList(
             await requestBackendJson(
               endpoint,
-              { path: path(task), limit: 512 * 1024 },
+              { path: path(task), limit: 1024 * 1024 },
               signal,
             ),
             task,
@@ -302,6 +294,22 @@ export function registerTaskTerminalIpc(
       );
     }),
   );
+  stops.push(handleForWindow('task-terminal:commands', trusted, (window, ...args) => {
+    const scopeId = scope(args), value = object(args[1]);
+    keys(value, ['taskId', 'terminalId', 'generation', 'after']);
+    const task = integer(value['taskId'], 1), id = integer(value['terminalId'], 1),
+      after = integer(value['after']), gen = value['generation'] === null ? null : generation(value['generation']);
+    const query = new URLSearchParams({ after: String(after), ...(gen ? { generation: gen } : {}) });
+    return client.execute(window, scopeId, `terminal:commands:${task}:${id}:${query}`, false,
+      async (endpoint, signal) => {
+        track(window, endpoint);
+        const reply = parseTerminalCommands(await requestBackendJson(endpoint,
+          { path: path(task, id) + '/commands?' + query, limit: 1024 * 1024 }, signal), task, id);
+        if (!reply.gap && (reply.generation !== gen ||
+          (reply.commands.length ? reply.commands[0]!.id !== after + 1 : reply.next !== after))) throw invalidResponse();
+        return reply;
+      });
+  }));
   const accepted = async (value: Promise<unknown>) => {
     if (object(await value)["accepted"] !== true) throw invalidResponse();
     return { accepted: true as const };

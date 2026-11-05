@@ -15,16 +15,24 @@ fi
 function _elevenex_user_preexec() {
   builtin emulate -L zsh
   local LC_ALL=C command="$1"
-  if (( ${#command} > 4096 )) || [[ "$command" == *[$'\001'-$'\037'$'\177']* ]]; then
+  if (( ${#command} > 4096 )); then
     command=''
   fi
   command=${command//\\/\\\\}
   command=${command//;/\\x3b}
+  command=${command//$'\n'/\\x0a}
+  command=${command//$'\t'/\\x09}
   builtin printf '\033]133;E;__ELEVENEX_TOKEN__;%s\007\033]133;C;__ELEVENEX_TOKEN__\007' "$command"
 }
 function _elevenex_user_precmd() {
   local result=$?
-  builtin printf '\033]133;D;__ELEVENEX_TOKEN__;%s\007\033]133;B;__ELEVENEX_TOKEN__\007' "$result"
+  builtin emulate -L zsh
+  local LC_ALL=C directory="$PWD"
+  if (( ${#directory} > 8192 )); then directory=''; fi
+  directory=${directory//\\/\\\\}
+  directory=${directory//;/\\x3b}
+  builtin printf '\033]133;D;__ELEVENEX_TOKEN__;%s\007\033]133;P;__ELEVENEX_TOKEN__;%s\007\033]133;B;__ELEVENEX_TOKEN__\007' "$result" "$directory"
+  return "$result"
 }
 builtin autoload -Uz add-zsh-hook
 add-zsh-hook preexec _elevenex_user_preexec

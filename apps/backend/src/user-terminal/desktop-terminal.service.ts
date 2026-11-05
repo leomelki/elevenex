@@ -171,7 +171,15 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
       id: terminal.id,
       taskId: task.id,
       title: terminal.name.slice(0, 120),
+      // Saved names (including script names) own the tab. Keep the established
+      // title contract and expose automatic activity as additive metadata only.
+      activityTitle:
+        terminal.name === path.basename(terminal.shell)
+          ? (stream?.activityTitle ?? null)
+          : null,
       cwd: terminal.worktreePath,
+      currentCwd: stream?.tracking.cwd ?? null,
+      commandTracking: true as const,
       branch: task.taskBranch ?? '',
       alive: this.ptys.isAlive(terminal.id),
       generation: stream?.generation ?? null,
@@ -364,6 +372,30 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
             gap: gen !== null,
             more: false,
           }),
+    };
+  }
+  async commands(taskId: number, id: number, gen: unknown, after: unknown) {
+    if (gen !== null && gen !== undefined) generation(gen);
+    if (typeof after === 'string' && /^\d{1,16}$/.test(after))
+      after = Number(after);
+    if (typeof after !== 'number' || !Number.isSafeInteger(after) || after < 0)
+      throw new BadRequestException('Invalid command cursor');
+    await this.owned(taskId, id);
+    const stream = this.ptys.desktopStream(id);
+    const sameGeneration = gen === (stream?.generation ?? null);
+    const page = stream?.tracking.page(sameGeneration ? after : 0) ?? {
+      commands: [],
+      current: null,
+      next: 0,
+      more: false,
+      gap: after !== 0,
+    };
+    return {
+      taskId,
+      terminalId: id,
+      generation: stream?.generation ?? null,
+      ...page,
+      gap: !sameGeneration || page.gap,
     };
   }
   command(taskId: number, id: number, value: unknown) {

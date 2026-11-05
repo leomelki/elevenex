@@ -4,6 +4,102 @@
 > in chat/PR descriptions and keep run artifacts under ignored `artifacts/`, as
 > described in the root `AGENTS.md`. Earlier results do not verify current code.
 
+## Activity-aware terminal tabs, 2026-11-05
+
+Terminal tabs now follow an optional `activityTitle` while preserving the saved
+`title` contract. Tracked commands provide a conservative leading executable label
+without arguments (`zsh → pnpm → zsh`). Standard OSC 0/2 titles can supply richer
+program-selected text for the current execution. The existing command record owns
+that lifecycle: completion, failure and process exit restore the saved label, and
+prompt/previous-command titles cannot leak into a later command. Unsupported
+command heads retain the saved label. Saved names differing from the default shell
+basename and project-script names take priority, without renaming database rows.
+Plain terminals may use standard title updates independently of shell integration.
+
+Title payloads are bounded and stripped of terminal/directional controls, with
+Unicode-safe truncation. Main validates the additive field. Titles remain display
+hints and cannot authorize commands, rerun, navigation or service discovery.
+Port suffixes remain available. No OS process-table polling, new timers, bridge
+methods, dependencies or CSP changes were introduced. This tracks reported
+commands and program-supplied titles; it does not discover arbitrary foreground
+processes on the operating system.
+
+Passed: 122 backend user-terminal tests, 140 desktop platform tests, 7 capture-tool
+tests and 667 renderer tests, including TypeScript contract checking. Real Bash 3.2,
+modern Bash and zsh tests cover active command labels, program-reported titles and
+prompt restoration. Service tests verify saved-name precedence. Stream tests cover
+frame splits, limits, Unicode, plain mode and the separation of titles from command
+permissions/service hints. The terminal GPU mock now resets its module cache before
+installation, removing its dependency on earlier TerminalSurface test imports.
+Desktop lint, changed-backend lint, production TypeScript, desktop build and backend
+build/bundle pass. Native macOS Electron smoke also passes against production
+assets with the disposable backend transport fixture (an unpackaged launch).
+
+The [native title report](../../artifacts/desktop-capture/task85-terminal-titles-stable/report.json)
+has `verified: true`, six checkpoints and no errors/warnings. All six PNGs were
+inspected. The actual production terminal components in the isolated connected
+preview cover light/dark themes, a 440px pane, dark reduced motion, long-title
+truncation, live title replacement and restoration. Assertions also verify stable
+tab identity/selection, retained xterm DOM/focus, one process-creation request, saved
+names and port labels. An initial capture was interrupted by preview HMR; the
+settled capture passed. Controlled preview replies and real-PTY tests provide
+separate UI and process evidence. Fish/PowerShell native execution remains skipped
+because the executables are absent; Linux/Windows, live SSH terminals and packaged
+launches remain unverified.
+
+## Rich terminal tracking, 2026-11-05
+
+Added process-owned command records with exact/history/unavailable confidence,
+cwd at execution, status, receipt timestamps, monotonic elapsed duration and
+UTF-16 output boundaries. Immutable completion pages keep at most 200 records /
+128 Ki text units and return 20 completions plus a separate running record.
+Generation/after-ID gaps handle expiration and process replacement. The named
+`taskTerminalCommands` bridge validates ownership, cursors, ordering and bounds;
+ordinary terminal list/output replies do not carry command history.
+
+Optional `currentCwd` updates terminal directory details without changing the
+existing launch-workspace `cwd`. Server-authenticated command-start boundaries
+become bounded, owned xterm markers. Command/Ctrl-Up/Down navigates them without
+sending PTY input, including after replay/reflow. Navigation retains its anchor
+across asynchronous scroll events; reset, scrollback expiry and surface cleanup
+release markers. Raw OSC output cannot create navigation markers. Multiline
+commands may be retained as metadata but cannot be injected by rerun.
+
+Bash/zsh adapters now report directories; Bash reports history-derived commands
+at start where possible and reconciles at completion. Existing startup files,
+history and hooks remain intact. Added fish native-event and PowerShell
+readline/prompt adapters after normal profiles. PowerShell keeps execution policy,
+restricted language mode, existing functions and PSReadLine options in charge,
+reporting pipeline success as 0/1 rather than a stale native exit code. Plain
+terminal fallback and explicit opt-out remain available. The incremental OSC
+parser consumes foreign/oversized metadata without discovering services inside
+it, and waits for complete port delimiters across chunks.
+
+Validation passed: 79 focused backend tests (including real Bash 3.2, modern Bash
+and zsh PTYs), 139 desktop platform tests, 7 capture-tool tests and 666 renderer
+tests; TypeScript IPC contracts, desktop lint/build, focused backend lint and
+production backend build/bundle/type checking. All five integration scripts match
+source in both Nest and bundled outputs. Native macOS Electron smoke passed with
+production assets and its disposable transport fixture. The focused IPC tests also
+exercise the new named read, ownership/argument validation and cursor rejection.
+An exploratory backend-wide tsc including test sources still encounters unrelated
+spec typing errors; the production backend configuration passes.
+
+The [native tracking report](../../artifacts/desktop-capture/task85-rich-tracking-settled/report.json)
+has `verified: true`, two checkpoints and no errors/warnings. Both PNGs were
+inspected. Captures use the actual production TaskTerminal/TerminalSurface in the
+isolated connected-workspace preview with controlled backend replies. They verify
+observed directory binding, focused Command-Up/Down navigation and no PTY input,
+in light/dark themes with a 440px panel and dark reduced motion. Real PTY behavior
+is covered separately by backend tests.
+
+Fish/PowerShell adapter preparation and cleanup are tested. Their optional
+real-PTY regression is explicitly skipped because neither executable is installed
+here. Linux/Windows runtime behavior, live SSH terminal sessions and packaged
+application launches remain unverified. This slice supplies command tracking and
+navigation; it does not add a recent-command/directory picker, decorations or
+sticky scroll. No dependencies or platform security settings changed.
+
 ## Optional shell integration architecture, 2026-11-05
 
 Separated terminal bytes/geometry/process lifetime from optional shell metadata.

@@ -50,3 +50,26 @@ describe('Terminal output geometry', () => {
     } finally { surface.dispose(); }
   });
 });
+
+describe('Command navigation', () => {
+  it('uses trusted boundaries through replay and reset', async () => {
+    const surface = new TerminalSurface(() => {}, () => {}, () => { throw new Error('No DOM'); });
+    vi.spyOn(surface, 'fit').mockImplementation(() => {});
+    try {
+      const scroll = vi.spyOn(surface.terminal, 'scrollToLine');
+      const first = 'first> command\r\n', second = 'result\r\nsecond> command\r\n';
+      await surface.write(first + second + 'done\r\n', undefined, false,
+        [{ id: 1, at: first.length }, { id: 2, at: first.length + second.length }], 0);
+      expect(surface.navigateCommand(true)).toBe(true);
+      expect(scroll).toHaveBeenLastCalledWith(3);
+      surface.navigateCommand(true);
+      expect(scroll).toHaveBeenLastCalledWith(1);
+      surface.navigateCommand(false);
+      expect(scroll).toHaveBeenLastCalledWith(3);
+      surface.reset();
+      expect(surface.navigateCommand(true)).toBe(false);
+      await surface.write('\x1b]133;C;aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\x07');
+      expect(surface.navigateCommand(true)).toBe(false);
+    } finally { surface.dispose(); }
+  });
+});

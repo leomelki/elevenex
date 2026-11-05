@@ -21,36 +21,46 @@ _elevenex_user_history() {
   fi
   export -n _elevenex_user_history_number _elevenex_user_history_command
 }
-_elevenex_user_start() {
-  _elevenex_user_executing=1
-  export -n _elevenex_user_executing
-  builtin printf '\033]133;E;__ELEVENEX_TOKEN__;\007\033]133;C;__ELEVENEX_TOKEN__\007'
-}
-_elevenex_user_status() {
-  local result=$? LC_ALL=C command=''
+_elevenex_user_report_command() {
+  local LC_ALL=C command=''
   _elevenex_user_history
-  # Only a newly added history entry can describe the command just completed.
-  # Ignored commands and disabled history must never reuse an older entry.
   if (( _elevenex_user_history_number == _elevenex_user_history_index + 1 )); then
     command=$_elevenex_user_history_command
   fi
-  if (( ${#command} > 4096 )) || [[ "$command" == *[$'\001'-$'\037'$'\177']* ]]; then
-    command=''
-  fi
+  if (( ${#command} > 4096 )); then command=''; fi
   command=${command//\\/\\\\}
   command=${command//;/\\x3b}
-  builtin printf '\033]133;E;__ELEVENEX_TOKEN__;%s\007\033]133;D;__ELEVENEX_TOKEN__;%s\007' "$command" "$result"
+  command=${command//$'\n'/\\x0a}
+  command=${command//$'\t'/\\x09}
+  builtin printf '\033]133;H;__ELEVENEX_TOKEN__;%s\007' "$command"
+}
+_elevenex_user_start() {
+  _elevenex_user_executing=1
+  export -n _elevenex_user_executing
+  _elevenex_user_report_command
+  builtin printf '\033]133;C;__ELEVENEX_TOKEN__\007'
+}
+_elevenex_user_status() {
+  local result=$?
+  _elevenex_user_report_command
+  builtin printf '\033]133;D;__ELEVENEX_TOKEN__;%s\007' "$result"
   return "$result"
 }
 _elevenex_user_ready() {
-  local result=$?
+  local result=$? LC_ALL=C directory="$PWD"
   _elevenex_user_history
   _elevenex_user_history_index=$_elevenex_user_history_number
   _elevenex_user_executing=0
   export -n _elevenex_user_history_index _elevenex_user_executing
-  builtin printf '\033]133;B;__ELEVENEX_TOKEN__\007'
+  if (( ${#directory} > 8192 )); then directory=''; fi
+  directory=${directory//\\/\\\\}
+  directory=${directory//;/\\x3b}
+  builtin printf '\033]133;P;__ELEVENEX_TOKEN__;%s\007\033]133;B;__ELEVENEX_TOKEN__\007' "$directory"
   return "$result"
 }
+
+_elevenex_user_history
+_elevenex_user_history_index=$_elevenex_user_history_number
 
 # PS0 is expanded before execution in Bash 4.4+. Preserve existing DEBUG traps.
 # Older Bash supplies start events only if it has no user DEBUG trap and does
@@ -72,4 +82,4 @@ fi
 # Profiles may use allexport. Tokens and command metadata stay in this shell.
 export -n PS0 _elevenex_user_history_index _elevenex_user_executing
 export -n _elevenex_user_history_number _elevenex_user_history_command
-export -n -f _elevenex_user_history _elevenex_user_start _elevenex_user_status _elevenex_user_ready
+export -n -f _elevenex_user_history _elevenex_user_report_command _elevenex_user_start _elevenex_user_status _elevenex_user_ready

@@ -1,6 +1,6 @@
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
-import type { TaskTerminalTarget, TaskTerminal, TaskTerminalList, TaskTerminalRead, TaskTerminalOutput, TaskTerminalCreate, TaskTerminalInput, TaskTerminalResize, TaskTerminalAction } from './task-terminal';
+import type { TaskTerminalCommandsRead, TaskTerminalCommands, TaskTerminalTarget, TaskTerminal, TaskTerminalList, TaskTerminalRead, TaskTerminalOutput, TaskTerminalCreate, TaskTerminalInput, TaskTerminalResize, TaskTerminalAction } from './task-terminal';
 export type * from './task-terminal';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
@@ -51,6 +51,7 @@ export interface InvokeContracts {
   'task-terminal:open-port': { args: [scopeId: string, input: TaskTerminalTarget & { readonly port: number }]; result: BackendResult<{ readonly accepted: true }> };
   'task-terminal:list': { args: [scopeId: string, taskId: number]; result: BackendResult<TaskTerminalList> };
   'task-terminal:create': { args: [scopeId: string, input: TaskTerminalCreate]; result: BackendResult<TaskTerminal> };
+  'task-terminal:commands': { args: [scopeId: string, input: TaskTerminalCommandsRead]; result: BackendResult<TaskTerminalCommands> };
   'task-terminal:read': { args: [scopeId: string, input: TaskTerminalRead]; result: BackendResult<TaskTerminalOutput> };
   'task-terminal:input': { args: [scopeId: string, input: TaskTerminalInput]; result: BackendResult<{ readonly accepted: true }> };
   'task-terminal:resize': { args: [scopeId: string, input: TaskTerminalResize]; result: BackendResult<{ readonly accepted: true }> };
@@ -167,6 +168,7 @@ export interface ElevenexBridge {
   taskTerminalOpenPort(scopeId: string, input: TaskTerminalTarget & { readonly port: number }): Promise<BackendResult<{ readonly accepted: true }>>;
   taskTerminalList(scopeId: string, taskId: number): Promise<BackendResult<TaskTerminalList>>;
   taskTerminalCreate(scopeId: string, input: TaskTerminalCreate): Promise<BackendResult<TaskTerminal>>;
+  taskTerminalCommands(scopeId: string, input: TaskTerminalCommandsRead): Promise<BackendResult<TaskTerminalCommands>>;
   taskTerminalRead(scopeId: string, input: TaskTerminalRead): Promise<BackendResult<TaskTerminalOutput>>;
   taskTerminalInput(scopeId: string, input: TaskTerminalInput): Promise<BackendResult<{ readonly accepted: true }>>;
   taskTerminalResize(scopeId: string, input: TaskTerminalResize): Promise<BackendResult<{ readonly accepted: true }>>;

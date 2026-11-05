@@ -82,23 +82,27 @@ export class TaskTerminalComponent {
   readonly searchMatches = signal<number | null>(null);
   readonly current = this.store.current;
   readonly tabs = computed<readonly TerminalTab[]>(() =>
-    (this.store.snapshot()?.terminals ?? []).map((row) => ({
-      id: String(row.id),
-      title: row.port ? `${row.title} :${row.port}` : row.title,
-      tip: `${row.title} · ${row.status}${row.status === "exited" ? " · shell exited" : ""}`,
-      cwd: row.cwd,
-      branch: row.branch,
-      cmd: row.command,
-      status:
-        row.status === "unavailable" || row.status === "exited" ||
-        (row.status === 'running' && row.shellIntegration !== undefined && row.shellIntegration !== 'active')
-          ? "idle"
-          : row.status,
-      ...(row.port ? { port: row.port } : {}),
-      unread:
-        row.id !== this.store.active() &&
-        row.sequence > (this.store.seen().get(row.id) ?? 0),
-    })),
+    (this.store.snapshot()?.terminals ?? []).map((row) => {
+      const title = row.activityTitle ?? row.title;
+      const detail = title === row.title ? title : `${title} · ${row.title}`;
+      return {
+        id: String(row.id),
+        title: row.port ? `${title} :${row.port}` : title,
+        tip: `${detail} · ${row.status}${row.status === "exited" ? " · shell exited" : ""}`,
+        cwd: row.currentCwd ?? row.cwd,
+        branch: row.branch,
+        cmd: row.command,
+        status:
+          row.status === "unavailable" || row.status === "exited" ||
+          (row.status === 'running' && row.shellIntegration !== undefined && row.shellIntegration !== 'active')
+            ? "idle"
+            : row.status,
+        ...(row.port ? { port: row.port } : {}),
+        unread:
+          row.id !== this.store.active() &&
+          row.sequence > (this.store.seen().get(row.id) ?? 0),
+      };
+    }),
   );
   readonly failure = computed(() => {
     const row = this.current();
@@ -346,7 +350,7 @@ export class TaskTerminalComponent {
           this.notice.set(entry.notice);
         }
       }
-      await entry.surface.write(reply.data, reply.size, reply.more);
+      await entry.surface.write(reply.data, reply.size, reply.more, reply.commandStarts, reply.from);
       entry.surface.generation = reply.generation;
       entry.surface.sequence = reply.next;
       if (this.disposed || revision !== this.revision) return;

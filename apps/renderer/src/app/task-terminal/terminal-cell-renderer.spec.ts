@@ -1,10 +1,15 @@
 import { TerminalCellRenderer } from './terminal-cell-renderer';
 
-const gpu = vi.hoisted(() => ({
-  disposed: vi.fn(),
-  unsubscribed: vi.fn(),
-  lost: undefined as (() => void) | undefined,
-}));
+const gpu = vi.hoisted(() => {
+  // Other terminal specs import the renderer through TerminalSurface. Clear
+  // that cached module before installing this file's GPU ownership mock.
+  vi.resetModules();
+  return {
+    disposed: vi.fn(),
+    unsubscribed: vi.fn(),
+    lost: undefined as (() => void) | undefined,
+  };
+});
 vi.mock('@xterm/addon-webgl', () => ({
   WebglAddon: class {
     activate() {}

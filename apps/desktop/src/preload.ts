@@ -27,6 +27,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   taskTerminalOpenPort: (scope, input) => invoke('task-terminal:open-port', scope, input),
   taskTerminalList: (scope, task) => invoke('task-terminal:list', scope, task),
   taskTerminalCreate: (scope, input) => invoke('task-terminal:create', scope, input),
+  taskTerminalCommands: (scope, input) => invoke('task-terminal:commands', scope, input),
   taskTerminalRead: (scope, input) => invoke('task-terminal:read', scope, input),
   taskTerminalInput: (scope, input) => invoke('task-terminal:input', scope, input),
   taskTerminalResize: (scope, input) => invoke('task-terminal:resize', scope, input),

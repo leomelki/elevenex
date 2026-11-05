@@ -129,6 +129,21 @@ describe('Desktop task terminals with real PTYs', () => {
     });
     await waitFor(() => ptys.desktopStream(terminal.id)?.canRerun === true);
     expect(ptys.desktopStream(terminal.id)?.command).toBe('false');
+    const commands = await service.commands(task, terminal.id, generation, 0);
+    expect(
+      commands.commands.some(
+        (row) => row.command === 'false' && row.exitCode === 1,
+      ),
+    ).toBe(true);
+    expect(commands.generation).toBe(generation);
+    expect(commands.gap).toBe(false);
+    expect((await service.commands(task, terminal.id, null, 0)).gap).toBe(true);
+    await expect(
+      service.commands(task, terminal.id, generation, -1),
+    ).rejects.toThrow('cursor');
+    await expect(
+      service.commands(task + 999, terminal.id, generation, 0),
+    ).rejects.toThrow();
     await service.command(task, terminal.id, { type: 'rerun', generation });
     await waitFor(() => ptys.desktopStream(terminal.id)?.canRerun === true);
     await service.command(task, terminal.id, {
@@ -156,6 +171,44 @@ describe('Desktop task terminals with real PTYs', () => {
       .set({ path: root })
       .where(eq(schema.workspaces.id, task));
   });
+  it('exposes activity separately from saved names and keeps explicit names in charge', async () => {
+    const row = await service.create(task, {});
+    ids.push(row.id);
+    await waitFor(() => ptys.desktopStream(row.id)?.integration === 'active');
+    await service.command(task, row.id, {
+      type: 'input',
+      generation: row.generation,
+      data: 'sleep 1\r',
+    });
+    await waitFor(async () =>
+      (await service.list(task)).terminals.some(
+        (terminal) =>
+          terminal.id === row.id && terminal.activityTitle === 'sleep',
+      ),
+    );
+    const active = (await service.list(task)).terminals.find(
+      (terminal) => terminal.id === row.id,
+    )!;
+    expect(active.title).toBe('bash');
+    expect(active.activityTitle).toBe('sleep');
+    await db.db
+      .update(schema.userTerminals)
+      .set({ name: 'My server' })
+      .where(eq(schema.userTerminals.id, row.id));
+    const renamed = (await service.list(task)).terminals.find(
+      (terminal) => terminal.id === row.id,
+    )!;
+    expect(renamed.title).toBe('My server');
+    expect(renamed.activityTitle).toBeNull();
+    await waitFor(() => ptys.desktopStream(row.id)?.status === 'idle');
+    expect(
+      (await service.list(task)).terminals.find(
+        (terminal) => terminal.id === row.id,
+      )?.title,
+    ).toBe('My server');
+    await service.close(task, row.id);
+  });
+
   it('runs discovered scripts explicitly; failure retains context and rerun creates a fresh generation', async () => {
     const list = await service.list(task);
     expect(list.scripts[0].id).toBe('fail');

@@ -41,7 +41,8 @@ test('named terminal IPC keeps credentials/main scope, validates inputs and neve
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : null;
     requests.at(-1).body = body;
     res.setHeader('content-type', 'application/json');
-    if (req.url.includes('/output')) res.end(JSON.stringify({ terminal, generation, from: 0, next: 4, data: 'test', gap: true, more: false }));
+    if (req.url.includes('/commands')) res.end(JSON.stringify({ taskId: 1, terminalId: 2, generation, commands: [], current: null, next: 0, gap: false, more: false }));
+    else if (req.url.includes('/output')) res.end(JSON.stringify({ terminal, generation, from: 0, next: 4, data: 'test', gap: true, more: false }));
     else if (req.method === 'POST' && body.type === 'input') { res.destroy(); }
     else if (req.method === 'POST') res.end(JSON.stringify(terminal));
     else res.end(JSON.stringify({ taskId: 1, terminals: [terminal], scripts: [], limit: 16 }));
@@ -62,6 +63,13 @@ test('named terminal IPC keeps credentials/main scope, validates inputs and neve
   assert.equal((await list(event, client.state(12).scope.id, 1)).error.code, 'stale-scope'); assert.equal(requests.length, 0);
   assert.equal((await list(event, scope, 1)).value.terminals[0].cwd, '/task/worktree');
   assert.equal((await read(event, scope, { taskId: 1, terminalId: 2, generation: null, after: 0 })).value.next, 4);
+  const commands = handlers.get('task-terminal:commands');
+  assert.throws(() => commands(event, scope, { taskId: 1, terminalId: 2, generation, after: -1 }));
+  assert.throws(() => commands(event, scope, { taskId: 1, terminalId: 2, generation, after: 0, command: 'injected' }));
+  const commandPage = await commands(event, scope, { taskId: 1, terminalId: 2, generation, after: 0 });
+  assert.equal(commandPage.ok, true);
+  assert.equal(commandPage.value.next, 0);
+  assert.equal((await commands(event, scope, { taskId: 1, terminalId: 2, generation, after: 1 })).error.code, 'invalid-response');
   const create = handlers.get('task-terminal:create');
   assert.throws(() => create(event, scope, { taskId: 1, owner: generation }));
   assert.equal((await create(event, scope, { taskId: 1 })).value.id, terminal.id);
@@ -121,4 +129,38 @@ test('app cleanup uses its private launch owner and latest engine endpoint exact
   await cleanup;
   assert.deepEqual(requests, [{ method: 'DELETE', path: `/api/desktop-workspace/terminal-owners/${lifetime.owner}`, auth: 'private' }]);
   assert.notEqual(new TerminalLifetime().owner, lifetime.owner);
+});
+
+test('command tracking is additive, bounded and validates immutable page identities', () => {
+  const { parseTerminalCommands } = require('../dist/backend-client/task-terminal');
+  const completed = { id: 1, command: 'false', confidence: 'exact', cwd: '/task', state: 'completed', startedAt: 100, finishedAt: 200,
+    durationMs: 100, outputStart: 10, outputEnd: 30, exitCode: 1 };
+  const page = { taskId: 1, terminalId: 2, generation, commands: [completed], current: null, next: 1, gap: false, more: false };
+  assert.deepEqual(parseTerminalCommands(page, 1, 2), page);
+  for (const bad of [
+    { ...page, taskId: 3 }, { ...page, terminalId: 9 }, { ...page, generation: null }, { ...page, next: 0 },
+    { ...page, more: true }, { ...page, commands: Array(21).fill(completed) }, { ...page, commands: [completed, completed] },
+    ...[{ command: 'x'.repeat(4097) }, { confidence: 'guessed' }, { command: null }, { state: 'running' },
+      { outputEnd: 9 }, { durationMs: -1 }, { exitCode: 999 }, { cwd: '/'.repeat(8193) }, { finishedAt: null }]
+      .map(patch => ({ ...page, commands: [{ ...completed, ...patch }] })),
+    { ...page, current: completed },
+  ]) assert.throws(() => parseTerminalCommands(bad, 1, 2));
+  const active = { ...completed, id: 2, state: 'running', finishedAt: null, outputEnd: null, durationMs: null, exitCode: null };
+  assert.equal(parseTerminalCommands({ ...page, current: active }, 1, 2).current.id, 2);
+  assert.throws(() => parseTaskTerminal({ ...terminal, commandTracking: false }, 1));
+  assert.equal(parseTaskTerminal({ ...terminal, currentCwd: '/other', commandTracking: true }, 1).currentCwd, '/other');
+  const output = { terminal, generation, from: 0, next: 4, data: 'test', gap: false, more: false, commandStarts: [{ id: 1, at: 2 }] };
+  assert.deepEqual(parseTerminalOutput(output, 1, 2), output);
+  for (const commandStarts of [null, [{ id: 1, at: 0 }], [{ id: 1, at: 5 }], [{ id: 1, at: 2 }, { id: 1, at: 3 }],
+    [{ id: 1, at: 3 }, { id: 2, at: 2 }], Array(202).fill({ id: 1, at: 2 })])
+    assert.throws(() => parseTerminalOutput({ ...output, commandStarts }, 1, 2));
+});
+
+
+test('activity titles remain bounded display-only optional metadata', () => {
+  for (const activityTitle of [null, 'node', 'file — editor', '🙂'])
+    assert.equal(parseTaskTerminal({ ...terminal, activityTitle }, 1).activityTitle, activityTitle);
+  for (const activityTitle of ['', '   ', 3, 'x'.repeat(121), 'bad\nline', '\u202etitle', '\ud800'])
+    assert.throws(() => parseTaskTerminal({ ...terminal, activityTitle }, 1));
+  assert.equal(Object.hasOwn(parseTaskTerminal(terminal, 1), 'activityTitle'), false);
 });

@@ -112,6 +112,24 @@ private-use prompt icons; it and the regular/bold text faces load before cell
 measurement and leave ordinary text in Geist Mono. See the
 [font provenance and licenses](../../../public/fonts/README.md).
 
+Tab labels use the optional backend `activityTitle`, falling back to the saved
+`title`; detected ports retain their existing suffix. During a tracked command,
+the backend derives a conservative literal executable name without arguments.
+A program's standard OSC 0/2 title can override that label for the current command.
+Completion restores the shell name even after failure; process exit clears activity.
+An unsupported command head keeps the saved name rather than guessing a shell
+expression. This is command/title tracking, not OS foreground-process discovery.
+
+Saved names differing from the default shell basename and project-script names
+take priority; automatic titles never rename database records. Plain/untracked
+shells may supply standard OSC titles independently of integration. Titles are
+bounded, normalized display text: they cannot authorize command tracking, rerun,
+service detection or navigation. Main validates the additive field. Titles follow
+the existing scoped metadata reads for local and SSH backends, without new timers,
+process-table scans, IPC channels or renderer networking. Changing a title preserves
+the keyed tab, selection, focus, terminal surface and process generation. Older
+engines omitting the field retain their existing labels.
+
 Shell integration is an optional launch adapter, independent of PTY output,
 input, geometry, process ownership and script execution. Supported Bash/zsh
 shells receive private startup wrappers; other shells start normally. Preparation
@@ -127,18 +145,20 @@ the new one uses the same task-owned PTY lifecycle without injected hooks. Set
 injection for new shells globally, or in the user's rc to opt out of hooks for
 that shell. Existing engines and callers retain their default contracts.
 
-Bash/zsh adapters emit bounded, authenticated OSC status/command frames. The
+Bash/zsh, fish and PowerShell adapters emit bounded, authenticated OSC status/command frames. The
 random per-process token lives in private temporary files and is not exported to
 children. This distinguishes ordinary untrusted output; it is not isolation from
 hostile programs with same-user filesystem/process access. Bash preserves string/
 array prompt hooks, incoming exit status and existing DEBUG traps. Zsh preserves
 `.zshenv`, redirected `ZDOTDIR`, `.zshrc` and intentional suppression of rc
-files. Both integrated shells enter the resolved task workspace after their rc;
+files. Integrated Bash/zsh shells enter the resolved task workspace after their rc;
 plain shells use the normal PTY cwd and unmodified shell initialization.
 
 Zsh reports the actual submitted command through preexec, so history recall and
-cursor editing work without reconstructing keystrokes. Bash reports a completed
-command only when a fresh history entry identifies it; ignored commands, disabled
+cursor editing work without reconstructing keystrokes. Fish uses native events;
+PowerShell wraps the existing console readline/prompt functions after profiles.
+Execution policy and restricted language mode remain in force. PowerShell reports
+pipeline success as 0/1. Bash accepts a command only when a fresh history entry identifies it; ignored commands, disabled
 history and ambiguous entries disable rerun. History settings and locations are
 preserved. Modern Bash uses PS0 for start events; older Bash installs a start-only
 DEBUG hook only when no user trap or inherited-debug mode would be displaced.
@@ -149,9 +169,23 @@ program input. Any new prompt input invalidates rerun until the shell reports a
 new command. When a command receives further input or submission includes
 type-ahead, rerun also remains disabled: that input may still be queued at a
 future prompt. Single-line shell reports are bounded to 4 KiB, escaped, decoded
-and validated before they can become a rerun. Multiline/control-containing commands
-and malformed reports use a generic label with rerun disabled. Scripts rerun by
-their rediscovered ID. Reads and reconnect never execute commands. The failure
+and validated before they can become a rerun. Multiline commands can be retained
+as bounded display metadata; the failure label
+remains generic and rerun stays disabled. Control-containing and malformed reports
+are rejected. The optional `currentCwd` updates the tab's directory details after
+`cd`, while `cwd` retains the launch workspace for older consumers.
+
+Command/Ctrl-Up/Down navigates authenticated command-output starts. xterm markers
+follow resize/reflow, are bounded to 200, and are disposed on output gaps/reset,
+scrollback expiration and surface cleanup. Navigation never sends PTY input and
+leaves alternate-screen applications in charge of their keys. Old engines and
+plain terminals retain ordinary keyboard behavior without markers.
+
+The optional `commandTracking` capability enables `taskTerminalCommands` reads:
+20 immutable completions per generation/after-ID page plus one current record,
+with bounded command text, confidence, cwd, exit state, timestamps and duration.
+History is separate from output replay; missing hooks have null timing. A history
+picker is not part of this slice. Scripts rerun by their rediscovered ID. Reads and reconnect never execute commands. The failure
 bar uses Fold; ViewTabs retains its existing motion, and initial history stays
 still. Failed processes retain output until close.
 

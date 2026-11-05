@@ -1,6 +1,6 @@
 import type { TerminalStyleLease } from "./terminal-style-nonce";
 import type { TaskTerminalSize } from "@elevenex/shared";
-import { Terminal } from "@xterm/xterm";
+import { type IMarker, Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { findTerminalMatches } from "./terminal-search";
 import { TerminalCellRenderer } from "./terminal-cell-renderer";
@@ -21,6 +21,9 @@ export class TerminalSurface {
   private replaying = false;
   private searchPosition = -1;
   private query = "";
+  private commandMarkers: IMarker[] = [];
+  private navigationMarker?: IMarker;
+  private navigationViewport?: number;
   sequence = 0;
   generation: string | null = null;
   constructor(
@@ -44,13 +47,21 @@ export class TerminalSurface {
     });
     this.terminal.loadAddon(this.fitAddon);
     this.disposers.push(
-      this.terminal.onData(input),
+      this.terminal.onData(data => { this.navigationMarker = undefined; input(data); }),
+      this.terminal.onScroll(viewport => {
+        if (viewport !== this.navigationViewport) this.navigationMarker = undefined;
+      }),
       this.terminal.onResize((size) => {
         if (!this.replaying) resized(size.cols, size.rows);
       }),
       this.terminal.parser.registerOscHandler(52, () => true),
     );
     this.terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type === 'keydown' && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey &&
+          (event.key === 'ArrowUp' || event.key === 'ArrowDown') && this.navigateCommand(event.key === 'ArrowUp')) {
+        event.preventDefault();
+        return false;
+      }
       if (
         (event.metaKey || event.ctrlKey) &&
         ["t", "f"].includes(event.key.toLowerCase())
@@ -127,7 +138,8 @@ export class TerminalSurface {
       }
     });
   }
-  async write(data: string, size?: TaskTerminalSize, more = false): Promise<void> {
+  async write(data: string, size?: TaskTerminalSize, more = false,
+    starts: readonly { readonly id: number; readonly at: number }[] = [], from = this.sequence): Promise<void> {
     if (this.disposed) return;
     if (size) {
       // Replay with the producer's grid, including across output pages. Local
@@ -136,22 +148,55 @@ export class TerminalSurface {
       if (this.terminal.cols !== size.cols || this.terminal.rows !== size.rows)
         this.terminal.resize(size.cols, size.rows);
     }
-    if (data) {
-      await new Promise<void>((resolve) => {
-        const complete = () => {
-          this.writes.delete(complete);
-          resolve();
-        };
-        this.writes.add(complete);
-        this.terminal.write(data, complete);
-      });
+    let written = 0;
+    for (const start of starts) {
+      const end = start.at - from;
+      if (end <= written || end > data.length) continue;
+      await this.writeChunk(data.slice(written, end));
+      if (this.disposed) return;
+      const marker = this.terminal.registerMarker();
+      if (marker) this.commandMarkers.push(marker);
+      written = end;
     }
+    await this.writeChunk(data.slice(written));
+    this.commandMarkers = this.commandMarkers.filter(marker => !marker.isDisposed);
+    while (this.commandMarkers.length > 200) this.commandMarkers.shift()!.dispose();
     if (!this.disposed && this.replaying && !more) {
       this.replaying = false;
       this.fit();
     }
   }
+  private async writeChunk(data: string): Promise<void> {
+    if (!data || this.disposed) return;
+    await new Promise<void>(resolve => {
+      const complete = () => { this.writes.delete(complete); resolve(); };
+      this.writes.add(complete);
+      this.terminal.write(data, complete);
+    });
+  }
+  /** Navigate server-authenticated command starts; xterm markers follow reflow. */
+  navigateCommand(backwards: boolean): boolean {
+    const markers = this.commandMarkers.filter(marker => !marker.isDisposed);
+    if (!markers.length || this.terminal.buffer.active.type !== 'normal') return false;
+    const buffer = this.terminal.buffer.active;
+    const anchor = this.navigationMarker && !this.navigationMarker.isDisposed ? this.navigationMarker.line :
+      buffer.viewportY === buffer.baseY ? buffer.baseY + buffer.cursorY + 1 : buffer.viewportY;
+    const marker = backwards ? [...markers].reverse().find(item => item.line < anchor) : markers.find(item => item.line > anchor);
+    if (marker) {
+      this.navigationViewport = Math.min(marker.line, buffer.baseY);
+      this.navigationMarker = marker;
+      this.terminal.scrollToLine(marker.line);
+    }
+    return true;
+  }
+  private clearMarkers(): void {
+    for (const marker of this.commandMarkers) marker.dispose();
+    this.commandMarkers = [];
+    this.navigationMarker = undefined;
+    this.navigationViewport = undefined;
+  }
   reset(): void {
+    this.clearMarkers();
     this.terminal.reset();
     this.sequence = 0;
     this.searchPosition = -1;
@@ -240,6 +285,7 @@ export class TerminalSurface {
   }
   dispose(): void {
     this.disposed = true;
+    this.clearMarkers();
     this.detachObservers();
     for (const complete of this.writes) complete();
     for (const disposer of this.disposers) disposer.dispose();
