@@ -106,7 +106,7 @@ describe('Remote browser public HTTP behavior', () => {
       }
       res.setHeader('Content-Type', 'text/html');
       res.end(
-        "<!doctype html><meta charset=\"utf-8\"><style>body{margin:16px}input{display:block;width:200px;height:36px}button{margin-top:16px;height:36px}</style><input type=\"password\" oninput=\"fetch('/event',{method:'POST',body:this.value})\"><button onclick=\"fetch('/event',{method:'POST',body:'clicked'})\">Run action</button><script>navigator.permissions.query({name:'geolocation'}).then(p=>fetch('/event',{method:'POST',body:'permission:'+p.state}))</script>",
+        "<!doctype html><meta charset=\"utf-8\"><title>Runtime page title</title><style>body{margin:16px}input{display:block;width:200px;height:36px}button{margin-top:16px;height:36px}</style><input type=\"password\" oninput=\"document.title='Updated runtime title';fetch('/event',{method:'POST',body:this.value})\"><button onclick=\"fetch('/event',{method:'POST',body:'clicked'})\">Run action</button><script>navigator.permissions.query({name:'geolocation'}).then(p=>fetch('/event',{method:'POST',body:'permission:'+p.state}))</script>",
       );
     });
     await new Promise<void>((resolve) =>
@@ -226,6 +226,12 @@ describe('Remote browser public HTTP behavior', () => {
     expect(events).toContain('permission:denied');
     const opened = await openedResponse.json();
     tabId = opened.active;
+    let title = opened.tabs[0].title;
+    for (let n = 0; n < 100 && title !== 'Runtime page title'; n++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      title = (await request('state').then((r) => r.json())).tabs[0].title;
+    }
+    expect(title).toBe('Runtime page title');
     const layout = await request('layout', {
       width: 800,
       height: 600,
@@ -306,6 +312,16 @@ describe('Remote browser public HTTP behavior', () => {
     for (let n = 0; n < 100 && !events.includes('private-test-世界-batch'); n++)
       await new Promise((resolve) => setTimeout(resolve, 20));
     expect(events).toContain('private-test-世界-batch');
+    expect((await request('state').then((r) => r.json())).tabs[0].title).toBe('Updated runtime title');
+    const context = await launches.mock.results.at(-1)!.value;
+    const page = context.pages().find(page => page.url().startsWith(pageUrl));
+    await page!.evaluate(() => history.pushState(null, '', '#title-route'));
+    for (let n = 0; n < 100; n++) {
+      const tab = (await request('state').then((r) => r.json())).tabs[0];
+      if (tab.url.endsWith('#title-route') && tab.title === 'Updated runtime title') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect((await request('state').then((r) => r.json())).tabs[0]).toMatchObject({ url: pageUrl + '/#title-route', title: 'Updated runtime title' });
     expect(
       (
         await request('input', {
@@ -342,6 +358,8 @@ describe('Remote browser public HTTP behavior', () => {
       );
       expect(JSON.stringify(reply)).not.toContain('private-test-世界');
       expect(reply).toMatchObject({ observation: 'withheld' });
+      expect(JSON.stringify(reply)).not.toContain('Updated runtime title');
+      expect(reply.tabs[0]).not.toHaveProperty('title');
     } finally {
       mailbox.onModuleDestroy();
     }

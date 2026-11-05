@@ -12,6 +12,11 @@ No website, guest or remote Chromium process starts until navigation. Existing
 tabs survive panel/conversation changes. Closing the last tab leaves the New tab
 action available; returning to the empty browser creates its default again.
 
+Tab labels follow the page title, including live title changes, in both local and
+streamed browsers. Titles are normalized and bounded to 200 characters, with the
+location as fallback and “New tab” for an empty tab. They are human-facing only:
+navigation persistence and MCP replies do not include page titles.
+
 ## Rendering and composition
 
 Browser Tools selects **This device**, **This device · task proxy**, or

@@ -41,6 +41,7 @@ export class BrowserPage {
   private disposedInput = 0;
   url = '';
   documentUrl = '';
+  private pageTitle?: { url: string; text: string };
   loading = false;
   error: string | null = null;
   errors = 0;
@@ -124,7 +125,16 @@ export class BrowserPage {
       while (history.length() > 100 && history.removeEntryAtIndex(0)) { /* Bound retained navigation entries. */ }
       host.changed();
     };
-    contents.on('did-navigate', navigated); contents.on('did-navigate-in-page', navigated);
+    contents.on('did-navigate', navigated);
+    contents.on('did-navigate-in-page', () => {
+      if (this.pageTitle) this.pageTitle.url = host.logicalUrl(contents.getURL());
+      navigated();
+    });
+    contents.on('page-title-updated', (_event, title, explicitSet) => {
+      if (this.destroyed) return;
+      this.pageTitle = { url: host.logicalUrl(contents.getURL()), text: explicitSet ? title.replace(/\s+/gu, ' ').trim().slice(0, 200) : '' };
+      host.changed();
+    });
     contents.on('did-stop-loading', () => { if (this.loadTimer) clearTimeout(this.loadTimer); this.loadTimer = undefined; this.loading = false; navigated(); host.changed(); });
     contents.on('did-fail-load', (_event, code, _description, _url, main) => {
       if (!main || code === -3) return;
@@ -221,7 +231,8 @@ export class BrowserPage {
   snapshot(): TaskBrowserTab {
     let title = 'New tab';
     try { const url = new URL(this.url); title = url.pathname === '/' ? url.host : url.pathname.slice(0, 160); } catch { /* Empty tab. */ }
-    // Page titles can contain secrets and are never used as browser state.
+    // Titles are human-facing presentation data; agent replies omit them.
+    if (this.pageTitle?.url === this.url && this.url === this.documentUrl && this.pageTitle.text) title = this.pageTitle.text;
     return { id: this.id, title, url: this.url, by: this.lease.by, driver: this.lease.driver,
       agentSessionId: this.lease.agentSessionId, generation: this.lease.generation, waiting: this.lease.waiting, loading: this.loading, ready: this.ready,
       canGoBack: !this.destroyed && this.hasContents && this.contents.navigationHistory.canGoBack(), error: this.error,
@@ -231,6 +242,7 @@ export class BrowserPage {
   configureNetwork(): Promise<void> { return this.networkReady ??= this.host.configure(this.pageSession).catch(error => { this.networkReady = undefined; throw error; }); }
   pauseNetwork(): void { void this.pageSession.closeAllConnections().catch(() => undefined); }
   load(logical: string, actual: string): void {
+    this.pageTitle = undefined;
     this.url = logical; this.error = null; this.loading = true; this.host.changed();
     if (this.loadTimer) clearTimeout(this.loadTimer);
     this.loadTimer = setTimeout(() => {

@@ -108,8 +108,18 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   await command({ kind: 'navigate', tabId: first, url: url + '/browser-test' });
   await until(async () => !(await read()).tabs[0]?.loading, 'Original fixture did not reload');
   native = await require('./browser-detached-native.cjs')(window, native, scope, first);
-  // Page strings/secret controls never appear in state or automation-facing tab titles.
-  await native.executeJavaScript(`document.title='password-secret';document.querySelector('input').value='password-secret';console.error('password-secret')`);
+  // Human tab titles follow the page; private fields/logs stay out of state.
+  await native.executeJavaScript(`document.title='Checkout page';document.querySelector('input').value='password-secret';console.error('password-secret')`);
+  await until(async () => (await read()).tabs[0].title === 'Checkout page', 'Page title did not update');
+  await native.executeJavaScript(`document.title='  Updated   checkout  '`);
+  await until(async () => (await read()).tabs[0].title === 'Updated checkout', 'Dynamic page title did not update');
+  await native.executeJavaScript(`history.pushState(null, '', '#checkout')`);
+  await until(async () => (await read()).tabs[0].url.endsWith('#checkout'), 'Same-document navigation did not update');
+  assert.equal((await read()).tabs[0].title, 'Updated checkout');
+  await native.executeJavaScript(`document.title='x'.repeat(300)`);
+  await until(async () => (await read()).tabs[0].title === 'x'.repeat(200), 'Page title was not bounded');
+  await native.executeJavaScript(`document.title=''`);
+  await until(async () => (await read()).tabs[0].title === '/browser-test', 'Empty page title did not fall back to the location');
   state = await read(); assert.equal(JSON.stringify(state).includes('password-secret'), false);
   state = await command({ kind: 'theme', tabId: first, theme: 'dark' });
   assert.equal(state.tabs[0].theme, 'dark'); assert.equal(await native.executeJavaScript("matchMedia('(prefers-color-scheme: dark)').matches"), true);

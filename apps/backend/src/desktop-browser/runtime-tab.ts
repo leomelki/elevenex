@@ -23,6 +23,7 @@ export class RuntimeBrowserTab {
   agentSessionId: number | null;
   url = '';
   documentUrl = '';
+  private pageTitle?: { url: string; text: string };
   loading = false;
   error: string | null = null;
   errors = 0;
@@ -129,6 +130,36 @@ export class RuntimeBrowserTab {
     this.page = page;
     this.crashed = false;
     this.cdp = await this.context.newCDPSession(page);
+    // Headless Chromium target metadata does not report document.title changes.
+    // This page-owned binding accepts only bounded human-facing title data.
+    const bindingName = '__elevenexPageTitle';
+    await page.exposeBinding(bindingName, ({ frame }, url: unknown, title: unknown) => {
+      if (this.disposed || this.page !== page || frame !== page.mainFrame() || url !== page.url() || typeof title !== 'string' || title.length > 200) return;
+      this.pageTitle = { url: page.url(), text: title.replace(/\s+/gu, ' ').trim() };
+      this.changed();
+    });
+    await page.addInitScript((name: string) => {
+      if (window !== window.top) return;
+      document.addEventListener('DOMContentLoaded', () => {
+        let previous: string | undefined;
+        const publish = () => {
+          const title = document.title.replace(/\s+/gu, ' ').trim().slice(0, 200);
+          if (title === previous) return;
+          previous = title;
+          const send = Reflect.get(globalThis, name);
+          if (typeof send === 'function') void Promise.resolve(send(location.href, title)).catch(() => undefined);
+        };
+        // The observers and binding die with their owning document/page.
+        const head = new MutationObserver(publish);
+        const observeHead = () => {
+          head.disconnect();
+          head.observe(document.head ?? document.documentElement, { childList: true, subtree: true, characterData: true });
+          publish();
+        };
+        new MutationObserver(observeHead).observe(document.documentElement, { childList: true });
+        observeHead();
+      }, { once: true });
+    }, bindingName);
     page.on('console', (message) => {
       if (message.type() === 'error') this.countError();
     });
@@ -195,6 +226,15 @@ export class RuntimeBrowserTab {
           this.documentUrl = this.url;
         } catch {
           /* Initial blank page. */
+        }
+        // Same-document navigation may keep the title without mutating <head>.
+        const previousTitle = this.pageTitle, navigation = this.navigation;
+        if (previousTitle && previousTitle.url !== this.url) {
+          void page.title().then(title => {
+            if (this.disposed || this.page !== page || this.navigation !== navigation || this.pageTitle !== previousTitle) return;
+            this.pageTitle = { url: this.url, text: title.replace(/\s+/gu, ' ').trim().slice(0, 200) };
+            this.changed();
+          }).catch(() => undefined);
         }
         this.target = undefined;
         void this.history();
@@ -276,6 +316,8 @@ export class RuntimeBrowserTab {
     } catch {
       /* New tab. */
     }
+    // Human presentation only; the automation reply has its own allowlist.
+    if (this.pageTitle?.url === this.url && this.url === this.documentUrl && this.pageTitle.text) title = this.pageTitle.text;
     return {
       id: this.id,
       title,
@@ -312,6 +354,7 @@ export class RuntimeBrowserTab {
     if (!page || !this.started || this.disposed) throw new Error('Browser page is unavailable');
     const revision = ++this.loadRevision;
     const current = () => !this.disposed && this.page === page && revision === this.loadRevision;
+    this.pageTitle = undefined;
     this.loading = true;
     this.error = null;
     this.changed();
