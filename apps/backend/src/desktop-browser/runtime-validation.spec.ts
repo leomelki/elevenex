@@ -2,6 +2,13 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runtimeInput, runtimeCommand } from './runtime-validation.js';
 
+it('accepts forward navigation only for a valid tab with no extra fields', () => {
+  const tabId = '11111111-1111-4111-8111-111111111111';
+  expect(runtimeCommand.safeParse({ kind: 'forward', tabId }).success).toBe(true);
+  expect(runtimeCommand.safeParse({ kind: 'forward', tabId: 'missing' }).success).toBe(false);
+  expect(runtimeCommand.safeParse({ kind: 'forward', tabId, url: 'https://example.com' }).success).toBe(false);
+});
+
 it('satisfies the same human input protocol cases as Electron', async () => {
   const cases: { valid: boolean; input: unknown }[] = JSON.parse(await readFile(join(__dirname, '../../../../test/fixtures/task-browser-input.json'), 'utf8'));
   for (const { valid, input } of cases) expect(runtimeInput.safeParse(input).success).toBe(valid);

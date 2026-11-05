@@ -15,6 +15,10 @@ entry reveal the whole tab inside this strip without moving the page or stealing
 focus. Metadata updates preserve manual browsing. Reduced motion reveals tabs
 instantly and disables the fades' transitions.
 
+`BrowserView`'s `canGoBack` and `canGoForward` inputs control the history buttons; handle
+`backRequested` and `forwardRequested` in the owning platform adapter. Both default
+to disabled and respect `controlsDisabled` for tabs hosted in another window.
+
 `BrowserView` accepts a trusted `[browserPreview]` projection. It does not create
 iframes, webviews, or turn arbitrary URLs into privileged content. Every navigation
 or browser capability is an intent output. `driver` remains controlled: preview
@@ -107,7 +111,8 @@ with the same file/revision/mode identity. This keeps line paging attached to th
 file while scroll-based selection moves between its neighbours.
 
 The optional `addressEditable` input enables an accessible address draft;
-`navigated` emits its value only on Enter. Page updates preserve an unfinished
+`navigated` emits its nonempty value only on Enter, clearing address focus.
+An empty submission keeps focus. Page updates preserve an unfinished
 draft, and changing tabs resets it. `askLabel` defaults to “Ask”; integrations
 that stage a draft use “Add to composer”. The presentational component still
 performs no platform navigation or prompt submission itself.

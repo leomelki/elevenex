@@ -5,6 +5,7 @@
   <div class="toolbar">
     <div class="navigation">
       <ex-icon-button icon="back" label="Back" size="sm" [disabled]="!canGoBack() || !current() || controlsDisabled()" (pressed)="backRequested.emit()" />
+      <ex-icon-button icon="forward" label="Forward" size="sm" [disabled]="!canGoForward() || !current() || controlsDisabled()" (pressed)="forwardRequested.emit()" />
       <ex-icon-button icon="refresh" label="Reload" size="sm" [disabled]="!current() || controlsDisabled()" (pressed)="reloadRequested.emit()" />
     </div>
     <div class="address" [title]="current()?.url ?? ''">

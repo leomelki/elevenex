@@ -232,6 +232,26 @@ describe('Remote browser public HTTP behavior', () => {
       title = (await request('state').then((r) => r.json())).tabs[0].title;
     }
     expect(title).toBe('Runtime page title');
+    const historyState = async (url: string, canGoForward: boolean) => {
+      for (let n = 0; n < 100; n++) {
+        const state = await request('state').then(r => r.json());
+        if (state.tabs[0].url === url && state.tabs[0].canGoForward === canGoForward) return state;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      throw new Error('History state did not settle: ' + url);
+    };
+    await request('command', { kind: 'navigate', tabId, url: pageUrl + '/history-next' });
+    await historyState(pageUrl + '/history-next', false);
+    await request('command', { kind: 'back', tabId });
+    await historyState(pageUrl + '/', true);
+    await request('command', { kind: 'forward', tabId });
+    await historyState(pageUrl + '/history-next', false);
+    await request('command', { kind: 'back', tabId });
+    await historyState(pageUrl + '/', true);
+    await request('command', { kind: 'navigate', tabId, url: pageUrl + '/history-branch' });
+    await historyState(pageUrl + '/history-branch', false);
+    await request('command', { kind: 'navigate', tabId, url: pageUrl });
+    await historyState(pageUrl + '/', false);
     const layout = await request('layout', {
       width: 800,
       height: 600,

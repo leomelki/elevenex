@@ -206,6 +206,7 @@ export class TaskBrowser implements DesktopBrowserHost {
         // Opening outside is an explicit, validated user intent, including a remote forward.
         await shell.openExternal(actual);
       } else if (input.kind === 'back') { if (this.active === page.id) this.clearPicker(); page.lease.takeOver(); if (page.hasContents && page.contents.navigationHistory.canGoBack()) page.contents.navigationHistory.goBack(); }
+      else if (input.kind === 'forward') { if (this.active === page.id) this.clearPicker(); page.lease.takeOver(); if (page.hasContents && page.contents.navigationHistory.canGoForward()) page.contents.navigationHistory.goForward(); }
       else if (input.kind === 'reload') {
         if (!page.url) return this.snapshot();
         page.userDownloadIntent = true; page.lease.takeOver();

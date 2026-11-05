@@ -9,11 +9,11 @@
   <ex-browser-view [reorderable]="store.state()?.canReorder === true" [tabsBusy]="store.pending() > 0" (tabMoved)="command({kind: 'move-tab', tabId: $event.tabId, beforeTabId: $event.beforeTabId})" (tabWindowRequested)="moveToWindow($event)" [showTabs]="!detachedWindow()" [pickerAvailable]="!detachedWindow()" [controlsDisabled]="!!current()?.detached" [detachable]="!detachedWindow() && store.state()?.canDetach !== false && !!windowContext() && !!store.bridge.taskBrowserDetach" [detachBusy]="moving()" [detachLabel]="current()?.detached ? 'Show tab window' : directAvailable() ? 'Open tab in new window (reloads page)' : 'Open tab in new window'" (detachRequested)="moveToWindow()" [tabs]="tabs()" [active]="store.state()?.active ?? undefined" [addressEditable]="true" [keepPreviewMounted]="true" [clipPreview]="true" [pageFocusAvailable]="!!current()?.url && !current()?.error && !current()?.detached" askLabel="Add to composer"
     [driver]="current()?.detached ? 'you' : current()?.driver ?? 'you'" [step]="current()?.detached ? undefined : current()?.step" [action]="target()" [agentWaiting]="!current()?.detached && (current()?.waiting ?? false)"
     [picking]="store.state()?.picking ?? false" [picked]="picked()" [width]="current()?.width ?? 'full'"
-    [loading]="current()?.loading ?? false" [canGoBack]="current()?.canGoBack ?? false"
+    [loading]="current()?.loading ?? false" [canGoBack]="current()?.canGoBack ?? false" [canGoForward]="current()?.canGoForward ?? false"
     [errors]="current()?.detached ? 0 : current()?.errors ?? 0" errorText=" · Details withheld for privacy."
     needsTitle="The agent needs you here" needsText="Complete sign-in, codes or payment yourself. Agent page text, screenshots and logs are withheld. I’m done explicitly returns control."
     (selected)="tabCommand('select', $event)" (closed)="tabCommand('close', $event)" (added)="newTab()"
-    (navigated)="navigate($event)" (backRequested)="tabCommand('back')" (reloadRequested)="tabCommand('reload')"
+    (navigated)="navigate($event)" (backRequested)="tabCommand('back')" (forwardRequested)="tabCommand('forward')" (reloadRequested)="tabCommand('reload')"
     (pageFocusRequested)="tabCommand('focus')" (takeOverRequested)="tabCommand('takeover')" (handBackRequested)="tabCommand('handoff')" (widthChange)="setWidth($event)"
     (pickingChange)="command({kind: 'pick', enabled: $event})" (asked)="ask($event)" (sendErrorsRequested)="sendErrors()" (moreRequested)="showDialog('tools')">
     <div browserPreview #surface class="native-page" [class.driving]="current()?.driver === 'agent'">

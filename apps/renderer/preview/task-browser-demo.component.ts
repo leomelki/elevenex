@@ -26,7 +26,7 @@ export class StartTabFixture implements Pick<ElevenexBridge, 'taskBrowserRead' |
   async taskBrowserCommand(_scope: string, _task: number, input: TaskBrowserCommand): Promise<BackendResult<TaskBrowserState>> {
     if (input.kind === 'new-tab') {
       if (this.state.tabs.length >= 12) return { ok: false, error: { code: 'unavailable', message: 'Close a tab before opening another.' } };
-      const tab: TaskBrowserTab = { id: 'preview-' + ++this.nextId, title: 'New tab', url: '', by: 'you', driver: 'you', agentSessionId: null, generation: 1, loading: false, ready: false, canGoBack: false, error: null, errors: 0, width: 'full', theme: 'system', slowNetwork: false, waiting: false };
+      const tab: TaskBrowserTab = { id: 'preview-' + ++this.nextId, title: 'New tab', url: '', by: 'you', driver: 'you', agentSessionId: null, generation: 1, loading: false, ready: false, canGoBack: false, canGoForward: false, error: null, errors: 0, width: 'full', theme: 'system', slowNetwork: false, waiting: false };
       this.state = { ...this.state, active: tab.id, tabs: [...this.state.tabs, tab] };
     } else if (input.kind === 'move-tab') {
       const tab = this.state.tabs.find(tab => tab.id === input.tabId);

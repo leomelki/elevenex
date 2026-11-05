@@ -236,6 +236,7 @@ export class BrowserPage {
     return { id: this.id, title, url: this.url, by: this.lease.by, driver: this.lease.driver,
       agentSessionId: this.lease.agentSessionId, generation: this.lease.generation, waiting: this.lease.waiting, loading: this.loading, ready: this.ready,
       canGoBack: !this.destroyed && this.hasContents && this.contents.navigationHistory.canGoBack(), error: this.error,
+      canGoForward: !this.destroyed && this.hasContents && this.contents.navigationHistory.canGoForward(),
       errors: this.errors, width: this.width, theme: this.theme, slowNetwork: this.slowNetwork, ...(this.step ? { step: this.step } : {}),
       ...(this.target ? { target: this.target } : {}) };
   }

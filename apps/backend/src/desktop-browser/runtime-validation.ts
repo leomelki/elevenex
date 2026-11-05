@@ -30,6 +30,7 @@ export const runtimeCommand = z.union([
         'select',
         'close',
         'back',
+        'forward',
         'reload',
         'takeover',
         'outside',

@@ -39,6 +39,7 @@ export class BrowserViewComponent {
   readonly needsTitle = input('The agent needs you here');
   readonly needsText = input('Complete the step, then hand control back to the agent.');
   readonly canGoBack = input(false);
+  readonly canGoForward = input(false);
   readonly loading = input(false);
   readonly addressEditable = input(false);
   readonly pageFocusAvailable = input(true);
@@ -58,6 +59,7 @@ export class BrowserViewComponent {
   readonly sendErrorsRequested = output<void>();
   readonly widthChange = output<'full' | 'phone'>();
   readonly backRequested = output<void>();
+  readonly forwardRequested = output<void>();
   readonly reloadRequested = output<void>();
   readonly moreRequested = output<void>();
   protected readonly driverLabel = computed(() => (this.driver() === 'agent' ? 'Agent driving. Take over and focus page.' : this.driver() === 'needs' ? 'Your turn. Focus page.' : 'You are driving. Focus page.') + ' Shift+Escape returns to browser controls.');
@@ -120,7 +122,7 @@ export class BrowserViewComponent {
   }
   protected navigateAddress(): void {
     const value = this.addressDraft()?.trim();
-    if (value) { this.navigated.emit(value); this.addressDraft.set(null); }
+    if (value) { this.preview()?.nativeElement.focus({ preventScroll: true }); this.navigated.emit(value); this.addressDraft.set(null); }
   }
   protected ask(): void {
     const target = this.picked();

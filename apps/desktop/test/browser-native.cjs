@@ -182,8 +182,18 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   assert.match(state.picked.selector, /button:nth-child/); await delay(50); assert.equal(await visibleCount(), 0);
   assert.equal(await native.executeJavaScript('window.clicks'), 0, 'Picker must consume page input');
   await command({ kind: 'pick', enabled: false });
+  const previousUrl = native.getURL();
   await command({ kind: 'navigate', tabId: first, url: url + '/browser-test?next=1' });
-  await until(async () => (await read()).tabs[0].canGoBack, 'Navigation did not retain history');
+  await until(async () => { const tab = (await read()).tabs[0]; return tab.canGoBack && !tab.loading && native.getURL() === url + '/browser-test?next=1'; }, 'Navigation did not retain history');
+  assert.equal((await read()).tabs[0].canGoForward, false);
+  await command({ kind: 'back', tabId: first });
+  await until(async () => (await read()).tabs[0].canGoForward && !(await read()).tabs[0].loading && native.getURL() === previousUrl, 'Back did not enable forward history');
+  await command({ kind: 'forward', tabId: first });
+  await until(async () => !(await read()).tabs[0].canGoForward && !(await read()).tabs[0].loading && native.getURL() === url + '/browser-test?next=1', 'Forward did not restore the next page');
+  await command({ kind: 'back', tabId: first });
+  await until(async () => (await read()).tabs[0].canGoForward && !(await read()).tabs[0].loading, 'Back did not restore forward history');
+  await command({ kind: 'navigate', tabId: first, url: url + '/browser-test?branch=1' });
+  await until(async () => !(await read()).tabs[0].canGoForward && !(await read()).tabs[0].loading && native.getURL().includes('branch=1'), 'New navigation did not clear forward history');
   await native.executeJavaScript("localStorage.setItem('profile-probe','task-profile-value')");
   await command({ kind: 'open', url: url + '/browser-test?second=1' });
   const secondPage=await until(()=>webContents.getAllWebContents().find(contents=>contents.getURL().includes('second=1')),'Second profile tab did not load');
@@ -193,7 +203,7 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   // Every picker exit must release native interception, including closing a sibling.
   const sibling = await command({ kind: 'new-tab' });
   await command({ kind: 'select', tabId: first });
-  for (const exit of [{ kind: 'close', tabId: sibling.active }, { kind: 'reload', tabId: first }, { kind: 'back', tabId: first }]) {
+  for (const exit of [{ kind: 'close', tabId: sibling.active }, { kind: 'reload', tabId: first }, { kind: 'back', tabId: first }, { kind: 'forward', tabId: first }]) {
     await command({ kind: 'pick', enabled: true });
     await command(exit);
     await until(async () => !(await read()).tabs.find(tab => tab.id === first)?.loading, 'Picker exit navigation did not finish');

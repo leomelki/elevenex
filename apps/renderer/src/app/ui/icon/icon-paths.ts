@@ -47,6 +47,7 @@ export const ICON_PATHS: Readonly<Record<string, string>> = {
   shrink: "M13.5 2.5L9.5 6.5M9.5 3v3.5H13M2.5 13.5l4-4M3 9.5h3.5V13",
   wrap: "M2.5 4h11M2.5 8h9a2 2 0 0 1 0 4H8M9.5 10.5L8 12l1.5 1.5M2.5 12h3",
   back: "M13 8H3M7 4L3 8l4 4",
+  forward: "M3 8h10M9 4l4 4-4 4",
   play: "M5 3.5l7 4.5-7 4.5z",
   cursor: "M3.5 2l9 5.2-4 1.1 2.4 4.3-1.7 1-2.4-4.3-3.3 2.7z",
   target:

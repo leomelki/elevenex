@@ -37,6 +37,15 @@ async function render(fixture: ComponentFixture<TaskBrowserComponent>): Promise<
 }
 afterEach(() => TestBed.resetTestingModule());
 describe('Task browser start tabs', () => {
+  it.each([undefined, false, true])('enables Forward only with forward history (%s)', async canGoForward => {
+    const { fixture, bridge } = setup([{ ...tab(), canGoForward }]);
+    fixture.componentRef.setInput('active', true); await render(fixture);
+    const forward = fixture.nativeElement.querySelector('[aria-label="Forward"]') as HTMLButtonElement;
+    expect(forward.disabled).toBe(canGoForward !== true);
+    forward.click(); await render(fixture);
+    if (canGoForward) expect(bridge.taskBrowserCommand).toHaveBeenCalledExactlyOnceWith('scope', 1, { kind: 'forward', tabId: 'tab-1' });
+    else expect(bridge.taskBrowserCommand).not.toHaveBeenCalled();
+  });
   it('keeps the page slot clear of replacement content during navigation', async () => {
     const { fixture } = setup([{ ...tab(), url: 'https://example.com/next', loading: true }]);
     fixture.componentRef.setInput('active', true); await render(fixture);
@@ -71,6 +80,17 @@ describe('Task browser start tabs', () => {
     address.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await render(fixture);
     expect(bridge.taskBrowserCommand).toHaveBeenLastCalledWith('scope', 1, { kind: 'navigate', tabId: 'tab-3', url: 'http://localhost:3000' });
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('[aria-label="Page preview"]'));
+  });
+  it('keeps address focus when Enter has no destination', async () => {
+    const { fixture, bridge } = setup([tab()]);
+    fixture.componentRef.setInput('active', true); await render(fixture);
+    const address = fixture.nativeElement.querySelector('[aria-label="Page address"]') as HTMLInputElement;
+    address.value = '   '; address.dispatchEvent(new Event('input')); fixture.detectChanges();
+    address.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await render(fixture);
+    expect(bridge.taskBrowserCommand).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(address);
   });
   it('retains existing tabs and creates a default again only on returning to an empty browser', async () => {
     const { fixture, bridge } = setup([tab('existing')]);
@@ -104,10 +124,11 @@ describe('Detached browser tab intents', () => {
     expect(bridge.taskBrowserCommand).not.toHaveBeenCalled();
   });
   it('keeps detached tabs discoverable without enabling duplicate page controls', async () => {
-    const { fixture, bridge } = setup([{ ...tab('detached'), detached: true }]);
+    const { fixture, bridge } = setup([{ ...tab('detached'), detached: true, canGoForward: true }]);
     fixture.componentRef.setInput('windowContext', context); await render(fixture);
     expect(fixture.nativeElement.querySelector('.detached-placeholder')?.textContent).toContain('Show window');
     expect((fixture.nativeElement.querySelector('[aria-label="Page address"]') as HTMLInputElement).disabled).toBe(true);
+    expect((fixture.nativeElement.querySelector('[aria-label="Forward"]') as HTMLButtonElement).disabled).toBe(true);
     fixture.componentInstance.tabCommand('select', 'detached');
     await vi.waitFor(() => expect(bridge.taskBrowserDetach).toHaveBeenCalledWith('scope', 1, 'detached', context));
     await fixture.componentInstance.returnTab();

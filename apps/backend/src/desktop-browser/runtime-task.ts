@@ -510,7 +510,7 @@ export class RuntimeBrowserTask {
     else {
       const page = this.page(input.tabId);
       if (input.kind === 'navigate') this.authorize(input.url);
-      if (input.kind === 'close' || (page.id === this.active && ['navigate', 'reload', 'back'].includes(input.kind))) this.clearPicker();
+      if (input.kind === 'close' || (page.id === this.active && ['navigate', 'reload', 'back', 'forward'].includes(input.kind))) this.clearPicker();
       if (input.kind === 'select') await this.select(page.id);
       else if (input.kind === 'close') {
         if (this.attention?.tabId === page.id) this.attention = undefined;
@@ -545,6 +545,9 @@ export class RuntimeBrowserTask {
       } else if (input.kind === 'back') {
         page.takeover();
         await page.back();
+      } else if (input.kind === 'forward') {
+        page.takeover();
+        await page.forward();
       } else if (input.kind === 'width') {
         page.width = input.width;
         if (this.presentations.has(page.id)) { this.revision++; return this.state(); }

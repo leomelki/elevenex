@@ -59,6 +59,8 @@ export interface TaskBrowserTab {
   readonly loading: boolean;
   readonly ready: boolean;
   readonly canGoBack: boolean;
+  /** Omitted by older runtimes that do not support forward navigation. */
+  readonly canGoForward?: boolean;
   readonly error: string | null;
   readonly errors: number;
   readonly width: 'full' | 'phone';
@@ -102,7 +104,7 @@ export type TaskBrowserCommand =
   | { readonly kind: 'open'; readonly url: string }
   /** Move an existing tab before another, or to the end. Never replaces the tab set. */
   | { readonly kind: 'move-tab'; readonly tabId: string; readonly beforeTabId: string | null }
-  | { readonly kind: 'select' | 'close' | 'back' | 'reload' | 'takeover' | 'outside' | 'focus'; readonly tabId: string }
+  | { readonly kind: 'select' | 'close' | 'back' | 'forward' | 'reload' | 'takeover' | 'outside' | 'focus'; readonly tabId: string }
   | { readonly kind: 'handoff'; readonly tabId: string; readonly sessionId: number }
   | { readonly kind: 'navigate'; readonly tabId: string; readonly url: string }
   | { readonly kind: 'width'; readonly tabId: string; readonly width: 'full' | 'phone' }

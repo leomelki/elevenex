@@ -31,6 +31,7 @@ export class RuntimeBrowserTab {
   theme: 'light' | 'dark' | 'system' = 'system';
   slowNetwork = false;
   private canGoBack = false;
+  private canGoForward = false;
   private historyPending = false;
   step?: TaskBrowserTab['step'];
   target?: BrowserElement;
@@ -288,9 +289,11 @@ export class RuntimeBrowserTab {
       const history = await this.cdp.send('Page.getNavigationHistory');
       if (this.cdp !== cdp || this.navigation !== navigation) return;
       this.canGoBack = history.currentIndex > 0;
+      this.canGoForward = history.currentIndex < history.entries.length - 1;
       if (history.entries.length > 100) {
         await this.cdp.send('Page.resetNavigationHistory');
         this.canGoBack = false;
+        this.canGoForward = false;
       }
       this.changed();
     } catch {
@@ -329,6 +332,7 @@ export class RuntimeBrowserTab {
       loading: this.loading,
       ready: this.ready,
       canGoBack: this.canGoBack,
+      canGoForward: this.canGoForward,
       error: this.error,
       errors: this.errors,
       width: this.width,
@@ -787,6 +791,9 @@ export class RuntimeBrowserTab {
   async back(): Promise<void> {
     await this.load((page) => page.goBack({ waitUntil: 'domcontentloaded', timeout: 20000 }));
   }
+  async forward(): Promise<void> {
+    await this.load((page) => page.goForward({ waitUntil: 'domcontentloaded', timeout: 20000 }));
+  }
   async destroy(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
@@ -813,6 +820,8 @@ export class RuntimeBrowserTab {
     this.snapshotPending = undefined;
     this.completeFrame(null);
     this.crashed = false;
+    this.canGoBack = false;
+    this.canGoForward = false;
     this.error = null;
     this.loading = true;
     this.takeover();

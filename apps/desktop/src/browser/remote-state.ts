@@ -87,6 +87,7 @@ function tab(value: unknown): TaskBrowserTab {
     loading: boolean(raw["loading"]),
     ready: boolean(raw["ready"]),
     canGoBack: boolean(raw["canGoBack"]),
+    canGoForward: raw["canGoForward"] === undefined ? false : boolean(raw["canGoForward"]),
     error: raw["error"] === null ? null : text(raw["error"], 400),
     errors: integer(raw["errors"], 0, 999),
     slowNetwork: boolean(raw["slowNetwork"]),

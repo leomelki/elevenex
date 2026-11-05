@@ -29,6 +29,9 @@ test('navigation and tools reject privileged protocols, credentials, unknown fie
   assert.equal(loopback(new URL('https://example.com')), false);
   assert.equal(browserUrl('https://example.com/'), 'https://example.com/');
   assert.deepEqual(command({ kind: 'new-tab' }), { kind: 'new-tab' });
+  assert.deepEqual(command({ kind: 'forward', tabId: id }), { kind: 'forward', tabId: id });
+  assert.throws(() => command({ kind: 'forward', tabId: id, url: 'https://example.com' }));
+  assert.throws(() => command({ kind: 'forward', tabId: 'missing' }));
   assert.throws(() => command({ kind: 'new-tab', url: 'file:///etc/passwd' }));
   assert.throws(() => agentCommand({ kind: 'new-tab' }));
   assert.throws(() => command({ kind: 'open', url: 'https://example.com', preload: '/tmp/unsafe' }));
@@ -141,6 +144,11 @@ test('remote browser replies are bounded, resource matched and content allowlist
   const value={taskId:1,revision:1,surfaceEpoch:1,controlsFocus:0,tabs:[],active:null,ports:[],privacy:'content-withheld',picked:null,picking:false,pickerMessage:null,feedback:false,pageText:'never forward this'};
   assert.equal(remoteBrowserState(value,'scope',1).scopeId,'scope');
   assert.equal('pageText' in remoteBrowserState(value,'scope',1),false);
+  const tab = { id, title: 'Page', url: 'https://example.com/', by: 'you', driver: 'you', agentSessionId: null, generation: 1, loading: false, ready: true, canGoBack: true, error: null, errors: 0, width: 'full', theme: 'system', slowNetwork: false, waiting: false };
+  const withTab = { ...value, tabs: [tab], active: id };
+  assert.equal(remoteBrowserState(withTab, 'scope', 1).tabs[0].canGoForward, false);
+  assert.equal(remoteBrowserState({ ...withTab, tabs: [{ ...tab, canGoForward: true }] }, 'scope', 1).tabs[0].canGoForward, true);
+  assert.throws(() => remoteBrowserState({ ...withTab, tabs: [{ ...tab, canGoForward: 'true' }] }, 'scope', 1));
   for(const invalid of [{...value,taskId:2},{...value,ports:Array(33).fill(80)},{...value,ports:[0]},{...value,privacy:'masked'},{...value,revision:Infinity},{...value,picked:{selector:'input[value=secret]',tag:'input',x:0,y:0,width:1,height:1}},{...value,attention:{kind:'eval',message:'x',outside:true}}])assert.throws(()=>remoteBrowserState(invalid,'scope',1));
 });
 

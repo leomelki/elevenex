@@ -27,6 +27,7 @@ export default async function* (capture) {
     assert.equal((await state()).tabs.at(-1).url, '');
     yield { name: `${theme}-address-draft`, selector: 'ex-task-browser' };
     await capture.press('Enter');
+    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Page preview');
     await capture.waitFor(() => document.querySelector('ex-task-browser [role="alert"]'));
     assert.equal((await state()).tabs.at(-1).url, 'https://example.com');
     yield { name: `${theme}-navigation-preview-error`, selector: 'ex-task-browser' };
