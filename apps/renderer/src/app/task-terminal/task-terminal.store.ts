@@ -158,7 +158,7 @@ export class TaskTerminalStore {
     if (!this.disposed && revision === this.revision)
       this.timer = setTimeout(() => void this.refreshLoop(revision), 1800);
   }
-  async create(scriptId?: string): Promise<void> {
+  async create(scriptId?: string, shellIntegration = true): Promise<void> {
     const target = this.selection(),
       revision = this.revision;
     if (!target || !this.connected() || this.busy()) return;
@@ -168,6 +168,7 @@ export class TaskTerminalStore {
       const reply = await this.bridge.taskTerminalCreate(target.scopeId, {
         taskId: target.taskId,
         ...(scriptId ? { scriptId } : {}),
+        ...(shellIntegration ? {} : { shellIntegration: false }),
       });
       if (!this.currentSelection(target, revision)) return;
       if (reply.ok) {

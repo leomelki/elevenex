@@ -1,5 +1,10 @@
 import { TerminalSurface } from './terminal-surface';
 
+// xterm installs media listeners at import time. The test runner's partial
+// matchMedia shim lacks these methods; establish them before static imports.
+vi.hoisted(() => vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} })));
+afterAll(() => vi.unstubAllGlobals());
+
 // Real ANSI parsing and buffer reflow; only container measurement needs a browser.
 describe('Terminal output geometry', () => {
   function setup() {

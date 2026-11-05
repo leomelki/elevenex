@@ -1,4 +1,5 @@
 import { TerminalStylePolicy } from "./terminal-style-nonce";
+import { CdkMenuTrigger } from '@angular/cdk/menu';
 import {
   afterRenderEffect,
   ChangeDetectionStrategy,
@@ -15,7 +16,7 @@ import {
 } from "@angular/core";
 import type { TaskTerminal, TerminalBrowserIntent } from "@elevenex/shared";
 import { TerminalViewComponent, type TerminalTab } from "../views";
-import { ButtonComponent } from "../ui";
+import { ButtonComponent, IconComponent, DropdownMenuComponent, DropdownItemComponent } from "../ui";
 import {
   TaskTerminalStore,
   type TerminalSelection,
@@ -45,7 +46,7 @@ export interface TerminalQuestion {
 @Component({
   selector: "ex-task-terminal",
   providers: [TaskTerminalStore],
-  imports: [TerminalViewComponent, ButtonComponent],
+  imports: [TerminalViewComponent, ButtonComponent, IconComponent, DropdownMenuComponent, DropdownItemComponent, CdkMenuTrigger],
   templateUrl: "./task-terminal.component.html",
   styleUrl: "./task-terminal.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -65,6 +66,7 @@ export class TaskTerminalComponent {
   private readonly styles = inject(TerminalStylePolicy);
   private focusOnAttach = false;
   private readonly host = viewChild<ElementRef<HTMLElement>>("surface");
+  private readonly optionsMenu = viewChild(CdkMenuTrigger);
   private readonly surfaces = new Map<string, SurfaceEntry>();
   private attached?: SurfaceEntry;
   private revision = 0;
@@ -88,7 +90,8 @@ export class TaskTerminalComponent {
       branch: row.branch,
       cmd: row.command,
       status:
-        row.status === "unavailable" || row.status === "exited"
+        row.status === "unavailable" || row.status === "exited" ||
+        (row.status === 'running' && row.shellIntegration !== undefined && row.shellIntegration !== 'active')
           ? "idle"
           : row.status,
       ...(row.port ? { port: row.port } : {}),
@@ -111,6 +114,11 @@ export class TaskTerminalComponent {
       this.store.loading(),
   );
   constructor() {
+    afterRenderEffect(() => {
+      this.visible(); this.available(); this.store.selection();
+      const menu = this.optionsMenu();
+      untracked(() => menu?.close());
+    });
     afterRenderEffect(() => {
       const machine = this.machineId();
       if (this.lastMachine !== machine) {
@@ -388,9 +396,9 @@ export class TaskTerminalComponent {
     if (entry?.terminal.id === Number(id) && this.canType(entry))
       entry.input.push("\x03");
   }
-  async create(scriptId?: string): Promise<void> {
+  async create(scriptId?: string, shellIntegration = true): Promise<void> {
     this.focusOnAttach = true;
-    await this.store.create(scriptId);
+    await this.store.create(scriptId, shellIntegration);
     requestAnimationFrame(() => this.attached?.surface.focus());
   }
   private async open(signal: AbortSignal): Promise<void> {

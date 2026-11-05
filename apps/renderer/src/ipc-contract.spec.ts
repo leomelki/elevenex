@@ -136,6 +136,9 @@ function checkUpload(invoke: <K extends keyof import('@elevenex/shared').InvokeC
 void checkUpload;
 
 function checkTerminals(invoke: import('@elevenex/shared').Invoke) {
+  void invoke('task-terminal:create', 'scope', { taskId: 1, shellIntegration: false });
+  // @ts-expect-error Shell integration is a bounded boolean, not a script or command.
+  void invoke('task-terminal:create', 'scope', { taskId: 1, shellIntegration: 'source ~/.zshrc' });
   void invoke('task-terminal:read', 'scope', { taskId: 1, terminalId: 2, generation: null, after: 0 });
   // @ts-expect-error Every keystroke names its backend scope and process generation.
   void invoke('task-terminal:input', 'scope', { taskId: 1, terminalId: 2, data: 'hello' });

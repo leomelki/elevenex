@@ -3,6 +3,7 @@ export interface TaskTerminalTarget {
   readonly taskId: number;
   readonly terminalId: number;
 }
+export type TaskTerminalShellIntegration = 'pending' | 'active' | 'disabled' | 'unsupported' | 'unavailable';
 export interface TaskTerminal {
   readonly id: number;
   readonly taskId: number;
@@ -25,6 +26,8 @@ export interface TaskTerminal {
   readonly port: number | null;
   readonly protocol?: "http" | "https";
   readonly canRerun: boolean;
+  /** Optional on older engines; never required for terminal input/output. */
+  readonly shellIntegration?: TaskTerminalShellIntegration;
 }
 export interface TaskTerminalScript {
   readonly id: string;
@@ -36,6 +39,7 @@ export interface TaskTerminalList {
   readonly terminals: readonly TaskTerminal[];
   readonly scripts: readonly TaskTerminalScript[];
   readonly limit: number;
+  readonly shellIntegrationControl?: boolean;
 }
 export interface TaskTerminalRead extends TaskTerminalTarget {
   readonly generation: string | null;
@@ -59,6 +63,8 @@ export interface TaskTerminalOutput {
 export interface TaskTerminalCreate {
   readonly taskId: number;
   readonly scriptId?: string;
+  /** False starts the user's ordinary shell without injecting command hooks. */
+  readonly shellIntegration?: boolean;
 }
 export interface TaskTerminalInput extends TaskTerminalTarget {
   readonly generation: string;

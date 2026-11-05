@@ -74,6 +74,10 @@ export function parseTaskTerminal(
     const protocol = value["protocol"];
     if (protocol !== undefined && protocol !== "http" && protocol !== "https")
       throw invalidResponse();
+    const shellIntegration = value['shellIntegration'];
+    if (shellIntegration !== undefined && shellIntegration !== 'pending' && shellIntegration !== 'active' &&
+        shellIntegration !== 'disabled' && shellIntegration !== 'unsupported' && shellIntegration !== 'unavailable')
+      throw invalidResponse();
     const port =
       value["port"] === null ? null : integer(value["port"], 1, 65535);
     if (status === "serving" && port === null) throw invalidResponse();
@@ -94,6 +98,7 @@ export function parseTaskTerminal(
       port,
       ...(protocol === undefined ? {} : { protocol }),
       canRerun: value["canRerun"],
+      ...(shellIntegration === undefined ? {} : { shellIntegration }),
     };
   } catch {
     throw invalidResponse();
@@ -129,7 +134,11 @@ export function parseTerminalList(
     });
     if (new Set(scripts.map((row) => row.id)).size !== scripts.length)
       throw invalidResponse();
-    return { taskId: task, terminals, scripts, limit: 16 };
+    const control = value['shellIntegrationControl'];
+    if (control !== undefined && typeof control !== 'boolean') throw invalidResponse();
+    return { taskId: task, terminals, scripts, limit: 16,
+      ...(control === undefined ? {} : { shellIntegrationControl: control }),
+    };
   } catch {
     throw invalidResponse();
   }
@@ -220,7 +229,10 @@ export function registerTaskTerminalIpc(
     handleForWindow("task-terminal:create", trusted, (window, ...args) => {
       const scopeId = scope(args),
         value = object(args[1]);
-      keys(value, ["taskId", "scriptId"]);
+      keys(value, ["taskId", "scriptId", "shellIntegration"]);
+      const shellIntegration = value['shellIntegration'];
+      if (shellIntegration !== undefined && typeof shellIntegration !== 'boolean')
+        throw new Error('Invalid shell integration option');
       const task = integer(value["taskId"], 1),
         script =
           value["scriptId"] === undefined
@@ -239,7 +251,9 @@ export function registerTaskTerminalIpc(
               {
                 path: path(task),
                 method: "POST",
-                body: { ...(script === undefined ? {} : { scriptId: script }), ...(lifetime ? { owner: lifetime.owner } : {}) },
+                body: { ...(script === undefined ? {} : { scriptId: script }),
+                  ...(shellIntegration === undefined ? {} : { shellIntegration }),
+                  ...(lifetime ? { owner: lifetime.owner } : {}) },
                 limit: 16384,
               },
               signal,

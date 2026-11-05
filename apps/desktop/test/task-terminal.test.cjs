@@ -22,6 +22,11 @@ test('terminal replies validate task, generation, ordered offsets and bounds', (
   assert.throws(() => parseTerminalList({ taskId: 1, terminals: [terminal, terminal], scripts: [], limit: 16 }, 1));
   assert.throws(() => parseTaskTerminal({ ...terminal, status: 'serving' }, 1));
   assert.throws(() => parseTaskTerminal({ ...terminal, protocol: 'file' }, 1));
+  for (const shellIntegration of ['pending', 'active', 'disabled', 'unsupported', 'unavailable'])
+    assert.equal(parseTaskTerminal({ ...terminal, shellIntegration }, 1).shellIntegration, shellIntegration);
+  assert.throws(() => parseTaskTerminal({ ...terminal, shellIntegration: 'ready' }, 1));
+  assert.equal(parseTerminalList({ taskId: 1, terminals: [], scripts: [], limit: 16, shellIntegrationControl: true }, 1).shellIntegrationControl, true);
+  assert.throws(() => parseTerminalList({ taskId: 1, terminals: [], scripts: [], limit: 16, shellIntegrationControl: 'yes' }, 1));
 });
 
 test('named terminal IPC keeps credentials/main scope, validates inputs and never replays mutations', async context => {
@@ -61,8 +66,11 @@ test('named terminal IPC keeps credentials/main scope, validates inputs and neve
   assert.throws(() => create(event, scope, { taskId: 1, owner: generation }));
   assert.equal((await create(event, scope, { taskId: 1 })).value.id, terminal.id);
   assert.deepEqual(requests.at(-1).body, { owner: lifetime.owner });
+  assert.throws(() => create(event, scope, { taskId: 1, shellIntegration: 'off' }));
+  assert.equal((await create(event, scope, { taskId: 1, shellIntegration: false })).value.id, terminal.id);
+  assert.deepEqual(requests.at(-1).body, { owner: lifetime.owner, shellIntegration: false });
   assert.equal((await input(event, scope, { taskId: 1, terminalId: 2, generation, data: 'hello\r' })).error.code, 'outcome-unknown');
-  assert.equal(requests.filter(req => req.method === 'POST').length, 2);
+  assert.equal(requests.filter(req => req.method === 'POST').length, 3);
   assert.ok(requests.every(req => req.auth === 'private'));
   target = { ...target, identity: 'two' }; client.refresh(11);
   assert.equal((await list(event, scope, 1)).error.code, 'stale-scope');

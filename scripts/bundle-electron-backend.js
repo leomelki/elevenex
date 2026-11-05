@@ -1,4 +1,4 @@
-const { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } = require('fs');
+const { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } = require('fs');
 const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..');
@@ -106,6 +106,9 @@ async function main() {
 
   rmSync(backendBundleRoot, { recursive: true, force: true });
   mkdirSync(backendBundleRoot, { recursive: true });
+  // Runtime-read shell adapters must travel with the single-file backend.
+  cpSync(path.join(backendRoot, 'src/user-terminal/shell-integration/scripts'),
+    path.join(backendBundleRoot, 'shell-integration/scripts'), { recursive: true });
 
   const esbuild = require(findEsbuildModule());
   await esbuild.build({

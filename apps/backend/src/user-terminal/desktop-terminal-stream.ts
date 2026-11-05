@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { TerminalOutputBuffer } from '../terminal/terminal-output-buffer.js';
+import {
+  TerminalOutputEvents,
+  type TerminalOutputEvent,
+} from './terminal-output-events.js';
+import type { ShellIntegrationState } from './desktop-shell-integration.js';
 
 export const DESKTOP_TERMINAL_INITIAL_SIZE = { cols: 80, rows: 24 } as const;
 
@@ -18,14 +23,27 @@ export class DesktopTerminalStream {
   port: number | null = null;
   protocol: 'http' | 'https' | undefined;
   command: string;
-  private pendingLine = '';
-  private reliableLine = true;
   private rerunCommand: string | null = null;
-  private pasteMarker = '';
-  private bracketedPaste = false;
-  private parserTail = '';
   private processExited = false;
   private promptReady = false;
+  private commandStarted = false;
+  private submittedInput = false;
+  private typeahead = false;
+  private inputDuringCommand = false;
+  private readonly events: TerminalOutputEvents;
+  private integrationState?: ShellIntegrationState;
+  private integrationStarted = Date.now();
+
+  get integration(): ShellIntegrationState | undefined {
+    return this.integrationState === 'pending' &&
+      Date.now() - this.integrationStarted >= 10000
+      ? 'unavailable'
+      : this.integrationState;
+  }
+  configureIntegration(state: ShellIntegrationState): void {
+    this.integrationState = state;
+    this.integrationStarted = Date.now();
+  }
 
   constructor(
     readonly script: {
@@ -34,64 +52,70 @@ export class DesktopTerminalStream {
       args: string[];
       cmd: string;
     } | null = null,
-    private readonly promptToken: string | null = null,
+    promptToken: string | null = null,
   ) {
     this.command = script?.cmd ?? '';
+    this.events = new TerminalOutputEvents(promptToken);
+    if (!script && promptToken) this.integrationState = 'pending';
   }
   append(data: string): void {
     this.sequence += data.length;
     this.output.append(data);
     this.trimSizes();
-    const tailLength = this.parserTail.length;
-    const text = this.parserTail + data;
-    // Consume status and service hints in wire order. Only our process-specific
-    // hook token can enable command capture; ordinary/nested OSC 133 is display data.
-    // This distinguishes untrusted output, not hostile programs with same-user OS access.
-    const events =
-      // eslint-disable-next-line no-control-regex -- Parse PTY protocol delimiters.
-      /\x1b\]133;([BCD]);([a-f\d-]{36})(?:;(\d{1,3}))?\x07|(https?):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{1,5})(?=[/\s\x1b]|$)/g;
-    for (const match of text.matchAll(events)) {
-      if ((match.index ?? 0) + match[0].length <= tailLength) continue;
-      if (match[1]) {
-        if (this.script || this.processExited || match[2] !== this.promptToken)
-          continue;
-        if (match[1] === 'B') this.promptReady = true;
-        else {
-          this.promptReady = false;
-          this.port = null;
-          this.protocol = undefined;
-          if (match[1] === 'C') {
-            this.status = 'running';
-            this.exitCode = null;
-          } else {
-            this.exitCode = Math.min(255, Number(match[3] ?? 0));
-            this.status = this.exitCode ? 'failed' : 'idle';
-          }
-        }
+    this.events.append(data, (event) => this.outputEvent(event));
+  }
+  private outputEvent(event: TerminalOutputEvent): void {
+    if (this.processExited) return;
+    if (event.type === 'service') {
+      if (this.status === 'running' || this.status === 'serving') {
+        this.port = event.port;
+        this.protocol = event.protocol;
+        this.status = 'serving';
+      }
+      return;
+    }
+    if (
+      this.script ||
+      this.integrationState === 'disabled' ||
+      this.integrationState === 'unsupported'
+    )
+      return;
+    if (event.type === 'disabled') {
+      this.integrationState = 'disabled';
+      this.promptReady = false;
+      this.rerunCommand = null;
+      return;
+    }
+    this.integrationState = 'active';
+    if (event.type === 'command') {
+      this.command = event.command ?? 'Shell command';
+      this.rerunCommand = (
+        this.commandStarted ? this.inputDuringCommand : this.typeahead
+      )
+        ? null
+        : event.command;
+    } else if (event.type === 'ready') {
+      this.promptReady = true;
+      this.submittedInput = false;
+      this.typeahead = false;
+      this.inputDuringCommand = false;
+    } else {
+      this.promptReady = false;
+      this.port = null;
+      this.protocol = undefined;
+      if (event.type === 'started') {
+        this.commandStarted = true;
+        this.inputDuringCommand = this.typeahead;
+        this.submittedInput = false;
+        this.typeahead = false;
+        this.status = 'running';
+        this.exitCode = null;
       } else {
-        const port = Number(match[5]);
-        if (
-          port > 0 &&
-          port <= 65535 &&
-          !this.processExited &&
-          (this.status === 'running' || this.status === 'serving')
-        ) {
-          this.port = port;
-          this.protocol = match[4] === 'https' ? 'https' : 'http';
-          this.status = 'serving';
-        }
+        this.commandStarted = false;
+        this.exitCode = event.code;
+        this.status = event.code ? 'failed' : 'idle';
       }
     }
-    // Only retain an incomplete suffix. Complete status markers cannot run twice.
-    const start = text.lastIndexOf('\x1b]133;');
-    this.parserTail =
-      start >= 0 && !text.slice(start).includes('\x07')
-        ? text.slice(start, start + 128)
-        : text.slice(
-            start >= 0
-              ? Math.max(text.indexOf('\x07', start) + 1, text.length - 100)
-              : -100,
-          );
   }
   resize(cols: number, rows: number): void {
     const last = this.sizes[this.sizes.length - 1];
@@ -112,64 +136,23 @@ export class DesktopTerminalStream {
       this.sizes.shift();
   }
   input(data: string): void {
-    // Keystrokes while a foreground program runs may be passwords or REPL input.
-    // Only a shell prompt can establish a repeatable user command.
-    if (this.script || this.processExited || !this.promptReady) return;
-    for (const char of data) {
-      if (!this.promptReady) break;
-      // xterm wraps paste in these markers. They may cross input requests and
-      // are framing, not shell edits. All other escape sequences remain unsafe.
-      if (char === '\x1b' || this.pasteMarker) {
-        this.pasteMarker += char;
-        if (this.pasteMarker === '\x1b[200~') {
-          if (this.bracketedPaste) this.reliableLine = false;
-          this.bracketedPaste = true;
-          this.pasteMarker = '';
-        } else if (this.pasteMarker === '\x1b[201~') {
-          if (!this.bracketedPaste) this.reliableLine = false;
-          this.bracketedPaste = false;
-          this.pasteMarker = '';
-        } else if (
-          !'\x1b[200~'.startsWith(this.pasteMarker) &&
-          !'\x1b[201~'.startsWith(this.pasteMarker)
-        ) {
-          this.reliableLine = false;
-          this.pasteMarker = '';
+    // An unfinished/edited prompt must never receive an injected rerun. We only
+    // invalidate readiness here; command text comes exclusively from shell hooks.
+    if (data) {
+      this.promptReady = false;
+      this.rerunCommand = null;
+      if (this.commandStarted) this.inputDuringCommand = true;
+      else {
+        if (this.submittedInput) this.typeahead = true;
+        // Track only submission boundaries, never command text. Data after an
+        // Enter may be program input or an unfinished future prompt; neither
+        // permits an injected rerun until a new shell command is identified.
+        const submission = data.search(/[\r\n]/);
+        if (submission >= 0) {
+          this.submittedInput = true;
+          if (submission < data.length - 1) this.typeahead = true;
         }
-        continue;
       }
-      // Newlines/controls inside a paste are literal editing-buffer content;
-      // never treat them as submission or guess how the shell interpreted them.
-      if (this.bracketedPaste && (char < ' ' || char === '\x7f')) {
-        this.reliableLine = false;
-        continue;
-      }
-      if (char === '\r' || char === '\n') {
-        if (this.pendingLine || !this.reliableLine) {
-          this.command = this.reliableLine ? this.pendingLine : 'Shell command';
-          this.rerunCommand = this.reliableLine ? this.pendingLine : null;
-          this.status = 'running';
-          this.promptReady = false;
-          this.exitCode = null;
-          this.port = null;
-        }
-        this.pendingLine = '';
-        this.reliableLine = true;
-      } else if (char === '\x03') {
-        this.pendingLine = '';
-        this.reliableLine = true;
-      } else if (char === '\x7f' || char === '\b') {
-        // Readline/ZLE deletion depends on character, grapheme and key bindings.
-        // Non-ASCII deletion cannot safely reconstruct the actual shell buffer.
-        if (/[^\x20-\x7e]/.test(this.pendingLine)) this.reliableLine = false;
-        this.pendingLine = this.pendingLine.slice(0, -1);
-      } else if (char === '\x15') {
-        this.pendingLine = '';
-        // Ctrl-U deletes up to the cursor; prior cursor/history edits may leave
-        // text after it. Only an already reliable line is known to be cleared.
-      } else if (char < ' ' || this.pendingLine.length >= 4096)
-        this.reliableLine = false;
-      else this.pendingLine += char;
     }
   }
   exited(code: number): void {
@@ -183,16 +166,10 @@ export class DesktopTerminalStream {
     return (
       this.status === 'failed' &&
       (!!this.script ||
-        (!this.processExited &&
-          this.promptReady &&
-          !this.bracketedPaste &&
-          !this.pasteMarker &&
-          !!this.rerunCommand &&
-          this.pendingLine.length === 0 &&
-          this.reliableLine))
+        (!this.processExited && this.promptReady && !!this.rerunCommand))
     );
   }
-  /** Only input supplied by a person, never a command extracted from process output. */
+  /** Only an authenticated shell-reported command can be repeated. */
   rerunInput(): string | null {
     return this.canRerun && !this.script ? this.rerunCommand + '\r' : null;
   }

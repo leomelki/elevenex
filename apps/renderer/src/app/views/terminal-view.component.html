@@ -1,6 +1,7 @@
 <section class="terminal" tabindex="-1" aria-label="Your terminals" (keydown)="keydown($event)">
   <ex-view-tabs label="Terminal tabs" newLabel="New terminal (⌘T)" [items]="tabs()" [active]="current()?.id" [disabled]="disabled()" [animateEntries]="animateTabs()" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()">
     @if (scripts().length) { <select [disabled]="disabled()" #scriptSelect aria-label="Run a project script" (change)="script(scriptSelect.value); scriptSelect.value = ''"><option value="">Run script…</option>@for (script of scripts(); track script.id) { <option [value]="script.id">{{ script.name }}</option> }</select> }
+    <ng-content select="[terminalActions]" />
     <ex-icon-button class="find-trigger" icon="search" label="Find in terminal (⌘F)" size="sm" [active]="findOpen()" (pressed)="find()" />
   </ex-view-tabs>
   <ex-fold [open]="toolbarOpen()">

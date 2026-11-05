@@ -47,8 +47,8 @@ export async function prepareDevelopmentBackend(root, run, { linuxArchitecture, 
   const directory = join(root, 'apps/desktop/.stage/development-backend');
   await rm(directory, { recursive: true, force: true });
   await mkdir(directory, { recursive: true });
-  for (const file of ['main.cjs', 'main.cjs.map', 'pi-agent-extension.mjs']) {
-    await cp(join(backend, 'bundle', file), join(directory, file));
+  for (const file of ['main.cjs', 'main.cjs.map', 'pi-agent-extension.mjs', 'shell-integration']) {
+    await cp(join(backend, 'bundle', file), join(directory, file), { recursive: true });
   }
   // Keep native modules on the launching Node ABI, and serve checkout assets.
   // These links are development-only; packaging retains its curated assembly.

@@ -1,0 +1,31 @@
+if [[ -n "$ELEVENEX_USER_ZDOTDIR" ]]; then
+  ZDOTDIR="$ELEVENEX_USER_ZDOTDIR"
+else
+  unset ZDOTDIR
+fi
+[[ -r "${ZDOTDIR:-$HOME}/.zshrc" ]] && builtin source "${ZDOTDIR:-$HOME}/.zshrc"
+builtin cd -- "$ELEVENEX_USER_CWD" || exit 1
+if [[ "${ELEVENEX_TERMINAL_SHELL_INTEGRATION-}" == 0 ]]; then
+  builtin printf '\033]133;X;__ELEVENEX_TOKEN__\007'
+  return
+fi
+
+# preexec receives the submitted command after history/cursor editing. Never
+# reconstruct a command from terminal keystrokes or inspect foreground input.
+function _elevenex_user_preexec() {
+  builtin emulate -L zsh
+  local LC_ALL=C command="$1"
+  if (( ${#command} > 4096 )) || [[ "$command" == *[$'\001'-$'\037'$'\177']* ]]; then
+    command=''
+  fi
+  command=${command//\\/\\\\}
+  command=${command//;/\\x3b}
+  builtin printf '\033]133;E;__ELEVENEX_TOKEN__;%s\007\033]133;C;__ELEVENEX_TOKEN__\007' "$command"
+}
+function _elevenex_user_precmd() {
+  local result=$?
+  builtin printf '\033]133;D;__ELEVENEX_TOKEN__;%s\007\033]133;B;__ELEVENEX_TOKEN__\007' "$result"
+}
+builtin autoload -Uz add-zsh-hook
+add-zsh-hook preexec _elevenex_user_preexec
+add-zsh-hook precmd _elevenex_user_precmd

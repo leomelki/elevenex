@@ -5,6 +5,10 @@ import { BackendClientService, ELEVENEX_BRIDGE } from '../backend/backend-client
 import { TaskTerminalComponent } from './task-terminal.component';
 import { TerminalSurface } from './terminal-surface';
 
+// xterm installs media listeners at import time, before per-test setup runs.
+vi.hoisted(() => vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} })));
+afterAll(() => vi.unstubAllGlobals());
+
 async function settle(fixture: ComponentFixture<TaskTerminalComponent>) {
   for (let pass = 0; pass < 30; pass++) { await Promise.resolve(); fixture.detectChanges(); }
   await fixture.whenStable();

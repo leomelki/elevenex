@@ -66,8 +66,13 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     shell: string,
     script: DesktopTerminalStream['script'] = null,
     generation = this.getGeneration(id),
+    shellIntegration = true,
   ): Promise<void> {
-    if (this.shuttingDown || this.strictStops.has(id) || generation !== this.getGeneration(id))
+    if (
+      this.shuttingDown ||
+      this.strictStops.has(id) ||
+      generation !== this.getGeneration(id)
+    )
       throw new Error('Terminal startup was cancelled');
     if (
       this.desktopStreams.has(id) ||
@@ -88,8 +93,11 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     const promise = Promise.resolve()
       .then(async () => {
         const baseEnv = {
-          ...(await buildAugmentedEnvAsync(process.env, cwd)),
+          ...stripInheritedTmuxEnv(
+            await buildAugmentedEnvAsync(process.env, cwd),
+          ),
           ELEVENEX_USER_CWD: cwd,
+          TERM_PROGRAM: 'elevenex',
         };
         const integration = script
           ? { args: script.args, env: baseEnv, cleanup: async () => {} }
@@ -97,7 +105,10 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
               normalizeShellForPlatform(shell),
               baseEnv,
               promptToken,
+              shellIntegration,
             );
+        if ('integration' in integration)
+          stream.configureIntegration(integration.integration);
         this.desktopCleanup.set(id, integration.cleanup);
         if (
           this.shuttingDown ||
@@ -467,7 +478,10 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       this.desktopStreams.get(terminalId)?.exited(exitCode);
       const cleanup = this.desktopCleanup.get(terminalId);
       this.desktopCleanup.delete(terminalId);
-      if (cleanup) void cleanup();
+      if (cleanup)
+        void cleanup().catch(() =>
+          this.logger.warn('Terminal integration cleanup failed'),
+        );
       this.processes.delete(terminalId);
       if (!this.pendingKills.get(terminalId)?.has(ptyProcess)) {
         this.gateway.onProcessExit(terminalId);
@@ -570,7 +584,8 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   async destroy(terminalId: number, requireStopped = false): Promise<boolean> {
     const cleanup = this.desktopCleanup.get(terminalId);
     this.desktopCleanup.delete(terminalId);
-    if (cleanup) await cleanup();
+    // Retire the process before asynchronous adapter cleanup. An unavailable
+    // temporary directory must never keep a shell alive or revive a launch.
     this.generations.set(terminalId, this.getGeneration(terminalId) + 1);
     if (requireStopped) this.strictStops.add(terminalId);
     try {
@@ -614,6 +629,10 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       return true;
     } finally {
       if (requireStopped) this.strictStops.delete(terminalId);
+      if (cleanup)
+        await cleanup().catch(() =>
+          this.logger.warn('Terminal integration cleanup failed'),
+        );
     }
   }
 

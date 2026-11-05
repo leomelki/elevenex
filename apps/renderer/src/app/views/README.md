@@ -27,8 +27,10 @@ Reduced motion stops the cursor pulse, tab breathing and target travel. The
 isolated `BrowserDemo` measures its sample button with an owned ResizeObserver;
 the production browser owner must supply its own page coordinates.
 
-`TerminalView` accepts `[terminalContent]` for the [production user-terminal adapter](../task-terminal/README.md). Its text
-preview uses escaped `TerminalLine` objects and CDK virtualization, bounded to the
+`TerminalView` accepts `[terminalContent]` for the [production user-terminal adapter](../task-terminal/README.md).
+Its `[terminalActions]` slot projects owner-supplied toolbar actions beside Find; the
+owner retains menu lifecycle, capability checks and typed platform operations.
+Its text preview uses escaped `TerminalLine` objects and CDK virtualization, bounded to the
 latest 2,000 lines; any omitted history is labelled. It emits typed script,
 failure, port and stop intents. Ports are validated before emitting `portOpened`.
 Do not put the agent's tool output in this view. `disabled`, `askDisabled` and

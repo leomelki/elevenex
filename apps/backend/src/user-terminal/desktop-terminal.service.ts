@@ -182,6 +182,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
       port: stream?.port ?? null,
       ...(stream?.protocol ? { protocol: stream.protocol } : {}),
       canRerun: stream?.canRerun ?? false,
+      ...(stream?.integration ? { shellIntegration: stream.integration } : {}),
     };
   }
   /** Only the root manifest, bounded bytes/rows; never run discovery scripts. */
@@ -255,6 +256,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
       terminals: rows.map((row) => this.view(task, row)),
       scripts: scripts.map(({ id, name, cmd }) => ({ id, name, cmd })),
       limit: 16,
+      shellIntegrationControl: true,
     };
   }
   create(taskId: number, value: unknown) {
@@ -265,7 +267,11 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
   private async createInternal(taskId: number, value: unknown) {
     const input = terminalObject(value);
     if (
-      Object.keys(input).some((key) => key !== 'scriptId' && key !== 'owner') ||
+      Object.keys(input).some(
+        (key) => !['scriptId', 'owner', 'shellIntegration'].includes(key),
+      ) ||
+      (input.shellIntegration !== undefined &&
+        typeof input.shellIntegration !== 'boolean') ||
       (input.scriptId !== undefined &&
         (typeof input.scriptId !== 'string' || input.scriptId.length > 100))
     )
@@ -306,6 +312,9 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
         ...(script ? { name: script.name } : {}),
       });
       id = terminal.id;
+      // Ownership validation is async; cleanup must retire this launch rather
+      // than letting it acquire a newer cancellation fence afterward.
+      const fence = this.ptys.getGeneration(id);
       // Path-based legacy creation is reconciled against the durable owner before spawn.
       const latest = await this.task(taskId, true);
       if (
@@ -318,6 +327,8 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
         latest.path,
         terminal.shell,
         script ?? null,
+        fence,
+        input.shellIntegration !== false,
       );
       const final = await this.task(taskId, true);
       if (final.path !== latest.path)

@@ -4,6 +4,91 @@
 > in chat/PR descriptions and keep run artifacts under ignored `artifacts/`, as
 > described in the root `AGENTS.md`. Earlier results do not verify current code.
 
+## Optional shell integration architecture, 2026-11-05
+
+Separated terminal bytes/geometry/process lifetime from optional shell metadata.
+Shell-specific scripts are immutable assets owned by the backend launch adapter;
+preparation failure, unsupported shells and explicit opt-out start ordinary
+shells. Tracking state is additive metadata and never disables typing. The new
+capability-gated Terminal options menu offers a separate plain shell, using the
+same process ownership and cleanup. Its projected actions use the existing CDK
+menu primitives and close on pane/selection changes.
+
+Removed keystroke reconstruction. Zsh preexec reports the submitted command;
+Bash accepts only a newly added history entry after completion. Ignored history,
+invalid/oversize/control-containing commands and uncertain prompt input disable
+rerun rather than guessing. Hook tokens stay private, user hooks/DEBUG traps and
+history settings are preserved, and rc suppression leaves the user's ZDOTDIR
+intact. Process cancellation precedes asynchronous adapter cleanup; failure to
+remove temporary files cannot prevent the PTY from stopping.
+Additional input during execution or after a submission conservatively disables
+rerun, including single-packet and queued type-ahead. A late Bash command report
+cannot reauthorize it against an uncertain future prompt.
+
+Validation passed: desktop lint/build, 138 platform tests, 7 capture-tool tests,
+664 renderer tests and TypeScript IPC contracts; 88 user-terminal backend tests,
+focused backend lint and the production backend build. Real PTYs cover Bash 3.2,
+available modern Bash and zsh, history recall, ignored commands, password input,
+saved history, BASH_REMATCH, DEBUG/prompt hooks, plain mode and cleanup failure.
+Nest and bundled runtime shell assets were checked against their source files.
+Native macOS Electron smoke passed with production assets and its disposable
+transport fixture.
+
+Changed backend files pass focused lint. A broader exploratory lint of the
+untouched legacy PTY-manager spec still reports its existing unsafe-mock and
+require-await diagnostics; that spec was left unchanged. The final cleanup
+regression uses a real PTY through the service's public lifecycle instead.
+
+The [native options/fallback report](../../artifacts/desktop-capture/task85-shell-options-stable/report.json)
+has `verified: true`, six checkpoints, no errors and no warnings. All six PNGs
+were inspected. They cover light/dark themes, narrow reduced-motion layout,
+typing with unavailable tracking, keyboard menu selection, Escape focus return,
+plain-terminal creation/typing and menu teardown when the pane closes. The
+preview uses controlled backend replies; it is separate from the real-PTY tests.
+An earlier capture was interrupted by preview HMR and was rerun after it settled.
+These checks do not establish live SSH terminal sessions, packaged-app launch
+or Windows/Linux runtime behavior. No dependencies or security relaxations were
+introduced.
+
+## Task terminal review, 2026-11-05
+
+Reproduced and fixed four additional cases: an astral character could overflow
+the captured-command metadata limit; the zsh wrapper skipped `.zshenv` and its
+redirected rc directory; a new launch could acquire a cancellation fence already
+retired by task cleanup; and choosing a second serving terminal while the first
+service was opening could skip that opening or accept stale busy/error state.
+Focused regressions fail against the previous behavior and pass with the fixes.
+The xterm buffer/attachment tests now establish media listeners before imports,
+removing their dependency on the test runner's incomplete `matchMedia` shim.
+
+Desktop lint, production build and the full desktop runner pass: 138 platform
+tests, 7 capture-tool tests and 663 renderer tests, including TypeScript contract
+checking. All 70 user-terminal backend tests pass, including real Bash/zsh PTYs
+and controlled cleanup races. Backend production TypeScript and focused backend
+lint pass. Native macOS Electron smoke passes with the built production assets
+and its disposable backend transport fixture.
+
+New native reports all have `verified: true`:
+
+- [Startup and reattachment](../../artifacts/desktop-capture/task85-review-startup/report.json):
+  four light/dark checkpoints, including narrow replay, intentional blank lines,
+  filled output and trusted keyboard input.
+- [Concurrent service handoff](../../artifacts/desktop-capture/task85-review-services/report.json):
+  four light/dark checkpoints with controlled preview replies, a second explicit
+  opening, an earlier rejection, and narrow reduced-motion layout.
+- [Terminal rendering](../../artifacts/desktop-capture/task85-review-rendering-route/report.json):
+  eleven checkpoints covering cell geometry, keyboard input, Find across wrapped
+  text, retained selection and GPU fallback. Its sole warning is the deliberately
+  induced GPU context loss.
+
+Inspected startup/filled, service pending/completed, light/default, dark/narrow,
+GPU-fallback and wrapped-Find PNGs. Captures use the production components with
+isolated preview data; real backend PTYs are verified separately by the tests.
+These checks do not establish live SSH terminal sessions, packaged-app launch,
+or Windows/Linux runtime behavior. Validation used the locally installed pinned
+pnpm 8.15.4 because the system pnpm launcher stalled; native/loopback checks ran
+outside the sandbox. The preview server was stopped after verification.
+
 ## Immediate final-terminal panel close, 2026-11-03
 
 Closing the final terminal now emits panel dismissal immediately after the store

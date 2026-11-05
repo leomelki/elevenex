@@ -68,6 +68,15 @@ async function setupTerminals() {
   return state;
 }
 
+it('sends the explicit plain-shell choice without changing ordinary launch defaults', async () => {
+  const { store, bridge } = await setupTerminals();
+  bridge.taskTerminalCreate.mockResolvedValue({ ok: true, value: terminal(5) });
+  await store.create();
+  expect(bridge.taskTerminalCreate).toHaveBeenLastCalledWith('scope', { taskId: 1 });
+  await store.create(undefined, false);
+  expect(bridge.taskTerminalCreate).toHaveBeenLastCalledWith('scope', { taskId: 1, shellIntegration: false });
+});
+
 describe("Immediate terminal close", () => {
   it("clears the last tab immediately without entering a loading or busy state", async () => {
     const { store, bridge } = await setupTerminals();

@@ -1,9 +1,15 @@
 import { DesktopTerminalStream } from './desktop-terminal-stream.js';
 
 const token = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const start = `\x1b]133;C;${token}\x07`;
+const start = '\x1b]133;C;' + token + '\x07';
 const prompt = (code: number) =>
-  `\x1b]133;D;${token};${code}\x07\x1b]133;B;${token}\x07`;
+  '\x1b]133;D;' + token + ';' + code + '\x07\x1b]133;B;' + token + '\x07';
+const command = (value: string) =>
+  '\x1b]133;E;' +
+  token +
+  ';' +
+  value.replaceAll('\\', '\\\\').replaceAll(';', '\\x3b') +
+  '\x07';
 
 describe('Desktop terminal process stream', () => {
   it('pages at resize boundaries and carries the grid that produced each page', () => {
@@ -69,163 +75,128 @@ describe('Desktop terminal process stream', () => {
     expect(stream.read('other-generation', next.next).gap).toBe(true);
     expect(stream.read(stream.generation, 400_000).gap).toBe(true);
   });
-  it('uses user input for rerun and never executes a command or URL found in output', () => {
+  it('uses authenticated shell-reported commands after editing rather than keystrokes', () => {
     const stream = new DesktopTerminalStream(null, token);
-    stream.append(`${prompt(0)}`);
-    stream.input('false\r');
-    stream.append(`${start}failure${prompt(1)}`);
-    expect(stream.status).toBe('failed');
-    expect(stream.command).toBe('false');
-    expect(stream.rerunInput()).toBe('false\r');
-    stream.append(`${prompt(1)}rm -rf anything\nhttp://evil.example:3000/`);
-    expect(stream.rerunInput()).toBe('false\r');
-    expect(stream.port).toBeNull();
-    stream.input('\x1b[A\r');
-    stream.append(`${prompt(1)}`);
-    expect(stream.canRerun).toBe(false);
+    stream.append(prompt(0));
+    stream.input('different text\x1b[A\r');
+    expect(stream.command).toBe('');
+    stream.append(command('printf "actual; 🙂"; false') + start + prompt(1));
+    expect(stream.command).toBe('printf "actual; 🙂"; false');
+    expect(stream.rerunInput()).toBe('printf "actual; 🙂"; false\r');
+    stream.input('unfinished\x15');
+    expect(stream.rerunInput()).toBeNull();
+    stream.append(prompt(1));
+    expect(stream.rerunInput()).toBeNull();
   });
-  it('parses split prompt status, detects only bounded localhost ports, and clears serving on exit', () => {
+  it('never captures foreground input, passwords, or a command from ordinary output', () => {
     const stream = new DesktopTerminalStream(null, token);
-    stream.append('\x1b]133;');
-    stream.append(`D;${token};7\x07\x1b]133;B;${token}\x07`);
-    expect(stream.exitCode).toBe(7);
-    stream.append(`${start}Listening http://localhost:4317/\r\n`);
-    expect(stream.port).toBe(4317);
-    expect(stream.protocol).toBe('http');
-    stream.append('Ready https://localhost:9443/\r\n');
-    expect(stream.protocol).toBe('https');
-    expect(stream.status).toBe('serving');
-    stream.exited(0);
-    expect(stream.port).toBeNull();
-    expect(stream.status).toBe('exited');
-    expect(stream.generation).not.toBe(
-      new DesktopTerminalStream(null, token).generation,
-    );
+    stream.append(prompt(0));
+    stream.input('ssh host\rSECRET_PASSWORD\r');
+    stream.append(command('ssh host') + start);
+    stream.input('OTHER_SECRET\r');
+    stream.append('rm -rf something\n' + prompt(1));
+    expect(stream.command).toBe('ssh host');
+    expect(stream.rerunInput()).toBeNull();
+    expect(JSON.stringify(stream)).not.toContain('SECRET_PASSWORD');
+    expect(JSON.stringify(stream)).not.toContain('OTHER_SECRET');
   });
   it('does not split Unicode at output page boundaries', () => {
-    const stream = new DesktopTerminalStream(null, token);
+    const stream = new DesktopTerminalStream();
     stream.append('a'.repeat(32767) + '🙂end');
     const first = stream.read(null, 0),
       next = stream.read(stream.generation, first.next);
     expect(first.data + next.data).toBe('a'.repeat(32767) + '🙂end');
   });
-  it('does not expose interactive program input as a shell command', () => {
-    const stream = new DesktopTerminalStream(null, token);
-    stream.append(`${prompt(0)}`);
-    stream.input('ssh example\rprivate pasted input\r');
-    stream.append(`${start}`);
-    stream.input('private password\r');
-    stream.append(`${prompt(7)}`);
-    expect(stream.command).toBe('ssh example');
-    expect(stream.rerunInput()).toBe('ssh example\r');
-  });
-  it('refuses rerun while the shell contains an unfinished or edited input line', () => {
-    const stream = new DesktopTerminalStream(null, token);
-    stream.append(`${prompt(0)}`);
-    stream.input('false\r');
-    stream.append(`${prompt(1)}`);
-    stream.input('unfinished');
-    expect(stream.canRerun).toBe(false);
-    expect(stream.rerunInput()).toBeNull();
-    stream.input('\x15');
-    expect(stream.rerunInput()).toBe('false\r');
-    stream.input('\x1b[D');
-    expect(stream.canRerun).toBe(false);
-  });
-  it('captures a single-line bracketed paste, including split paste markers', () => {
-    const stream = new DesktopTerminalStream(null, token);
-    stream.append(`${prompt(0)}`);
-    for (const char of '\x1b[200~false\x1b[201~\r') stream.input(char);
-    stream.append(`${start}${prompt(1)}`);
-    expect(stream.command).toBe('false');
-    expect(stream.rerunInput()).toBe('false\r');
-  });
-  it('does not restore rerun after Ctrl-U when cursor edits may leave unsent text', () => {
-    const stream = new DesktopTerminalStream(null, token);
-    stream.append(prompt(0));
-    stream.input('false\r');
-    stream.append(prompt(1));
-    stream.input('unsent\x01\x15');
-    expect(stream.canRerun).toBe(false);
-    expect(stream.rerunInput()).toBeNull();
-    stream.input('false\r');
-    stream.append(prompt(1));
-    expect(stream.command).toBe('Shell command');
-    expect(stream.canRerun).toBe(false);
-  });
-  it.each(['🙂', 'e\u0301'])(
-    'refuses to guess shell deletion of %s',
-    (text) => {
+  it.each(['packet', 'queued', 'foreground'])(
+    'does not append a rerun to uncertain %s input',
+    (mode) => {
       const stream = new DesktopTerminalStream(null, token);
       stream.append(prompt(0));
-      stream.input(`echo ${text}\x7f\r`);
+      stream.input(mode === 'packet' ? 'false\runsent' : 'false\r');
+      if (mode === 'queued') stream.input('unsent');
+      stream.append(command('false') + start);
+      if (mode === 'foreground') {
+        stream.input('unsent');
+        // Bash may report the identified command only after it finishes.
+        stream.append(command('false'));
+      }
       stream.append(prompt(1));
-      expect(stream.command).toBe('Shell command');
+      expect(stream.command).toBe('false');
+      expect(stream.rerunInput()).toBeNull();
+      stream.input('\r');
+      stream.append(command('false') + start + prompt(1));
+      expect(stream.rerunInput()).toBe('false\r');
+    },
+  );
+  it('keeps command/status frames ordered and single-use at every chunk boundary', () => {
+    const text =
+      command('echo http://localhost:3000/; false') +
+      start +
+      'https://localhost:9443/\r\n' +
+      prompt(7);
+    for (let split = 0; split <= text.length; split++) {
+      const stream = new DesktopTerminalStream(null, token);
+      stream.append(text.slice(0, split));
+      stream.append(text.slice(split));
+      expect(stream.status).toBe('failed');
+      expect(stream.port).toBeNull();
+      expect(stream.command).toBe('echo http://localhost:3000/; false');
+      expect(stream.rerunInput()).toBe('echo http://localhost:3000/; false\r');
+      stream.input('unsent');
+      stream.append('more output');
+      expect(stream.rerunInput()).toBeNull();
+    }
+  });
+  it.each([
+    '',
+    'x'.repeat(4095) + '🙂',
+    'bad\ncommand',
+    'bad\rcommand',
+    'bad\x1bcommand',
+  ])(
+    'does not make an unsafe or oversize reported command repeatable',
+    (value) => {
+      const stream = new DesktopTerminalStream(null, token);
+      stream.append(command(value) + start + prompt(1));
+      expect(stream.command.length).toBeLessThanOrEqual(4096);
       expect(stream.rerunInput()).toBeNull();
     },
   );
-  it('refuses rerun during a paste or after multiline paste and history editing', () => {
+  it('rejects foreign markers, invalid escaping and untrusted OSC command text', () => {
     const stream = new DesktopTerminalStream(null, token);
-    stream.append(`${prompt(0)}`);
-    stream.input('false\r');
-    stream.append(`${prompt(1)}`);
-    stream.input('\x1b[200');
-    expect(stream.canRerun).toBe(false);
-    stream.input('~');
-    expect(stream.canRerun).toBe(false);
-    stream.input('false\ntrue\x1b[201~');
-    expect(stream.status).toBe('failed');
-    stream.input('\r');
-    stream.append(`${prompt(1)}`);
+    stream.append(
+      command('foreign').replace(token, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),
+    );
+    stream.append('\x1b]133;B\x07\x1b]133;D;1\x07');
+    expect(stream.command).toBe('');
+    stream.append('\x1b]133;E;' + token + ';bad\\q\x07' + prompt(1));
     expect(stream.command).toBe('Shell command');
     expect(stream.canRerun).toBe(false);
-    stream.input('false\r');
-    stream.append(`${prompt(1)}`);
-    stream.input('\x1b[A\r');
-    stream.append(`${prompt(1)}`);
-    expect(stream.canRerun).toBe(false);
   });
-  it('does not mistake prompt text for a running service', () => {
+  it('exposes optional integration state without making it a process prerequisite', () => {
     const stream = new DesktopTerminalStream(null, token);
-    stream.append(`${prompt(0)}Ready http://localhost:3000/\r\n`);
-    expect(stream.status).toBe('idle');
-    stream.input('false\r');
-    stream.append(`${start}${prompt(1)}`);
-    expect(stream.command).toBe('false');
-    expect(stream.rerunInput()).toBe('false\r');
+    expect(stream.integration).toBe('pending');
+    const now = Date.now();
+    const time = jest.spyOn(Date, 'now').mockReturnValue(now + 10001);
+    try {
+      expect(stream.integration).toBe('unavailable');
+    } finally {
+      time.mockRestore();
+    }
+    stream.append(prompt(0));
+    expect(stream.integration).toBe('active');
+    stream.configureIntegration('disabled');
+    stream.append(command('false') + start + prompt(1));
+    expect(stream.integration).toBe('disabled');
+    expect(stream.canRerun).toBe(false);
+    stream.append('Listening http://localhost:4317/\n');
+    // Plain terminals can discover services too, independent of command tracking.
+    const plain = new DesktopTerminalStream(null, token);
+    plain.configureIntegration('unsupported');
+    plain.append('Listening http://localhost:4317/\n');
+    expect(plain.port).toBe(4317);
+    plain.exited(7);
+    expect(plain.status).toBe('failed');
+    expect(plain.port).toBeNull();
   });
 });
-
-it('ignores forged and foreign-shell prompt markers before secret input', () => {
-  const stream = new DesktopTerminalStream(null, token);
-  stream.append(`\x1b]133;D;${token};0\x07\x1b]133;B;${token}\x07`);
-  stream.input('ssh host\r');
-  stream.append(`\x1b]133;C;${token}\x07`);
-  stream.append('\x1b]133;D;0\x07\x1b]133;B\x07');
-  stream.append('\x1b]133;B;bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\x07Password:');
-  stream.input('PRIVATE_PASSWORD\r');
-  stream.append(`\x1b]133;D;${token};1\x07\x1b]133;B;${token}\x07`);
-  expect(stream.command).toBe('ssh host');
-  expect(stream.rerunInput()).toBe('ssh host\r');
-});
-it('waits for the final ready hook before capturing input from prompt commands', () => {
-  const stream = new DesktopTerminalStream(null, token);
-  stream.append(`\x1b]133;D;${token};0\x07`);
-  stream.input('SECRET\r');
-  stream.append(`\x1b]133;B;${token}\x07`);
-  expect(stream.command).toBe('');
-});
-it.each([0, 7])(
-  'keeps completion %s authoritative after URLs, for every chunk split',
-  (code) => {
-    const output = `\x1b]133;C;${token}\x07http://localhost:3000/\r\n\x1b]133;D;${token};${code}\x07\x1b]133;B;${token}\x07`;
-    for (let split = 0; split <= output.length; split++) {
-      const stream = new DesktopTerminalStream(null, token);
-      stream.append(output.slice(0, split));
-      stream.append(output.slice(split));
-      expect(stream.port).toBeNull();
-      expect(stream.status).toBe(code ? 'failed' : 'idle');
-      expect(stream.exitCode).toBe(code);
-    }
-  },
-);

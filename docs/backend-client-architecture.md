@@ -387,6 +387,14 @@ main-owned transport credentials, CSP and the named bridge remain unchanged.
 
 ## User terminal slice
 
+Shell integration is optional. New engines advertise `shellIntegrationControl`
+on terminal lists and accept an optional boolean `shellIntegration` on creation;
+omitting it preserves existing defaults. Per-terminal state is an optional,
+runtime-validated enum. Main strips unknown fields and older replies remain
+valid. The renderer exposes a plain-shell launch only with the capability.
+PTY output, input, geometry, script execution and ownership do not depend on
+tracking. See the [adapter boundary and runtime assets](../apps/backend/src/user-terminal/shell-integration/README.md).
+
 The additive `task-terminal:*` bridge operations use the existing per-window HTTP
 lease. Main validates task/process identity, bounds, generations and contiguous
 output offsets. `user-terminal/desktop-terminal` routes share the existing PTY

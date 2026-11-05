@@ -780,6 +780,10 @@ async function stageTarget(target, commitSha, nodeVersion) {
     path.join(targetRoot, "main.cjs"),
   );
   copyRequiredPath(
+    path.join(backendBundleRoot, "shell-integration"),
+    path.join(targetRoot, "shell-integration"),
+  );
+  copyRequiredPath(
     path.join(backendRoot, "drizzle"),
     path.join(targetRoot, "drizzle"),
   );

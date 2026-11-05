@@ -49,8 +49,9 @@ reconciles the backend list without replaying close; failed or uncertain closes
 restore any surviving tab and show an error without replacing the current selection.
 
 Terminal mutations serialize per process, including explicit close and owner cleanup.
-Reruns revalidate durable ownership and carry the manager generation captured before
-asynchronous work, so task finishing and legacy cleanup can cancel replacement.
+New launches and reruns revalidate durable ownership and carry the manager generation
+captured before asynchronous ownership checks, so task finishing and legacy cleanup
+can cancel startup or replacement.
 App cleanup also waits for accepted reruns.
 
 Main exposes named runtime-validated operations on its existing per-window
@@ -111,23 +112,47 @@ private-use prompt icons; it and the regular/bold text faces load before cell
 measurement and leave ordinary text in Geist Mono. See the
 [font provenance and licenses](../../../public/fonts/README.md).
 
-Bash/zsh prompt hooks report command start/completion and exit status using a
-random per-process token, distinct from the public generation. The token lives in
-private temporary rc files and is not exported to child environments. Ordinary or
-foreign OSC 133 output cannot enable command capture. This separates untrusted
-output; it is not isolation from hostile programs with same-user filesystem/process
-access. Bash preserves string/array prompt hooks and their incoming exit status,
-and enables capture only after those hooks finish. Both integrations source the
-normal user rc then explicitly enter the resolved task worktree. Other shells
-remain interactive; per-command status requires their prompt integration. Rerun
-uses only a discovered script ID or a reliably captured plain user input line,
-including single-line bracketed paste (even when its markers span input requests),
-never a command extracted from output. Multiline pastes remain unrepeatable rather
-than guessing how the shell interpreted them. Foreground-program input, including hidden
-password prompts, is never captured as a shell command. Complex cursor/history editing disables
-shell rerun rather than guessing. An unfinished prompt line also disables rerun,
-so a repeat cannot concatenate with a person’s unsent input. The failure bar uses Fold; ViewTabs retains
-its existing entry/exit, keyboard close and status motion. Initial history stays
+Shell integration is an optional launch adapter, independent of PTY output,
+input, geometry, process ownership and script execution. Supported Bash/zsh
+shells receive private startup wrappers; other shells start normally. Preparation
+failure also starts an ordinary shell, without retrying a process launch. A
+pending integration becomes unavailable after ten seconds without a valid event;
+a late successful initialization can still activate tracking. Typing is never
+blocked by that state. Untracked shells do not show a guessed running indicator.
+
+The Terminal options menu offers **New terminal without command tracking** on
+engines advertising the optional capability. The existing shell is retained;
+the new one uses the same task-owned PTY lifecycle without injected hooks. Set
+`ELEVENEX_TERMINAL_SHELL_INTEGRATION=0` in the backend environment to disable
+injection for new shells globally, or in the user's rc to opt out of hooks for
+that shell. Existing engines and callers retain their default contracts.
+
+Bash/zsh adapters emit bounded, authenticated OSC status/command frames. The
+random per-process token lives in private temporary files and is not exported to
+children. This distinguishes ordinary untrusted output; it is not isolation from
+hostile programs with same-user filesystem/process access. Bash preserves string/
+array prompt hooks, incoming exit status and existing DEBUG traps. Zsh preserves
+`.zshenv`, redirected `ZDOTDIR`, `.zshrc` and intentional suppression of rc
+files. Both integrated shells enter the resolved task workspace after their rc;
+plain shells use the normal PTY cwd and unmodified shell initialization.
+
+Zsh reports the actual submitted command through preexec, so history recall and
+cursor editing work without reconstructing keystrokes. Bash reports a completed
+command only when a fresh history entry identifies it; ignored commands, disabled
+history and ambiguous entries disable rerun. History settings and locations are
+preserved. Modern Bash uses PS0 for start events; older Bash installs a start-only
+DEBUG hook only when no user trap or inherited-debug mode would be displaced.
+Completion/status still work when that hook cannot be installed.
+
+The backend never records input as command text or examines passwords/foreground
+program input. Any new prompt input invalidates rerun until the shell reports a
+new command. When a command receives further input or submission includes
+type-ahead, rerun also remains disabled: that input may still be queued at a
+future prompt. Single-line shell reports are bounded to 4 KiB, escaped, decoded
+and validated before they can become a rerun. Multiline/control-containing commands
+and malformed reports use a generic label with rerun disabled. Scripts rerun by
+their rediscovered ID. Reads and reconnect never execute commands. The failure
+bar uses Fold; ViewTabs retains its existing motion, and initial history stays
 still. Failed processes retain output until close.
 
 Ask the agent adds the command, exit code and last 80 rendered lines (8,000
@@ -139,7 +164,9 @@ A recognized localhost HTTP(S) serving port produces `TerminalBrowserIntent`
 with scope/task/terminal/port, never an output URL. The workspace selects Browser;
 main rechecks the live terminal and opens its service in the system browser.
 For SSH, it creates/reuses this window's managed forward and uses its actual
-bound local port. The small Browser service handoff is the standalone fallback;
+bound local port. Pending handoffs track the selected service: a second explicit
+opening can proceed, and earlier replies cannot overwrite its busy/error state.
+The small Browser service handoff is the standalone fallback;
 a richer Browser owner can consume the same typed intent without changing the
 terminal domain. Detection never itself navigates. Saved forwards retain their existing window-manager lifetime; closing a terminal
 does not remove a saved forward.

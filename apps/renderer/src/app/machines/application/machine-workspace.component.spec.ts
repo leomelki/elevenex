@@ -1,4 +1,5 @@
 import { SessionChatDrafts } from '../../session-chat/session-chat-drafts';
+import type { BackendResult, ElevenexBridge } from '@elevenex/shared';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { ConnectedWorkspaceFixture } from '../../../../preview/connected-workspace-fixture';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
@@ -8,8 +9,11 @@ async function settle(fixture: ComponentFixture<MachineWorkspaceComponent>): Pro
   for (let pass = 0; pass < 40; pass++) { await Promise.resolve(); fixture.detectChanges(); }
   await fixture.whenStable();
 }
-function setup() {
-  TestBed.configureTestingModule({ providers: [ConnectedWorkspaceFixture, BackendClientService, { provide: ELEVENEX_BRIDGE, useExisting: ConnectedWorkspaceFixture }] });
+function setup(terminalOpen?: ElevenexBridge['taskTerminalOpenPort']) {
+  TestBed.configureTestingModule({ providers: [ConnectedWorkspaceFixture, BackendClientService, {
+    provide: ELEVENEX_BRIDGE, useFactory: (platform: ConnectedWorkspaceFixture) => terminalOpen ? Object.assign(platform, { taskTerminalOpenPort: terminalOpen }) : platform,
+    deps: [ConnectedWorkspaceFixture],
+  }] });
   const fixture = TestBed.createComponent(MachineWorkspaceComponent);
   fixture.componentRef.setInput('machine', { id: 'local', name: 'This Mac', kind: 'local', conn: 'live' });
   fixture.componentRef.setInput('active', true);
@@ -185,6 +189,27 @@ describe('Connected workspace composition', () => {
     component.askTerminal(question); await settle(fixture);
     expect(entry.text()).toContain('Keep this writing.'); expect(entry.text()).toContain('failure context');
     expect(platform.sentChatActions).toHaveLength(0);
+  });
+
+  it.each(['reply', 'throw'])('opens a newly selected terminal service during an earlier launch and ignores its failed %s', async mode => {
+    const pending: { resolve: (reply: BackendResult<{ readonly accepted: true }>) => void; reject: (error: Error) => void }[] = [];
+    const open = vi.fn<ElevenexBridge['taskTerminalOpenPort']>(() => new Promise((resolve, reject) => { pending.push({ resolve, reject }); }));
+    const { fixture, component } = setup(open); await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
+    const selected = component.store.selected()!;
+    const first = { scopeId: selected.scopeId, taskId: selected.taskId, terminalId: 1, port: 3000 };
+    const second = { ...first, terminalId: 2, port: 4000 };
+    component.openTerminalPort(first);
+    component.openTerminalPort(second);
+    expect(open).toHaveBeenCalledTimes(2);
+    if (mode === 'throw') pending[0]!.reject(new Error('Earlier failure'));
+    else pending[0]!.resolve({ ok: false, error: { code: 'transport', message: 'Earlier failure' } });
+    await settle(fixture);
+    expect(component.terminalBrowserBusy()).toBe(true);
+    expect(component.terminalBrowserError()).toBe('');
+    pending[1]!.resolve({ ok: true, value: { accepted: true } }); await settle(fixture);
+    expect(component.terminalBrowserBusy()).toBe(false);
+    expect(component.selectedTerminalBrowser()).toBe(second);
   });
 
 });

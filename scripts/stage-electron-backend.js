@@ -319,6 +319,10 @@ async function main() {
     path.join(stageBackendRoot, "pi-agent-extension.mjs"),
   );
   copyRequiredPath(
+    path.join(backendBundleRoot, "shell-integration"),
+    path.join(stageBackendRoot, "shell-integration"),
+  );
+  copyRequiredPath(
     path.join(backendRoot, "drizzle"),
     path.join(stageBackendRoot, "drizzle"),
   );

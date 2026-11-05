@@ -62,6 +62,7 @@ export class MachineWorkspaceComponent {
   readonly selectedTerminalBrowser = computed(() => { const intent = this.terminalBrowser(), selected = this.store.selected(); return intent && selected?.scopeId === intent.scopeId && selected.taskId === intent.taskId ? intent : null; });
   readonly terminalBrowserError = signal('');
   readonly terminalBrowserBusy = signal(false);
+  private terminalBrowserOpening?: TerminalBrowserIntent;
   askTerminal(question: TerminalQuestion): void {
     const selected = this.store.selected();
     if (!selected || selected.scopeId !== question.scopeId || selected.taskId !== question.taskId || this.store.offline()) return;
@@ -84,14 +85,22 @@ export class MachineWorkspaceComponent {
   }
   async launchTerminalPort(): Promise<void> {
     const intent = this.selectedTerminalBrowser();
-    if (!intent || this.terminalBrowserBusy() || this.store.offline()) return;
+    if (!intent || this.terminalBrowserOpening === intent || this.store.offline()) return;
+    this.terminalBrowserOpening = intent;
     this.terminalBrowserBusy.set(true); this.terminalBrowserError.set('');
+    const current = () => this.terminalBrowserOpening === intent && this.selectedTerminalBrowser() === intent;
     try {
       const reply = await this.terminalBridge.taskTerminalOpenPort(intent.scopeId, { taskId: intent.taskId, terminalId: intent.terminalId, port: intent.port });
-      if (this.terminalBrowser() !== intent) return;
+      if (!current()) return;
       if (!reply.ok) this.terminalBrowserError.set(reply.error.message);
-    } catch { this.terminalBrowserError.set('Could not open this service. Check the terminal and connection.'); }
-    finally { this.terminalBrowserBusy.set(false); }
+    } catch {
+      if (current()) this.terminalBrowserError.set('Could not open this service. Check the terminal and connection.');
+    } finally {
+      if (this.terminalBrowserOpening === intent) {
+        this.terminalBrowserOpening = undefined;
+        this.terminalBrowserBusy.set(false);
+      }
+    }
   }
   readonly launch = signal<'idle' | 'creating' | 'flying'>('idle');
   private readonly setupStarted = signal(false);
@@ -137,6 +146,7 @@ export class MachineWorkspaceComponent {
       this.store.projectCreated.set(null);
     });
     inject(DestroyRef).onDestroy(() => {
+      this.terminalBrowserOpening = undefined;
       this.stopLaunch();
       if (this.terminalFocusFrame !== undefined) cancelAnimationFrame(this.terminalFocusFrame);
     });

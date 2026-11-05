@@ -127,10 +127,10 @@ describe('Desktop task terminals with real PTYs', () => {
       generation,
       data: 'false\r',
     });
-    await waitFor(() => ptys.desktopStream(terminal.id)?.status === 'failed');
+    await waitFor(() => ptys.desktopStream(terminal.id)?.canRerun === true);
     expect(ptys.desktopStream(terminal.id)?.command).toBe('false');
     await service.command(task, terminal.id, { type: 'rerun', generation });
-    await waitFor(() => ptys.desktopStream(terminal.id)?.status === 'failed');
+    await waitFor(() => ptys.desktopStream(terminal.id)?.canRerun === true);
     await service.command(task, terminal.id, {
       type: 'input',
       generation,
@@ -181,6 +181,59 @@ describe('Desktop task terminals with real PTYs', () => {
     await service.close(task, terminal.id);
     expect(ptys.desktopStream(terminal.id)).toBeUndefined();
   });
+  it('starts a plain interactive shell through the same task-owned process lifecycle', async () => {
+    const terminal = await service.create(task, { shellIntegration: false });
+    ids.push(terminal.id);
+    expect(terminal.shellIntegration).toBe('disabled');
+    expect(terminal.alive).toBe(true);
+    expect((await service.list(task)).shellIntegrationControl).toBe(true);
+    await service.command(task, terminal.id, {
+      type: 'input',
+      generation: terminal.generation,
+      data: "printf 'PLAIN_%s\\n' READY; false\r",
+    });
+    await waitFor(() =>
+      ptys
+        .desktopStream(terminal.id)!
+        .read(null, 0)
+        .data.includes('PLAIN_READY'),
+    );
+    expect(ptys.desktopStream(terminal.id)?.integration).toBe('disabled');
+    expect(ptys.desktopStream(terminal.id)?.canRerun).toBe(false);
+    await service.close(task, terminal.id);
+    expect(ptys.isAlive(terminal.id)).toBe(false);
+    await expect(
+      service.create(task, { shellIntegration: 'off' }),
+    ).rejects.toThrow('Invalid terminal launch');
+  });
+  it('stops a real PTY and retires its generation when integration file cleanup fails', async () => {
+    const terminal = await service.create(task, {});
+    ids.push(terminal.id);
+    const generation = ptys.getGeneration(terminal.id);
+    const remove = fs.rm.bind(fs);
+    const directories = new Set<Parameters<typeof fs.rm>[0]>();
+    const failing = jest
+      .spyOn(fs, 'rm')
+      .mockImplementation((target, options) => {
+        if (String(target).includes('elevenex-user-shell-')) {
+          directories.add(target);
+          return Promise.reject(new Error('Temporary files are unavailable'));
+        }
+        return remove(target, options);
+      });
+    try {
+      await expect(service.close(task, terminal.id)).resolves.toEqual({
+        accepted: true,
+      });
+      expect(ptys.isAlive(terminal.id)).toBe(false);
+      expect(ptys.getGeneration(terminal.id)).toBeGreaterThan(generation);
+      expect(directories.size).toBeGreaterThan(0);
+    } finally {
+      failing.mockRestore();
+      for (const directory of directories)
+        await remove(directory, { recursive: true, force: true });
+    }
+  });
   it.each(['constructor', 'toString', '__proto__'])(
     'rejects inherited operation name %s as a bad request',
     async (type) => {
@@ -213,16 +266,14 @@ describe('Desktop task terminals with real PTYs', () => {
         generation: stream.generation,
         data: paste ? '\x1b[200~' + command + '\x1b[201~\r' : command + '\r',
       });
-      await waitFor(() => stream.status === 'failed');
+      await waitFor(() => stream.canRerun);
       expect(stream.command).toBe(command);
       const offset = stream.sequence;
       await service.command(task, terminal.id, {
         type: 'rerun',
         generation: stream.generation,
       });
-      await waitFor(
-        () => stream.status === 'failed' && stream.sequence > offset,
-      );
+      await waitFor(() => stream.canRerun && stream.sequence > offset);
       expect(stream.read(stream.generation, offset).data).toContain(
         'RERUN_EXECUTED',
       );
@@ -507,5 +558,42 @@ describe('Desktop task terminals with real PTYs', () => {
     ).rejects.toThrow('cancelled');
     expect(ptys.isAlive(terminal.id)).toBe(false);
     expect(ptys.desktopStream(terminal.id)).toBeUndefined();
+  });
+  it('never starts a newly created terminal after task cleanup retires its launch', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const spawn = ptys.spawnDesktop.bind(ptys);
+    let started = false;
+    const spy = jest
+      .spyOn(ptys, 'spawnDesktop')
+      .mockImplementation(async (...args) => {
+        await gate;
+        await spawn(...args);
+        started = true;
+      });
+    const outcome = service.create(task, {}).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    try {
+      await waitFor(() => spy.mock.calls.length > 0);
+      const id = spy.mock.calls[0][0];
+      ids.push(id);
+      await db.db
+        .update(schema.workspaces)
+        .set({ taskState: 'finishing' })
+        .where(eq(schema.workspaces.id, task));
+      await ptys.destroy(id, true);
+      release();
+      expect(await outcome).toBeInstanceOf(Error);
+      expect(started).toBe(false);
+      expect(ptys.isAlive(id)).toBe(false);
+    } finally {
+      release();
+      await outcome;
+      spy.mockRestore();
+    }
   });
 });
