@@ -16,7 +16,7 @@
 .frame-container.reflowing::after { opacity: 1; transition-duration: var(--dur-instant); }
 /* Keep startup paints and input covered without throttling the live iframe.
    Fade the cover away once ready; the editor stays live and accepts input. */
-.frame-container::before { content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none; background: var(--surface); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.frame-container::before { content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none; background: var(--surface); opacity: 0; transition: opacity var(--dur-base) var(--ease-in-out); }
 .frame-container.loading::before { opacity: 1; transition: none; }
 .frame-container.cover-immediate::after { transition: none; }
 .frame-container[hidden] { display: none; }

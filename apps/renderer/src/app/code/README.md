@@ -187,8 +187,8 @@ applies the native theme and compact layout together, then checks stable child
 layout frames before acknowledging presentation. The loading bar and busy state
 remain active until that acknowledgement, including after the extension connects.
 The cover fades out over
-`dur-fast` (140ms) on that acknowledgement, with no fixed startup delay; input
-is available immediately and reduced motion reveals instantly. Retained editors
+`dur-base` (200ms) with `ease-in-out` on that acknowledgement, with no fixed
+startup delay; input is available immediately and reduced motion reveals instantly. Retained editors
 stay uncovered during later layout changes. The launch card never occupies space
 beside or underneath the iframe. Short
 windows scroll launch/recovery actions into reach.
