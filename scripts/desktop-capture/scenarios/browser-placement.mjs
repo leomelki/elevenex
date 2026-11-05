@@ -8,13 +8,16 @@ export default async function* browserPlacement(capture) {
     await capture.theme(theme);
     await capture.component('ex-task-browser', component => component.showDialog('tools'));
     await capture.waitFor(() => document.querySelector('[role="dialog"] ex-dropdown button'));
+    await capture.motion.finish();
     assert.equal(await capture.evaluate(() => document.querySelector('[role="dialog"] ex-dropdown button').disabled), false);
+    assert.equal(await capture.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].some(button => ['Direct', 'Stream'].includes(button.textContent.trim()))), false);
     yield { name: theme + '-location', inspect: ['[role="dialog"]', 'ex-dropdown'] };
     await capture.click('[role="dialog"] ex-dropdown button');
     await capture.waitFor(() => document.querySelectorAll('[role="menuitemradio"]').length === 3);
+    await capture.motion.finish();
     yield { name: theme + '-choices', inspect: ['[role="menu"]'] };
     await capture.press('End'); await capture.press('Enter');
-    await capture.waitFor(() => document.querySelector('ex-dropdown button')?.textContent.includes('Stream from task machine'));
+    await capture.waitFor(() => document.querySelector('ex-dropdown button')?.textContent.includes('Remote'));
     assert.equal(await capture.evaluate(() => document.activeElement.closest('ex-dropdown') !== null), true, 'Menu restores focus to its trigger');
     await capture.press('Escape');
     await capture.waitFor(() => !document.querySelector('[role="dialog"]'));
@@ -30,4 +33,9 @@ export default async function* browserPlacement(capture) {
   await capture.component('ex-task-browser', component => component.showDialog('tools'));
   await capture.waitFor(() => document.querySelector('[role="dialog"] ex-dropdown button')?.disabled);
   yield { name: 'loaded-location-disabled', inspect: ['[role="dialog"]', 'ex-dropdown'] };
+  await capture.component('ex-task-browser', component => {
+    component.store.state.update(state => ({ ...state, placement: 'desktop', availablePlacements: ['desktop'], capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true } }));
+  });
+  await capture.waitFor(() => document.querySelector('[aria-label="Browser location: Local"]')?.disabled);
+  yield { name: 'local-only', inspect: ['[role="dialog"]', 'ex-dropdown'] };
 }

@@ -76,6 +76,8 @@ export interface TaskBrowserState {
   /** Independent panel/tab ordering; omitted by older machine hosts. */
   readonly layoutLanes?: true;
   readonly placement?: TaskBrowserPlacement;
+  /** Main-issued location choices; older desktops omit this field. */
+  readonly availablePlacements?: readonly TaskBrowserPlacement[];
   readonly capabilities?: TaskBrowserCapabilities;
   /** Older remote runtimes omit this capability. */
   readonly canDetach?: boolean;

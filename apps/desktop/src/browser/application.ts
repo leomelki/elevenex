@@ -21,6 +21,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
   const detached = new DetachedBrowserWindows(createBrowserWindow, (id, scope) => client.state(id).scope?.id === scope);
   const persistence = new BrowserPersistence(root);
   const profiles = new BrowserTaskProfiles();
+  const availablePlacements = (id: number): readonly TaskBrowserPlacement[] => client.state(id).scope?.environment.kind === 'remote' ? ['desktop', 'desktop-proxy', 'machine'] : ['desktop'];
   const surfaces = (id: number) => detached.get(id) ? detached.surfaces(id) : [...(windows.get(id)?.tasks.values() ?? [])].flatMap(task => task.surfaces());
   const publishSurfaces = (id: number) => { const current = surfaces(id); const claims = windows.get(id)?.attaching; if (claims) for (const bootstrap of claims) if (!current.some(surface => surface.bootstrap === bootstrap)) claims.delete(bootstrap); const owner=windows.get(id),signature=JSON.stringify(current);if(owner&&owner.surfaceSnapshot!==signature){owner.surfaceSnapshot=signature;sendToWindow(id, 'task-browser:surfaces-changed', current);} };
   const windowOwner = (id: number) => {
@@ -102,13 +103,12 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
           const destination = remote.configurationIdentity(environment);
           const identity = createHash('sha256').update(JSON.stringify([destination, reply.value['repoId'], task, reply.value['identity']])).digest('hex');
           const placement = replacement ?? owner.placements.get(key) ?? (environment.kind === 'remote' ? 'machine' : 'desktop');
-          const onState = (state: TaskBrowserState) => { if (owner.tasks.get(key) !== created) return; const value = { ...state, placement }; sendToWindow(id, 'task-browser:changed', value); detached.publish(created, value); };
+          const onState = (state: TaskBrowserState) => { if (owner.tasks.get(key) !== created) return; const value = { ...state, placement, availablePlacements: availablePlacements(id) }; sendToWindow(id, 'task-browser:changed', value); detached.publish(created, value); };
           const onFrame = (frame: import('@elevenex/shared').TaskBrowserFrame) => { if (!detached.frame(created, frame)) sendToWindow(id, 'task-browser:frame', frame); };
-          // The local backend retains its TCP API. Local machine streaming uses
-          // the existing guest producer; only a remote private host owns Chromium.
+          // Local pages always embed natively; only a remote private host streams.
           const created: BrowserTask = placement === 'machine' && environment.kind === 'remote'
             ? new RemoteTaskBrowser(scope, task, window, client, onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, remote, environment.kind === 'remote')
-            : new TaskBrowser(scope, task, window, client, remote, persistence, placement === 'desktop' ? identity : identity + ':' + placement, profiles, placement === 'desktop-proxy' && environment.kind === 'remote', onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, Number(reply.value['applicationPort']), placement === 'machine' ? 'stream' : 'embedded');
+            : new TaskBrowser(scope, task, window, client, remote, persistence, placement === 'desktop' ? identity : identity + ':' + placement, profiles, placement === 'desktop-proxy' && environment.kind === 'remote', onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, Number(reply.value['applicationPort']));
           if (created.engine === 'desktop') created.setPorts(reply.value.ports);
           let evict: [string, BrowserTask] | undefined;
           try {
@@ -167,11 +167,11 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
         const browser = selectedBrowser(id, scope, task), owner = windows.get(id)!;
         if (browser.hasDetached() || browser.snapshot().tabs.some(tab => tab.url || tab.loading)) throw new Error('Close tabs with loaded pages before changing where the browser runs.');
         const previousPlacement = ownerPlacement(id, scope, task), key = scope + ':' + task;
-        if (previousPlacement === placement) return { ...browser.snapshot(), placement };
+        if (previousPlacement === placement) return { ...browser.snapshot(), placement, availablePlacements: availablePlacements(id) };
         if (owner.opening.has(key)) throw new Error('Browser placement is already changing.');
         // Prepare first, then recheck ownership and empty tabs before replacement.
         const next = await get(id, scope, task, placement);
-        return { ...next.snapshot(), placement };
+        return { ...next.snapshot(), placement, availablePlacements: availablePlacements(id) };
       });
     }),
     handleForWindow('task-browser:detach', trusted, (id, ...args) => {
@@ -222,7 +222,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
     handleForWindow('task-browser:read', trusted, (id, ...args) => {
       if (args.length !== 2) throw new Error('Invalid browser read');
       const scope = browserId(args[0]), task = taskId(args[1]);
-      return result(async () => { const entry = detached.get(id, scope, task); if (entry) { detached.require(id); return detached.snapshot(entry); } const browser=await get(id, scope, task);if(browser.engine === 'machine')await browser.refresh();return { ...browser.snapshot(), placement: ownerPlacement(id, scope, task) };});
+      return result(async () => { const entry = detached.get(id, scope, task); if (entry) { detached.require(id); return detached.snapshot(entry); } const browser=await get(id, scope, task);if(browser.engine === 'machine')await browser.refresh();return { ...browser.snapshot(), placement: ownerPlacement(id, scope, task), availablePlacements: availablePlacements(id) };});
     }),
     handleForWindow('task-browser:command', trusted, (id, ...args) => {
       if (args.length !== 3) throw new Error('Invalid browser command');
@@ -232,7 +232,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
         if (entry) { detached.require(id); detached.command(entry, input); await entry.browser.command(input); return detached.snapshot(entry); }
         const owner = windows.get(id), browser = owner?.tasks.get(scope + ':' + task);
         if (!browser || owner?.selected !== browser || client.state(id).scope?.id !== scope) throw new Error('Task selection changed. Reopen its Browser.');
-        return { ...await browser.command(input), placement: ownerPlacement(id, scope, task) };
+        return { ...await browser.command(input), placement: ownerPlacement(id, scope, task), availablePlacements: availablePlacements(id) };
       });
     }),
     handleForWindow('task-browser:layout', trusted, (id, ...args) => {

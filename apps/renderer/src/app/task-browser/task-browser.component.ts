@@ -29,13 +29,17 @@ export class TaskBrowserComponent {
   readonly notice = signal('');
   readonly current = this.store.current;
   readonly tabs = computed<readonly BrowserTab[]>(() => (this.store.state()?.tabs ?? []).map(tab => ({ id: tab.id, title: tab.title, url: tab.url, by: tab.by, server: tab.server, icon: tab.detached ? 'window' : 'globe', tip: tab.detached ? tab.title + ' · Open in window' : tab.title, status: tab.error ? 'failed' : tab.loading ? 'running' : 'idle' })));
-  readonly directAvailable = computed(() => this.store.state()?.capabilities?.embedded === true);
+  readonly embeddedAvailable = computed(() => this.store.state()?.capabilities?.embedded === true);
   readonly placementLocked = computed(() => this.store.pending() > 0 || (this.store.state()?.tabs.some(tab => !!tab.url || tab.loading || tab.detached) ?? true));
-  readonly placements = [
-    { id: 'desktop', label: 'This device', detail: 'Pages and network access run here' },
-    { id: 'desktop-proxy', label: 'This device · task proxy', detail: 'Task localhost servers use machine forwarding' },
-    { id: 'machine', label: 'Stream from task machine', detail: 'Pages and network access run on the task machine' },
-  ] as const;
+  readonly placements = computed(() => {
+    const available = this.store.state()?.availablePlacements;
+    const options = [
+      { id: 'desktop', label: 'Local', detail: 'Browser runs on this device' },
+      { id: 'desktop-proxy', label: 'Local · task proxy', detail: 'Browser runs here; task localhost uses forwarding' },
+      { id: 'machine', label: 'Remote', detail: 'Browser runs on the task machine' },
+    ] as const;
+    return options.filter(option => !available || available.includes(option.id));
+  });
   configurePlacement(value: string): void {
     if (value === 'desktop' || value === 'desktop-proxy' || value === 'machine') void this.store.configure(value satisfies TaskBrowserPlacement);
   }
@@ -134,11 +138,6 @@ export class TaskBrowserComponent {
   }
   private normalize(value: string): string { const trimmed = value.trim(); if (/^[0-9]{1,5}$/.test(trimmed)) return 'http://localhost:' + trimmed; return /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : 'http://' + trimmed; }
   setWidth(width: 'full' | 'phone'): void { const tabId = this.current()?.id; if (tabId) this.command({ kind: 'width', tabId, width }); }
-  presentation(mode: 'embedded' | 'stream'): void {
-    const scope = this.scopeId(), task = this.taskId(), tab = this.current()?.id;
-    if (scope && task && tab) void this.store.bridge.taskBrowserPresentation?.(scope, task, tab, mode).catch(() => this.notice.set('This page display is unavailable.'));
-    this.dialogOpen.set(false);
-  }
   theme(theme: 'light' | 'dark' | 'system'): void { const tabId = this.current()?.id; if (tabId) this.command({ kind: 'theme', tabId, theme }); }
   network(slow: boolean): void { const tabId = this.current()?.id; if (tabId) this.command({ kind: 'network', tabId, slow }); }
   ask(question: BrowserQuestion): void {

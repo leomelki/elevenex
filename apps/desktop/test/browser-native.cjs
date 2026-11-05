@@ -36,7 +36,7 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   })()`);
   await window.webContents.executeJavaScript(`window.__autoBrowserAck = true; void window.elevenex.onTaskBrowserFrame(frame => { window.__browserFrame = {streamId:frame.streamId,sequence:frame.sequence,bytes:frame.jpeg.byteLength,width:frame.width,height:frame.height}; if (window.__autoBrowserAck) void window.elevenex.taskBrowserFrameAck(frame.scopeId,frame.taskId,frame.tabId,frame.streamId,frame.sequence); });`);
   const visibleCount = () => window.webContents.executeJavaScript('(window.__browserSurfaces || []).filter(surface=>surface.visible).length');
-  await read();
+  assert.deepEqual((await read()).availablePlacements, ['desktop'], 'Local tasks must not offer a remote streaming location');
   const configured = await call('taskBrowserConfigure', scope, 1, 'desktop-proxy');
   assert.equal(configured.ok, true); assert.equal(configured.value.placement, 'desktop-proxy');
   assert.equal(configured.value.capabilities.embedded, true);
@@ -88,7 +88,7 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   await call('taskBrowserLayout', scope, 1, layout);
   await until(async()=>await visibleCount() === 1, 'Guest was not presented');
   assert.deepEqual(await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible).bounds'), layout.bounds);
-  assert.equal(await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible).presentation'), 'stream');
+  assert.equal(await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible).presentation'), 'embedded', 'Even legacy local machine placement must embed natively');
   await call('taskBrowserPresentation', scope, 1, first, 'embedded');
   // Hold a real link navigation before response headers: the old document stays visible.
   await call('taskBrowserLayout', scope, 1, layout);

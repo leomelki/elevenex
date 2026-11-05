@@ -143,7 +143,7 @@ export class BrowserStreamComponent {
     } catch {
       if (!this.disposed)
         this.status.set(
-          'Page display interrupted. Switch display mode to reconnect.',
+          'Page display interrupted. Reload the page to reconnect.',
         );
     } finally {
       bitmap?.close();

@@ -11,18 +11,21 @@ from an empty guest partition.
 
 | Browser location | Engine | Task localhost | Display |
 | --- | --- | --- | --- |
-| This device (`desktop`) | Electron guest here | This device | Embedded or local compatibility stream |
-| This device · task proxy (`desktop-proxy`) | Electron guest here | SSH forwarding to task machine, when remote | Embedded or local compatibility stream |
-| Stream from task machine (`machine`) | Remote: sandboxed backend Chromium; local: Electron guest here | Task machine | JPEG stream |
+| Local (`desktop`) | Electron guest here | This device | Native embedding |
+| Local · task proxy (`desktop-proxy`) | Electron guest here | SSH forwarding to task machine, when remote | Native embedding |
+| Remote (`machine`, offered for remote tasks) | Sandboxed backend Chromium | Task machine | JPEG stream |
 
 A local task defaults to `desktop`; a remote task defaults to `machine`. Choosing
-`machine` for a local task uses the existing Electron guest frame producer: the
+`machine` for a local task through the legacy API still uses the local Electron
+guest, now embedded natively. The UI offers only Local for local tasks, using
+main-issued `availablePlacements`; it has no separate Direct/Stream display
+selector. Legacy presentation IPC remains supported for older consumers. The
 local backend retains its TCP transport, and private runtime pixel routes stay
-closed to TCP. A future local backend runtime client needs private transport too.
+closed to TCP.
 The proxy choice forwards explicitly opened task localhost ports; public website traffic still originates on this
 device. It is not an arbitrary HTTP proxy, a VPN or a public-traffic SSH tunnel.
 The desktop engine still uses its internal policy SOCKS connector in both modes
-to enforce destination grants and DNS pinning. “This device” means no task-machine
+to enforce destination grants and DNS pinning. “Local” means no task-machine
 forwarding, not removal of that security boundary.
 
 Browser Tools exposes the choice through `taskBrowserConfigure`, a named,

@@ -1,18 +1,22 @@
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TaskBrowserCommand, TaskBrowserState, TaskBrowserTab, TaskBrowserWindowContext, ElevenexBridge } from '@elevenex/shared';
+import type { TaskBrowserCommand, TaskBrowserPlacement, TaskBrowserState, TaskBrowserTab, TaskBrowserWindowContext, ElevenexBridge } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { TaskBrowserComponent } from './task-browser.component';
 
 function tab(id = 'tab-1'): TaskBrowserTab {
   return { id, title: 'New tab', url: '', by: 'you', driver: 'you', agentSessionId: null, generation: 1, loading: false, ready: false, canGoBack: false, error: null, errors: 0, width: 'full', theme: 'system', slowNetwork: false, waiting: false };
 }
-function setup(tabs: readonly TaskBrowserTab[] = []) {
-  let state: TaskBrowserState = { scopeId: 'scope', taskId: 1, revision: 0, surfaceEpoch: 0, controlsFocus: 0, active: tabs[0]?.id ?? null, tabs, picked: null, picking: false, pickerMessage: null, feedback: false, ports: [3000], privacy: 'content-withheld' };
+function setup(tabs: readonly TaskBrowserTab[] = [], availablePlacements?: readonly TaskBrowserPlacement[]) {
+  let state: TaskBrowserState = { availablePlacements, placement: 'desktop', scopeId: 'scope', taskId: 1, revision: 0, surfaceEpoch: 0, controlsFocus: 0, active: tabs[0]?.id ?? null, tabs, picked: null, picking: false, pickerMessage: null, feedback: false, ports: [3000], privacy: 'content-withheld' };
   const bridge = {
     taskBrowserDetach: vi.fn<NonNullable<ElevenexBridge['taskBrowserDetach']>>(async () => undefined),
     taskBrowserReturn: vi.fn<NonNullable<ElevenexBridge['taskBrowserReturn']>>(async () => undefined),
     taskBrowserRead: vi.fn(async () => ({ ok: true, value: state })),
+    taskBrowserConfigure: vi.fn(async (_scope: string, _task: number, placement: TaskBrowserPlacement) => {
+      state = { ...state, placement, revision: 0 };
+      return { ok: true, value: state };
+    }),
     taskBrowserHide: vi.fn(async () => undefined),
     taskBrowserCommand: vi.fn(async (_scope: string, _task: number, input: TaskBrowserCommand) => {
       if (input.kind === 'new-tab') {
@@ -36,6 +40,29 @@ async function render(fixture: ComponentFixture<TaskBrowserComponent>): Promise<
   });
 }
 afterEach(() => TestBed.resetTestingModule());
+describe('Browser location controls', () => {
+  it('keeps local tasks native without a display-mode choice', async () => {
+    const { fixture } = setup([tab()], ['desktop']);
+    fixture.componentRef.setInput('active', true); await render(fixture);
+    fixture.componentInstance.showDialog('tools'); fixture.detectChanges();
+    const location = document.querySelector<HTMLButtonElement>('[aria-label="Browser location: Local"]');
+    expect(location?.disabled).toBe(true);
+    const buttons = [...document.querySelectorAll('[role="dialog"] button')].map(button => button.textContent?.trim());
+    expect(buttons).not.toContain('Direct');
+    expect(buttons).not.toContain('Stream');
+  });
+  it('uses Local and Remote to switch browser hosts', async () => {
+    const { fixture, bridge } = setup([tab()], ['desktop', 'desktop-proxy', 'machine']);
+    fixture.componentRef.setInput('active', true); await render(fixture);
+    fixture.componentInstance.showDialog('tools'); fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[aria-label="Browser location: Local"]')?.click(); fixture.detectChanges();
+    const remote = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find(button => button.textContent?.trim().startsWith('Remote'));
+    expect(remote).toBeDefined();
+    remote?.click(); await render(fixture);
+    expect(bridge.taskBrowserConfigure).toHaveBeenCalledExactlyOnceWith('scope', 1, 'machine');
+    expect(document.querySelector('[aria-label="Browser location: Remote"]')).not.toBeNull();
+  });
+});
 describe('Task browser start tabs', () => {
   it.each([undefined, false, true])('enables Forward only with forward history (%s)', async canGoForward => {
     const { fixture, bridge } = setup([{ ...tab(), canGoForward }]);

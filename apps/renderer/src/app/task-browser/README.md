@@ -20,11 +20,13 @@ navigation persistence and MCP replies do not include page titles.
 
 ## Rendering and composition
 
-Browser Tools selects **This device**, **This device · task proxy**, or
-**Stream from task machine** through the scope-bound configuration operation.
+Browser Tools selects **Local**, **Local · task proxy**, or **Remote** through
+the scope-bound configuration operation. Main supplies the available locations;
+local tasks offer only Local. There is no separate display-mode choice: local
+engines embed natively and remote engines stream from the task machine.
 Close tabs with loaded pages before switching; profiles are separate. The proxy
 forwards task localhost servers while public traffic stays on this device. Local
-tasks default to this device; remote tasks default to the task-machine stream.
+tasks default to Local; remote tasks default to Remote.
 See [the architecture review and extension boundaries](../../../../../docs/task-browser-architecture.md).
 
 Desktop-hosted tasks use a real Electron guest `<webview>`. `EmbeddedPageComponent` creates
@@ -45,8 +47,8 @@ inert and without input; hidden panels also stop page audio and frame production
 
 A remote backend hosts real sandboxed Chromium. Main owns its private transport,
 viewer lease and credentials; the renderer receives only typed state and bounded
-JPEG display frames. Remote pages always use `BrowserStreamComponent`. Local
-Tools also offer a compatibility Stream display using the same guest engine.
+JPEG display frames. Remote pages always use `BrowserStreamComponent`. The
+legacy local stream IPC remains compatible but is not exposed in Browser Tools.
 The streamed display has one decoding frame and one latest replacement. Explicit
 acks, adaptive resolution/quality and host backpressure avoid growing a frame queue
 on slow links. A typed, bounded input lane coalesces motion/scroll, preserves key

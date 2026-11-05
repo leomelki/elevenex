@@ -9,7 +9,7 @@
     @if (info.context.machineName) {
       <div class="machine-island"><ex-title-island [contentKey]="info.context.machineName" [label]="'Open task on ' + info.context.machineName" (pressed)="action('reveal')"><span class="machine"><ex-icon name="laptop" [size]="13" />{{ info.context.machineName }}</span></ex-title-island></div>
     }
-    <div class="window-actions"><ex-icon-button icon="panel" [label]="browser()?.directAvailable() ? 'Return tab to task (reloads page)' : 'Return tab to task'" [disabled]="!info.available || returning()" (pressed)="action('return')" /></div>
+    <div class="window-actions"><ex-icon-button icon="panel" [label]="browser()?.embeddedAvailable() ? 'Return tab to task (reloads page)' : 'Return tab to task'" [disabled]="!info.available || returning()" (pressed)="action('return')" /></div>
   }
 </header>
 <main animate.enter="arrive" [attr.inert]="returning() ? '' : null">
