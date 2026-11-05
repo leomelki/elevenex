@@ -26,7 +26,9 @@ Use `pnpm desktop:dev` for the normal native application. Checks are
 `pnpm desktop:lint`, `pnpm desktop:test`, and `pnpm desktop:build`.
 Visual verification uses [the native capture runner](../../scripts/desktop-capture/README.md),
 with `--url http://127.0.0.1:4310` when reviewing the component preview.
-See [verification results](VERIFICATION.md) for checks and captured states.
+The [historical verification log](VERIFICATION.md) records earlier checks and
+captured states; routine new results belong in chat/PR descriptions and ignored
+`artifacts/`, as described in the root `AGENTS.md`.
 See [the design review](DESIGN_REVIEW.md) for corrected defects and remaining
 differences from the supplied component and motion specifications.
 

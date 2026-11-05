@@ -18,6 +18,9 @@ dev
 .DS_Store
 .worktrees/
 artifacts/
+# Routine agent verification logs belong in artifacts/ or chat/PR descriptions.
+# Existing tracked historical logs remain tracked; AGENTS.md freezes their upkeep.
+VERIFICATION.md
 apps/desktop/renderer/
 apps/desktop/.stage/
 dist-runtime/

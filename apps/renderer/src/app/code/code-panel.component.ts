@@ -34,7 +34,7 @@ export class CodePanelComponent {
   private readonly acknowledgedLayout = signal(-1);
   readonly layoutReady = computed(() => this.acknowledgedLayout() === this.layoutRevision());
   readonly viewportKey = computed(() => { const target = this.target(); return this.frameVisible() && target ? `${target.scopeId}:${target.taskId}` : ''; });
-  readonly launching = computed(() => this.store.busy() || this.store.state()?.phase === 'loading');
+  readonly launching = computed(() => this.store.busy() || this.store.state()?.phase === 'loading' || this.showFrame() && this.frameLoading());
   readonly connectionLost = computed(() => !this.connected() || this.store.state()?.phase === 'disconnected' && !this.store.state()?.relocated && !this.store.state()?.detached);
   readonly showFrame = computed(() => !!this.frameResource() && this.store.state()?.phase !== 'failed');
   readonly hasSurface = computed(() => this.showFrame() && this.store.state()?.phase !== 'loading');

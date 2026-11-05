@@ -98,6 +98,7 @@ describe('Code panel launch and iframe focus handoff', () => {
     expect(layouts).toHaveLength(1);
     expect(fixture.componentInstance.frameLoading()).toBe(false);
     expect(fixture.nativeElement.querySelector('.frame-container.loading')).toBeNull();
+    expect(fixture.componentInstance.launching()).toBe(false);
   });
   it('keeps the mounted frame and its focus when status or open replies change without changing the resource', async () => {
     const { fixture, publish } = setup(); await settle(fixture);
@@ -131,8 +132,14 @@ describe('Code panel launch and iframe focus handoff', () => {
     expect(root.querySelector('.frame-container.loading[inert]')).not.toBeNull();
     publish(ready); await settle(fixture);
     expect(root.querySelector('.frame-container.loading[inert]')).not.toBeNull();
+    expect(fixture.componentInstance.launching()).toBe(true);
+    expect(root.getAttribute('aria-busy')).toBe('true');
+    expect(root.querySelector('ex-progress-line')?.closest('ex-fold')?.classList.contains('open')).toBe(true);
     const acknowledge = layouts.shift(); if (!acknowledge) throw new Error('Frame presentation was not requested.');
     acknowledge(); await settle(fixture);
+    expect(fixture.componentInstance.launching()).toBe(false);
+    expect(root.getAttribute('aria-busy')).toBe('false');
+    expect(root.querySelector('ex-progress-line')?.closest('ex-fold')?.classList.contains('open')).toBe(false);
     expect(root.querySelector('.frame-container.loading')).toBeNull();
     expect(root.querySelector('.frame-container')?.hasAttribute('inert')).toBe(false);
     expect(TestBed.inject(CodeFramePool).mount).toHaveBeenCalledOnce();
