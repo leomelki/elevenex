@@ -141,17 +141,20 @@ answers, unknown task ports and application control destinations stay denied.
 ## Capture reliability
 
 `RuntimeBrowserCapture` owns the tab's CDP screencast listener, serialized
-start/stop commands, latest image, one cancellable read and one screenshot in
+start/stop commands, latest image, one cancellable read and one refresh in
 flight. It keeps its source sequence across engine replacement; document/viewport
-epochs and capture revisions reject late screenshots and old engine events.
+epochs and capture revisions reject old engine events.
 Navigation completion restarts capture without waiting for a layout heartbeat.
 
 Capture uses `everyNthFrame: 1`: Chromium damage can be a single hover or button
 update, so sampling damage events can leave the final image stale indefinitely.
 Video pacing and the bounded latest-image slot handle rate control downstream.
-A viewer-owned read also runs a coalesced screenshot watchdog: initial/dirty
-images are eligible immediately, input changes are checked at 100 ms cadence,
-and idle reconciliation is limited to once a second. Identical JPEGs do not
+A viewer-owned read also runs a coalesced screencast refresh: missing input
+updates are checked at 100 ms cadence, and idle reconciliation is limited to
+once a second. Refresh stops/starts the same source to seed its current viewport.
+Do not mix scaled `Page.captureScreenshot` calls into this source: clipping uses
+document coordinates and temporarily changes compositor emulation, producing
+wrong scroll regions or white frames. Identical JPEGs do not
 advance the source sequence or trigger video encoding. No watchdog runs without
 a waiting reader; hide, abort, navigation and teardown release its timers.
 
@@ -174,3 +177,12 @@ supersede intent, but cannot leave a partial device-metrics update behind. The
 new control generation publishes together with its display epoch, and final
 readiness publishes after the update. Regression coverage reproduces the former
 stale-generation broadcast, plus an interrupted resize with a different DPR.
+The viewport update explicitly sets the visible backing size as well as device
+metrics: persistent headless Chrome can otherwise subtract native chrome insets
+from screencast dimensions while reporting the requested logical viewport.
+
+CPU-only streams use the same 1920×1440 resolution bounds as hardware, with a
+30 FPS ceiling and capacity-based reductions. Relative resolution tiers preserve
+tall panels; they do not round them down to landscape width buckets. Bitrate
+retains a text-quality floor at low FPS, and the encoder buffer reserves at least
+two frame budgets so sparse updates do not become heavily quantized keyframes.

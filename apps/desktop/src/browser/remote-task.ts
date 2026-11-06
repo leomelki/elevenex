@@ -185,7 +185,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
   }
   positionDetached(tabId: string, input: TaskBrowserLayout): void {
     this.detached.get(tabId)?.position(input);
-    this.ensureConnection();
+    void this.ensureConnection();
   }
   hideDetached(tabId: string): void {
     this.detached.get(tabId)?.hide();
@@ -266,7 +266,10 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     this.schedule();
   }
   async refresh(): Promise<void> {
-    if (this.hasDetached() && !this.reconnect) {
+    // Reading metadata must not invalidate a live or opening viewer channel.
+    // In particular, first-open layout and the automatic blank-tab command race.
+    await this.connecting;
+    if (!this.reconnect) {
       this.accept(await this.request("state"));
       return;
     }
@@ -318,6 +321,9 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
       : this.panel.surfaces();
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
+    await this.ensureConnection(true);
+    if (this.disposed || this.reconnect || !this.selected())
+      throw new Error(this.connection.message ?? 'Browser is not connected. Reconnect before trying again.');
     if (input.kind === 'move-tab') {
       if (!this.state?.canReorder) throw new Error('Update the task machine to reorder browser tabs.');
       // Ordering does not change any document, viewport or driver generation.
@@ -430,7 +436,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
   }
   position(input: TaskBrowserLayout): void {
     this.panel.position(input);
-    this.ensureConnection();
+    void this.ensureConnection();
   }
   private pump(): void {
     this.panel.pump();
@@ -442,25 +448,26 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
       [...this.detached.values()].some((view) => view.visible)
     );
   }
-  private ensureConnection(): void {
+  private ensureConnection(forCommand = false): Promise<void> {
     if (
       this.disposed ||
-      !this.visible() ||
+      (!forCommand && !this.visible()) ||
       !this.selected() ||
       !this.reconnect ||
       this.connection.phase === "blocked"
     )
-      return;
+      return this.connecting ?? Promise.resolve();
     if (!this.connecting)
       this.connecting = this.establish()
         .catch((error) => this.fail(error))
         .finally(() => {
           this.connecting = undefined;
         });
+    return this.connecting;
   }
   private async establish(): Promise<void> {
     await this.disconnecting;
-    if (this.disposed || !this.visible()) return;
+    if (this.disposed || !this.selected()) return;
     this.connection = { phase: "connecting", message: "Connecting browser…" };
     const reply = record(
       await this.request("connect", { clientId: this.clientId }),
@@ -479,7 +486,8 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     this.connection = { phase: 'ready' };
     this.emit();
     if (this.visible()) this.pump();
-    else this.disconnect();
+    // A command can establish before the first measured layout. maintain()
+    // releases an unused viewer; do not disconnect before that command sends.
   }
   private async openStream(): Promise<void> {
     const revision = this.connectionRevision;
@@ -516,7 +524,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
         this.visible() &&
         this.connection.phase !== "blocked"
       ) {
-        if (this.reconnect) this.ensureConnection();
+        if (this.reconnect) void this.ensureConnection();
         else if (this.stream) {
           if (Date.now() - this.lastHeartbeat >= 3000) {
             this.lastHeartbeat = Date.now();

@@ -222,3 +222,24 @@ it('starts a keyframe epoch for a new document at the same viewport size', async
     expect(packets[2].video.epoch).not.toBe(packets[0].video.epoch);
   } finally { video.stop(); await video.done; }
 });
+
+it('keeps a detailed low-FPS keyframe sharp instead of exhausting a tiny rate buffer', async () => {
+  const executable = managedVideoExecutable();
+  const run = (args: string[]) => promisify(execFile)(executable, args, { encoding: 'buffer', maxBuffer: 3_000_000, timeout: 5000 });
+  const source = await run(['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=440x1400',
+    '-frames:v', '1', '-c:v', 'mjpeg', '-f', 'image2pipe', 'pipe:1']);
+  const encoder = new RuntimeVideoEncoder({ executable, kind: 'software' },
+    { width: 440, height: 1400, fps: 2, bitrate: 2_500_000, threads: 1 });
+  try {
+    const packet = await encoder.encode(source.stdout);
+    // Data URLs are local fixture bytes, never page strings or production logs.
+    const decode = (bytes: Buffer, format: string) => run(['-hide_banner', '-loglevel', 'error', '-f', format,
+      '-i', 'data:application/octet-stream;base64,' + bytes.toString('base64'), '-frames:v', '1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1']);
+    const original = (await decode(source.stdout, 'mjpeg')).stdout;
+    const decoded = (await decode(packet.data, 'h264')).stdout;
+    expect(decoded.length).toBe(original.length);
+    let difference = 0;
+    for (let n = 0; n < decoded.length; n++) difference += Math.abs(decoded[n] - original[n]);
+    expect(difference / decoded.length).toBeLessThan(5);
+  } finally { encoder.stop(); await encoder.closed; }
+});

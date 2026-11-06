@@ -122,6 +122,26 @@ describe('hardware selection and device confinement', () => {
 });
 
 describe('adaptive interactive video', () => {
+  it('preserves text resolution on CPU servers, including tall retina panels and slow steady links', () => {
+    const landscape = new RuntimeVideoQuality(settings).select(viewport, false, plenty, 1);
+    expect(landscape.width).toBe(1920);
+    expect(landscape.height).toBe(1080);
+    const quality = new RuntimeVideoQuality(settings);
+    quality.acknowledged(500);
+    const tall = quality.select({ width: 440, height: 1400, pixelRatio: 2 }, false, plenty, 1);
+    expect(tall.width).toBeGreaterThanOrEqual(440);
+    expect(tall.height).toBeGreaterThanOrEqual(1438);
+    expect(tall.height).toBeLessThanOrEqual(1440);
+    expect(tall.bitrate).toBeGreaterThanOrEqual(2_000_000);
+    const args = videoEncoderArguments({ executable: '/ffmpeg', kind: 'software' }, tall);
+    expect(Number(args[args.indexOf('-bufsize') + 1])).toBeGreaterThanOrEqual(tall.bitrate / 2);
+    for (let n = 0; n < 30; n++) quality.encoded(250);
+    const sparse = quality.select({ width: 440, height: 1400, pixelRatio: 2 }, false, plenty, 1);
+    expect(sparse.fps).toBe(2);
+    expect(sparse.bitrate).toBeGreaterThanOrEqual(2_000_000);
+    const slowArgs = videoEncoderArguments({ executable: '/ffmpeg', kind: 'software' }, sparse);
+    expect(Number(slowArgs[slowArgs.indexOf('-bufsize') + 1])).toBeGreaterThanOrEqual(sparse.bitrate);
+  });
   it('uses hardware capacity while sharing software and memory budgets across presentations', () => {
     const high = new RuntimeVideoQuality(settings).select(
       viewport,

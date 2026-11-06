@@ -9,6 +9,7 @@ const { RemoteTaskBrowser } = require('../dist/browser/remote-task');
 
 /** Real main adapter/HTTP transport with a deterministic machine host. Chromium host has its own integration suite. */
 module.exports = async function machineBrowserSmoke() {
+  await startupSmoke();
   for (const { layoutLanes, streaming } of [{ layoutLanes: true, streaming: true }, { layoutLanes: true, streaming: false }, { layoutLanes: false, streaming: false }]) {
     const token = randomUUID(), first = randomUUID(), second = randomUUID(), frames = [], layouts = [];
     let connects = 0, disconnects = 0, revision = 1, upgrades = 0, httpFrames = 0;
@@ -83,3 +84,72 @@ module.exports = async function machineBrowserSmoke() {
   }
   console.log('Machine browser smoke passed: one task lease, independent presentations, legacy layout fallback and last-display cleanup.');
 };
+
+async function startupSmoke() {
+  const token = randomUUID(), tabId = randomUUID();
+  let tabs = [], revision = 0, connects = 0, commands = 0, frames = 0, upgrade;
+  const state = () => ({ taskId: 1, revision: ++revision, surfaceEpoch: 0, controlsFocus: 0,
+    active: tabs[0]?.id ?? null, tabs, streamVersion: 1, picked: null, picking: false,
+    pickerMessage: null, feedback: false, ports: [], privacy: 'content-withheld' });
+  const server = createServer(async (request, response) => {
+    const path = request.url.split('/').at(-1);
+    for await (const chunk of request) { void chunk; }
+    response.setHeader('content-type', 'application/json');
+    if (path === 'initial') response.end(JSON.stringify(state()));
+    else if (path === 'connect') { connects++; response.end(JSON.stringify({ token, state: state() })); }
+    else if (path === 'state') response.end(JSON.stringify(state()));
+    else if (path === 'disconnect') response.end('{}');
+    else { response.statusCode = 400; response.end('{}'); }
+  });
+  const sockets = new WebSocketServer({ noServer: true });
+  server.on('upgrade', (request, socket, head) => {
+    upgrade = () => sockets.handleUpgrade(request, socket, head, ws => {
+      ws.on('message', data => {
+        const { id, method, body } = JSON.parse(data);
+        if (method === 'command') {
+          commands++;
+          assert.equal(body.kind, 'new-tab');
+          tabs = [{ id: tabId, title: 'New tab', url: '', by: 'you', driver: 'you', agentSessionId: null,
+            generation: 1, loading: false, ready: false, canGoBack: false, error: null, errors: 0,
+            width: 'full', theme: 'system', slowNetwork: false, waiting: false }];
+        } else if (method === 'frame') frames++;
+        ws.send(JSON.stringify({ id, result: method === 'ping' ? null : state() }));
+      });
+      ws.send(JSON.stringify({ event: 'state', state: state() }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const window = new BrowserWindow({ show: false });
+  const client = new BackendClient(() => ({ identity: 'startup-test', url: 'http://127.0.0.1:' + server.address().port,
+    version: 'a'.repeat(40), headers: {}, environment: { kind: 'local' } }), () => undefined);
+  client.attach(window.webContents.id);
+  const scope = client.state(window.webContents.id).scope.id;
+  const browser = new RemoteTaskBrowser(scope, 1, window, client, () => undefined, () => true, () => undefined, () => undefined, {}, false);
+  let command, refresh;
+  try {
+    await browser.restore();
+    // The renderer automatically creates its first blank tab before geometry
+    // and the private socket are necessarily ready. Hold the actual upgrade.
+    command = browser.command({ kind: 'new-tab' });
+    const deadline = Date.now() + 5000;
+    while (!upgrade) { assert.ok(Date.now() < deadline); await delay(10); }
+    refresh = browser.refresh();
+    assert.equal(commands, 0, 'No command is dispatched before the channel is ready');
+    upgrade();
+    const opened = await command;
+    await refresh;
+    assert.equal(opened.active, tabId);
+    assert.equal(browser.snapshot().connection.phase, 'ready');
+    assert.equal(connects, 1, 'Concurrent metadata refresh does not rotate the opening viewer');
+    assert.equal(commands, 1, 'Startup sends the command exactly once');
+    browser.position({ surfaceEpoch: browser.snapshot().surfaceEpoch, sequence: 1, visible: true, inputReady: true,
+      reducedMotion: false, ownerGeneration: 1, bounds: { x: 0, y: 0, width: 800, height: 600 } });
+    await delay(50);
+    assert.equal(frames, 0, 'Blank tabs never hold a pixel request or its deadline');
+  } finally {
+    browser.destroy(); client.dispose(); window.destroy();
+    for (const socket of sockets.clients) socket.terminate();
+    await Promise.allSettled([command, refresh]);
+    sockets.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+  }
+}

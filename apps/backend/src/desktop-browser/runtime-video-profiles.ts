@@ -180,7 +180,9 @@ export function videoEncoderArguments(
     '-maxrate',
     String(bitrate),
     '-bufsize',
-    String(Math.max(64_000, Math.round(bitrate / 15))),
+    // At least two frame budgets: a fixed 1/15-second buffer forces blocky
+    // keyframes when capture or network feedback reduces the frame rate.
+    String(Math.round(Math.max(bitrate / 2, (bitrate * 2) / fps))),
     // Packet framing uses a private sideband, never a buffered video container.
     '-stats_mux_pre',
     'pipe:3',

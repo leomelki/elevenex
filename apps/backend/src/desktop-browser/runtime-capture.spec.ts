@@ -13,13 +13,14 @@ function fixture() {
   };
   const events = new EventEmitter();
   let image = 'first';
-  const send = jest.fn((method: string) =>
-    Promise.resolve(
-      method === 'Page.captureScreenshot'
-        ? { data: Buffer.from(image).toString('base64') }
-        : {},
-    ),
-  );
+  const send = jest.fn((method: string) => {
+    if (method === 'Page.startScreencast' && state.ready)
+      events.emit('Page.screencastFrame', {
+        sessionId: 1, data: Buffer.from(image).toString('base64'),
+        metadata: { deviceWidth: state.width, deviceHeight: state.height },
+      });
+    return Promise.resolve({});
+  });
   const cdp = Object.assign(events, { send });
   const capture = new RuntimeBrowserCapture(() => ({ ...state }));
   // The fixture implements only the CDP operations owned by the capture boundary.
@@ -57,16 +58,17 @@ it('delivers an initial static image and recovers a missed input update without 
     f.image('hover');
     f.capture.changed();
     const next = f.capture.next(1, signal);
-    await jest.advanceTimersByTimeAsync(0);
+    await jest.advanceTimersByTimeAsync(100);
     expect((await next)?.jpeg.toString()).toBe('hover');
     const idle = f.capture.next(2, signal, 2500);
     await jest.advanceTimersByTimeAsync(2500);
     expect(await idle).toBeNull();
     expect(
       f.send.mock.calls.filter(
-        ([method]) => method === 'Page.captureScreenshot',
+        ([method]) => method === 'Page.startScreencast',
       ).length,
-    ).toBeLessThanOrEqual(4);
+    ).toBeLessThanOrEqual(5);
+    expect(f.send.mock.calls.some(([method]) => method === 'Page.captureScreenshot')).toBe(false);
   } finally {
     f.capture.detach();
     await f.capture.stop();
@@ -77,7 +79,7 @@ it('accepts a single damage event before the start reply and never decimates spa
   const f = fixture();
   const original = f.send.getMockImplementation()!;
   f.send.mockImplementation(async (method) => {
-    if (method === 'Page.startScreencast') f.frame('early');
+    if (method === 'Page.startScreencast') { f.frame('early'); return {}; }
     return original(method);
   });
   try {
@@ -111,7 +113,7 @@ it('keeps a read live through loading and rejects overlapping reads before the w
     ).toBe(false);
     f.state.ready = true;
     await f.capture.start();
-    await jest.advanceTimersByTimeAsync(100);
+    await jest.advanceTimersByTimeAsync(1000);
     expect((await first)?.displayEpoch).toBe(1);
   } finally {
     f.capture.detach();
@@ -143,6 +145,7 @@ it('cancels only the owning waiter and restarts after an interrupted asynchronou
     f.frame('stale');
     release();
     expect(await old).toBeNull();
+    f.image('current');
     const next = f.capture.next(0, new AbortController().signal);
     await settle();
     controller.abort();
@@ -162,46 +165,28 @@ it('cancels only the owning waiter and restarts after an interrupted asynchronou
   expect(f.events.listenerCount('Page.screencastFrame')).toBe(0);
 });
 
-it('discards a screenshot completed after hide/show and stops watchdog work on abort', async () => {
-  const f = fixture(),
-    controller = new AbortController();
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const original = f.send.getMockImplementation()!;
-  let held = false;
-  f.send.mockImplementation(async (method) => {
-    if (method === 'Page.captureScreenshot' && !held) {
-      held = true;
-      await pending;
-      return { data: Buffer.from('old-hidden-page').toString('base64') };
-    }
-    return original(method);
-  });
+it('cancels watchdog refreshes on hide and abort without publishing a second pixel source', async () => {
+  const f = fixture(), controller = new AbortController();
   try {
-    const old = f.capture.next(0, controller.signal);
-    await jest.advanceTimersByTimeAsync(0);
+    const initial = await f.capture.next(0, controller.signal);
+    const hidden = f.capture.next(initial!.sequence, controller.signal);
+    await settle();
     f.state.visible = false;
     f.capture.invalidate();
-    expect(await old).toBeNull();
+    expect(await hidden).toBeNull();
+    const count = f.send.mock.calls.filter(([method]) => method === 'Page.startScreencast').length;
+    await jest.advanceTimersByTimeAsync(2000);
+    expect(f.send.mock.calls.filter(([method]) => method === 'Page.startScreencast')).toHaveLength(count);
     f.state.visible = true;
-    const next = f.capture.next(0, controller.signal);
-    await settle();
-    release();
-    await settle();
-    await jest.advanceTimersByTimeAsync(100);
-    expect((await next)?.jpeg.toString()).toBe('first');
-    const aborted = f.capture.next(1, controller.signal);
+    f.image('shown');
+    const next = await f.capture.next(0, controller.signal);
+    expect(next?.jpeg.toString()).toBe('shown');
+    const aborted = f.capture.next(next!.sequence, controller.signal);
     await settle();
     controller.abort();
     expect(await aborted).toBeNull();
-    const count = f.send.mock.calls.length;
     await jest.advanceTimersByTimeAsync(5000);
-    expect(f.send.mock.calls).toHaveLength(count);
-  } finally {
-    release();
-    f.capture.detach();
-    await f.capture.stop();
-  }
+    expect(f.send.mock.calls.some(([method]) => method === 'Page.captureScreenshot')).toBe(false);
+    expect(f.send.mock.calls.filter(([method]) => method === 'Page.startScreencast')).toHaveLength(count + 1);
+  } finally { f.capture.detach(); await f.capture.stop(); }
 });

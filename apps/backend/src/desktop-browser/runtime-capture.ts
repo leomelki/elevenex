@@ -47,12 +47,12 @@ export class RuntimeBrowserCapture {
   private control: Promise<void> = Promise.resolve();
   private reading = false;
   private waiter?: Waiter;
-  private snapshotPending?: Promise<void>;
-  private lastSnapshot = -Infinity;
+  private refreshPending?: Promise<void>;
+  private lastRefresh = -Infinity;
   private dirty = true;
   private outstanding = false;
   private frameSent = 0;
-  private quality = 85;
+  private readonly quality = 95;
   private maxWidth = 1920;
   private maxHeight = 1440;
   constructor(private readonly state: () => CaptureState) {}
@@ -159,27 +159,16 @@ export class RuntimeBrowserCapture {
     this.reading = true;
     try {
       if (this.outstanding || video) {
-        const elapsed = Date.now() - this.frameSent,
-          quality = video ? 95 : elapsed > 250 ? 65 : 85,
-          width =
-            typeof video === 'object'
-              ? video.width
-              : video
-                ? 1920
-                : elapsed > 250
-                  ? 1280
-                  : 1920,
+        const width = typeof video === 'object' ? video.width : 1920,
           height = typeof video === 'object' ? video.height : 1440;
         this.outstanding = false;
         if (
-          quality !== this.quality ||
           width !== this.maxWidth ||
           height !== this.maxHeight
         ) {
-          this.quality = quality;
           this.maxWidth = width;
           this.maxHeight = height;
-          // Encoding quality changes do not change the logical viewport epoch.
+          // Encoding resolution changes do not change the logical viewport epoch.
           this.frame = undefined;
           this.dirty = true;
           await this.stop();
@@ -207,16 +196,17 @@ export class RuntimeBrowserCapture {
           if (this.waiter === waiter) this.complete(null);
         };
         const timer = setTimeout(abort, waitMs);
-        // Damage events can stop on static pages, navigation or compositor stalls.
-        // A bounded, coalesced screenshot watchdog ensures eventual freshness.
+        // Refresh the same pixel source when damage events stop. Scaled
+        // screenshots temporarily emulate another viewport and can leak
+        // white/stale frames into a running screencast.
         const check = () => {
           if (this.waiter !== waiter) return;
-          if (this.dirty || Date.now() - this.lastSnapshot >= 1000)
-            void this.snapshot();
+          if (Date.now() - this.lastRefresh >= (this.dirty ? 100 : 1000))
+            void this.refresh();
           fallback = setTimeout(check, 100);
         };
         this.waiter = waiter;
-        fallback = setTimeout(check, this.dirty ? 0 : 100);
+        fallback = setTimeout(check, 100);
         signal.addEventListener('abort', abort, { once: true });
         if (signal.aborted) abort();
         else this.flush();
@@ -232,7 +222,7 @@ export class RuntimeBrowserCapture {
   }
   private publish(jpeg: Buffer, state: CaptureState): void {
     this.dirty = false;
-    // Idle watchdogs should not re-encode an unchanged page.
+    // Idle refreshes should not re-encode an unchanged page.
     if (
       this.frame?.displayEpoch === state.displayEpoch &&
       this.frame.jpeg.equals(jpeg)
@@ -257,48 +247,18 @@ export class RuntimeBrowserCapture {
     this.waiter = undefined;
     waiter?.resolve(frame);
   }
-  private async snapshot(): Promise<void> {
-    const cdp = this.cdp,
-      state = this.state(),
-      revision = this.revision,
-      sequence = this.sequence;
-    if (this.snapshotPending || !cdp || !state.visible || !state.ready) return;
-    this.lastSnapshot = Date.now();
-    const capture = cdp
-      .send('Page.captureScreenshot', {
-        format: 'jpeg',
-        quality: this.quality,
-        captureBeyondViewport: false,
-        fromSurface: true,
-        clip: {
-          x: 0,
-          y: 0,
-          width: state.width,
-          height: state.height,
-          scale: Math.min(
-            1,
-            this.maxWidth / (state.width * state.pixelRatio),
-            this.maxHeight / (state.height * state.pixelRatio),
-          ),
-        },
-      })
-      .then((reply) => {
-        if (
-          cdp !== this.cdp ||
-          revision !== this.revision ||
-          !this.state().visible ||
-          !this.state().ready ||
-          sequence !== this.sequence ||
-          reply.data.length > 4_000_000
-        )
-          return;
-        this.publish(Buffer.from(reply.data, 'base64'), state);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (this.snapshotPending === capture) this.snapshotPending = undefined;
-      });
-    this.snapshotPending = capture;
-    await capture;
+  private async refresh(): Promise<void> {
+    if (this.refreshPending || !this.cdp || !this.state().visible || !this.state().ready) return;
+    this.lastRefresh = Date.now();
+    const waiter = this.waiter, revision = this.revision;
+    // Restart emits the current viewport even without further damage. Use the
+    // same control lane as navigation, viewport changes and teardown.
+    const refresh = this.stop().then(async () => {
+      if (waiter && this.waiter === waiter && revision === this.revision) await this.start();
+    }).finally(() => {
+      if (this.refreshPending === refresh) this.refreshPending = undefined;
+    });
+    this.refreshPending = refresh;
+    await refresh;
   }
 }

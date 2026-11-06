@@ -20,6 +20,18 @@ function fixture(tabId, loading = false, displayEpoch) {
 }
 const settle = async () => { for (let n = 0; n < 8; n++) await Promise.resolve(); };
 
+test('an empty browser and blank tabs do not start pixel reads', async () => {
+  const f = fixture();
+  f.state.tabs[0].url = '';
+  f.position(); await settle();
+  assert.equal(f.reads(), 0);
+  assert.deepEqual(f.view.surfaces(), []);
+  f.state.active = null;
+  f.view.update(); f.view.pump(); await settle();
+  assert.equal(f.reads(), 0);
+  f.view.destroy();
+});
+
 test('loading pages stay visible and continue receiving streamed frames', async () => {
   const f = fixture(undefined, true);
   f.position(); await settle();

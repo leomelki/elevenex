@@ -5,6 +5,7 @@ import { RemoteBrowserVideo } from './remote-video';
 import { RemoteBrowserFrames } from './remote-frames';
 
 interface Pending {
+  readonly mutation: boolean;
   resolve(value: unknown): void;
   reject(error: Error): void;
   readonly timer: ReturnType<typeof setTimeout>;
@@ -74,7 +75,9 @@ export class RemoteBrowserStream {
           clearTimeout(entry.timer);
           entry.reject(
             new Error(
-              "Browser stream interrupted; outcome may be unknown. Inspect state before retrying.",
+              entry.mutation
+                ? "Browser stream interrupted; outcome may be unknown. Inspect state before retrying."
+                : "Browser display connection interrupted. Reconnecting…",
             ),
           );
         }
@@ -189,7 +192,7 @@ export class RemoteBrowserStream {
       const timer = setTimeout(() => {
         this.destroy();
       }, timeout);
-      this.pending.set(id, { resolve, reject, timer, ...(key ? { key } : {}) });
+      this.pending.set(id, { resolve, reject, timer, mutation: method === 'command' || method === 'input', ...(key ? { key } : {}) });
       this.socket.send(data);
     });
   }

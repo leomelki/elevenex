@@ -109,8 +109,10 @@ The module boundaries are explicit:
   macroblock/level limits and recovery hysteresis.
 * `runtime-video`: stream ownership, keyframe epochs, delivery window and cancellation.
 
-Software begins conservatively (at most 1280×720/30 FPS); hardware can reach the
-configured 60 FPS/resolution ceiling. Concurrent views share a pixel-work budget.
+Software can use the configured resolution ceiling at up to 30 FPS; hardware
+can reach 60 FPS. Concurrent views share a pixel-work budget. Relative resolution
+tiers preserve narrow/tall text views, with no blanket 720p software cap. Sparse
+updates retain a bitrate floor and at least two frame budgets of encoder buffering.
 Low CPU quota, high load, low memory, slow encoding or growing display latency
 reduce work. Resolution reduction reaches the CDP producer as well as FFmpeg,
 reducing intermediate JPEG costs. The logical browser viewport and input coordinate

@@ -46,7 +46,7 @@ test('frame cancellation releases only its display and scope abort rejects mutat
     assert.equal(await panel, null);
     const mutation = f.stream.request('input', {});
     const rejected = assert.rejects(mutation, /outcome may be unknown/);
-    const closed = assert.rejects(companion, /interrupted/);
+    const closed = assert.rejects(companion, error => /display connection interrupted/.test(error.message) && !/outcome/.test(error.message));
     f.controller.abort();
     await Promise.all([rejected, closed, f.stream.closed]);
     await assert.rejects(f.stream.request('input', {}), /unavailable/);

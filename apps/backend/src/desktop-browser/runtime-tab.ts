@@ -436,7 +436,15 @@ export class RuntimeBrowserTab {
       await cdp?.send('Emulation.setDeviceMetricsOverride', {
         width: viewport.width, height: viewport.height,
         deviceScaleFactor: pixelRatio, mobile: false,
+        screenWidth: viewport.width, screenHeight: viewport.height,
       });
+      if (!engineCurrent()) return;
+      // Persistent headless Chrome can size its backing view minus native
+      // chrome insets while reporting the requested innerHeight. Screencast
+      // metadata then disagrees with input coordinates. Set both explicitly.
+      const browserWindow = await cdp?.send('Browser.getWindowForTarget');
+      if (!engineCurrent()) return;
+      if (browserWindow) await cdp?.send('Browser.setContentsSize', { windowId: browserWindow.windowId, ...viewport });
       if (!engineCurrent()) return;
       this.viewport = viewport;
       this.pixelRatio = pixelRatio;

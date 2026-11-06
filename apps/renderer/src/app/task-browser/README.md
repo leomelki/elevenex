@@ -314,7 +314,8 @@ display after five seconds, with a fresh stream identity. Task pages, driver
 ownership and input are never replayed by this recovery.
 
 The host captures every damage event and reconciles missed compositor updates
-through a bounded screenshot watchdog while a reader is waiting. Static pages
+through a bounded restart of the same screencast while a reader is waiting. It
+does not mix scaled screenshots with the live source. Static pages
 do not need another animation or tab switch to reveal an input update. With the
 optional `pointerExit` capability, leaving the canvas clears remote CSS hover
 without blurring the site's input or cancelling a captured drag. Late input
@@ -332,3 +333,9 @@ supersede intent, but cannot leave a partial device-metrics update behind. The
 new control generation publishes together with its display epoch, and final
 readiness publishes after the update. Regression coverage reproduces the former
 stale-generation broadcast, plus an interrupted resize with a different DPR.
+
+Commands await the task's viewer handshake, including the automatic first blank
+tab. Concurrent metadata refreshes reuse an opening/live connection; blank tabs
+do not start pixel reads. Display-only interruption messages do not claim an
+unknown action outcome. Dispatched commands and human input still require
+inspection after interruption and are never replayed.

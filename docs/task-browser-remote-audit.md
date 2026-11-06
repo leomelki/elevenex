@@ -98,7 +98,7 @@ The follow-up review found more failure paths after the original audit:
 | Cause | Correction |
 | --- | --- |
 | The first picture waited for encoder discovery/probes. | Deliver a JPEG first, then negotiate video. Separate source cursors from the monotonic display receipt across codec changes. |
-| Sampling every other Chromium damage event missed isolated CSS hover/click updates. | Capture every damage event; pace video downstream. Reconcile missing updates with a bounded screenshot watchdog and suppress identical JPEGs. |
+| Sampling every other Chromium damage event missed isolated CSS hover/click updates. | Capture every damage event; pace video downstream. Reconcile missing updates with a bounded restart of the same screencast and suppress identical JPEGs. Scaled screenshots must not disturb the live compositor or capture document-origin pixels after scrolling. |
 | A single fallback timer fired during navigation and never tried again; a screencast event before its start reply was dropped. | Give capture its own owner, serialized lifecycle and repeating reader-owned watchdog, accept current-start events and resume on navigation completion. |
 | Concurrent reads passed the waiter check before either awaited start completed. | Admit only one read across its entire asynchronous lifetime, with owner-specific cancellation. |
 | Lost local frame receipts retained display credit indefinitely. | Restart only that presentation after five seconds; ignore retired stream receipts. |

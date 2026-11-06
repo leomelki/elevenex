@@ -111,9 +111,8 @@ export class RuntimeVideoQuality {
       this.settings.maxWidth / viewport.width,
       this.settings.maxHeight / viewport.height,
     );
-    // Preserve useful text resolution before pushing CPU-only streams to high FPS.
-    if (!hardware)
-      scale = Math.min(scale, 1280 / viewport.width, 720 / viewport.height);
+    // Cap CPU work using capacity and measured encode time before sacrificing
+    // text resolution. Software encoding does not imply a 720p-only machine.
     const requestedPixels = viewport.width * viewport.height * scale * scale;
     fps = Math.max(
       Math.min(fps, hardware ? 15 : 10),
@@ -123,6 +122,7 @@ export class RuntimeVideoQuality {
     // a resource-limited 30 FPS view can absorb several reductions without slowing.
     fps = Math.max(2, Math.floor(fps * 0.8 ** this.tier));
     const memoryPixels = resources.memory / (count * 48);
+    const maximumScale = scale;
     scale = Math.min(
       scale,
       Math.sqrt(
@@ -130,12 +130,11 @@ export class RuntimeVideoQuality {
           (viewport.width * viewport.height),
       ),
     );
-    const desiredWidth = viewport.width * scale;
-    const widths = [1920, 1600, 1280, 960, 800, 640, 480, 320, 160];
-    const boundedWidth =
-      widths.find((width) => width <= desiredWidth) ??
-      Math.max(16, Math.floor(desiredWidth / 2) * 2);
-    scale = Math.min(scale, boundedWidth / viewport.width);
+    // Quantize relative to this viewport's maximum. Landscape width buckets
+    // severely undersample narrow, tall panels.
+    scale = maximumScale * ([1, 0.85, 0.7, 0.5, 0.35, 0.25, 0.15, 0.1].find(
+      fraction => fraction * maximumScale <= scale,
+    ) ?? scale / maximumScale);
     let width = Math.max(16, Math.floor((viewport.width * scale) / 2) * 2);
     let height = Math.max(16, Math.floor((viewport.height * scale) / 2) * 2);
     const macroblocks = Math.ceil(width / 16) * Math.ceil(height / 16);
@@ -167,7 +166,8 @@ export class RuntimeVideoQuality {
       250_000,
       Math.min(
         this.settings.maxBitrate,
-        width * height * fps * 0.14 * 0.85 ** this.tier,
+        // Sparse pages and RTT-limited streams still need sharp keyframes.
+        width * height * Math.max(15, fps) * 0.28 * 0.85 ** this.tier,
       ),
     );
     const bitrate = Math.max(

@@ -192,6 +192,7 @@ export class RemoteBrowserPresentation {
       tab = this.host.state()?.tabs.find((tab) => tab.id === tabId);
     if (
       !tabId ||
+      !tab?.url ||
       tab?.error ||
       this.framePending ||
       this.layoutPending ||
