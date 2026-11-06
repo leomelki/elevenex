@@ -117,17 +117,6 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
   state.attach(window);
   const stopCodeFrames = code.attachWindow(window.webContents, devUrl);
   window.once('closed', stopCodeFrames);
-  let closing = false;
-  window.on('close', event => {
-    if (closing || quitting || BrowserWindow.getAllWindows().length > 1) return;
-    event.preventDefault();
-    closing = true;
-    // macOS can keep the application alive after its last window closes.
-    void terminals.close().then(() => {
-      terminals = new TerminalLifetime();
-      window.close();
-    });
-  });
   // Home is passive on launch. Restore domain context when a machine is chosen,
   // but do not open a saved SSH host merely because the app started.
   remote.attach(window.webContents.id, launchSelection ?? null);
@@ -149,10 +138,16 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
     event.preventDefault();
     if (editorClosePending) return;
     editorClosePending = true;
-    void code.prepareWindowClose(windowId).then(accepted => {
-      editorClosePending = false;
-      if (accepted && !window.isDestroyed()) { editorCloseAccepted = true; window.close(); }
-    }).catch(() => { editorClosePending = false; });
+    void code.prepareWindowClose(windowId).then(async accepted => {
+      if (!accepted || window.isDestroyed()) return;
+      // macOS keeps the app alive after its last window closes. Finish editor
+      // backups before terminal cleanup, and keep this close pending for both.
+      if (BrowserWindow.getAllWindows().length === 1) {
+        await terminals.close();
+        terminals = new TerminalLifetime();
+      }
+      if (!window.isDestroyed()) { editorCloseAccepted = true; window.close(); }
+    }).catch(() => undefined).finally(() => { editorClosePending = false; });
   });
   window.once('closed', () => code.releaseWindow(windowId, () => {
     machines.detach(windowId);
