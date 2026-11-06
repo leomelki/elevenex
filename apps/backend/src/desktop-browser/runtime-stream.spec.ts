@@ -162,6 +162,26 @@ describe('private persistent browser channel', () => {
     first.close();
     await once(first, 'close');
   });
+  it('notifies a viewer when a video producer ends normally after a presentation hides', async () => {
+    const task = service.active(1)!;
+    const tab = await task.create('you', null, '');
+    await task.layout(800, 600, true, true);
+    let finish!: () => void;
+    const capture = jest.spyOn(tab, 'nextFrame').mockImplementation(() => new Promise(resolve => { finish = () => resolve(null); }));
+    const ws = open(), received: Record<string, unknown>[] = [];
+    ws.on('message', data => received.push(JSON.parse(data.toString())));
+    await once(ws, 'open');
+    ws.send(JSON.stringify({ id: 1, method: 'video', body: {
+      tabId: tab.id, subscription: '22222222-2222-4222-8222-222222222222', action: 'start', sequence: 0,
+    } }));
+    while (!capture.mock.calls.length) await new Promise<void>(resolve => setImmediate(resolve));
+    await task.layout(800, 600, false);
+    finish();
+    while (!received.some(item => item.event === 'video-ended')) await once(ws, 'message');
+    expect(received.find(item => item.event === 'video-ended')).toEqual({ event: 'video-ended', subscription: '22222222-2222-4222-8222-222222222222' });
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    capture.mockRestore();
+  });
   it('accepts one-way video receipts without replies and keeps starts request/response', async () => {
     const ws = open(),
       received: Record<string, unknown>[] = [];

@@ -34,7 +34,7 @@ pauses on slow or hidden viewers. Logical viewport caps at 2560×1600, DPR at tw
 Human key/text/IME/clipboard/mouse/scroll input is bounded, ordered and gated by
 current driver and visibility. Disconnect removes display/input authority while preserving live task pages,
 network access and agent ownership. No queued automation resumes. Viewer TTL is
-ten seconds; tasks with tabs remain alive independently until explicit task or
+thirty seconds; tasks with live tabs remain alive independently until explicit task or
 backend shutdown. Live tasks are never silently evicted for capacity. Cookies, localStorage,
 IndexedDB, service workers and cache storage remain in task-incarnation profiles
 under `task-browser-profiles/` in application data, including across backend
@@ -78,7 +78,7 @@ The private layout route accepts optional `tabId` and `detached` fields for
 companion presentations. Omitted fields retain the original active-tab behavior.
 All views share the original viewer token; a companion does not acquire another
 lease. Per-tab visibility gates frames and every input event independently, with
-three-second presentation freshness and the existing viewer expiry. A detached
+fifteen-second presentation freshness and the existing viewer expiry. A detached
 layout never selects another tab. Returning removes its presentation; disconnect
 clears presentations and human-input authority while preserving agent control. The public TCP boundary is unchanged. Agents may start the runtime without a
 viewer; page observation and user-tab handoff restrictions remain unchanged.
@@ -114,3 +114,26 @@ is page-owned rather than bringing companion pages to front on every heartbeat.
 Congestion reduction applies to the attainable frame rate after CPU/pixel budgets.
 See the [remote interaction audit](../../../../docs/task-browser-remote-audit.md)
 for this revision's behavior and the remaining feature boundaries.
+
+New hosts advertise `keyText: true` and `inputWindow: 4`. Printable keydown and
+its native text travel together so websites can cancel insertion. Up to four
+whole batches may be outstanding; a per-tab lane preserves their order, bounds
+admission and rejects old presentation epochs after hide/show or reconnect.
+Clipboard remains a barrier and follows focused cross-origin frames/open shadow
+roots. A separate generation-checked `release` event cleans up held human state
+after queue pressure or an uncertain outcome; it never retries text or actions.
+Ordinary input does not publish unchanged task snapshots.
+
+`displayEpoch` identifies the document and logical viewport independently of
+driver ownership. Navigation clears old captures, serializes screencast restart
+and seeds the current page; H.264 starts a new keyframe epoch at that boundary.
+Both binary transports preserve the field. A producer always announces its end,
+including normal presentation expiry. Receipt deadlines tolerate fifteen seconds
+of jitter; no input is replayed. Layout acknowledges intent while installation is
+pending, and concurrent tasks share one managed installer. Unviewed blank user
+tabs may be evicted for capacity; live pages and agent-owned tabs are retained.
+
+Task networking handles public IP literals without DNS, uses the OS resolver for
+host configuration, and pins validated answers while racing address families.
+Authorized localhost aliases can reach IPv4- or IPv6-only task servers. Private
+answers, unknown task ports and application control destinations stay denied.

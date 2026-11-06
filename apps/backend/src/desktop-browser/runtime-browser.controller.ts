@@ -228,6 +228,7 @@ export class RuntimeBrowserController {
           sequence: frame.sequence,
           width: frame.width,
           height: frame.height,
+          ...(frame.displayEpoch === undefined ? {} : { displayEpoch: frame.displayEpoch }),
         }),
       );
       const size = Buffer.alloc(4);

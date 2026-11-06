@@ -17,6 +17,8 @@ export class BrowserHumanInput {
   };
   private committedComposition?: string;
   private compositionTimer?: ReturnType<typeof setTimeout>;
+  private printable?: Extract<TaskBrowserStreamEvent, { kind: 'key' }>;
+  private printableTimer?: ReturnType<typeof setTimeout>;
   constructor(
     private readonly send: (input: TaskBrowserStreamEvent) => void,
     private readonly textarea: () => HTMLTextAreaElement | undefined,
@@ -25,6 +27,7 @@ export class BrowserHumanInput {
     ) => { x: number; y: number } | null,
     private readonly pageHeight: () => number,
     private readonly shortcut: (intent: 'open' | 'pick' | 'controls') => void,
+    private readonly keyText: () => boolean = () => false,
   ) {}
   clear(): void {
     this.heldKeys.clear();
@@ -33,6 +36,8 @@ export class BrowserHumanInput {
     this.composing = false;
     this.committedComposition = undefined;
     clearTimeout(this.compositionTimer);
+    clearTimeout(this.printableTimer);
+    this.printable = undefined;
     this.clearText();
   }
   destroy(): void {
@@ -95,6 +100,10 @@ export class BrowserHumanInput {
       this.send({ ...pointer, type: 'up', buttons: 0, modifiers: 0 });
   }
   releaseInput(): void {
+    // A pending key never reached the host. Focus cleanup must not dispatch it.
+    if (this.printable) this.heldKeys.delete(this.printable.code || this.printable.key);
+    this.printable = undefined;
+    clearTimeout(this.printableTimer);
     this.cancelPointer();
     for (const key of this.heldKeys.values())
       this.send({ ...key, type: 'up', modifiers: 0 });
@@ -130,6 +139,7 @@ export class BrowserHumanInput {
   }
   key(event: KeyboardEvent, type: 'down' | 'up'): void {
     event.stopPropagation();
+    this.flushPrintable();
     if (event.isComposing || this.composing) return;
     // Let the local input method turn dead/process keys into composition or text.
     if (event.key === 'Dead' || event.key === 'Process' || event.keyCode === 229)
@@ -206,7 +216,12 @@ export class BrowserHumanInput {
       if (this.heldKeys.size < 128 || this.heldKeys.has(identity))
         this.heldKeys.set(identity, input);
     } else this.heldKeys.delete(identity);
-    this.send(input);
+    if (type === 'down' && this.keyText() && event.key.length === 1 && !event.metaKey && (!event.ctrlKey || event.altKey)) {
+      // The local beforeinput supplies layout/Option/AltGr text. Deliver it with
+      // keyDown so Blink honors the site's preventDefault and editing behavior.
+      this.printable = input;
+      this.printableTimer = setTimeout(() => this.flushPrintable(), 0);
+    } else this.send(input);
   }
   beforeInput(event: Event): void {
     event.stopPropagation();
@@ -222,10 +237,20 @@ export class BrowserHumanInput {
       input.inputType === 'insertText' &&
       input.data &&
       input.data !== this.committedComposition
-    )
-      this.send({ kind: 'text', text: input.data });
+    ) {
+      if (this.printable) this.flushPrintable(input.data);
+      else this.send({ kind: 'text', text: input.data });
+    }
+  }
+  private flushPrintable(text?: string): void {
+    const key = this.printable;
+    if (!key) return;
+    this.printable = undefined;
+    clearTimeout(this.printableTimer);
+    this.send({ ...key, ...(text === undefined ? {} : { text }) });
   }
   compositionStart(): void {
+    this.flushPrintable();
     clearTimeout(this.compositionTimer);
     this.committedComposition = undefined;
     this.composing = true;

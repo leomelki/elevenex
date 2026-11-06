@@ -60,7 +60,9 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
         contents.once('destroyed', () => { clearTimeout(timer); owner!.guests.delete(contents.id); });
       };
       const mouse=(_event:Electron.Event,input:Electron.MouseInputEvent)=>{if(input.type==='mouseDown')owner!.selected?.applicationInput(input.x/window.webContents.getZoomFactor(),input.y/window.webContents.getZoomFactor());};
-      const key=(_event:Electron.Event,input:Electron.Input)=>{if(input.type==='keyDown'&&(input.control||input.meta||input.alt))owner!.selected?.applicationInput();};
+      // Streamed page keys arrive in the app's textarea. Modifier keys there are
+      // page input; actual app overlays gate input through the measured layout.
+      const key=(_event:Electron.Event,input:Electron.Input)=>{if(input.type==='keyDown'&&(input.control||input.meta||input.alt)&&owner!.selected?.engine==='desktop')owner!.selected.applicationInput();};
       window.webContents.on('before-mouse-event',mouse);window.webContents.on('before-input-event',key);
       window.once('closed', detach);
       window.webContents.on('did-start-navigation', navigation);

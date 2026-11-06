@@ -1,4 +1,4 @@
-import type { BrowserContext, CDPSession, Page } from 'playwright-core';
+import type { BrowserContext, CDPSession, Page, Request } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import type {
   BrowserElement,
@@ -13,6 +13,7 @@ export interface RuntimeFrame {
   readonly width: number;
   readonly height: number;
   readonly pixelRatio?: number;
+  readonly displayEpoch?: number;
   readonly jpeg: Buffer;
 }
 export interface RuntimeVideoCapture { readonly width: number; readonly height: number; readonly fps: number }
@@ -21,6 +22,9 @@ export class RuntimeBrowserTab {
   readonly id = randomUUID();
   driver: 'you' | 'agent' | 'needs';
   generation = 1;
+  displayEpoch = 1;
+  private humanEpoch = 0;
+  get inputEpoch(): number { return this.humanEpoch; }
   ownership = 0;
   waiting = false;
   agentSessionId: number | null;
@@ -62,6 +66,9 @@ export class RuntimeBrowserTab {
     timer: ReturnType<typeof setTimeout>;
   };
   private streaming = false;
+  private captureEpoch = 0;
+  private frameControl: Promise<void> = Promise.resolve();
+  private documentRequest?: Request;
   private snapshotPending?: Promise<void>;
   private outstanding = false;
   private frameSent = 0;
@@ -182,7 +189,28 @@ export class RuntimeBrowserTab {
     page.on('console', (message) => {
       if (message.type() === 'error') this.countError();
     });
-    page.on('requestfailed', () => this.countError());
+    page.on('request', request => {
+      if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) return;
+      this.documentRequest = request;
+      this.loading = true;
+      this.error = null;
+      this.invalidateDisplay();
+    });
+    page.on('domcontentloaded', () => {
+      if (this.page !== page || this.disposed) return;
+      this.documentRequest = undefined;
+      this.loading = false;
+      this.changed();
+    });
+    page.on('requestfailed', request => {
+      this.countError();
+      if (request === this.documentRequest) {
+        this.documentRequest = undefined;
+        this.loading = false;
+        this.error = 'This page could not load. Check the address or task server, then retry.';
+        this.changed();
+      }
+    });
     page.on('response', (response) => {
       if (response.status() >= 400) this.countError();
     });
@@ -242,6 +270,7 @@ export class RuntimeBrowserTab {
         void this.input?.reset();
         this.navigation++;
         this.generation++;
+        this.invalidateDisplay();
         try {
           this.url = runtimeUrl(frame.url()).href;
           this.documentUrl = this.url;
@@ -276,6 +305,8 @@ export class RuntimeBrowserTab {
         if (
           !this.visible ||
           !this.streaming ||
+          this.captureEpoch !== this.displayEpoch ||
+          this.loading ||
           this.disposed ||
           event.data.length > 4000000
         )
@@ -294,6 +325,7 @@ export class RuntimeBrowserTab {
           width: this.viewport.width,
           height: this.viewport.height,
           pixelRatio: this.pixelRatio,
+          displayEpoch: this.displayEpoch,
           jpeg: Buffer.from(event.data, 'base64'),
         };
         this.flushFrame();
@@ -351,6 +383,7 @@ export class RuntimeBrowserTab {
       driver: this.driver,
       agentSessionId: this.agentSessionId,
       generation: this.generation,
+      displayEpoch: this.displayEpoch,
       loading: this.loading,
       ready: this.ready,
       canGoBack: this.canGoBack,
@@ -383,7 +416,7 @@ export class RuntimeBrowserTab {
     this.pageTitle = undefined;
     this.loading = true;
     this.error = null;
-    this.changed();
+    this.invalidateDisplay();
     try {
       await operation(page);
     } catch {
@@ -407,6 +440,7 @@ export class RuntimeBrowserTab {
     const current = () => revision === this.layoutRevision && !this.disposed;
     const changed =
       this.visible !== visible || this.interactive !== interactive;
+    if (changed) this.humanEpoch++;
     this.visible = visible;
     this.interactive = interactive;
     if (changed) this.changed();
@@ -433,7 +467,8 @@ export class RuntimeBrowserTab {
     if (resized || pixelRatio !== this.pixelRatio) {
       await this.input?.reset();
       if (!current()) return;
-      await this.stopFrames();
+      this.invalidateDisplay();
+      await this.frameControl;
       if (!current()) return;
       this.frame = undefined;
       this.needsSnapshot = true;
@@ -459,23 +494,42 @@ export class RuntimeBrowserTab {
     await this.startFrames();
   }
   private async startFrames(): Promise<void> {
-    if (this.streaming || !this.cdp || !this.visible) return;
-    this.streaming = true;
-    try {
-      await this.cdp.send('Page.startScreencast', {
-        format: 'jpeg',
-        quality: this.quality,
-        maxWidth: this.maxWidth,
-        maxHeight: this.maxHeight,
-        everyNthFrame: this.everyNthFrame,
+    const cdp = this.cdp, epoch = this.displayEpoch;
+    if (this.streaming || !cdp || !this.visible || this.loading || this.disposed) return;
+    const operation = this.frameControl.then(async () => {
+      if (this.streaming || cdp !== this.cdp || epoch !== this.displayEpoch || !this.visible || this.loading || this.disposed) return;
+      await cdp.send('Page.startScreencast', {
+        format: 'jpeg', quality: this.quality, maxWidth: this.maxWidth,
+        maxHeight: this.maxHeight, everyNthFrame: this.everyNthFrame,
       });
-    } catch {
-      this.streaming = false;
-    }
+      if (cdp === this.cdp && epoch === this.displayEpoch && this.visible && !this.loading && !this.disposed) {
+        this.captureEpoch = epoch;
+        this.streaming = true;
+      } else await cdp.send('Page.stopScreencast').catch(() => undefined);
+    }).catch(() => undefined);
+    this.frameControl = operation;
+    await operation;
   }
   private async stopFrames(): Promise<void> {
     this.streaming = false;
-    await this.cdp?.send('Page.stopScreencast').catch(() => undefined);
+    this.captureEpoch = 0;
+    const cdp = this.cdp;
+    const operation = this.frameControl.then(async () => {
+      await cdp?.send('Page.stopScreencast').catch(() => undefined);
+    });
+    this.frameControl = operation;
+    await operation;
+  }
+  private invalidateDisplay(): void {
+    this.displayEpoch++;
+    this.humanEpoch++;
+    void this.input?.reset();
+    this.frame = undefined;
+    this.needsSnapshot = true;
+    this.outstanding = false;
+    this.completeFrame(null);
+    void this.stopFrames();
+    this.changed();
   }
   async nextFrame(
     after: number,
@@ -518,7 +572,7 @@ export class RuntimeBrowserTab {
       const timer = setTimeout(abort, waitMs);
       const fallback = setTimeout(() => {
         if (after === 0 || this.needsSnapshot) void this.staticFrame();
-      }, 300);
+      }, after === 0 || this.needsSnapshot ? 60 : 300);
       this.waiter = {
         after,
         timer,
@@ -533,10 +587,10 @@ export class RuntimeBrowserTab {
     });
   }
   private async staticFrame(): Promise<void> {
-    if (this.snapshotPending || !this.cdp || !this.visible || this.disposed)
+    if (this.snapshotPending || !this.cdp || !this.visible || this.loading || this.disposed)
       return;
     const sequence = this.frameSequence,
-      generation = this.generation;
+      epoch = this.displayEpoch;
     const capture = this.cdp
       .send('Page.captureScreenshot', {
         format: 'jpeg',
@@ -559,7 +613,8 @@ export class RuntimeBrowserTab {
         if (
           this.disposed ||
           !this.visible ||
-          this.generation !== generation ||
+          this.displayEpoch !== epoch ||
+          this.loading ||
           this.frameSequence !== sequence ||
           reply.data.length > 4000000
         )
@@ -570,6 +625,7 @@ export class RuntimeBrowserTab {
           width: this.viewport.width,
           height: this.viewport.height,
           pixelRatio: this.pixelRatio,
+          displayEpoch: epoch,
           jpeg: Buffer.from(reply.data, 'base64'),
         };
         this.flushFrame();
@@ -615,11 +671,13 @@ export class RuntimeBrowserTab {
     )
       throw new Error('Input is outside the viewport');
     const acceptedGeneration = this.generation,
-      navigation = this.navigation;
+      navigation = this.navigation,
+      inputEpoch = this.inputEpoch;
     const current = () => {
       if (
         !this.ready ||
         this.generation !== acceptedGeneration ||
+        this.inputEpoch !== inputEpoch ||
         this.navigation !== navigation
       )
         throw new Error('Browser input was interrupted');
@@ -633,8 +691,10 @@ export class RuntimeBrowserTab {
       return {};
     }
     const result = await this.input!.dispatch(input, current);
-    this.changed();
     return result;
+  }
+  releaseInput(): Promise<void> {
+    return this.input?.reset() ?? Promise.resolve();
   }
   async inspect(x: number, y: number): Promise<BrowserElement | null> {
     return this.page!.evaluate(
@@ -738,12 +798,13 @@ export class RuntimeBrowserTab {
     theme: 'system' | 'light' | 'dark',
     system: 'light' | 'dark' = 'light',
   ): Promise<void> {
-    await this.page!.emulateMedia({
+    if (this.started) await this.page!.emulateMedia({
       colorScheme: theme === 'system' ? system : theme,
     });
     this.theme = theme;
   }
   async networkTo(slow: boolean): Promise<void> {
+    if (!this.started) { this.slowNetwork = slow; return; }
     // Network emulation is a no-op on this CDP session until its domain is
     // enabled. The private session does not retain bodies or posted data.
     await this.cdp!.send('Network.enable', { maxTotalBufferSize: 0, maxResourceBufferSize: 0, maxPostDataSize: 0 });
@@ -757,6 +818,9 @@ export class RuntimeBrowserTab {
   }
   async back(): Promise<void> {
     await this.load((page) => page.goBack({ waitUntil: 'domcontentloaded', timeout: 20000 }));
+  }
+  async reload(): Promise<void> {
+    await this.load(page => page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 }));
   }
   async forward(): Promise<void> {
     await this.load((page) => page.goForward({ waitUntil: 'domcontentloaded', timeout: 20000 }));
@@ -772,6 +836,7 @@ export class RuntimeBrowserTab {
   }
   /** Explicit human recovery; no navigation or queued action is resumed here. */
   async resetEngine(): Promise<void> {
+    this.invalidateDisplay();
     const page = this.page,
       cdp = this.cdp;
     this.page = undefined;

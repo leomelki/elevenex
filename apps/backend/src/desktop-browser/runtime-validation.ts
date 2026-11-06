@@ -66,6 +66,7 @@ export const runtimeCommand = z.union([
   z.object({ kind: z.literal('network'), tabId, slow: z.boolean() }).strict(),
 ]);
 const runtimeEvent = z.union([
+  z.object({ kind: z.literal('release') }).strict(),
   z
     .object({
       kind: z.literal('pointer'),
@@ -96,8 +97,10 @@ const runtimeEvent = z.union([
       code: z.string().max(80),
       keyCode: z.number().int().min(0).max(255),
       modifiers,
+      text: z.string().max(65536).optional(),
     })
-    .strict(),
+    .strict()
+    .refine(event => event.text === undefined || event.type === 'down'),
   z.object({ kind: z.literal('text'), text: z.string().max(65536) }).strict(),
   z
     .object({
@@ -129,12 +132,12 @@ export const runtimeInput = z.union([
     .strict()
     .refine(
       (batch) =>
-        batch.events.every((event) => event.kind !== 'clipboard') &&
+        batch.events.every((event) => event.kind !== 'clipboard' && event.kind !== 'release') &&
         batch.events.reduce(
           (size, event) =>
             size +
-            (event.kind === 'text' || event.kind === 'composition'
-              ? event.text.length
+            (event.kind === 'text' || event.kind === 'composition' || event.kind === 'key'
+              ? (event.text?.length ?? 0)
               : 0),
           0,
         ) <= 65536,

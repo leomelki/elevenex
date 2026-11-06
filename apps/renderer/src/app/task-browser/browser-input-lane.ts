@@ -9,16 +9,21 @@ export class BrowserInputLane {
   private driver: "you" | "agent" | "needs" = "you";
   private enabled = false;
   private expectedTakeover = 0;
-  private sending = false;
+  private inFlight = 0;
+  private clipboardPending = false;
+  private revision = 0;
+  private scheduled = false;
   private disposed = false;
   private uncertain = false;
+  private queuedTextUnits = 0;
   get needsInteraction(): boolean {
     return this.uncertain;
   }
   resume(): void {
-    if (!this.disposed) {
+    if (!this.disposed && this.uncertain) {
+      this.revision++;
       this.uncertain = false;
-      this.queue = [];
+      this.clearQueue();
     }
   }
   private queue: TaskBrowserStreamEvent[] = [];
@@ -28,6 +33,8 @@ export class BrowserInputLane {
       input: TaskBrowserStreamInput,
     ) => Promise<number>,
     private readonly interrupted: () => void,
+    private readonly windowSize: () => number = () => 1,
+    private readonly release?: (generation: number) => Promise<unknown>,
   ) {}
   authority(
     generation: number,
@@ -37,20 +44,36 @@ export class BrowserInputLane {
     if (
       generation > this.generation &&
       !(generation === this.expectedTakeover && driver !== "agent")
-    )
-      this.queue = [];
-    if (!enabled) this.queue = [];
+    ) {
+      this.clearQueue();
+      this.revision++;
+    }
+    if (!enabled && this.enabled) {
+      this.clearQueue();
+      this.revision++;
+    }
     this.generation = Math.max(this.generation, generation);
     this.driver = driver;
     this.enabled = enabled;
   }
   send(input: TaskBrowserStreamEvent): void {
     if (this.disposed || !this.enabled) return;
+    if (input.kind === "release") return;
     if (this.uncertain) {
       if (input.kind !== "pointer" || input.type !== "down") return;
       this.resume();
     }
     const previous = this.queue.at(-1);
+    const textUnits =
+      this.queuedTextUnits +
+      this.textUnits(input) -
+      (input.kind === "composition" && previous?.kind === "composition"
+        ? this.textUnits(previous)
+        : 0);
+    if (textUnits > 65536) {
+      this.interrupt();
+      return;
+    }
     if (
       input.kind === "pointer" &&
       input.type === "move" &&
@@ -62,9 +85,13 @@ export class BrowserInputLane {
       this.queue[this.queue.length - 1] = input;
     else if (input.kind === "composition" && previous?.kind === "composition")
       this.queue[this.queue.length - 1] = input;
-    else if (input.kind === "wheel" && previous?.kind === "wheel" &&
-      previous.x === input.x && previous.y === input.y &&
-      previous.modifiers === input.modifiers)
+    else if (
+      input.kind === "wheel" &&
+      previous?.kind === "wheel" &&
+      previous.x === input.x &&
+      previous.y === input.y &&
+      previous.modifiers === input.modifiers
+    )
       this.queue[this.queue.length - 1] = {
         ...input,
         deltaX: Math.max(
@@ -76,69 +103,132 @@ export class BrowserInputLane {
           Math.min(10000, input.deltaY + previous.deltaY),
         ),
       };
-    else if (this.queue.length < 128) this.queue.push(input);
+    // Keep a fast burst during a long jitter pause, bounded by both event count
+    // and text memory. This buffer contains only work not yet dispatched.
+    else if (this.queue.length < 512) this.queue.push(input);
     else {
-      this.queue = [];
-      this.uncertain = true;
-      this.interrupted();
+      this.interrupt();
       return;
     }
-    void this.flush();
+    this.queuedTextUnits = textUnits;
+    if (this.windowSize() === 1) this.flush();
+    else this.schedule();
   }
-  private async flush(): Promise<void> {
-    if (this.sending || this.disposed || !this.enabled || !this.queue.length)
+  private schedule(): void {
+    if (this.scheduled || this.disposed) return;
+    this.scheduled = true;
+    queueMicrotask(() => {
+      this.scheduled = false;
+      this.flush();
+    });
+  }
+  private flush(): void {
+    if (
+      this.disposed ||
+      this.uncertain ||
+      !this.enabled ||
+      this.clipboardPending
+    )
       return;
-    this.sending = true;
-    const generation = this.generation,
-      first = this.queue[0]!,
-      clipboard = this.queue.findIndex((event) => event.kind === "clipboard");
-    let count =
-      first.kind === "clipboard"
-        ? 1
-        : Math.min(32, clipboard < 0 ? this.queue.length : clipboard);
-    let size = 0;
-    for (let index = 0; index < count; index++) {
-      const event = this.queue[index]!;
-      size +=
-        event.kind === "text" || event.kind === "composition"
-          ? event.text.length
-          : 0;
-      if (size > 65536) {
-        count = Math.max(1, index);
-        break;
-      }
-    }
-    const events = this.queue.splice(0, count);
-    const input: TaskBrowserStreamInput =
-      events.length === 1 ? events[0]! : { kind: "batch", events };
-    this.expectedTakeover = this.driver === "agent" ? generation + 1 : 0;
-    try {
-      const accepted = await this.dispatch(generation, input);
-      if (!this.disposed) {
-        if (accepted !== generation && accepted !== this.expectedTakeover) {
-          this.queue = [];
-          this.uncertain = true;
-          this.interrupted();
+    // A small ordered window hides RTT without growing an outbox. Agent takeover
+    // and clipboard remain barriers; the host serializes complete input batches.
+    while (
+      this.queue.length &&
+      this.inFlight < Math.max(1, Math.min(4, this.windowSize())) &&
+      !(this.driver === "agent" && this.inFlight)
+    ) {
+      if (this.queue[0]?.kind === "clipboard" && this.inFlight) return;
+      const generation = this.generation,
+        first = this.queue[0]!,
+        clipboardIndex = this.queue.findIndex(
+          (event) => event.kind === "clipboard",
+        );
+      let count =
+        first.kind === "clipboard"
+          ? 1
+          : Math.min(
+              32,
+              clipboardIndex < 0 ? this.queue.length : clipboardIndex,
+            );
+      let size = 0;
+      for (let index = 0; index < count; index++) {
+        const event = this.queue[index]!;
+        size += this.textUnits(event);
+        if (size > 65536) {
+          count = Math.max(1, index);
+          break;
         }
-        this.generation = Math.max(this.generation, accepted);
       }
-    } catch {
-      this.queue = [];
-      if (!this.disposed) {
-        this.uncertain = true;
-        this.interrupted();
-      }
-    } finally {
-      this.sending = false;
-      this.expectedTakeover = 0;
-      if (!this.disposed) void this.flush();
+      const events = this.queue.splice(0, count);
+      this.queuedTextUnits -= events.reduce(
+        (sum, event) => sum + this.textUnits(event),
+        0,
+      );
+      const input: TaskBrowserStreamInput =
+        events.length === 1 ? events[0]! : { kind: "batch", events };
+      this.expectedTakeover = this.driver === "agent" ? generation + 1 : 0;
+      const takeover = this.expectedTakeover,
+        revision = this.revision;
+      const clipboard = first.kind === "clipboard";
+      this.inFlight++;
+      this.clipboardPending = clipboard;
+      void this.dispatch(generation, input)
+        .then((accepted) => {
+          if (!this.disposed && revision === this.revision) {
+            if (accepted !== generation && accepted !== takeover) {
+              this.interrupt();
+            }
+            this.generation = Math.max(this.generation, accepted);
+            if (takeover && accepted === takeover) this.driver = "you";
+          }
+        })
+        .catch(() => {
+          if (!this.disposed && revision === this.revision) {
+            this.interrupt();
+          }
+        })
+        .finally(() => {
+          this.inFlight--;
+          if (clipboard) this.clipboardPending = false;
+          if (takeover === this.expectedTakeover) this.expectedTakeover = 0;
+          this.schedule();
+        });
+      if (clipboard) return;
     }
+  }
+  private interrupt(): void {
+    this.clearQueue();
+    this.revision++;
+    this.uncertain = true;
+    // Releasing held human state is cleanup, never a retry of an uncertain write.
+    void this.release?.(this.generation).catch(() => undefined);
+    this.interrupted();
+  }
+  private textUnits(input: TaskBrowserStreamEvent): number {
+    return input.kind === "key" ||
+      input.kind === "text" ||
+      input.kind === "composition"
+      ? (input.text?.length ?? 0)
+      : 0;
+  }
+  private clearQueue(): void {
+    this.queue = [];
+    this.queuedTextUnits = 0;
+  }
+  reset(): void {
+    this.revision++;
+    this.generation = 0;
+    this.driver = "you";
+    this.expectedTakeover = 0;
+    this.enabled = false;
+    this.uncertain = false;
+    this.clearQueue();
   }
   cancel(): void {
-    this.queue = [];
+    this.clearQueue();
   }
   destroy(): void {
     this.disposed = true;
-    this.queue = [];
+    this.clearQueue();
   }
 }

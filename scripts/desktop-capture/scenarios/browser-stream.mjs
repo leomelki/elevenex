@@ -42,19 +42,30 @@ export default async function* (capture) {
     const streamId = randomUUID();
     for (const theme of ['light', 'dark']) {
       await capture.theme(theme);
+      const displayEpoch = theme === 'light' ? 1 : 3;
+      await capture.component('ex-browser-video-demo', (component, epoch) => component.surface.update(surface => ({ ...surface, displayEpoch: epoch })), displayEpoch);
       const data = await encode((await source.webContents.capturePage()).toJPEG(90));
       const packet = { scopeId: 'preview', taskId: 1, tabId: 'video-tab', streamId, sequence: ++sequence,
-        width: 800, height: 600, jpeg: [], video: { epoch: randomUUID(), codec: 'avc1.42E02A', key: true, timestamp: sequence * 33333, data } };
+        width: 800, height: 600, displayEpoch, jpeg: [], video: { epoch: randomUUID(), codec: 'avc1.42E02A', key: true, timestamp: sequence * 33333, data } };
       await capture.component('ex-browser-video-demo', (component, frame) => component.fixture.deliver({ ...frame, jpeg: new Uint8Array(), video: { ...frame.video, data: new Uint8Array(frame.video.data) } }), packet);
       await capture.waitFor(() => !document.querySelector('ex-browser-stream [role="status"]'));
       const receipt = await capture.component('ex-browser-video-demo', component => component.fixture.acknowledgments.at(-1));
       assert.equal(receipt.decoded, true, 'Real H.264 decoded and displayed');
+      if (theme === 'light') {
+        const future = { ...packet, sequence: ++sequence, displayEpoch: 2, video: { ...packet.video, epoch: randomUUID(), timestamp: sequence * 33333 } };
+        await capture.component('ex-browser-video-demo', (component, frame) => component.fixture.deliver({ ...frame, jpeg: new Uint8Array(), video: { ...frame.video, data: new Uint8Array(frame.video.data) } }), future);
+        assert.equal(await capture.component('ex-browser-video-demo', component => component.fixture.acknowledgments.at(-1).sequence), packet.sequence, 'A future static frame waits for its surface state');
+        await capture.component('ex-browser-video-demo', component => component.surface.update(surface => ({ ...surface, displayEpoch: 2 })));
+        assert.equal(await capture.component('ex-browser-video-demo', component => component.fixture.acknowledgments.at(-1).sequence), future.sequence, 'The retained frame paints once its surface arrives');
+      }
       await capture.click('ex-browser-stream canvas');
+      await capture.press('a');
       await capture.press('z', 4);
       await capture.cdp('Input.imeSetComposition', { text: 'に', selectionStart: 1, selectionEnd: 1 });
       await capture.cdp('Input.insertText', { text: '日本語' });
       const inputs = await capture.component('ex-browser-video-demo', component => component.fixture.inputs.flatMap(input => input.kind === 'batch' ? input.events : [input]));
       assert.ok(inputs.some(input => input.kind === 'edit' && input.operation === 'undo'));
+      assert.ok(inputs.some(input => input.kind === 'key' && input.type === 'down' && input.text === 'a'), 'Native key text stays paired for cancellable browser editing');
       assert.ok(inputs.some(input => input.kind === 'composition' && input.text === 'に'));
       assert.equal(inputs.filter(input => input.kind === 'text' && input.text === '日本語').length, theme === 'light' ? 1 : 2);
       yield { name: `${theme}-h264-input`, selector: 'ex-browser-video-demo', inspect: ['canvas', 'textarea'] };

@@ -278,6 +278,7 @@ export class BrowserPage {
   }
   acknowledge(stream: string, sequence: number): void { this.frames?.acknowledge(stream, sequence); }
   async userInput(generation: number, input: TaskBrowserStreamEvent): Promise<void> {
+    if (input.kind === 'release') throw new Error('Explicit input release requires a machine stream');
     if (!this.attached || !this.hasContents || !this.host.authorized() || this.presentation !== 'stream') throw new Error('Browser presentation or control changed');
     const previousGeneration = this.lease.generation;
     if (this.lease.driver === 'agent') { this.lease.takeOver(); this.host.changed(); }
@@ -295,7 +296,7 @@ export class BrowserPage {
     else if (input.kind === 'wheel') await contents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseWheel', x: input.x, y: input.y, deltaX: input.deltaX, deltaY: input.deltaY, modifiers: input.modifiers });
     else if (input.kind === 'key') {
       if (input.type === 'down' && input.key === 'Escape' && (input.modifiers & 8)) { this.host.shortcut('controls'); return; }
-      await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: input.type === 'down' ? 'keyDown' : 'keyUp', key: input.key, code: input.code, windowsVirtualKeyCode: input.keyCode, modifiers: input.modifiers, ...(input.type === 'down' && input.key === 'Enter' ? { text: '\r' } : {}) });
+      await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: input.type === 'down' ? 'keyDown' : 'keyUp', key: input.key, code: input.code, windowsVirtualKeyCode: input.keyCode, modifiers: input.modifiers, ...(input.type === 'down' && (input.text !== undefined || input.key === 'Enter') ? { text: input.text ?? '\r' } : {}) });
     } else if (input.kind === 'composition') await contents.debugger.sendCommand('Input.imeSetComposition', { text: input.text, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd });
     else if (input.kind === 'edit') contents[input.operation]();
     else if (input.kind === 'text') await contents.insertText(input.text);

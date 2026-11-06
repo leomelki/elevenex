@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { TaskBrowserFrame, TaskBrowserSurface } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { BrowserStreamComponent } from './browser-stream.component';
+import { BrowserVideoDecoder } from './browser-video';
 
 const surface: TaskBrowserSurface = {
   scopeId: 'scope',
@@ -229,4 +230,88 @@ it('reuses the canvas backing store and rejects a late decode after switching ta
   expect(close).toHaveBeenCalledTimes(3);
   expect(ack.mock.lastCall?.slice(0, 3)).toEqual(['scope', 1, 'tab']);
   expect(fixture.componentInstance.hasFrame()).toBe(false);
+});
+
+it('keeps old pixels visible but gates input until the current document epoch is painted', async () => {
+  const { fixture, textarea, dispatch, deliver, drawImage } = await setup();
+  fixture.componentRef.setInput('surface', { ...surface, displayEpoch: 2 });
+  fixture.detectChanges();
+  const type = () => textarea.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'a' }));
+  type(); await settle();
+  expect(dispatch).not.toHaveBeenCalled();
+  deliver({ ...frame(2), displayEpoch: 1 }); await settle();
+  expect(drawImage).toHaveBeenCalledTimes(1);
+  type(); await settle(); expect(dispatch).not.toHaveBeenCalled();
+  deliver({ ...frame(3), displayEpoch: 2 }); await settle();
+  type(); await settle();
+  expect(drawImage).toHaveBeenCalledTimes(2);
+  expect(dispatch.mock.lastCall?.[4]).toEqual({ kind: 'text', text: 'a' });
+});
+
+it('pairs printable keys with native text only when the host advertises support', async () => {
+  const { fixture, textarea, dispatch } = await setup();
+  fixture.componentRef.setInput('surface', { ...surface, keyText: true });
+  fixture.detectChanges();
+  textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'é', code: 'KeyE', altKey: true, cancelable: true }));
+  textarea.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'é' }));
+  textarea.dispatchEvent(new KeyboardEvent('keyup', { key: 'é', code: 'KeyE', altKey: true }));
+  await settle();
+  const events = dispatch.mock.calls.flatMap(call => call[4].kind === 'batch' ? call[4].events : [call[4]]);
+  expect(events).toEqual([
+    { kind: 'key', type: 'down', key: 'é', code: 'KeyE', keyCode: 0, modifiers: 1, text: 'é' },
+    { kind: 'key', type: 'up', key: 'é', code: 'KeyE', keyCode: 0, modifiers: 1 },
+  ]);
+  dispatch.mockClear();
+  textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', code: 'KeyB' }));
+  textarea.dispatchEvent(new Event('blur'));
+  await settle();
+  expect(dispatch).not.toHaveBeenCalled();
+});
+
+it('retains a future document frame until Angular applies its matching surface state', async () => {
+  const { fixture, deliver, drawImage, ack } = await setup();
+  fixture.componentRef.setInput('surface', { ...surface, displayEpoch: 1 });
+  fixture.detectChanges();
+  deliver({ ...frame(2), displayEpoch: 2 }); await settle();
+  expect(drawImage).toHaveBeenCalledTimes(1);
+  expect(ack).toHaveBeenCalledTimes(1);
+  fixture.componentRef.setInput('surface', { ...surface, displayEpoch: 2 });
+  fixture.detectChanges(); await settle();
+  expect(drawImage).toHaveBeenCalledTimes(2);
+  expect(ack.mock.lastCall?.[4]).toBe(2);
+});
+
+it('keeps typing without fresh video frames or losses from unchanged surface updates', async () => {
+  const { fixture, textarea, deliver, dispatch, drawImage } = await setup();
+  const current = { ...surface, displayEpoch: 1, keyText: true as const, inputWindow: 4 as const };
+  fixture.componentRef.setInput('surface', current);
+  fixture.detectChanges();
+  deliver({ ...frame(2), displayEpoch: 1 }); await settle();
+  const expected = 'fast typing stays ordered even while the video is paused '.repeat(4);
+  for (const character of expected) {
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: character, code: 'KeyA' }));
+    textarea.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: character }));
+    textarea.dispatchEvent(new KeyboardEvent('keyup', { key: character, code: 'KeyA' }));
+    fixture.componentRef.setInput('surface', { ...current });
+    fixture.detectChanges(); await settle();
+  }
+  const events = dispatch.mock.calls.flatMap(call => call[4].kind === 'batch' ? call[4].events : [call[4]]);
+  expect(events.flatMap(event => event.kind === 'key' && event.type === 'down' ? [event.text ?? ''] : []).join('')).toBe(expected);
+  expect(events).toHaveLength(expected.length * 2);
+  expect(drawImage).toHaveBeenCalledTimes(2);
+});
+
+it('decodes and acknowledges backlog packets without painting intermediate images', async () => {
+  const { deliver, drawImage, ack, close } = await setup();
+  // Native VideoFrame allocation is covered by the capture; this isolates the
+  // decoder output's draw/close/receipt ownership without starting another codec.
+  vi.spyOn(BrowserVideoDecoder.prototype, 'decode').mockResolvedValue({ displayWidth: 800, displayHeight: 600, close } as unknown as VideoFrame);
+  const video = { epoch: '22222222-2222-4222-8222-222222222222', codec: 'avc1.42E02A' as const, key: true, timestamp: 1, data: new Uint8Array([1]) };
+  deliver({ ...frame(2), jpeg: new Uint8Array(), video: { ...video, present: false } });
+  await settle();
+  expect(drawImage).toHaveBeenCalledTimes(1);
+  expect(ack.mock.lastCall?.at(-1)).toBe(true);
+  deliver({ ...frame(3), jpeg: new Uint8Array(), video }); await settle();
+  expect(drawImage).toHaveBeenCalledTimes(2);
+  expect(close).toHaveBeenCalledTimes(3);
 });

@@ -3,7 +3,9 @@ import {
   publicBrowserAddress,
   browserLoopbackHost,
 } from '@elevenex/browser-network';
-import { resolve4, resolve6 } from 'node:dns/promises';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+import type { BrowserSocketTarget } from '@elevenex/browser-network';
 
 export function runtimeUrl(value: unknown): URL {
   if (typeof value !== 'string' || value.length > 2048 || /\s/.test(value))
@@ -23,7 +25,7 @@ export function runtimeUrl(value: unknown): URL {
 export class RuntimeBrowserNetwork {
   private readonly ports = new Set<number>();
   private lookups = 0;
-  private readonly pending = new Map<string, Promise<string>>();
+  private readonly pending = new Map<string, Promise<BrowserSocketTarget>>();
   private proxy?: ReturnType<typeof browserSocks>;
   private closed = false;
   constructor(
@@ -55,23 +57,29 @@ export class RuntimeBrowserNetwork {
       if (browserLoopbackHost(host)) {
         if (!this.ports.has(port))
           throw new Error('Task port is not authorized');
-        return { host: '127.0.0.1', port };
+        if (host === 'localhost' || host.endsWith('.localhost'))
+          return { host, port, addresses: [{ address: '127.0.0.1', family: 4 }, { address: '::1', family: 6 }] };
+        const canonical = host.includes(':') ? new URL(`http://[${host}]/`).hostname : host;
+        return { host: canonical === '[::]' ? '::1' : host === '0.0.0.0' ? '127.0.0.1' : host, port };
+      }
+      if (isIP(host)) {
+        if (!publicBrowserAddress(host)) throw new Error('Private browser destination');
+        return { host, port };
       }
       let pending = this.pending.get(host);
       if (!pending) {
         if (this.lookups >= 32) throw new Error('Browser DNS limit reached');
         this.lookups++;
-        pending = Promise.allSettled([resolve4(host), resolve6(host)])
-          .then((results) => {
-            const addresses = results.flatMap((result) =>
-              result.status === 'fulfilled' ? result.value : [],
-            );
+        // Honor the host's resolver/hosts file, then connect only to the checked
+        // answers. A slow/broken family must not block a healthy destination.
+        pending = lookup(host, { all: true, verbatim: true })
+          .then((addresses) => {
             if (
               !addresses.length ||
-              addresses.some((address) => !publicBrowserAddress(address))
+              addresses.some(({ address }) => !publicBrowserAddress(address))
             )
               throw new Error('Private browser destination');
-            return addresses[0]!;
+            return { host, port: 0, addresses: addresses.slice(0, 32) };
           })
           .finally(() => {
             this.lookups--;
@@ -79,7 +87,7 @@ export class RuntimeBrowserNetwork {
           });
         this.pending.set(host, pending);
       }
-      return { host: await pending, port };
+      return { ...await pending, port };
     });
     const proxy = await this.proxy;
     if (this.closed) {

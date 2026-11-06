@@ -165,3 +165,19 @@ it('paces and resizes capture as well as encoding while retaining logical input 
     await host.destroy();
   }
 });
+
+it('starts a keyframe epoch for a new document at the same viewport size', async () => {
+  const packets: RuntimeVideoPacket[] = [];
+  const video = new RuntimeBrowserVideo({ nextFrame: after => Promise.resolve({
+    sequence: after + 1, width: 512, height: 256, jpeg, displayEpoch: after < 2 ? 1 : 2,
+  }) }, () => true, packet => packets.push(packet));
+  try {
+    const deadline = Date.now() + 5000;
+    while (packets.length < 3) {
+      if (Date.now() > deadline) throw new Error('Document keyframe timed out');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(packets[2]).toMatchObject({ sequence: 3, displayEpoch: 2, video: { key: true } });
+    expect(packets[2].video.epoch).not.toBe(packets[0].video.epoch);
+  } finally { video.stop(); await video.done; }
+});

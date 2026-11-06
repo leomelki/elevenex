@@ -27,6 +27,7 @@ export class RuntimeBrowserInput {
     input: TaskBrowserStreamEvent,
     current: () => void,
   ): Promise<{ clipboard?: string }> {
+    if (input.kind === 'release') return this.reset().then(() => ({}));
     const revision = this.revision;
     const check = () => {
       current();
@@ -98,7 +99,7 @@ export class RuntimeBrowserInput {
   }
 
   private async deliver(
-    input: TaskBrowserStreamEvent,
+    input: Exclude<TaskBrowserStreamEvent, { kind: 'release' }>,
     current: () => void,
   ): Promise<{ clipboard?: string }> {
     if (input.kind === 'pointer') {
@@ -145,8 +146,8 @@ export class RuntimeBrowserInput {
         windowsVirtualKeyCode: input.keyCode,
         modifiers: input.modifiers,
         autoRepeat: input.type === 'down' && repeat,
-        ...(input.type === 'down' && input.key === 'Enter'
-          ? { text: '\r' }
+        ...(input.type === 'down' && (input.text !== undefined || input.key === 'Enter')
+          ? { text: input.text ?? '\r' }
           : {}),
       });
     } else if (input.kind === 'composition') {
@@ -163,8 +164,11 @@ export class RuntimeBrowserInput {
       await this.edit(input.operation === 'undo' ? 'Undo' : 'Redo');
     else if (input.operation === 'selectAll') await this.edit('SelectAll');
     else if (input.operation === 'copy' || input.operation === 'cut') {
-      const text = await this.page.evaluate(() => {
-        const active = document.activeElement;
+      const frame = await this.focusedFrame();
+      current();
+      const text = await frame.evaluate(() => {
+        let active = document.activeElement;
+        while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
         if (active instanceof HTMLInputElement && active.type === 'password')
           return '';
         if (
@@ -179,8 +183,29 @@ export class RuntimeBrowserInput {
       current();
       if (input.operation === 'cut' && text)
         await this.page.keyboard.press('Backspace');
-      return { clipboard: text };
+      return text ? { clipboard: text } : {};
     } else throw new Error('Paste must be provided by the viewing device');
     return {};
+  }
+
+  private async focusedFrame() {
+    let frame = this.page.mainFrame();
+    // Focus follows nested cross-origin frames through Playwright, without
+    // exposing a frame evaluator or page content to the agent/renderer bridge.
+    for (let depth = 0; depth < 20; depth++) {
+      const element = await frame.evaluateHandle(() => {
+        let active = document.activeElement;
+        while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+        return active;
+      });
+      try {
+        const next = await element.asElement()?.contentFrame();
+        if (!next) return frame;
+        frame = next;
+      } finally {
+        await element.dispose();
+      }
+    }
+    throw new Error('Focused browser frame limit reached');
   }
 }

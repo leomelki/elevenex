@@ -20,10 +20,24 @@ on correctness and responsiveness within those boundaries.
 | Every displayed frame reallocated the canvas | Reuse the backing store until frame dimensions change. |
 | Late frames/codec callbacks could affect a replacement task/decoder | Clear pixels on hide/task change; reject stale decode work, close retired frames, ignore retired errors and acknowledge the original task. |
 | Congestion reduced a theoretical ceiling without reducing the actual resource-limited rate | Apply congestion reduction to the achievable frame rate, retaining steady-RTT behavior. |
+| New document state could enable clicks over old pixels | Independent document/viewport epochs tag captures through both transports. Input waits for matching pixels; a decoded future frame waits for Angular's surface update. |
+| App shortcut interception blocked streamed modifier keys | The root and companion boundaries distinguish native guests from the streamed page's textarea. Native registration/preload tests exercise modified input with jittered replies. |
+| A normally ended video producer left its viewer waiting forever | Every producer termination notifies its subscription, including expired presentations. |
+| Serial typing waited for every network round trip | Capable hosts negotiate four outstanding whole batches, serialize their order, retain clipboard barriers and release held state after queue pressure or uncertain delivery. Older hosts retain serial input. |
+| Input and layout heartbeats repeatedly broadcast unchanged task snapshots | Only semantic state and presentation changes publish updates. Ordinary chrome commands retain independent video streams. |
+| Backlog replay painted every obsolete image | Decode every dependent packet, skip intermediate paints while catching up, and retain periodic visible progress if the queue stays busy. |
+| Reload, popup ownership and focused-frame clipboard differed from browser behavior | Use real Reload, identify popup openers, leave unrelated tabs alone and follow focused frames/open shadow inputs for text copy/cut. |
+| First launch and network configuration caused avoidable failures | Layout no longer waits for installation; installers coalesce. IP literals bypass DNS, OS host configuration is honored, and validated addresses use family fallback. Blank user tabs do not permanently consume task capacity. |
+| Fast typing filled the small queue during long pauses, and healthy refocus cleared unsent text | Keep up to 512 unsent events / 65,536 text code units, retain writing on healthy refocus, and test sustained 240-character typing through a twelve-second receipt stall. A stable page does not require new video frames for typing. |
 
 No new dependency, wire method, network permission or agent observation channel
 is introduced. Input still stops after an unknown delivery outcome; cleanup only
 releases held state and never retries writing or navigation.
+
+Viewer leases now tolerate thirty seconds without incoming activity, companion
+presentations fifteen seconds and video receipts fifteen seconds. Tests include a
+twelve-second artificial transport pause and out-of-order input receipts. These
+are bounded recovery policies, not a claim that an offline link remains interactive.
 
 ## Remaining gaps and implementation boundaries
 
@@ -32,7 +46,7 @@ releases held state and never retries writing or navigation.
 | High | Uploads and downloads | Human-only, viewer-bound transfer IDs; bounded streamed files, device dialogs in main, path confinement on the host, cancellation and cleanup with the viewer. Never buffer arbitrary files in renderer IPC or expose host paths. |
 | High | OAuth popups and dialogs | Adopt bounded popup tabs in the same task profile while preserving opener semantics and task network policy. Dialog IDs must bind to the document/driver generation; display and resolve them through human-only chrome. |
 | High | Cursor shape, link preview and context menu | Narrow human-only presentation metadata, enum-validated cursors, sanitized link locations and explicit context actions. Handle iframe/shadow-root targets and reject stale pointer results. Do not send arbitrary CSS cursor URLs. |
-| High | Clipboard in frames/shadow roots, rich clipboard and page Clipboard API | Respect the focused frame and selection, support bounded MIME types, and require current human ownership. Current copy/cut remains text-only and main-document based. |
+| High | Rich clipboard and page Clipboard API | Support bounded MIME types and page copy/paste events under current human ownership. Text copy/cut now follows focused frames and open shadow inputs; richer formats remain unavailable. |
 | Medium | Native browser shortcuts, find, zoom, custom viewports and hard reload | Route explicit browser-chrome intents to the task owner; keep page shortcuts scoped to the focused page and logical viewport separate from encoded resolution. |
 | Medium | Audio, media permissions and accessibility | Separate owned media/accessibility adapters with explicit permission and resource lifetimes. Pixels alone cannot provide native screen-reader semantics or audio. |
 | Medium | HTML drag-and-drop, file drops and touch gestures | Add typed drag/touch lifecycles and cancellation beyond the repaired mouse dragging path; file drops should reuse the transfer boundary. |
@@ -61,16 +75,18 @@ callbacks. The reusable native capture is
 FFmpeg H.264 through the production component with a preview-only bridge.
 This is neither a WAN benchmark nor a packaged/foreign-OS verification.
 
-Delivery verification: 51 browser-host tests, 162 desktop tests, seven capture-tool
-tests and 658 renderer tests pass. Desktop lint/build, backend production TypeScript,
-typed lint for the new host input modules and the native Electron smoke pass.
-The modified tab also passes typed lint with its pre-existing formatting differences
-excluded from that check. The final capture report is
-`artifacts/desktop-capture/browser-stream-final/report.json` (`verified: true`, no
+Delivery verification: 63 browser-host tests, 167 desktop tests, seven capture-tool
+tests and 669 renderer tests pass. Desktop lint/build, backend production TypeScript,
+typed lint for the changed host modules, the native Electron smoke and the separate
+native remote-input regression pass. Existing host formatting differences are
+excluded from typed lint; the new test modules also pass ordinary backend lint.
+The final capture includes native paired text and a deliberately future document
+frame waiting for Angular's matching surface. Its report is
+`artifacts/desktop-capture/browser-typing-final/report.json` (`verified: true`, no
 errors/warnings); all four PNGs were inspected. The preview process was stopped.
 The repository scripts ran directly through Node because the installed pnpm tried
 to download its pinned manager and could not fetch it. Dependencies were unchanged.
 
 An additional whole-backend test-source TypeScript check still reports pre-existing
-errors in unchanged test fixtures, including older browser integration tests;
-the production-only TypeScript check and the changed input tests pass.
+errors in unrelated test fixtures. Browser integration fixture typing was corrected;
+the production-only check and browser-host test sources have no type diagnostics.

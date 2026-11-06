@@ -2,20 +2,21 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { RemoteBrowserPresentation } = require('../dist/browser/remote-presentation');
 
-function fixture(tabId, loading = false) {
+function fixture(tabId, loading = false, displayEpoch) {
   const frames = [], layouts = [], cancelled = [], failures = [];
-  let resolveFrame, reads = 0;
+  let resolveFrame, reads = 0, changes = 0;
+  const state = { active: 'panel-tab', tabs: [{ id: 'panel-tab', url: 'https://example.com', generation: 1, driver: 'you', loading, displayEpoch }, { id: 'companion-tab', url: 'https://example.com', generation: 1, driver: 'you', loading, displayEpoch }] };
   const host = {
     scopeId: 'scope', taskId: 1,
-    state: () => ({ active: 'panel-tab', tabs: [{ id: 'panel-tab', url: 'https://example.com', generation: 1, driver: 'you', loading }, { id: 'companion-tab', url: 'https://example.com', generation: 1, driver: 'you', loading }] }),
-    ready: () => true, changed: () => undefined,
+    state: () => state,
+    ready: () => true, changed: () => changes++,
     layout: async (tabId, value) => { layouts.push({ tabId, ...value }); },
     frame: () => { reads++; return new Promise(resolve => { resolveFrame = resolve; }); },
     cancel: id => cancelled.push(id), deliver: frame => frames.push(frame), failed: error => failures.push(error),
   };
   const view = new RemoteBrowserPresentation(host, { visible: () => true, zoom: () => 1, pixelRatio: () => 1, colorScheme: () => 'light' }, tabId);
   const position = (sequence = 1) => view.position({ surfaceEpoch: view.epoch, sequence, visible: true, inputReady: true, bounds: { x: 0, y: 0, width: 800, height: 600 } });
-  return { view, position, frames, layouts, cancelled, failures, reads: () => reads, resolve: n => resolveFrame({ sequence: n, width: 800, height: 600, jpeg: new Uint8Array([1]) }) };
+  return { view, position, state, host, frames, layouts, cancelled, failures, changes: () => changes, reads: () => reads, resolve: (n, displayEpoch) => resolveFrame({ sequence: n, width: 800, height: 600, jpeg: new Uint8Array([1]), ...(displayEpoch === undefined ? {} : { displayEpoch }) }) };
 }
 const settle = async () => { for (let n = 0; n < 8; n++) await Promise.resolve(); };
 
@@ -66,4 +67,32 @@ test('expired presentation heartbeat closes input and stream without destroying 
   assert.equal(f.view.interactive, false);
   assert.equal(f.layouts.at(-1).visible, false);
   f.view.destroy();
+});
+
+test('retires queued old-document frames without displaying them or losing the next frame credit', async () => {
+  const f = fixture(undefined, false, 2);
+  try {
+    f.position(); await settle();
+    f.resolve(1, 1); await settle();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(f.frames.length, 0);
+    assert.equal(f.reads(), 2);
+    f.resolve(2, 2); await settle();
+    assert.equal(f.frames.length, 1);
+    assert.equal(f.frames[0].displayEpoch, 2);
+  } finally { f.view.destroy(); }
+});
+
+test('reconciles a future document frame and keeps identical layout heartbeats quiet', async () => {
+  const f = fixture(undefined, false, 2);
+  f.host.synchronize = async () => { f.state.tabs[0].displayEpoch = 3; };
+  try {
+    f.position(); await settle();
+    const changes = f.changes();
+    f.position(2); await settle();
+    assert.equal(f.changes(), changes);
+    f.resolve(1, 3); await settle();
+    assert.equal(f.frames[0].displayEpoch, 3);
+    assert.equal(f.failures.length, 0);
+  } finally { f.view.destroy(); }
 });

@@ -94,6 +94,7 @@ export class RemoteBrowserStream {
           value = record(
             JSON.parse(bytes.subarray(4, 4 + length).toString("utf8")),
           );
+          if (value['displayEpoch'] !== undefined && (!Number.isSafeInteger(value['displayEpoch']) || Number(value['displayEpoch']) < 1)) throw new Error();
           if (
             !Number.isSafeInteger(value["sequence"]) ||
             Number(value["sequence"]) < 1 ||
@@ -113,6 +114,7 @@ export class RemoteBrowserStream {
               sequence: value["sequence"],
               width: value["width"],
               height: value["height"],
+              ...(value['displayEpoch'] === undefined ? {} : { displayEpoch: value['displayEpoch'] }),
               jpeg: new Uint8Array(
                 bytes.buffer,
                 bytes.byteOffset + 4 + length,
@@ -159,7 +161,7 @@ export class RemoteBrowserStream {
   request(
     method: "command" | "layout" | "input" | "frame" | "ping" | 'video',
     body?: unknown,
-    timeout = 10000,
+    timeout = 20000,
     key?: string,
   ): Promise<unknown> {
     if (

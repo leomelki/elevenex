@@ -1,7 +1,12 @@
 [
+  {"valid":true,"input":{"kind":"release"}},
+  {"valid":false,"input":{"kind":"release","text":"never retry"}},
+  {"valid":false,"input":{"kind":"batch","events":[{"kind":"release"}]}},
   {"valid":true,"input":{"kind":"text","text":"世界"}},
   {"valid":true,"input":{"kind":"composition","text":"abc","selectionStart":0,"selectionEnd":3}},
   {"valid":true,"input":{"kind":"key","type":"down","key":"a","code":"KeyA","keyCode":65,"modifiers":15}},
+  {"valid":true,"input":{"kind":"key","type":"down","key":"é","code":"KeyE","keyCode":69,"modifiers":1,"text":"é"}},
+  {"valid":false,"input":{"kind":"key","type":"up","key":"a","code":"KeyA","keyCode":65,"modifiers":0,"text":"a"}},
   {"valid":true,"input":{"kind":"pointer","type":"down","x":1.5,"y":2.5,"button":"left","buttons":1,"clicks":1,"modifiers":0}},
   {"valid":false,"input":{"kind":"key","type":"down","key":"a","code":"KeyA","keyCode":65.5,"modifiers":0}},
   {"valid":false,"input":{"kind":"key","type":"down","key":"a","code":"KeyA","keyCode":65,"modifiers":0.5}},

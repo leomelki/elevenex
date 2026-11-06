@@ -165,7 +165,7 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
     };
     const unsubscribe = task.subscribe(publish);
     const timer = setInterval(() => {
-      if (Date.now() - seen > 9000) ws.terminate();
+      if (Date.now() - seen > 30000) ws.terminate();
     }, 3000);
     timer.unref();
     ws.once('close', () => {
@@ -253,6 +253,7 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
                       sequence: packet.sequence,
                       width: packet.width,
                       height: packet.height,
+                      ...(packet.displayEpoch === undefined ? {} : { displayEpoch: packet.displayEpoch }),
                       video,
                     }),
                   );
@@ -271,14 +272,13 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
                 stream,
               });
               void stream.done
-                .catch(() => {
+                .catch(() => undefined)
+                .finally(() => {
                   if (videos.get(command.tabId)?.stream === stream)
                     send({
                       event: 'video-ended',
                       subscription: command.subscription,
                     });
-                })
-                .finally(() => {
                   if (videos.get(command.tabId)?.stream === stream)
                     videos.delete(command.tabId);
                 });
@@ -333,6 +333,7 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
                     sequence: frame.sequence,
                     width: frame.width,
                     height: frame.height,
+                    ...(frame.displayEpoch === undefined ? {} : { displayEpoch: frame.displayEpoch }),
                   }),
                 );
                 const length = Buffer.alloc(4);

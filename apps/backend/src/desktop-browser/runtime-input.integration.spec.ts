@@ -87,7 +87,7 @@ it('uses native Chromium composition, platform-independent editing, key repeat a
       },
       current,
     );
-    await input.reset();
+    await input.dispatch({ kind: 'release' }, current);
     expect(await page.evaluate('window.releases')).toBe(1);
     await input.dispatch(key, current);
     expect(await page.evaluate('window.keys.at(-1)')).toEqual(['Shift', false]);
@@ -103,6 +103,33 @@ it('uses native Chromium composition, platform-independent editing, key repeat a
     await expect(queued).rejects.toThrow('Control changed');
     expect(await value()).toBe('日本語');
     await input.reset();
+    await page.setContent('<input id="field"><script>document.addEventListener("keydown", e => { if(e.key === "x") e.preventDefault(); })</script>');
+    await page.locator('#field').focus();
+    await input.dispatch({ kind: 'key', type: 'down', key: 'x', code: 'KeyX', keyCode: 88, modifiers: 0, text: 'x' }, current);
+    expect(await value()).toBe('');
+    await input.dispatch({ kind: 'key', type: 'up', key: 'x', code: 'KeyX', keyCode: 88, modifiers: 0 }, current);
+    await input.dispatch({ kind: 'key', type: 'down', key: 'a', code: 'KeyA', keyCode: 65, modifiers: 0, text: 'a' }, current);
+    expect(await value()).toBe('a');
+    await input.reset();
+    await page.setContent('<iframe srcdoc="<input value=frame-text>"></iframe><div id="shadow"></div>');
+    const frame = page.frames()[1]!;
+    await frame.locator('input').focus();
+    await frame.locator('input').selectText();
+    expect(await input.dispatch({ kind: 'clipboard', operation: 'copy' }, current)).toEqual({ clipboard: 'frame-text' });
+    expect(await input.dispatch({ kind: 'clipboard', operation: 'cut' }, current)).toEqual({ clipboard: 'frame-text' });
+    expect(await frame.locator('input').inputValue()).toBe('');
+    await page.evaluate(() => {
+      const shadow = document.querySelector('#shadow')!.attachShadow({ mode: 'open' });
+      shadow.innerHTML = '<input value="shadow-text">';
+      const field = shadow.querySelector('input')!;
+      field.focus(); field.select();
+    });
+    expect(await input.dispatch({ kind: 'clipboard', operation: 'copy' }, current)).toEqual({ clipboard: 'shadow-text' });
+    await page.evaluate(() => {
+      const field = document.querySelector('#shadow')!.shadowRoot!.querySelector('input')!;
+      field.type = 'password'; field.focus(); field.select();
+    });
+    expect(await input.dispatch({ kind: 'clipboard', operation: 'copy' }, current)).toEqual({});
   } finally {
     await pool.onModuleDestroy();
     if (previous === undefined) delete process.env['ELEVENEX_DATA_ROOT'];

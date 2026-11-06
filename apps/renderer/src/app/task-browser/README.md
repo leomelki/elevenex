@@ -154,7 +154,7 @@ observation listeners and timers. Frame payloads cap at 3 MB; decoding also chec
 JPEG dimensions before allocating. History caps at 100 entries. Layouts carry a
 presentation epoch and monotonic sequence; a 750 ms heartbeat makes hidden or
 unresponsive app surfaces noninteractive. Remote viewers have exclusive leases,
-a ten-second heartbeat expiry independent of retained task execution. A competing
+a thirty-second heartbeat expiry independent of retained task execution. A competing
 viewer gets a visible conflict and explicit Reconnect, never silent takeover.
 
 Explicit Reload after a crashed or closed local engine retains the tab ID, order,
@@ -189,12 +189,22 @@ counts stay visible in the workflow controls during agent work. Ownership change
 the page between mouse-down and mouse-up. Native pages can finish an already
 accepted human release during visible chrome motion; hidden pages remain gated.
 
-Human input queues cap at 128 events. Up to 32 ordered events and 65,536 text
-code units travel per batch, reducing typing round trips without dropping browser
-key events. Clipboard commands travel separately, preserving copy/paste order.
+Human input queues cap at 512 unsent events / 65,536 queued text code units.
+The larger event budget retains fast typing during a long receipt stall; normal
+focus on an already healthy page preserves queued writing. Input does not wait
+for fresh video on a stable document and viewport. Up to 32 ordered events and
+65,536 text code units travel per batch, reducing typing round trips without dropping browser
+key events. Hosts advertising `inputWindow: 4` serialize complete batches and
+allow four outstanding writes to absorb network jitter; older hosts retain one.
+Clipboard commands travel separately as barriers, preserving copy/paste order.
+Queue pressure or uncertain delivery requests held-state cleanup on capable
+hosts. Typing stays stopped until fresh interaction; cleanup never replays input.
 Navigation, authority changes and unknown outcomes discard queued work. Following
 uncertain delivery, fresh state alone does not resume typing: the user must click
 the page or explicitly Focus page. Failed batches are never replayed.
+Document/viewport changes still invalidate coordinates and queued input; this is
+distinct from an ordinary video-frame delay. The bounded buffer is not an offline
+editor and does not preserve typing across navigation or an unknown delivery outcome.
 
 A crashed/disconnected remote engine requires explicit Reload. The task preserves
 safe locations/provenance, revokes old ownership, replaces its closed context/page
@@ -277,3 +287,19 @@ the new start field only to hosts advertising it; older H.264 hosts retain their
 original strict command shape and three-packet window. The backend adapts pixel
 resolution while preserving frame metadata in logical page CSS coordinates, so
 the input lane never treats an encoder quality change as a new page viewport.
+
+New machine hosts attach `displayEpoch` to tab state and frames. The last picture
+remains visible during navigation, but input waits for pixels from the current
+document/viewport. Old queued packets retire their credits; future-epoch frames
+reconcile metadata before presentation. Driver handoff and ordinary chrome
+commands do not restart every display. After jitter, dependent video packets are
+decoded in order while intermediate paints are skipped. Sustained backlog still
+paints progress at a bounded cadence instead of waiting forever for an empty queue.
+
+With `keyText: true`, printable key events include the local keyboard's text so
+Blink honors a site's cancelled keydown. IME retains its explicit composition
+path. Main's app keyboard interception excludes streamed page typing, including
+Command/Control shortcuts and Option/AltGr. Copy/cut follows the focused frame
+and open shadow input. These are bounded human-only operations, not agent
+observation capabilities. Reload on a live engine uses Chromium reload semantics,
+including fragment locations. Popup notices affect their originating tab.

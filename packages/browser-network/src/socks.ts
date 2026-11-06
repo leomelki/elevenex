@@ -1,6 +1,11 @@
 import { createServer, createConnection, isIP, type Socket } from 'node:net';
 
-export interface BrowserSocketTarget { readonly host: string; readonly port: number }
+export interface BrowserSocketTarget {
+  readonly host: string;
+  readonly port: number;
+  /** Already validated, pinned DNS answers. Node races families without resolving again. */
+  readonly addresses?: readonly { readonly address: string; readonly family: number }[];
+}
 /** Private, task-owned SOCKS5 connector. No HTTP bodies, TLS bytes or page logs are inspected.
  * Browsers cannot speak the binary handshake through fetch/WebSocket to impersonate a proxy client. */
 export async function browserSocks(resolve: (host: string, port: number) => Promise<BrowserSocketTarget>): Promise<{ readonly port: number; disconnect(): void; close(): Promise<void> }> {
@@ -11,7 +16,7 @@ export async function browserSocks(resolve: (host: string, port: number) => Prom
     sockets.add(client);
     let buffer = Buffer.alloc(0), phase: 'hello' | 'connect' | 'connecting' | 'stream' = 'hello';
     let upstream: Socket | undefined;
-    const deadline = setTimeout(() => client.destroy(), 5000);
+    const deadline = setTimeout(() => client.destroy(), 10000);
     const close = () => {
       clearTimeout(deadline); sockets.delete(client); client.removeListener('data', data);
       upstream?.destroy();
@@ -56,7 +61,18 @@ export async function browserSocks(resolve: (host: string, port: number) => Prom
       void resolve(host, port).then(target => {
         if (closing || client.destroyed) return;
         if (sockets.size >= 128) { fail(); return; }
-        upstream = createConnection({ host: target.host, port: target.port });
+        upstream = createConnection({ host: target.host, port: target.port,
+          ...(target.addresses ? {
+            autoSelectFamily: true,
+            autoSelectFamilyAttemptTimeout: 200,
+            lookup: (_host, options, callback) => {
+              const addresses = target.addresses ?? [];
+              if (!addresses.length) { callback(new Error('No browser destination'), []); return; }
+              if (options.all) callback(null, [...addresses]);
+              else callback(null, addresses[0]!.address, addresses[0]!.family);
+            },
+          } : {}),
+        });
         sockets.add(upstream);
         const peer = upstream;
         peer.once('close', () => { sockets.delete(peer); client.destroy(); });

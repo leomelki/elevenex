@@ -16,6 +16,7 @@ import {
 } from '@angular/core';
 import type {
   TaskBrowserFrame,
+  TaskBrowserStreamInput,
   TaskBrowserSurface,
 } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
@@ -40,25 +41,19 @@ export class BrowserStreamComponent {
   private latest?: TaskBrowserFrame;
   private stream = '';
   private sequence = 0;
+  private paintedEpoch?: number;
+  private pendingDisplay?: { readonly epoch: number; finish(): void };
   private readonly videoDecoder = new BrowserVideoDecoder();
   readonly viewport = signal({ width: 1, height: 1 });
   readonly hasFrame = signal(false);
   private readonly inputLane = new BrowserInputLane(
-    async (generation, input) => {
-      const surface = this.surface();
-      if (!this.bridge.taskBrowserInput) throw new Error('Input unavailable');
-      return this.bridge.taskBrowserInput(
-        surface.scopeId,
-        surface.taskId,
-        surface.tabId,
-        generation,
-        input,
-      );
-    },
+    (generation, input) => this.dispatchInput(generation, input),
     () =>
       this.status.set(
         'Control changed. Release controls, then interact again.',
       ),
+    () => this.surface().inputWindow ?? 1,
+    generation => this.surface().inputWindow === 4 ? this.dispatchInput(generation, { kind: 'release' }) : Promise.resolve(),
   );
   readonly humanInput = new BrowserHumanInput(
     input => this.inputLane.send(input),
@@ -66,6 +61,7 @@ export class BrowserStreamComponent {
     event => this.point(event),
     () => this.viewport().height,
     intent => { this.inputLane.cancel(); this.shortcutRequested.emit(intent); },
+    () => this.surface().keyText === true,
   );
   private surfaceIdentity = '';
   private displayRevision = 0;
@@ -92,11 +88,13 @@ export class BrowserStreamComponent {
         (!frame.video && !browserFrameSize(frame.jpeg)) ||
         (frame.video && (!(frame.video.data instanceof Uint8Array) || frame.video.data.byteLength > 3_000_000 ||
           typeof frame.video.key !== 'boolean' || !Number.isSafeInteger(frame.video.timestamp) || frame.video.timestamp < 0 ||
+          (frame.video.present !== undefined && typeof frame.video.present !== 'boolean') ||
           !/^[a-f0-9-]{36}$/.test(frame.video.epoch))) ||
         frame.width < 1 ||
         frame.height < 1 ||
         frame.width > 16384 ||
         frame.height > 16384
+        || (frame.displayEpoch !== undefined && (!Number.isSafeInteger(frame.displayEpoch) || frame.displayEpoch < 1))
       )
         return;
       if (frame.streamId !== this.stream) {
@@ -111,13 +109,17 @@ export class BrowserStreamComponent {
     effect(() => {
       const surface = this.surface();
       const identity = JSON.stringify([surface.scopeId, surface.taskId, surface.tabId]);
+      if (this.pendingDisplay && (!surface.visible || identity !== this.surfaceIdentity || (surface.displayEpoch ?? 0) >= this.pendingDisplay.epoch))
+        this.pendingDisplay.finish();
       if (identity !== this.surfaceIdentity || !surface.visible) {
+        if (identity !== this.surfaceIdentity) this.inputLane.reset();
         this.displayRevision++;
         this.surfaceIdentity = identity;
         this.latest = undefined;
         this.videoDecoder.reset();
         this.stream = '';
         this.sequence = 0;
+        this.paintedEpoch = undefined;
         this.hasFrame.set(false);
         this.status.set(surface.visible ? 'Connecting page display…' : 'Page display paused.');
         const canvas = this.canvas()?.nativeElement;
@@ -132,6 +134,7 @@ export class BrowserStreamComponent {
     inject(DestroyRef).onDestroy(() => {
       this.humanInput.destroy();
       this.disposed = true;
+      this.pendingDisplay?.finish();
       window.removeEventListener('blur', blur);
       stop?.();
       this.latest = undefined;
@@ -152,6 +155,10 @@ export class BrowserStreamComponent {
       bitmap = frame.video ? await this.videoDecoder.decode(frame.video) : await createImageBitmap(
         new Blob([frame.jpeg.slice().buffer], { type: 'image/jpeg' }),
       );
+      decoded = true;
+      const expectedEpoch = this.surface().displayEpoch;
+      if (frame.displayEpoch !== undefined && expectedEpoch !== undefined && frame.displayEpoch > expectedEpoch)
+        await this.waitForDisplay(frame.displayEpoch);
       const canvas = this.canvas()?.nativeElement;
       if (
         this.disposed ||
@@ -160,6 +167,8 @@ export class BrowserStreamComponent {
         !this.surface().visible ||
         frame.streamId !== this.stream ||
         frame.sequence <= this.sequence
+        || frame.video?.present === false
+        || (this.surface().displayEpoch !== undefined && frame.displayEpoch !== this.surface().displayEpoch)
       )
         return;
       const width = 'displayWidth' in bitmap ? bitmap.displayWidth : bitmap.width;
@@ -181,10 +190,11 @@ export class BrowserStreamComponent {
         this.viewport.set({ width: frame.width, height: frame.height });
       this.hasFrame.set(true);
       this.sequence = frame.sequence;
-      decoded = true;
+      this.paintedEpoch = frame.displayEpoch;
       this.status.set(this.inputLane.needsInteraction ? 'Input interrupted. Click the page or Focus page to resume.' : '');
       this.updateAuthority();
     } catch {
+      decoded = false;
       if (!this.disposed && revision === this.displayRevision)
         this.status.set(
           'Page display interrupted. Reload the page to reconnect.',
@@ -207,6 +217,27 @@ export class BrowserStreamComponent {
       }
     }
   }
+  private waitForDisplay(epoch: number): Promise<void> {
+    // Surface events reach Angular inputs on its next render. Retain this one
+    // decoded frame rather than discarding a static page's only keyframe.
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pendingDisplay === pending) this.pendingDisplay = undefined;
+        reject(new Error('Page display state did not arrive'));
+      }, 1000);
+      const pending = { epoch, finish: () => {
+        clearTimeout(timer);
+        if (this.pendingDisplay === pending) this.pendingDisplay = undefined;
+        resolve();
+      } };
+      this.pendingDisplay = pending;
+    });
+  }
+  private dispatchInput(generation: number, input: TaskBrowserStreamInput): Promise<number> {
+    const surface = this.surface();
+    if (!this.bridge.taskBrowserInput) return Promise.reject(new Error('Input unavailable'));
+    return this.bridge.taskBrowserInput(surface.scopeId, surface.taskId, surface.tabId, generation, input);
+  }
   private updateAuthority(): void {
     const surface = this.surface(),
       viewport = this.viewport();
@@ -215,6 +246,7 @@ export class BrowserStreamComponent {
       height = surface.viewport?.height ?? surface.bounds.height / surface.zoom;
     const matches =
       this.hasFrame() &&
+      (surface.displayEpoch === undefined || surface.displayEpoch === this.paintedEpoch) &&
       Math.abs(
         viewport.width - Math.max(100, Math.min(2560, Math.round(width))),
       ) < 2 &&

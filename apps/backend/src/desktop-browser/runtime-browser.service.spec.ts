@@ -139,6 +139,19 @@ it('retains task execution and agent ownership after viewer disconnect and lease
   } finally { await service.onModuleDestroy(); jest.useRealTimers(); }
 });
 
+it('tolerates a jitter pause without releasing the viewer and still expires an abandoned lease', async () => {
+  jest.useFakeTimers();
+  const persistence = { read: async () => null, save: async () => true, flush: async () => undefined };
+  const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence);
+  try {
+    const { token } = await service.connect(1, 'viewer', 'identity');
+    jest.advanceTimersByTime(14000);
+    expect(service.viewer(1, token)).toBe(service.active(1));
+    jest.advanceTimersByTime(31000);
+    expect(() => service.viewer(1, token)).toThrow('expired');
+  } finally { await service.onModuleDestroy(); jest.useRealTimers(); }
+});
+
 it('refuses capacity pressure instead of silently destroying retained browser tabs', async () => {
   const persistence = { read: async () => null, save: async () => true, flush: async () => undefined };
   const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence);
@@ -149,6 +162,33 @@ it('refuses capacity pressure instead of silently destroying retained browser ta
     }
     await expect(service.prepare(5, 'identity-5')).rejects.toThrow('limit');
     expect(service.active(1)?.tabs.size).toBe(1);
+  } finally { await service.onModuleDestroy(); }
+});
+
+it('releases unviewed blank user tabs before refusing a fifth task', async () => {
+  const persistence = { read: async () => null, save: async () => true, flush: async () => undefined };
+  const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence);
+  try {
+    for (let id = 1; id <= 4; id++) {
+      const task = await service.prepare(id, 'identity-' + id);
+      await task.create('you', null, '');
+    }
+    expect(await service.prepare(5, 'identity-5')).toBe(service.active(5));
+    expect(service.active(1)).toBeNull();
+  } finally { await service.onModuleDestroy(); }
+});
+
+it('stores tools on a blank tab and accepts its companion layout without launching an engine', async () => {
+  const persistence = { read: async () => null, save: async () => true, flush: async () => undefined };
+  const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence);
+  try {
+    const task = await service.prepare(1, 'identity');
+    const tab = await task.create('you', null, '');
+    await task.command({ kind: 'theme', tabId: tab.id, theme: 'dark' });
+    await task.command({ kind: 'network', tabId: tab.id, slow: true });
+    await task.layoutTab(tab.id, 800, 600, true, true, 1, 'dark');
+    expect(tab.started).toBe(false);
+    expect(task.state().tabs[0]).toMatchObject({ theme: 'dark', slowNetwork: true, error: null });
   } finally { await service.onModuleDestroy(); }
 });
 

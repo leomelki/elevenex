@@ -24,6 +24,11 @@ export interface TaskBrowserSurface {
   readonly zoom: number;
   readonly visible: boolean;
   readonly generation: number;
+  /** Machine document/viewport identity, independent of driver handoff. */
+  readonly displayEpoch?: number;
+  /** The host accepts printable key events with their native default text. */
+  readonly keyText?: true;
+  readonly inputWindow?: 4;
   readonly interactive: boolean;
   readonly driver: 'you' | 'agent' | 'needs';
   readonly presentation: 'embedded' | 'stream';
@@ -37,13 +42,15 @@ export interface TaskBrowserFrame {
   readonly width: number;
   readonly height: number;
   readonly jpeg: Uint8Array;
+  readonly displayEpoch?: number;
   /** Negotiated Annex B access unit. JPEG is empty for video packets. */
-  readonly video?: { readonly epoch: string; readonly codec: 'avc1.42E02A'; readonly key: boolean; readonly timestamp: number; readonly data: Uint8Array };
+  readonly video?: { readonly epoch: string; readonly codec: 'avc1.42E02A'; readonly key: boolean; readonly timestamp: number; readonly data: Uint8Array; readonly present?: boolean };
 }
 export type TaskBrowserStreamEvent =
+  | { readonly kind: 'release' }
   | { readonly kind: 'pointer'; readonly type: 'down' | 'up' | 'move'; readonly x: number; readonly y: number; readonly button: 'left' | 'middle' | 'right' | 'none'; readonly buttons: number; readonly clicks: number; readonly modifiers: number }
   | { readonly kind: 'wheel'; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number; readonly modifiers: number }
-  | { readonly kind: 'key'; readonly type: 'down' | 'up'; readonly key: string; readonly code: string; readonly keyCode: number; readonly modifiers: number }
+  | { readonly kind: 'key'; readonly type: 'down' | 'up'; readonly key: string; readonly code: string; readonly keyCode: number; readonly modifiers: number; readonly text?: string }
   | { readonly kind: 'text'; readonly text: string }
   | { readonly kind: 'composition'; readonly text: string; readonly selectionStart: number; readonly selectionEnd: number }
   | { readonly kind: 'edit'; readonly operation: 'undo' | 'redo' }
@@ -58,6 +65,7 @@ export interface TaskBrowserTab {
   readonly driver: 'you' | 'agent' | 'needs';
   readonly agentSessionId: number | null;
   readonly generation: number;
+  readonly displayEpoch?: number;
   readonly loading: boolean;
   readonly ready: boolean;
   readonly canGoBack: boolean;
@@ -77,6 +85,10 @@ export interface TaskBrowserTab {
 export interface TaskBrowserState {
   /** Independent panel/tab ordering; omitted by older machine hosts. */
   readonly layoutLanes?: true;
+  /** Additive input capability; strict older hosts must receive legacy events. */
+  readonly keyText?: true;
+  /** Complete batches are ordered by the host; older hosts remain stop-and-wait. */
+  readonly inputWindow?: 4;
   readonly placement?: TaskBrowserPlacement;
   /** Main-issued location choices; older desktops omit this field. */
   readonly availablePlacements?: readonly TaskBrowserPlacement[];

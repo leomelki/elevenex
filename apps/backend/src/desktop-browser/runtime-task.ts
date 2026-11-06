@@ -21,7 +21,7 @@ export class RuntimeBrowserTask {
   private readonly presentations = new Map<string, { width: number; height: number; visible: boolean; interactive: boolean; pixelRatio: number; colorScheme: 'light' | 'dark'; seen: number }>();
   isPresented(tabId: string): boolean {
     const view = this.presentations.get(tabId);
-    return this.alive && (view ? view.visible && Date.now() - view.seen < 3000 : this.active === tabId && this.visible);
+    return this.alive && (view ? view.visible && Date.now() - view.seen < 15000 : this.active === tabId && this.visible);
   }
   private canInput(tabId: string): boolean {
     const view = this.presentations.get(tabId);
@@ -34,8 +34,16 @@ export class RuntimeBrowserTask {
     const view = { width, height, visible, interactive, pixelRatio, colorScheme, seen: Date.now() };
     if (!this.presentations.has(tabId)) { page.takeover(); this.revision++; }
     this.presentations.set(tabId, view);
-    if (visible) await this.ensure(page);
+    if (visible && !page.started && page.url && !page.error) {
+      this.launchForDisplay(page, () => {
+        if (this.presentations.get(tabId) === view)
+          return this.layoutTab(tabId, width, height, visible, interactive, pixelRatio, colorScheme);
+        return Promise.resolve();
+      });
+      return;
+    }
     if (this.presentations.get(tabId) !== view || !this.alive) return;
+    if (!page.started) return;
     if (page.theme === 'system') await page.themeTo('system', colorScheme);
     if (this.presentations.get(tabId) !== view || !this.alive) return;
     await page.layout(width, height, visible, interactive, pixelRatio);
@@ -57,7 +65,11 @@ export class RuntimeBrowserTask {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
-  get retained(): boolean { return this.tabs.size > 0 || this.starting.size > 0 || this.agentPending > 0; }
+  get retained(): boolean {
+    // Unviewed empty user start tabs have no live document to lose. Loaded
+    // pages and agent-owned drafts always require explicit closure.
+    return this.starting.size > 0 || this.agentPending > 0 || [...this.tabs.values()].some(tab => !!tab.url || tab.started || tab.driver === 'agent');
+  }
   private controlsFocus = 0;
   private picked: TaskBrowserState['picked'] = null;
   private pickerMessage: string | null = null;
@@ -74,6 +86,8 @@ export class RuntimeBrowserTask {
   private attention: TaskBrowserState['attention'];
   private ports: readonly number[] = [];
   private readonly starting = new Map<string, Promise<void>>();
+  private readonly displayStarting = new Map<string, { present: () => Promise<void> }>();
+  private readonly inputTails = new Map<string, { tail: Promise<unknown>; pending: number }>();
   private readonly controller = new AbortController();
   private readonly authorizedPorts = new Set<number>();
   private disposed = false;
@@ -101,7 +115,7 @@ export class RuntimeBrowserTask {
     return !this.disposed;
   }
   private expirePresentations(): void {
-    for (const [tabId, view] of this.presentations) if (view.visible && Date.now() - view.seen >= 3000) {
+    for (const [tabId, view] of this.presentations) if (view.visible && Date.now() - view.seen >= 15000) {
       view.visible = false; view.interactive = false;
       const page = this.tabs.get(tabId);
       void page?.layout(view.width, view.height, false); this.revision++;
@@ -134,6 +148,8 @@ export class RuntimeBrowserTask {
       canDetach: true,
       canReorder: true,
       layoutLanes: true,
+      keyText: true,
+      inputWindow: 4,
       scopeId: this.id,
       taskId: this.taskId,
       revision: this.revision,
@@ -275,10 +291,14 @@ export class RuntimeBrowserTask {
           .then((opener) => {
             if (opener) {
               void popup.close().catch(() => undefined);
-              const active = this.active
-                ? this.tabs.get(this.active)
-                : undefined;
-              active?.takeover(true);
+              const origin = [...this.tabs.values()].find(tab => tab.owns(opener));
+              origin?.takeover(true);
+              this.attention = {
+                kind: 'popup',
+                message: 'This page opened a popup. Open the originating page outside to continue; sign-in state is separate.',
+                outside: !!origin,
+                ...(origin ? { tabId: origin.id } : {}),
+              };
               this.revision++;
             }
           })
@@ -317,6 +337,22 @@ export class RuntimeBrowserTask {
       this.starting.set(page.id, pending);
     }
     await pending;
+  }
+  private launchForDisplay(page: RuntimeBrowserTab, present: () => Promise<void>): void {
+    // Installation belongs to the task, not a short layout RPC. Keep
+    // heartbeats and input on other pages moving while this engine starts.
+    const previous = this.displayStarting.get(page.id);
+    if (previous) { previous.present = present; return; }
+    const entry = { present };
+    this.displayStarting.set(page.id, entry);
+    void this.ensure(page).then(async () => {
+      if (this.alive && this.tabs.get(page.id) === page) await entry.present();
+    }).catch(() => {
+      if (!this.alive || this.tabs.get(page.id) !== page) return;
+      page.loading = false;
+      page.error = 'The browser could not start. Check the host setup, then Reload to retry.';
+      this.revision++;
+    }).finally(() => this.displayStarting.delete(page.id));
   }
   async create(
     by: 'you' | 'agent',
@@ -465,7 +501,13 @@ export class RuntimeBrowserTask {
     this.pixelRatio = pixelRatio;
     const page = this.active && !this.presentations.has(this.active) ? this.page(this.active) : undefined;
     if (visible && page) {
-      await this.ensure(page);
+      if (!page.started && page.url && !page.error) {
+        this.launchForDisplay(page, async () => {
+          if (revision === this.layoutRevision && selected === this.active)
+            await this.layout(width, height, visible, interactive, pixelRatio, colorScheme);
+        });
+        return;
+      }
       if (
         revision !== this.layoutRevision ||
         selected !== this.active ||
@@ -547,7 +589,7 @@ export class RuntimeBrowserTask {
         }
         await page.themeTo(page.theme, this.colorScheme);
         if (page.slowNetwork) await page.networkTo(true);
-        await page.navigate(page.url);
+        await page.reload();
       } else if (input.kind === 'back') {
         page.takeover();
         await page.back();
@@ -578,8 +620,36 @@ export class RuntimeBrowserTask {
     generation: number,
     input: TaskBrowserStreamInput,
   ): Promise<{ generation: number; revision: number; clipboard?: string }> {
+    const page = this.page(tabId), epoch = page.inputEpoch;
+    let lane = this.inputTails.get(tabId);
+    if (!lane) {
+      lane = { tail: Promise.resolve(), pending: 0 };
+      this.inputTails.set(tabId, lane);
+    }
+    if (lane.pending >= 8) throw new Error('Browser input capacity reached');
+    lane.pending++;
+    const owner = lane;
+    const result = owner.tail.then(() => this.deliverInput(tabId, generation, input, epoch));
+    owner.tail = result.catch(() => undefined).finally(() => {
+      owner.pending--;
+      if (!owner.pending && this.inputTails.get(tabId) === owner) this.inputTails.delete(tabId);
+    });
+    return result;
+  }
+  private async deliverInput(
+    tabId: string,
+    generation: number,
+    input: TaskBrowserStreamInput,
+    epoch: number,
+  ): Promise<{ generation: number; revision: number; clipboard?: string }> {
     this.touch();
     const page = this.page(tabId);
+    if (page.inputEpoch !== epoch) throw new Error('Browser presentation changed');
+    if (input.kind === 'release') {
+      if (page.generation !== generation || page.driver === 'agent') throw new Error('Browser control changed');
+      await page.releaseInput();
+      return { generation: page.generation, revision: this.revision };
+    }
     if (
       this.isPresented(tabId) &&
       this.picked &&
@@ -609,16 +679,16 @@ export class RuntimeBrowserTask {
         break;
       if (
         !this.canInput(tabId) ||
+        page.inputEpoch !== epoch ||
         this.picked
       )
         throw new Error('Browser input was interrupted');
       const accepted = page.driver === 'agent' ? expected + 1 : expected;
-      result = await page.userInput(expected, events[index]!);
+      result = await page.userInput(expected, events[index]);
       expected = page.generation;
       if (expected !== accepted && index < events.length - 1)
         throw new Error('Browser document or control changed during input');
     }
-    this.revision++;
     return { generation: page.generation, revision: this.revision, ...result };
   }
   private readonly agentTabs = new Set<string>();
@@ -715,7 +785,7 @@ export class RuntimeBrowserTask {
                 () => page.assertAgent(input.generation, sessionId),
               );
             } else await page.navigate(input.url);
-          } else if (input.kind === 'reload') await page.navigate(page.url);
+          } else if (input.kind === 'reload') await page.reload();
           else if (input.kind === 'back') await page.back();
         } finally {
           signal.removeEventListener('abort', cancel);
@@ -754,8 +824,6 @@ export class RuntimeBrowserTask {
         for (const page of context.pages())
           if (![...this.tabs.values()].some((tab) => tab.owns(page))) {
             void page.close({ runBeforeUnload: false }).catch(() => undefined);
-            const active = this.active ? this.tabs.get(this.active) : undefined;
-            active?.takeover(true);
             this.attention = {
               kind: 'popup',
               message:
@@ -773,6 +841,8 @@ export class RuntimeBrowserTask {
     this.controller.abort();
     this.listeners.clear();
     this.presentations.clear();
+    this.displayStarting.clear();
+    this.inputTails.clear();
     await Promise.allSettled(
       [...this.tabs.values()].map((page) => page.destroy()),
     );

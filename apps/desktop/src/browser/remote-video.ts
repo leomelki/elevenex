@@ -13,6 +13,7 @@ interface Subscription {
   readonly window: number;
   sequence: number;
   epoch: string;
+  lastPresented: number;
   resolve?: (frame: VideoFrame | null) => void;
 }
 
@@ -39,7 +40,7 @@ export class RemoteBrowserVideo {
   ): Promise<VideoFrame | null> {
     let entry = this.subscriptions.get(key);
     if (!entry) {
-      entry = { tabId, id: randomUUID(), queue: [], sequence: 0, epoch: "", window: maximumWindow === 8 ? 8 : 3 };
+      entry = { tabId, id: randomUUID(), queue: [], sequence: 0, epoch: "", lastPresented: 0, window: maximumWindow === 8 ? 8 : 3 };
       this.subscriptions.set(key, entry);
       const id = entry.id;
       void this.request({
@@ -63,7 +64,17 @@ export class RemoteBrowserVideo {
       else void this.request(body).catch(() => this.end(id));
     }
     const frame = entry.queue.shift();
-    if (frame) return frame;
+    if (frame) {
+      // Keep every dependent access unit, but catch up after jitter without
+      // painting each obsolete intermediate image into the visible canvas.
+      // A continuously busy decoder must still show progress, even if the
+      // queue never empties while the host adapts to its processing speed.
+      const now = performance.now();
+      if (entry.queue.length && frame.video && now - entry.lastPresented < 32)
+        return { ...frame, video: { ...frame.video, present: false } };
+      entry.lastPresented = now;
+      return frame;
+    }
     return new Promise((resolve) => {
       entry.resolve = resolve;
     });
@@ -85,6 +96,7 @@ export class RemoteBrowserVideo {
       Number(video["timestamp"]) < 0 ||
       (entry.epoch !== video["epoch"] && !video["key"]) ||
       entry.queue.length >= entry.window
+      || (header['displayEpoch'] !== undefined && (!Number.isSafeInteger(header['displayEpoch']) || Number(header['displayEpoch']) < 1))
     )
       throw new Error("Invalid browser video");
     entry.sequence++;
@@ -93,6 +105,7 @@ export class RemoteBrowserVideo {
       sequence: entry.sequence,
       width: Number(header["width"]),
       height: Number(header["height"]),
+      ...(header['displayEpoch'] === undefined ? {} : { displayEpoch: Number(header['displayEpoch']) }),
       jpeg: new Uint8Array(),
       video: {
         epoch: entry.epoch,
@@ -105,6 +118,7 @@ export class RemoteBrowserVideo {
     if (entry.resolve) {
       const resolve = entry.resolve;
       entry.resolve = undefined;
+      entry.lastPresented = performance.now();
       resolve(frame);
     } else entry.queue.push(frame);
   }

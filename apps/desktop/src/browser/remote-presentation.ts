@@ -37,6 +37,7 @@ export interface RemotePresentationHost {
   rejectVideo?(requestId: string): void;
   deliver(frame: TaskBrowserFrame): void;
   failed(error: unknown): void;
+  synchronize?(): Promise<void>;
 }
 export interface RemotePresentationWindow {
   visible(): boolean;
@@ -59,6 +60,7 @@ export class RemoteBrowserPresentation {
   private sequence = -1;
   private heartbeat = 0;
   private presentedTab: string | null = null;
+  private surfaceKey = '';
   private disposed = false;
   private retryTimer?: ReturnType<typeof setTimeout>;
   private layout?: TaskBrowserLayout;
@@ -113,6 +115,9 @@ export class RemoteBrowserPresentation {
         zoom,
         viewport: this.layout?.viewport,
         generation: tab.generation,
+        ...(tab.displayEpoch === undefined ? {} : { displayEpoch: tab.displayEpoch }),
+        ...(this.host.state()?.keyText ? { keyText: true } : {}),
+        ...(this.host.state()?.inputWindow === 4 ? { inputWindow: 4 } : {}),
         driver: tab.driver,
         visible:
           this.visible && this.host.ready() && !tab.error,
@@ -131,7 +136,8 @@ export class RemoteBrowserPresentation {
     this.sequence = input.sequence;
     this.heartbeat = Date.now();
     this.layout = input;
-    this.host.changed();
+    const key = JSON.stringify([input.visible, input.inputReady, input.ownerGeneration, input.bounds, input.viewport, this.window.zoom()]);
+    if (key !== this.surfaceKey) { this.surfaceKey = key; this.host.changed(); }
     this.pump();
   }
   pump(): void {
@@ -206,6 +212,20 @@ export class RemoteBrowserPresentation {
         return;
       if (frame) {
         this.after = frame.sequence;
+        if (frame.displayEpoch !== undefined) {
+          let expected = this.host.state()?.tabs.find(tab => tab.id === tabId)?.displayEpoch;
+          if (expected !== undefined && frame.displayEpoch > expected) {
+            await this.host.synchronize?.();
+            expected = this.host.state()?.tabs.find(tab => tab.id === tabId)?.displayEpoch;
+          }
+          if (this.disposed || revision !== this.frameRevision || this.active !== tabId || !this.visible || !this.host.ready()) return;
+          if (expected !== undefined && frame.displayEpoch !== expected) {
+            // The new document starts a keyframe epoch. Retire old packets and
+            // their credits without exposing their coordinates to the user.
+            this.retryTimer = setTimeout(() => { void this.readFrame(); }, 0);
+            return;
+          }
+        }
         this.waitingAck = frame.sequence;
         this.host.deliver({
           scopeId: this.host.scopeId,
@@ -268,6 +288,7 @@ export class RemoteBrowserPresentation {
     const visible = this.visible;
     this.epoch++;
     this.layout = undefined;
+    this.surfaceKey = '';
     this.reset();
     if (visible && this.host.ready())
       void this.host

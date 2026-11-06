@@ -114,6 +114,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
         this.client.cancel(this.ownerId, this.scopeId, requestId);
       },
       rejectVideo: requestId => this.stream?.video.fallback(requestId),
+      synchronize: async () => this.accept(await this.request('state')),
       deliver: this.deliver,
       failed: (error) => this.fail(error),
     };
@@ -213,7 +214,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
   private async request(
     path: string,
     body?: unknown,
-    timeout = 10000,
+    timeout = 20000,
   ): Promise<unknown> {
     if (this.disposed) throw new Error("Remote browser closed");
     const revision = this.connectionRevision;
@@ -297,6 +298,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     if (this.disposed || record(value)["unchanged"] === true) return;
     const state = remoteBrowserState(value, this.scopeId, this.taskId);
     if (state.revision < this.serverRevision) return;
+    if (this.serverRevision >= 0 && state.revision === this.state?.revision) return;
     this.serverRevision = state.revision;
     this.state = state;
     for (const key of this.layoutSequences.keys())
@@ -336,8 +338,12 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
       await shell.openExternal(actual);
       return this.snapshot();
     }
-    this.panel.reset();
-    for (const view of this.detached.values()) view.reset();
+    // New hosts tag documents and restart their encoder only when needed.
+    // Strict older hosts retain the conservative presentation reset.
+    if (!this.state?.tabs.every(tab => tab.displayEpoch !== undefined)) {
+      this.panel.reset();
+      for (const view of this.detached.values()) view.reset();
+    }
     this.accept(await this.request("command", input, 200000));
     this.pump();
     return this.snapshot();
@@ -379,7 +385,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
       };
     if (!valid()) throw new Error("Browser control changed");
     const reply = record(
-      await this.request("input", { tabId, generation, input }, 4000),
+      await this.request("input", { tabId, generation, input }, 15000),
     );
     if (!valid()) throw new Error("Browser control changed");
     if (
@@ -410,7 +416,8 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
             : tab,
         ),
       };
-    this.emit();
+    // Ordinary input receipts do not invalidate navigation or layout signals.
+    if (this.state?.tabs.some(tab => tab.id === tabId && (tab.generation !== generation || tab.driver !== 'you'))) this.emit();
     return accepted;
   }
   acknowledge(tabId: string, streamId: string, sequence: number, decoded = true): void {
@@ -568,12 +575,12 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
         if (frame) return frame;
         if (this.stream.video.available(requestId)) return null;
       }
-      const value = await this.stream.request('frame', { tabId, after }, 35000, requestId);
+      const value = await this.stream.request('frame', { tabId, after }, 50000, requestId);
       if (revision !== this.connectionRevision) return null;
       if (value === null) return null;
       const frame = record(value);
       if (typeof frame['sequence'] !== 'number' || frame['sequence'] <= after || typeof frame['width'] !== 'number' || typeof frame['height'] !== 'number' || !(frame['jpeg'] instanceof Uint8Array)) throw new Error('Invalid remote frame');
-      return { sequence: frame['sequence'], width: frame['width'], height: frame['height'], jpeg: frame['jpeg'] };
+      return { sequence: frame['sequence'], width: frame['width'], height: frame['height'], jpeg: frame['jpeg'], ...(frame['displayEpoch'] === undefined ? {} : { displayEpoch: Number(frame['displayEpoch']) }) };
     }
     const result = await this.client.execute(
       this.ownerId,
@@ -623,6 +630,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
         const metadata = record(
           JSON.parse(body.subarray(4, 4 + length).toString("utf8")),
         );
+        if (metadata['displayEpoch'] !== undefined && (!Number.isSafeInteger(metadata['displayEpoch']) || Number(metadata['displayEpoch']) < 1)) throw new Error('Invalid remote frame epoch');
         if (
           !Number.isSafeInteger(metadata["sequence"]) ||
           Number(metadata["sequence"]) <= after ||
@@ -640,10 +648,11 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
           sequence: Number(metadata["sequence"]),
           width: Number(metadata["width"]),
           height: Number(metadata["height"]),
+          ...(metadata['displayEpoch'] === undefined ? {} : { displayEpoch: Number(metadata['displayEpoch']) }),
           jpeg: new Uint8Array(body.subarray(4 + length)),
         };
       },
-      7000,
+      25000,
     );
     if (revision !== this.connectionRevision || this.disposed) return null;
     if (!result.ok) throw new Error("Browser frame interrupted");

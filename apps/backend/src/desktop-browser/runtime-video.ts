@@ -17,6 +17,7 @@ export interface RuntimeVideoPacket {
   readonly sequence: number;
   readonly width: number;
   readonly height: number;
+  readonly displayEpoch?: number;
   readonly video: {
     readonly epoch: string;
     readonly codec: 'avc1.42E02A';
@@ -103,7 +104,8 @@ export class RuntimeBrowserVideo {
     let after = 0,
       epoch = randomUUID(),
       lastCapture = 0,
-      lastRestart = -Infinity;
+      lastRestart = -Infinity,
+      displayEpoch: number | undefined;
     let target: VideoEncoderTarget | undefined, format: VideoFormat | undefined;
     const excluded = new Set<string>(),
       started = performance.now();
@@ -111,7 +113,7 @@ export class RuntimeBrowserVideo {
       const now = performance.now();
       if (
         [...this.outstanding.values()].some(
-          (receipt) => now - receipt.sent > 5000,
+          (receipt) => now - receipt.sent > 15000,
         )
       )
         throw new Error('Video viewer stalled');
@@ -141,6 +143,8 @@ export class RuntimeBrowserVideo {
       if (!frame || !current() || this.lifetime.signal.aborted) continue;
       lastCapture = performance.now();
       after = frame.sequence;
+      const changedDocument = frame.displayEpoch !== displayEpoch;
+      displayEpoch = frame.displayEpoch;
       // Failure never drops an encoded dependent packet: a replacement encoder
       // creates a fresh keyframe epoch for this same most-recent source image.
       for (;;) {
@@ -163,7 +167,7 @@ export class RuntimeBrowserVideo {
           (format.bitrate !== desired.bitrate ||
             format.threads !== desired.threads) &&
           performance.now() - lastRestart > 3000;
-        if (!this.encoder || resized || retune) {
+        if (!this.encoder || resized || retune || changedDocument) {
           this.encoder?.stop();
           await this.encoder?.closed;
           format = desired;
@@ -203,6 +207,7 @@ export class RuntimeBrowserVideo {
           sequence,
           width: frame.width,
           height: frame.height,
+          ...(frame.displayEpoch === undefined ? {} : { displayEpoch: frame.displayEpoch }),
           video: {
             epoch,
             codec: 'avc1.42E02A',

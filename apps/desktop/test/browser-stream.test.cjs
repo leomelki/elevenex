@@ -85,7 +85,10 @@ for (const window of [3, 8]) test(`video window ${window} negotiates compatibly 
     };
     for (let n = 1; n <= window; n++) send(n);
     assert.equal((await first).video.data[0], 1);
-    for (let n = 2; n <= window; n++) assert.equal((await f.stream.video.next('tab', n - 1, 'panel')).video.data[0], n);
+    for (let n = 2; n <= window; n++) {
+      const frame = await f.stream.video.next('tab', n - 1, 'panel');
+      assert.equal(frame.video.data[0], n);
+    }
     assert.equal(commands.filter(c => c.body.action === 'start').length, 1);
     // Expanded-window receipts have no reply and cannot accumulate RPC deadlines.
     while (commands.filter(c => c.body.action === 'ack').length < window - 1) await once(f.socket, 'message');
@@ -93,6 +96,43 @@ for (const window of [3, 8]) test(`video window ${window} negotiates compatibly 
     f.stream.video.fallback('panel');
     assert.equal(f.stream.video.available('panel'), false);
     assert.equal(f.stream.video.available('companion'), true);
+  } finally { await f.cleanup(); }
+});
+
+test('queued video preserves dependent packets and catches up without starving visible progress', async context => {
+  const { RemoteBrowserVideo } = require('../dist/browser/remote-video');
+  let subscription, now = 1000;
+  context.mock.method(performance, 'now', () => now);
+  const video = new RemoteBrowserVideo(async body => { subscription = body.subscription; return null; });
+  try {
+    const first = video.next('tab', 0, 'panel', 8);
+    for (let n = 1; n <= 3; n++) video.receive({ tabId: 'tab', subscription, sequence: n, width: 800, height: 600,
+      video: { epoch: '11111111-1111-4111-8111-111111111111', codec: 'avc1.42E02A', key: n === 1, timestamp: n * 33333 } }, new Uint8Array([n]));
+    assert.equal((await first).video.data[0], 1);
+    const intermediate = await video.next('tab', 1, 'panel', 8);
+    assert.equal(intermediate.video.data[0], 2);
+    assert.equal(intermediate.video.present, false);
+    video.receive({ tabId: 'tab', subscription, sequence: 4, width: 800, height: 600,
+      video: { epoch: '11111111-1111-4111-8111-111111111111', codec: 'avc1.42E02A', key: false, timestamp: 133332 } }, new Uint8Array([4]));
+    now += 33;
+    assert.equal((await video.next('tab', 2, 'panel', 8)).video.present, undefined, 'Sustained backlog still paints at a useful cadence');
+    const latest = await video.next('tab', 3, 'panel', 8);
+    assert.equal(latest.video.data[0], 4);
+    assert.equal(latest.video.present, undefined);
+  } finally { video.destroy(); }
+});
+
+test('a long jitter pause keeps the control socket alive without replaying an input', async context => {
+  const f = await fixture();
+  try {
+    context.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+    const received = once(f.socket, 'message');
+    const input = f.stream.request('input', { generation: 1 });
+    const [bytes] = await received;
+    context.mock.timers.tick(12000);
+    assert.equal(f.socket.readyState, 1);
+    f.socket.send(JSON.stringify({ id: JSON.parse(bytes).id, result: { generation: 1 } }));
+    assert.deepEqual(await input, { generation: 1 });
   } finally { await f.cleanup(); }
 });
 

@@ -7,7 +7,7 @@ export function streamInput(value: unknown): TaskBrowserStreamInput {
   exact(raw, ['kind', 'events']);
   if (!Array.isArray(raw['events']) || !raw['events'].length || raw['events'].length > 32) throw new Error('Invalid input batch');
   const events = raw['events'].map(streamEvent);
-  if (events.some(event => event.kind === 'clipboard') || events.reduce((size, event) => size + (event.kind === 'text' || event.kind === 'composition' ? event.text.length : 0), 0) > 65536) throw new Error('Input batch exceeded its bounds');
+  if (events.some(event => event.kind === 'clipboard' || event.kind === 'release') || events.reduce((size, event) => size + (event.kind === 'text' || event.kind === 'composition' || event.kind === 'key' ? event.text?.length ?? 0 : 0), 0) > 65536) throw new Error('Input batch exceeded its bounds');
   return { kind: 'batch', events };
 }
 function streamEvent(value: unknown): TaskBrowserStreamEvent {
@@ -15,6 +15,7 @@ function streamEvent(value: unknown): TaskBrowserStreamEvent {
   const number = (key: string, min: number, max: number): number => { const n = raw[key]; if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) throw new Error('Invalid browser input'); return n; };
   const integer = (key: string, min: number, max: number): number => { const n = number(key, min, max); if (!Number.isSafeInteger(n)) throw new Error('Invalid browser input integer'); return n; };
   const text = (key: string, max: number): string => { const s = raw[key]; if (typeof s !== 'string' || s.length > max) throw new Error('Invalid browser input'); return s; };
+  if (kind === 'release') { exact(raw, ['kind']); return { kind }; }
   if (kind === 'text') { exact(raw, ['kind', 'text']); return { kind, text: text('text', 65536) }; }
   if (kind === 'composition') {
     exact(raw, ['kind', 'text', 'selectionStart', 'selectionEnd']);
@@ -23,7 +24,7 @@ function streamEvent(value: unknown): TaskBrowserStreamEvent {
   }
   if (kind === 'edit') { exact(raw, ['kind', 'operation']); const operation=raw['operation'];if(operation!=='undo'&&operation!=='redo')throw new Error('Invalid edit operation');return {kind,operation}; }
   if (kind === 'clipboard') { exact(raw, ['kind', 'operation']); const operation = raw['operation']; if (operation !== 'copy' && operation !== 'cut' && operation !== 'paste' && operation !== 'selectAll') throw new Error('Invalid clipboard action'); return { kind, operation }; }
-  if (kind === 'key') { exact(raw, ['kind', 'type', 'key', 'code', 'keyCode', 'modifiers']); const type = raw['type']; if (type !== 'down' && type !== 'up') throw new Error('Invalid key action'); return { kind, type, key: text('key', 80), code: text('code', 80), keyCode: integer('keyCode', 0, 255), modifiers: integer('modifiers', 0, 15) }; }
+  if (kind === 'key') { exact(raw, ['kind', 'type', 'key', 'code', 'keyCode', 'modifiers', 'text']); const type = raw['type']; if (type !== 'down' && type !== 'up' || (raw['text'] !== undefined && type !== 'down')) throw new Error('Invalid key action'); return { kind, type, key: text('key', 80), code: text('code', 80), keyCode: integer('keyCode', 0, 255), modifiers: integer('modifiers', 0, 15), ...(raw['text'] === undefined ? {} : { text: text('text', 65536) }) }; }
   const x = number('x', 0, 16384), y = number('y', 0, 16384), modifiers = integer('modifiers', 0, 15);
   if (kind === 'wheel') { exact(raw, ['kind', 'x', 'y', 'deltaX', 'deltaY', 'modifiers']); return { kind, x, y, modifiers, deltaX: number('deltaX', -10000, 10000), deltaY: number('deltaY', -10000, 10000) }; }
   if (kind !== 'pointer') throw new Error('Unsupported browser input');

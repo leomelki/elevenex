@@ -50,7 +50,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
     if (this.stopped || this.tasks.get(taskId) !== task)
       throw new Error('Browser task preparation was interrupted');
     const old = this.viewers.get(taskId);
-    if (old && old.clientId !== clientId && Date.now() - old.seen < 10000)
+    if (old && old.clientId !== clientId && Date.now() - old.seen < 30000)
       throw new ConflictException({
         code: 'browser-viewer-in-use',
         message: 'This task browser already has an active viewer',
@@ -129,7 +129,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
       !bytes ||
       bytes.length !== 36 ||
       !viewer ||
-      Date.now() - viewer.seen > 10000 ||
+      Date.now() - viewer.seen > 30000 ||
       !timingSafeEqual(bytes, Buffer.from(viewer.token))
     )
       throw new ForbiddenException('Browser viewer lease expired');
@@ -201,7 +201,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
       }
     }
     for (const [id, viewer] of this.viewers)
-      if (Date.now() - viewer.seen > 10000) {
+      if (Date.now() - viewer.seen > 30000) {
         viewer.task.reconcile();
         this.viewers.delete(id);
       }

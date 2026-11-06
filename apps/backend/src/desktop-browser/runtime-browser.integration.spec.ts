@@ -1,4 +1,4 @@
-import { chromium } from 'playwright-core';
+import { chromium, type BrowserContext } from 'playwright-core';
 import { RuntimeBrowserPersistence } from './runtime-persistence.js';
 import { createServer, request as httpRequest, type Server, type ServerResponse } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -333,7 +333,7 @@ describe('Remote browser public HTTP behavior', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     expect(events).toContain('private-test-世界-batch');
     expect((await request('state').then((r) => r.json())).tabs[0].title).toBe('Updated runtime title');
-    const context = await launches.mock.results.at(-1)!.value;
+    const context: BrowserContext = await launches.mock.results.at(-1)!.value;
     const page = context.pages().find(page => page.url().startsWith(pageUrl));
     await page!.evaluate(() => history.pushState(null, '', '#title-route'));
     for (let n = 0; n < 100; n++) {
@@ -379,7 +379,7 @@ describe('Remote browser public HTTP behavior', () => {
       expect(JSON.stringify(reply)).not.toContain('private-test-世界');
       expect(reply).toMatchObject({ observation: 'withheld' });
       expect(JSON.stringify(reply)).not.toContain('Updated runtime title');
-      expect(reply.tabs[0]).not.toHaveProperty('title');
+      expect(reply).not.toHaveProperty('tabs.0.title');
     } finally {
       mailbox.onModuleDestroy();
     }
@@ -632,7 +632,7 @@ describe('Remote browser public HTTP behavior', () => {
     expect((await request('frame?tabId=' + detachedId + '&after=0')).status).toBe(400);
     await request('layout', { ...box, sequence: 11 });
     await request('command', { kind: 'handoff', tabId: detachedId, sessionId: 2 });
-    const now = Date.now(), clock = jest.spyOn(Date, 'now').mockReturnValue(now + 3100);
+    const now = Date.now(), clock = jest.spyOn(Date, 'now').mockReturnValue(now + 16000);
     try {
       const expired = await runtime.viewer(1, token).agent({ kind: 'list' }, 2, new AbortController().signal);
       expect(expired.tabs.find(tab => tab.id === detachedId)?.driver).toBe('agent');
@@ -699,7 +699,7 @@ describe('Remote browser public HTTP behavior', () => {
       expect(events.filter(event => event === 'clicked').length).toBe(before + 1);
       expect((await request('state').then(reply => reply.json())).picked).toBeNull();
       await request('command', { kind: 'network', tabId: id, slow: true });
-      const context = await launches.mock.results.at(-1)!.value;
+      const context: BrowserContext = await launches.mock.results.at(-1)!.value;
       const page = context.pages().find(page => page.url() === pageUrl + '/newer')!;
       const elapsed = await page.evaluate(async () => {
         const start = performance.now();

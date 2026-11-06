@@ -114,6 +114,28 @@ test('stream input rejects unrestricted commands, unbounded text, invalid pointe
   assert.deepEqual(streamInput({kind:'text',text:'世界'}), {kind:'text',text:'世界'});
 });
 
+test('SOCKS races pinned addresses without another DNS lookup when the first family is unavailable', async context => {
+  const { createServer, createConnection } = require('node:net');
+  const { once } = require('node:events');
+  const { browserSocks } = require('@elevenex/browser-network');
+  const echo = createServer(socket => socket.pipe(socket));
+  await new Promise(resolve => echo.listen(0, '127.0.0.1', resolve));
+  context.after(() => new Promise(resolve => echo.close(resolve)));
+  const proxy = await browserSocks(async () => ({ host: 'pinned.invalid', port: echo.address().port, addresses: [
+    { address: '::1', family: 6 }, { address: '127.0.0.1', family: 4 },
+  ] }));
+  context.after(() => proxy.close());
+  const client = createConnection(proxy.port, '127.0.0.1');
+  context.after(() => client.destroy());
+  client.on('error', () => undefined);
+  const greeting = once(client, 'data'); client.write(Buffer.from([5, 1, 0])); await greeting;
+  const connected = once(client, 'data'); client.write(Buffer.from([5, 1, 0, 1, 1, 1, 1, 1, 0, 80]));
+  assert.equal((await connected)[0][1], 0);
+  const response = once(client, 'data'); client.write('pinned transport');
+  assert.equal((await response)[0].toString(), 'pinned transport');
+  client.destroy();
+});
+
 test('display stream bounds pending frames, authenticates receipts, adapts to slow consumers and stops on disposal', async context => {
   const { EventEmitter } = require('node:events');
   const { BrowserFrameStream } = require('../dist/browser/frame-stream');

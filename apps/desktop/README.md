@@ -359,6 +359,13 @@ pnpm desktop:capture scripts/desktop-capture/scenarios/check.mjs --fixture
 
 ## Add an IPC channel
 
+After browser main/preload changes, run the native `test/electron-smoke.cjs` with
+the installed Electron after building. `test/browser-remote-input-native.cjs` is
+a separate native regression for streamed modifier keys through the actual browser
+registration and sandboxed preload, with jittered isolated-host replies. Run them
+sequentially and unset inherited `ELECTRON_RUN_AS_NODE`. Neither is a packaged-app
+or external SSH/WAN test.
+
 1. Add its argument tuple and serializable result to `InvokeContracts` in
    `packages/shared/src/index.ts` (or a payload to `EventContracts` for events).
 2. Add a named method to `ElevenexBridge` and implement it in `preload.ts` using

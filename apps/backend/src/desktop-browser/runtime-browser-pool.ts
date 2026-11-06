@@ -54,6 +54,7 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
   private readonly contexts = new Map<string, BrowserContext>();
   private readonly lifetime = new AbortController();
   private disposed = false;
+  private installation?: Promise<void>;
   private readonly cache = join(getElevenexDataRoot(), 'browser-runtime');
   async acquire(identity: string, contextOptions: BrowserContextOptions): Promise<BrowserContext> {
     if (!/^[a-f0-9]{64}$/.test(identity)) throw new Error('Invalid browser profile identity');
@@ -129,7 +130,8 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
     return context;
   }
   private install(): Promise<void> {
-    return installRuntimeBrowser(this.cache, this.lifetime.signal);
+    return this.installation ??= installRuntimeBrowser(this.cache, this.lifetime.signal)
+      .finally(() => { this.installation = undefined; });
   }
   async onModuleDestroy(): Promise<void> {
     this.disposed = true;
