@@ -22,16 +22,14 @@ async function fixture(t) {
   t.after(() => rm(root, { recursive: true, force: true }));
   const files = [
     'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/backend/package.json', 'apps/desktop/package.json',
-    'packages/shared/package.json', 'e2e/package.json', 'vscode-filesystem-provider/package.json',
-    'vscode-scm-extension/package.json', 'apps/backend/bundle/main.cjs', 'apps/backend/drizzle/migration.sql',
-    'apps/backend/bin/helper', 'apps/frontend/proxy.conf.json', 'config/vscode-web-runtime.json',
+    'packages/shared/package.json', 'e2e/package.json', 'apps/backend/bundle/main.cjs', 'apps/backend/drizzle/migration.sql',
+    'apps/backend/bin/helper', 'apps/frontend/proxy.conf.json',
     'scripts/desktop-backend-runtime.mjs', 'scripts/stage-electron-backend.js',
     'scripts/rebuild-electron-backend-natives.js', 'scripts/archive-electron-backend.js',
-    'scripts/prepare-vscode-web-runtime.js', 'scripts/runtime-stage-utils.js', 'scripts/desktop-backend-linux.Dockerfile',
-    'vscode-filesystem-provider/dist/extension.js', 'vscode-scm-extension/dist/extension.js',
+    'scripts/runtime-stage-utils.js', 'scripts/desktop-backend-linux.Dockerfile',
     // Neither installed dependencies, unrelated sources nor secrets belong in the context.
     'apps/backend/node_modules/native.node', 'apps/desktop/src/unrelated.ts', '.env',
-    'apps/backend/node_modules/vscode-web/dist/index.html', 'apps/backend/node_modules/@openai/codex-sdk/dist/index.js',
+    'apps/backend/node_modules/@openai/codex-sdk/dist/index.js',
     'apps/backend/node_modules/@openai/codex-sdk/package.json', 'apps/backend/node_modules/@openai/codex-sdk/LICENSE',
     'apps/backend/node_modules/@anthropic-ai/claude-agent-sdk/package.json',
   ];
@@ -50,7 +48,7 @@ async function fixture(t) {
 }
 
 for (const architecture of ['arm64', 'x64']) {
-  test(`Linux ${architecture} build snapshots runtime inputs, exports artifacts and cleans its context`, async t => {
+  test(`Linux ${architecture} builds browser runtime without legacy VS Code assets and cleans its context`, async t => {
     const root = await fixture(t);
     let context;
     const archiveName = `elevenex-backend-linux-${architecture}.tar.gz`;
@@ -67,7 +65,10 @@ for (const architecture of ['arm64', 'x64']) {
       assert.ok(lockfile.endsWith('  apps/other:\n    dependencies: {}\npackages:\n  /unchanged@1.2.3:\n    resolution: {integrity: sha512-original}\n'));
       const backend = JSON.parse(await readFile(join(cwd, 'manifests/apps/backend/package.json'), 'utf8'));
       assert.equal(backend.dependencies['better-sqlite3'], '1.0.0');
+      assert.equal(backend.dependencies['playwright-core'], '1.0.0');
+      assert.equal(backend.dependencies['ffmpeg-static'], '1.0.0');
       assert.equal(backend.dependencies['unused-agent-cli'], undefined);
+      assert.equal(await readFile(join(cwd, 'runtime/scripts/runtime-stage-utils.js'), 'utf8'), 'scripts/runtime-stage-utils.js');
       for (const file of ['runtime/apps/backend/node_modules/native.node', 'runtime/apps/desktop/src', '.env']) {
         await assert.rejects(stat(join(cwd, file)), { code: 'ENOENT' });
       }
@@ -102,8 +103,6 @@ test('the shared UI base builds its core runtime without browser dependencies or
   delete manifest.dependencies['playwright-core'];
   delete manifest.dependencies['ffmpeg-static'];
   await writeFile(manifestPath, JSON.stringify(manifest));
-  await rm(join(root, 'config'), { recursive: true });
-  await rm(join(root, 'apps/backend/node_modules/vscode-web'), { recursive: true });
   await buildLinuxDevelopmentRuntime(root, version, 'arm64', async (_command, _args, cwd) => {
     const backend = JSON.parse(await readFile(join(cwd, 'manifests/apps/backend/package.json'), 'utf8'));
     assert.deepEqual(Object.keys(backend.dependencies), ['better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node']);

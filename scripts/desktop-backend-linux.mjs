@@ -56,18 +56,12 @@ export async function buildLinuxDevelopmentRuntime(root, version, architecture, 
       'apps/backend/bundle', 'apps/backend/drizzle', 'apps/backend/bin', 'apps/frontend/proxy.conf.json',
       'scripts/desktop-backend-runtime.mjs',
       'scripts/stage-electron-backend.js', 'scripts/rebuild-electron-backend-natives.js',
-      'scripts/archive-electron-backend.js',
-      ...(browserRuntime ? ['scripts/prepare-vscode-web-runtime.js', 'config/vscode-web-runtime.json',
-        'apps/backend/node_modules/vscode-web/dist'] : ['scripts/runtime-stage-utils.js']),
+      // Runtime assembly uses this utility for both core and browser backends.
+      // Playwright does not imply that legacy VS Code assets exist in the checkout.
+      'scripts/archive-electron-backend.js', 'scripts/runtime-stage-utils.js',
       'apps/backend/node_modules/@openai/codex-sdk/package.json', 'apps/backend/node_modules/@openai/codex-sdk/dist',
       'apps/backend/node_modules/@openai/codex-sdk/LICENSE', 'apps/backend/node_modules/@anthropic-ai/claude-agent-sdk/package.json',
     ]) await copy(file, `runtime/${file}`);
-    for (const family of browserRuntime ? ['vscode-filesystem-provider', 'vscode-scm-extension'] : []) {
-      await copy(`${family}/package.json`, `runtime/${family}/package.json`);
-      await copy(`${family}/dist`, `runtime/${family}/dist`);
-      try { await copy(`${family}/package.nls.json`, `runtime/${family}/package.nls.json`); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
-    }
     await copy('scripts/desktop-backend-linux.Dockerfile', 'Dockerfile');
     console.log(`Building the SSH Linux ${architecture} runtime with Docker (dependencies are cached)…`);
     try {
