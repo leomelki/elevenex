@@ -1,3 +1,4 @@
+import { CodeTransfers } from './code-transfers.service.js';
 import { CodeLifetimes } from './code-lifetimes.service.js';
 import { BadRequestException, Body, CanActivate, Controller, ExecutionContext, Get, Injectable, Param, ParseIntPipe, Post, Query, Req, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { timingSafeEqual } from 'node:crypto';
@@ -27,7 +28,7 @@ export class CodeWorkspaceController {
   private readonly mutations = new Map<string, Promise<unknown>>();
   private readonly queued = new Map<string, number>();
   private pendingMutations = 0;
-  constructor(private readonly authorization: CodeAuthorization, private readonly search: CodeSearch, private readonly watches: CodeWatch, private readonly lifetimes: CodeLifetimes) {}
+  constructor(private readonly authorization: CodeAuthorization, private readonly search: CodeSearch, private readonly watches: CodeWatch, private readonly lifetimes: CodeLifetimes, private readonly transfers: CodeTransfers) {}
   @Get(':taskId')
   async describe(@Param('taskId', ParseIntPipe) taskId: number, @Query('taskIncarnation') expectedStorage?: string) {
     if (expectedStorage !== undefined && !/^[a-f0-9]{64}$/.test(expectedStorage)) throw new BadRequestException('Invalid task identity.');
@@ -45,9 +46,15 @@ export class CodeWorkspaceController {
     this.lifetimes.touch(workspace);
     const execute = async () => {
       cancellation.signal.throwIfAborted();
-      if (['write', 'mkdir', 'rename', 'delete'].includes(operation)) await this.authorization.assertCurrent(workspace);
+      if (['write', 'mkdir', 'rename', 'delete', 'upload-begin', 'upload-chunk', 'upload-commit', 'upload-abort'].includes(operation)) await this.authorization.assertCurrent(workspace);
       try {
         switch (operation) {
+          case 'transfer-stat': return await this.transfers.stat(workspace, input.path);
+          case 'transfer-read': return await this.transfers.read(workspace, input, cancellation.signal);
+          case 'upload-begin': return await this.transfers.begin(workspace, input);
+          case 'upload-chunk': return await this.transfers.append(workspace, input, cancellation.signal);
+          case 'upload-commit': return await this.transfers.commit(workspace, input, async () => { cancellation.signal.throwIfAborted(); await this.authorization.assertCurrent(workspace); }, cancellation.signal);
+          case 'upload-abort': return await this.transfers.abort(workspace, input);
           case 'stat': return await codeStat(workspace, input.path);
           case 'read': {
             this.watches.observe(workspace, dirname(await confinedPath(workspace, input.path)));
@@ -74,7 +81,7 @@ export class CodeWorkspaceController {
         }
       } catch (error) { return publicFileError(error); }
     };
-    if (!['write', 'mkdir', 'rename', 'delete'].includes(operation)) {
+    if (!['write', 'mkdir', 'rename', 'delete', 'upload-begin', 'upload-chunk', 'upload-commit', 'upload-abort'].includes(operation)) {
       const value = await execute(); cancellation.signal.throwIfAborted();
       try { await this.authorization.workspace(taskId, identity); }
       catch (error) { this.search.release(identity); this.watches.release(identity); throw error; }
@@ -87,7 +94,7 @@ export class CodeWorkspaceController {
     const previous = this.mutations.get(identity) ?? Promise.resolve();
     const result = previous.catch(() => undefined).then(() => this.authorization.mutate(taskId, execute));
     this.mutations.set(identity, result);
-    try { const reply = await result; this.search.invalidate(identity); return reply; }
+    try { const reply = await result; if (['write', 'mkdir', 'rename', 'delete', 'upload-commit'].includes(operation)) this.search.invalidate(identity); return reply; }
     finally { this.pendingMutations--; const remaining = (this.queued.get(identity) ?? 1) - 1; if (remaining) this.queued.set(identity, remaining); else this.queued.delete(identity); if (this.mutations.get(identity) === result) this.mutations.delete(identity); }
     } finally { response.off('close', closed); request.off('aborted', closed); }
   }

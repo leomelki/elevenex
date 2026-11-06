@@ -627,3 +627,15 @@ asserts zero launch-viewport scrolling and matching iframe/workbench widths. Com
 empty tree, single-click acceptance of an already-open file, Escape/Back state,
 keyboard tree navigation, automatic tree return after closing the last editor,
 and restored Explorer after expansion.
+
+`scenarios/task-code-transfers.mjs` uses the same Code capture environment
+variables and a disposable backend/task. It requires unused `upload.bin` and
+`assets` names at the task root and removes its fixtures afterward. It exercises
+the real extension, Explorer commands and backend with a 9 MiB binary, folder
+upload/download including empty directories, picker cancellation, keyboard menu
+navigation, both themes and a narrow reduced-motion layout. Only the native
+picker responses are deterministic, confined to temporary test files; this does
+not verify the operating system's picker appearance. Run sequentially with other
+native captures after building. When starting a disposable backend, set both
+`DB_PATH` and `ELEVENEX_DATA_ROOT` explicitly, as well as its runtime/migrations
+directory, to avoid inheriting a running development session's database.

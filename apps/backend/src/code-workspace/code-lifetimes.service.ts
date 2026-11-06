@@ -1,3 +1,4 @@
+import { CodeTransfers } from './code-transfers.service.js';
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
 import { CodeAuthorization, type CodeWorkspace } from './code-authorization.service.js';
@@ -16,7 +17,7 @@ export class CodeLifetimes implements OnModuleDestroy {
     this.pending = true;
     queueMicrotask(() => { void this.reconcile().finally(() => { this.pending = false; if (this.again) { this.again = false; this.invalidated(); } }); });
   };
-  constructor(private readonly navigation: NavigationEventsService, private readonly authorization: CodeAuthorization, private readonly search: CodeSearch, private readonly watches: CodeWatch) {
+  constructor(private readonly navigation: NavigationEventsService, private readonly authorization: CodeAuthorization, private readonly search: CodeSearch, private readonly watches: CodeWatch, private readonly transfers: CodeTransfers) {
     navigation.on('tree-invalidated', this.invalidated);
   }
   touch(workspace: CodeWorkspace): void {
@@ -25,7 +26,7 @@ export class CodeLifetimes implements OnModuleDestroy {
     this.active.set(workspace.identity, { workspace, at: Date.now() });
   }
   onModuleDestroy(): void { this.disposed = true; this.navigation.off('tree-invalidated', this.invalidated); for (const id of this.active.keys()) this.release(id); }
-  private release(identity: string): void { this.active.delete(identity); this.search.release(identity); this.watches.release(identity); }
+  private release(identity: string): void { this.active.delete(identity); void this.transfers.release(identity).catch(() => undefined); this.search.release(identity); this.watches.release(identity); }
   private async reconcile(): Promise<void> {
     for (const [identity, owner] of this.active) {
       if (this.disposed) return;

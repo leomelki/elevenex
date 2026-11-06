@@ -8,6 +8,9 @@ import type { BackendClient } from '../backend-client/client';
 import { requestBackendJson } from '../backend-client/transport';
 import { CODE_OPERATIONS, object, reply, type CodeOperation, type WorkspaceDescriptor } from './validation';
 import { codePolicy, CODE_EXTENSION_PATH, EXTENSION, workbenchDocument } from './document';
+import { codeTransferCall } from './transfer-client';
+import { CodeTransfers } from './transfers';
+import type { TransferDialogs } from './transfer-contracts';
 
 const MIME: Readonly<Record<string, string>> = { '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.html': 'text/html', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain' };
 /** A private session-local HTTPS handler, not an Internet or loopback listener. */
@@ -18,6 +21,8 @@ export class CodeProtocol {
   private ready = false;
   private readonly readyWaiters = new Set<(ready: boolean) => void>();
   private transportRevision = 0;
+  private transfers?: CodeTransfers;
+  private transferId?: string;
   dirty = 0;
   active = false;
   embedded = true;
@@ -31,6 +36,7 @@ export class CodeProtocol {
     private readonly shellOrigin = 'app://elevenex',
     originIdentity = workspace.storageIdentity,
     private readonly presented: (filesOpen: boolean, hasEditors: boolean) => void = () => undefined,
+    private readonly transferDialogs?: TransferDialogs,
   ) { this.authority = `w-${originIdentity.slice(0, 32)}.${originIdentity.slice(32)}.code.elevenex.invalid`; }
   allows(value: string): boolean {
     try {
@@ -38,8 +44,8 @@ export class CodeProtocol {
       return url.protocol === 'https:' && !url.username && !url.password && !url.port && (url.hostname === this.authority || /^[a-z0-9-]{1,80}$/.test(url.hostname.slice(0, -(this.authority.length + 1))) && url.hostname.endsWith('.' + this.authority));
     } catch { return false; }
   }
-  bind(target: CodeTarget): boolean { const changed = target.scopeId !== this.target.scopeId; if (changed) { this.transportRevision++; this.ready = false; } this.target = target; return changed; }
-  reset(): void { this.transportRevision++; this.ready = false; }
+  bind(target: CodeTarget): boolean { const changed = target.scopeId !== this.target.scopeId || target.taskId !== this.target.taskId; if (changed) this.reset(); this.target = target; return changed; }
+  reset(): void { this.transfers?.dispose(); this.transportRevision++; this.ready = false; }
   whenReady(): Promise<boolean> {
     if (this.ready) return Promise.resolve(true);
     if (this.closed || this.readyWaiters.size >= 32) return Promise.resolve(false);
@@ -49,7 +55,7 @@ export class CodeProtocol {
       this.readyWaiters.add(done);
     });
   }
-  dispose(): void { this.closed = true; this.lifetime.abort(); for (const done of this.readyWaiters) done(false); }
+  dispose(): void { this.closed = true; this.transfers?.dispose(); this.lifetime.abort(); for (const done of this.readyWaiters) done(false); }
   async handle(request: Request): Promise<Response> {
     if (this.closed || !this.allows(request.url)) return new Response(null, { status: 403 });
     const url = new URL(request.url);
@@ -102,6 +108,21 @@ export class CodeProtocol {
     finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
     let input: Record<string, unknown>;
     try { input = object(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { return new Response(null, { status: 400 }); }
+    if (['transfer-start', 'transfer-status', 'transfer-cancel'].includes(operation)) {
+      if (!this.ready || input['generation'] !== this.workspace.identity || input['transportRevision'] !== this.transportRevision) return Response.json({ error: 'workspace-changed' }, { status: 409, headers });
+      try {
+        if (operation === 'transfer-start') {
+          if (!this.active || !this.transferDialogs || this.client.state(this.windowId).scope?.id !== this.target.scopeId) return new Response(null, { status: 403, headers });
+          if (this.transfers && this.transferId && this.transfers.status(this.transferId).phase === 'running') throw new Error('A transfer is already running.');
+          const { scopeId, taskId } = this.target, windowId = this.windowId, generation = this.workspace.identity, revision = this.transportRevision;
+          this.transfers = new CodeTransfers(this.transferDialogs, codeTransferCall(this.client, { windowId, scopeId, taskId, generation }, () => !this.closed && this.windowId === windowId && this.transportRevision === revision && this.workspace.identity === generation, this.lifetime.signal));
+          const started = this.transfers.start(input); this.transferId = started.id;
+          return Response.json(started, { headers });
+        }
+        if (!this.transfers) throw new Error('No transfer.');
+        return Response.json(this.transfers.status(input['id'], operation === 'transfer-cancel'), { headers });
+      } catch { return Response.json({ error: 'Transfer is unavailable or already running.' }, { status: 400, headers }); }
+    }
     if (operation === 'presentation') {
       if (Object.keys(input).some(key => !['generation','transportRevision','filesOpen','hasEditors'].includes(key)) || typeof input['filesOpen'] !== 'boolean' || typeof input['hasEditors'] !== 'boolean') return new Response(null,{status:400,headers});
       const accepted = this.ready && input['generation'] === this.workspace.identity && input['transportRevision'] === this.transportRevision;

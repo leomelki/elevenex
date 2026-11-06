@@ -15,3 +15,14 @@ export interface Changes {
   readonly paths: readonly string[];
 
 }
+
+export interface TransferState {
+  readonly id: string;
+  phase: 'running' | 'complete' | 'cancelled' | 'failed';
+  files: number;
+  skipped: number;
+  bytes: number;
+  size: number;
+  name: string;
+  message?: string;
+}

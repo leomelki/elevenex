@@ -287,7 +287,8 @@ styles, blob workers and WASM. Only its isolated extension-worker origin permits
 CommonJS evaluation; the pinned iframe's inline code is hash-allowlisted. External
 network, navigation, arbitrary frames and device permissions are denied. The
 private editor document may retain persistent browser storage and perform focused
-clipboard writes; clipboard reads and external filesystem pickers are denied.
+clipboard writes; clipboard reads and browser filesystem pickers are denied.
+Task transfers use separate main-owned native dialogs, described below.
 HTTP/code caches are distinct from durable task writing. Editor content never
 receives transport credentials or a generic HTTP/filesystem/shell bridge.
 
@@ -342,6 +343,56 @@ change does not import their development-profile browser storage into the new
 iframe origins.
 
 ## Bounds and supported scope
+
+### Upload and download
+
+The Explorer offers **Upload Files…**, **Upload Folder…** and **Download…** in
+its context menu, plus an Upload toolbar action and Task commands in the command
+palette. Upload targets the selected folder (or a selected file's parent);
+toolbar/palette uploads target the task root. Download uses the Explorer's
+multi-selection or the active editor. Without a selected file, the command offers
+Explorer selection or the entire task folder. Editor tabs also offer Download.
+The embedder routes upstream `explorer.upload` and `explorer.download` through
+these commands: their browser implementations cannot work inside this sandbox.
+The extension adds a folder Download item only when upstream hides its own
+for lack of browser filesystem access, and adds Upload Files on file rows.
+Keep these menu conditions and aliases aligned when upgrading the pinned runtime.
+
+Native main-owned pickers grant local paths; paths and file bytes never cross
+the shell bridge or extension worker. Multiple downloads choose one destination
+folder. Single downloads choose a name through Save. Folders preserve their
+structure, including empty directories, and require a new destination name.
+Existing file replacements require confirmation, with Replace/Skip All for
+batch transfers. Uploads ask to save dirty task editors first; downloads offer
+Save All or the saved disk versions. Edits made during a transfer remain subject
+to the editor's usual save-conflict protection.
+
+VS Code notifications show the current file, byte percentage, completed-file
+count, skipped entries and Cancel. Cancellation keeps published files and removes
+incomplete staging. An interrupted commit can have an unknown outcome: the user
+must refresh and inspect the destination before starting a new transfer. There
+is no automatic retry, resume or reconnect replay.
+
+Transfers support binary and empty files up to 2 GiB each, 10 GiB per action,
+10,000 entries, 64 nested folder levels and 200 selected resources. They use
+256 KiB chunks, bounded directory pages and sequential I/O; the 8 MiB editor
+limit still applies to opening files for editing. Git metadata, symbolic links
+and special files are excluded. Names must be portable to the destination
+filesystem; unsafe names fail the transfer without publishing that file.
+
+The private Code protocol exposes only transfer start/status/cancel to its
+registered task origin. Start requires a visible ready editor and a current
+backend lease. Main pins task, workspace generation, window and transport for
+the action, rejects stale replies, and cancels on rebinding/disposal. Desktop
+paths come exclusively from native dialogs; backend responses cannot choose
+local paths. Staged downloads are confined to a private sibling directory and
+published after completion; concurrent destination changes fail safely. Upload
+chunks stage outside the repository; publication uses the existing lifecycle
+mutation lock, revision checks and no-clobber creation. Staging expires after
+two idle minutes and is removed on task invalidation or backend shutdown.
+The iframe still cannot use browser downloads, external filesystem pickers or
+arbitrary network access. These application checks do not provide an OS sandbox
+against another process concurrently rewriting filesystem ancestors.
 
 Files are at most 8 MiB. Directory transport pages contain 200 entries; upstream's
 single-directory API materializes at most 10,000 children and offers Quick Open

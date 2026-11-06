@@ -1,3 +1,4 @@
+import { codeTransferDialogs } from './transfer-dialogs';
 import { BrowserWindow, nativeTheme, dialog, type WebContents } from 'electron';
 import { createHash } from 'node:crypto';
 import type { BackendResult, CodeAction, CodeBounds, CodePresentation, CodeOpenFile, CodeSurfaceState, CodeTarget, CodeWindowContext, EnvironmentSelection } from '@elevenex/shared';
@@ -269,7 +270,7 @@ export class CodeSurfaces {
     const creatingScope = this.client.state(windowId).scope; if (creatingScope?.id !== target.scopeId) throw new Error('Machine disconnected.');
     const environment = creatingScope.environment;
     const state: CodeSurfaceState = { taskName: workspace.name, branch: workspace.branch, taskId: workspace.taskId, identity: workspace.identity, phase: 'loading', message: 'Opening task workspace…' };
-    const host = new CodeProtocol(this.client, windowId, target, workspace, assets, this.fonts, () => nativeTheme.shouldUseDarkColors, (phase, message) => {
+    const host: CodeProtocol = new CodeProtocol(this.client, windowId, target, workspace, assets, this.fonts, () => nativeTheme.shouldUseDarkColors, (phase, message) => {
       const surface = this.surfaces.get(key);
       if (!surface) return;
       if (phase === 'ready') { surface.wasReady = true; clearTimeout(surface.startup); surface.startup = undefined; }
@@ -282,7 +283,7 @@ export class CodeSurfaces {
       if (!surface || surface.state.filesOpen === filesOpen && surface.state.hasEditors === hasEditors) return;
       surface.state = { ...surface.state, filesOpen, hasEditors };
       if (this.active.get(surface.owner) === key) this.changed(surface.owner, surface.target, surface.state);
-    });
+    }, codeTransferDialogs(() => host.windowId));
     this.router?.add(host);
     const frame = new CodeFrame(windowId, `https://${host.authority}/`);
     const surface: Surface = { key, environment, configurationIdentity: this.client.configurationIdentity(windowId, target.scopeId) ?? '', frame, host, state: { ...state, frameUrl: frame.url }, owner: windowId, target, used: Date.now() };

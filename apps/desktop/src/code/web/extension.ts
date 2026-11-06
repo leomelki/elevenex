@@ -1,3 +1,4 @@
+import { registerTransfers } from './transfers';
 import { CompactLayout } from './compact-layout';
 import * as vscode from 'vscode';
 import type { Changes, DirectoryPage, FileRead, SearchPage } from './contracts';
@@ -328,6 +329,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (!root || root.scheme !== SCHEME) return;
   const base = context.extensionUri.with({ path: '/', query: '', fragment: '' });
   const files = new TaskFiles(base, root, new SaveLedger(context.workspaceState));
+  registerTransfers(context, root, (operation, input) => files.call(operation, input));
   const layout = new CompactLayout(context.workspaceState, (filesOpen, hasEditors) => files.call('presentation', {filesOpen, hasEditors}));
   context.subscriptions.push(layout,
     vscode.commands.registerCommand('elevenex.code.find-file', () => vscode.commands.executeCommand('workbench.action.quickOpen')),
