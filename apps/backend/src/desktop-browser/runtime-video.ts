@@ -140,7 +140,13 @@ export class RuntimeBrowserVideo {
           ? { width: format.width, height: format.height, fps: this.fps }
           : true,
       );
-      if (!frame || !current() || this.lifetime.signal.aborted) continue;
+      if (!current() || this.lifetime.signal.aborted) return;
+      if (!frame) {
+        // A starting or hidden tab can resolve immediately. Yield to I/O and
+        // timers so an unavailable source cannot starve heartbeats or stop().
+        await this.pause();
+        continue;
+      }
       lastCapture = performance.now();
       after = frame.sequence;
       const changedDocument = frame.displayEpoch !== displayEpoch;

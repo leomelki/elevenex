@@ -213,6 +213,61 @@ describe('private persistent browser channel', () => {
     while (!received.some((item) => item.id === 3)) await once(ws, 'message');
     expect(received.find((item) => item.id === 3)?.failed).toBe(true);
   });
+  it('keeps heartbeats and cancellation responsive while video has no source frame', async () => {
+    const task = service.active(1)!;
+    const tab = await task.create('you', null, '');
+    await task.layout(800, 600, true, true);
+    // A starting/hidden page can resolve immediately with no frame. Bound the
+    // fixture so a microtask starvation regression fails instead of hanging Jest.
+    const capture = jest.spyOn(tab, 'nextFrame').mockImplementation(() => {
+      if (capture.mock.calls.length > 1000)
+        throw new Error('Empty frame polling starved the event loop');
+      return Promise.resolve(null);
+    });
+    const ws = open();
+    const received: Record<string, unknown>[] = [];
+    ws.on('message', (data) => {
+      if (!Buffer.isBuffer(data)) throw new Error('Unexpected test packet');
+      const value: unknown = JSON.parse(data.toString('utf8'));
+      if (typeof value === 'object' && value !== null)
+        received.push({ ...value });
+    });
+    await once(ws, 'open');
+    const body = {
+      tabId: tab.id,
+      subscription: '22222222-2222-4222-8222-222222222222',
+      action: 'start',
+      sequence: 0,
+    };
+    ws.send(JSON.stringify({ id: 1, method: 'video', body }));
+    while (!received.some((item) => item.id === 1)) await once(ws, 'message');
+    ws.send(JSON.stringify({ id: 2, method: 'ping' }));
+    while (!received.some((item) => item.id === 2)) await once(ws, 'message');
+    expect(received.find((item) => item.id === 2)).toEqual({
+      id: 2,
+      result: null,
+    });
+    expect(capture.mock.calls.length).toBeGreaterThan(0);
+    expect(capture.mock.calls.length).toBeLessThan(10);
+    expect(received.some((item) => item.event === 'video-ended')).toBe(false);
+    ws.send(
+      JSON.stringify({
+        id: 3,
+        method: 'video',
+        body: { ...body, action: 'stop' },
+      }),
+    );
+    while (!received.some((item) => item.id === 3)) await once(ws, 'message');
+    expect(received.find((item) => item.id === 3)).toEqual({
+      id: 3,
+      result: null,
+    });
+    const stoppedReads = capture.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(capture).toHaveBeenCalledTimes(stoppedReads);
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    capture.mockRestore();
+  });
   it('closes duplicate request IDs and rejects a superseded lease without replay', async () => {
     const ws = open();
     await once(ws, 'open');

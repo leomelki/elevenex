@@ -53,6 +53,47 @@ it('emits a static update immediately without another source image, then bounded
     await encoder.closed;
   }
 });
+it('starts delivering video when an initially unavailable source becomes ready', async () => {
+  const host = new RuntimeVideoHost(
+    videoSettings({ ELEVENEX_BROWSER_VIDEO_ENCODER: 'software' }),
+  );
+  const packets: RuntimeVideoPacket[] = [];
+  let ready = false;
+  let reads = 0;
+  const timer = setTimeout(() => {
+    ready = true;
+  }, 0);
+  const video = new RuntimeBrowserVideo(
+    {
+      nextFrame: (after) => {
+        reads++;
+        return Promise.resolve(
+          ready && after === 0
+            ? { sequence: 1, width: 512, height: 256, jpeg }
+            : null,
+        );
+      },
+    },
+    // Keep a starvation regression bounded even if the readiness timer cannot run.
+    () => reads < 1000,
+    (packet) => packets.push(packet),
+    { host },
+  );
+  try {
+    const deadline = Date.now() + 5000;
+    while (!packets.length) {
+      if (Date.now() > deadline) throw new Error('Video startup timed out');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(packets[0]).toMatchObject({ sequence: 1, video: { key: true } });
+  } finally {
+    clearTimeout(timer);
+    video.stop();
+    await video.done;
+    await host.destroy();
+  }
+  expect(host.count).toBe(0);
+});
 it('bounds unacknowledged packets, resumes cumulatively and releases the encoder on stop', async () => {
   const packets: RuntimeVideoPacket[] = [];
   const video = new RuntimeBrowserVideo(
