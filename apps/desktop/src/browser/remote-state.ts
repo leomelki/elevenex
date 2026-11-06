@@ -143,6 +143,7 @@ export function remoteBrowserState(
     ...(raw['videoStream'] === 'h264' ? { videoStream: 'h264' as const } : {}),
     ...(raw['videoWindow'] === 8 ? { videoWindow: 8 as const } : {}),
     ...(raw['layoutLanes'] === true ? { layoutLanes: true } : {}),
+    ...(raw['pointerExit'] === true ? { pointerExit: true } : {}),
     ...(raw['keyText'] === true ? { keyText: true } : {}),
     ...(raw['inputWindow'] === 4 ? { inputWindow: 4 } : {}),
     scopeId,

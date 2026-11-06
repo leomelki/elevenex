@@ -28,6 +28,7 @@ export class BrowserHumanInput {
     private readonly pageHeight: () => number,
     private readonly shortcut: (intent: 'open' | 'pick' | 'controls') => void,
     private readonly keyText: () => boolean = () => false,
+    private readonly pointerExit: () => boolean = () => false,
   ) {}
   clear(): void {
     this.heldKeys.clear();
@@ -92,6 +93,9 @@ export class BrowserHumanInput {
     };
     this.heldPointer = event.buttons ? input : undefined;
     this.send(input);
+  }
+  leavePointer(): void {
+    if (!this.heldPointer && this.pointerExit()) this.send({ kind: 'pointer-exit' });
   }
   cancelPointer(): void {
     const pointer = this.heldPointer;

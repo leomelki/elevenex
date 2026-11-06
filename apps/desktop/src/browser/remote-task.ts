@@ -405,7 +405,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
       this.state = {
         ...this.state,
         tabs: this.state.tabs.map((tab) =>
-          tab.id === tabId
+          tab.id === tabId && tab.generation <= accepted
             ? {
                 ...tab,
                 generation: accepted,
@@ -569,18 +569,9 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
   > | null> {
     const revision = this.connectionRevision;
     if (this.stream) {
-      if (this.state?.videoStream === 'h264' && this.stream.video.available(requestId)) {
-        const frame = await this.stream.video.next(tabId, after, requestId, this.state.videoWindow ?? 3);
-        if (revision !== this.connectionRevision) return null;
-        if (frame) return frame;
-        if (this.stream.video.available(requestId)) return null;
-      }
-      const value = await this.stream.request('frame', { tabId, after }, 50000, requestId);
-      if (revision !== this.connectionRevision) return null;
-      if (value === null) return null;
-      const frame = record(value);
-      if (typeof frame['sequence'] !== 'number' || frame['sequence'] <= after || typeof frame['width'] !== 'number' || typeof frame['height'] !== 'number' || !(frame['jpeg'] instanceof Uint8Array)) throw new Error('Invalid remote frame');
-      return { sequence: frame['sequence'], width: frame['width'], height: frame['height'], jpeg: frame['jpeg'], ...(frame['displayEpoch'] === undefined ? {} : { displayEpoch: Number(frame['displayEpoch']) }) };
+      const frame = await this.stream.frames.next(tabId, after, requestId,
+        this.state?.videoStream === 'h264' ? this.state.videoWindow ?? 3 : undefined);
+      return revision === this.connectionRevision ? frame : null;
     }
     const result = await this.client.execute(
       this.ownerId,

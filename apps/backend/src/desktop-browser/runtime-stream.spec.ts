@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { RuntimeBrowserStream } from './runtime-stream.js';
+import { RuntimeVideoHost } from './runtime-video-host.js';
 import { RuntimeBrowserController } from './runtime-browser.controller.js';
 import { RuntimeBrowserService } from './runtime-browser.service.js';
 import type { RuntimeBrowserPool } from './runtime-browser-pool.js';
@@ -65,6 +66,7 @@ describe('private persistent browser channel', () => {
       new Promise<void>((resolve) => tcp.close(() => resolve())),
     ]);
     await rm(root, { recursive: true, force: true });
+    jest.restoreAllMocks();
   });
   function open(
     headers: Record<string, string> = {},
@@ -169,7 +171,11 @@ describe('private persistent browser channel', () => {
     let finish!: () => void;
     const capture = jest.spyOn(tab, 'nextFrame').mockImplementation(() => new Promise(resolve => { finish = () => resolve(null); }));
     const ws = open(), received: Record<string, unknown>[] = [];
-    ws.on('message', data => received.push(JSON.parse(data.toString())));
+    ws.on('message', data => {
+      if (!Buffer.isBuffer(data)) throw new Error('Unexpected test packet');
+      const value: unknown = JSON.parse(data.toString('utf8'));
+      if (typeof value === 'object' && value !== null) received.push({ ...value });
+    });
     await once(ws, 'open');
     ws.send(JSON.stringify({ id: 1, method: 'video', body: {
       tabId: tab.id, subscription: '22222222-2222-4222-8222-222222222222', action: 'start', sequence: 0,
@@ -214,6 +220,9 @@ describe('private persistent browser channel', () => {
     expect(received.find((item) => item.id === 3)?.failed).toBe(true);
   });
   it('keeps heartbeats and cancellation responsive while video has no source frame', async () => {
+    // No encoder is ever created without a source frame. Keep discovery outside
+    // this transport test; real capability/encoding has separate native coverage.
+    jest.spyOn(RuntimeVideoHost.prototype, 'select').mockResolvedValue({ kind: 'software', executable: process.execPath });
     const task = service.active(1)!;
     const tab = await task.create('you', null, '');
     await task.layout(800, 600, true, true);
@@ -241,6 +250,9 @@ describe('private persistent browser channel', () => {
     };
     ws.send(JSON.stringify({ id: 1, method: 'video', body }));
     while (!received.some((item) => item.id === 1)) await once(ws, 'message');
+    // Encoder discovery now precedes source reads so its first picture is fresh.
+    // Exercise the empty-source loop only once that asynchronous startup is done.
+    while (!capture.mock.calls.length) await new Promise<void>(resolve => setImmediate(resolve));
     ws.send(JSON.stringify({ id: 2, method: 'ping' }));
     while (!received.some((item) => item.id === 2)) await once(ws, 'message');
     expect(received.find((item) => item.id === 2)).toEqual({

@@ -44,11 +44,18 @@ export default async function* (capture) {
       await capture.theme(theme);
       const displayEpoch = theme === 'light' ? 1 : 3;
       await capture.component('ex-browser-video-demo', (component, epoch) => component.surface.update(surface => ({ ...surface, displayEpoch: epoch })), displayEpoch);
-      const data = await encode((await source.webContents.capturePage()).toJPEG(90));
+      const jpeg = (await source.webContents.capturePage()).toJPEG(90);
+      const bootstrapSequence = ++sequence;
+      await capture.component('ex-browser-video-demo', (component, frame) => component.fixture.deliver({ ...frame, jpeg: new Uint8Array(frame.jpeg) }), {
+        scopeId: 'preview', taskId: 1, tabId: 'video-tab', streamId, sequence: bootstrapSequence, width: 800, height: 600, displayEpoch, jpeg: [...jpeg],
+      });
+      await capture.waitFor(expected => globalThis.ng.getComponent(document.querySelector('ex-browser-video-demo')).fixture.acknowledgments.at(-1)?.sequence === expected, bootstrapSequence);
+      assert.equal(await capture.component('ex-browser-video-demo', component => component.fixture.acknowledgments.at(-1).sequence), bootstrapSequence, 'JPEG bootstrap paints before video is even encoded');
+      const data = await encode(jpeg);
       const packet = { scopeId: 'preview', taskId: 1, tabId: 'video-tab', streamId, sequence: ++sequence,
         width: 800, height: 600, displayEpoch, jpeg: [], video: { epoch: randomUUID(), codec: 'avc1.42E02A', key: true, timestamp: sequence * 33333, data } };
       await capture.component('ex-browser-video-demo', (component, frame) => component.fixture.deliver({ ...frame, jpeg: new Uint8Array(), video: { ...frame.video, data: new Uint8Array(frame.video.data) } }), packet);
-      await capture.waitFor(() => !document.querySelector('ex-browser-stream [role="status"]'));
+      await capture.waitFor(expected => globalThis.ng.getComponent(document.querySelector('ex-browser-video-demo')).fixture.acknowledgments.at(-1)?.sequence === expected, packet.sequence);
       const receipt = await capture.component('ex-browser-video-demo', component => component.fixture.acknowledgments.at(-1));
       assert.equal(receipt.decoded, true, 'Real H.264 decoded and displayed');
       if (theme === 'light') {
@@ -68,6 +75,8 @@ export default async function* (capture) {
       assert.ok(inputs.some(input => input.kind === 'key' && input.type === 'down' && input.text === 'a'), 'Native key text stays paired for cancellable browser editing');
       assert.ok(inputs.some(input => input.kind === 'composition' && input.text === 'に'));
       assert.equal(inputs.filter(input => input.kind === 'text' && input.text === '日本語').length, theme === 'light' ? 1 : 2);
+      await capture.hover('ex-browser-video-demo h1');
+      assert.ok(await capture.component('ex-browser-video-demo', component => component.fixture.inputs.flatMap(input => input.kind === 'batch' ? input.events : [input]).some(input => input.kind === 'pointer-exit')), 'Leaving the streamed page clears remote hover');
       yield { name: `${theme}-h264-input`, selector: 'ex-browser-video-demo', inspect: ['canvas', 'textarea'] };
     }
     await capture.reducedMotion(true);

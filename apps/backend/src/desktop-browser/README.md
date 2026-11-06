@@ -137,3 +137,40 @@ Task networking handles public IP literals without DNS, uses the OS resolver for
 host configuration, and pins validated answers while racing address families.
 Authorized localhost aliases can reach IPv4- or IPv6-only task servers. Private
 answers, unknown task ports and application control destinations stay denied.
+
+## Capture reliability
+
+`RuntimeBrowserCapture` owns the tab's CDP screencast listener, serialized
+start/stop commands, latest image, one cancellable read and one screenshot in
+flight. It keeps its source sequence across engine replacement; document/viewport
+epochs and capture revisions reject late screenshots and old engine events.
+Navigation completion restarts capture without waiting for a layout heartbeat.
+
+Capture uses `everyNthFrame: 1`: Chromium damage can be a single hover or button
+update, so sampling damage events can leave the final image stale indefinitely.
+Video pacing and the bounded latest-image slot handle rate control downstream.
+A viewer-owned read also runs a coalesced screenshot watchdog: initial/dirty
+images are eligible immediately, input changes are checked at 100 ms cadence,
+and idle reconciliation is limited to once a second. Identical JPEGs do not
+advance the source sequence or trigger video encoding. No watchdog runs without
+a waiting reader; hide, abort, navigation and teardown release its timers.
+
+The desktop bootstraps every new presentation with an ordinary JPEG credit,
+then starts optional H.264. Capability discovery completes before taking the
+first video source image. `RemoteBrowserFrames` owns separate JPEG/video source
+cursors and a monotonic display sequence, including codec fallback; a JPEG
+receipt can never accidentally acknowledge an H.264 packet. The desktop restarts
+only a presentation whose local renderer receipt is missing for five seconds.
+This never reconnects task execution or replays input.
+
+New hosts advertise optional `pointerExit: true`. The human-only
+`{ kind: 'pointer-exit' }` event moves the host pointer outside the viewport
+without changing keyboard focus or held keys. Captured drags retain their normal
+release path. Older hosts receive only their existing supported input events.
+
+Viewport changes serialize complete Chromium size/DPR updates and gate capture,
+human input and agent actions until application finishes. A newer layout may
+supersede intent, but cannot leave a partial device-metrics update behind. The
+new control generation publishes together with its display epoch, and final
+readiness publishes after the update. Regression coverage reproduces the former
+stale-generation broadcast, plus an interrupted resize with a different DPR.

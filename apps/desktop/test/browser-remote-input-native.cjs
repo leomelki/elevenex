@@ -17,11 +17,13 @@ app.setPath('userData', root);
 async function run() {
   Menu.setApplicationMenu(null);
   const tabId = randomUUID(), token = randomUUID(), inputs = [];
-  let sequence = 0;
-  const state = () => ({ taskId: 1, revision: 1, surfaceEpoch: 0, controlsFocus: 0,
+  let sequence = 0, generation = 1, holdReceipt = false, receivedHeld, releaseHeld;
+  const heldReceived = new Promise(resolve => { receivedHeld = resolve; });
+  const heldRelease = new Promise(resolve => { releaseHeld = resolve; });
+  const state = () => ({ taskId: 1, revision: generation, surfaceEpoch: 0, controlsFocus: 0,
     keyText: true, inputWindow: 4, active: tabId, picked: null, picking: false, pickerMessage: null,
     feedback: false, ports: [], privacy: 'content-withheld', tabs: [{ id: tabId, title: 'Fixture',
-      url: 'https://example.com', by: 'you', driver: 'you', agentSessionId: null, generation: 1,
+      url: 'https://example.com', by: 'you', driver: 'you', agentSessionId: null, generation,
       displayEpoch: 1, loading: false, ready: true, canGoBack: false, error: null, errors: 0,
       width: 'full', theme: 'system', slowNetwork: false, waiting: false }] });
   const server = createServer(async (request, response) => {
@@ -32,8 +34,12 @@ async function run() {
     else if (path.endsWith('/connect')) response.end(JSON.stringify({ token, state: state() }));
     else if (path.endsWith('/input')) {
       inputs.push(JSON.parse(bytes).input);
-      await delay(inputs.length % 2 ? 180 : 30);
+      if (holdReceipt) { receivedHeld(); await heldRelease; }
+      else await delay(inputs.length % 2 ? 180 : 30);
       response.end(JSON.stringify({ generation: 1, revision: 1 }));
+    } else if (path.endsWith('/command')) {
+      generation++;
+      response.end(JSON.stringify(state()));
     } else if (path.endsWith('/frame')) {
       const metadata = Buffer.from(JSON.stringify({ sequence: ++sequence, displayEpoch: 1, width: 800, height: 600 }));
       const length = Buffer.alloc(4); length.writeUInt32BE(metadata.length);
@@ -85,8 +91,19 @@ async function run() {
     await until(async () => (await window.webContents.executeJavaScript('window.fixtureResults.length')) === 4);
     assert.equal(inputs.length, 4, 'Every modified page key reached the remote input lane');
     assert.deepEqual(await window.webContents.executeJavaScript('window.fixtureResults'), [true, true, true, true]);
-    console.log('Remote input native smoke passed: real registration/preload, modifier keys and jittered receipts.');
+    holdReceipt = true;
+    await window.webContents.executeJavaScript(`void (window.fixtureLateInput = window.elevenex.taskBrowserInput(${JSON.stringify(scope)}, 1, ${JSON.stringify(tabId)}, 1, { kind: 'text', text: 'before-control-change' }))`);
+    await heldReceived;
+    const command = await window.webContents.executeJavaScript(`window.elevenex.taskBrowserCommand(${JSON.stringify(scope)}, 1, { kind: 'takeover', tabId: ${JSON.stringify(tabId)} })`);
+    assert.equal(command.ok, true);
+    assert.equal(command.value.tabs[0].generation, 2);
+    releaseHeld();
+    await window.webContents.executeJavaScript('window.fixtureLateInput');
+    const surfaces = await window.webContents.executeJavaScript('window.elevenex.taskBrowserSurfaces()');
+    assert.equal(surfaces[0].generation, 2, 'A late input receipt cannot roll back newer authoritative state');
+    console.log('Remote input native smoke passed: real registration/preload, modifier keys, jittered receipts and control-generation races.');
   } finally {
+    releaseHeld();
     if (!window.isDestroyed()) await window.webContents.executeJavaScript('clearInterval(window.fixtureHeartbeat)').catch(() => undefined);
     browsers.dispose(); await browsers.flush(); client.dispose(); window.destroy();
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

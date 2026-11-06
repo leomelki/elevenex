@@ -149,6 +149,7 @@ export class RuntimeBrowserTask {
       canReorder: true,
       layoutLanes: true,
       keyText: true,
+      pointerExit: true,
       inputWindow: 4,
       scopeId: this.id,
       taskId: this.taskId,

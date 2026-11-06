@@ -132,6 +132,10 @@ export class RuntimeBrowserVideo {
       const pause = 1000 / this.fps - (now - lastCapture);
       if (pause > 0)
         await delay(pause, undefined, { signal: this.lifetime.signal });
+      // Discovery can be slow on a cold host. Capture after it finishes so the
+      // first video packet cannot replace the bootstrap with older pixels.
+      target ??= await this.host.select(this.lifetime.signal, excluded);
+      if (!current() || this.lifetime.signal.aborted) return;
       const frame = await tab.nextFrame(
         after,
         this.lifetime.signal,

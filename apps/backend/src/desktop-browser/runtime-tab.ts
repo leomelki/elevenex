@@ -8,15 +8,9 @@ import type {
 import { RuntimeBrowserNetwork, runtimeUrl } from './runtime-network.js';
 import { RuntimeBrowserInput } from './runtime-input.js';
 
-export interface RuntimeFrame {
-  readonly sequence: number;
-  readonly width: number;
-  readonly height: number;
-  readonly pixelRatio?: number;
-  readonly displayEpoch?: number;
-  readonly jpeg: Buffer;
-}
-export interface RuntimeVideoCapture { readonly width: number; readonly height: number; readonly fps: number }
+import { RuntimeBrowserCapture, type RuntimeFrame, type RuntimeVideoCapture } from './runtime-capture.js';
+export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
+
 /** A tab has one driver, one navigation generation, one frame waiter and no text observation. */
 export class RuntimeBrowserTab {
   readonly id = randomUUID();
@@ -50,6 +44,8 @@ export class RuntimeBrowserTab {
   private disposed = false;
   private crashed = false;
   private layoutRevision = 0;
+  private viewportChanging = false;
+  private viewportUpdate: Promise<void> = Promise.resolve();
   private navigation = 0;
   private loadRevision = 0;
   private visible = false;
@@ -57,25 +53,12 @@ export class RuntimeBrowserTab {
   private pixelRatio = 1;
   private viewport = { width: 800, height: 600 };
   private network: RuntimeBrowserNetwork;
-  private frame?: RuntimeFrame;
-  private frameSequence = 0;
-  private needsSnapshot = true;
-  private waiter?: {
-    after: number;
-    resolve(frame: RuntimeFrame | null): void;
-    timer: ReturnType<typeof setTimeout>;
-  };
-  private streaming = false;
-  private captureEpoch = 0;
-  private frameControl: Promise<void> = Promise.resolve();
   private documentRequest?: Request;
-  private snapshotPending?: Promise<void>;
-  private outstanding = false;
-  private frameSent = 0;
-  private quality = 85;
-  private maxWidth = 1920;
-  private maxHeight = 1440;
-  private everyNthFrame = 2;
+  private readonly capture = new RuntimeBrowserCapture(() => ({
+    ...this.viewport, pixelRatio: this.pixelRatio, displayEpoch: this.displayEpoch,
+    visible: this.visible && !this.disposed,
+    ready: this.started && !this.loading && !this.viewportChanging && !this.disposed,
+  }));
   constructor(
     readonly by: 'you' | 'agent',
     sessionId: number | null,
@@ -132,12 +115,13 @@ export class RuntimeBrowserTab {
       this.active() &&
       this.started &&
       !this.loading &&
+      !this.viewportChanging &&
       !this.error &&
       !this.disposed
     );
   }
   get agentReady(): boolean {
-    return this.active() && this.started && !this.loading && !this.error && !this.disposed;
+    return this.active() && this.started && !this.loading && !this.viewportChanging && !this.error && !this.disposed;
   }
   async start(context: BrowserContext): Promise<void> {
     this.context = context;
@@ -151,6 +135,7 @@ export class RuntimeBrowserTab {
     this.crashed = false;
     this.cdp = await this.context.newCDPSession(page);
     this.input = new RuntimeBrowserInput(page, this.cdp);
+    this.capture.attach(this.cdp);
     // Companion views must not steal document focus from one another on layout heartbeats.
     await this.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
     // Headless Chromium target metadata does not report document.title changes.
@@ -200,6 +185,7 @@ export class RuntimeBrowserTab {
       if (this.page !== page || this.disposed) return;
       this.documentRequest = undefined;
       this.loading = false;
+      void this.capture.start();
       this.changed();
     });
     page.on('requestfailed', request => {
@@ -258,10 +244,7 @@ export class RuntimeBrowserTab {
       this.loading = false;
       this.error =
         'The browser disconnected. Reload to reopen with user control.';
-      this.frame = undefined;
-      this.needsSnapshot = true;
-      this.streaming = false;
-      this.completeFrame(null);
+      this.capture.invalidate();
       this.changed();
     });
     page.on('framenavigated', (frame) => {
@@ -291,49 +274,8 @@ export class RuntimeBrowserTab {
         this.changed();
       }
     });
-    this.cdp.on(
-      'Page.screencastFrame',
-      (event: {
-        sessionId: number;
-        data: string;
-        metadata: { deviceWidth: number; deviceHeight: number };
-      }) => {
-        if (this.page !== page) return;
-        void this.cdp
-          ?.send('Page.screencastFrameAck', { sessionId: event.sessionId })
-          .catch(() => undefined);
-        if (
-          !this.visible ||
-          !this.streaming ||
-          this.captureEpoch !== this.displayEpoch ||
-          this.loading ||
-          this.disposed ||
-          event.data.length > 4000000
-        )
-          return;
-        const matches = (actual: number, expected: number) =>
-          Math.abs(actual - expected) < 2 ||
-          Math.abs(actual - expected * this.pixelRatio) < 2;
-        if (
-          !matches(event.metadata.deviceWidth, this.viewport.width) ||
-          !matches(event.metadata.deviceHeight, this.viewport.height)
-        )
-          return;
-        this.needsSnapshot = false;
-        this.frame = {
-          sequence: ++this.frameSequence,
-          width: this.viewport.width,
-          height: this.viewport.height,
-          pixelRatio: this.pixelRatio,
-          displayEpoch: this.displayEpoch,
-          jpeg: Buffer.from(event.data, 'base64'),
-        };
-        this.flushFrame();
-        if (this.outstanding && Date.now() - this.frameSent > 1000)
-          void this.stopFrames();
-      },
-    );
   }
+
   private async history(): Promise<void> {
     if (this.historyPending || !this.cdp) return;
     this.historyPending = true;
@@ -425,6 +367,7 @@ export class RuntimeBrowserTab {
     } finally {
       if (current()) {
         this.loading = false;
+        void this.capture.start();
         this.changed();
       }
     }
@@ -451,206 +394,66 @@ export class RuntimeBrowserTab {
     if (!visible) {
       await this.input?.reset();
       if (!current()) return;
-      this.frame = undefined;
-      this.needsSnapshot = true;
-      this.completeFrame(null);
-      await this.stopFrames();
+      this.capture.invalidate();
+      await this.capture.stop();
       return;
     }
+    // Apply complete viewport operations in order. A newer heartbeat may replace
+    // intent, but cannot abandon a half-applied Chromium size/DPR update.
+    await this.viewportUpdate;
+    if (!current()) return;
     const viewport = {
       width: Math.max(100, Math.min(2560, Math.round(width))),
       height: Math.max(100, Math.min(1600, Math.round(height))),
     };
-    const resized =
-      viewport.width !== this.viewport.width ||
-      viewport.height !== this.viewport.height;
-    if (resized || pixelRatio !== this.pixelRatio) {
+    if (viewport.width !== this.viewport.width || viewport.height !== this.viewport.height || pixelRatio !== this.pixelRatio) {
+      const operation = this.resizeViewport(viewport, pixelRatio, current);
+      this.viewportUpdate = operation.catch(() => undefined);
+      await operation;
+      if (!current()) return;
+    }
+    await this.capture.start();
+  }
+  private async resizeViewport(viewport: { width: number; height: number }, pixelRatio: number, current: () => boolean): Promise<void> {
+    const page = this.page, cdp = this.cdp;
+    const engineCurrent = () => !this.disposed && this.page === page && this.cdp === cdp;
+    this.viewportChanging = true;
+    try {
       await this.input?.reset();
       if (!current()) return;
+      const resized = viewport.width !== this.viewport.width || viewport.height !== this.viewport.height;
+      if (resized) {
+        if (viewport.width !== this.viewport.width) this.takeover();
+        else this.generation++;
+      }
+      // Publish the new generation with its epoch, before any asynchronous CDP
+      // work. Otherwise viewers can keep the old generation indefinitely.
       this.invalidateDisplay();
-      await this.frameControl;
+      await this.capture.stop();
       if (!current()) return;
-      this.frame = undefined;
-      this.needsSnapshot = true;
-      this.completeFrame(null);
-    }
-    if (resized) {
-      if (this.viewport.width !== viewport.width) this.takeover();
-      else this.generation++;
+      if (resized) await page?.setViewportSize(viewport);
+      if (!engineCurrent()) return;
+      await cdp?.send('Emulation.setDeviceMetricsOverride', {
+        width: viewport.width, height: viewport.height,
+        deviceScaleFactor: pixelRatio, mobile: false,
+      });
+      if (!engineCurrent()) return;
       this.viewport = viewport;
-      await this.page?.setViewportSize(viewport);
-      if (!current()) return;
-    }
-    if (resized || pixelRatio !== this.pixelRatio) {
       this.pixelRatio = pixelRatio;
-      await this.cdp?.send('Emulation.setDeviceMetricsOverride', {
-        width: viewport.width,
-        height: viewport.height,
-        deviceScaleFactor: pixelRatio,
-        mobile: false,
-      });
-      if (!current()) return;
+    } finally {
+      this.viewportChanging = false;
+      this.changed();
     }
-    await this.startFrames();
-  }
-  private async startFrames(): Promise<void> {
-    const cdp = this.cdp, epoch = this.displayEpoch;
-    if (this.streaming || !cdp || !this.visible || this.loading || this.disposed) return;
-    const operation = this.frameControl.then(async () => {
-      if (this.streaming || cdp !== this.cdp || epoch !== this.displayEpoch || !this.visible || this.loading || this.disposed) return;
-      await cdp.send('Page.startScreencast', {
-        format: 'jpeg', quality: this.quality, maxWidth: this.maxWidth,
-        maxHeight: this.maxHeight, everyNthFrame: this.everyNthFrame,
-      });
-      if (cdp === this.cdp && epoch === this.displayEpoch && this.visible && !this.loading && !this.disposed) {
-        this.captureEpoch = epoch;
-        this.streaming = true;
-      } else await cdp.send('Page.stopScreencast').catch(() => undefined);
-    }).catch(() => undefined);
-    this.frameControl = operation;
-    await operation;
-  }
-  private async stopFrames(): Promise<void> {
-    this.streaming = false;
-    this.captureEpoch = 0;
-    const cdp = this.cdp;
-    const operation = this.frameControl.then(async () => {
-      await cdp?.send('Page.stopScreencast').catch(() => undefined);
-    });
-    this.frameControl = operation;
-    await operation;
   }
   private invalidateDisplay(): void {
     this.displayEpoch++;
     this.humanEpoch++;
     void this.input?.reset();
-    this.frame = undefined;
-    this.needsSnapshot = true;
-    this.outstanding = false;
-    this.completeFrame(null);
-    void this.stopFrames();
+    this.capture.invalidate();
     this.changed();
   }
-  async nextFrame(
-    after: number,
-    signal: AbortSignal,
-    waitMs = 5000,
-    video: boolean | RuntimeVideoCapture = false,
-  ): Promise<RuntimeFrame | null> {
-    signal.throwIfAborted();
-    if (this.waiter) throw new Error('A frame read is already pending');
-    if (this.outstanding || video) {
-      const elapsed = Date.now() - this.frameSent,
-        // Video congestion is handled by its packet window. Degrading the
-        // intermediate JPEG as well would compound loss around small text.
-        quality = video ? 95 : elapsed > 250 ? 65 : 85,
-        width = typeof video === 'object' ? video.width : video ? 1920 : elapsed > 250 ? 1280 : 1920,
-        height = typeof video === 'object' ? video.height : 1440,
-        everyNthFrame = typeof video === 'object' ? Math.max(1, Math.round(60 / video.fps)) : 2;
-      this.outstanding = false;
-      if (quality !== this.quality || width !== this.maxWidth || height !== this.maxHeight || everyNthFrame !== this.everyNthFrame) {
-        this.quality = quality;
-        this.maxWidth = width;
-        this.maxHeight = height;
-        this.everyNthFrame = everyNthFrame;
-        this.frame = undefined;
-        this.needsSnapshot = true;
-        await this.stopFrames();
-        await this.startFrames();
-      }
-    }
-    if (this.frame && this.frame.sequence > after) {
-      this.outstanding = true;
-      this.frameSent = Date.now();
-      return this.frame;
-    }
-    if (!this.visible) return null;
-    await this.startFrames();
-    signal.throwIfAborted();
-    return new Promise((resolve) => {
-      const abort = () => this.completeFrame(null);
-      const timer = setTimeout(abort, waitMs);
-      const fallback = setTimeout(() => {
-        if (after === 0 || this.needsSnapshot) void this.staticFrame();
-      }, after === 0 || this.needsSnapshot ? 60 : 300);
-      this.waiter = {
-        after,
-        timer,
-        resolve: (frame) => {
-          signal.removeEventListener('abort', abort);
-          clearTimeout(fallback);
-          resolve(frame);
-        },
-      };
-      signal.addEventListener('abort', abort, { once: true });
-      this.flushFrame();
-    });
-  }
-  private async staticFrame(): Promise<void> {
-    if (this.snapshotPending || !this.cdp || !this.visible || this.loading || this.disposed)
-      return;
-    const sequence = this.frameSequence,
-      epoch = this.displayEpoch;
-    const capture = this.cdp
-      .send('Page.captureScreenshot', {
-        format: 'jpeg',
-        quality: this.quality,
-        captureBeyondViewport: false,
-        fromSurface: true,
-        clip: {
-          x: 0,
-          y: 0,
-          width: this.viewport.width,
-          height: this.viewport.height,
-          scale: Math.min(
-            1,
-            this.maxWidth / (this.viewport.width * this.pixelRatio),
-            this.maxHeight / (this.viewport.height * this.pixelRatio),
-          ),
-        },
-      })
-      .then((reply) => {
-        if (
-          this.disposed ||
-          !this.visible ||
-          this.displayEpoch !== epoch ||
-          this.loading ||
-          this.frameSequence !== sequence ||
-          reply.data.length > 4000000
-        )
-          return;
-        this.needsSnapshot = false;
-        this.frame = {
-          sequence: ++this.frameSequence,
-          width: this.viewport.width,
-          height: this.viewport.height,
-          pixelRatio: this.pixelRatio,
-          displayEpoch: epoch,
-          jpeg: Buffer.from(reply.data, 'base64'),
-        };
-        this.flushFrame();
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (this.snapshotPending === capture) this.snapshotPending = undefined;
-      });
-    this.snapshotPending = capture;
-    await capture;
-  }
-  private flushFrame(): void {
-    if (this.waiter && this.frame && this.frame.sequence > this.waiter.after) {
-      this.outstanding = true;
-      this.frameSent = Date.now();
-      this.completeFrame(this.frame);
-    }
-  }
-  private completeFrame(frame: RuntimeFrame | null): void {
-    const waiter = this.waiter;
-    this.waiter = undefined;
-    if (waiter) {
-      clearTimeout(waiter.timer);
-      waiter.resolve(frame);
-    }
+  nextFrame(after: number, signal: AbortSignal, waitMs = 5000, video: boolean | RuntimeVideoCapture = false): Promise<RuntimeFrame | null> {
+    return this.capture.next(after, signal, waitMs, video);
   }
   async userInput(
     generation: number,
@@ -691,6 +494,7 @@ export class RuntimeBrowserTab {
       return {};
     }
     const result = await this.input!.dispatch(input, current);
+    this.capture.changed();
     return result;
   }
   releaseInput(): Promise<void> {
@@ -829,9 +633,10 @@ export class RuntimeBrowserTab {
     if (this.disposed) return;
     this.disposed = true;
     this.takeover();
-    this.completeFrame(null);
-    await this.stopFrames();
+    this.capture.detach();
+    await this.capture.stop();
     await this.page?.close({ runBeforeUnload: false });
+    await this.viewportUpdate;
     this.page = undefined;
   }
   /** Explicit human recovery; no navigation or queued action is resumed here. */
@@ -846,12 +651,7 @@ export class RuntimeBrowserTab {
     this.interactive = false;
     this.pixelRatio = 1;
     this.viewport = { width: 0, height: 0 };
-    this.frame = undefined;
-    this.needsSnapshot = true;
-    this.streaming = false;
-    this.outstanding = false;
-    this.snapshotPending = undefined;
-    this.completeFrame(null);
+    this.capture.detach();
     this.crashed = false;
     this.canGoBack = false;
     this.canGoForward = false;
@@ -862,5 +662,6 @@ export class RuntimeBrowserTab {
     this.input = undefined;
     await cdp?.detach().catch(() => undefined);
     await page?.close({ runBeforeUnload: false }).catch(() => undefined);
+    await this.viewportUpdate;
   }
 }

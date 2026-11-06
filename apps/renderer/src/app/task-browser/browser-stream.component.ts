@@ -62,6 +62,7 @@ export class BrowserStreamComponent {
     () => this.viewport().height,
     intent => { this.inputLane.cancel(); this.shortcutRequested.emit(intent); },
     () => this.surface().keyText === true,
+    () => this.surface().pointerExit === true,
   );
   private surfaceIdentity = '';
   private displayRevision = 0;

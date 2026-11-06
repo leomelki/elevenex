@@ -28,6 +28,8 @@ export interface TaskBrowserSurface {
   readonly displayEpoch?: number;
   /** The host accepts printable key events with their native default text. */
   readonly keyText?: true;
+  /** Optional human-only hover exit; older hosts keep legacy pointer events. */
+  readonly pointerExit?: true;
   readonly inputWindow?: 4;
   readonly interactive: boolean;
   readonly driver: 'you' | 'agent' | 'needs';
@@ -48,6 +50,7 @@ export interface TaskBrowserFrame {
 }
 export type TaskBrowserStreamEvent =
   | { readonly kind: 'release' }
+  | { readonly kind: 'pointer-exit' }
   | { readonly kind: 'pointer'; readonly type: 'down' | 'up' | 'move'; readonly x: number; readonly y: number; readonly button: 'left' | 'middle' | 'right' | 'none'; readonly buttons: number; readonly clicks: number; readonly modifiers: number }
   | { readonly kind: 'wheel'; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number; readonly modifiers: number }
   | { readonly kind: 'key'; readonly type: 'down' | 'up'; readonly key: string; readonly code: string; readonly keyCode: number; readonly modifiers: number; readonly text?: string }
@@ -87,6 +90,8 @@ export interface TaskBrowserState {
   readonly layoutLanes?: true;
   /** Additive input capability; strict older hosts must receive legacy events. */
   readonly keyText?: true;
+  /** Optional human-only hover exit; older hosts keep legacy pointer events. */
+  readonly pointerExit?: true;
   /** Complete batches are ordered by the host; older hosts remain stop-and-wait. */
   readonly inputWindow?: 4;
   readonly placement?: TaskBrowserPlacement;

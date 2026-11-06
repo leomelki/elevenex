@@ -1,5 +1,8 @@
 [
   {"valid":true,"input":{"kind":"release"}},
+  {"valid":true,"input":{"kind":"pointer-exit"}},
+  {"valid":false,"input":{"kind":"pointer-exit","x":-1}},
+  {"valid":true,"input":{"kind":"batch","events":[{"kind":"pointer-exit"}]}},
   {"valid":false,"input":{"kind":"release","text":"never retry"}},
   {"valid":false,"input":{"kind":"batch","events":[{"kind":"release"}]}},
   {"valid":true,"input":{"kind":"text","text":"世界"}},

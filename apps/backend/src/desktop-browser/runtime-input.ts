@@ -102,7 +102,13 @@ export class RuntimeBrowserInput {
     input: Exclude<TaskBrowserStreamEvent, { kind: 'release' }>,
     current: () => void,
   ): Promise<{ clipboard?: string }> {
-    if (input.kind === 'pointer') {
+    if (input.kind === 'pointer-exit') {
+      // Preserve keyboard focus and held keys. A captured drag leaves only after
+      // its release, so this event must never terminate a held host gesture.
+      if (!this.buttons.size) await this.cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved', x: -1, y: -1, button: 'none', buttons: 0,
+      });
+    } else if (input.kind === 'pointer') {
       if (input.type === 'down') this.buttons.set(input.button, input);
       else if (input.type === 'up') this.buttons.delete(input.button);
       else

@@ -197,6 +197,28 @@ it('preserves drag buttons, counts double clicks and releases canceled pointers'
   expect(dispatch.mock.lastCall?.[4]).toMatchObject({ type: 'up', buttons: 0 });
 });
 
+it('clears hover on capable hosts without releasing keyboard focus or captured drags', async () => {
+  const { fixture, canvas, textarea, dispatch } = await setup();
+  canvas.setPointerCapture = vi.fn();
+  vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600));
+  canvas.dispatchEvent(new Event('pointerleave'));
+  await settle();
+  expect(dispatch).not.toHaveBeenCalled(); // Strict legacy hosts receive no new event.
+  fixture.componentRef.setInput('surface', { ...surface, pointerExit: true });
+  fixture.detectChanges();
+  textarea.focus();
+  textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', code: 'ShiftLeft', shiftKey: true }));
+  canvas.dispatchEvent(new Event('pointerleave'));
+  await settle();
+  expect(dispatch.mock.lastCall?.[4]).toEqual({ kind: 'pointer-exit' });
+  expect(document.activeElement).toBe(textarea);
+  dispatch.mockClear();
+  canvas.dispatchEvent(new MouseEvent('pointerdown', { clientX: 10, clientY: 20, button: 0, buttons: 1 }));
+  canvas.dispatchEvent(new Event('pointerleave'));
+  await settle();
+  expect(dispatch.mock.calls.map(call => call[4].kind)).toEqual(['pointer']);
+});
+
 it('reuses the canvas backing store and rejects a late decode after switching tasks', async () => {
   const { fixture, canvas, deliver, ack, drawImage, close } = await setup();
   const width = vi.spyOn(canvas, 'width', 'set'),

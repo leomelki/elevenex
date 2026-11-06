@@ -25,7 +25,10 @@ describe('remote browser interaction and display ownership', () => {
     server = createServer((_request, response) => {
       response.setHeader('Content-Type', 'text/html');
       response.end(
-        '<!doctype html><input id="field"><script>window.documentIdentity=crypto.randomUUID()</script>',
+        `<!doctype html><input id="field">
+        <style>#hover{position:absolute;left:300px;top:100px;width:200px;height:100px;background:rgb(20,40,200);border:0}#hover:hover{background:rgb(20,200,40)}</style>
+        <button id="hover" onclick="this.dataset.clicks=String(Number(this.dataset.clicks||0)+1)">Hover and click</button>
+        <script>window.documentIdentity=crypto.randomUUID()</script>`,
       );
     });
     await new Promise<void>((resolve) =>
@@ -100,6 +103,48 @@ describe('remote browser interaction and display ownership', () => {
     expect(task.state().revision).toBe(revision);
   });
 
+  it('publishes the final input generation after a viewport resize without another page action', async () => {
+    const generations: number[] = [];
+    const stop = task.subscribe(() => {
+      generations.push(task.state().tabs.find(tab => tab.id === tabId)!.generation);
+    });
+    try {
+      await task.layout(800, 560, true, true);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(generations.at(-1)).toBe(task.page(tabId).generation);
+    } finally { stop(); await task.layout(800, 600, true, true); }
+  });
+
+  it('finishes an in-flight viewport change before applying the latest layout and gates input throughout', async () => {
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const applying = new Promise<void>(resolve => { entered = resolve; });
+    const setViewport = page.setViewportSize.bind(page);
+    const resize = jest.spyOn(page, 'setViewportSize').mockImplementationOnce(async viewport => {
+      entered(); await gate;
+      return setViewport(viewport);
+    });
+    const value = await page.locator('#field').inputValue();
+    const first = task.layout(800, 520, true, true);
+    let latest: Promise<void> | undefined;
+    try {
+      await applying;
+      latest = task.layout(800, 580, true, true, 2);
+      expect(task.page(tabId).ready).toBe(false);
+      await expect(task.input(tabId, task.page(tabId).generation, { kind: 'text', text: 'stale-layout' })).rejects.toThrow();
+      release();
+      await Promise.all([first, latest]);
+      expect(page.viewportSize()).toEqual({ width: 800, height: 580 });
+      expect(task.page(tabId).ready).toBe(true);
+      expect(await page.locator('#field').inputValue()).toBe(value);
+      const frame = await task.page(tabId).nextFrame(0, new AbortController().signal);
+      expect(frame).toMatchObject({ width: 800, height: 580, pixelRatio: 2, displayEpoch: task.page(tabId).displayEpoch });
+    } finally {
+      release(); await Promise.allSettled([first, latest]); resize.mockRestore();
+      await task.layout(800, 600, true, true);
+    }
+  });
+
   it('rejects queued input after hiding and showing the same document', async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
@@ -141,6 +186,49 @@ describe('remote browser interaction and display ownership', () => {
       release();
       dispatch.mockRestore();
     }
+  });
+
+  it('streams one-shot CSS hover changes, clears hover on exit and accepts clicks without switching tabs', async () => {
+    const tab = task.page(tabId), signal = new AbortController().signal;
+    let after = 0;
+    const untilPixel = async (green: boolean) => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const frame = await tab.nextFrame(after, signal, 1000);
+        if (!frame) continue;
+        after = frame.sequence;
+        const pixel = await page.evaluate(async ({ jpeg }) => {
+          const bitmap = await createImageBitmap(new Blob([new Uint8Array(jpeg)], { type: 'image/jpeg' }));
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = bitmap.width; canvas.height = bitmap.height;
+            const context = canvas.getContext('2d')!;
+            context.drawImage(bitmap, 0, 0);
+            return [...context.getImageData(350, 150, 1, 1).data];
+          } finally { bitmap.close(); }
+        }, { jpeg: [...frame.jpeg] });
+        if (green ? pixel[1] > 150 && pixel[2] < 100 : pixel[2] > 150 && pixel[1] < 100) return;
+      }
+      throw new Error('The streamed hover image did not update');
+    };
+    await task.layout(800, 600, true, true);
+    await untilPixel(false);
+    const generation = tab.generation;
+    const pointer = { kind: 'pointer' as const, x: 350, y: 150, button: 'none' as const, buttons: 0, clicks: 0, modifiers: 0 };
+    await task.input(tabId, generation, { ...pointer, type: 'move' });
+    await untilPixel(true);
+    await task.input(tabId, generation, { kind: 'pointer-exit' });
+    await untilPixel(false);
+    await task.input(tabId, generation, { kind: 'batch', events: [
+      { ...pointer, type: 'down', button: 'left', buttons: 1, clicks: 1 },
+      { ...pointer, type: 'up', button: 'left', clicks: 1 },
+    ] });
+    expect(await page.locator('#hover').getAttribute('data-clicks')).toBe('1');
+    await task.layout(800, 600, false);
+    await task.layout(800, 600, true, true);
+    await task.input(tabId, tab.generation, { kind: 'pointer-exit' });
+    await untilPixel(false);
+    expect(task.state().active).toBe(tabId);
   });
 
   it('attributes a background popup to its opener without changing another tab', async () => {

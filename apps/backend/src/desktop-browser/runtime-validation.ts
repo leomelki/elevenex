@@ -67,6 +67,7 @@ export const runtimeCommand = z.union([
 ]);
 const runtimeEvent = z.union([
   z.object({ kind: z.literal('release') }).strict(),
+  z.object({ kind: z.literal('pointer-exit') }).strict(),
   z
     .object({
       kind: z.literal('pointer'),

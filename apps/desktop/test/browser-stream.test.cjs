@@ -168,3 +168,54 @@ test('cancelling a video waiter releases it without interpreting late packets as
     assert.equal(await frame, null);
   } finally { await f.cleanup(); }
 });
+
+test('first pixels bypass cold video startup and codec transitions retain independent source receipts', async () => {
+  const { RemoteBrowserFrames } = require('../dist/browser/remote-frames');
+  const { RemoteBrowserVideo } = require('../dist/browser/remote-video');
+  const commands = [], jpegReads = [];
+  let finish;
+  const video = new RemoteBrowserVideo(async command => {
+    commands.push(command);
+    return null;
+  });
+  const frames = new RemoteBrowserFrames(video, async (tab, after) => {
+    jpegReads.push(after);
+    if (jpegReads.length === 2) return new Promise(resolve => { finish = resolve; });
+    return { sequence: 100, width: 800, height: 600, jpeg: new Uint8Array([1]) };
+  });
+  try {
+    const first = await frames.next('tab', 0, 'panel', 8);
+    assert.equal(first.sequence, 1);
+    assert.equal(commands.length, 0, 'first image never waits for capability probes or encoder startup');
+    const second = frames.next('tab', 1, 'panel', 8);
+    assert.equal(commands[0].action, 'start');
+    assert.equal(commands[0].sequence, 0, 'JPEG cursor is never a video acknowledgment');
+    video.receive({ tabId: 'tab', subscription: commands[0].subscription, sequence: 1, width: 800, height: 600,
+      video: { epoch: '11111111-1111-4111-8111-111111111111', codec: 'avc1.42E02A', key: true, timestamp: 0 } }, new Uint8Array([2]));
+    assert.equal((await second).sequence, 2, 'display sequence increases despite resetting source cursor');
+    video.fallback('panel');
+    const fallback = frames.next('tab', 2, 'panel', 8);
+    assert.deepEqual(jpegReads, [0, 100]);
+    finish({ sequence: 120, width: 800, height: 600, jpeg: new Uint8Array([3]) });
+    assert.equal((await fallback).sequence, 3);
+    // A fresh presentation must bootstrap again, even on the same retained page.
+    frames.cancel('panel');
+    assert.equal((await frames.next('tab', 0, 'panel', 8)).sequence, 1);
+    assert.deepEqual(jpegReads, [0, 100, 0]);
+  } finally { frames.destroy(); }
+});
+
+test('cancelled JPEG bootstrap cannot revive a display or allocate another video subscription', async () => {
+  const { RemoteBrowserFrames } = require('../dist/browser/remote-frames');
+  const { RemoteBrowserVideo } = require('../dist/browser/remote-video');
+  let finish;
+  const frames = new RemoteBrowserFrames(new RemoteBrowserVideo(async () => { throw new Error('Unexpected video startup'); }),
+    () => new Promise(resolve => { finish = resolve; }));
+  try {
+    const old = frames.next('tab', 0, 'panel', 8);
+    await assert.rejects(frames.next('tab', 0, 'panel', 8), /Invalid frame receipt/);
+    frames.cancel('panel');
+    finish({ sequence: 1, width: 800, height: 600, jpeg: new Uint8Array([1]) });
+    assert.equal(await old, null);
+  } finally { frames.destroy(); }
+});

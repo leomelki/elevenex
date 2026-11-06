@@ -15,7 +15,7 @@ function streamEvent(value: unknown): TaskBrowserStreamEvent {
   const number = (key: string, min: number, max: number): number => { const n = raw[key]; if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) throw new Error('Invalid browser input'); return n; };
   const integer = (key: string, min: number, max: number): number => { const n = number(key, min, max); if (!Number.isSafeInteger(n)) throw new Error('Invalid browser input integer'); return n; };
   const text = (key: string, max: number): string => { const s = raw[key]; if (typeof s !== 'string' || s.length > max) throw new Error('Invalid browser input'); return s; };
-  if (kind === 'release') { exact(raw, ['kind']); return { kind }; }
+  if (kind === 'release' || kind === 'pointer-exit') { exact(raw, ['kind']); return { kind }; }
   if (kind === 'text') { exact(raw, ['kind', 'text']); return { kind, text: text('text', 65536) }; }
   if (kind === 'composition') {
     exact(raw, ['kind', 'text', 'selectionStart', 'selectionEnd']);

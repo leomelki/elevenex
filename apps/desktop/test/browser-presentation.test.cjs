@@ -96,3 +96,25 @@ test('reconciles a future document frame and keeps identical layout heartbeats q
     assert.equal(f.failures.length, 0);
   } finally { f.view.destroy(); }
 });
+
+test('a lost display receipt recovers only its presentation and ignores the retired receipt', async context => {
+  context.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const f = fixture();
+  try {
+    f.position(); await settle(); f.resolve(1); await settle();
+    const old = f.frames[0];
+    // Keep layout authority alive while simulating a renderer dropping one ack.
+    context.mock.timers.tick(5001);
+    f.position(2); await settle();
+    assert.equal(f.reads(), 1);
+    f.view.maintain(); await settle();
+    assert.equal(f.reads(), 2);
+    f.resolve(1); await settle();
+    assert.notEqual(f.frames[1].streamId, old.streamId);
+    f.view.acknowledge('panel-tab', old.streamId, old.sequence);
+    assert.equal(f.reads(), 2);
+    f.view.acknowledge('panel-tab', f.frames[1].streamId, 1);
+    assert.equal(f.reads(), 3);
+    assert.equal(f.failures.length, 0);
+  } finally { f.view.destroy(); }
+});

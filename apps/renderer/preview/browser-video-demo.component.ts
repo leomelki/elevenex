@@ -34,5 +34,5 @@ class VideoFixture implements Pick<ElevenexBridge, 'onTaskBrowserFrame' | 'taskB
 })
 export class BrowserVideoDemoComponent {
   readonly fixture = inject(VideoFixture);
-  readonly surface = signal<TaskBrowserSurface>({ scopeId: 'preview', taskId: 1, tabId: 'video-tab', partition: '', bootstrap: '', bounds: { x: 0, y: 0, width: 800, height: 600 }, viewport: { width: 800, height: 600 }, zoom: 1, visible: true, generation: 1, displayEpoch: 1, keyText: true, inputWindow: 4, interactive: true, driver: 'you', presentation: 'stream' });
+  readonly surface = signal<TaskBrowserSurface>({ scopeId: 'preview', taskId: 1, tabId: 'video-tab', partition: '', bootstrap: '', bounds: { x: 0, y: 0, width: 800, height: 600 }, viewport: { width: 800, height: 600 }, zoom: 1, visible: true, generation: 1, displayEpoch: 1, keyText: true, pointerExit: true, inputWindow: 4, interactive: true, driver: 'you', presentation: 'stream' });
 }

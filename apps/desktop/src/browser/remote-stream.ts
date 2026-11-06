@@ -2,6 +2,7 @@ import { WebSocket } from "ws";
 import type { BackendEndpoint } from "../backend-client/transport";
 import { record } from "./validation";
 import { RemoteBrowserVideo } from './remote-video';
+import { RemoteBrowserFrames } from './remote-frames';
 
 interface Pending {
   resolve(value: unknown): void;
@@ -18,6 +19,15 @@ export class RemoteBrowserStream {
   readonly opened: Promise<void>;
   readonly closed: Promise<void>;
   readonly video = new RemoteBrowserVideo(body => this.request('video', body), body => this.notifyVideo(body));
+  readonly frames = new RemoteBrowserFrames(this.video, async (tabId, after, key) => {
+    const value = await this.request('frame', { tabId, after }, 50000, key);
+    if (value === null) return null;
+    const frame = record(value);
+    if (!Number.isSafeInteger(frame['sequence']) || Number(frame['sequence']) <= after || !(frame['jpeg'] instanceof Uint8Array))
+      throw new Error('Invalid remote frame');
+    return { sequence: Number(frame['sequence']), width: Number(frame['width']), height: Number(frame['height']), jpeg: frame['jpeg'],
+      ...(frame['displayEpoch'] === undefined ? {} : { displayEpoch: Number(frame['displayEpoch']) }) };
+  });
   constructor(
     endpoint: BackendEndpoint,
     taskId: number,
@@ -69,7 +79,7 @@ export class RemoteBrowserStream {
           );
         }
         this.pending.clear();
-        this.video.destroy();
+        this.frames.destroy();
         resolve();
       });
     });
@@ -184,7 +194,7 @@ export class RemoteBrowserStream {
     });
   }
   cancel(key: string): void {
-    this.video.cancel(key);
+    this.frames.cancel(key);
     for (const [id, entry] of this.pending)
       if (entry.key === key) {
         this.pending.delete(id);

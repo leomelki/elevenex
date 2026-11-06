@@ -303,3 +303,32 @@ Command/Control shortcuts and Option/AltGr. Copy/cut follows the focused frame
 and open shadow input. These are bounded human-only operations, not agent
 observation capabilities. Reload on a live engine uses Chromium reload semantics,
 including fragment locations. Popup notices affect their originating tab.
+
+## Stream startup and recovery
+
+Every private-socket presentation first displays a JPEG, making current pixels
+and input available while optional video discovery/encoding starts. Display
+sequences stay monotonic across JPEG, H.264 and fallback; each codec retains its
+own source receipts. A missing local renderer acknowledgment restarts that
+display after five seconds, with a fresh stream identity. Task pages, driver
+ownership and input are never replayed by this recovery.
+
+The host captures every damage event and reconciles missed compositor updates
+through a bounded screenshot watchdog while a reader is waiting. Static pages
+do not need another animation or tab switch to reveal an input update. With the
+optional `pointerExit` capability, leaving the canvas clears remote CSS hover
+without blurring the site's input or cancelling a captured drag. Late input
+receipts cannot overwrite a newer authoritative driver generation.
+
+The native stream capture scenario now checks JPEG bootstrap before video
+encoding, the actual H.264 decode receipt and trusted pointer exit, in addition
+to themes, typing/IME, document epochs, narrow layout and display pause. Host
+regressions inspect real streamed hover pixels and click side effects through
+navigation and hide/show. These checks do not benchmark external SSH/WAN links.
+
+Viewport changes serialize complete Chromium size/DPR updates and gate capture,
+human input and agent actions until application finishes. A newer layout may
+supersede intent, but cannot leave a partial device-metrics update behind. The
+new control generation publishes together with its display epoch, and final
+readiness publishes after the update. Regression coverage reproduces the former
+stale-generation broadcast, plus an interrupted resize with a different DPR.

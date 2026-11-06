@@ -90,3 +90,37 @@ to download its pinned manager and could not fetch it. Dependencies were unchang
 An additional whole-backend test-source TypeScript check still reports pre-existing
 errors in unrelated test fixtures. Browser integration fixture typing was corrected;
 the production-only check and browser-host test sources have no type diagnostics.
+
+## Follow-up: first image and stalled interactions
+
+The follow-up review found more failure paths after the original audit:
+
+| Cause | Correction |
+| --- | --- |
+| The first picture waited for encoder discovery/probes. | Deliver a JPEG first, then negotiate video. Separate source cursors from the monotonic display receipt across codec changes. |
+| Sampling every other Chromium damage event missed isolated CSS hover/click updates. | Capture every damage event; pace video downstream. Reconcile missing updates with a bounded screenshot watchdog and suppress identical JPEGs. |
+| A single fallback timer fired during navigation and never tried again; a screencast event before its start reply was dropped. | Give capture its own owner, serialized lifecycle and repeating reader-owned watchdog, accept current-start events and resume on navigation completion. |
+| Concurrent reads passed the waiter check before either awaited start completed. | Admit only one read across its entire asynchronous lifetime, with owner-specific cancellation. |
+| Lost local frame receipts retained display credit indefinitely. | Restart only that presentation after five seconds; ignore retired stream receipts. |
+| Leaving the canvas left the remote element hovered. | Negotiate human-only pointer exit, preserving focus, held keys and drag capture. |
+| Resizing published an epoch before incrementing the input generation, and overlapping layouts could abandon half-applied viewport metrics. | Publish generation with its epoch, serialize complete size/DPR updates, and gate capture/human/agent actions while applying. A real Chromium test reproduced the old generation remaining in the event feed. |
+| An old successful input receipt could overwrite a newer driver generation. | Retain newer authoritative tab state; verify through the real Electron registration/preload with a deliberately held receipt. |
+
+The new capture owner is `runtime-capture.ts`; the main codec/cursor owner is
+`remote-frames.ts`. Existing HTTP/JPEG clients and older strict input hosts
+retain their supported contracts. No dependency, page observation permission,
+credential exposure or mutation replay was added. CDP semantics were checked
+against the locked Playwright protocol types and the official
+[Page protocol](https://chromedevtools.github.io/devtools-protocol/tot/Page/).
+
+Verification: 73 browser-host tests (including real sandboxed Chromium hover
+pixels, click delivery and hide/show), 183 desktop transport/runtime tests and
+699 Angular renderer tests pass. Desktop lint/build, backend production
+TypeScript, typed lint for the changed host modules, native Electron smoke and
+the native delayed-input receipt regression pass. The standard scripts ran
+through Node because the local pnpm launcher stalled. The native stream capture
+report is `artifacts/desktop-capture/browser-stream-resilience-verified/report.json`
+(`verified: true`, no errors/warnings); light/dark, narrow reduced-motion and
+paused-display PNGs were inspected. This is local development verification;
+external SSH/WAN latency, arbitrary sites and packaged/foreign-OS launches are
+not established by these checks.

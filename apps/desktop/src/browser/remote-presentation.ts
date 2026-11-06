@@ -52,6 +52,7 @@ export class RemoteBrowserPresentation {
   private streamId = randomUUID();
   private after = 0;
   private waitingAck = 0;
+  private ackDeadline = 0;
   private frameRevision = 0;
   private framePending = false;
   private layoutPending = false;
@@ -89,6 +90,7 @@ export class RemoteBrowserPresentation {
     this.frameRevision++;
     this.streamId = randomUUID();
     this.waitingAck = 0;
+    this.ackDeadline = 0;
     this.after = 0;
     this.layoutSent = "";
     clearTimeout(this.retryTimer);
@@ -116,6 +118,7 @@ export class RemoteBrowserPresentation {
         viewport: this.layout?.viewport,
         generation: tab.generation,
         ...(tab.displayEpoch === undefined ? {} : { displayEpoch: tab.displayEpoch }),
+        ...(this.host.state()?.pointerExit ? { pointerExit: true } : {}),
         ...(this.host.state()?.keyText ? { keyText: true } : {}),
         ...(this.host.state()?.inputWindow === 4 ? { inputWindow: 4 } : {}),
         driver: tab.driver,
@@ -227,6 +230,7 @@ export class RemoteBrowserPresentation {
           }
         }
         this.waitingAck = frame.sequence;
+        this.ackDeadline = Date.now() + 5000;
         this.host.deliver({
           scopeId: this.host.scopeId,
           taskId: this.host.taskId,
@@ -282,7 +286,12 @@ export class RemoteBrowserPresentation {
       (Date.now() - this.heartbeat > 750 || !this.window.visible())
     )
       this.hide();
-    else if (this.visible) this.pump();
+    else if (this.visible) {
+      // A renderer remount or lost receipt must not retain a frame credit forever.
+      // Restart only this display; queued input and task execution are untouched.
+      if (this.waitingAck && Date.now() >= this.ackDeadline) this.reset();
+      this.pump();
+    }
   }
   hide(): void {
     const visible = this.visible;
