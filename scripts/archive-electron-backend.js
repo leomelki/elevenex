@@ -77,6 +77,18 @@ const REQUIRED_NATIVE_RUNTIME_ARTIFACTS = [
     : []),
 ];
 const FINAL_RUNTIME_PACKAGE_PLANS = {
+  // Playwright stays external to main.cjs. Keep its loader, browser registry,
+  // installer CLI and platform helpers together; Chromium is installed later.
+  'playwright-core': {
+    files: ['package.json', 'index.js', 'index.mjs', 'cli.js', 'browsers.json', 'LICENSE', 'NOTICE', 'ThirdPartyNotices.txt'],
+    directories: ['lib', 'bin'],
+  },
+  // The backend resolves this executable beside the package manifest. The npm
+  // download helpers are installation-only and can still be pruned.
+  'ffmpeg-static': {
+    files: ['package.json', 'index.js', 'LICENSE', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'],
+    optionalFiles: ['ffmpeg.LICENSE', 'ffmpeg.README'],
+  },
   'better-sqlite3': {
     files: ['package.json', 'LICENSE'],
     directories: ['lib'],
@@ -230,13 +242,13 @@ function pruneToKeep(rootDir, keepPaths, relativeDir = '') {
   }
 }
 
-function pruneStagedNodeModules() {
-  if (!existsSync(STAGED_NODE_MODULES_ROOT)) {
+function pruneStagedNodeModules(nodeModulesRoot = STAGED_NODE_MODULES_ROOT) {
+  if (!existsSync(nodeModulesRoot)) {
     return;
   }
 
-  for (const entry of readdirSync(STAGED_NODE_MODULES_ROOT)) {
-    const packageRoot = path.join(STAGED_NODE_MODULES_ROOT, entry);
+  for (const entry of readdirSync(nodeModulesRoot)) {
+    const packageRoot = path.join(nodeModulesRoot, entry);
     const stats = statSync(packageRoot);
 
     if (!stats.isDirectory()) {
@@ -369,7 +381,7 @@ function getBundledNodeExecutable() {
   return candidates.find((candidate) => existsSync(candidate)) || null;
 }
 
-function validateNativeRuntimeLoad() {
+function validateRuntimeLoad() {
   const script = [
     "const path = require('path');",
     "const root = process.argv[1];",
@@ -384,6 +396,19 @@ function validateNativeRuntimeLoad() {
     ...(ONNXRUNTIME_TARGET_SUPPORTED
       ? ["require(path.join(root, 'node_modules', 'onnxruntime-node'));"]
       : []),
+    // These external browser packages must survive final pruning too. Do not
+    // download/launch Chromium here; exercise its registry and installer loader.
+    "const assert = require('node:assert/strict');",
+    "const { execFileSync } = require('node:child_process');",
+    "const playwrightRoot = path.join(root, 'node_modules', 'playwright-core');",
+    "assert.equal(typeof require(playwrightRoot).chromium.launch, 'function');",
+    "execFileSync(process.execPath, [path.join(playwrightRoot, 'cli.js'), '--version'], { timeout: 10000, stdio: 'pipe' });",
+    // Resolve the managed binary directly, as the backend does, so FFMPEG_BIN
+    // cannot make a missing packaged executable pass validation.
+    "const ffmpegRoot = path.dirname(require.resolve(path.join(root, 'node_modules', 'ffmpeg-static', 'package.json')));",
+    "const ffmpeg = path.join(ffmpegRoot, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');",
+    "const ffmpegEnv = { ...process.env }; delete ffmpegEnv.FFREPORT;",
+    "execFileSync(ffmpeg, ['-version'], { timeout: 10000, stdio: 'pipe', env: ffmpegEnv });",
   ].join('');
   const bundledNode = getBundledNodeExecutable();
   const executable = bundledNode || getElectronExecutable();
@@ -404,14 +429,14 @@ function validateNativeRuntimeLoad() {
   if (result.status !== 0) {
     throw new Error(
       [
-        `Staged backend native smoke test failed with exit code ${result.status ?? 'unknown'}.`,
+        `Staged backend runtime smoke test failed with exit code ${result.status ?? 'unknown'}.`,
         result.stderr.trim(),
         result.stdout.trim(),
       ].filter(Boolean).join('\n'),
     );
   }
 
-  console.log(`Validated staged native modules with ${bundledNode ? 'bundled Node' : 'Electron-as-Node'}`);
+  console.log(`Validated staged native and browser runtimes with ${bundledNode ? 'bundled Node' : 'Electron-as-Node'}`);
 }
 
 function main() {
@@ -427,7 +452,7 @@ function main() {
   validateNativeRuntimeArtifacts();
   pruneStagedNodeModules();
   validateNoEmbeddedAgentExecutables();
-  validateNativeRuntimeLoad();
+  validateRuntimeLoad();
   logStageSizeSummary();
 
   execFileSync('tar', ['-czf', archivePath, '-C', stageBaseRoot, 'backend'], {
@@ -438,9 +463,13 @@ function main() {
   console.log(`Electron backend archive written to ${archivePath}`);
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
 }
+
+module.exports = { pruneStagedNodeModules };
