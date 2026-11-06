@@ -78,8 +78,10 @@ instead of installing an unrelated release.
 
 Development revisions include dirty/untracked backend sources. Remote development
 data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.
-A running daemon from a different build is rejected; disconnect and stop that
-development daemon before switching builds. Production remote data is untouched.
+Explicitly opening/retrying a server replaces a daemon from a different build
+through authenticated handoff. This interrupts that daemon's agents and terminals;
+background recovery never replaces another revision. Daemons predating handoff
+need one manual stop as described in the remote guide. Production remote data is untouched.
 Restart `pnpm desktop:dev` after backend edits to rebuild the bundle. Renderer
 HMR and main/preload restarts continue to work during the run.
 

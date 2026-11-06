@@ -1,16 +1,18 @@
 /** Uploaded as plain CommonJS alongside wire.js; runs only on the SSH host. */
-import { fork, spawn, type ChildProcess } from 'node:child_process';
+import { fork, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { chmod, mkdir, open, readFile, rm, stat } from 'node:fs/promises';
 import { createServer, request } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { connect as connectSocket } from 'node:net';
-import { createSocket } from 'node:dgram';
+import { createSocket, type Socket as OwnershipSocket } from 'node:dgram';
 import { ForwardedAgentProxy } from './agent-proxy';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Wire, SocketChannels, type WireMessage } from './wire';
-import { queryDaemon, publishDaemon, verifyHealthRequest, healthResponseProof, type RuntimeHealth } from './runtime-control';
+import { backendSocketPath, queryDaemon, publishDaemon, verifyHealthRequest, verifyHandoffRequest, healthResponseProof, type RuntimeHealth } from './runtime-control';
+import { ensureDaemon } from './runtime-start';
+import { inheritOwnership, launchReplacement, prepareReplacement, publishReplacement, type RuntimeReplacement } from './runtime-handoff';
 
 async function backendReady(socketPath: string, version: string, signal: AbortSignal): Promise<boolean> {
   return new Promise(resolve => {
@@ -47,34 +49,58 @@ async function controlToken(root: string): Promise<string> {
   }
 }
 
-async function daemon(root: string, installation: string, version: string, port: number, token: string): Promise<void> {
+async function daemon(root: string, installation: string, version: string, port: number, token: string, inherited?: OwnershipSocket): Promise<void> {
   const instance = randomUUID();
-  const socketPath = join(root, 'backend.sock');
+  const socketPath = backendSocketPath(root, { instance, handoff: 1 });
   let child: ChildProcess | undefined;
   let stopping = false;
   let ready = false;
+  let replacement: string | undefined;
+  let next: RuntimeReplacement | undefined;
+  let preparing: Promise<void> | undefined;
   const lifetime = new AbortController();
+  const snapshot = (): RuntimeHealth => ({ version, instance, ready: ready && !replacement, handoff: 1, ...(replacement ? { replacement } : {}) });
+  const stop = () => {
+    if (stopping) return;
+    stopping = true; ready = false; lifetime.abort();
+    if (child?.connected) child.send({ type: 'stop' }, () => undefined); else child?.kill('SIGTERM');
+  };
   const agentPath = join(root, 'agent.sock');
   const agents = new ForwardedAgentProxy(agentPath);
   const health = createServer((req, res) => {
-    const nonce = verifyHealthRequest(req, token);
+    const handoff = verifyHandoffRequest(req, token, snapshot());
+    const nonce = handoff?.nonce ?? verifyHealthRequest(req, token);
     if (nonce === null) { res.writeHead(403).end(); return; }
+    const respond = () => {
+      const body = JSON.stringify(snapshot());
+      res.setHeader('Content-Type', 'application/json'); res.setHeader('X-Elevenex-Proof', healthResponseProof(token, nonce, body)); res.end(body);
+    };
+    if (handoff) {
+      if (!stopping && !replacement) {
+        replacement = handoff.target;
+        preparing = prepareReplacement(root, handoff.target).then(plan => { next = plan; stop(); }).catch(error => { replacement = undefined; throw error; });
+      }
+      if (replacement === handoff.target && preparing) void preparing.then(respond, respond);
+      else respond();
+      return;
+    }
     const lease = req.headers['x-elevenex-lease'];
     const agent = req.headers['x-elevenex-agent'];
     if (typeof lease === 'string' && /^[a-f0-9-]{36}$/.test(lease) && typeof agent === 'string' && agent.length <= 4096) {
       const path = Buffer.from(agent, 'base64').toString('utf8');
       agents.renew(lease, path.startsWith('/') && !path.includes('\0') && path.length <= 1024 ? path : null);
     }
-    const body = JSON.stringify({ version, instance, ready });
-    res.setHeader('Content-Type', 'application/json'); res.setHeader('X-Elevenex-Proof', healthResponseProof(token, nonce, body)); res.end(body);
+    respond();
   });
   health.requestTimeout = 2000; health.headersTimeout = 2000;
   // A separate UDP reservation can be retained by the supervisor without
   // accepting/swallowing any HTTP health connections in that other process.
-  const ownership = createSocket('udp4');
-  try {
-    await new Promise<void>((resolve, reject) => { ownership.once('error', reject); ownership.bind({ port, address: '127.0.0.1', exclusive: true }, resolve); });
-  } catch (error) { ownership.close(); throw error; }
+  const ownership = inherited ?? createSocket('udp4');
+  if (!inherited) {
+    try {
+      await new Promise<void>((resolve, reject) => { ownership.once('error', reject); ownership.bind({ port, address: '127.0.0.1', exclusive: true }, resolve); });
+    } catch (error) { ownership.close(); throw error; }
+  }
   try {
     await new Promise<void>((resolve, reject) => { health.once('error', reject); health.listen(0, '127.0.0.1', resolve); });
     const address = health.address();
@@ -89,12 +115,8 @@ async function daemon(root: string, installation: string, version: string, port:
   catch (error) {
     await agents.dispose(); health.closeAllConnections(); await new Promise<void>(resolve => health.close(() => resolve())); ownership.close(); throw error;
   }
-  const stop = () => {
-    if (stopping) return;
-    stopping = true; ready = false; lifetime.abort();
-    if (child?.connected) child.send({ type: 'stop' }, () => undefined); else child?.kill('SIGTERM');
-  };
   process.once('SIGTERM', stop); process.once('SIGINT', stop);
+  if (inherited && process.send) process.send({ type: 'adopted' }, () => undefined);
   const crashes: number[] = [];
   try {
     while (!stopping) {
@@ -153,38 +175,20 @@ async function daemon(root: string, installation: string, version: string, port:
         new Promise<void>(resolve => health.close(() => resolve())),
       ]);
       await rm(socketPath, { force: true }); await rm(agentPath, { force: true });
+      // Transfer the same kernel reservation after tree/socket cleanup. There
+      // is no vacant interval for an older desktop to reclaim the database.
+      if (next) await launchReplacement(root, next, ownership);
     } finally { ownership.close(); }
   }
 }
 
 async function bridge(root: string, installation: string, version: string, port: number, token: string): Promise<void> {
   const lease = { id: randomUUID(), agent: process.env['SSH_AUTH_SOCK'] ?? null };
-  let health: RuntimeHealth | undefined;
-  let spawned = false;
-  let starts = 0;
-  const deadline = Date.now() + 45_000;
-  while (!health?.ready) {
-    if (health && health.version !== version) throw new Error('EX11_COMPATIBILITY: another desktop revision owns this remote backend; disconnect it and stop its daemon before upgrading');
-    if (starts >= 16 && !health) throw new Error('EX11_CONFIGURATION: the remote daemon cannot acquire its ownership port or prepare its private sockets');
-    if (Date.now() >= deadline) throw new Error('EX11_RUNTIME: backend did not become ready; check bundled Node compatibility and backend prerequisites');
-    try { health = await queryDaemon(root, port, token, lease); }
-    catch {
-      health = undefined;
-      // A stale TCP address can belong to another service. The independent UDP
-      // lock, rather than TCP availability, authorizes starting a backend.
-      if (!spawned) {
-        spawned = true;
-        starts++;
-        const child = spawn(process.execPath, [__filename, 'daemon', root, installation, version], { cwd: root, detached: true, stdio: 'ignore', env: process.env });
-        child.on('error', () => { spawned = false; }); child.on('exit', () => { spawned = false; }); child.unref();
-      }
-    }
-    if (!health?.ready) await delay(health ? 100 : 250);
-  }
-  if (health.version !== version) throw new Error('EX11_COMPATIBILITY: remote backend revision differs');
+  await publishReplacement(root, installation, __filename, version);
+  const health = await ensureDaemon({ root, installation, version, port, token, lease, runtime: __filename, allowUpdate: process.argv[6] === 'update' });
   const wire = new Wire(process.stdin, process.stdout);
   const channels = new SocketChannels(wire);
-  const socketPath = join(root, 'backend.sock');
+  const socketPath = backendSocketPath(root, health);
   wire.on('message', (message: WireMessage) => {
     if (message.type === 'open') channels.accept(message.id, message.port, socketPath);
     else if (message.type === 'probe') {
@@ -201,7 +205,7 @@ async function bridge(root: string, installation: string, version: string, port:
     }
     else if (message.type === 'ping') {
       void queryDaemon(root, port, token, lease).then(current => {
-        wire.send({ type: 'pong', id: message.id, ready: current.ready && current.version === version, instance: current.instance });
+        wire.send({ type: 'pong', id: message.id, ready: current.ready && current.version === version && current.instance === health.instance && !current.replacement, instance: current.instance });
       }).catch(() => wire.close());
     }
   });
@@ -217,15 +221,19 @@ async function bridge(root: string, installation: string, version: string, port:
 
 async function main(): Promise<void> {
   const [mode, root, installation, version] = process.argv.slice(2);
-  if (!root || !installation || !version || !/^[a-f0-9]{40}$/.test(version)) throw new Error('EX11_CONFIGURATION: invalid remote runtime arguments');
-  if (join(root, 'backend.sock').length > 100) throw new Error('EX11_COMPATIBILITY: remote home path is too long for a private backend socket');
-  await mkdir(root, { recursive: true, mode: 0o700 });
-  await mkdir(join(root, 'data'), { recursive: true, mode: 0o700 });
-  const token = await controlToken(root);
-  const port = 20000 + createHash('sha256').update(`${homedir()}:${process.getuid?.() ?? ''}:elevenex-desktop`).digest().readUInt32BE(0) % 20000;
-  if (mode === 'daemon') await daemon(root, installation, version, port, token);
-  else if (mode === 'bridge') await bridge(root, installation, version, port, token);
-  else throw new Error('EX11_CONFIGURATION: unknown remote runtime mode');
+  const inherited = mode === 'handoff' ? await inheritOwnership() : undefined;
+  let delegated = false;
+  try {
+    if (!root || !installation || !version || !/^[a-f0-9]{40}$/.test(version)) throw new Error('EX11_CONFIGURATION: invalid remote runtime arguments');
+    if (backendSocketPath(root, { instance: '', handoff: 1 }).length > 100) throw new Error('EX11_COMPATIBILITY: remote home path is too long for a private backend socket');
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    await mkdir(join(root, 'data'), { recursive: true, mode: 0o700 });
+    const token = await controlToken(root);
+    const port = 20000 + createHash('sha256').update(`${homedir()}:${process.getuid?.() ?? ''}:elevenex-desktop`).digest().readUInt32BE(0) % 20000;
+    if (mode === 'daemon' || mode === 'handoff') { delegated = true; await daemon(root, installation, version, port, token, inherited); }
+    else if (mode === 'bridge') await bridge(root, installation, version, port, token);
+    else throw new Error('EX11_CONFIGURATION: unknown remote runtime mode');
+  } finally { if (inherited && !delegated) inherited.close(); }
 }
 void main().catch(error => {
   // Only our own fixed diagnostic markers leave the remote process.

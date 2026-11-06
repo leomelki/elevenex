@@ -140,8 +140,8 @@ Dirty and untracked backend sources contribute to the development revision;
 the generated revision file itself does not. Development runtime caches, daemon
 ownership, sockets and data use `~/.elevenex/desktop-remote-dev/<checkout-id>/`,
 separate from release data. Identical builds reuse their installation. The existing
-revision guard refuses a daemon from another build, preserving its active sessions;
-disconnect and stop that development daemon before switching builds.
+handoff replaces a daemon from another build on explicit open/retry, just as for
+release builds. Background recovery never interrupts another build's backend.
 
 Validation on 2026-11-02: desktop lint, build, type checks, 129 desktop tests,
 7 capture-tool tests and 605 renderer tests passed (two Vitest workers), together
@@ -162,9 +162,10 @@ legacy remote data and local desktop data:
 | `runtimes/<release>-<target>/` | Immutable backend and bundled Node caches |
 | `clients/<source-hash>/` | Immutable bridge/supervisor code |
 | `data/` | Database, tasks, sessions, agent workspaces and app-owned caches |
-| `backend.sock`, `agent.sock` | Private, mode-0600 runtime sockets |
+| `b-<instance-hash>`, `agent.sock` | Private, mode-0600 backend instance socket and stable agent proxy |
 | `control-token` | Mode-0600 daemon authentication token; never renderer-visible |
 | `daemon.json` | Atomic mode-0600 discovery record for the current control listener |
+| `handoff-<revision>.json` | Private prepared runtime/shim descriptor, atomically published before handoff |
 
 The daemon reserves a deterministic remote loopback UDP port in 20000–39999 as
 its kernel database ownership lock. The HTTP control listener uses an
@@ -202,14 +203,48 @@ agent connection attempts and idle time are bounded.
 Backend/daemon crashes or host reboots can interrupt agents; this layer does not
 invent automatic agent-run resumption.
 
-A live daemon at a different revision pauses with a compatibility error instead
-of interrupting remote work or attempting a concurrent database migration.
-Finish the work and disconnect other clients before stopping that daemon on the
-remote host, then Retry to start the newly installed revision. Identify the
-exact `runtime.js daemon <root> <installation> <revision>` process with
-`ps -ax -o pid,command` and send **that verified process** SIGTERM. The daemon
-gracefully stops its owned tree. Never use a stale PID file or kill all Node
-processes. Automatic cross-revision handover of active work is not supported.
+### Updating a remote backend
+
+Explicitly opening a server or choosing Retry prepares this desktop's backend
+revision, then replaces a different running revision automatically. Preparation
+finishes before shutdown: failed download, checksum, extraction or Node checks
+leave the old backend running. The authenticated handoff is bound to the exact
+daemon instance, source revision and target revision. The daemon accepts only
+an already installed runtime and uploaded shim beneath its own root. No process
+discovery, PID file, broad kill command or public shutdown API is involved.
+
+The old daemon gracefully stops its supervised backend tree, with the existing
+forced cleanup for processes that ignore termination. It cleans its sockets,
+then launches the prepared replacement using its bundled Node and transfers the
+same UDP ownership reservation. The reservation remains held throughout the
+handoff, so an older desktop cannot reclaim the database in between versions.
+The new daemon adopts it before publishing health or starting a backend.
+An accepted handoff finishes independently of the requesting SSH connection.
+User data and previous version caches remain in place. Agents and terminals
+are interrupted; this does not migrate or automatically resume live processes.
+
+Concurrent requests for the same target join the accepted handoff. A competing
+target pauses instead of stopping the replacement, and background restoration
+or reconnects never initiate cross-revision replacement. An older desktop that
+finds a different revision pauses and offers explicit Retry. Use matching
+desktop builds when sharing a server. An explicit Retry can intentionally select
+an older revision; database schema compatibility still depends on that release.
+
+The bridge pins the backend's instance-specific socket and health identity, so
+retired bridges cannot send requests to a replacement, even at the same revision.
+Existing scoped clients invalidate their generations and reconcile on reconnect.
+Startup verifies the exact revision end to end. Failure is bounded and reported;
+there is no automatic fallback to old code after possible database migrations.
+A lost shutdown reply is reconciled through health/ownership without replaying
+the destructive request.
+
+**One-time migration for older daemons:** a daemon without the handoff capability
+cannot safely be stopped through its health-only protocol. The desktop reports
+this specifically and leaves it running. Finish remote work, identify the exact
+`runtime.js daemon <root> <installation> <revision>` process with
+`ps -ax -o pid,command`, send **that verified process** SIGTERM, then Retry.
+Never use a stale PID file or kill all Node processes. Subsequent revision changes
+use automatic handoff. This migration also applies to older development daemons.
 
 ## IPC integration
 

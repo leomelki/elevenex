@@ -48,7 +48,7 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
     for (const transport of transports) await transport.close();
     for (const session of sessions) await session.stop(); await stopServer(); agent?.kill('SIGTERM');
     const processes = await run('ps', ['-axo', 'pid=,command=']);
-    for (const line of processes.split('\n')) if (line.includes(` daemon ${remoteRoot} `)) process.kill(Number(line.trim().split(/\s+/)[0]), 'SIGTERM');
+    for (const line of processes.split('\n')) if (line.includes(` daemon ${remoteRoot} `) || line.includes(` handoff ${remoteRoot} `)) process.kill(Number(line.trim().split(/\s+/)[0]), 'SIGTERM');
     await new Promise(done => setTimeout(done, 200)); await new Promise(done => blocker.close(done)); await rm(root, { recursive: true, force: true });
   });
   await mkdir(join(root, 'home'));
@@ -217,6 +217,19 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
   assert.equal((await fetch(`http://127.0.0.1:${restrictedBackend.port}/api/info`, { headers: { Authorization: restrictedBackend.authorization } }).then(res => res.json())).backendSha, version);
   assert.doesNotMatch(await fetch(`http://127.0.0.1:${restrictedBackend.port}/agent`, { headers: { Authorization: restrictedBackend.authorization } }).then(res => res.text()), /ED25519/, 'server forwarding restrictions do not prevent SSH/backend readiness');
   await restricted.close();
+  // Cross-revision replacement also uses stdio when TCP forwarding is denied.
+  const updatedVersion = 'b'.repeat(40);
+  const updatedRelease = backendRelease({ version: updatedVersion, tag: `runtime-${updatedVersion}` }, process.platform, process.arch);
+  const updatedInstallation = join(remoteRoot, 'runtimes', `${updatedRelease.tag}-${updatedRelease.target}`);
+  await mkdir(join(updatedInstallation, 'backend/node/bin'), { recursive: true });
+  await symlink(process.execPath, join(updatedInstallation, 'backend/node/bin/node'));
+  await writeFile(join(updatedInstallation, 'installation.sha256'), 'verified-fixture');
+  await writeFile(join(updatedInstallation, 'backend/main.cjs'), `const http=require('http');const server=http.createServer((req,res)=>res.end(JSON.stringify({backendSha:${JSON.stringify(updatedVersion)}})));server.listen(process.env.ELEVENEX_DESKTOP_SOCKET);process.on('SIGTERM',()=>server.close(()=>process.exit(0)));`);
+  const updated = await connectRemote({ ...options, release: updatedRelease, host: { ...options.host, host: 'jump' }, signal: AbortSignal.timeout(10000) }); transports.push(updated);
+  const updatedBackend = await updated.forward(0, 0);
+  assert.notEqual(updated.instance, initialRuntime.instance);
+  assert.equal((await fetch(`http://127.0.0.1:${updatedBackend.port}/api/info`, { headers: { Authorization: updatedBackend.authorization } }).then(res => res.json())).backendSha, updatedVersion);
+  await updated.close();
   await stopServer(); await rm(join(root, 'host')); await rm(join(root, 'host.pub'));
   await writeFile(join(root, 'sshd'), serverConfig);
   await run('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', join(root, 'host')]); await startServer();

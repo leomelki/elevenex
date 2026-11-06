@@ -41,7 +41,7 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
   const signal = AbortSignal.any([options.signal, cancellation.signal]);
   const { progress } = options;
   const nonce = randomBytes(16).toString('hex');
-  const ssh = await (options.spawn ?? spawnSsh)(options.host, await bootstrapScript(options.release, nonce, !options.developmentNamespace, options.developmentNamespace), options.ask, options.interactive, signal, options.helper).catch((error: unknown) => {
+  const ssh = await (options.spawn ?? spawnSsh)(options.host, await bootstrapScript(options.release, nonce, !options.developmentNamespace, options.developmentNamespace, options.interactive), options.ask, options.interactive, signal, options.helper).catch((error: unknown) => {
     if (error instanceof RemoteError) throw error;
     throw sshFailure(error instanceof Error ? error.message : '', 'authentication');
   });
@@ -49,9 +49,11 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
   ssh.child.stdin.on('error', () => undefined);
   const transportEnded = ssh.exited.then(() => {
     const stderr = ssh.diagnostics();
-    if (options.developmentNamespace && /EX11_COMPATIBILITY: (?:another desktop revision owns|remote backend revision differs)/.test(stderr)) {
-      throw failure('runtime', 'compatibility', 'A different development build is running on this server. Disconnect its windows and stop its development daemon before switching builds.', 'edit');
-    }
+    if (/EX11_UPDATE: legacy daemon/.test(stderr)) throw failure('runtime', 'compatibility', 'The running remote daemon predates automatic updates. Stop that verified daemon once using the remote development guide, then Retry. Later updates stop and replace it automatically.', 'retry');
+    if (/EX11_UPDATE: explicit connection required/.test(stderr)) throw failure('runtime', 'compatibility', 'Another backend revision is running on this server. Choose Retry to replace it with this desktop’s version. Updating interrupts remote agents and terminals.', 'retry');
+    if (/EX11_UPDATE: competing revision/.test(stderr)) throw failure('runtime', 'compatibility', 'Another desktop is updating this server to a different revision. Use matching desktop versions, then Retry.', 'retry');
+    if (/EX11_UPDATE: handoff rejected/.test(stderr)) throw failure('runtime', 'configuration', 'The remote daemon could not accept the prepared runtime. Check its installation and permissions on the server, then Retry. The previous backend was left running.', 'retry');
+    if (/EX11_UPDATE: handoff timed out/.test(stderr)) throw failure('runtime', 'configuration', 'The remote update did not become ready at the requested revision. Check the daemon on the server, then Retry. The desktop has not fallen back to an older revision.', 'retry');
     if (/EX11_COMPATIBILITY/.test(stderr)) throw failure(stage, 'compatibility', 'Remote prerequisites or runtime compatibility need attention. Verify Git, tar, head, sha256sum/shasum, and a supported Linux glibc or macOS host.', 'install-prerequisites');
     if (/EX11_CONFIGURATION/.test(stderr)) throw failure(stage, 'configuration', 'Remote setup could not safely continue. Check disk space, permissions, runtime cache integrity, and the daemon control-port conflict described in the remote development guide.', 'edit');
     if (/EX11_RUNTIME/.test(stderr)) throw failure('runtime', 'compatibility', 'The remote backend did not become ready. Check OS/libc compatibility and the backend prerequisites.', 'install-prerequisites');

@@ -6,9 +6,9 @@ import type { BackendRelease } from '../backend/release';
 import { shellQuote } from './ssh';
 
 /** All script substitutions are application-owned revisions, source and nonces. */
-export async function bootstrapScript(release: BackendRelease, nonce: string, serverDownload = true, developmentNamespace?: string): Promise<string> {
+export async function bootstrapScript(release: BackendRelease, nonce: string, serverDownload = true, developmentNamespace?: string, allowUpdate = false): Promise<string> {
   if (developmentNamespace !== undefined && !/^[a-f0-9]{32}$/.test(developmentNamespace)) throw new Error('Invalid development runtime namespace');
-  const modules = ['wire', 'runtime', 'runtime-control', 'agent-proxy', 'host', 'process-tree'];
+  const modules = ['wire', 'runtime', 'runtime-control', 'runtime-start', 'runtime-handoff', 'agent-proxy', 'host', 'process-tree'];
   const sources = await Promise.all(modules.map(name => readFile(join(__dirname, name === 'host' || name === 'process-tree' ? `../backend/${name}.js` : `${name}.js`), 'utf8')));
   const clientId = createHash('sha256').update(sources.join('\n')).digest('hex');
   const installerFiles = ['backend/download', 'backend/archive', 'backend/release', 'remote/server-install'];
@@ -68,7 +68,7 @@ mkdir -p "$client"
 ${sources.map((source, index) => `cat > "$client/${modules[index]}.${nonce}.tmp" <<'EX11_SOURCE_${nonce}'\n${source}\nEX11_SOURCE_${nonce}\nmv "$client/${modules[index]}.${nonce}.tmp" "$client/${modules[index]}.js"`).join('\n')}
 printf 'EX11:${nonce}:runtime:start\\n'
 "$cache/backend/node/bin/node" --version >/dev/null 2>&1 || fail COMPATIBILITY 'The cached Node executable is incompatible or damaged; check OS and libc support'
-exec "$cache/backend/node/bin/node" "$client/runtime.js" bridge "$root" "$cache" '${release.version}'
+exec "$cache/backend/node/bin/node" "$client/runtime.js" bridge "$root" "$cache" '${release.version}' '${allowUpdate ? 'update' : 'join'}'
 `;
   // Keep Windows CreateProcess and remote shell argv well below their limits.
   // The bootstrap reads its script from a file, leaving stdin entirely for the
