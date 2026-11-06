@@ -107,10 +107,9 @@ export function registerTerminalPorts(
                 remotePort: port,
                 localPort: 0,
                 label: `Terminal :${port}`,
-              }, state.terminal.portDiscovery === undefined ? undefined : service.host);
+              }, service.host);
             else {
-              const retargeted = state.terminal.portDiscovery !== undefined &&
-                await remote.targetForward(window, existing.id, service.host);
+              const retargeted = await remote.targetForward(window, existing.id, service.host);
               if (!retargeted && (
                 existing.phase === "unavailable" ||
                 existing.phase === "conflict" ||

@@ -209,7 +209,13 @@ metadata refresh, and opening rechecks ownership/generation with a fresh scan.
 Collector failure clears advertised ports while leaving the shell usable.
 See [discovery architecture, platform support and limits](../../../../backend/src/user-terminal/ports/README.md).
 For SSH, it creates/reuses this window's managed forward and uses its actual
-bound local port. Pending handoffs track the selected service: a second explicit
+bound local port. Automatic terminal forwards use a desktop-persisted assignment
+in 20000–29999 keyed by saved server, exact loopback target and remote port. The
+URL survives reconnects and app/service restarts at that endpoint; established
+port conflicts are reported without silently choosing another port. Windows
+share listeners through independent leases. Explicit local-port forwards retain
+their existing behavior. See [allocation and persistence](../../../../desktop/REMOTE_DEVELOPMENT.md).
+Pending handoffs track the selected service: a second explicit
 opening can proceed, and earlier replies cannot overwrite its busy/error state.
 The small Browser service handoff is the standalone fallback;
 a richer Browser owner can consume the same typed intent without changing the

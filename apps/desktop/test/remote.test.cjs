@@ -256,6 +256,67 @@ test('terminal forward targets are exact, loopback-only, window-owned and leave 
   await assert.rejects(manager.targetForward(1, id, '::1'));
 });
 
+test('automatic terminal forwards share leases and restore their port and target after relaunch', async t => {
+  const { manager, remote, options, transports, root } = await setup(t);
+  await manager.select(1, remote); await manager.select(2, remote); await ready(manager);
+  const targets = [], forward = transports[0].forward;
+  transports[0].forward = async (...args) => { targets.push(args[3]); return forward(...args); };
+  await manager.addForward(1, { remotePort: 4200, localPort: 0, label: 'Terminal :4200' }, '::1');
+  await until(() => manager.snapshot(1).forwards[0], value => value?.phase === 'listening');
+  const port = manager.snapshot(1).forwards[0].boundPort;
+  assert.ok(port >= 20000 && port <= 29999);
+  await manager.addForward(2, { remotePort: 4200, localPort: 0, label: 'Terminal :4200' }, '::1');
+  await until(() => manager.snapshot(2).forwards[0], value => value?.phase === 'listening');
+  assert.equal(manager.snapshot(2).forwards[0].boundPort, port); assert.deepEqual(targets, ['::1']);
+  const id = manager.snapshot(1).forwards[0].id;
+  assert.equal(await manager.targetForward(1, id, '127.0.0.1'), true);
+  await until(() => manager.snapshot(1).forwards[0], value => value?.phase === 'listening');
+  assert.notEqual(manager.snapshot(1).forwards[0].boundPort, port);
+  assert.equal(manager.snapshot(2).forwards[0].boundPort, port);
+  await manager.disconnect(1); assert.equal(manager.snapshot(2).forwards[0].phase, 'listening');
+  const saved = JSON.parse(await readFile(join(root, 'settings.json'), 'utf8'));
+  assert.deepEqual(Object.keys(saved).sort(), ['hosts', 'version', 'windows']);
+  await manager.dispose();
+  const restored = new RemoteManager(options); t.after(() => restored.dispose());
+  await restored.load(); assert.equal(restored.hosts().length, 1);
+  restored.attach(1); restored.attach(2);
+  await ready(restored, 2).catch(error => { error.message += JSON.stringify(restored.snapshot(2).connection); throw error; });
+  await until(() => restored.snapshot(2).forwards[0], value => value?.phase === 'listening');
+  assert.equal(restored.snapshot(2).forwards[0].boundPort, port);
+  const sidecar = JSON.parse(await readFile(join(root, 'settings.json.terminal-forwards.json'), 'utf8'));
+  assert.equal(sidecar.definitions.find(value => value.forwardId === restored.snapshot(2).forwards[0].id).targetHost, '::1');
+  await restored.dispose();
+});
+
+test('explicit retry of a shared terminal forward updates every owning window', async t => {
+  const { manager, remote, transports } = await setup(t);
+  await manager.select(1, remote); await manager.select(2, remote); await ready(manager);
+  const forward = transports[0].forward;
+  let reachable = false;
+  transports[0].forward = async (...args) => ({ ...await forward(...args), reachable });
+  for (const window of [1, 2]) {
+    await manager.addForward(window, { remotePort: 4200, localPort: 0, label: 'Terminal :4200' }, '127.0.0.1');
+    await until(() => manager.snapshot(window).forwards[0], value => value?.phase === 'unavailable' && value.boundPort);
+  }
+  const port = manager.snapshot(1).forwards[0].boundPort;
+  reachable = true;
+  await manager.retryForward(1, manager.snapshot(1).forwards[0].id);
+  for (const window of [1, 2]) {
+    assert.equal(manager.snapshot(window).forwards[0].phase, 'listening');
+    assert.equal(manager.snapshot(window).forwards[0].boundPort, port);
+  }
+});
+
+test('generic automatically allocated forwards retain OS allocation semantics', async t => {
+  const { manager, remote, transports } = await setup(t);
+  await manager.select(1, remote); await ready(manager);
+  const ports = [], forward = transports[0].forward;
+  transports[0].forward = async (...args) => { ports.push(args[1]); return forward(...args); };
+  await manager.addForward(1, { remotePort: 8000, localPort: 0, label: 'Manual auto' });
+  await until(() => manager.snapshot(1).forwards[0], value => value?.phase === 'listening');
+  assert.deepEqual(ports, [0]);
+});
+
 test('askpass broker authenticates callers, returns transient credentials and denies all background prompts', async t => {
   const controller = new AbortController(); let prompts = 0;
   const broker = await createAskpass(async prompt => { prompts++; assert.equal(prompt.kind, 'credential'); return 'secret-value'; }, true, controller.signal);

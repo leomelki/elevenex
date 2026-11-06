@@ -74,8 +74,11 @@ loopback hosts and canonical pathname bounds. Existing engines without the
 discovery metadata keep the previous handoff. Local opening uses the observed
 IPv4/IPv6 host; SSH forwards target that exact numeric loopback address and use
 their actual allocated local port. An unrelated listener on another address with
-the same port therefore cannot receive the browser request. Target overrides
-belong to the window and survive reconnects, expiring when the window closes.
+the same port therefore cannot receive the browser request. Automatic terminal
+forwards persist the exact target and their local-port assignment on the desktop.
+Windows share the listener through independent leases; reconnects reuse its saved
+port and report conflicts instead of remapping. Manual forward target overrides
+remain window-owned.
 PTYs retain their existing app-launch lifetime. Saved generic forward definitions retain their
 existing format/defaults. The additive SSH wire address is validated as numeric
 loopback; old frames without an address retain their IPv4 default.
