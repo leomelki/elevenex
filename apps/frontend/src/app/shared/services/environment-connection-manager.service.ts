@@ -8,7 +8,6 @@ import {
 import { BrowserTabsStateService } from '@/features/browser-panel/browser-tabs-state.service';
 import { RemoteLinkService } from '@/features/remote-link/remote-link.service';
 import { TabService } from '@/features/session/tab-service';
-import { buildVSCodeIframeKey, VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.service';
 import { ELEVENEX_REMOTE_PORT } from '@/shared/constants/elevenex';
 import { OnboardingLastSshDefaults, SavedServer, ServerAuthMode } from '@/shared/models/onboarding.model';
 import { getElectronWslServerApi } from '@/shared/runtime/electron-wsl-server';
@@ -53,7 +52,6 @@ export class EnvironmentConnectionManagerService {
   private readonly onboardingConnection = inject(OnboardingConnectionService);
   private readonly onboardingStartup = inject(OnboardingStartupService);
   private readonly tabService = inject(TabService);
-  private readonly vscodeWebState = inject(VSCodeWebStateService);
   private readonly browserViewState = inject(BrowserViewStateService);
   private readonly browserTabsState = inject(BrowserTabsStateService);
   private readonly navigationService = inject(NavigationService);
@@ -458,10 +456,6 @@ export class EnvironmentConnectionManagerService {
   private clearWorkspaceState(): void {
     const openTabs = this.tabService.tabs();
     const browserApi = getElectronBrowserApi();
-
-    for (const tab of openTabs) {
-      this.vscodeWebState.destroyIframe(buildVSCodeIframeKey(tab.projectId, tab.worktreePath));
-    }
 
     const projectIds = new Set(openTabs.map(tab => tab.projectId));
     for (const key of this.browserViewState.states().keys()) {

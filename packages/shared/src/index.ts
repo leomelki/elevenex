@@ -1,3 +1,5 @@
+import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
+export type * from './code-workspace';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
 import type { SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
@@ -34,6 +36,17 @@ export interface GitStatus {
 }
 
 export interface InvokeContracts {
+  'code:window-context': { args: []; result: CodeWindowContext | null };
+  'code:open': { args: [target: CodeTarget]; result: BackendResult<CodeSurfaceState> };
+  'code:present': { args: [target: CodeTarget, presentation: CodePresentation]; result: void };
+  'code:layout': { args: [target: CodeTarget, bounds: CodeBounds | null]; result: void };
+  'code:open-file': { args: [target: CodeTarget, file: CodeOpenFile]; result: BackendResult<{ readonly accepted: true }> };
+  'code:recover': { args: [target: CodeTarget]; result: BackendResult<CodeSurfaceState> };
+  'code:detach': { args: [target: CodeTarget]; result: void };
+  'code:action': { args: [target: CodeTarget, action: CodeAction]; result: void };
+  'code:focus': { args: [target: CodeTarget]; result: void };
+  'code:release': { args: [target: CodeTarget]; result: void };
+
   'session-chat:upload': { args: [scopeId: string, input: ChatAttachmentUpload]; result: BackendResult<ChatAttachmentReceipt> };
   'session-chat:catalog': { args: [scopeId: string, input: SessionChatCatalogRead]; result: BackendResult<SessionChatCatalog> };
   'session-chat:changes': { args: [scopeId: string, input: SessionChatChangesRead]; result: BackendResult<SessionChatChangesPage> };
@@ -108,6 +121,8 @@ export interface InvokeContracts {
 }
 
 export interface EventContracts {
+  'code:exit-requested': CodeTarget;
+  'code:changed': { readonly target: CodeTarget; readonly state: CodeSurfaceState };
   'machines:changed': MachineState;
   'theme:changed': Theme;
   'backend:changed': BackendStatus;
@@ -127,6 +142,19 @@ export type Subscribe = <C extends keyof EventContracts>(
 
 /** The entire public preload API; raw IPC and Electron events stay private. */
 export interface ElevenexBridge {
+  onCodeExitRequested(listener: (target: CodeTarget) => void): () => void;
+  onCodeChanged(listener: (event: { readonly target: CodeTarget; readonly state: CodeSurfaceState }) => void): () => void;
+  codeWindowContext(): Promise<CodeWindowContext | null>;
+  codeOpen(target: CodeTarget): Promise<BackendResult<CodeSurfaceState>>;
+  codePresent(target: CodeTarget, presentation: CodePresentation): Promise<void>;
+  codeLayout(target: CodeTarget, bounds: CodeBounds | null): Promise<void>;
+  codeOpenFile(target: CodeTarget, file: CodeOpenFile): Promise<BackendResult<{ readonly accepted: true }>>;
+  codeRecover(target: CodeTarget): Promise<BackendResult<CodeSurfaceState>>;
+  codeDetach(target: CodeTarget): Promise<void>;
+  codeAction(target: CodeTarget, action: CodeAction): Promise<void>;
+  codeFocus(target: CodeTarget): Promise<void>;
+  codeRelease(target: CodeTarget): Promise<void>;
+
   sessionChatUpload(scopeId: string, input: ChatAttachmentUpload): Promise<BackendResult<ChatAttachmentReceipt>>;
   sessionChatCatalog(scopeId: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>>;
   sessionChatChanges(scopeId: string, input: SessionChatChangesRead): Promise<BackendResult<SessionChatChangesPage>>;

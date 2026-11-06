@@ -38,28 +38,6 @@ export class GitController {
     private readonly changeReviewService: ChangeReviewService,
   ) {}
 
-  @Get('editor-status')
-  async getEditorStatus(
-    @Query('worktreePath') worktreePath: string,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<FileStatus[]> {
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    res.once('close', abort);
-    try {
-      return await this.gitService.getEditorStatus(
-        worktreePath,
-        controller.signal,
-      );
-    } catch (error) {
-      if (controller.signal.aborted)
-        throw new HttpException('Editor status cancelled', 499);
-      throw error;
-    } finally {
-      res.removeListener('close', abort);
-    }
-  }
-
   @Get('status')
   async getStatus(
     @Query('worktreePath') worktreePath: string,

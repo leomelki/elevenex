@@ -2,7 +2,6 @@ import { inject, Injectable, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
 import { ZardDialogService } from '@/shared/components/dialog/dialog.service';
-import { VSCodeWebStateService } from '@/features/vscode-web/vscode-web-state.service';
 import { TaskCreateComponent, TaskCreateData } from './task-create.component';
 import { TaskFinishComponent } from './task-finish.component';
 import { TaskReleaseComponent } from './task-release.component';
@@ -14,7 +13,6 @@ import { TaskReleasePreview, taskError } from './task.model';
 export class TaskUiService {
   private readonly dialog = inject(ZardDialogService);
   private readonly api = inject(TasksApiService);
-  private readonly editors = inject(VSCodeWebStateService);
   private readonly completion = inject(TaskCompletionService);
   readonly finishing = signal(new Set<number>());
   readonly releasing = signal(new Set<number>());
@@ -35,16 +33,11 @@ export class TaskUiService {
     this.finishing.update((ids) => new Set(ids).add(id));
     try {
       const task = await firstValueFrom(this.api.get(id));
-      const [counts, dirtyEditors] = await Promise.all([
-        firstValueFrom(this.api.preview(id)),
-        task.linkStatus === 'linked'
-          ? this.editors.checkTaskEditors(task.path)
-          : Promise.resolve(0),
-      ]);
-      if (counts.agents || counts.terminals || counts.actions || dirtyEditors) {
+      const counts = await firstValueFrom(this.api.preview(id));
+      if (counts.agents || counts.terminals || counts.actions) {
         const ref = this.dialog.create({
           zContent: TaskFinishComponent,
-          zData: { task, ...counts, dirtyEditors },
+          zData: { task, ...counts },
           zHideFooter: true,
           zAriaLabel: 'Finish task',
           zWidth: 'min(460px, calc(100vw - 2rem))',
@@ -53,7 +46,6 @@ export class TaskUiService {
         const confirmed = await firstValueFrom(ref.afterClosed());
         if (confirmed !== true) return;
         // Keep the operation owned by the service after the dialog is dismissed.
-        if (task.linkStatus === 'linked') await this.editors.checkTaskEditors(task.path, true);
         await this.completion.finish(task, true);
       } else await this.completion.finish(task, false);
     } catch (error) {

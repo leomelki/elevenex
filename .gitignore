@@ -11,8 +11,6 @@ apps/backend/agent/
 *.db-shm
 *.db-wal
 *.ts.map
-vscode-web-dist/
-vscode-filesystem-provider/test/out
 apps/backend/bundle/
 apps/backend/src/generated/git-sha.ts
 apps/frontend/src/build-info.ts
@@ -20,6 +18,9 @@ dev
 .DS_Store
 .worktrees/
 artifacts/
+# Routine agent verification logs belong in artifacts/ or chat/PR descriptions.
+# Existing tracked historical logs remain tracked; AGENTS.md freezes their upkeep.
+VERIFICATION.md
 apps/desktop/renderer/
 apps/desktop/.stage/
 dist-runtime/

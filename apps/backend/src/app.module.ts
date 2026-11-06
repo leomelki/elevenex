@@ -1,3 +1,4 @@
+import { CodeWorkspaceModule } from './code-workspace/code-workspace.module.js';
 import { DesktopWorkspaceModule } from './desktop-workspace/desktop-workspace.module.js';
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller.js';
@@ -42,6 +43,7 @@ import { TasksModule } from './tasks/tasks.module.js';
   imports: [
     DatabaseModule,
     DesktopWorkspaceModule,
+    CodeWorkspaceModule,
     ProjectsModule,
     ReposModule,
     BranchesModule,

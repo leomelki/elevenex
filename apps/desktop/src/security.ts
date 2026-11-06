@@ -37,7 +37,7 @@ export function contentSecurityPolicy(devUrl?: string): string {
     `connect-src ${connect}`,
     "base-uri 'self'",
     "object-src 'none'",
-    "frame-src 'none'",
+    "frame-src https://*.code.elevenex.invalid",
     "frame-ancestors 'none'",
     "form-action 'none'",
   ].join('; ');

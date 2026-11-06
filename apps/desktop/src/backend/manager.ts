@@ -25,6 +25,8 @@ export class BackendManager {
 
   constructor(private readonly options: BackendManagerOptions) {}
 
+  codeAccess(): string | undefined { return this.running?.codeAccess; }
+
   snapshot(): BackendStatus { return { ...this.status }; }
 
   subscribe(listener: (status: BackendStatus) => void): () => void {

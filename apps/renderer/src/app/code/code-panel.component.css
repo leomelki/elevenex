@@ -1,0 +1,43 @@
+:host { container: code-panel / inline-size; display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; color: var(--ink); background: var(--surface); }
+.editor-surface { position: relative; flex: 1; min-height: 0; min-width: 0; margin: var(--space-1); display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
+.editor-surface.loaded { overflow: hidden; }
+.frame-container { --code-transition-blur: calc(var(--blur-glass) - var(--space-1)); position: absolute; inset: 0; display: flex; justify-content: flex-end; flex: 1; min-height: 0; min-width: 0; contain: layout; view-transition-name: none; }
+.frame-container::view-transition { pointer-events: none; }
+.frame-container::view-transition-group(code-editor) { animation: none; width: 100%; height: 100%; transform: none; }
+.frame-container::view-transition-old(code-editor), .frame-container::view-transition-new(code-editor) { width: 100%; height: 100%; object-fit: fill; object-position: right top; mix-blend-mode: normal; }
+/* The snapshots share the panel's clock: linear crossfade throughout resize, sharp
+   just before its end. Only snapshots stretch; the live editor keeps its natural scale. */
+.frame-container::view-transition-old(code-editor) { z-index: 2; background: var(--surface); animation: code-layout-out var(--dur-slow) linear both; }
+.frame-container::view-transition-new(code-editor) { z-index: 1; opacity: 1; animation: code-layout-in var(--dur-slow) linear both; }
+@keyframes code-layout-out { from { opacity: 1; filter: blur(0); } 45% { filter: blur(var(--code-transition-blur)); } 95%, to { opacity: 0; filter: blur(var(--code-transition-blur)); } }
+@keyframes code-layout-in { 0%, 45% { filter: blur(var(--code-transition-blur)); } 95%, to { filter: blur(0); } }
+.frame-container::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--surface); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+/* Cover the iframe instead of making it transparent: Chromium throttles a
+   transparent cross-origin document's own layout/animation frames. */
+.frame-container.reflowing::after { opacity: 1; transition-duration: var(--dur-instant); }
+/* Keep startup paints and input covered without throttling the live iframe.
+   Fade the cover away once ready; the editor stays live and accepts input. */
+.frame-container::before { content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none; background: var(--surface); opacity: 0; transition: opacity var(--dur-base) var(--ease-in-out); }
+.frame-container.loading::before { opacity: 1; transition: none; }
+.frame-container.cover-immediate::after { transition: none; }
+.frame-container[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .frame-container::before, .frame-container::after { transition: none; }
+}
+.launch-card { box-sizing: border-box; flex: none; display: flex; align-items: stretch; flex-direction: column; width: 100%; max-width: 368px; margin: auto; padding: var(--space-8) var(--space-6); }
+.code-mark { display: grid; place-items: center; width: calc(var(--space-6) * 2); height: calc(var(--space-6) * 2); border-radius: var(--radius-md); background: var(--surface-sunken); color: var(--ink-muted); margin-bottom: var(--space-4); }
+h2 { margin: 0 0 var(--space-2); font-size: var(--text-title-size); line-height: var(--text-title-line); font-weight: var(--text-title-weight); letter-spacing: var(--text-title-tracking); }
+p { margin: 0; color: var(--ink-muted); font-size: var(--text-body-size); line-height: var(--text-body-line); }
+.launch-actions { display: flex; align-items: stretch; flex-direction: column; gap: var(--space-2); margin-top: var(--space-6); }
+.launch-actions button { min-height: var(--control-height); height: auto; white-space: normal; padding-block: var(--space-2); }
+.launch-note { margin-top: var(--space-3); color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-caption-line); }
+.shortcuts { margin: var(--space-6) 0 0; padding-top: var(--space-4); border-top: 1px solid var(--line); display: grid; gap: var(--space-3); }
+.shortcuts div { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); color: var(--ink-muted); font-size: var(--text-caption-size); }
+.shortcuts dd { flex: none; margin: 0; }
+.error { margin-top: var(--space-4); color: var(--attention); overflow-wrap: anywhere; }
+.recovery { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-3); color: var(--attention); background: var(--attention-soft); font-size: var(--text-caption-size); line-height: var(--text-caption-line); }
+.recovery > span { flex: 1 1 220px; overflow-wrap: anywhere; }
+.recovery button { flex: none; }
+@container code-panel (width < 380px) {
+  .launch-card { padding: var(--space-6) var(--space-4); }
+}

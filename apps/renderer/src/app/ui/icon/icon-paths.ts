@@ -23,6 +23,7 @@ export const ICON_PATHS: Readonly<Record<string, string>> = {
   "chevron-down": "M4.5 6.5L8 10l3.5-3.5",
   "chevron-right": "M6.5 4.5L10 8l-3.5 3.5",
   at: "M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0zM10.5 8v1a1.75 1.75 0 0 0 3.5 0V8A6 6 0 1 0 11.5 12.9",
+  save: "M3.5 2.5h7l3 3v7a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zM5 2.5v4h6v-4M5 13.5v-4h6v4",
   search: "M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM10.3 10.3L13.5 13.5",
   commit: "M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM1.5 8h4M10.5 8h4",
   push: "M8 11V3M4.5 6.5L8 3l3.5 3.5M3 13.5h10",

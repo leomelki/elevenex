@@ -1,4 +1,6 @@
-import { app, BrowserWindow, Menu, net, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
+import { CodeSurfaces } from './code/surfaces';
+import { registerCodeIpc } from './code/ipc';
+import { app, BrowserWindow, Menu, dialog, net, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
 import { readFile, realpath } from 'node:fs/promises';
 import { extname, join, relative, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -17,7 +19,7 @@ import { homedir } from 'node:os';
 import { RemoteArchiveCache } from './remote/archives';
 import { createBackendClient } from './backend-client/application';
 import { registerBackendClientIpc } from './backend-client/ipc';
-import type { EnvironmentSelection } from '@elevenex/shared';
+import type { CodeWindowContext, EnvironmentSelection } from '@elevenex/shared';
 import { MachineApplication } from './machines/application';
 import { MachinePreferences } from './machines/preferences';
 import { registerMachineIpc } from './machines/ipc';
@@ -59,6 +61,7 @@ const remote = new RemoteManager({
 });
 const backendClient = createBackendClient(backend, remote,
   (windowId, snapshot) => sendToWindow(windowId, 'backend-client:changed', snapshot));
+const code = new CodeSurfaces(backendClient.client, join(app.getPath('userData'), 'code-runtimes'), join(rendererRoot, 'fonts'), (windowId, target, snapshot) => sendToWindow(windowId, 'code:changed', { target, state: snapshot }), (windowId, target) => sendToWindow(windowId, 'code:exit-requested', target), (context, configurationIdentity) => createWindow(context.selection, context, configurationIdentity), devUrl ? new URL(devUrl).origin : APP_ORIGIN);
 const machinePreferences = new MachinePreferences(join(app.getPath('userData'), 'machine-preferences.json'));
 const machines = new MachineApplication(backend, remote, machinePreferences,
   (windowId, snapshot) => sendToWindow(windowId, 'machines:changed', snapshot));
@@ -86,10 +89,10 @@ function openExternal(url: string): void {
   if (isExternalUrl(url)) void shell.openExternal(url).catch(console.error);
 }
 
-function createWindow(launchSelection?: EnvironmentSelection | null): BrowserWindow {
+function createWindow(launchSelection?: EnvironmentSelection | null, editorContext?: CodeWindowContext, editorConfiguration?: string): BrowserWindow {
   const window = new BrowserWindow({
     ...state.options(),
-    title: 'Elevenex',
+    title: editorContext ? 'Code · ' + (editorContext.state.taskName ?? 'Task') : 'Elevenex',
     icon: applicationIcon,
     show: false,
     frame: false,
@@ -109,25 +112,39 @@ function createWindow(launchSelection?: EnvironmentSelection | null): BrowserWin
     },
   });
   state.attach(window);
+  const stopCodeFrames = code.attachWindow(window.webContents, devUrl);
+  window.once('closed', stopCodeFrames);
   // Home is passive on launch. Restore domain context when a machine is chosen,
   // but do not open a saved SSH host merely because the app started.
   remote.attach(window.webContents.id, launchSelection ?? null);
   const windowId = window.webContents.id;
   machines.attach(windowId, launchSelection ?? null);
-  if (launchSelection) void remote.select(windowId, launchSelection).catch(() => {
+  if (editorContext && editorConfiguration) code.registerWindow(windowId, editorContext, editorConfiguration);
+  if (launchSelection && (!editorConfiguration || remote.backendCacheIdentity(windowId) === editorConfiguration)) void remote.select(windowId, launchSelection).catch(() => {
     // The renderer can retry from Home; never abandon a newly created window.
     console.error('Could not select the requested machine');
   });
   backendClient.client.attach(windowId);
   window.webContents.on('did-start-navigation', (_event, _url, inPlace, isMainFrame) => {
-    if (isMainFrame && !inPlace) backendClient.client.reset(windowId);
+    if (isMainFrame && !inPlace) { code.detachWindow(windowId); backendClient.client.reset(windowId); }
   });
-  window.webContents.on('render-process-gone', () => backendClient.client.reset(windowId));
-  window.once('closed', () => {
+  window.webContents.on('render-process-gone', () => { code.detachWindow(windowId); backendClient.client.reset(windowId); });
+  let editorCloseAccepted = false, editorClosePending = false;
+  window.on('close', event => {
+    if (editorCloseAccepted || quitting) { code.detachWindow(windowId); return; }
+    event.preventDefault();
+    if (editorClosePending) return;
+    editorClosePending = true;
+    void code.prepareWindowClose(windowId).then(accepted => {
+      editorClosePending = false;
+      if (accepted && !window.isDestroyed()) { editorCloseAccepted = true; window.close(); }
+    }).catch(() => { editorClosePending = false; });
+  });
+  window.once('closed', () => code.releaseWindow(windowId, () => {
     machines.detach(windowId);
     backendClient.client.detach(windowId);
     void remote.detach(windowId).catch(() => console.error('Remote window cleanup failed'));
-  });
+  }));
   window.once('ready-to-show', () => window.show());
   window.webContents.setWindowOpenHandler(({ url }) => {
     openExternal(url);
@@ -144,7 +161,7 @@ function createWindow(launchSelection?: EnvironmentSelection | null): BrowserWin
     if (!isAppUrl(url, devUrl)) event.preventDefault();
   });
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
-  void window.loadURL(devUrl ?? `${APP_ORIGIN}/`).catch((error: unknown) => {
+  void window.loadURL(editorContext ? `${devUrl ?? APP_ORIGIN}/code-window` : devUrl ?? `${APP_ORIGIN}/`).catch((error: unknown) => {
     console.error('Could not load the renderer:', error);
     window.destroy();
   });
@@ -192,7 +209,7 @@ void app.whenReady().then(async () => {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({ responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': [contentSecurityPolicy(devUrl)],
+        ...(isAppUrl(details.url, devUrl) ? { 'Content-Security-Policy': [contentSecurityPolicy(devUrl)] } : {}),
         'X-Content-Type-Options': ['nosniff'],
       } });
     });
@@ -202,6 +219,8 @@ void app.whenReady().then(async () => {
   handle('app:version', trusted, () => app.getVersion());
   const unsubscribeBackend = registerBackendIpc(backend, trusted);
   app.once('will-quit', unsubscribeBackend);
+  const unregisterCode = registerCodeIpc(code, trusted);
+  app.once('will-quit', unregisterCode);
   const unregisterClient = registerBackendClientIpc(backendClient.client, trusted);
   app.once('will-quit', unregisterClient);
   const unregisterRemote = registerRemoteIpc(remote, backend, trusted);
@@ -257,7 +276,7 @@ void app.whenReady().then(async () => {
   disposeIdentity = undefined;
   backendClient.dispose();
   machines.dispose();
-  void Promise.allSettled([backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]).then(() => app.exit(1));
+  void Promise.allSettled([code.dispose(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]).then(() => app.exit(1));
 });
 
 app.on('window-all-closed', () => {
@@ -268,9 +287,5 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  disposeIdentity?.();
-  disposeIdentity = undefined;
-  backendClient.dispose();
-  machines.dispose();
-  void Promise.allSettled([state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]).then(() => app.quit());
+  void code.dispose().then(async () => { disposeIdentity?.(); disposeIdentity = undefined; backendClient.dispose(); machines.dispose(); await Promise.allSettled([state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]); app.quit(); }, async error => { quitting = false; await dialog.showMessageBox({ type: 'warning', message: 'Editor changes are still retained in the open window', detail: error instanceof Error ? error.message : 'Finish backing up your editor changes before quitting.', buttons: ['Keep open'] }); });
 });

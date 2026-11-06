@@ -15,15 +15,11 @@
       </p>
     </div>
   }
-  @if (data.dirtyEditors) {
-    <p class="text-sm">
-      {{ data.dirtyEditors }} unsaved editor documents will be saved before finishing.
-    </p>
-  }
+
   <footer class="flex justify-end gap-2 border-t border-border pt-4">
     <button z-button zType="ghost" (click)="cancel()" cdkFocusInitial>Cancel</button
     ><button z-button (click)="finish()">
-      {{ data.dirtyEditors ? 'Save and finish' : 'Stop and finish' }}
+      Stop and finish
     </button>
   </footer>
 </div>

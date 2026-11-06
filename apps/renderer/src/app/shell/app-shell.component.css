@@ -44,6 +44,7 @@
   overflow: hidden;
 }
 .workspace {
+  container: workspace / inline-size;
   position: relative;
   display: flex;
   flex: 1;
@@ -69,10 +70,10 @@
   width: 0;
   min-width: 0;
   overflow: clip;
+  /* Clip composited editor/snapshot layers even at the final subpixel widths. */
+  clip-path: inset(0 round var(--radius-lg));
   opacity: 0;
-  transition:
-    width var(--dur-slow) var(--ease-in-out),
-    opacity var(--dur-base) var(--ease-out);
+  transition: width var(--dur-slow) var(--ease-in-out);
 }
 .panel-inner {
   display: flex;
@@ -84,6 +85,8 @@
 }
 :host(.panel-open) .panel {
   width: var(--side-panel-width);
+}
+:host(.panel-retained) .panel {
   opacity: 1;
 }
 :host(.panel-open) .main {

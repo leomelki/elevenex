@@ -4,9 +4,6 @@ import { expect, test } from '@playwright/test';
 // launching shells or agent processes in the user's worktrees.
 for (const theme of ['light', 'dark'] as const) {
   test(`${theme}: terminal views reopen without reconnecting and retain output and selection`, async ({ page }) => {
-    await page.route('**/vscode-static/**', (route) => route.fulfill({
-      contentType: 'text/html', body: '<!doctype html><title>Mock editor</title>',
-    }));
     await page.route('**/api/**', (route) => {
       const pathname = new URL(route.request().url()).pathname;
       let json: unknown = [];

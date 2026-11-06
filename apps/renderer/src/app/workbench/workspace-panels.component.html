@@ -1,14 +1,17 @@
 <header class="panel-head">
   <ex-panel-tabs [tabs]="tabs" [active]="panel()" (selectTab)="panel.set($event)" />
-  <div class="panel-actions">
+  <div class="panel-actions" [class.code-tools]="panel() === 'code'">
+    @if (panel() === 'code') { <ng-container [ngTemplateOutlet]="codeActions()" /> }
     <ex-icon-button [icon]="wide() ? 'shrink' : 'expand'" [label]="wide() ? 'Return to chat' : 'Expand side panel'" (pressed)="wideChange.emit(!wide())" />
     <ex-icon-button icon="x" label="Close side panel" (pressed)="closed.emit()" />
   </div>
 </header>
 @for (tab of tabs; track tab.id) {
-  <section class="panel-body" [class.has-content]="tab.id === 'changes' && !!changesContent()" role="tabpanel" [id]="tab.panelId" [attr.aria-label]="tab.label" [hidden]="panel() !== tab.id" [attr.inert]="panel() !== tab.id ? '' : null" tabindex="0">
+  <section class="panel-body" [class.has-content]="(tab.id === 'changes' && !!changesContent()) || (tab.id === 'code' && !!codeContent())" role="tabpanel" [id]="tab.panelId" [attr.aria-label]="tab.label" [hidden]="panel() !== tab.id" [attr.inert]="panel() !== tab.id ? '' : null" tabindex="0">
     @if (tab.id === 'changes' && changesContent()) {
       <ng-content select="[workspaceChanges]" />
+    } @else if (tab.id === 'code' && codeContent()) {
+      <ng-content select="[workspaceCode]" />
     } @else if (panel() === tab.id && unreachable()) {
       <ex-opens-when-back [machine]="unreachable()!" [what]="current().label" [compact]="true" (tryRequested)="reconnectRequested.emit()" />
     } @else if (panel() === tab.id) {

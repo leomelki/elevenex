@@ -61,11 +61,11 @@ function octal(header: Buffer, start: number, length: number): number {
   return parsed;
 }
 
-function archivePath(value: string): string {
+function archivePath(value: string, rootName: string): string {
   const name = value.replace(/\/$/, '');
   const parts = name.split('/');
   // Use portable rules even on macOS: the same archives run on Windows.
-  if (name.length > 4096 || parts[0] !== 'backend' || parts.some(part => !part || part === '.' || part === '..'
+  if (name.length > 4096 || parts[0] !== rootName || parts.some(part => !part || part === '.' || part === '..'
     || Array.from(part).some(character => character.charCodeAt(0) < 32)
     || /[\\:<>"|?*]/.test(part) || /[. ]$/.test(part)
     || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(part))) {
@@ -98,6 +98,11 @@ function paxAttributes(body: Buffer): Record<string, string> {
 
 /** Accept regular files/directories plus PAX/GNU names; never extract links or devices. */
 export async function extractBackend(archive: string, destination: string, signal: AbortSignal): Promise<void> {
+  return extractArchive(archive, destination, signal, 'backend');
+}
+
+/** Shared confined archive reader. Callers select a fixed trusted archive root. */
+export async function extractArchive(archive: string, destination: string, signal: AbortSignal, rootName: string, omit: (name: string) => boolean = () => false): Promise<void> {
   await pipeline(createReadStream(archive), createGunzip(), async (source: AsyncIterable<Buffer>) => {
     const reader = new TarReader(source[Symbol.asyncIterator](), signal);
     let attributes: Record<string, string> = {};
@@ -143,7 +148,15 @@ export async function extractBackend(archive: string, destination: string, signa
         await reader.read((BLOCK - size % BLOCK) % BLOCK);
         continue;
       }
-      const name = archivePath(rawName);
+      const name = archivePath(rawName, rootName);
+      if (omit(name)) {
+        for (let remaining = size; remaining > 0;) {
+          const count = Math.min(64 * 1024, remaining);
+          await reader.read(count); remaining -= count;
+        }
+        await reader.read((BLOCK - size % BLOCK) % BLOCK);
+        continue;
+      }
       const path = join(destination, name);
       if (type === '5') {
         if (size !== 0) throw new Error('Invalid archive directory');

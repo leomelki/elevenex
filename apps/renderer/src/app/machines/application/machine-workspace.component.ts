@@ -1,3 +1,5 @@
+import { CodePanelComponent } from '../../code';
+import type { CodeTarget, CodeFileIntent } from '@elevenex/shared';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal } from '@angular/core';
 import { jumpHome, settleMark, type CreateProjectIntent } from '../../projects';
 import { AppShellComponent } from '../../shell/app-shell.component';
@@ -16,7 +18,7 @@ import { SessionChatClient } from '../../backend/session-chat-client.service';
 @Component({
   selector: 'ex-machine-workspace',
   providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient, SessionChatOutbox, WorkspaceWritingJournal],
-  imports: [AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  imports: [CodePanelComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
   templateUrl: './machine-workspace.component.html',
   styleUrl: './machine-workspace.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -38,11 +40,14 @@ export class MachineWorkspaceComponent {
   readonly panelOpen = this.store.panelOpen;
   readonly panel = this.store.panel;
   readonly wideReview = this.store.wideReview;
+  readonly codeFile = signal<CodeFileIntent | null>(null);
+  readonly codeTarget = computed<CodeTarget | null>(() => { const selected = this.store.selected(); return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null; }, { equal: (a, b) => a?.scopeId === b?.scopeId && a?.taskId === b?.taskId });
   readonly reviewTarget = signal<ChatReviewTarget | null>(null);
   readonly selectedReview = computed(() => {
     const target = this.reviewTarget(), selected = this.store.selected();
     return target && selected && target.scopeId === selected.scopeId && target.taskId === selected.taskId && target.sessionId === selected.sessionId ? target : null;
   });
+  openCode(path: string): void { const target = this.codeTarget(); if (!target) return; this.codeFile.set({ ...target, file: { path } }); this.store.selectPanel('code'); this.panelOpen.set(true); this.wideReview.set(true); }
   review(target: ChatReviewTarget): void {
     this.reviewTarget.set(target); this.store.selectPanel('changes'); this.panelOpen.set(true);
   }

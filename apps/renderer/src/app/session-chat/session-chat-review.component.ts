@@ -43,6 +43,7 @@ export class SessionChatReviewComponent {
   readonly reconnectRequested = output<void>();
   readonly wideChange = output<boolean>();
   readonly exitRequested = output<void>();
+  readonly openFileRequested = output<string>();
   readonly page = signal<SessionChatChangesPage | null>(null);
   readonly files = signal<readonly ChangeFile[]>([]);
   readonly contents = signal<readonly DiffFileContent[]>([]);

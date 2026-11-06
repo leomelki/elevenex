@@ -1,5 +1,5 @@
 <div class="workspace-frame" [class.ex-offline]="store.offline() || !active()" [class.onboarding]="onboarding() && launch() !== 'flying'" [attr.inert]="onboarding() && launch() !== 'flying' ? '' : null" [attr.aria-hidden]="onboarding() && launch() !== 'flying' ? 'true' : null">
-  <ex-app-shell [titleBar]="false" [panelOpen]="panelOpen()" [wideReview]="wideReview()" [panelLabel]="panel() + ' panel'" (panelCloseRequested)="panelOpen.set(false); wideReview.set(false)" (reviewExited)="wideReview.set(false)">
+  <ex-app-shell #shell [titleBar]="false" [panelOpen]="panelOpen()" [wideReview]="wideReview()" [panelLabel]="panel() + ' panel'" (panelCloseRequested)="panelOpen.set(false); wideReview.set(false)" (reviewExited)="wideReview.set(false)">
     <ex-workspace-project-rail shellRail />
     <ex-workspace-navigation shellSidebar />
     <div shellMain class="main-content">
@@ -44,11 +44,12 @@
         </section>
       }
     </div>
-    <ex-workspace-panels [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" shellPanel [panel]="panel()" (panelChange)="store.selectPanel($event)" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (closed)="closePanel()">
+    <ex-workspace-panels [codeActions]="workspaceCode.actions() ?? null" [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" shellPanel [panel]="panel()" (panelChange)="store.selectPanel($event)" [wide]="shell.panelWide()" (wideChange)="wideReview.set($event)" (closed)="closePanel()">
+      <ex-code-panel workspaceCode #workspaceCode [target]="codeTarget()" [file]="codeFile()" [taskName]="store.selectedTask()?.name ?? ''" [branch]="store.selectedTask()?.branchName ?? ''" [active]="panelOpen() && panel() === 'code' && active()" [retained]="shell.panelPresent() && panel() === 'code' && active()" [connected]="!store.offline()" [wide]="shell.panelWide()" (wideChange)="wideReview.set($event)" />
       <div workspaceChanges #workspaceChanges class="review-content">
         @if (selectedReview(); as target) {
-          @if (panelOpen() && panel() === 'changes' && active()) {
-            <ex-session-chat-review [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" [target]="target" [wide]="wideReview()" (wideChange)="wideReview.set($event)" (exitRequested)="wideReview.set(false)" />
+          @if (shell.panelPresent() && panel() === 'changes' && active()) {
+            <ex-session-chat-review [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" [target]="target" (openFileRequested)="openCode($event)" [wide]="shell.panelWide()" (wideChange)="wideReview.set($event)" (exitRequested)="wideReview.set(false)" />
           }
         } @else {
           <p class="review-hint">Choose Review beneath an agent reply to see its changes.</p>

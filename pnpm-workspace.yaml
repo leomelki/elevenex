@@ -2,8 +2,6 @@ packages:
   - 'apps/*'
   - 'packages/*'
   - 'e2e'
-  - 'vscode-filesystem-provider'
-  - 'vscode-scm-extension'
 allowBuilds:
   '@nestjs/core': true
   '@parcel/watcher': true

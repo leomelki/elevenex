@@ -285,6 +285,12 @@ export class RemoteManager {
       throw error;
     } finally { if (window.revision === revision) window.pendingHost = undefined; }
   }
+  /** Stable destination identity for main-owned resource caches, never a credential. */
+  backendCacheIdentity(windowId: number): string {
+    const selection = this.window(windowId).saved.selection;
+    const host = selection.kind === 'remote' ? this.settings.hosts.find(host => host.id === selection.hostId) : null;
+    return createHash('sha256').update(JSON.stringify(host ? [host.id, host.host, host.user, host.port, host.configFile] : ['local'])).digest('hex');
+  }
   private writingIdentity(selection: EnvironmentSelection): string {
     const host = selection.kind === 'remote' ? this.settings.hosts.find(host => host.id === selection.hostId) : null;
     if (selection.kind === 'remote' && !host) throw new Error('Unknown machine');

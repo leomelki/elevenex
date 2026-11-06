@@ -14,6 +14,8 @@
   "files": [
     "dist/**/*.js",
     "dist/backend-release.json",
+    "dist/code/*.css",
+    "dist/code/LICENSE.txt",
     "renderer/**/*",
     "assets/icons/icon.png",
     "assets/icons/tray*.png",

@@ -1,7 +1,4 @@
-import {
-  resolveVSCodeAssetVersion,
-  vscodeStatic,
-} from './config/vscode-static.js';
+
 import { interceptProcessStreams } from './backend-logs/log-interceptor.js';
 interceptProcessStreams();
 
@@ -32,7 +29,6 @@ import { ElevenexMcpHttpTransport } from './mcp/transport/elevenex-mcp-http.tran
 import { AgentChannelGateway } from './mcp/human-channel/agent-channel.gateway.js';
 import { DesktopPortForwardingGateway } from './mcp/port-forwarding/desktop-port-forwarding.gateway.js';
 import { CookieProxyService } from './plannotator/cookie-proxy.service.js';
-import { join } from 'path';
 import * as http from 'http';
 import * as express from 'express';
 import { createEdgeProxyServer } from './proxy/edge-proxy.server.js';
@@ -41,17 +37,12 @@ import {
   getElevenexBindHost,
   getElevenexProxyPort,
 } from './config/ports.js';
-import { chmod, readFile } from 'fs/promises';
+import { chmod } from 'fs/promises';
 import { isAbsolute } from 'path';
 import {
   getBackendRuntimeRoot,
-  getBackendVSCodeStaticPath,
 } from './config/runtime-paths.js';
 import { ShellEnvService } from './config/shell-env.service.js';
-import {
-  buildVSCodeWebLauncherHtml,
-  renderVSCodeWorkbenchHtml,
-} from './config/vscode-web-launcher.js';
 import {
   buildMcpAuthProxyUnavailableHtml,
   parseMcpAuthProxyRequestUrl,
@@ -104,106 +95,6 @@ async function bootstrap() {
       next();
     },
   );
-
-  // Serve a stable launcher in both dev and packaged modes.
-  app.use(
-    '/vscode-static/index.html',
-    (_req: express.Request, res: express.Response) => {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-store');
-      res.send(buildVSCodeWebLauncherHtml());
-    },
-  );
-
-  const vscodeStaticPath = getBackendVSCodeStaticPath();
-  const vscodeAssetVersion = await resolveVSCodeAssetVersion(vscodeStaticPath);
-
-  // workbench.html ships with {{WORKBENCH_WEB_BASE_URL}}-style placeholders
-  // that VS Code's own server would substitute. Render it ourselves and inject
-  // window.product from the iframe query string so asset URLs resolve and the
-  // workspace/extensions load.
-  const renderWorkbench = async (
-    req: express.Request,
-    res: express.Response,
-    next: express.NextFunction,
-    sourcePath: string,
-  ) => {
-    try {
-      const raw = await readFile(sourcePath, 'utf-8');
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-store');
-      res.send(
-        renderVSCodeWorkbenchHtml(raw, {
-          baseUrl: `/vscode-static/v/${vscodeAssetVersion}`,
-        }),
-      );
-    } catch (error) {
-      next(error);
-    }
-  };
-
-  app.use(
-    '/vscode-static/out/vs/code/browser/workbench/workbench.html',
-    (
-      req: express.Request,
-      res: express.Response,
-      next: express.NextFunction,
-    ) => {
-      renderWorkbench(
-        req,
-        res,
-        next,
-        join(
-          vscodeStaticPath,
-          'out',
-          'vs',
-          'code',
-          'browser',
-          'workbench',
-          'workbench.html',
-        ),
-      );
-    },
-  );
-
-  app.use(
-    '/vscode-static/out/vs/code/browser/workbench/workbench-dev.html',
-    (
-      req: express.Request,
-      res: express.Response,
-      next: express.NextFunction,
-    ) => {
-      renderWorkbench(
-        req,
-        res,
-        next,
-        join(
-          vscodeStaticPath,
-          'out',
-          'vs',
-          'code',
-          'browser',
-          'workbench',
-          'workbench-dev.html',
-        ),
-      );
-    },
-  );
-
-  app.use(
-    `/vscode-static/v/${vscodeAssetVersion}`,
-    vscodeStatic(vscodeStaticPath, true),
-  );
-  // Older bookmarks remain usable but never receive immutable caching.
-  app.use('/vscode-static', vscodeStatic(vscodeStaticPath));
-
-  // Serve FileSystemProvider extension bundle
-  const ext1Path = join(runtimeRoot, 'vscode-filesystem-provider');
-  app.use('/vscode-ext1', express.static(ext1Path));
-
-  // Serve SCM extension bundle
-  const ext2Path = join(runtimeRoot, 'vscode-scm-extension');
-  app.use('/vscode-ext2', express.static(ext2Path));
 
   // Register MCP auth proxy BEFORE body-parser so req stream is readable
   // Proxies localhost MCP auth servers for SSH/remote access: /api/mcp-auth-proxy/:port/*

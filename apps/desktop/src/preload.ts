@@ -12,6 +12,18 @@ const subscribe: Subscribe = (channel, listener) => {
 };
 
 const bridge = Object.freeze<ElevenexBridge>({
+  onCodeExitRequested: listener => subscribe('code:exit-requested', listener),
+  onCodeChanged: listener => subscribe('code:changed', listener),
+  codeRecover: target => invoke('code:recover', target),
+  codeDetach: target => invoke('code:detach', target),
+  codeWindowContext: () => invoke('code:window-context'),
+  codeOpen: target => invoke('code:open', target),
+  codePresent: (target, presentation) => invoke('code:present', target, presentation),
+  codeLayout: (target, bounds) => invoke('code:layout', target, bounds),
+  codeOpenFile: (target, file) => invoke('code:open-file', target, file),
+  codeAction: (target, action) => invoke('code:action', target, action),
+  codeFocus: target => invoke('code:focus', target),
+  codeRelease: target => invoke('code:release', target),
   sessionChatCatalog: (scope, input) => invoke('session-chat:catalog', scope, input),
   sessionChatChanges: (scope, input) => invoke('session-chat:changes', scope, input),
   sessionChatRead: (scope, input) => invoke('session-chat:read', scope, input),
@@ -91,4 +103,5 @@ const bridge = Object.freeze<ElevenexBridge>({
   onEnvironmentChanged: listener => subscribe('environment:changed', listener),
 });
 
-contextBridge.exposeInMainWorld('elevenex', bridge);
+// An editor is an unprivileged cross-origin subframe of the app window.
+if (process.isMainFrame) contextBridge.exposeInMainWorld('elevenex', bridge);

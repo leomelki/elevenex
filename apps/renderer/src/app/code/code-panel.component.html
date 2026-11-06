@@ -1,0 +1,40 @@
+<ng-template #actions>
+  @if (hasSurface()) {
+    <ex-icon-button class="browse-files" [icon]="browsing() ? 'back' : 'folder'" [label]="browseLabel()" [disabled]="!active() || !connected() && !browsing()" (pressed)="runAction(browsing() ? 'dismiss-files' : 'browse-files')" />
+    <ex-icon-button icon="search" label="Search text in files" [disabled]="!active() || !connected()" (pressed)="runAction('search-text')" />
+    @if (!standalone()) { <ex-icon-button icon="window" label="Open editor window" [disabled]="!active() || !connected() || launching()" (pressed)="detach()" /> }
+  }
+</ng-template>
+<ex-fold [open]="launching()"><ex-progress-line label="Opening editor" /></ex-fold>
+<ex-fold [open]="connectionLost() && hasSurface() && !store.state()?.recoveryAvailable"><div class="recovery" role="status"><span>Connection lost. Your edits stay here. Reconnect using the machine menu before saving.</span></div></ex-fold>
+<ex-fold [open]="!!store.state()?.recoveryAvailable"><div class="recovery"><span>The checkout changed. Your tabs and unsaved text are retained. Inspect them before saving.</span><button exButton size="sm" [disabled]="launching() || !connected()" (click)="recover()">Open updated workspace</button></div></ex-fold>
+<ex-fold [open]="!!store.error() && hasSurface()"><div class="recovery" role="alert"><span>{{ store.error() }}</span><button exButton size="sm" variant="ghost" (click)="dismissError()">Dismiss</button></div></ex-fold>
+<div class="editor-surface" [class.loaded]="showFrame()" [attr.aria-label]="showFrame() ? 'Task Code workbench' : null">
+  <div #frameContainer exCodeViewport [active]="active()" (viewportWidth)="measuredWidth.set($event)" (layoutRequested)="layoutRevision.set(layoutRevision() + 1)" [layoutReady]="layoutReady()" [contextKey]="viewportKey()" class="frame-container" [class.loading]="frameLoading()" [attr.inert]="frameLoading() ? '' : null" [hidden]="!showFrame() || !frameVisible()"></div>
+  @if (!showFrame()) {
+    <div class="launch-card">
+      <div class="code-mark"><ex-icon [name]="store.error() || store.state()?.phase === 'failed' ? 'plug' : 'code'" [size]="22" /></div>
+      <h2>{{ title() }}</h2>
+      <p>{{ !target() ? 'Code follows a task’s files across its conversations.' : launching() ? 'Preparing your files and restoring your editor.' : !connected() ? 'Reconnect using the machine menu above. Your unsaved edits are retained.' : store.state()?.relocated ? store.state()?.message : 'Explore, search and edit this task’s workspace.' }}</p>
+      @if (store.error() || store.state()?.phase === 'failed') { <p class="error" role="alert">{{ store.error() || store.state()?.message }}</p> }
+      @if (target()) {
+        <div class="launch-actions">
+          @if (store.state()?.relocated) {
+            <button exButton variant="primary" [disabled]="!connected() || launching()" (click)="recover()">Open editor here</button>
+            @if (store.state()?.detached) { <button exButton variant="ghost" (click)="store.focus()">Focus other window</button> }
+          } @else if (launching()) {
+            <button exButton variant="primary" disabled>Opening editor…</button>
+          } @else {
+            <button exButton variant="primary" [disabled]="!connected()" (click)="retry()">Try again</button>
+          }
+        </div>
+        <p class="launch-note">Your conversation stays in place.</p>
+        <dl class="shortcuts" aria-label="Editor shortcuts">
+          <div><dt>Find a file</dt><dd><ex-kbd>{{ findShortcut() }}</ex-kbd></dd></div>
+          <div><dt>Search files</dt><dd><ex-kbd>{{ searchShortcut() }}</ex-kbd></dd></div>
+          @if (!standalone()) { <div><dt>Return to chat</dt><dd><ex-kbd>{{ returnShortcut() }}</ex-kbd></dd></div> }
+        </dl>
+      }
+    </div>
+  }
+</div>

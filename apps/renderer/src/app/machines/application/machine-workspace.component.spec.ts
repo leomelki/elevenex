@@ -24,6 +24,24 @@ describe('Connected workspace composition', () => {
   });
   afterEach(() => { TestBed.resetTestingModule(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+  it('retains the selected Changes review through an inert closing slide, then disposes it', async () => {
+    const {fixture,component,root}=setup(); await settle(fixture);
+    component.store.selectSession({taskId:'11',sessionId:'101'}); await settle(fixture);
+    const selected=component.store.selected(); if (!selected) throw new Error('Session was not selected');
+    component.review({...selected,turnId:'turn-one'}); component.wideReview.set(true); await settle(fixture);
+    const review=root.querySelector('ex-session-chat-review'); expect(review).not.toBeNull();
+    const panel=root.querySelector<HTMLElement>('ex-app-shell .panel'); if (!panel) throw new Error('Panel was not mounted');
+    let finish!: () => void;
+    const finished=new Promise<void>(resolve=>{finish=resolve;});
+    Object.defineProperty(panel,'getAnimations',{value:()=>[{transitionProperty:'width',finished}]});
+    component.closePanel(); await settle(fixture);
+    await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+    expect(root.querySelector('ex-session-chat-review')).toBe(review);
+    expect(panel.hasAttribute('inert')).toBe(true);
+    finish(); await Promise.resolve(); await settle(fixture);
+    expect(root.querySelector('ex-session-chat-review')).toBeNull();
+  });
+
   it('loads navigation and the task header, retaining a read-only view behind Home', async () => {
     const { fixture, component, root } = setup();
     await settle(fixture);

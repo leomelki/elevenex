@@ -118,6 +118,14 @@ specific resulting state before yielding. For asynchronous error/loading states,
 use a feature's real test provider or controlled promise rather than arbitrary
 timeouts or screenshots of replacement HTML.
 
+Viewport changes resize the native window as well as the renderer. Chromium
+device emulation can suppress native child compositor frames, so it is not used.
+Checkpoints containing visible `WebContentsView` children capture their actual
+pixels separately and composite them at their live bounds; the report records
+those surfaces. Await the child feature's usable state before yielding. DOM and
+accessibility diagnostics still describe the trusted shell; native feature smoke
+checks must inspect the isolated child separately.
+
 ## Motion
 
 `scenarios/composer-queue-motion.mjs` checks optimistic queue receipt handoffs
@@ -590,3 +598,44 @@ separately by desktop regressions and the sandboxed preload smoke.
 reading above the end and inside an earlier-history window. It asserts retained
 scroll position, unread feedback for recovered output, stable history items and
 view identity in both themes through the production window with controlled transport.
+
+`scenarios/task-code-compact.mjs` verifies the genuine compact Code workbench
+through production UI/IPC against a running disposable Nest backend. Supply
+`ELEVENEX_CODE_CAPTURE_ORIGIN`, `ELEVENEX_CODE_CAPTURE_ACCESS`, the existing
+`ELEVENEX_CODE_CAPTURE_PROJECT/TASK/SESSION` IDs, `ELEVENEX_CODE_SMOKE_CACHE`
+and `ELEVENEX_CODE_TEST_WORKSPACE`. The test-only process adapter connects the
+capture to this backend without starting or changing the user's backend manager.
+It covers both themes, native Quick Open/Quick Search, actual toolbar saving,
+dirty-file retention through expansion/collapse, narrow/reduced-motion layout
+and hidden iframe focus and actual settings layered over the live editor. Use `--built` after `desktop:build`. Its window debugger
+uses focus emulation and trusted input into the focused cross-origin iframe.
+The scenario checks the absence of native editor views and retains the same
+frame through tab changes and expansion. It also holds real extension bootstrap
+to check exclusive loading, repeats close/reopen and resizing in both themes,
+scrubs interrupted expansions/collapses, measures exactly one real iframe
+viewport resize per toggle at the predicted destination while a native scoped
+snapshot is retained, records click-to-resize latency, holds back the real
+child-layout acknowledgement without extending the visual animation, checks
+stable pane geometry,
+asserts immediate uncovered Code visibility during ordinary panel opening,
+continuous shell width motion with blur/crossfade on the same clock, a midpoint
+handoff and a sharp final editor without a second reveal,
+checks stretched editor bounds at the shell midpoint in both directions,
+checks opaque retained Code at early/middle/late closing frames in compact/wide
+layouts plus interrupted reopening, and
+asserts zero launch-viewport scrolling and matching iframe/workbench widths. Compact Files coverage includes the initial
+empty tree, single-click acceptance of an already-open file, Escape/Back state,
+keyboard tree navigation, automatic tree return after closing the last editor,
+and restored Explorer after expansion.
+
+`scenarios/task-code-transfers.mjs` uses the same Code capture environment
+variables and a disposable backend/task. It requires unused `upload.bin` and
+`assets` names at the task root and removes its fixtures afterward. It exercises
+the real extension, Explorer commands and backend with a 9 MiB binary, folder
+upload/download including empty directories, picker cancellation, keyboard menu
+navigation, both themes and a narrow reduced-motion layout. Only the native
+picker responses are deterministic, confined to temporary test files; this does
+not verify the operating system's picker appearance. Run sequentially with other
+native captures after building. When starting a disposable backend, set both
+`DB_PATH` and `ELEVENEX_DATA_ROOT` explicitly, as well as its runtime/migrations
+directory, to avoid inheriting a running development session's database.

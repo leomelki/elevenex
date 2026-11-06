@@ -4,21 +4,6 @@
     "secure": false,
     "changeOrigin": true
   },
-  "/vscode-static": {
-    "target": "http://127.0.0.1:11111",
-    "secure": false,
-    "changeOrigin": true
-  },
-  "/vscode-ext1": {
-    "target": "http://127.0.0.1:11111",
-    "secure": false,
-    "changeOrigin": true
-  },
-  "/vscode-ext2": {
-    "target": "http://127.0.0.1:11111",
-    "secure": false,
-    "changeOrigin": true
-  },
   "/file-changes": {
     "target": "ws://127.0.0.1:11111",
     "ws": true,

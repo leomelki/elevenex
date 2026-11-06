@@ -12,10 +12,9 @@ export async function developmentRevision(root) {
   const paths = (await git('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--',
     'apps/backend/src', 'apps/backend/drizzle', 'apps/backend/package.json', 'packages/shared/src',
     'pnpm-lock.yaml', 'apps/frontend/proxy.conf.json', 'scripts/bundle-electron-backend.js',
-    'scripts/stage-electron-backend.js', 'scripts/prepare-vscode-web-runtime.js',
+    'scripts/stage-electron-backend.js', 'scripts/runtime-stage-utils.js',
     'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-runtime.mjs',
     'scripts/archive-electron-backend.js', 'scripts/rebuild-electron-backend-natives.js',
-    'vscode-filesystem-provider', 'vscode-scm-extension',
   ], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })).stdout.split('\0').filter(Boolean);
   const hash = createHash('sha256').update(`${process.version}\0${process.platform}\0${process.arch}\0`);
   for (const file of [...new Set(paths)].sort()) {
@@ -55,9 +54,6 @@ export async function prepareDevelopmentBackend(root, run) {
     ['node_modules', join(backend, 'node_modules')],
     ['drizzle', join(backend, 'drizzle')],
     ['bin', join(backend, 'bin')],
-    ['vscode-web-dist', join(backend, 'node_modules/vscode-web/dist')],
-    ['vscode-filesystem-provider', join(root, 'vscode-filesystem-provider')],
-    ['vscode-scm-extension', join(root, 'vscode-scm-extension')],
   ]) await symlink(source, join(directory, name), process.platform === 'win32' ? 'junction' : 'dir');
   await cp(join(root, 'apps/frontend/proxy.conf.json'), join(directory, 'proxy.conf.json'));
   await writeFile(join(directory, 'backend-release.json'), `${JSON.stringify({ version, tag: `runtime-${version}` })}\n`);

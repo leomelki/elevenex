@@ -87,7 +87,13 @@ export class Capture {
 
   async viewport(width, height) {
     if (![width, height].every(value => Number.isInteger(value) && value >= 240 && value <= 4096)) throw new Error('Viewport dimensions must be integers in 240..4096');
-    await this.cdp('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    this.window.show(); this.window.focus();
+    this.window.setMinimumSize(0, 0);
+    this.window.setContentSize(width, height);
+    this.window.webContents.setZoomFactor(1);
+    // Resize the real native host. Device emulation changes Chromium's widget
+    // visibility independently of native child views and can leave them hidden.
+    await this.cdp('Emulation.clearDeviceMetricsOverride');
     this.options.width = width;
     this.options.height = height;
   }

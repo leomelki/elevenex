@@ -1,3 +1,4 @@
+const { formatSize, getDirectorySize, removeGitArtifacts } = require("./runtime-stage-utils");
 const {
   cpSync,
   existsSync,
@@ -12,13 +13,6 @@ const {
 const https = require("https");
 const path = require("path");
 const { execSync, spawnSync } = require("child_process");
-const {
-  assembleRuntime,
-  formatSize,
-  getDirectorySize,
-  removeGitArtifacts,
-  stagedVSCodeRoot,
-} = require("./prepare-vscode-web-runtime");
 const {
   REMOTE_HOME_DIRNAME,
 } = require("../apps/electron/remote-server-utils.cjs");
@@ -150,31 +144,6 @@ function removeSourceMaps(rootDir) {
       rmSync(fullPath, { force: true });
     }
   }
-}
-
-function stageExtensionRuntime(extensionDirName, destinationRoot) {
-  const sourceRoot = path.join(repoRoot, extensionDirName);
-  const extensionDestinationRoot = path.join(destinationRoot, extensionDirName);
-
-  ensureDir(extensionDestinationRoot);
-  copyRequiredPath(
-    path.join(sourceRoot, "dist"),
-    path.join(extensionDestinationRoot, "dist"),
-  );
-  copyRequiredPath(
-    path.join(sourceRoot, "package.json"),
-    path.join(extensionDestinationRoot, "package.json"),
-  );
-
-  const packageNlsPath = path.join(sourceRoot, "package.nls.json");
-  if (existsSync(packageNlsPath)) {
-    copyRequiredPath(
-      packageNlsPath,
-      path.join(extensionDestinationRoot, "package.nls.json"),
-    );
-  }
-
-  removeSourceMaps(extensionDestinationRoot);
 }
 
 function shouldBuildNativeDependenciesOnHost(target) {
@@ -819,9 +788,6 @@ async function stageTarget(target, commitSha, nodeVersion) {
     path.join(repoRoot, "apps", "frontend", "proxy.conf.json"),
     path.join(targetRoot, "proxy.conf.json"),
   );
-  copyRequiredPath(stagedVSCodeRoot, path.join(targetRoot, "vscode-web-dist"));
-  stageExtensionRuntime("vscode-filesystem-provider", targetRoot);
-  stageExtensionRuntime("vscode-scm-extension", targetRoot);
   writeFileSync(path.join(targetRoot, "version"), `${commitSha}\n`, "utf8");
   writeFileSync(
     path.join(targetRoot, "runtime-target"),
@@ -893,7 +859,6 @@ async function main() {
     ensureDir(remoteRuntimeRoot);
     ensureDir(tempRoot);
   }
-  await assembleRuntime();
 
   const commitSha = execSync("git rev-parse HEAD", { cwd: repoRoot })
     .toString()

@@ -19,6 +19,9 @@ the root logo through `pnpm desktop:icons`, rather than editing that asset.
 makes the inactive side inert. It owns and cancels all Web Animations. Stable
 `machineId` matches the card's `data-machine`. A launch cover-fits the view, carries
 the card face through the transition, and restores keyboard focus on return.
+Its outer launch viewport clips without scrolling; the Home projection owns its
+own scroll area. This prevents focus in a retained iframe from shifting the
+workspace toward the enlarged, hidden Home animation.
 
 `TitleBar` reserves native window controls; it does not draw imitation traffic
 lights. Its reference height is 34px; the shared app shell uses it too. The island
@@ -217,3 +220,5 @@ ResizeObserver follows intrinsic changes, including countdowns and recovery form
 `MachinePanel` accepts `[machineRecovery]` content before the guest section. The
 production machine owner supplies elapsed outage escalation and real SSH asks;
 these components do not authenticate or infer working transport capabilities.
+
+`MachineConnectionService` and `RemoteChallengeDialogComponent` are also exported for the dedicated Code window. The service owns per-window lifecycle snapshot ordering and subscriptions; the task window retains its own machine lease and modal challenge lifetime.

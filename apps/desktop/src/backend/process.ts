@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { fork, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
@@ -10,6 +11,7 @@ import { signalBackendTree } from './process-tree';
 export interface BackendExit { readonly code: number | null; readonly signal: NodeJS.Signals | null }
 export interface RunningBackend {
   readonly url: string;
+  readonly codeAccess?: string;
   readonly exited: Promise<BackendExit>;
   stop(): Promise<void>;
 }
@@ -29,7 +31,7 @@ async function freePort(): Promise<number> {
   });
 }
 
-function environment(installation: InstalledBackend, root: string, port: number): NodeJS.ProcessEnv {
+function environment(installation: InstalledBackend, root: string, port: number, codeAccess: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
   // Do not inherit Electron or Node injection/debug flags into downloaded code.
   for (const key of Object.keys(env)) {
@@ -38,6 +40,7 @@ function environment(installation: InstalledBackend, root: string, port: number)
   return {
     ...env, NODE_ENV: 'production', DB_PATH: join(root, 'data/elevenex.db'),
     ELEVENEX_DATA_ROOT: join(root, 'data'),
+    ELEVENEX_CODE_ACCESS: codeAccess,
     ELEVENEX_BACKEND_RUNTIME_ROOT: installation.directory,
     ELEVENEX_BACKEND_MODE: 'local', ELEVENEX_BACKEND_SUPERVISED: '1',
     ELEVENEX_BIND_HOST: '127.0.0.1', ELEVENEX_PROXY_PORT: String(port), FRONTEND_PORT: String(port),
@@ -87,9 +90,10 @@ export async function startBackend(
     const port = await freePort();
     signal.throwIfAborted();
     const url = `http://127.0.0.1:${port}`;
+    const codeAccess = randomBytes(32).toString('hex');
     const child = fork(supervisor, [installation.entry, installation.directory], {
       execPath: installation.executable, execArgv: [], cwd: root,
-      env: environment(installation, root, port), silent: true, windowsHide: true,
+      env: environment(installation, root, port, codeAccess), silent: true, windowsHide: true,
     });
     let stderr = '';
     let stdout = '';
@@ -118,7 +122,7 @@ export async function startBackend(
         exited.then(result => { throw new Error(`Backend stopped during startup (${result.code ?? result.signal ?? 'spawn error'}).\n\n${diagnostic()}`); }),
       ]);
       signal.throwIfAborted();
-      return { url, exited, stop };
+      return { url, codeAccess, exited, stop };
     } catch (error) {
       await stop();
       signal.throwIfAborted();

@@ -22,6 +22,12 @@ The project must support repositories with thousands of files and folders, hundr
 - Document why a non-obvious constraint exists, especially security decisions and dependency overrides. Keep setup instructions accurate when commands or architecture change.
 - Run the checks appropriate to the changed area. Report what passed, what could not run, and why; distinguish a smoke test from a packaged-app launch or visual verification.
 
+### Validation evidence and documentation
+
+- Report routine validation commands, results and limitations in the final response and, when creating a PR, its description. Keep per-run logs, screenshots, measurements and capture reports under the ignored `artifacts/` directory. A required verified capture report means the tool's `report.json`, not a tracked Markdown report.
+- Do not create or append routine task reports to tracked `VERIFICATION.md`, validation/status reports, work logs or README histories unless the user explicitly requests a versioned report. Existing verification logs are historical references, not documents to maintain after each change. Do not move the same running log into another tracked file.
+- Keep reusable tests, regression scenarios and durable documentation in Git. Update the relevant guide when supported behavior, setup, architecture, security constraints or known limitations change; document the resulting contract rather than the sequence of checks performed. These evidence-storage rules do not reduce required testing or visual verification.
+
 ### Modularity and maintainability
 
 - Organize code around cohesive responsibilities and domain ownership. Keep CLI entry points, Electron bootstrap, routes, and IPC adapters focused on composition; move substantial behavior into named modules with explicit inputs and outputs.
@@ -75,7 +81,7 @@ The project must support repositories with thousands of files and folders, hundr
 
 ### Finding and using renderer components
 
-- Start with [the renderer component guide](apps/renderer/README.md) for architecture, composition slots, ownership and preview instructions. Read the owning family's README and `index.ts`, then the component's signal inputs, outputs, template and nearby tests before using or extending it. The Angular implementation defines the current API; `docs/design-system/project/components/<Name>/README.md` describes the intended design and interaction. Consult [the design review](apps/renderer/DESIGN_REVIEW.md) for recorded differences and [verification results](apps/renderer/VERIFICATION.md) for the scope of prior checks; a component export does not establish complete design parity or a working platform integration. Reference React/gallery code is not application code.
+- Start with [the renderer component guide](apps/renderer/README.md) for architecture, composition slots, ownership and preview instructions. Read the owning family's README and `index.ts`, then the component's signal inputs, outputs, template and nearby tests before using or extending it. The Angular implementation defines the current API; `docs/design-system/project/components/<Name>/README.md` describes the intended design and interaction. Consult [the design review](apps/renderer/DESIGN_REVIEW.md) for recorded differences. The [historical verification log](apps/renderer/VERIFICATION.md) records earlier checks, not current validation; do not append routine results to it. A component export does not establish complete design parity or a working platform integration. Reference React/gallery code is not application code.
 - Find existing components before building another control. Search within the relevant family, for example `rg --files apps/renderer/src/app/ui` or `rg -n 'DropdownComponent|ex-dropdown' apps/renderer/src/app apps/renderer/preview`. Design names use PascalCase, source filenames use kebab-case, and selectors generally use `ex-`; native-button enhancements such as `button[exButton]` are exceptions.
 
 | Need | Implementation and usage guide |
