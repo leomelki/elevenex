@@ -202,6 +202,32 @@ manifest validation checks their checksums before publishing. Current CI targets
 are macOS arm64, Linux x64/arm64 and Windows x64. Other accepted targets need their
 own host build job before an app can be distributed for them.
 
+### Branch preview releases
+
+The **Build new desktop previews** workflow (`.github/workflows/new-ui-assets.yml`)
+runs for every push to `feat/new-ui`, including documentation-only changes.
+Each run builds the pushed head commit; pushing several commits at once produces
+one preview for that head. Later pushes do not cancel earlier builds.
+
+Downloads are published as a GitHub prerelease at `runtime-<full-commit-sha>`:
+
+- `elevenex-new-desktop-macos-arm64.dmg`: the new `apps/desktop` app, signed and
+  notarized for Apple Silicon using the existing repository Apple secrets.
+- `elevenex-backend-{macos-arm64,linux-x64,linux-arm64,windows-x64}.tar.gz`:
+  standalone backends with bundled Node, using the archive format expected by
+  the desktop installer. The app is stamped with this exact backend revision.
+- Matching remote runtimes for SSH setup, SHA-256 checksums, and
+  `manifest-new-desktop.json`. Publication requires every expected asset and
+  checksum to validate.
+
+The workflow also supports **Run workflow** with `feat/new-ui` selected for an
+on-demand rebuild. GitHub requires a manually dispatched workflow to exist on
+the default branch before offering that trigger; branch pushes work immediately.
+Existing `apps/electron` release builds remain in **Build and release assets**.
+New desktop DMGs and manifests have separate names so they cannot replace the
+legacy updater's assets at the same commit tag. These previews do not become
+the repository's latest release.
+
 An installation streams into a private staging directory, enforces download and
 expanded-size limits, verifies the release's SHA-256 checksum, and extracts only
 regular files/directories with confined paths. PAX and GNU long names are

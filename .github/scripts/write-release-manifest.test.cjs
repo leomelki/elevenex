@@ -26,10 +26,15 @@ const assets = [
   'elevenex-backend-windows-x64.tar.gz',
 ];
 
-function fixture(context) {
+const newDesktopAssets = [
+  ...assets.filter(asset => asset.startsWith('elevenex-remote-runtime-') || asset.startsWith('elevenex-backend-')),
+  'elevenex-new-desktop-macos-arm64.dmg',
+];
+
+function fixture(context, includedAssets = assets) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'elevenex-manifest-'));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
-  for (const asset of assets) {
+  for (const asset of includedAssets) {
     writeFileSync(path.join(directory, asset), asset);
     const checksum = createHash('sha256').update(asset).digest('hex');
     writeFileSync(path.join(directory, `${asset}.sha256`), `${checksum}  ${asset}\n`);
@@ -38,10 +43,10 @@ function fixture(context) {
   return directory;
 }
 
-function publish(directory) {
+function publish(directory, env = {}) {
   return spawnSync(process.execPath, [path.join(__dirname, 'write-release-manifest.cjs'), directory], {
     encoding: 'utf8',
-    env: { ...process.env, RELEASE_SHA: sha, RELEASE_TAG: tag, RELEASE_PR: '123' },
+    env: { ...process.env, RELEASE_SHA: sha, RELEASE_TAG: tag, RELEASE_PR: '123', RELEASE_PROFILE: 'legacy', ...env },
   });
 }
 
@@ -87,4 +92,55 @@ test('source maps from the workflow branch cannot be published in a PR release',
   const result = publish(directory);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Source maps refer to another release/);
+});
+
+const newDesktopEnv = {
+  RELEASE_PROFILE: 'new-desktop', RELEASE_TAG: `runtime-${sha}`, RELEASE_PR: '', GITHUB_REF: 'refs/heads/feat/new-ui',
+};
+
+test('new desktop releases require only their DMG, standalone backends and remote runtimes', (context) => {
+  const directory = fixture(context, newDesktopAssets);
+  rmSync(path.join(directory, 'source-maps-manifest.json'));
+  // A new desktop release must not overwrite the legacy manifest at the same tag.
+  writeFileSync(path.join(directory, 'manifest.json'), 'legacy manifest');
+  const result = publish(directory, newDesktopEnv);
+  assert.equal(result.status, 0, result.stderr);
+  const manifest = JSON.parse(readFileSync(path.join(directory, 'manifest-new-desktop.json'), 'utf8'));
+  assert.equal(manifest.version, sha);
+  assert.equal(manifest.releaseTag, `runtime-${sha}`);
+  assert.equal(manifest.ref, 'refs/heads/feat/new-ui');
+  assert.equal(manifest.pullRequest, null);
+  assert.deepEqual(manifest.desktop.map(asset => asset.archive), ['elevenex-new-desktop-macos-arm64.dmg']);
+  assert.deepEqual(manifest.desktopRuntime, []);
+  assert.equal(manifest.sourceMaps, null);
+  assert.equal(manifest.backend.length, 4);
+  assert.equal(manifest.targets.length, 4);
+  assert.ok([...manifest.desktop, ...manifest.backend, ...manifest.targets].every(asset => /^[a-f0-9]{64}$/.test(asset.sha256)));
+  assert.equal(readFileSync(path.join(directory, 'manifest.json'), 'utf8'), 'legacy manifest');
+});
+
+test('new desktop publication rejects missing, corrupt and checksum-less assets', (context) => {
+  for (const asset of newDesktopAssets) {
+    const missing = fixture(context, newDesktopAssets);
+    rmSync(path.join(missing, asset));
+    assert.notEqual(publish(missing, newDesktopEnv).status, 0, asset);
+    const corrupt = fixture(context, newDesktopAssets);
+    writeFileSync(path.join(corrupt, asset), 'corrupt');
+    assert.match(publish(corrupt, newDesktopEnv).stderr, /Invalid checksum/, asset);
+    const noChecksum = fixture(context, newDesktopAssets);
+    rmSync(path.join(noChecksum, `${asset}.sha256`));
+    assert.notEqual(publish(noChecksum, newDesktopEnv).status, 0, asset);
+  }
+});
+
+test('new desktop publication rejects a mismatched release tag', (context) => {
+  const result = publish(fixture(context, newDesktopAssets), { ...newDesktopEnv, RELEASE_TAG: `runtime-${'c'.repeat(40)}` });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /tag does not match/);
+});
+
+test('an unknown release profile cannot silently omit required assets', (context) => {
+  const result = publish(fixture(context), { RELEASE_PROFILE: 'unknown' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unknown release profile/);
 });

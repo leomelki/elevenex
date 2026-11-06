@@ -1,0 +1,153 @@
+name: Build new desktop previews
+run-name: "New desktop — ${{ github.sha }} — @${{ github.actor }}"
+
+on:
+  push:
+    branches: [feat/new-ui]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Every pushed head gets its own build; a later push must not cancel it.
+concurrency:
+  group: new-ui-assets-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Resolve release commit
+    runs-on: ubuntu-22.04
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test release validation
+        run: node --test .github/scripts/*.test.cjs
+      - id: plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await require('./.github/scripts/resolve-release.cjs')({ github, context, core, env: {} });
+
+  build-runtime:
+    needs: prepare
+    name: Build matching backends and remote runtimes
+    uses: ./.github/workflows/reusable-build-runtime.yml
+    with:
+      source-sha: ${{ needs.prepare.outputs.sha }}
+      release-tag: ${{ needs.prepare.outputs.tag }}
+
+  build-dmg:
+    needs: prepare
+    name: Build new desktop macOS DMG
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      GIT_SHA: ${{ needs.prepare.outputs.sha }}
+      ELEVENEX_BACKEND_VERSION: ${{ needs.prepare.outputs.sha }}
+      ELEVENEX_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.4
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Initialize disk image subsystem
+        run: sudo hdiutil info > /dev/null
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Package, sign, and notarize new desktop
+        env:
+          CSC_LINK: ${{ secrets.APPLE_CERT_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID_EMAIL }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -eu
+          for key in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            test -n "$(printenv "$key")" || { echo "Missing required signing credential: $key"; exit 1; }
+          done
+          pnpm desktop:package --mac dmg --arm64 \
+            -c.mac.forceCodeSigning=true -c.mac.hardenedRuntime=true \
+            -c.mac.notarize=true -c.dmg.sign=true
+      - name: Verify signature and notarization, then stage DMG
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -eu
+          APP_PATH="apps/desktop/release/mac-arm64/Elevenex Desktop.app"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -Fx "TeamIdentifier=$APPLE_TEAM_ID"
+          xcrun stapler validate "$APP_PATH"
+          spctl --assess --type execute --verbose=2 "$APP_PATH"
+          mkdir -p dist-new-desktop
+          # Keep the legacy updater's elevenex-desktop-* asset names separate.
+          DMG_PATH="$(find apps/desktop/release -maxdepth 1 -type f -name '*.dmg' | head -n 1)"
+          test -n "$DMG_PATH" || { echo "No DMG artifact produced"; exit 1; }
+          codesign --verify --strict "$DMG_PATH"
+          cp "$DMG_PATH" dist-new-desktop/elevenex-new-desktop-macos-arm64.dmg
+          (cd dist-new-desktop && shasum -a 256 elevenex-new-desktop-macos-arm64.dmg > elevenex-new-desktop-macos-arm64.dmg.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elevenex-new-desktop-macos-arm64
+          path: dist-new-desktop/*
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish new desktop preview
+    needs: [prepare, build-runtime, build-dmg]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Validate all assets and write manifest
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_PROFILE: new-desktop
+        run: node .github/scripts/write-release-manifest.cjs artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ needs.prepare.outputs.sha }}
+          make_latest: false
+          name: "New desktop preview ${{ needs.prepare.outputs.sha }}"
+          prerelease: true
+          files: artifacts/*
+          fail_on_unmatched_files: true
+          body: |
+            New desktop (`apps/desktop`) built from `${{ needs.prepare.outputs.sha }}`.
+            Includes a signed and notarized macOS Apple Silicon DMG,
+            matching standalone Node backends for macOS arm64, Linux x64/arm64,
+            and Windows x64, plus remote runtimes for SSH setup.
+            Backend downloads use the existing `.tar.gz` format and SHA-256 checksums.
+      - name: Link release in workflow summary
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: echo "Preview downloads — https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
