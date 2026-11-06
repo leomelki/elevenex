@@ -5,12 +5,12 @@
 .frame-container::view-transition { pointer-events: none; }
 .frame-container::view-transition-group(code-editor) { animation: none; width: 100%; height: 100%; transform: none; }
 .frame-container::view-transition-old(code-editor), .frame-container::view-transition-new(code-editor) { width: 100%; height: 100%; object-fit: fill; object-position: right top; mix-blend-mode: normal; }
-/* The snapshots share the panel's clock: crossfade at mid-resize, sharp at
-   its end. Only snapshots stretch; the live editor keeps its natural scale. */
-.frame-container::view-transition-old(code-editor) { z-index: 2; background: var(--surface); animation: code-layout-out var(--dur-slow) var(--ease-in-out) both; }
-.frame-container::view-transition-new(code-editor) { z-index: 1; opacity: 1; animation: code-layout-in var(--dur-slow) var(--ease-in-out) both; }
-@keyframes code-layout-out { from { opacity: 1; filter: blur(0); } 50% { filter: blur(var(--code-transition-blur)); } to { opacity: 0; filter: blur(var(--code-transition-blur)); } }
-@keyframes code-layout-in { 0%, 50% { filter: blur(var(--code-transition-blur)); } 100% { filter: blur(0); } }
+/* The snapshots share the panel's clock: linear crossfade throughout resize, sharp
+   just before its end. Only snapshots stretch; the live editor keeps its natural scale. */
+.frame-container::view-transition-old(code-editor) { z-index: 2; background: var(--surface); animation: code-layout-out var(--dur-slow) linear both; }
+.frame-container::view-transition-new(code-editor) { z-index: 1; opacity: 1; animation: code-layout-in var(--dur-slow) linear both; }
+@keyframes code-layout-out { from { opacity: 1; filter: blur(0); } 45% { filter: blur(var(--code-transition-blur)); } 95%, to { opacity: 0; filter: blur(var(--code-transition-blur)); } }
+@keyframes code-layout-in { 0%, 45% { filter: blur(var(--code-transition-blur)); } 95%, to { filter: blur(0); } }
 .frame-container::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: var(--surface); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
 /* Cover the iframe instead of making it transparent: Chromium throttles a
    transparent cross-origin document's own layout/animation frames. */

@@ -129,9 +129,11 @@ the inner frame keeps its explicitly assigned pixel width, without receiving
 intermediate panel widths or a scale transform. Only the browser-owned snapshot
 images fit the moving panel. Blur, crossfade and panel width share the same native
 animation start time and duration (normally 280ms, shorter on a reversal).
-Snapshot capture joins that existing clock without a delay. The outgoing layout
-blurs as it fades, the images cross at the midpoint, and the incoming layout
-unblurs during the second half, becoming sharp at the panel's final width.
+Snapshot capture joins that existing clock without a delay. Fade and blur use
+linear interpolation throughout the resize: blur peaks at 45%, the images cross
+near the midpoint, and the incoming layout becomes sharp at 95% (about 266ms
+of the normal 280ms glide). This avoids a steep change concentrated in a few
+frames and leaves the editor sharp just before the panel reaches its final width.
 Collapse uses the same timeline; it does not hold the old image or add a reveal
 after resizing. The 16px maximum blur derives from glass and spacing tokens.
 Child layout preparation runs in parallel. Its acknowledgement owns readiness,

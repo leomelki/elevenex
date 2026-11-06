@@ -289,12 +289,14 @@ export default async function* (capture) {
       assert.ok(middle.some(s=>s.active && s.opacity>0.1 && s.opacity<0.9),'Editor crossfade missed the middle of the panel glide: '+JSON.stringify(samples));
       const firstBlur=intermediate.find(s=>s.active && s.blur!=='none' && s.blur!=='blur(0px)');
       assert.ok(firstBlur && firstBlur.motionTime<100,'Blur did not begin with the panel glide: '+JSON.stringify(samples));
+      const fading=samples.filter(s=>s.active && s.motionTime>40 && s.motionTime<250);
+      assert.ok(fading.length>=4 && fading.every(s=>Math.abs(s.opacity-Math.max(0,1-s.motionTime/(280*0.95)))<0.025),'Crossfade must progress linearly throughout resize: '+JSON.stringify(samples));
       const visibleBlend=samples.filter(s=>s.active && s.opacity>0.01 && s.opacity<0.99);
       const firstBlend=visibleBlend[0];
       const visibleBlendMs=visibleBlend.at(-1).time-firstBlend.time;
       assert.ok(visibleBlend.length>=4 && visibleBlendMs>=50,'Editor handoff snapped through too few visible fade frames: '+JSON.stringify(samples));
       const late=samples.filter(s=>s.motionTime>=260);
-      assert.ok(late.length && late.every(s=>s.opacity<0.02 && (s.incomingBlur==='none' || parseFloat(s.incomingBlur.slice(5))<0.5)),'Code did not finish sharp on the panel clock: '+JSON.stringify(samples));
+      assert.ok(late.length && late.every(s=>s.opacity<0.03 && (s.incomingBlur==='none' || parseFloat(s.incomingBlur.slice(5))<1)),'Code did not finish sharp on the panel clock: '+JSON.stringify(samples));
       assert.ok(!samples.some(s=>s.active && s.motionTime===null && s.time>350),'Editor added a second reveal after the panel glide: '+JSON.stringify(samples));
       const largestStep=Math.max(...samples.slice(1).map((s,i)=>Math.abs(s.width-samples[i].width)));
       assert.ok(largestStep<distance*0.65,'Panel width jumped during crossfade: '+JSON.stringify(samples));
