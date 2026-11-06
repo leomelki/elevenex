@@ -359,9 +359,10 @@ async function main() {
     node_modules: getDirectorySize(path.join(stageBackendRoot, "node_modules")),
   };
 
-  const commitSha = execSync("git rev-parse HEAD", { cwd: repoRoot })
-    .toString()
-    .trim();
+  // Isolated development builders receive a source fingerprint without .git.
+  const commitSha = process.env.ELEVENEX_BACKEND_STAGE_VERSION ||
+    execSync("git rev-parse HEAD", { cwd: repoRoot }).toString().trim();
+  if (!/^[a-f0-9]{40}$/i.test(commitSha)) throw new Error('Invalid backend stage revision');
   writeFileSync(path.join(stageBackendRoot, "version"), commitSha, "utf8");
   writeFileSync(path.join(stageBaseRoot, "version"), commitSha, "utf8");
 

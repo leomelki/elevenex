@@ -1,19 +1,21 @@
 import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { cp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { constants, createReadStream } from 'node:fs';
+import { copyFile, cp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { buildLinuxDevelopmentRuntime } from './desktop-backend-linux.mjs';
 
 /** Include dirty/untracked backend sources so a development cache cannot hide edits. */
 export async function developmentRevision(root) {
   const git = promisify(execFile);
   const paths = (await git('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--',
     'apps/backend/src', 'apps/backend/drizzle', 'apps/backend/package.json', 'packages/shared/src',
-    'pnpm-lock.yaml', 'apps/frontend/proxy.conf.json', 'scripts/bundle-electron-backend.js',
+    'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/frontend/proxy.conf.json', 'scripts/bundle-electron-backend.js',
     'scripts/stage-electron-backend.js', 'scripts/runtime-stage-utils.js',
     'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-runtime.mjs',
+    'scripts/desktop-backend-linux.mjs', 'scripts/desktop-backend-linux.Dockerfile', 'config/vscode-web-runtime.json',
     'scripts/archive-electron-backend.js', 'scripts/rebuild-electron-backend-natives.js',
   ], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })).stdout.split('\0').filter(Boolean);
   const hash = createHash('sha256').update(`${process.version}\0${process.platform}\0${process.arch}\0`);
@@ -28,7 +30,7 @@ export async function developmentRevision(root) {
 }
 
 /** Build checkout code, reusing installed dependencies/assets without a release archive. */
-export async function prepareDevelopmentBackend(root, run) {
+export async function prepareDevelopmentBackend(root, run, { linuxArchitecture, runCommand } = {}) {
   const backend = join(root, 'apps/backend');
   const require = createRequire(join(backend, 'package.json'));
   const version = await developmentRevision(root);
@@ -60,17 +62,21 @@ export async function prepareDevelopmentBackend(root, run) {
   try {
     // Curated assembly dereferences only approved runtime dependencies/assets,
     // includes this Node executable, and validates native modules before tar.
-    await run(join(root, 'scripts/desktop-backend-runtime.mjs'));
+    if (linuxArchitecture) await buildLinuxDevelopmentRuntime(root, version, linuxArchitecture, runCommand);
+    else await run(join(root, 'scripts/desktop-backend-runtime.mjs'));
     const platform = { darwin: 'macos', linux: 'linux', win32: 'windows' }[process.platform];
-    const target = `${platform}-${process.arch}`;
+    const target = linuxArchitecture ? `linux-${linuxArchitecture}` : `${platform}-${process.arch}`;
     const archiveName = `elevenex-backend-${target}.tar.gz`;
     const archive = join(root, 'dist-runtime', archiveName);
     const checksum = (await readFile(`${archive}.sha256`, 'utf8')).split(/\s/)[0];
     if (!/^[a-f0-9]{64}$/.test(checksum)) throw new Error('Invalid development runtime checksum');
-    await cp(archive, join(directory, archiveName));
+    // APFS can clone the large archive without allocating another full copy.
+    await copyFile(archive, join(directory, archiveName), constants.COPYFILE_FICLONE);
     await writeFile(join(directory, 'remote-archive.json'), `${JSON.stringify({ version, target, digest: checksum })}\n`);
     console.log(`SSH development build ready for ${target}.`);
   } catch (error) {
+    // An explicitly requested target must be ready before Electron starts.
+    if (linuxArchitecture) throw error;
     console.warn(`SSH development build unavailable: ${error.message}. Local development remains available.`);
   }
   console.log(`Using local development backend ${version} (no GitHub download).`);

@@ -35,6 +35,7 @@ Angular version. Install with the repository's pinned pnpm:
 ```sh
 pnpm install
 pnpm desktop:dev
+pnpm desktop:dev --linux
 pnpm desktop:preview
 pnpm desktop:build
 pnpm desktop:test
@@ -70,11 +71,34 @@ dependencies, migrations and assets. Mutable data remains under
 launch development (including the `better-sqlite3` and `node-pty` native modules).
 The launcher also attempts to assemble a standalone SSH archive with bundled
 Node and validated native dependencies. In development, a matching server receives
-that custom build over SSH, without trying GitHub. This currently requires the
-client and server to have the same OS and architecture; a Mac build cannot run
-on Linux. Failed archive assembly leaves local development available and reports
-the reason in the terminal. A remote connection then reports the missing target
-instead of installing an unrelated release.
+that custom build over SSH, without trying GitHub. By default this archive matches
+the client's OS and architecture. Failed default archive assembly leaves local
+development available and reports the reason in the terminal.
+
+To develop on a Mac and connect to a **Linux ARM64** server, start Docker Desktop
+or OrbStack, then run:
+
+```sh
+pnpm desktop:dev --linux
+```
+
+Electron, Angular HMR and **This Mac** still run locally. The launcher bundles your
+current backend code (including uncommitted edits), then uses Docker to install
+the lockfile's Linux dependencies, bundle portable Node and validate the runtime.
+Docker caches the dependency/build layers between launches. Only manifests and
+runtime inputs enter the isolated build context; the Mac's installed dependencies
+are left alone. The explicit Linux build must succeed before Electron opens.
+The first build requires internet access and can take several minutes. The builder
+uses the [official Node image on ECR Public](https://gallery.ecr.aws/docker/library/node)
+with the same Node version as the launcher, and the repository's pinned pnpm.
+
+Add/select your Linux server through the normal SSH machine flow. It receives
+the development archive automatically; no manual server build or release upload
+is needed. `--linux --arm64` is equivalent; use `--linux --x64` for a Linux x64
+server. These flags select the SSH runtime, not the desktop app's platform.
+The server needs a compatible glibc-based Linux distribution (the build uses
+Debian Bookworm), rather than Alpine/musl. The container validates native runtime
+dependencies; a real server connection still requires testing on the target.
 
 Development revisions include dirty/untracked backend sources. Remote development
 data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.

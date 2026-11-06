@@ -50,6 +50,17 @@ test('development never transfers another target, a stale build or modified byte
   await assert.rejects(options.archive(root, release, controller.signal, () => {}), /abort/i);
 });
 
+test('a Mac development launcher can provide a Linux ARM64 archive using the detected server target', async t => {
+  const { root, directory, options } = await setup(t);
+  const release = backendRelease({ version, tag: `runtime-${version}` }, 'linux', 'arm64');
+  const bytes = archive();
+  await writeFile(join(directory, release.archiveName), bytes);
+  await writeFile(join(directory, 'remote-archive.json'), JSON.stringify({ version, target: release.target, digest: createHash('sha256').update(bytes).digest('hex') }));
+  const result = await options.archive(root, release, new AbortController().signal, () => {});
+  assert.equal(result.path, join(directory, 'elevenex-backend-linux-arm64.tar.gz'));
+  await assert.rejects(options.archive(root, backendRelease({ version, tag: `runtime-${version}` }, 'linux', 'x64'), new AbortController().signal, () => {}), /desktop:dev --linux --x64/);
+});
+
 test('development identity follows dirty and untracked sources but excludes its generated stamp', async t => {
   const { root } = await setup(t); const run = promisify(execFile);
   const git = (...args) => run('git', args, { cwd: root });

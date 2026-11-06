@@ -28,7 +28,9 @@ export function developmentRemote(isPackaged: boolean, env: NodeJS.ProcessEnv = 
       const metadata: unknown = descriptorInfo?.isFile() && descriptorInfo.size <= 4096 ? JSON.parse(await readFile(descriptor, 'utf8')) : null;
       if (!metadata || typeof metadata !== 'object' || !('version' in metadata) || metadata.version !== release.version
         || !('target' in metadata) || metadata.target !== release.target) {
-        throw failure('installation', 'compatibility', `A development runtime for ${release.target} is unavailable. Build on the same OS and architecture as the server and restart pnpm desktop:dev.`, 'edit');
+        const command = release.target === 'linux-arm64' ? 'pnpm desktop:dev --linux'
+          : release.target === 'linux-x64' ? 'pnpm desktop:dev --linux --x64' : 'pnpm desktop:dev on the same OS and architecture as the server';
+        throw failure('installation', 'compatibility', `A development runtime for ${release.target} is unavailable. Restart ${command}.`, 'edit');
       }
       if (!('digest' in metadata) || typeof metadata.digest !== 'string' || !/^[a-f0-9]{64}$/.test(metadata.digest)) throw new Error('Invalid development archive checksum');
       const path = join(directory, release.archiveName);

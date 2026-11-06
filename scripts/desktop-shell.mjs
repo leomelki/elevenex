@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { stageBackendRelease } from './desktop-backend-release.mjs';
 import { prepareDevelopmentBackend } from './desktop-backend-development.mjs';
+import { developmentLinuxArchitecture } from './desktop-backend-linux.mjs';
 import { generateDesktopIcons } from './desktop-icons.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -22,11 +23,16 @@ const children = new Set();
 let stopping = false;
 
 function launch(entry, args = [], cwd = root, env = {}) {
+  return launchCommand(process.execPath, entry ? [entry, ...args] : args, cwd, env);
+}
+
+function launchCommand(command, args, cwd = root, env = {}) {
   if (stopping) throw new Error('Desktop development is stopping');
-  const child = spawn(process.execPath, entry ? [entry, ...args] : args, {
+  const child = spawn(command, args, {
     cwd, stdio: 'inherit', env: { ...process.env, ...env },
   });
   children.add(child);
+  child.once('error', () => children.delete(child));
   child.once('exit', () => children.delete(child));
   return child;
 }
@@ -74,10 +80,13 @@ async function stopChildren() {
   await Promise.allSettled([...children].map((child) => completed(child)));
 }
 
-async function dev() {
+async function dev(args) {
+  const linuxArchitecture = developmentLinuxArchitecture(args);
   await compileMain();
   await syncTokens();
-  const backendEnvironment = await prepareDevelopmentBackend(root, run);
+  const backendEnvironment = await prepareDevelopmentBackend(root, run, {
+    linuxArchitecture, runCommand: (command, args, cwd) => completed(launchCommand(command, args, cwd)),
+  });
   const port = Number(process.env['ELEVENEX_DESKTOP_PORT'] ?? 4300);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid ELEVENEX_DESKTOP_PORT');
   const url = `http://127.0.0.1:${port}`;
@@ -158,7 +167,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { void st
 try {
   const [mode, ...args] = process.argv.slice(2);
   switch (mode) {
-    case 'dev': await dev(); break;
+    case 'dev': await dev(args); break;
     case 'build': await build(); break;
     case 'preview':
       await compileMain();
@@ -176,6 +185,7 @@ try {
       await run(null, ['--test', 'test/preload.test.cjs', 'test/code-security.test.cjs', 'test/code-transfers.test.cjs', 'test/code-frame-router.test.cjs', 'test/code-artifact.test.cjs', 'test/code-save-recovery.test.cjs', 'test/code-compact-layout.test.cjs', 'test/code-files-focus.test.cjs', 'test/security.test.cjs', 'test/machines.test.cjs', 'test/backend-install.test.cjs', 'test/backend-development.test.cjs', 'test/backend-manager.test.cjs', 'test/backend-process.test.cjs', 'test/backend-client.test.cjs', 'test/ipc.test.cjs', 'test/remote.test.cjs', 'test/remote-wire.test.cjs', 'test/remote-audit.test.cjs', 'test/remote-recovery.test.cjs', 'test/remote-install.test.cjs', 'test/remote-development.test.cjs', 'test/remote-update.test.cjs', 'test/ssh-native.test.cjs'], desktop);
       await run(null, ['--test', 'scripts/desktop-capture/test/options.test.mjs', 'scripts/desktop-capture/test/lifecycle.test.mjs']);
       await run(null, ['--test', 'scripts/desktop-icons.test.mjs']);
+      await run(null, ['--test', 'scripts/desktop-backend-linux.test.mjs']);
       // ng test transpiles TypeScript; tsc also checks the negative IPC type cases.
       await run(tsc, ['-p', join(renderer, 'tsconfig.spec.json'), '--noEmit']);
       await run(ng, ['test', '--watch=false'], renderer);
@@ -183,7 +193,7 @@ try {
     case 'lint':
       await run(join(dirname(desktopRequire.resolve('eslint/package.json')), 'bin/eslint.js'), [
         '--config', 'apps/desktop/eslint.config.mjs', 'apps/desktop/src', 'apps/renderer/src', 'packages/shared/src', '--max-warnings', '0',
-        'scripts/desktop-shell.mjs', 'scripts/desktop-icons.mjs', 'scripts/desktop-icons-render.cjs', 'scripts/desktop-icons.test.mjs', 'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-release.mjs', 'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-capture', 'apps/renderer/capture', 'apps/renderer/preview', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
+        'scripts/desktop-shell.mjs', 'scripts/desktop-icons.mjs', 'scripts/desktop-icons-render.cjs', 'scripts/desktop-icons.test.mjs', 'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-release.mjs', 'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-backend-linux.mjs', 'scripts/desktop-backend-linux.test.mjs', 'scripts/desktop-capture', 'apps/renderer/capture', 'apps/renderer/preview', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
       ]);
       break;
     default: throw new Error('Use dev, preview, build, package, test or lint');
