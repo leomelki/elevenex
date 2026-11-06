@@ -104,3 +104,13 @@ negotiate up to eight packets through `videoWindow: 8`; older peers retain three
 Hiding/disconnecting a viewer closes encoders while retaining task pages. Older
 clients retain JPEG. CDP capture still supplies JPEG input to the encoder; no raw
 or zero-copy capture, audio or WebRTC is implied by this capability.
+
+`RuntimeBrowserInput` owns the page's ordered human writes and pressed state.
+Hidden/noninteractive presentations, resize, navigation and ownership changes
+invalidate queued writes and release held keys/buttons/composition. Agent mouse
+actions await that cleanup. Editing intents use fixed Blink commands so the
+viewing device's undo/redo/select-all do not depend on the host OS. Focus emulation
+is page-owned rather than bringing companion pages to front on every heartbeat.
+Congestion reduction applies to the attainable frame rate after CPU/pixel budgets.
+See the [remote interaction audit](../../../../docs/task-browser-remote-audit.md)
+for this revision's behavior and the remaining feature boundaries.

@@ -103,8 +103,7 @@ export class RuntimeVideoQuality {
           Number.isFinite(this.baselineRtt)
             ? ((this.maximumWindow - 1) * 1000) / Math.max(1, this.baselineRtt)
             : 60,
-        ) *
-          0.8 ** this.tier,
+        ),
       ),
     );
     let scale = Math.min(
@@ -120,6 +119,9 @@ export class RuntimeVideoQuality {
       Math.min(fps, hardware ? 15 : 10),
       Math.min(fps, Math.floor(pixelsPerSecond / requestedPixels)),
     );
+    // Apply congestion to the achievable rate, not the hardware ceiling. Otherwise
+    // a resource-limited 30 FPS view can absorb several reductions without slowing.
+    fps = Math.max(2, Math.floor(fps * 0.8 ** this.tier));
     const memoryPixels = resources.memory / (count * 48);
     scale = Math.min(
       scale,

@@ -6,6 +6,7 @@ import type {
   TaskBrowserStreamEvent,
 } from '@elevenex/shared';
 import { RuntimeBrowserNetwork, runtimeUrl } from './runtime-network.js';
+import { RuntimeBrowserInput } from './runtime-input.js';
 
 export interface RuntimeFrame {
   readonly sequence: number;
@@ -41,6 +42,7 @@ export class RuntimeBrowserTab {
   private page?: Page;
   private context?: BrowserContext;
   private cdp?: CDPSession;
+  private input?: RuntimeBrowserInput;
   private disposed = false;
   private crashed = false;
   private layoutRevision = 0;
@@ -85,6 +87,7 @@ export class RuntimeBrowserTab {
     this.network = network;
   }
   takeover(needs = false): void {
+    void this.input?.reset();
     this.ownership++;
     this.waiting ||= this.driver === 'agent';
     this.driver = needs ? 'needs' : 'you';
@@ -92,6 +95,7 @@ export class RuntimeBrowserTab {
     this.target = undefined;
   }
   handoff(sessionId: number): void {
+    void this.input?.reset();
     this.ownership++;
     this.agentSessionId = sessionId;
     this.driver = 'agent';
@@ -139,6 +143,9 @@ export class RuntimeBrowserTab {
     this.page = page;
     this.crashed = false;
     this.cdp = await this.context.newCDPSession(page);
+    this.input = new RuntimeBrowserInput(page, this.cdp);
+    // Companion views must not steal document focus from one another on layout heartbeats.
+    await this.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
     // Headless Chromium target metadata does not report document.title changes.
     // This page-owned binding accepts only bounded human-facing title data.
     const bindingName = '__elevenexPageTitle';
@@ -155,8 +162,11 @@ export class RuntimeBrowserTab {
           const title = document.title.replace(/\s+/gu, ' ').trim().slice(0, 200);
           if (title === previous) return;
           previous = title;
-          const send = Reflect.get(globalThis, name);
-          if (typeof send === 'function') void Promise.resolve(send(location.href, title)).catch(() => undefined);
+          const send: unknown = Reflect.get(globalThis, name);
+          if (typeof send === 'function') {
+            const result: unknown = Reflect.apply(send, globalThis, [location.href, title]);
+            void Promise.resolve(result).catch(() => undefined);
+          }
         };
         // The observers and binding die with their owning document/page.
         const head = new MutationObserver(publish);
@@ -229,6 +239,7 @@ export class RuntimeBrowserTab {
     page.on('framenavigated', (frame) => {
       if (this.page !== page) return;
       if (frame === page.mainFrame()) {
+        void this.input?.reset();
         this.navigation++;
         this.generation++;
         try {
@@ -399,7 +410,13 @@ export class RuntimeBrowserTab {
     this.visible = visible;
     this.interactive = interactive;
     if (changed) this.changed();
+    if (visible && !interactive) {
+      await this.input?.reset();
+      if (!current()) return;
+    }
     if (!visible) {
+      await this.input?.reset();
+      if (!current()) return;
       this.frame = undefined;
       this.needsSnapshot = true;
       this.completeFrame(null);
@@ -414,6 +431,8 @@ export class RuntimeBrowserTab {
       viewport.width !== this.viewport.width ||
       viewport.height !== this.viewport.height;
     if (resized || pixelRatio !== this.pixelRatio) {
+      await this.input?.reset();
+      if (!current()) return;
       await this.stopFrames();
       if (!current()) return;
       this.frame = undefined;
@@ -437,8 +456,6 @@ export class RuntimeBrowserTab {
       });
       if (!current()) return;
     }
-    await this.page?.bringToFront();
-    if (!current()) return;
     await this.startFrames();
   }
   private async startFrames(): Promise<void> {
@@ -615,82 +632,9 @@ export class RuntimeBrowserTab {
       }
       return {};
     }
-    if (input.kind === 'pointer')
-      await this.cdp!.send('Input.dispatchMouseEvent', {
-        type:
-          input.type === 'down'
-            ? 'mousePressed'
-            : input.type === 'up'
-              ? 'mouseReleased'
-              : 'mouseMoved',
-        x: input.x,
-        y: input.y,
-        button: input.button,
-        buttons: input.buttons,
-        clickCount: input.clicks,
-        modifiers: input.modifiers,
-      });
-    else if (input.kind === 'wheel')
-      await this.cdp!.send('Input.dispatchMouseEvent', {
-        type: 'mouseWheel',
-        x: input.x,
-        y: input.y,
-        deltaX: input.deltaX,
-        deltaY: input.deltaY,
-        modifiers: input.modifiers,
-      });
-    else if (input.kind === 'text')
-      await this.page!.keyboard.insertText(input.text);
-    else if (input.kind === 'composition')
-      await this.cdp!.send('Input.imeSetComposition', {
-        text: input.text,
-        selectionStart: input.selectionStart,
-        selectionEnd: input.selectionEnd,
-      });
-    else if (input.kind === 'edit')
-      await this.page!.keyboard.press(
-        input.operation === 'undo'
-          ? 'ControlOrMeta+Z'
-          : 'ControlOrMeta+Shift+Z',
-      );
-    else if (input.kind === 'key')
-      await this.cdp!.send('Input.dispatchKeyEvent', {
-        type: input.type === 'down' ? 'keyDown' : 'keyUp',
-        key: input.key,
-        code: input.code,
-        windowsVirtualKeyCode: input.keyCode,
-        modifiers: input.modifiers,
-        ...(input.type === 'down' && input.key === 'Enter'
-          ? { text: '\r' }
-          : {}),
-      });
-    else if (input.kind === 'clipboard') {
-      if (input.operation === 'selectAll')
-        await this.page!.keyboard.press('ControlOrMeta+A');
-      else if (input.operation === 'copy' || input.operation === 'cut') {
-        const text = await this.page!.evaluate(() => {
-          const active = document.activeElement;
-          if (active instanceof HTMLInputElement && active.type === 'password')
-            return '';
-          if (
-            active instanceof HTMLInputElement ||
-            active instanceof HTMLTextAreaElement
-          )
-            return active.value.slice(
-              active.selectionStart ?? 0,
-              active.selectionEnd ?? 0,
-            );
-          return getSelection()?.toString() ?? '';
-        });
-        current();
-        if (input.operation === 'cut' && text)
-          await this.page!.keyboard.press('Backspace');
-        this.changed();
-        return { clipboard: text.slice(0, 65536) };
-      } else throw new Error('Paste must be provided by the viewing device');
-    }
+    const result = await this.input!.dispatch(input, current);
     this.changed();
-    return {};
+    return result;
   }
   async inspect(x: number, y: number): Promise<BrowserElement | null> {
     return this.page!.evaluate(
@@ -748,6 +692,8 @@ export class RuntimeBrowserTab {
     total?: number,
   ): Promise<void> {
     this.assertAgent(generation, sessionId, true);
+    await this.input?.settled();
+    this.assertAgent(generation, sessionId, true);
     const target = await this.inspect(x, y);
     this.assertAgent(generation, sessionId, true);
     if (!target || target.tag === 'element') {
@@ -781,6 +727,8 @@ export class RuntimeBrowserTab {
     atX = this.viewport.width / 2,
     atY = this.viewport.height / 2,
   ): Promise<void> {
+    this.assertAgent(generation, sessionId, true);
+    await this.input?.settled();
     this.assertAgent(generation, sessionId, true);
     await this.page!.mouse.move(atX, atY);
     this.assertAgent(generation, sessionId, true);
@@ -845,6 +793,8 @@ export class RuntimeBrowserTab {
     this.error = null;
     this.loading = true;
     this.takeover();
+    await this.input?.reset();
+    this.input = undefined;
     await cdp?.detach().catch(() => undefined);
     await page?.close({ runBeforeUnload: false }).catch(() => undefined);
   }

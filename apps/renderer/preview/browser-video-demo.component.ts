@@ -1,11 +1,17 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import type { ElevenexBridge, TaskBrowserFrame, TaskBrowserSurface } from '@elevenex/shared';
+import type { ElevenexBridge, TaskBrowserFrame, TaskBrowserSurface, TaskBrowserStreamInput } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../src/app/backend/backend-client.service';
 import { BrowserStreamComponent } from '../src/app/task-browser/browser-stream.component';
 
-class VideoFixture implements Pick<ElevenexBridge, 'onTaskBrowserFrame' | 'taskBrowserFrameAck'> {
+class VideoFixture implements Pick<ElevenexBridge, 'onTaskBrowserFrame' | 'taskBrowserFrameAck' | 'taskBrowserInput'> {
   private listener?: (frame: TaskBrowserFrame) => void;
   readonly acknowledgments: { sequence: number; decoded?: boolean }[] = [];
+  readonly inputs: TaskBrowserStreamInput[] = [];
+  async taskBrowserInput(_scope: string, _task: number, _tab: string, generation: number, input: TaskBrowserStreamInput): Promise<number> {
+    if (this.inputs.length >= 128) this.inputs.shift();
+    this.inputs.push(input);
+    return generation;
+  }
   onTaskBrowserFrame(listener: (frame: TaskBrowserFrame) => void): () => void {
     this.listener = listener;
     return () => { this.listener = undefined; };

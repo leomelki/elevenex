@@ -56,6 +56,26 @@ and text order, and drops queued work on hidden/disconnected/changed authority.
 IME, Unicode, editing and clipboard use narrowly typed human-only adapters.
 Neither pixels nor input are persisted or logged.
 
+`BrowserHumanInput` owns DOM gestures and composition; `BrowserInputLane` owns
+bounded delivery and authority. Composition updates coalesce until their commit,
+AltGr/Option characters retain native text entry, and undo/redo use editing intents.
+Pointer capture cancellation and focus loss release held input. Motion coalescing
+preserves button/modifier changes; wheel coalescing preserves the target and modifiers.
+The host owns a separate page input lane and cancels/releases held gestures when
+the presentation hides, resizes, navigates or hands control away. Blink editing
+commands keep undo/redo/select-all independent of the remote host's operating system.
+
+The display reuses its canvas backing store until dimensions change. Task changes
+and hidden presentations clear old pixels; asynchronous JPEG/video output cannot
+paint into a replacement task. Frame receipts retain the originating task identity.
+Decoder support checks, output callbacks and errors are guarded by decoder lifetime.
+These changes keep the existing wire contract, including older JPEG/HTTP hosts.
+
+`scenarios/browser-stream.mjs` exercises the production stream component in the
+`/browser-video` preview with actual Chromium pixels, managed FFmpeg H.264, trusted
+keyboard/IME input, both themes, a narrow reduced-motion view and display pause.
+It uses an isolated preview bridge; it does not establish external SSH behavior.
+
 ## Driver ownership and privacy
 
 Each tab has one authoritative driver and a monotonic generation. User-created

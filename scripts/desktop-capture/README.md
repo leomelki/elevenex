@@ -128,6 +128,13 @@ checks must inspect the isolated child separately.
 
 ## Motion
 
+`scenarios/browser-stream.mjs` checks the production remote-display component
+through `/browser-video`, with real Chromium pixels and managed FFmpeg H.264,
+trusted keyboard/IME input, both themes, narrow reduced motion and display pause.
+Use `--url http://127.0.0.1:4310` against `pnpm desktop:preview`. The bridge is an
+isolated preview provider; host input/transport and profiles have native integration
+tests. This capture is not an external SSH/WAN or packaged-app test.
+
 `scenarios/browser-tabs.mjs` checks the shared Browser/Terminal tab strip through
 the Browser preview: middle selection, idle dividers and hover suppression,
 natural wheel/trackpad scrolling, metadata refreshes, keyboard selection/closing,

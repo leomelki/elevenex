@@ -166,16 +166,24 @@ describe('adaptive interactive video', () => {
     const healthy = new RuntimeVideoQuality(settings),
       slow = new RuntimeVideoQuality(settings);
     for (let n = 0; n < 20; n++) slow.encoded(100);
-    expect(slow.select(viewport, true, plenty, 1).fps).toBeLessThan(
-      healthy.select(viewport, true, plenty, 1).fps,
+    expect(slow.select(viewport, true, plenty, 1, 0).fps).toBeLessThan(
+      healthy.select(viewport, true, plenty, 1, 0).fps,
     );
     healthy.acknowledged(200, 0);
     expect(healthy.window(8, 30)).toBe(7);
     expect(healthy.window(3, 30)).toBe(3);
     const before = healthy.select(viewport, true, plenty, 1, 0);
+    expect(before.fps).toBeLessThan(settings.maxFps);
     for (let n = 0; n < 6; n++) healthy.acknowledged(500, 3000 + n * 1000);
     expect(healthy.select(viewport, true, plenty, 1, 9000).fps).toBeLessThan(
       before.fps,
+    );
+    const steady = new RuntimeVideoQuality(settings);
+    steady.acknowledged(500, 0);
+    const steadyRate = steady.select(viewport, true, plenty, 1, 0).fps;
+    for (let n = 1; n < 10; n++) steady.acknowledged(500, n * 1000);
+    expect(steady.select(viewport, true, plenty, 1, 10000).fps).toBe(
+      steadyRate,
     );
   });
   it('reduces resolution promptly, recovers slowly, and preserves aspect after a real viewport change', () => {

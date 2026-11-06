@@ -55,10 +55,16 @@ export class BrowserInputLane {
       input.kind === "pointer" &&
       input.type === "move" &&
       previous?.kind === "pointer" &&
-      previous.type === "move"
+      previous.type === "move" &&
+      previous.buttons === input.buttons &&
+      previous.modifiers === input.modifiers
     )
       this.queue[this.queue.length - 1] = input;
-    else if (input.kind === "wheel" && previous?.kind === "wheel")
+    else if (input.kind === "composition" && previous?.kind === "composition")
+      this.queue[this.queue.length - 1] = input;
+    else if (input.kind === "wheel" && previous?.kind === "wheel" &&
+      previous.x === input.x && previous.y === input.y &&
+      previous.modifiers === input.modifiers)
       this.queue[this.queue.length - 1] = {
         ...input,
         deltaX: Math.max(

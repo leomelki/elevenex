@@ -28,4 +28,50 @@ describe("Browser H.264 allocation boundary", () => {
     ).rejects.toThrow("unavailable");
     decoder.destroy();
   });
+  it('does not resurrect a decoder when codec support resolves after reset or destruction', async () => {
+    let supported!: (result: { supported: boolean }) => void;
+    const constructed = vi.fn();
+    class Decoder {
+      static isConfigSupported = () => new Promise(resolve => { supported = resolve; });
+      constructor() { constructed(); }
+    }
+    vi.stubGlobal('VideoDecoder', Decoder);
+    for (const dispose of [false, true]) {
+      const decoder = new BrowserVideoDecoder();
+      const result = decoder.decode({ epoch: 'epoch', codec: 'avc1.42E02A', key: true, timestamp: 0, data: sps() });
+      if (dispose) decoder.destroy(); else decoder.reset();
+      supported({ supported: true });
+      await expect(result).rejects.toThrow('unavailable');
+      decoder.destroy();
+    }
+    expect(constructed).not.toHaveBeenCalled();
+  });
+  it('closes late frames and ignores errors from a retired decoder', async () => {
+    const instances: Decoder[] = [];
+    class Decoder {
+      static isConfigSupported = async () => ({ supported: true });
+      state = 'configured';
+      constructor(readonly callbacks: VideoDecoderInit) { instances.push(this); }
+      configure(): void { /* Synthetic decoder, no native allocations. */ }
+      decode(): void { /* Output is controlled to exercise callback races. */ }
+      close(): void { this.state = 'closed'; }
+    }
+    vi.stubGlobal('VideoDecoder', Decoder);
+    vi.stubGlobal('EncodedVideoChunk', class {});
+    const decoder = new BrowserVideoDecoder();
+    const video = { epoch: 'old', codec: 'avc1.42E02A' as const, key: true, timestamp: 0, data: sps() };
+    const old = decoder.decode(video);
+    const rejected = expect(old).rejects.toThrow('interrupted');
+    await Promise.resolve(); decoder.reset(); await rejected;
+    const next = decoder.decode({ ...video, epoch: 'new' });
+    await Promise.resolve();
+    const stale = { close: vi.fn() } as unknown as VideoFrame;
+    instances[0]!.callbacks.output(stale);
+    instances[0]!.callbacks.error(new DOMException('Retired decoder failed'));
+    expect(stale.close).toHaveBeenCalledOnce();
+    const fresh = { close: vi.fn() } as unknown as VideoFrame;
+    instances[1]!.callbacks.output(fresh);
+    expect(await next).toBe(fresh);
+    fresh.close(); decoder.destroy();
+  });
 });

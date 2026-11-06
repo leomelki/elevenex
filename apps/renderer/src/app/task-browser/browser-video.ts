@@ -89,6 +89,7 @@ export class BrowserVideoDecoder {
     reject(error: Error): void;
   };
   private disposed = false;
+  private revision = 0;
   async decode(
     video: NonNullable<TaskBrowserFrame["video"]>,
   ): Promise<VideoFrame> {
@@ -122,23 +123,25 @@ export class BrowserVideoDecoder {
       if (!video.key || !browserVideoSize(video.data))
         throw new Error("Invalid video keyframe");
       this.reset();
+      const revision = this.revision;
       const config: VideoDecoderConfig = {
         codec: video.codec,
         optimizeForLatency: true,
       };
       if (
         !(await VideoDecoder.isConfigSupported(config)).supported ||
-        this.disposed
+        this.disposed || revision !== this.revision
       )
         throw new Error("Video codec unavailable");
       this.decoder = new VideoDecoder({
         output: (frame) => {
+          if (revision !== this.revision || this.disposed) { frame.close(); return; }
           const pending = this.pending;
           this.pending = undefined;
           if (pending) pending.resolve(frame);
           else frame.close();
         },
-        error: () => this.reset(),
+        error: () => { if (revision === this.revision) this.reset(); },
       });
       this.decoder.configure(config);
       this.epoch = video.epoch;
@@ -166,6 +169,7 @@ export class BrowserVideoDecoder {
     }
   }
   reset(): void {
+    this.revision++;
     this.pending?.reject(new Error("Video decoding interrupted"));
     this.pending = undefined;
     if (this.decoder && this.decoder.state !== "closed") this.decoder.close();

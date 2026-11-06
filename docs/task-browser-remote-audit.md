@@ -1,0 +1,76 @@
+# Remote browser interaction audit
+
+Reviewed 2026-11-06 against the current desktop, renderer and task-machine host.
+The remote browser already has persistent isolated profiles, real Chromium,
+private multiplexed transport, bounded H.264/JPEG, explicit driver generations,
+companion windows and legacy HTTP/JPEG compatibility. This revision concentrates
+on correctness and responsiveness within those boundaries.
+
+## Implemented
+
+| Gap | Result |
+| --- | --- |
+| IME sent only a final string | Live composition updates, bounded coalescing, explicit cancel and one commit. |
+| Option/AltGr characters blocked by key handling | Printable input retains the native text event while remote key events remain ordered. |
+| Undo/redo and select-all interpreted using the host OS | Human edit intents invoke fixed Blink commands; no arbitrary editor/CDP command crosses the bridge. |
+| Held keys/buttons survived focus loss and hidden presentations | Renderer focus/pointer-capture cleanup and a page-owned host input lane release keys/buttons and cancel composition/drag. Host cleanup also covers navigation, resize and handoff. |
+| Pointer moves always declared no button; double clicks always counted as one | Held button follows a drag, with bounded double/triple-click counting (500 ms, four CSS pixels). |
+| Coalescing crossed scroll targets or modifier/button changes | Coalescing preserves target and modifier/button boundaries; only consecutive uncommitted composition updates replace each other. |
+| Companion layout heartbeats repeatedly brought pages to front | Page-owned focus emulation avoids periodic focus stealing between presentations. |
+| Every displayed frame reallocated the canvas | Reuse the backing store until frame dimensions change. |
+| Late frames/codec callbacks could affect a replacement task/decoder | Clear pixels on hide/task change; reject stale decode work, close retired frames, ignore retired errors and acknowledge the original task. |
+| Congestion reduced a theoretical ceiling without reducing the actual resource-limited rate | Apply congestion reduction to the achievable frame rate, retaining steady-RTT behavior. |
+
+No new dependency, wire method, network permission or agent observation channel
+is introduced. Input still stops after an unknown delivery outcome; cleanup only
+releases held state and never retries writing or navigation.
+
+## Remaining gaps and implementation boundaries
+
+| Priority | Gap | Appropriate next implementation |
+| --- | --- | --- |
+| High | Uploads and downloads | Human-only, viewer-bound transfer IDs; bounded streamed files, device dialogs in main, path confinement on the host, cancellation and cleanup with the viewer. Never buffer arbitrary files in renderer IPC or expose host paths. |
+| High | OAuth popups and dialogs | Adopt bounded popup tabs in the same task profile while preserving opener semantics and task network policy. Dialog IDs must bind to the document/driver generation; display and resolve them through human-only chrome. |
+| High | Cursor shape, link preview and context menu | Narrow human-only presentation metadata, enum-validated cursors, sanitized link locations and explicit context actions. Handle iframe/shadow-root targets and reject stale pointer results. Do not send arbitrary CSS cursor URLs. |
+| High | Clipboard in frames/shadow roots, rich clipboard and page Clipboard API | Respect the focused frame and selection, support bounded MIME types, and require current human ownership. Current copy/cut remains text-only and main-document based. |
+| Medium | Native browser shortcuts, find, zoom, custom viewports and hard reload | Route explicit browser-chrome intents to the task owner; keep page shortcuts scoped to the focused page and logical viewport separate from encoded resolution. |
+| Medium | Audio, media permissions and accessibility | Separate owned media/accessibility adapters with explicit permission and resource lifetimes. Pixels alone cannot provide native screen-reader semantics or audio. |
+| Medium | HTML drag-and-drop, file drops and touch gestures | Add typed drag/touch lifecycles and cancellation beyond the repaired mouse dragging path; file drops should reuse the transfer boundary. |
+| Medium | Sharper idle text and lower capture/encode cost | Measure real WAN latency/quality first. CDP JPEG → H.264 still requires decoding/re-encoding and chroma subsampling; examine a full-resolution idle refresh or native capture before introducing another transport. |
+| Separate policy | Agent DOM/AX, screenshots, text entry, evaluation and debugging | The current tool deliberately withholds page observations. Implementing these requires an explicit privacy/observation design; this interaction revision preserves that policy. |
+| Separate product scope | Multiple spectators, web/mobile clients, profile import and passkeys | Add authenticated presentation gateways and scoped identity/permission ownership; persistent task profiles do not imply access to the user's ordinary browser profile. |
+
+## Research and verification
+
+[T3 Code's server browser](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/preview/ServerBrowser.ts)
+provides useful comparison points for viewer-owned pressed keys/buttons, clipboard,
+file transfer, popup and dialog lifetimes. Its framework and security assumptions
+are independent of Elevenex's.
+[Chromium's Input protocol](https://chromedevtools.github.io/devtools-protocol/tot/Input/)
+defines fixed editing commands, held-button state and composition cancellation;
+the APIs used here were also checked against the locked Playwright protocol types.
+[WebCodecs](https://www.w3.org/TR/webcodecs/)
+defines asynchronous codec support and decoder/frame resource ownership.
+
+Focused regressions use real sandboxed Chromium for composition, editing, repeat,
+cleanup and rejected stale input. Renderer tests exercise the production component
+through DOM events, frame/task races, backing-store reuse and retired decoder
+callbacks. The reusable native capture is
+`scripts/desktop-capture/scenarios/browser-stream.mjs`, against
+`pnpm desktop:preview` on port 4310. It uses real Chromium pixels and managed
+FFmpeg H.264 through the production component with a preview-only bridge.
+This is neither a WAN benchmark nor a packaged/foreign-OS verification.
+
+Delivery verification: 51 browser-host tests, 162 desktop tests, seven capture-tool
+tests and 658 renderer tests pass. Desktop lint/build, backend production TypeScript,
+typed lint for the new host input modules and the native Electron smoke pass.
+The modified tab also passes typed lint with its pre-existing formatting differences
+excluded from that check. The final capture report is
+`artifacts/desktop-capture/browser-stream-final/report.json` (`verified: true`, no
+errors/warnings); all four PNGs were inspected. The preview process was stopped.
+The repository scripts ran directly through Node because the installed pnpm tried
+to download its pinned manager and could not fetch it. Dependencies were unchanged.
+
+An additional whole-backend test-source TypeScript check still reports pre-existing
+errors in unchanged test fixtures, including older browser integration tests;
+the production-only TypeScript check and the changed input tests pass.

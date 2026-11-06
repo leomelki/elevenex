@@ -11,6 +11,26 @@ function deferred<T>() {
 }
 const text = (value: string) => ({ kind: "text" as const, text: value });
 describe("Browser human input lane", () => {
+  it('coalesces composition updates but preserves their commit and scroll targets/modifiers', async () => {
+    const pending = deferred<number>(), dispatch = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(1);
+    const lane = new BrowserInputLane(dispatch, vi.fn());
+    lane.authority(1, 'you', true);
+    lane.send(text('blocking'));
+    lane.send({ kind: 'composition', text: 'に', selectionStart: 1, selectionEnd: 1 });
+    lane.send({ kind: 'composition', text: '日本', selectionStart: 2, selectionEnd: 2 });
+    lane.send(text('日本語'));
+    const wheel = { kind: 'wheel' as const, x: 10, y: 20, deltaX: 0, deltaY: 1, modifiers: 0 };
+    lane.send(wheel); lane.send(wheel);
+    lane.send({ ...wheel, x: 200 });
+    lane.send({ ...wheel, x: 200, modifiers: 2 });
+    pending.resolve(1);
+    await pending.promise; await Promise.resolve();
+    expect(dispatch.mock.calls[1]?.[1]).toEqual({ kind: 'batch', events: [
+      { kind: 'composition', text: '日本', selectionStart: 2, selectionEnd: 2 }, text('日本語'),
+      { ...wheel, deltaY: 2 }, { ...wheel, x: 200 }, { ...wheel, x: 200, modifiers: 2 },
+    ] });
+    lane.destroy();
+  });
   it("retains human keystrokes across its own takeover, then drops queued text on explicit hand-back", async () => {
     const first = deferred<number>(),
       dispatch = vi

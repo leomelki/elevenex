@@ -1,6 +1,7 @@
 import { browserFrameSize } from './browser-frame';
 import { BrowserVideoDecoder } from './browser-video';
 import { BrowserInputLane } from './browser-input-lane';
+import { BrowserHumanInput } from './browser-human-input';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -15,7 +16,6 @@ import {
 } from '@angular/core';
 import type {
   TaskBrowserFrame,
-  TaskBrowserStreamEvent,
   TaskBrowserSurface,
 } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
@@ -60,7 +60,15 @@ export class BrowserStreamComponent {
         'Control changed. Release controls, then interact again.',
       ),
   );
-  private composing = false;
+  readonly humanInput = new BrowserHumanInput(
+    input => this.inputLane.send(input),
+    () => this.inputElement()?.nativeElement,
+    event => this.point(event),
+    () => this.viewport().height,
+    intent => { this.inputLane.cancel(); this.shortcutRequested.emit(intent); },
+  );
+  private surfaceIdentity = '';
+  private displayRevision = 0;
   constructor() {
     const stop = this.bridge.onTaskBrowserFrame?.((frame) => {
       const surface = this.surface();
@@ -101,10 +109,30 @@ export class BrowserStreamComponent {
       void this.paint();
     });
     effect(() => {
+      const surface = this.surface();
+      const identity = JSON.stringify([surface.scopeId, surface.taskId, surface.tabId]);
+      if (identity !== this.surfaceIdentity || !surface.visible) {
+        this.displayRevision++;
+        this.surfaceIdentity = identity;
+        this.latest = undefined;
+        this.videoDecoder.reset();
+        this.stream = '';
+        this.sequence = 0;
+        this.hasFrame.set(false);
+        this.status.set(surface.visible ? 'Connecting page display…' : 'Page display paused.');
+        const canvas = this.canvas()?.nativeElement;
+        if (canvas && (canvas.width !== 1 || canvas.height !== 1)) { canvas.width = 1; canvas.height = 1; }
+        this.inputLane.cancel();
+        this.humanInput.clear();
+      }
       this.updateAuthority();
     });
+    const blur = () => this.humanInput.releaseInput();
+    window.addEventListener('blur', blur);
     inject(DestroyRef).onDestroy(() => {
+      this.humanInput.destroy();
       this.disposed = true;
+      window.removeEventListener('blur', blur);
       stop?.();
       this.latest = undefined;
       this.videoDecoder.destroy();
@@ -115,6 +143,8 @@ export class BrowserStreamComponent {
     if (this.decoding || !this.latest) return;
     this.decoding = true;
     const frame = this.latest;
+    const revision = this.displayRevision;
+    const surface = this.surface();
     this.latest = undefined;
     let bitmap: ImageBitmap | VideoFrame | undefined;
     let decoded = false;
@@ -126,6 +156,8 @@ export class BrowserStreamComponent {
       if (
         this.disposed ||
         !canvas ||
+        revision !== this.displayRevision ||
+        !this.surface().visible ||
         frame.streamId !== this.stream ||
         frame.sequence <= this.sequence
       )
@@ -136,9 +168,12 @@ export class BrowserStreamComponent {
         width > 4096 || height > 4096 || width * height > 8_000_000
       )
         throw new Error('Frame too large');
-      canvas.width = width;
-      canvas.height = height;
-      canvas.getContext('2d', { alpha: false })?.drawImage(bitmap, 0, 0);
+      // Reallocating the backing store on every frame clears it and forces GPU work.
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) throw new Error('Page display unavailable');
+      context.drawImage(bitmap, 0, 0);
       if (
         this.viewport().width !== frame.width ||
         this.viewport().height !== frame.height
@@ -150,7 +185,7 @@ export class BrowserStreamComponent {
       this.status.set(this.inputLane.needsInteraction ? 'Input interrupted. Click the page or Focus page to resume.' : '');
       this.updateAuthority();
     } catch {
-      if (!this.disposed)
+      if (!this.disposed && revision === this.displayRevision)
         this.status.set(
           'Page display interrupted. Reload the page to reconnect.',
         );
@@ -158,7 +193,6 @@ export class BrowserStreamComponent {
       bitmap?.close();
       this.decoding = false;
       if (!this.disposed) {
-        const surface = this.surface();
         void this.bridge
           .taskBrowserFrameAck?.(
             surface.scopeId,
@@ -197,6 +231,7 @@ export class BrowserStreamComponent {
     const canvas = this.canvas()?.nativeElement;
     if (!canvas || !this.sequence) return null;
     const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
     return {
       x: Math.min(
         this.viewport().width - 0.01,
@@ -214,144 +249,8 @@ export class BrowserStreamComponent {
       ),
     };
   }
-  pointer(event: PointerEvent, type: 'down' | 'up' | 'move'): void {
-    event.stopPropagation();
-    event.preventDefault();
-    const point = this.point(event);
-    if (!point) return;
-    if (type === 'down') {
-      this.inputElement()?.nativeElement.focus({ preventScroll: true });
-      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    }
-    this.send({
-      kind: 'pointer',
-      type,
-      ...point,
-      button:
-        type === 'move'
-          ? 'none'
-          : event.button === 2
-            ? 'right'
-            : event.button === 1
-              ? 'middle'
-              : 'left',
-      buttons: event.buttons,
-      clicks: Math.min(3, Math.max(1, event.detail)),
-      modifiers: this.modifiers(event),
-    });
-  }
-  wheel(event: WheelEvent): void {
-    event.stopPropagation();
-    event.preventDefault();
-    const point = this.point(event);
-    if (!point) return;
-    const scale =
-      event.deltaMode === 1
-        ? 16
-        : event.deltaMode === 2
-          ? this.viewport().height
-          : 1;
-    this.send({
-      kind: 'wheel',
-      ...point,
-      deltaX: Math.max(-10000, Math.min(10000, event.deltaX * scale)),
-      deltaY: Math.max(-10000, Math.min(10000, event.deltaY * scale)),
-      modifiers: this.modifiers(event),
-    });
-  }
-  key(event: KeyboardEvent, type: 'down' | 'up'): void {
-    event.stopPropagation();
-    if (event.isComposing || this.composing) return;
-    if (
-      (event.shiftKey && event.key === 'Escape') ||
-      ((event.metaKey || event.ctrlKey) &&
-        (event.key.toLowerCase() === 't' ||
-          (event.shiftKey && event.key.toLowerCase() === 'c')))
-    ) {
-      event.preventDefault();
-      if (type === 'down') {
-        this.inputLane.cancel();
-        this.shortcutRequested.emit(
-          event.key === 'Escape'
-            ? 'controls'
-            : event.key.toLowerCase() === 't'
-              ? 'open'
-              : 'pick',
-        );
-      }
-      return;
-    }
-    if (
-      (event.ctrlKey || event.metaKey) &&
-      ['c', 'v', 'x', 'a'].includes(event.key.toLowerCase())
-    ) {
-      event.preventDefault();
-      if (type === 'down')
-        this.send({
-          kind: 'clipboard',
-          operation:
-            event.key.toLowerCase() === 'c'
-              ? 'copy'
-              : event.key.toLowerCase() === 'v'
-                ? 'paste'
-                : event.key.toLowerCase() === 'x'
-                  ? 'cut'
-                  : 'selectAll',
-        });
-      return;
-    }
-    // Printable characters arrive through beforeinput, including composed Unicode.
-    if (
-      event.key.length !== 1 ||
-      event.ctrlKey ||
-      event.metaKey ||
-      event.altKey
-    )
-      event.preventDefault();
-    this.send({
-      kind: 'key',
-      type,
-      key: event.key,
-      code: event.code,
-      keyCode: Math.min(255, event.keyCode),
-      modifiers: this.modifiers(event),
-    });
-  }
-  beforeInput(event: Event): void {
-    event.stopPropagation();
-    const input = event as InputEvent;
-    if (this.composing || input.isComposing) return;
-    event.preventDefault();
-    if (input.inputType === 'insertText' && input.data)
-      this.send({ kind: 'text', text: input.data });
-  }
-  compositionStart(): void {
-    this.composing = true;
-  }
-  compositionEnd(event: CompositionEvent): void {
-    this.composing = false;
-    if (event.data) this.send({ kind: 'text', text: event.data });
-    this.clearText();
-  }
-  clearText(): void {
-    if (!this.composing) {
-      const element = this.inputElement()?.nativeElement;
-      if (element) element.value = '';
-    }
-  }
   focusPage(): void {
     this.inputLane.resume(); if (this.hasFrame()) this.status.set('');
     this.inputElement()?.nativeElement.focus({ preventScroll: true });
-  }
-  private modifiers(event: MouseEvent | KeyboardEvent): number {
-    return (
-      Number(event.altKey) |
-      (Number(event.ctrlKey) << 1) |
-      (Number(event.metaKey) << 2) |
-      (Number(event.shiftKey) << 3)
-    );
-  }
-  private send(input: TaskBrowserStreamEvent): void {
-    this.inputLane.send(input);
   }
 }
