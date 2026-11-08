@@ -130,8 +130,14 @@ GitBar or TaskHeader using the `gitPanel` attribute:
 </ex-task-header>
 ```
 
-The owner toggles `open` on Commit and closes it on submission. An empty message
-means generate the message after submission. Supply `GitState.busyLabel` (or
+The owner toggles `open` on Commit and closes it after a successful submission.
+Supply `busy` and `busyLabel` while saving; the panel prevents duplicate submissions
+and keeps its draft and file selection. Supply `submissionError` on failure.
+`blocked` disables resubmission for an unconfirmed outcome, with `statusRequested`
+asking the owner to reconcile Git status. Otherwise **Refresh files** rechecks
+the current selection and emits `errorDismissed`. Reads never replay a commit.
+The error recovery and confirmation controls remain visible when the panel body
+needs to scroll. An empty message means generate the message after submission. Supply `GitState.busyLabel` (or
 `GitBar.busyLabel`) with `busy='commit'` for **Writing the message…**. The same
 primary button carries on through committing, Push, or remaining changes.
 

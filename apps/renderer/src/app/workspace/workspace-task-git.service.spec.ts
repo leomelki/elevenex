@@ -24,6 +24,24 @@ function setup() {
 afterEach(() => { TestBed.resetTestingModule(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('WorkspaceTaskGitService', () => {
+  it('keeps background status checks quiet and coalesced through failure and recovery', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { git, bridge } = setup(); await settle();
+    let complete!: (value: BackendResult<WorkspaceGitSummary>) => void;
+    bridge.workspaceGit.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(git.loading()).toBe(false); expect(git.summary()).toEqual(summary);
+    window.dispatchEvent(new Event('focus')); await settle();
+    expect(bridge.workspaceGit).toHaveBeenCalledTimes(2);
+    complete({ ok: false, error: { code: 'transport', message: 'Temporary failure' } }); await settle();
+    expect(git.error()).toBeNull(); expect(git.summary()).toEqual(summary);
+    bridge.workspaceGit.mockResolvedValueOnce(ok({ ...summary, files: 3 }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(git.summary()?.files).toBe(3); expect(git.error()).toBeNull();
+    bridge.workspaceGit.mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Explicit failure' } });
+    await git.refresh(); expect(git.error()).toBe('Explicit failure');
+  });
+
   it('preloads once and skips unchanged polls, including upstream-only updates', async () => {
     vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     const { git, bridge } = setup(); await settle();
@@ -74,18 +92,18 @@ describe('WorkspaceTaskGitService', () => {
     expect(bridge.workspaceCommitPreview).toHaveBeenCalledTimes(3);
   });
 
-  it('rejects an older pending page when a newer local revision is observed in the same task', async () => {
+  it('keeps a checked panel read usable during working edits without caching it over newer status', async () => {
     vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     const { git, bridge } = setup(); await settle();
     let resolve!: (value: BackendResult<WorkspaceCommitPreview>) => void;
     bridge.workspaceCommitPreview.mockReturnValueOnce(new Promise(yes => { resolve = yes; }));
     bridge.workspaceGit.mockResolvedValueOnce(ok({ ...summary, changesRevision: 'b'.repeat(64) }));
     await git.refresh();
-    const rejected = expect(git.readCommitPreview('scope', defaultQuery)).rejects.toThrow('moved on');
+    const pending = git.readCommitPreview('scope', defaultQuery);
     bridge.workspaceGit.mockResolvedValueOnce(ok({ ...summary, changesRevision: 'c'.repeat(64) }));
     bridge.workspaceCommitPreview.mockResolvedValueOnce({ ok: true, value: { ...preview, revision: 'current' } });
     await git.refresh(); await settle();
-    resolve({ ok: true, value: { ...preview, revision: 'old' } }); await rejected;
+    resolve({ ok: true, value: { ...preview, revision: 'old' } }); expect((await pending).revision).toBe('old');
     expect(git.commitPreview()?.revision).toBe('current');
   });
 
@@ -149,6 +167,20 @@ describe('WorkspaceTaskGitService', () => {
     await vi.advanceTimersByTimeAsync(5000); expect(bridge.workspaceGit).toHaveBeenCalledTimes(2);
     TestBed.resetTestingModule(); await vi.advanceTimersByTimeAsync(10000);
     expect(bridge.workspaceGit).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains a pending commit and its checked files when switching sessions within the same task', async () => {
+    const { git, bridge, selected } = setup(); await settle();
+    let resolve!: (value: BackendResult<WorkspaceGitSummary>) => void;
+    bridge.workspaceGitAction.mockReturnValueOnce(new Promise(yes => { resolve = yes; }));
+    const pending = git.perform({ type: 'commit', message: 'Save changes' });
+    selected.set({ scopeId: 'scope', taskId: 1, sessionId: 3 }); TestBed.tick(); await settle();
+    expect(git.busy()).toBe('commit');
+    expect(await git.perform({ type: 'commit', message: 'Duplicate' })).toBe(false);
+    expect(bridge.workspaceGitAction).toHaveBeenCalledTimes(1);
+    resolve(ok({ ...summary, files: 0, ahead: 1 }));
+    expect(await pending).toBe(true);
+    expect(git.summary()?.ahead).toBe(1);
   });
 
   it('rejects an old mutation after navigating away and returning to the same task', async () => {

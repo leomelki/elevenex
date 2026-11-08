@@ -142,6 +142,12 @@ animated and interrupted new-tab entry, empty state and narrow reduced motion
 in both themes. Run it against `pnpm desktop:preview` with
 `--url http://127.0.0.1:4310`.
 
+`scenarios/composer-input-motion.mjs` checks trusted multiline edits through the
+connected workspace preview. It asserts text/box alignment before, during and
+after growth, shrinkage and interrupted newlines, plus native scrolling at the
+height cap and narrow reduced-motion layouts in both themes. Run it with
+`--url http://127.0.0.1:4310`.
+
 `scenarios/composer-queue-motion.mjs` checks optimistic queue receipt handoffs
 through the connected workspace preview. It samples each real animation frame
 for excess rows, changing DOM identity and height overshoot, with repeated text,
@@ -345,6 +351,21 @@ focus restoration and narrow reduced-motion layouts in both themes.
 
 ## Output and failures
 
+`scenarios/terminal-rendering.mjs` runs against `/terminal-rendering` in the
+component preview. It checks actual rounded-cap pixels at compact/default/spaced
+cell sizes, native-density canvas scaling, both themes, narrow/reduced-motion
+layouts, keyboard input, Find selection, retained output/selection through
+reattachment, GPU context release and input after GPU-loss fallback. It uses the
+production `TerminalSurface` with preview-only ANSI samples. Native display
+density is retained because Chromium's device-pixel ResizeObserver boxes do not
+follow the capture driver's default 1x CDP emulation on Retina displays.
+
+`scenarios/terminal-startup.mjs` checks zsh's 80-column startup spacer in a narrow
+pane through the production adapter. It verifies row-zero prompts, resizing and
+detachment between replay pages, preserved intentional blank lines, filled and
+scrolled output, trusted keyboard input, both themes and reduced motion. Run it
+with `--url http://127.0.0.1:4310`; its ANSI samples stay in the capture scenario.
+
 `scenarios/session-mentions.mjs` checks sidebar transfer data and trusted Chromium
 drops against the connected workspace preview, with drop-entry frames, duplicate
 prevention, focus handoff, draft navigation, keyboard insertion and narrow
@@ -477,6 +498,12 @@ preview-only provider adapter: both themes, tool input/output, approvals and
 questions, keyboard sending, editable drafts while streaming, navigation retention,
 uncertain delivery, paged original content, bounded history and narrow reduced
 motion states. It uses the connected workspace at the same preview URL.
+
+`scenarios/background-refresh.mjs` samples real frames during delayed background
+navigation and Git reads, transient failures and recovery. It checks retained
+chat/sidebar DOM, reading position, draft/cursor/focus, enabled controls and
+stable geometry in both themes and narrow reduced-motion layouts. Run against
+the connected workspace preview with `--url`.
 
 `scenarios/session-opening-scroll.mjs` checks that switching and reopening long
 sessions starts at the end on the first rendered frame. It also checks reading
@@ -687,3 +714,37 @@ window and root viewport together, then call
 emulation otherwise gives a guest a different DPR from the host display and
 misrepresents its size. App layout/AX diagnostics still inspect the trusted app
 only; they do not establish page accessibility or agent observation permission.
+
+`scenarios/session-tool-timeline.mjs` covers the single chronological work
+timeline: inspection through new replies and discovery grouping, persistent
+Earlier/Show fewer controls, running and failure visibility, stable completion,
+paired original input/output, keyboard focus, scoped motion frames, both themes
+and narrow reduced-motion layouts. Run against the connected component preview
+with `--url`. `SessionChatFixture.timeline(scene)` supplies stable harness-shaped
+receipts outside the production graph.
+
+`scenarios/commit-recovery.mjs` checks the production commit owner with controlled
+backend failures: retained messages and selections, duplicate-submit protection,
+session switching during a commit, message failure recovery, unknown-outcome
+reconciliation, successful dismissal, both themes and compact reduced-motion
+layouts. Use the connected-workspace preview URL, and run native captures
+sequentially. `task-screen-update.mjs` and `commit-panel-motion.mjs` cover the
+existing selection and anchored-panel motion contracts.
+
+`scenarios/terminal-tabs.mjs` verifies TerminalView's shared tab strip: repeated
+creation and automatic revelation, edge fades, wheel browsing without
+selection changes, metadata refresh, Home/End/Delete, ancestor scroll and focus retention,
+empty strips and 320px reduced-motion layouts in both themes. Run against the
+component preview with `--url http://127.0.0.1:4310`.
+
+`scenarios/terminal-attachment.mjs` uses `/terminal-stream` to exercise the
+production task-terminal owner and xterm with a preview-only stream transport.
+It checks automatic first creation, retained DOM/focus and native typing through
+metadata/output changes, plus one replacement stream after interruption. Both
+themes and a narrow reduced-motion layout run against the same preview URL.
+
+`scenarios/terminal-recovery.mjs` uses the same production adapter and preview
+transport to check stable terminal geometry during connection notices, persistent
+paused typing across reconnects, keyboard resume/focus restoration, and retained
+failed output without resize/reconnect loops. It covers both themes and a narrow
+reduced-motion layout.

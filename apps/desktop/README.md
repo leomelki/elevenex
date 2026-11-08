@@ -21,7 +21,7 @@ git operations and close/reopen flows. Selected sessions render streaming chat
 with tool activity, decisions, queue controls and retained drafts. Completed
 replies expose their changed files and a paginated Changes review; Browser uses a task-owned hardened local guest or remote Chromium stream with explicit driver handoff;
 see [the production browser boundary and privacy policy](../renderer/src/app/task-browser/README.md).
-Code provides a genuine task-confined web workbench; see [Code architecture, distribution and recovery](../renderer/src/app/code/README.md). Other side views provide their frames only. See [chat ownership](../renderer/src/app/session-chat/README.md)
+Code provides a genuine task-confined web workbench; Terminal supplies real task-owned user shells and project scripts. See [Code architecture, distribution and recovery](../renderer/src/app/code/README.md), [terminal ownership and recovery](../renderer/src/app/task-terminal/README.md), [chat ownership](../renderer/src/app/session-chat/README.md)
 and the [workspace guide](../renderer/src/app/workspace/README.md).
 The backend gains additive `desktop-workspace` routes;
 the existing app's routes and defaults remain available. A versioned capability
@@ -170,6 +170,17 @@ style replacement; production permits neither inline scripts nor inline CSS
 without its generated nonce. External HTTP(S) links open in the system browser.
 App windows deny all permission requests and reject IPC from other origins or
 subframes. The preload exposes named methods, never raw Electron objects.
+
+Copy actions use `writeClipboardText(text)` through the trusted preload, with a
+16 MiB UTF-8 limit enforced in main. Main awaits Electron's native system
+clipboard write on macOS, Windows and Linux; it does not use Linux's separate
+primary selection. Browser clipboard permissions remain denied, and clipboard
+reads are not exposed. Copying is local to the desktop, independent of the
+selected machine or its connection state.
+The `clipboard.mjs` desktop-capture scenario exercises reply, code, branch and
+original-page copy against the native clipboard in both themes, plus failure
+and retry feedback. Run it with the component preview URL as described in the
+[capture guide](../../scripts/desktop-capture/README.md).
 
 Window state is saved asynchronously in `Elevenex Desktop/window-state.json`
 under Electron's application-data directory, separate from the existing app.

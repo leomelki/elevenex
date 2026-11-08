@@ -1,3 +1,12 @@
+/** Original transcript addresses; the connected owner performs bounded reads. */
+export interface ToolContentSource {
+  readonly inputId?: string;
+  readonly outputId?: string;
+}
+export interface ToolContentRequest {
+  readonly itemId: string;
+  readonly part: 'input' | 'text';
+}
 /** Bounded display data supplied by a tool adapter; all strings remain inert text. */
 export interface ToolPresentation {
   readonly summary: string;

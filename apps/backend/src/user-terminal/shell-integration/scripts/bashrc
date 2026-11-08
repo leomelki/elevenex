@@ -1,0 +1,90 @@
+[[ -r "$HOME/.bashrc" ]] && builtin source "$HOME/.bashrc"
+builtin cd -- "$ELEVENEX_USER_CWD" || exit 1
+if [[ "${ELEVENEX_TERMINAL_SHELL_INTEGRATION-}" == 0 ]]; then
+  builtin printf '\033]133;X;__ELEVENEX_TOKEN__\007'
+  return
+fi
+
+_elevenex_user_history_index=0
+_elevenex_user_executing=1
+_elevenex_user_history() {
+  local HISTTIMEFORMAT= line number
+  line=$(builtin history 1)
+  _elevenex_user_history_number=0
+  _elevenex_user_history_command=''
+  # Parameter expansion avoids changing the user's global BASH_REMATCH array.
+  line=${line#"${line%%[![:space:]]*}"}
+  number=${line%%[!0-9]*}
+  if [[ -n "$number" && "$line" == "$number  "* ]]; then
+    _elevenex_user_history_number=$number
+    _elevenex_user_history_command=${line#"$number  "}
+  fi
+  export -n _elevenex_user_history_number _elevenex_user_history_command
+}
+_elevenex_user_report_command() {
+  local LC_ALL=C command=''
+  _elevenex_user_history
+  if (( _elevenex_user_history_number == _elevenex_user_history_index + 1 )); then
+    command=$_elevenex_user_history_command
+  fi
+  if (( ${#command} > 4096 )); then command=''; fi
+  command=${command//\\/\\\\}
+  command=${command//;/\\x3b}
+  command=${command//$'\n'/\\x0a}
+  command=${command//$'\t'/\\x09}
+  builtin printf '\033]133;H;__ELEVENEX_TOKEN__;%s\007' "$command"
+}
+_elevenex_user_start() {
+  _elevenex_user_executing=1
+  export -n _elevenex_user_executing
+  _elevenex_user_report_command
+  builtin printf '\033]133;C;__ELEVENEX_TOKEN__\007'
+}
+_elevenex_user_status() {
+  local result=$?
+  _elevenex_user_report_command
+  builtin printf '\033]133;D;__ELEVENEX_TOKEN__;%s\007' "$result"
+  return "$result"
+}
+_elevenex_user_ready() {
+  local result=$? LC_ALL=C directory="$PWD"
+  _elevenex_user_history
+  _elevenex_user_history_index=$_elevenex_user_history_number
+  _elevenex_user_executing=0
+  export -n _elevenex_user_history_index _elevenex_user_executing
+  if (( ${#directory} > 8192 )); then directory=''; fi
+  directory=${directory//\\/\\\\}
+  directory=${directory//;/\\x3b}
+  builtin printf '\033]133;P;__ELEVENEX_TOKEN__;%s\007' "$directory"
+  # Prompt hooks run before PS1 is drawn. The input grant must be the last
+  # nonprinting bytes of the actual prompt, even with fragmented PTY delivery.
+  local marker=$'\\[\033]133;B;__ELEVENEX_TOKEN__\007\\]'
+  PS1="${PS1%"$marker"}$marker"
+  export -n PS1
+  return "$result"
+}
+
+_elevenex_user_history
+_elevenex_user_history_index=$_elevenex_user_history_number
+
+# PS0 is expanded before execution in Bash 4.4+. Preserve existing DEBUG traps.
+# Older Bash supplies start events only if it has no user DEBUG trap and does
+# not inherit traps into functions. Completion/status work in either case.
+if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )); then
+  PS0='$(_elevenex_user_start)'"${PS0-}"
+elif [[ -z $(trap -p DEBUG) && $- != *T* ]] && ! shopt -q extdebug; then
+  trap 'if [[ $_elevenex_user_executing == 0 ]]; then _elevenex_user_start; fi' DEBUG
+fi
+# Preserve string/array hooks and their incoming exit status. Readiness comes
+# last because user prompt hooks may themselves ask for secret input.
+if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )) &&
+   [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a '* ]]; then
+  PROMPT_COMMAND=(_elevenex_user_status "${PROMPT_COMMAND[@]}" _elevenex_user_ready)
+else
+  PROMPT_COMMAND="_elevenex_user_status; ${PROMPT_COMMAND:-:}
+_elevenex_user_ready"
+fi
+# Profiles may use allexport. Tokens and command metadata stay in this shell.
+export -n PS0 _elevenex_user_history_index _elevenex_user_executing
+export -n _elevenex_user_history_number _elevenex_user_history_command
+export -n -f _elevenex_user_history _elevenex_user_report_command _elevenex_user_start _elevenex_user_status _elevenex_user_ready

@@ -61,9 +61,11 @@ export class SessionChatStore {
   private request: string | undefined;
   private disposed = false;
   private readonly commands = new Map<string, string>();
-  readonly state = signal<SessionChatState | null>(null);
-  readonly items = signal<readonly SessionChatItem[]>([]);
-  readonly fresh = signal<ReadonlySet<string>>(new Set());
+  // Replies cross IPC with new object identities even on an idle heartbeat.
+  // Keep unchanged inputs stable so polling does not rebuild the conversation.
+  readonly state = signal<SessionChatState | null>(null, { equal: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
+  readonly items = signal<readonly SessionChatItem[]>([], { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) });
+  readonly fresh = signal<ReadonlySet<string>>(new Set(), { equal: (a, b) => a.size === b.size && [...a].every(id => b.has(id)) });
   readonly loading = signal(true);
   /** UI lifetime survives a verified same-machine scope rebind. */
   readonly viewRevision = signal(0);
@@ -228,7 +230,9 @@ export class SessionChatStore {
   }
   private async load(reset: boolean, before?: string): Promise<void> {
     const selection = this.selection;
-    if (!selection || this.disposed || document.hidden || this.offline() || !this.active()) return;
+    if (!selection || this.request || this.disposed || document.hidden || this.offline() || !this.active()) return;
+    clearTimeout(this.timer);
+    this.timer = undefined;
     const epoch = this.epoch,
       readEpoch = ++this.readEpoch,
       requestId = crypto.randomUUID();
@@ -252,7 +256,7 @@ export class SessionChatStore {
       this.error.set("");
       this.accept(result.value, !!before);
       if (this.uncertain()) this.checked.set(true);
-    } else
+    } else if (reset || before || !this.state() || result.error.status === 404)
       this.error.set(
         result.error.status === 404
           ? "Chat is unavailable on this machine. Update its engine, then reconnect."
@@ -588,7 +592,11 @@ export class SessionChatStore {
         this.state.set(null);
       this.commands.delete(commandId);
       this.busy.set(this.commands.values().next().value ?? "");
-    } else void this.load(true);
+    } else {
+      // A confirmed write only invalidates the incremental window. Its follow-up
+      // read must not turn a successful send into a loading/error state.
+      void this.load(false);
+    }
     return true;
   }
   acknowledgeUncertain(): void {

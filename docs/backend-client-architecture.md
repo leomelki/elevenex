@@ -1,5 +1,15 @@
 # Desktop backend client
 
+Terminal service URLs use the named `taskTerminalOpenPort` and
+`taskTerminalCopyPort` bridge operations. Both accept only a scoped
+task/terminal/port, freshly verify the owned listener and use the window's
+managed remote forward. Copy writes the validated URL through Electron's native
+clipboard API and returns that URL without opening a browser. Browser clipboard
+permissions remain denied; there is no general renderer clipboard API. The
+display initially uses observed service metadata and updates to the resolved
+local URL after either action. No listener is started just to render the row,
+and neither action accepts an arbitrary URL from the renderer.
+
 Session chat optionally advertises `sessionMentions: true`. Its existing send
 action accepts up to eight distinct positive `sessionIds`. Main validates and
 preserves only those IDs; the backend resolves them through the existing
@@ -152,7 +162,7 @@ the sidebar. Session pages supply authoritative activity for the visible window.
 Browser uses narrow task-owned local guest and remote streaming adapters; see the
 [production browser guide](../apps/renderer/src/app/task-browser/README.md) for
 its mailbox, forwarding, ownership, bounded resources and conservative privacy
-policy. Remaining side views keep their existing integration boundaries. The implementation does not
+policy. Terminal connects real user-owned task PTYs through the scoped bridge; its ownership is described below. The implementation does not
 introduce direct renderer networking, generic IPC, a second backend or a
 replacement persistence framework. Selected sessions compose the
 [connected chat adapter](../apps/renderer/src/app/session-chat/README.md) with
@@ -327,7 +337,10 @@ snapshots across filters/pages; its lifetime ends with the backend service.
 
 Commit exceptions are bounded to 1,000 paths / 64 KiB per list, and match only
 server-observed changed paths. Likely secret paths require explicit inclusion.
-The commit revision includes HEAD, changed paths and index bytes. Existing files may continue changing before submission; their contents are frozen when Commit is pressed. Preview caches also key on the worktree fingerprint. The backend
+The commit revision includes HEAD, changed paths and staged blob IDs/modes.
+Ordinary index stat/cache refreshes do not invalidate a reviewed selection.
+Existing files may continue changing before submission; their contents are frozen
+when Commit is pressed. Preview caches also key on the worktree fingerprint. The backend
 captures a private index before generating a message, checks concurrent branch
 and index changes before publication, and holds the real index lock only through
 commit/publication. Excluded staged entries remain staged; later working edits
@@ -339,8 +352,18 @@ collected by Git status. Remote tracking changes do not invalidate it. Main
 validates it; older engines omit it. The selected renderer uses this token to
 skip unchanged background commit previews and retains one bounded default page.
 Recent pages are reused for five seconds, with expired reads coalesced and the
-existing submission revision guard unchanged. This token is a cache validator,
+existing submission revision guard unchanged. A background working-edit update
+invalidates the cache without cancelling an independently checked panel window.
+Task/scope changes and mutations still reject old file reads. Switching sessions
+inside the same task retains its pending Git operation and panel provider.
+This token is a cache validator,
 not a replacement for commit authorization or the frozen-index revision.
+Known commit conflicts carry allowlisted codes for moved selections, unresolved
+conflicts, index contention, message-generation failure, Git rejection and a saved
+commit whose push failed. Main maps these to fixed recovery instructions; raw
+provider/hook output stays private. Saved-commit reconciliation failures retain
+the unknown-outcome policy. Snapshot Git operations preserve the augmented
+workspace environment so hooks use the configured tools.
 The existing git status operation may carry an optional commit phase; the feature
 polls it only during its pending commit, with selection/epoch/cleanup guards.
 
@@ -393,3 +416,77 @@ owns credentials, frame transport and narrowly typed input. The renderer does
 not fetch remote frames or expose pixels to MCP. Disconnect invalidates driver
 generations and queued work; metadata reconciliation never replays an action.
 See [the browser host](../apps/backend/src/desktop-browser/README.md).
+## User terminal slice
+
+Terminal replies optionally carry `portDiscovery` and at most 16 `services`.
+New engines discover actual process-owned TCP listeners using bounded,
+demand-driven OS snapshots shared across windows/tasks. Output URLs only refine
+protocol/path hints; they never establish a listener. The primary `port` and
+`protocol` fields remain compatible. Main validates loopback addresses and
+canonical paths, and rechecks the selected generation/port through the additive
+bounded `GET terminals/:id/service` before browser opening. Older engines retain
+their existing handoff. No new IPC operation, network permission or generic
+renderer request is introduced. See the
+[collector ownership and platform limits](../apps/backend/src/user-terminal/ports/README.md).
+
+Shell integration is optional. New engines advertise `shellIntegrationControl`
+on terminal lists and accept an optional boolean `shellIntegration` on creation;
+omitting it preserves existing defaults. Per-terminal state is an optional,
+runtime-validated enum. Main strips unknown fields and older replies remain
+valid. The renderer exposes a plain-shell launch only with the capability.
+PTY output, input, geometry, script execution and ownership do not depend on
+tracking. See the [adapter boundary and runtime assets](../apps/backend/src/user-terminal/shell-integration/README.md).
+
+Terminal replies may also carry optional `activityTitle` display metadata. The
+backend owns command/title lifecycle and saved-name precedence; main bounds and
+validates the label, and the renderer updates the existing keyed tab. Standard
+OSC titles never authorize execution, service discovery or navigation. Existing
+`title` and older consumers retain their original semantics. No new read, mutation
+or polling lifetime is introduced for labels.
+
+Rich command metadata uses the optional `commandTracking` capability and the
+named `task-terminal:commands` read. Generation/after-ID pages return at most 20
+immutable completions and a separate current record; main validates identities,
+ordering, bounds and nullability. Retention is process-owned (200 records/128 Ki
+text units) and read/reconnect never executes input. Output pages may include
+bounded authenticated command-start offsets for local xterm navigation. The
+optional observed `currentCwd` is display-only; existing `cwd` keeps its original
+launch-workspace semantics. Older engines may omit all of these additions.
+
+The additive `task-terminal:*` bridge preserves bounded HTTP lifecycle/history
+operations and capability-selects the ordered `/desktop-terminal/v1` stream.
+Named attach/detach, write, resize, focus and acknowledge operations bind a main-owned
+WebSocket to the existing per-window backend lease. Renderer events contain only
+validated domain packets. Credits span the socket and Electron IPC and are returned
+after xterm consumes output. Input is pipelined and never replayed. Scope/document
+changes abort both bounded reads and live leases.
+
+The edge proxy's shared `apps/frontend/proxy.conf.json` must expose the
+`/desktop-terminal` WebSocket prefix, including `/desktop-terminal/v1`. Runtime
+assembly copies this allowlist, so updating a desktop alone cannot repair an
+older remote runtime that omits the route; rebuild and install the backend too.
+Unpackaged desktop launches log bounded WebSocket errors and close codes/reasons
+in main's console, with private capability values redacted. These diagnostics
+do not enter renderer events or change the no-replay input contract.
+Protocol rejection logs use fixed reason codes for packet parsing, delivery,
+cursor/generation, snapshot and input-ack validation, with handshake/stream phase;
+raw rejected packets and parser errors are never logged. Valid server `closed`
+packets also produce bounded, capability-redacted diagnostics.
+
+The PTY manager owns an isolated headless screen worker. Expired cursors restore a
+bounded checkpoint instead of treating an arbitrary output tail as complete screen
+state. Terminal-generated replies have one server owner, and replay cannot send
+historical replies. Main/renderer reject stale identities, process generations,
+cursor discontinuities and oversized packets. Older engines retain their HTTP
+contract. Per-machine shell/prediction preferences use narrow typed methods and
+private desktop storage. See [stream ownership and budgets](../apps/backend/src/user-terminal/stream/README.md)
+and [renderer behavior and prediction limits](../apps/renderer/src/app/task-terminal/README.md).
+
+Main stamps terminal creation with an opaque app-launch owner, shared across
+windows and absent from renderer arguments. App quit and last-window close send
+owner-scoped cleanup before releasing engines/transports; remote cleanup is best
+effort when disconnected. Desktop rows are distinct from durable legacy rows and
+expire on engine shutdown/startup. Existing clients may omit the owner and retain
+engine-lifetime desktop shells. Cleanup waits for pending launches and strict PTY
+termination; opening an empty Terminal pane creates a fresh shell through the
+existing explicit opening flow. There is no shutdown channel in the preload.

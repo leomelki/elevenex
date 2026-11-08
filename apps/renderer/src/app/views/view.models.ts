@@ -26,8 +26,17 @@ export interface BrowserQuestion { readonly tabId: string; readonly target: Brow
 export interface TerminalTab extends ViewTab {
   readonly cmd?: string;
   readonly port?: number;
+  readonly url?: string;
   readonly cwd?: string;
   readonly branch?: string;
+  readonly browser?: TerminalBrowserFeedback;
+}
+export interface TerminalBrowserFeedback {
+  readonly busy: boolean;
+  readonly error: string;
+  readonly url: string;
+  readonly copyBusy?: boolean;
+  readonly copied?: boolean;
 }
 export interface TerminalScript { readonly id: string; readonly name: string; readonly cmd: string }
 export interface TerminalLine {

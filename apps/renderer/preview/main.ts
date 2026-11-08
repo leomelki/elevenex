@@ -11,6 +11,8 @@ void bootstrapApplication(PreviewComponent, {
         { path: 'browser-window', loadComponent: () => import('./browser-window-demo.component').then(module => module.BrowserWindowDemoComponent) },
         { path: 'task-browser', loadComponent: () => import('./task-browser-demo.component').then(module => module.TaskBrowserDemoComponent) },
         { path: 'browser-video', loadComponent: () => import('./browser-video-demo.component').then(module => module.BrowserVideoDemoComponent) },
+        { path: 'terminal-stream', loadComponent: () => import('./terminal-stream-demo.component').then(module => module.TerminalStreamDemoComponent) },
+        { path: 'terminal-rendering', loadComponent: () => import('./terminal-rendering-demo.component').then(module => module.TerminalRenderingDemoComponent) },
         { path: "agent-picker", loadComponent: () => import("./agent-picker-demo.component").then(module => module.AgentPickerDemoComponent) },
         { path: 'reconnect', loadComponent: () => import('./reconnect-demo.component').then(module => module.ReconnectDemoComponent) },
         { path: 'connected-workspace', loadComponent: () => import('./connected-workspace-demo.component').then(module => module.ConnectedWorkspaceDemoComponent) },

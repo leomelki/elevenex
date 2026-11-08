@@ -3,15 +3,21 @@ import {
   Component,
   computed,
   input,
+  output,
   signal,
 } from "@angular/core";
-import type { ToolPresentation } from "../tool-presentation";
+import { AutoHeightDirective, ButtonComponent } from "../../ui";
+import type {
+  ToolContentRequest,
+  ToolContentSource,
+  ToolPresentation,
+} from "../tool-presentation";
 import { ToolBlockComponent } from "./tool-block.component";
 
 /** A short result first; full evidence and original payloads are read on demand. */
 @Component({
   selector: "ex-tool-content",
-  imports: [ToolBlockComponent],
+  imports: [ToolBlockComponent, ButtonComponent, AutoHeightDirective],
   templateUrl: "./tool-content.component.html",
   styleUrl: "./tool-content.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -19,6 +25,8 @@ import { ToolBlockComponent } from "./tool-block.component";
 export class ToolContentComponent {
   readonly presentation = input.required<ToolPresentation>();
   readonly original = input("");
+  readonly fullContent = input<ToolContentSource>();
+  readonly contentRequested = output<ToolContentRequest>();
   readonly detailsOpen = signal(false);
   readonly originalOpen = signal(false);
   readonly preview = computed(

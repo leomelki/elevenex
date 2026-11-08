@@ -33,6 +33,8 @@ import {
   type AgentModel,
   type PermissionChoice,
   type ConversationMention,
+  type ToolContentRequest,
+  type ToolContentSource,
 } from "../conversation";
 import {
   ButtonComponent,
@@ -50,6 +52,9 @@ import { SessionChatPresets } from "./session-chat-presets";
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import { sessionPlanUsage } from "./session-chat-usage";
 import { presentSessionTool } from './session-chat-tools';
+import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
+
+const copyFailureMessage = 'Could not copy. Select the text and copy it manually.';
 
 @Component({
   selector: "ex-session-chat",
@@ -85,6 +90,19 @@ import { presentSessionTool } from './session-chat-tools';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SessionChatComponent {
+  private readonly bridge = inject(ELEVENEX_BRIDGE);
+  private copyRevision = 0;
+  openToolContent(request: ToolContentRequest): void {
+    const items = this.store.items();
+    const item = items.find(item => item.id === request.itemId);
+    const toolId = item?.toolId ?? item?.id;
+    this.contentSource.set(item?.kind === 'tool_use' || item?.kind === 'tool_result' ? {
+      inputId: item.kind === 'tool_use' ? item.id : items.find(value => value.kind === 'tool_use' && (value.toolId ?? value.id) === toolId)?.id,
+      outputId: item.kind === 'tool_result' ? item.id : [...items].reverse().find(value => value.kind === 'tool_result' && value.toolId === toolId)?.id,
+    } : undefined);
+    this.contentPart.set(request.part);
+    this.contentId.set(request.itemId);
+  }
   readonly selection = input.required<ChatSelection>();
   readonly archived = input(false);
   readonly active = input(true);
@@ -124,12 +142,8 @@ export class SessionChatComponent {
   );
   readonly copiedCode = signal<string | null>(null);
   readonly contentId = signal<string | null>(null);
-  readonly contentPart = computed(() =>
-    this.store.items().find((item) => item.id === this.contentId())?.kind ===
-    "tool_use"
-      ? ("input" as const)
-      : ("text" as const),
-  );
+  readonly contentSource = signal<ToolContentSource | undefined>(undefined);
+  readonly contentPart = signal<'input' | 'text'>('text');
   readonly identity = computed(
     () =>
       `${this.selection().scopeId}:${this.selection().taskId}:${this.selection().sessionId}`,
@@ -336,6 +350,9 @@ export class SessionChatComponent {
     effect(() => {
       this.identity();
       this.presetFlow.reset();
+      this.copyRevision++;
+      clearTimeout(this.copyTimer);
+      this.copiedCode.set(null);
     });
     effect(() => { this.store.viewRevision(); this.contentId.set(null); });
     let scrollIdentity = -1;
@@ -360,6 +377,7 @@ export class SessionChatComponent {
       cleanup(() => clearInterval(timer));
     });
     inject(DestroyRef).onDestroy(() => {
+      this.copyRevision++;
       clearTimeout(this.copyTimer);
       this.presetFlow.dispose();
     });
@@ -385,8 +403,12 @@ export class SessionChatComponent {
       void this.store.perform({ type: "answer", id: request.id, answers });
   }
   async copy(text: string, code = false): Promise<void> {
+    const revision = ++this.copyRevision;
+    const identity = this.identity();
     try {
-      await navigator.clipboard.writeText(text);
+      await this.bridge.writeClipboardText(text);
+      if (revision !== this.copyRevision || identity !== this.identity()) return;
+      if (this.store.error() === copyFailureMessage) this.store.error.set('');
       this.store.notice.set("Copied");
       if (code) {
         clearTimeout(this.copyTimer);
@@ -394,9 +416,8 @@ export class SessionChatComponent {
         this.copyTimer = setTimeout(() => this.copiedCode.set(null), 2000);
       }
     } catch {
-      this.store.error.set(
-        "Could not copy. Select the text and copy it manually.",
-      );
+      if (revision !== this.copyRevision || identity !== this.identity()) return;
+      this.store.error.set(copyFailureMessage);
     }
   }
   turnAction(intent: {

@@ -21,7 +21,8 @@
 .input-height {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  /* Keep text on the height animation's moving top edge, including at rest. */
+  justify-content: flex-start;
 }
 .contents {
   flex-shrink: 0;

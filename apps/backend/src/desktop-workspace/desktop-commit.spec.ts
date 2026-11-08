@@ -52,7 +52,7 @@ describe('desktop commit snapshot', () => {
       return {
         subject: 'fix: save selected changes',
         body: null,
-        source: 'ai',
+        source: 'codex',
         confidence: 'high',
       };
     });
@@ -78,6 +78,49 @@ describe('desktop commit snapshot', () => {
     );
     expect(phase).toEqual(['writing', 'committing']);
   });
+  it.each(['delete', 'rename'])(
+    'commits an already staged %s with the default selection',
+    async (operation) => {
+      if (operation === 'delete') await git('rm', '--', 'work.txt');
+      else await git('mv', '--', 'work.txt', 'renamed.txt');
+      await commitSnapshot(
+        path,
+        service,
+        await service.getStatusSummary(path),
+        selection,
+        'Save changes',
+        () => {},
+      );
+      expect(await git('status', '--porcelain')).toBe('');
+      expect(await git('show', '--pretty=', '--name-status', 'HEAD')).toContain(
+        operation === 'delete' ? 'D\twork.txt' : 'renamed.txt',
+      );
+    },
+  );
+
+  it('ignores index stat refreshes in preview revisions and during message generation', async () => {
+    await writeFile(join(path, 'work.txt'), 'chosen\n');
+    const status = await service.getStatusSummary(path);
+    const revision = await commitRevision(path, status);
+    await git('update-index', '--index-version', '4');
+    await git('status', '--porcelain');
+    expect(await commitRevision(path, status)).toBe(revision);
+    jest.spyOn(service, 'suggestCommitMessage').mockImplementation(async () => {
+      await git('update-index', '--index-version', '2');
+      await writeFile(join(path, 'keep.txt'), 'another working edit\n');
+      await git('status', '--porcelain');
+      return {
+        subject: 'Save chosen changes',
+        body: null,
+        source: 'codex',
+        confidence: 'high',
+      };
+    });
+    await commitSnapshot(path, service, status, selection, '', () => {});
+    expect(await git('show', 'HEAD:work.txt')).toBe('chosen\n');
+    expect(await git('diff', '--name-only')).toBe('keep.txt\n');
+  });
+
   it('commits staged content without including later unstaged edits', async () => {
     await writeFile(join(path, 'work.txt'), 'staged\n');
     await git('add', '--', 'work.txt');
@@ -103,7 +146,7 @@ describe('desktop commit snapshot', () => {
       return {
         subject: 'fix: selected',
         body: null,
-        source: 'ai',
+        source: 'codex',
         confidence: 'high',
       };
     });
@@ -120,6 +163,53 @@ describe('desktop commit snapshot', () => {
     expect(await git('rev-parse', 'HEAD')).toBe(before);
     expect(await git('diff', '--cached', '--name-only')).toBe('keep.txt\n');
   });
+  it('keeps the index and selected edits intact when message generation fails, then accepts a manual message', async () => {
+    await writeFile(join(path, 'work.txt'), 'chosen\n');
+    const head = await git('rev-parse', 'HEAD');
+    jest
+      .spyOn(service, 'suggestCommitMessage')
+      .mockRejectedValue(new Error('Provider unavailable'));
+    await expect(
+      commitSnapshot(
+        path,
+        service,
+        await service.getStatusSummary(path),
+        selection,
+        '',
+        () => {},
+      ),
+    ).rejects.toMatchObject({ response: { code: 'commit-message-failed' } });
+    expect(await git('rev-parse', 'HEAD')).toBe(head);
+    expect(await git('diff', '--cached')).toBe('');
+    await commitSnapshot(
+      path,
+      service,
+      await service.getStatusSummary(path),
+      selection,
+      'Manual message',
+      () => {},
+    );
+    expect(await git('show', 'HEAD:work.txt')).toBe('chosen\n');
+  });
+
+  it('does not remove an index lock owned by another Git operation', async () => {
+    await writeFile(join(path, 'work.txt'), 'chosen\n');
+    const index = (await git('rev-parse', '--git-path', 'index')).trim();
+    const lock = join(path, index + '.lock');
+    await writeFile(lock, 'owned elsewhere');
+    await expect(
+      commitSnapshot(
+        path,
+        service,
+        await service.getStatusSummary(path),
+        selection,
+        'Save',
+        () => {},
+      ),
+    ).rejects.toMatchObject({ response: { code: 'commit-index-locked' } });
+    expect(await readFile(lock, 'utf8')).toBe('owned elsewhere');
+  });
+
   it('filters across the complete repository and returns bounded windows with accurate selection', async () => {
     await Promise.all(
       Array.from({ length: 115 }, (_, index) =>

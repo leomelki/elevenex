@@ -1,5 +1,11 @@
 # Connected workspace navigation
 
+Background revision, Git status and archived-history checks revalidate visible
+windows in place. They retain the last successful data while pending or
+temporarily unavailable, without navigation loading states or transient error
+banners. Failed navigation revisions retry on the next observation; explicit
+navigation, refresh and mutations retain their loading and error feedback.
+
 Saved task setup failures explain workspace quota limits and offer **Create
 workspace anyway** only when the backend advertises that recovery. This explicit
 choice retries the same task above the limit without changing the configured

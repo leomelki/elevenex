@@ -4,9 +4,13 @@ import { workspaces } from './workspaces.schema.js';
 export const userTerminals = sqliteTable('user_terminals', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   worktreePath: text('worktree_path').notNull(),
-  workspaceId: integer('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+  workspaceId: integer('workspace_id').references(() => workspaces.id, {
+    onDelete: 'set null',
+  }),
   name: text('name').notNull(),
   shell: text('shell').notNull(),
+  // Desktop shells belong to one app launch; legacy terminal records stay durable.
+  desktopOwner: text('desktop_owner'),
   createdAt: text('created_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),

@@ -83,7 +83,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     super(); this.ready();
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingFolderReads) finish(); });
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingTaskReads) finish(); });
-    inject(DestroyRef).onDestroy(() => this.setCommitPreviewHeld(false));
+    inject(DestroyRef).onDestroy(() => { this.setCommitPreviewHeld(false); this.setGitActionHeld(false); });
   }
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
@@ -210,8 +210,24 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     const matches = files.filter(file => file.path.includes(query.query ?? '')).sort((a,b) => Number(query.includeUnstaged || b.staged) - Number(query.includeUnstaged || a.staged));
     return success({ taskId: query.taskId, revision: 'a'.repeat(64), items: matches, nextCursor: null, total: files.length, matches: matches.length, unstaged: 34, selected: { files: selected.length, add: selected.reduce((n,file) => n + file.add,0), del: selected.reduce((n,file) => n + file.del,0), staged: selected.filter(file=>file.staged).length, unstaged: selected.filter(file=>!file.staged).length }, running: ['Guard concurrent requests'] });
   };
+  private gitFailure: 'message' | 'unknown' | null = null;
+  private gitActionHeld = false;
+  private readonly pendingGitActions = new Set<() => void>();
+  setGitFailure(value: 'message' | 'unknown' | null): void { this.gitFailure = value; }
+  setGitActionHeld(held: boolean): void {
+    this.gitActionHeld = held;
+    if (!held) for (const finish of this.pendingGitActions) finish();
+  }
   workspaceGitAction = async (scope: string, input: WorkspaceGitAction) => {
     this.sentGitActions.push(input);
+    if (this.gitActionHeld) await new Promise<void>(resolve => {
+      const finish = () => { this.pendingGitActions.delete(finish); resolve(); };
+      this.pendingGitActions.add(finish);
+    });
+    const failure = this.gitFailure; this.gitFailure = null;
+    if (failure) return { ok: false as const, error: failure === 'unknown'
+      ? { code: 'outcome-unknown' as const, message: 'The operation may have completed. Refresh status before trying again.' }
+      : { code: 'http' as const, status: 409, message: 'Elevenex could not write a commit message. Enter a message above and try again.' } };
     const previous = (await this.workspaceGit(scope, input.taskId));
     if (!previous.ok) return previous;
     const summary = { ...previous.value, ...(input.type === 'commit' ? { files: input.selection?.includedSecrets.includes('.env.local') ? 0 : 1, additions: 31, deletions: 0, ahead: input.push ? 0 : 1 } : {}), ...(input.type === 'push' ? { ahead: 0 } : {}), ...(input.type === 'sync' ? { behind: 0 } : {}), ...(input.type === 'rename-branch' ? { branch: input.branchName } : {}) };

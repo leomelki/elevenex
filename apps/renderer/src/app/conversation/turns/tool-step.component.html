@@ -7,7 +7,7 @@
     class="head"
     [disabled]="!hasContent()"
     [attr.aria-expanded]="hasContent() ? expanded() : null"
-    (click)="toggled.set(!expanded())"
+    (click)="toggle()"
   >
     <ex-icon [name]="icon()" [size]="14" /><span class="verb">{{ verb() }}</span
     ><code [title]="detail()">{{ detail() }}</code
@@ -36,10 +36,17 @@
     }
   </button>
   <ex-fold [open]="expanded() && hasContent()">
-    @if (presentation(); as content) {
-      <ex-tool-content [presentation]="content" [original]="output()" />
-    } @else {
-      <pre>{{ output() }}</pre>
+    @if (expanded() || contentMounted()) {
+      @if (presentation(); as content) {
+        <ex-tool-content
+          [presentation]="content"
+          [original]="output()"
+          [fullContent]="fullContent()"
+          (contentRequested)="contentRequested.emit($event)"
+        />
+      } @else {
+        <pre tabindex="0" aria-label="Tool output">{{ output() }}</pre>
+      }
     }
   </ex-fold>
 </section>

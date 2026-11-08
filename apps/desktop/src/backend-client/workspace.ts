@@ -447,6 +447,14 @@ export function registerWorkspaceIpc(
       value => { const result = gitSummary(value); if (result.taskId !== taskId) throw invalidResponse(); return result; },
       'POST',
       type === 'commit' ? 180000 : 30000,
+      {
+        'commit-changes-moved': 'The staged changes or branch changed. Refresh files, review your selection, then commit again.',
+        'commit-conflicts': 'Resolve the merge conflicts before committing.',
+        'commit-index-locked': 'Another Git operation is using this workspace. Wait for it to finish, then try again.',
+        'commit-message-failed': 'Elevenex could not write a commit message. Enter a message above and try again.',
+        'commit-rejected': 'Git rejected the commit. Check your Git name/email, commit hooks and signing setup, then try again.',
+        'commit-saved-push-failed': 'Your commit was saved, but the push failed. Refresh status, then use Push to try again.',
+      },
     );
   });
   register('workspace:restore-project', (window, scope, input) =>

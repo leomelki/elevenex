@@ -4,6 +4,288 @@
 > in chat/PR descriptions and keep run artifacts under ignored `artifacts/`, as
 > described in the root `AGENTS.md`. Earlier results do not verify current code.
 
+## Activity-aware terminal tabs, 2026-11-05
+
+Terminal tabs now follow an optional `activityTitle` while preserving the saved
+`title` contract. Tracked commands provide a conservative leading executable label
+without arguments (`zsh → pnpm → zsh`). Standard OSC 0/2 titles can supply richer
+program-selected text for the current execution. The existing command record owns
+that lifecycle: completion, failure and process exit restore the saved label, and
+prompt/previous-command titles cannot leak into a later command. Unsupported
+command heads retain the saved label. Saved names differing from the default shell
+basename and project-script names take priority, without renaming database rows.
+Plain terminals may use standard title updates independently of shell integration.
+
+Title payloads are bounded and stripped of terminal/directional controls, with
+Unicode-safe truncation. Main validates the additive field. Titles remain display
+hints and cannot authorize commands, rerun, navigation or service discovery.
+Port suffixes remain available. No OS process-table polling, new timers, bridge
+methods, dependencies or CSP changes were introduced. This tracks reported
+commands and program-supplied titles; it does not discover arbitrary foreground
+processes on the operating system.
+
+Passed: 122 backend user-terminal tests, 140 desktop platform tests, 7 capture-tool
+tests and 667 renderer tests, including TypeScript contract checking. Real Bash 3.2,
+modern Bash and zsh tests cover active command labels, program-reported titles and
+prompt restoration. Service tests verify saved-name precedence. Stream tests cover
+frame splits, limits, Unicode, plain mode and the separation of titles from command
+permissions/service hints. The terminal GPU mock now resets its module cache before
+installation, removing its dependency on earlier TerminalSurface test imports.
+Desktop lint, changed-backend lint, production TypeScript, desktop build and backend
+build/bundle pass. Native macOS Electron smoke also passes against production
+assets with the disposable backend transport fixture (an unpackaged launch).
+
+The [native title report](../../artifacts/desktop-capture/task85-terminal-titles-stable/report.json)
+has `verified: true`, six checkpoints and no errors/warnings. All six PNGs were
+inspected. The actual production terminal components in the isolated connected
+preview cover light/dark themes, a 440px pane, dark reduced motion, long-title
+truncation, live title replacement and restoration. Assertions also verify stable
+tab identity/selection, retained xterm DOM/focus, one process-creation request, saved
+names and port labels. An initial capture was interrupted by preview HMR; the
+settled capture passed. Controlled preview replies and real-PTY tests provide
+separate UI and process evidence. Fish/PowerShell native execution remains skipped
+because the executables are absent; Linux/Windows, live SSH terminals and packaged
+launches remain unverified.
+
+## Rich terminal tracking, 2026-11-05
+
+Added process-owned command records with exact/history/unavailable confidence,
+cwd at execution, status, receipt timestamps, monotonic elapsed duration and
+UTF-16 output boundaries. Immutable completion pages keep at most 200 records /
+128 Ki text units and return 20 completions plus a separate running record.
+Generation/after-ID gaps handle expiration and process replacement. The named
+`taskTerminalCommands` bridge validates ownership, cursors, ordering and bounds;
+ordinary terminal list/output replies do not carry command history.
+
+Optional `currentCwd` updates terminal directory details without changing the
+existing launch-workspace `cwd`. Server-authenticated command-start boundaries
+become bounded, owned xterm markers. Command/Ctrl-Up/Down navigates them without
+sending PTY input, including after replay/reflow. Navigation retains its anchor
+across asynchronous scroll events; reset, scrollback expiry and surface cleanup
+release markers. Raw OSC output cannot create navigation markers. Multiline
+commands may be retained as metadata but cannot be injected by rerun.
+
+Bash/zsh adapters now report directories; Bash reports history-derived commands
+at start where possible and reconciles at completion. Existing startup files,
+history and hooks remain intact. Added fish native-event and PowerShell
+readline/prompt adapters after normal profiles. PowerShell keeps execution policy,
+restricted language mode, existing functions and PSReadLine options in charge,
+reporting pipeline success as 0/1 rather than a stale native exit code. Plain
+terminal fallback and explicit opt-out remain available. The incremental OSC
+parser consumes foreign/oversized metadata without discovering services inside
+it, and waits for complete port delimiters across chunks.
+
+Validation passed: 79 focused backend tests (including real Bash 3.2, modern Bash
+and zsh PTYs), 139 desktop platform tests, 7 capture-tool tests and 666 renderer
+tests; TypeScript IPC contracts, desktop lint/build, focused backend lint and
+production backend build/bundle/type checking. All five integration scripts match
+source in both Nest and bundled outputs. Native macOS Electron smoke passed with
+production assets and its disposable transport fixture. The focused IPC tests also
+exercise the new named read, ownership/argument validation and cursor rejection.
+An exploratory backend-wide tsc including test sources still encounters unrelated
+spec typing errors; the production backend configuration passes.
+
+The [native tracking report](../../artifacts/desktop-capture/task85-rich-tracking-settled/report.json)
+has `verified: true`, two checkpoints and no errors/warnings. Both PNGs were
+inspected. Captures use the actual production TaskTerminal/TerminalSurface in the
+isolated connected-workspace preview with controlled backend replies. They verify
+observed directory binding, focused Command-Up/Down navigation and no PTY input,
+in light/dark themes with a 440px panel and dark reduced motion. Real PTY behavior
+is covered separately by backend tests.
+
+Fish/PowerShell adapter preparation and cleanup are tested. Their optional
+real-PTY regression is explicitly skipped because neither executable is installed
+here. Linux/Windows runtime behavior, live SSH terminal sessions and packaged
+application launches remain unverified. This slice supplies command tracking and
+navigation; it does not add a recent-command/directory picker, decorations or
+sticky scroll. No dependencies or platform security settings changed.
+
+## Optional shell integration architecture, 2026-11-05
+
+Separated terminal bytes/geometry/process lifetime from optional shell metadata.
+Shell-specific scripts are immutable assets owned by the backend launch adapter;
+preparation failure, unsupported shells and explicit opt-out start ordinary
+shells. Tracking state is additive metadata and never disables typing. The new
+capability-gated Terminal options menu offers a separate plain shell, using the
+same process ownership and cleanup. Its projected actions use the existing CDK
+menu primitives and close on pane/selection changes.
+
+Removed keystroke reconstruction. Zsh preexec reports the submitted command;
+Bash accepts only a newly added history entry after completion. Ignored history,
+invalid/oversize/control-containing commands and uncertain prompt input disable
+rerun rather than guessing. Hook tokens stay private, user hooks/DEBUG traps and
+history settings are preserved, and rc suppression leaves the user's ZDOTDIR
+intact. Process cancellation precedes asynchronous adapter cleanup; failure to
+remove temporary files cannot prevent the PTY from stopping.
+Additional input during execution or after a submission conservatively disables
+rerun, including single-packet and queued type-ahead. A late Bash command report
+cannot reauthorize it against an uncertain future prompt.
+
+Validation passed: desktop lint/build, 138 platform tests, 7 capture-tool tests,
+664 renderer tests and TypeScript IPC contracts; 88 user-terminal backend tests,
+focused backend lint and the production backend build. Real PTYs cover Bash 3.2,
+available modern Bash and zsh, history recall, ignored commands, password input,
+saved history, BASH_REMATCH, DEBUG/prompt hooks, plain mode and cleanup failure.
+Nest and bundled runtime shell assets were checked against their source files.
+Native macOS Electron smoke passed with production assets and its disposable
+transport fixture.
+
+Changed backend files pass focused lint. A broader exploratory lint of the
+untouched legacy PTY-manager spec still reports its existing unsafe-mock and
+require-await diagnostics; that spec was left unchanged. The final cleanup
+regression uses a real PTY through the service's public lifecycle instead.
+
+The [native options/fallback report](../../artifacts/desktop-capture/task85-shell-options-stable/report.json)
+has `verified: true`, six checkpoints, no errors and no warnings. All six PNGs
+were inspected. They cover light/dark themes, narrow reduced-motion layout,
+typing with unavailable tracking, keyboard menu selection, Escape focus return,
+plain-terminal creation/typing and menu teardown when the pane closes. The
+preview uses controlled backend replies; it is separate from the real-PTY tests.
+An earlier capture was interrupted by preview HMR and was rerun after it settled.
+These checks do not establish live SSH terminal sessions, packaged-app launch
+or Windows/Linux runtime behavior. No dependencies or security relaxations were
+introduced.
+
+## Task terminal review, 2026-11-05
+
+Reproduced and fixed four additional cases: an astral character could overflow
+the captured-command metadata limit; the zsh wrapper skipped `.zshenv` and its
+redirected rc directory; a new launch could acquire a cancellation fence already
+retired by task cleanup; and choosing a second serving terminal while the first
+service was opening could skip that opening or accept stale busy/error state.
+Focused regressions fail against the previous behavior and pass with the fixes.
+The xterm buffer/attachment tests now establish media listeners before imports,
+removing their dependency on the test runner's incomplete `matchMedia` shim.
+
+Desktop lint, production build and the full desktop runner pass: 138 platform
+tests, 7 capture-tool tests and 663 renderer tests, including TypeScript contract
+checking. All 70 user-terminal backend tests pass, including real Bash/zsh PTYs
+and controlled cleanup races. Backend production TypeScript and focused backend
+lint pass. Native macOS Electron smoke passes with the built production assets
+and its disposable backend transport fixture.
+
+New native reports all have `verified: true`:
+
+- [Startup and reattachment](../../artifacts/desktop-capture/task85-review-startup/report.json):
+  four light/dark checkpoints, including narrow replay, intentional blank lines,
+  filled output and trusted keyboard input.
+- [Concurrent service handoff](../../artifacts/desktop-capture/task85-review-services/report.json):
+  four light/dark checkpoints with controlled preview replies, a second explicit
+  opening, an earlier rejection, and narrow reduced-motion layout.
+- [Terminal rendering](../../artifacts/desktop-capture/task85-review-rendering-route/report.json):
+  eleven checkpoints covering cell geometry, keyboard input, Find across wrapped
+  text, retained selection and GPU fallback. Its sole warning is the deliberately
+  induced GPU context loss.
+
+Inspected startup/filled, service pending/completed, light/default, dark/narrow,
+GPU-fallback and wrapped-Find PNGs. Captures use the production components with
+isolated preview data; real backend PTYs are verified separately by the tests.
+These checks do not establish live SSH terminal sessions, packaged-app launch,
+or Windows/Linux runtime behavior. Validation used the locally installed pinned
+pnpm 8.15.4 because the system pnpm launcher stalled; native/loopback checks ran
+outside the sandbox. The preview server was stopped after verification.
+
+## Immediate final-terminal panel close, 2026-11-03
+
+Closing the final terminal now emits panel dismissal immediately after the store
+removes the tab, before awaiting backend cleanup. Failed/uncertain closes still
+reconcile surviving tabs and errors for inspection on reopening. Cleanup replies
+do not change panel visibility. Deferred-close component regressions assert the
+dismissal synchronously and ensure late completion does not dismiss again after
+task/view navigation.
+
+Desktop lint, the full suite (137 desktop, seven capture-tool and 645 renderer
+tests, including TypeScript contracts), and the production build pass.
+The [native report](../../artifacts/desktop-capture/terminal-final-tab-immediate/report.json)
+is `verified: true`, with two inspected light/dark PNGs and no errors/warnings.
+It verifies the production component/store/workspace composition with deliberately
+unresolved preview backend replies: the panel fully closes and restores focus
+while cleanup remains pending, including narrow keyboard/reduced-motion operation.
+Opening Browser before cleanup completes keeps Browser open. This capture uses
+controlled backend data rather than a real PTY; the timing regression is at the
+renderer ownership boundary. Validation-owned processes are stopped.
+
+## Automatic terminal panel lifecycle, 2026-11-03
+
+Opening Terminal checks the selected task's current backend list and creates one
+shell when empty. Existing shells survive hide/show and same-task session changes.
+Startup is attempted once per opening; polling and reconnect do not retry uncertain
+mutations. Pending openings are cancelled on navigation. Closing the final tab
+requests side-panel closure only after successful reconciliation for the same
+visible task/opening; failed closes and late replies cannot hide another view.
+
+Desktop lint, the full suite (137 desktop, seven capture-tool and 645 renderer
+tests, including TypeScript contract checks), and the production build pass.
+Eight focused component regressions cover opening, existing shells, task switches,
+failed/uncertain startup and close, and pending navigation.
+The [native capture report](../../artifacts/desktop-capture/terminal-auto-lifecycle-final/report.json)
+is `verified: true`, with four checkpoints and no errors/warnings. It uses the
+production components and sandboxed bridge with a real isolated backend, SQLite
+database, Git repository/worktree and PTYs. It verifies light/dark, hide/show process
+identity, multiple terminals, final-close panel/focus restoration, reopening, and
+a narrow reduced-motion layout. All four PNGs were inspected. Validation-owned
+processes are stopped; this is an unpackaged development-renderer capture.
+
+## Terminal prompt glyph coverage, 2026-11-03
+
+Bundled Symbols Nerd Font Mono v3.5.1 locally, restricted it to symbol/private-use
+ranges and added it to the terminal font stack. Geist Mono still renders ordinary
+text. The adapter waits for the symbol face before xterm measures its cells.
+The upstream font, license, attribution table and SHA-256 provenance are retained
+under `public/fonts/`.
+
+Desktop lint, the complete test suite (629 Angular tests plus main/capture/type
+checks) and the production build passed. The real built app:// Terminal was
+captured in light and dark against the isolated live backend. Chromium's actual
+per-glyph font data confirms custom Symbols Nerd Font Mono for the prompt icons
+and custom Geist Mono for ordinary text. Both PNGs were inspected. The report
+`artifacts/desktop-capture/terminal-prompt-symbols/report.json` is `verified: true`
+with zero errors/warnings. Earlier font probes targeted a container or ran before
+prompt painting; those failed probes are not visual evidence.
+
+## Production user Terminal, 2026-11-02
+
+The task-owned Terminal now uses the installed xterm 6 adapter, existing user-PTY
+manager and additive bounded desktop HTTP operations. Backend paths are resolved
+from durable task identity. Shell/script creation, input, interrupt, rerun and
+close are explicit; attachment never launches or restarts a process. Ask stages
+bounded context in the matching selected composer's draft and retains user send.
+See [ownership, UX decisions and bounds](src/app/task-terminal/README.md).
+
+Validation passed:
+- `pnpm desktop:lint`, `pnpm desktop:test`, `pnpm desktop:build`.
+- Desktop tests: 137 main/transport tests, seven capture-tool tests, 629 Angular
+  tests, and TypeScript negative IPC assertions.
+- Backend build-config TypeScript, focused ESLint, and 44 terminal regressions,
+  including real PTYs, fresh worktree roots, interrupt/exit, script failure/rerun,
+  generation loss, invalid payloads, output bounds and command-input privacy.
+  Native backend tests used Node 24 to match installed native modules.
+- Installed native Electron smoke: main/preload, sandbox, IPC scopes, theme,
+  multiple windows and app:// protocol. Its backend remains a test fixture.
+
+The actual backend and disposable repository/database supplied real output for
+these native reports (all `verified: true`, zero renderer errors/warnings):
+- `artifacts/desktop-capture/terminal-production-flow/report.json`: 11 checkpoints;
+  real typing, Find, hide/show, connection reattachment, session changes, script
+  failure/rerun, explicit Ask draft, serving-port handoff, light/dark, expansion,
+  narrow layout, reduced motion and process close.
+- `artifacts/desktop-capture/terminal-final-csp-selection/report.json`: built production
+  app:// renderer, real typing, Unicode Find/copy, 24-bit ANSI colors and
+  nonce-protected terminal styles in both themes. CSP was not relaxed.
+- `artifacts/desktop-capture/terminal-complete-lifecycle/report.json`: 400,000
+  output characters, an explicit expired-history gap, bounded searchable
+  scrollback, rapid task changes without duplicate shells, clipboard paste/copy
+  event paths without changing the system clipboard, trusted Stop/Ctrl-C, exit
+  and process close. The retained buffer stayed within 2,300 rows.
+
+The light/dark failure, built app:// and burst/exit PNGs were inspected. Browser
+handoff verified the typed destination with the system-browser launcher
+intercepted; remote port allocation/cleanup has focused main tests. A deployed
+SSH runtime, packaged launch, Windows and Linux were not exercised. Per-command
+prompt hooks cover Bash/zsh; other shells retain interaction and process-exit
+status. Earlier capture attempts interrupted by HMR or premature state checks
+are not product evidence.
+
 ## Agent picker review fixes, 2026-11-04
 
 Model search stays mounted for its current harness after a catalog shrinks,
@@ -2670,3 +2952,246 @@ file selection or downloads; UI states these limits and offers Open outside.
 No web/mobile client or later data-proxy mode is claimed. Managed downloading
 was not needed on this host (installed Chrome fallback was exercised). Packaged
 app launch, external SSH deployment and Windows/Linux runtime remain unverified.
+
+Terminal close now removes the selected tab immediately and selects its neighbour
+while process cleanup continues, without disabling the panel. Pending closes stay
+hidden through polling and task switches. Failed or uncertain closes reconcile
+the backend list without replaying the mutation or replacing a newer selection;
+stale list replies cannot resurrect a successfully closed tab. The store's 15
+regressions pass, including last-tab, concurrent-close, rollback and stale-read
+coverage. Desktop lint and the full desktop suite pass (137 desktop, 7 capture
+checks, 644 renderer tests); the production build passes.
+[Four native captures](../../artifacts/desktop-capture/terminal-close-responsive/index.html)
+verify light/dark, narrow layouts, reduced motion, mouse/keyboard close, focus
+restoration and creating another terminal while cleanup is held pending. Report
+`verified: true`; all four PNGs inspected. These captures use the real terminal
+component/store with preview-controlled backend replies, rather than live PTYs.
+
+### Failed-command rerun follow-up (2026-11-03)
+
+Single-line bracketed paste no longer invalidates command capture or disables
+Run again. Split markers are recognized; multiline paste, unfinished input and
+history/cursor editing still cannot cause a guessed command to execute.
+Backend terminal checks pass (46 tests), including real Bash/zsh reruns that
+assert new command output after the action, plus a real zsh pasted-command rerun.
+Backend build and focused ESLint, desktop lint and desktop production build pass.
+The full desktop suite passes (137 desktop, 7 capture-tool, 645 renderer tests).
+
+[Four live native checkpoints](../../artifacts/desktop-capture/terminal-rerun-live-4/index.html)
+exercise the production renderer, typed preload and actual backend/PTYs in an
+isolated database. Trusted hover/click on Run again produces a second execution
+for both typed and pasted failures. Light/dark PNGs inspected; report
+`verified: true`, with no renderer errors or warnings. These are unpackaged
+captures; no packaged-app launch or remote SSH verification is claimed.
+
+### Terminal toolbar simplification (2026-11-03)
+
+Removed startup directory/branch labels; terminal actions remain right-aligned.
+Desktop lint, build and tests pass (137 desktop, 7 capture-tool, 645 renderer).
+[Three native component checkpoints](../../artifacts/desktop-capture/terminal-actions-only/index.html)
+verify absent metadata, serving actions, Find/Escape focus restoration and a
+narrow reduced-motion layout. Light/dark PNGs inspected; report `verified: true`.
+These use preview data and do not revalidate live PTYs or a packaged app.
+
+### Terminal app-close lifecycle (2026-11-03)
+
+Desktop terminals now carry an app-launch owner. Quit and last-window close stop
+that owner's PTYs and remove running/exited tabs before engine/transport disposal;
+engine startup expires desktop records left by crashes. Legacy records retain
+their existing lifecycle and no longer appear as unavailable desktop tabs. The
+existing empty-pane opening flow starts a fresh shell after reopening.
+
+Validation: desktop lint, production build, and the full desktop suite passed
+(138 desktop, 7 capture-tool, 645 renderer tests). The focused terminal IPC suite
+passed again after its ownership assertions were added. Backend terminal suites
+passed (30 tests), including real PTYs, owner isolation, in-flight startup,
+shutdown failure, restart expiration, and fresh startup. Backend production
+TypeScript checking and changed-file ESLint passed. The broader backend test-file
+TypeScript check reports unrelated existing spec errors; it is not claimed clean.
+
+The native macOS Electron smoke passed with real preload/IPC and a fixture engine:
+closing one of two windows retains terminals; closing the last window cleans
+before engine disposal; reopening finds no tabs and uses a fresh owner; app quit
+cleans again. This is lifecycle verification, not a new visual capture, live SSH
+terminal test, or packaged-app launch. Remote cleanup remains best effort if its
+transport is unavailable. No validation processes are left running.
+
+### Terminal find refinement (2026-11-03)
+
+The find bar now uses a compact search field with a single focus border instead
+of stacked native/global rings, inline match feedback, previous/next actions and
+Close. Command/Ctrl-F refocuses and selects an existing query; Escape and Close
+clear the search and restore focus from any find control. Empty searches and
+zero matches disable navigation; Enter during IME composition does not navigate.
+
+Desktop tests passed (138 platform tests, 7 capture-tool tests, 646 renderer
+tests), including the updated Find keyboard/focus regression. The focused
+side-view suite passed all 14 tests. The production build, full desktop lint
+and changed-file ESLint passed.
+
+Native Electron captures using the real TerminalView and the bounded Machines
+preview data are saved in `artifacts/desktop-capture/terminal-find-refinement/`
+and `artifacts/desktop-capture/terminal-find-motion-verified/`; both reports have
+`verified: true` with no errors or warnings. Checks cover both themes, a 320px
+terminal, empty/matched/no-results states, previous/next and Enter/Shift-Enter,
+repeated Find, keyboard Close, Escape/focus return, reduced motion, opening
+frames and interrupted closing/reopening. PNGs were inspected. Motion sampling
+uses the owning Fold's live animations because a first gallery-wide seek hit a
+stale animation ID. These captures do not verify live PTYs or a packaged app.
+
+### Terminal cell geometry (2026-11-03)
+
+Task terminals use the matching xterm WebGL renderer with custom geometric
+glyphs. Powerline rounded caps, arrows, box drawing and blocks fill their cells
+regardless of text font metrics, line height or letter spacing. Text and symbol
+fonts load before measurement. Visible attachments own GPU resources; detaching
+releases the context without losing output or selection. GPU failure retains
+interactive DOM rendering, whose geometric glyphs still depend on font metrics.
+
+Desktop lint, production build and the full desktop suite passed (138 platform,
+7 capture-tool and 649 renderer tests). The focused terminal suite passed all 34
+tests, including renderer activation failure, context loss and attachment cleanup.
+Angular validation used `NG_BUILD_MAX_WORKERS=2` after competing compiler jobs
+stalled. Tests requiring loopback listeners ran outside filesystem sandboxing.
+
+The native macOS Electron report at
+`artifacts/desktop-capture/terminal-regression-7/report.json` has `verified: true`.
+Nine checkpoints cover both themes, compact/default/spaced cells, narrow/reduced
+motion, keyboard input, Find selection, retained output and selection, explicit
+context release and GPU-loss fallback. Pixel assertions check rounded corners
+and cap/background joins. PNGs were inspected. The single warning is xterm's
+expected notification from the deliberately lost GPU context. Captures keep
+native Retina density because Chromium's device-pixel observer boxes do not
+follow CDP's 1x emulation. This verifies the real terminal surface with isolated
+ANSI data, not a live PTY connection or a packaged-app launch.
+
+### Terminal Find in the toolbar row (2026-11-03)
+
+Find now replaces the toolbar actions in their existing row. Its closed and open
+states share a fixed minimum height, including the divider, so terminal content
+does not move when opening search. Closing restores the actions and the original
+focus after they become visible. Hidden controls are inert. The previous
+separate Find fold is removed; the failure fold retains its existing behavior.
+
+Desktop lint, production build and the full test suite passed (649 renderer
+tests). Native captures in `artifacts/desktop-capture/terminal-find-one-row/`
+report `verified: true` with no errors or warnings. Inspected PNGs cover both
+themes, matching and empty searches, no results, a 320px terminal, reduced motion,
+keyboard navigation, repeated shortcuts and Close/Escape focus restoration.
+Layout assertions verify identical toolbar height and output position relative
+to the terminal before and after opening. These are real component previews with
+supplied data, rather than live PTY or packaged-app verification.
+
+### Terminal Find button in the tab bar (2026-11-03)
+
+The Find trigger now occupies the existing tab bar beside Run script. Idle,
+failed and empty terminals no longer reserve a toolbar row for it. Find expands
+the shared Fold only when opened; Open/Stop keep that row available when a
+process actually needs those actions. Close/Escape clears search and restores
+focus. Command-F and Ctrl-F open from terminal focus and refocus an existing
+query. The trigger remains accessible while search is open.
+
+Desktop lint, production build and the full desktop tests passed (651 renderer
+tests), including separate Command/Ctrl-F opening and focus-return regressions.
+Native preview captures in `artifacts/desktop-capture/terminal-find-topbar-verified/`
+report `verified: true`, without errors or warnings. Inspected PNGs cover closed,
+open and matched searches in both themes, a 320px terminal, no results, reduced
+motion, keyboard navigation and focus return. Geometry checks confirm zero space
+between the tab bar and terminal output when the idle search is closed. The
+scenario measures the terminal output rather than Fold's internal content, and
+checks visible control bounds rather than its intentional focus-ring overflow.
+This verifies real components with supplied preview data, not live PTYs or a
+packaged app.
+
+
+### Terminal adversary fixes (2026-11-04)
+
+Reproduced and fixed all six terminal review findings. Terminal mutations serialize
+per process, reruns retain the manager's cancellation fence and revalidate durable
+ownership, and app cleanup awaits accepted replacements. Input queues bind each
+paste to immutable scope/task/process identity and discard remaining input on
+replacement. Shell hooks use private per-process tokens instead of trusting ordinary
+OSC 133, preserve Bash string/array hooks and exit status, and signal readiness
+after prompt hooks finish. URL hints and completion are consumed in wire order.
+Find now joins soft wraps with bounded Unicode-aware cell mapping.
+
+The desktop lint and production build passed. The full desktop runner passed 138
+platform tests, 7 capture-tool tests and 656 renderer tests, including the renderer
+TypeScript contract check. Backend production TypeScript passed. The full
+user-terminal suite passed 58 tests; the final focused desktop-terminal suites
+passed 30 tests after adding the retired-launch regression. Real Bash/zsh PTYs
+cover cwd, failures, rerun, shutdown and prompt preservation; deterministic gates
+cover close, owner cleanup and task-finish races. Backend tests used a 20-second
+per-test deadline for native process startup/termination.
+
+The broad backend spec TypeScript check still reports 146 existing diagnostics.
+A disposable compiler-host comparison against HEAD found the identical 146
+diagnostics and zero added diagnostics; production code and the focused tests pass.
+The repository desktop runners were invoked directly through Node 24 because the
+system pnpm shim stalled. The first sandboxed production build aborted; the same
+runner passed outside the sandbox with two Angular workers.
+
+Native macOS captures at `artifacts/desktop-capture/terminal-adversary-fixes/`
+report `verified: true` across 11 checkpoints, with no errors. Inspected PNGs cover
+both themes, cell geometry, narrow/reduced-motion layouts, retained selection,
+GPU release/fallback and exact Find selection across wrapped rows. The sole warning
+comes from intentionally losing the GPU context. These component captures use
+isolated ANSI data; backend PTY regressions separately verify real processes.
+They do not certify live SSH terminals or a packaged application.
+
+The native Electron smoke also passed with the built production renderer: real
+sandboxed preload, scoped terminal IPC validation/cleanup, multiple windows and
+`app://` history/CSP. Its backend is a disposable transport fixture, separate from
+the real backend PTY tests above. The final shell regression additionally checks
+that exported PS0/allexport profiles cannot leak hook tokens through child environments.
+
+### Terminal attachment review (2026-11-04)
+
+Fixed queued input continuing after detachment, stale task/tab input and resize
+dispatch, and output pages being read twice when reattaching during an unfinished
+xterm write. Regression tests retain real xterm input events and control only
+layout/drawing and transport timing. Shell rerun stays disabled after ambiguous
+cursor/Ctrl-U edits or Unicode deletion. Backend operation validation also rejects
+inherited object property names as bad requests.
+
+Desktop lint, the production build, backend production TypeScript and focused
+backend lint passed. The complete desktop runner passed 138 platform tests,
+7 capture-tool tests and 659 renderer tests, including TypeScript contract checks.
+All 65 user-terminal backend tests passed with real PTYs. Native macOS Electron
+smoke passed with the built production assets and a disposable transport fixture.
+
+Native captures in `artifacts/desktop-capture/terminal-review-attachment-v3/`
+report `verified: true` for four light/dark checkpoints with no errors or warnings.
+Trusted keyboard input checks detachment with an in-flight dispatch, discarded
+queued typing, the explicit Resume typing control and new input after resuming.
+The connected workspace uses its preview-only backend adapter; large Unicode
+pastes and output drawing races are covered by focused tests.
+
+The existing rendering scenario also reports `verified: true` for 11 checkpoints
+in `artifacts/desktop-capture/terminal-review-rendering/`. Inspected PNGs cover
+both themes, narrow/reduced-motion layouts and Find across wrapped text. The only
+warning is the intentional GPU context loss. These checks do not establish live
+SSH terminal behavior, packaged-app launch, or Windows/Linux runtime behavior.
+
+### Terminal startup geometry (2026-11-05)
+
+Reproduced zsh's startup spacer wrapping into extra rows when 80-column PTY
+output was parsed in a narrow pane. Output pages now retain the producer's grid
+and stop at resize boundaries; replay does not send historical resizes to the
+PTY. Geometry retention is bounded and optional for older engines.
+
+Desktop lint, production build, TypeScript contracts and the complete desktop
+suite passed: 138 platform tests, 7 capture-tool tests and 661 renderer tests.
+The final focused renderer run passed 44 terminal tests; four backend suites
+passed 57 tests, including real PTYs. Native macOS Electron smoke passed with
+the built assets and its disposable backend fixture.
+
+Native captures in `artifacts/desktop-capture/task85-terminal-startup-2/` report
+`verified: true` for four narrow light/dark checkpoints. Inspected PNGs show the
+initial prompt at the top and filled output using the first visible row. The
+scenario also checks detachment between pages, intentional blank lines, keyboard
+input and reduced motion. The existing rendering regression passed 11 checkpoints
+in `artifacts/desktop-capture/task85-terminal-rendering/`; inspected light/dark
+PNGs retain prompt shapes, with only the expected GPU-loss warning. These preview
+captures use the production ANSI adapter with supplied shell output; they do not
+establish a live SSH session, packaged-app launch or Windows/Linux behavior.

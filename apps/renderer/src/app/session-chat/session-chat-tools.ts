@@ -921,7 +921,7 @@ export function presentSessionTool(
     ...(shortened
       ? {
           notice:
-            "Preview shortened. Open the original transcript content for the full details.",
+            "Some details are shortened. Original data shows the received content.",
         }
       : {}),
   };

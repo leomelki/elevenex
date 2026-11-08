@@ -60,7 +60,8 @@
   (openPage)="openFile($event)"
   (fileReview)="review($event.id, $event.path)"
   (review)="review($event)"
-  (contentRequested)="contentId.set($event)"
+  (contentRequested)="openToolContent({ itemId: $event, part: 'text' })"
+  (toolContentRequested)="openToolContent($event)"
 >
   <div chatHistory class="history-controls">
     @if (store.before()) {
@@ -340,6 +341,7 @@
     (reconnectRequested)="reconnectRequested.emit()"
     [selection]="selection()"
     [itemId]="id"
+    [source]="contentSource()"
     (closed)="contentId.set(null)"
     [part]="contentPart()"
     (copyRequested)="copy($event)"

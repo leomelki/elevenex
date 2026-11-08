@@ -8,6 +8,11 @@ const emptyEnvironment = (): EnvironmentSnapshot => ({ selection: { kind: 'local
 /** Deterministic platform fixture for the production composition, outside its entry graph. */
 @Injectable()
 export class MachineStartupFixture {
+  // Captures exercise the real native bridge; standalone browser previews use
+  // their browser's clipboard rather than pretending a copy succeeded.
+  writeClipboardText = (text: string): Promise<void> => window.elevenex
+    ? window.elevenex.writeClipboardText(text)
+    : navigator.clipboard.writeText(text);
   readonly platform = 'darwin' as const;
   private state: MachineState = { revision: 0, hasOpenedMachine: false, settingsError: null, hosts: [], remoteMachines: [],
     localBackend: { phase: 'downloading', version: 'a'.repeat(40), receivedBytes: 42 * 1024 * 1024, totalBytes: 100 * 1024 * 1024 }, environment: emptyEnvironment(), launchSelection: null };

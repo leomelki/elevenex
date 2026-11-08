@@ -36,7 +36,7 @@ export class WorkspaceSessionArchives {
     this.set(taskId, { sessions: page.items, cursor: cursor ?? null, nextCursor: page.nextCursor, loaded: true, loading: false, error: null });
   }
 
-  async load(scope: string, taskId: number, page: 'latest' | 'earlier' | 'refresh' | 'probe' = 'latest'): Promise<void> {
+  async load(scope: string, taskId: number, page: 'latest' | 'earlier' | 'refresh' | 'probe' = 'latest', background = false): Promise<void> {
     if (!this.valid(scope) || !this.tasks.has(taskId) || this.requests.has(taskId)) return;
     const previous = this.pages().get(taskId);
     const cursor = page === 'earlier' ? previous?.nextCursor : page === 'refresh' ? previous?.cursor : null;
@@ -47,7 +47,7 @@ export class WorkspaceSessionArchives {
     this.requests.set(taskId, request);
     const current = () => generation === this.generation && this.valid(scope) && this.requests.get(taskId) === request;
     const loading: ArchivePage = { sessions: previous?.sessions ?? [], loaded: previous?.loaded ?? false, loading: true, error: null, cursor: previous?.cursor ?? null, nextCursor: previous?.nextCursor ?? null };
-    this.set(taskId, loading);
+    if (!background) this.set(taskId, loading);
     let emptyEarlierPage = false;
     try {
       const result = await this.bridge.workspaceSessions(scope, { taskId, state: 'archived', order: 'latest', limit: page === 'probe' ? 1 : 20, ...(cursor ? { cursor } : {}) });
@@ -55,20 +55,20 @@ export class WorkspaceSessionArchives {
       if (result.ok) {
         this.set(taskId, { sessions: result.value.items, loaded: page !== 'probe' || !result.value.items.length, loading: false, error: null, cursor: cursor ?? null, nextCursor: result.value.nextCursor });
         emptyEarlierPage = !!cursor && !result.value.items.length;
-      } else this.set(taskId, { ...loading, loading: false, error: result.error.message });
+      } else if (!background) this.set(taskId, { ...loading, loading: false, error: result.error.message });
     } catch {
-      if (current()) this.set(taskId, { ...loading, loading: false, error: 'Archived sessions could not be loaded. Try again.' });
+      if (!background && current()) this.set(taskId, { ...loading, loading: false, error: 'Archived sessions could not be loaded. Try again.' });
     } finally {
       if (this.requests.get(taskId) === request) this.requests.delete(taskId);
       request.finish();
     }
     // An empty older window does not establish whether any archives remain.
-    if (emptyEarlierPage && generation === this.generation && this.valid(scope)) await this.load(scope, taskId);
+    if (emptyEarlierPage && generation === this.generation && this.valid(scope)) await this.load(scope, taskId, 'latest', background);
   }
 
   async refresh(scope: string, taskId: number): Promise<void> {
     const page = this.pages().get(taskId);
-    await this.load(scope, taskId, page?.loaded && (page.sessions.length || page.cursor) ? 'refresh' : 'probe');
+    await this.load(scope, taskId, page?.loaded && (page.sessions.length || page.cursor) ? 'refresh' : 'probe', true);
   }
 
   /** Invalidate reads started before a successful mutation, then reconcile history. */

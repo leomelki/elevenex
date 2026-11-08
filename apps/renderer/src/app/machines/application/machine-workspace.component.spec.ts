@@ -1,3 +1,5 @@
+import { SessionChatDrafts } from '../../session-chat/session-chat-drafts';
+import type { BackendResult, ElevenexBridge } from '@elevenex/shared';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { ConnectedWorkspaceFixture } from '../../../../preview/connected-workspace-fixture';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
@@ -7,8 +9,12 @@ async function settle(fixture: ComponentFixture<MachineWorkspaceComponent>): Pro
   for (let pass = 0; pass < 40; pass++) { await Promise.resolve(); fixture.detectChanges(); }
   await fixture.whenStable();
 }
-function setup() {
-  TestBed.configureTestingModule({ providers: [ConnectedWorkspaceFixture, BackendClientService, { provide: ELEVENEX_BRIDGE, useExisting: ConnectedWorkspaceFixture }] });
+function setup(terminalOpen?: ElevenexBridge['taskTerminalOpenPort'], terminalCopy?: ElevenexBridge['taskTerminalCopyPort']) {
+  TestBed.configureTestingModule({ providers: [ConnectedWorkspaceFixture, BackendClientService, {
+    provide: ELEVENEX_BRIDGE, useFactory: (platform: ConnectedWorkspaceFixture) => Object.assign(platform,
+      terminalOpen ? { taskTerminalOpenPort: terminalOpen } : {}, terminalCopy ? { taskTerminalCopyPort: terminalCopy } : {}),
+    deps: [ConnectedWorkspaceFixture],
+  }] });
   const fixture = TestBed.createComponent(MachineWorkspaceComponent);
   fixture.componentRef.setInput('machine', { id: 'local', name: 'This Mac', kind: 'local', conn: 'live' });
   fixture.componentRef.setInput('active', true);
@@ -172,4 +178,92 @@ describe('Connected workspace composition', () => {
     await settle(fixture);
     expect(root.querySelector('ex-workspace-onboarding')).not.toBeNull();
   });
+  it('stages terminal context only in the matching selected conversation and never sends it', async () => {
+    const { fixture, component, platform } = setup(); await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
+    const selected = component.store.selected()!;
+    const entry = fixture.debugElement.injector.get(SessionChatDrafts).entry(selected.scopeId, selected.sessionId);
+    entry.text.set('Keep this writing.');
+    const question = { scopeId: selected.scopeId, taskId: selected.taskId, command: 'npm test', code: 7, output: 'failure context' };
+    component.askTerminal({ ...question, scopeId: 'stale-scope' });
+    expect(entry.text()).toBe('Keep this writing.');
+    component.askTerminal(question); await settle(fixture);
+    expect(entry.text()).toContain('Keep this writing.'); expect(entry.text()).toContain('failure context');
+    expect(platform.sentChatActions).toHaveLength(0);
+  });
+
+  it.each(['reply', 'throw'])('opens a newly selected terminal service during an earlier launch and ignores its failed %s', async mode => {
+    const pending: { resolve: (reply: BackendResult<{ readonly accepted: true }>) => void; reject: (error: Error) => void }[] = [];
+    const open = vi.fn<ElevenexBridge['taskTerminalOpenPort']>(() => new Promise((resolve, reject) => { pending.push({ resolve, reject }); }));
+    const { fixture, component } = setup(open); await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
+    const selected = component.store.selected()!;
+    const first = { scopeId: selected.scopeId, taskId: selected.taskId, terminalId: 1, port: 3000 };
+    const second = { ...first, terminalId: 2, port: 4000 };
+    component.openTerminalPort(first);
+    component.openTerminalPort(second);
+    expect(open).toHaveBeenCalledTimes(2);
+    if (mode === 'throw') pending[0]!.reject(new Error('Earlier failure'));
+    else pending[0]!.resolve({ ok: false, error: { code: 'transport', message: 'Earlier failure' } });
+    await settle(fixture);
+    expect(component.terminalBrowserBusy()).toBe(true);
+    expect(component.terminalBrowserError()).toBe('');
+    pending[1]!.resolve({ ok: true, value: { accepted: true } }); await settle(fixture);
+    expect(component.terminalBrowserBusy()).toBe(false);
+    expect(component.selectedTerminalBrowser()).toBe(second);
+  });
+
+  it('opens the external browser once, keeps Terminal visible and exposes its actual forwarded address', async () => {
+    let finish!: (reply: BackendResult<{ readonly accepted: true; readonly url?: string }>) => void;
+    const open = vi.fn<ElevenexBridge['taskTerminalOpenPort']>(() => new Promise(resolve => { finish = resolve; }));
+    const { fixture, component } = setup(open); await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
+    component.store.selectPanel('terminal'); component.panelOpen.set(true);
+    const selected = component.store.selected()!;
+    const intent = { scopeId: selected.scopeId, taskId: selected.taskId, terminalId: 1, port: 4200 };
+    component.openTerminalPort(intent);
+    component.openTerminalPort({ ...intent });
+    expect(open).toHaveBeenCalledExactlyOnceWith(selected.scopeId, { taskId: selected.taskId, terminalId: 1, port: 4200 });
+    expect(component.panel()).toBe('terminal'); expect(component.panelOpen()).toBe(true);
+    expect(component.terminalBrowserState()?.busy).toBe(true);
+    finish({ ok: true, value: { accepted: true, url: 'http://127.0.0.1:24567/app/' } });
+    await settle(fixture);
+    expect(component.terminalBrowserState()).toEqual({ terminalId: 1, port: 4200, busy: false, error: '', url: 'http://127.0.0.1:24567/app/' });
+    component.store.selectSession({ taskId: '13', sessionId: '104' }); await settle(fixture);
+    expect(component.terminalBrowserState()).toBeNull();
+  });
+
+  it('copies the resolved forwarded URL without opening the browser, with failure and retry feedback', async () => {
+    const open = vi.fn<ElevenexBridge['taskTerminalOpenPort']>();
+    const copy = vi.fn<ElevenexBridge['taskTerminalCopyPort']>(async () => ({ ok: true, value: { accepted: true, url: 'https://127.0.0.1:24567/app/' } }))
+      .mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Could not copy the URL.' } });
+    const { fixture, component } = setup(open, copy); await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
+    const selected = component.store.selected()!;
+    const intent = { scopeId: selected.scopeId, taskId: selected.taskId, terminalId: 1, port: 4200 };
+    component.openTerminalPort(intent, true);
+    expect(component.terminalBrowserState()?.copyBusy).toBe(true);
+    component.openTerminalPort({ ...intent }, true);
+    await settle(fixture);
+    expect(copy).toHaveBeenCalledExactlyOnceWith(selected.scopeId, { taskId: selected.taskId, terminalId: 1, port: 4200 });
+    expect(open).not.toHaveBeenCalled();
+    expect(component.terminalBrowserState()?.copied).toBeUndefined();
+    expect(component.terminalBrowserState()?.error).toContain('Could not copy');
+    component.openTerminalPort({ ...intent }, true); await settle(fixture);
+    expect(component.terminalBrowserState()).toMatchObject({ copied: true, busy: false, error: '', url: 'https://127.0.0.1:24567/app/' });
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('ignores late copy feedback after switching tasks', async () => {
+    let finish!: (reply: Awaited<ReturnType<ElevenexBridge['taskTerminalCopyPort']>>) => void;
+    const resolve = vi.fn<ElevenexBridge['taskTerminalCopyPort']>(() => new Promise(done => { finish = done; }));
+    const { fixture, component } = setup(undefined, resolve); await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
+    const selected = component.store.selected()!;
+    component.openTerminalPort({ scopeId: selected.scopeId, taskId: selected.taskId, terminalId: 1, port: 4200 }, true);
+    component.store.selectSession({ taskId: '13', sessionId: '104' }); await settle(fixture);
+    finish({ ok: true, value: { accepted: true, url: 'http://127.0.0.1:24567/' } }); await settle(fixture);
+    expect(component.terminalCopied()).toBe(false); expect(component.terminalBrowserState()).toBeNull();
+  });
+
 });

@@ -86,8 +86,8 @@ export function chatExchanges(
       (state?.phase === "running" || state?.phase === "waiting");
     const toolIds = new Set(
       group.items
-        .filter((item) => item.kind === "tool_use" && item.toolId)
-        .map((item) => item.toolId),
+        .filter((item) => item.kind === "tool_use")
+        .map((item) => item.toolId ?? item.id),
     );
     const results = new Map(
       group.items
@@ -144,6 +144,12 @@ export function chatExchanges(
                   ? "Completion unknown"
                   : presentation.meta,
               presentation,
+              fullContent: item.truncated || result?.truncated
+                ? {
+                    inputId: item.truncated ? item.id : undefined,
+                    outputId: result?.truncated ? result.id : undefined,
+                  }
+                : undefined,
               status: outcome ?? (result ? "done" : "running"),
               output: [
                 "Input",
@@ -181,6 +187,9 @@ export function chatExchanges(
               item.kind === "tool_result"
                 ? presentSessionTool({ ...item, input: "" }, item)
                 : undefined,
+            fullContent: item.kind === 'tool_result' && item.truncated
+              ? { outputId: item.id }
+              : undefined,
             status:
               item.error || item.kind === "error"
                 ? "failed"
@@ -211,15 +220,13 @@ export function chatExchanges(
       .filter(media => media.inline && !answer.includes(`](${media.path})`));
     return {
       overflow: group.items
-        .filter((item) => item.truncated)
+        // Tool evidence belongs in the work timeline, not below the answer.
+        .filter(
+          (item) => item.truncated && item.kind !== "tool_use" && item.kind !== "tool_result",
+        )
         .map((item) => ({
           id: item.id,
-          label:
-            item.kind === "tool_use"
-              ? "tool input"
-              : item.kind === "tool_result"
-                ? "tool output"
-                : "message",
+          label: "message",
         })),
       id: group.id,
       prompt: group.prompt,
@@ -245,6 +252,7 @@ export function chatExchanges(
         finalEnd > 0
           ? steps.find((step) => followingIds.has(step.id))?.id
           : undefined,
+      answerId: finalEnd > 0 ? group.items[finalStart]?.id : undefined,
       answer: [answer, ...attachments.map(media => `![${media.caption.replace(/[[\]\r\n]/g, " ")}](${media.path})`)].filter(Boolean).join("\n\n"),
       // Name the harness as the picker does ("Claude Code", not "claude").
       author:

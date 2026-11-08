@@ -73,9 +73,10 @@ optimistic updates have a clear owner.
 
 Substantial templates and styles are beside their owning component. Tiny marks
 and native-control wrappers use inline templates. Shared primitives are small
-standalone imports, not feature services. Browser and Terminal expose projection
-slots for a future trusted platform adapter; their controls emit typed requests.
-No browser/terminal backend or unrestricted embed was added.
+standalone imports, not feature services. Browser and Terminal expose trusted projection slots; their controls emit typed
+requests. The [production Terminal adapter](src/app/task-terminal/README.md)
+connects user shells through the scoped backend bridge. Browser keeps its safe
+frame and a typed serving-port handoff.
 
 ## Composition
 
@@ -119,7 +120,7 @@ paint boundary before opening starts. Its scoped feature
 stores supply the existing presentational components; they never import the
 legacy renderer or contact the backend directly. The side views provide tabs, close and expansion behavior. Changes reviews the
 selected agent reply; Browser composes the [production task browser](src/app/task-browser/README.md);
-Code hosts the [task-confined web workbench](src/app/code/README.md); the remaining views retain their frames. Expansion
+Code hosts the [task-confined web workbench](src/app/code/README.md); Terminal provides real task-owned shells and scripts. Actions retains its frame. See [terminal ownership and recovery](src/app/task-terminal/README.md). Expansion
 is available on every view and stays active when switching tabs.
 `/connected-workspace` exercises this production composition with a typed,
 preview-only backend adapter. Its fixture never enters the production build.

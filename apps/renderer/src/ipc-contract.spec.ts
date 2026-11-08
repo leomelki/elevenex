@@ -35,6 +35,14 @@ describe('IPC bridge contract', () => {
 // These negative assertions are checked by tsc in pnpm test. Vitest alone only
 // transpiles tests, which would silently miss an accidentally weakened contract.
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  expectTypeOf(invoke('clipboard:write-text', 'copy')).toEqualTypeOf<Promise<void>>();
+  expectTypeOf<ElevenexBridge['writeClipboardText']>().toEqualTypeOf<(text: string) => Promise<void>>();
+  // @ts-expect-error Clipboard writes accept text only.
+  void invoke('clipboard:write-text', { html: '<script>unsafe</script>' });
+  // @ts-expect-error The renderer cannot choose a clipboard or write arbitrary formats.
+  void invoke('clipboard:write-text', 'copy', 'selection');
+  // @ts-expect-error The bridge never exposes clipboard reads.
+  void ({} as ElevenexBridge).readClipboardText();
   void invoke('code:present', {scopeId:'scope',taskId:1}, {visible:true,compact:false});
   // @ts-expect-error Frame presentation carries no arbitrary URL or native geometry.
   void invoke('code:present', {scopeId:'scope',taskId:1}, {url:'https://example.com'});
@@ -54,6 +62,11 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   // @ts-expect-error Agent text entry is not a browser capability.
   void invoke('task-browser:command', 'scope', 1, { kind: 'type', text: 'secret', tabId: 'tab' });
 
+  void invoke('task-terminal:commands', 'scope', { taskId: 1, terminalId: 2, generation: null, after: 0 });
+  // @ts-expect-error Command metadata reads require an output generation and cursor.
+  void invoke('task-terminal:commands', 'scope', { taskId: 1, terminalId: 2 });
+  // @ts-expect-error Command reads cannot execute arbitrary command text.
+  void invoke('task-terminal:commands', 'scope', { taskId: 1, terminalId: 2, generation: null, after: 0, command: 'echo injected' });
   void invoke('session-chat:changes', 'scope', { taskId: 1, sessionId: 2, requestId: 'review', turnId: 'reply', offset: 0 });
   // @ts-expect-error Review reads require the selected task and session, never an arbitrary filesystem path.
   void invoke('session-chat:changes', 'scope', { path: '/etc/passwd', offset: 0 });
@@ -150,3 +163,29 @@ function checkUpload(invoke: <K extends keyof import('@elevenex/shared').InvokeC
   invoke('session-chat:upload', 'scope', '/Users/private/file.png');
 }
 void checkUpload;
+
+function checkTerminals(invoke: import('@elevenex/shared').Invoke) {
+  void invoke('task-terminal:attach', 'scope', { taskId: 1, terminalId: 2, attachmentId: 'attachment', generation: null, after: 0 });
+  // @ts-expect-error Terminal streams require a window-bound attachment, not a socket URL.
+  void invoke('task-terminal:attach', 'scope', { url: 'ws://other-host' });
+  // @ts-expect-error Output credits require an attachment and a committed delivery ID.
+  void invoke('task-terminal:stream-ack', 'scope', { taskId: 1, terminalId: 2, after: 0 });
+  // @ts-expect-error Stream writes distinguish text and binary input explicitly.
+  void invoke('task-terminal:stream-write', 'scope', { taskId: 1, terminalId: 2, attachmentId: 'attachment', generation: 'generation', sequence: 1, data: 'input' });
+  // @ts-expect-error A profile is executable plus literal arguments, never a generic shell command.
+  void invoke('task-terminal:save-preferences', 'scope', { prediction: 'auto', profile: { command: 'anything' } });
+  void invoke('task-terminal:create', 'scope', { taskId: 1, shellIntegration: false });
+  // @ts-expect-error Shell integration is a bounded boolean, not a script or command.
+  void invoke('task-terminal:create', 'scope', { taskId: 1, shellIntegration: 'source ~/.zshrc' });
+  void invoke('task-terminal:read', 'scope', { taskId: 1, terminalId: 2, generation: null, after: 0 });
+  // @ts-expect-error Every keystroke names its backend scope and process generation.
+  void invoke('task-terminal:input', 'scope', { taskId: 1, terminalId: 2, data: 'hello' });
+  // @ts-expect-error A renderer cannot choose an executable or worktree path.
+  void invoke('task-terminal:create', 'scope', { taskId: 1, cwd: '/tmp', shell: 'sh' });
+  // @ts-expect-error Browser handoff is a port intent, never an arbitrary output-supplied URL.
+  void invoke('task-terminal:open-port', 'scope', { taskId: 1, terminalId: 2, url: 'javascript:alert(1)' });
+  void invoke('task-terminal:copy-port', 'scope', { taskId: 1, terminalId: 2, port: 8080 });
+  // @ts-expect-error URL resolution accepts only a scoped terminal port, never arbitrary URLs.
+  void invoke('task-terminal:copy-port', 'scope', { taskId: 1, terminalId: 2, url: 'https://example.com' });
+}
+void checkTerminals;

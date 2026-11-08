@@ -20,6 +20,12 @@
   margin-top: var(--space-1);
   color: var(--ink-muted);
 }
+.full-content {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
 summary {
   cursor: pointer;
   width: fit-content;

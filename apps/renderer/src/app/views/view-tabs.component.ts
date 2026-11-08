@@ -6,6 +6,9 @@ import { ViewTab, type ViewTabMove } from './view.models';
 /** Matches the strip's edge mask in view-tabs.component.css. */
 const FADE_WIDTH = 24;
 
+/** Matches the strip's edge mask in view-tabs.component.css. */
+const FADE_WIDTH = 24;
+
 @Component({
   selector: 'ex-view-tabs',
   imports: [IconComponent, StatusGlyphComponent, CdkDrag, CdkDragHandle, CdkDropList],
@@ -28,6 +31,7 @@ export class ViewTabsComponent {
   protected readonly announcement = signal('');
   private dragIds: readonly string[] = [];
   private dragCancelled = false;
+  readonly animateEntries = input(true);
   readonly selected = output<string>();
   readonly closed = output<string>();
   readonly added = output<void>();

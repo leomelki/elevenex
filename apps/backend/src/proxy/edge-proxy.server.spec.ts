@@ -172,6 +172,96 @@ describe('createEdgeProxyServer', () => {
     await closed;
   });
 
+  describe.each(['local', 'upstream'] as const)(
+    'desktop terminal through the %s backend',
+    (mode) => {
+      async function startTerminalProxy(): Promise<string> {
+        upstreamServer = createServer();
+        upstreamWss = new WebSocketServer({ server: upstreamServer });
+        const upstreamPort = await listen(upstreamServer);
+        // Exercise the shipped allowlist: a synthetic rule would miss a
+        // terminal route omitted from both development and staged runtimes.
+        proxyServer = createEdgeProxyServer({
+          repoRoot: join(__dirname, '../../../..'),
+          ...(mode === 'local'
+            ? { localHttpServer: upstreamServer }
+            : { upstreamOrigin: `http://127.0.0.1:${upstreamPort}` }),
+        });
+        return `ws://127.0.0.1:${await listen(proxyServer)}`;
+      }
+
+      it('forwards the versioned upgrade, capability and frames in both directions', async () => {
+        const origin = await startTerminalProxy();
+        const connected = once(upstreamWss, 'connection');
+        const path = '/desktop-terminal/v1?taskId=1&terminalId=2&after=0';
+        const client = new WebSocket(`${origin}${path}`, {
+          headers: { 'x-elevenex-code-access': 'a'.repeat(64) },
+        });
+        try {
+          await once(client, 'open');
+          const [peer, request] = (await connected) as [
+            WebSocket,
+            import('http').IncomingMessage,
+          ];
+          expect(request.url).toBe(path);
+          expect(request.headers['x-elevenex-code-access']).toBe(
+            'a'.repeat(64),
+          );
+          const receivedInput = once(peer, 'message');
+          client.send('terminal-input');
+          await expect(receivedInput).resolves.toEqual([
+            Buffer.from('terminal-input'),
+            false,
+          ]);
+          const receivedOutput = once(client, 'message');
+          peer.send('terminal-output');
+          await expect(receivedOutput).resolves.toEqual([
+            Buffer.from('terminal-output'),
+            false,
+          ]);
+          const closed = once(client, 'close');
+          peer.close(4000, 'Terminal process exited');
+          await expect(closed).resolves.toEqual([
+            4000,
+            Buffer.from('Terminal process exited'),
+          ]);
+        } finally {
+          client.terminate();
+        }
+      });
+
+      it.each([
+        '/not-exposed',
+        '/desktop-terminal-other/v1',
+        '/api/desktop-workspace',
+      ])(
+        'rejects upgrades to %s without reaching the backend',
+        async (path) => {
+          const origin = await startTerminalProxy();
+          const upgraded = jest.fn();
+          upstreamServer.on('upgrade', upgraded);
+          const client = new WebSocket(`${origin}${path}`);
+          try {
+            const error = new Promise<Error>((resolve) =>
+              client.once('error', resolve),
+            );
+            const closed = new Promise<void>((resolve) =>
+              client.once('close', () => resolve()),
+            );
+            expect(await error).toMatchObject({
+              message: 'socket hang up',
+              code: 'ECONNRESET',
+            });
+            await closed;
+            expect(upgraded).not.toHaveBeenCalled();
+          } finally {
+            client.terminate();
+          }
+        },
+      );
+    },
+  );
+
   it('keeps a slow response alive after a POST upload completes', async () => {
     let finishResponse!: () => void;
     const uploadEnded = new Promise<string>((resolve) => {

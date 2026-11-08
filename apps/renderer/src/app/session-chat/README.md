@@ -32,6 +32,11 @@ Older engines omit the capability and retain their original send contract.
   epochs and feedback. It cancels reads on navigation, hiding or destruction.
   Pending writes can finish on their original backend; their replies never
   change a different conversation. No write is replayed by reconnect or refresh.
+  Idle heartbeats retain unchanged conversation inputs. Transient background
+  read failures retain the transcript and retry quietly; initial/explicit reads
+  and unsupported-engine errors still expose recovery feedback.
+  Confirmed non-configuration actions reconcile through that same quiet,
+  incremental read path. Repeated visibility notifications share the active read.
 - `SessionChatDrafts` retains at most 20 ordinary session drafts per workspace
   scope. Unresolved writes are not evicted silently. A failed send restores its
   text ahead of any newly typed draft. An uncertain outcome requires checking
@@ -62,8 +67,9 @@ Older engines omit the capability and retain their original send contract.
   the useful result and avoiding repeated paths, parameters, IDs or routine success
   receipts. Commands use a short output tail; edits show the focused diff; plans
   favor unfinished work; web/MCP results favor titles and meaningful state.
-  Full parsed evidence lives under Details; original data is nested beneath it; shortened previews retain the existing
-  paged transcript reader. Plans stay in the work timeline instead of becoming prose.
+  Full parsed evidence lives under Details; original data is nested beneath it.
+  Shortened tool inputs/results do not add full-content buttons below the answer;
+  tool evidence stays in the work timeline. Plans stay there instead of becoming prose.
 - Codex history restores native command, patch, MCP and web-search receipts with
   the live stream's tool IDs. Code-mode `exec` envelopes are omitted when native
   receipts supply the work, retaining separate output and exit/error status for
@@ -159,9 +165,10 @@ welcome card even before history contains a user item.
 user receipts through the preview adapter in light/dark and narrow layouts.
 
 The projection supplies `answerBeforeStepId` for work following the latest
-assistant text. Tool results remain paired with their original calls; late
-receipts do not move those calls past the reply. Earlier commentary and tools
-retain source order as subsequent replies arrive. `session-work-order.mjs`
+assistant text. The projection also supplies `answerId`, so that message keeps the same
+Markdown instance when it becomes earlier commentary. Tool results remain paired
+with their original calls; late receipts do not move calls past the reply. One
+flat timeline retains tool instances, disclosure and focus across message boundaries. `session-work-order.mjs`
 checks this ordering, tool/work disclosures, top hover/focus summaries, keyboard
 operation and narrow reduced-motion layouts in both themes.
 
@@ -469,3 +476,20 @@ checks actual reading position and unread feedback through recovery.
 During recovery, earlier local writing drains before a new direct submission can
 overtake it. The input remains editable. A paused backend queue stays paused;
 automatic delivery joins that queue instead of restarting the agent.
+
+## Tool timeline and original content
+
+The production timeline has one recent-work budget across alternating messages
+and tool calls. Running/unknown work and unresolved failures stay outside age
+compaction; commentary stays in order. Discovery grouping and completion preserve
+inspection. `session-tool-timeline.mjs` exercises these transitions, repeated and
+interrupted disclosures, full-output paging and paired call/input selection with
+provider-shaped fixtures in the connected preview.
+
+Shortened tool evidence carries explicit call/result IDs in `WorkStep.fullContent`.
+The connected owner resolves the available pair for the original-content reader.
+Input reads target the call; output reads target its receipt. Tab changes start
+at offset zero, cancel previous reads and reject stale responses. A message or
+an orphan result never displays an input tab for a missing call. The reader
+retains existing machine scope checks, bounded pages, inert text and cancellation
+on close/navigation.

@@ -6,31 +6,37 @@
   <section
     role="dialog"
     aria-modal="true"
+    tabindex="-1"
+    cdkFocusInitial
     aria-label="Full transcript content"
     [attr.inert]="open() ? null : ''"
   >
     <header>
-      <h2>Transcript content</h2>
+      <h2>
+        {{
+          source()
+            ? part() === "input"
+              ? "Tool input"
+              : "Tool output"
+            : "Message"
+        }}
+      </h2>
       <ex-icon-button icon="x" label="Close content" (pressed)="close()" />
     </header>
-    <nav aria-label="Content">
-      <button
-        exButton
-        variant="ghost"
-        [attr.aria-pressed]="part() === 'text'"
-        (click)="switchPart('text')"
-      >
-        Message / output</button
-      ><button
-        exButton
-        variant="ghost"
-        [attr.aria-pressed]="part() === 'input'"
-        (click)="switchPart('input')"
-      >
-        Tool input
-      </button>
-    </nav>
-    @if (unreachable() && !visiblePage()) { <ex-opens-when-back [machine]="unreachable()!" what="This transcript page" [backLabel]="page()?.itemId === itemId() ? 'Back to loaded page' : ''" (tryRequested)="reconnectRequested.emit()" (backRequested)="returnToLoaded()" /> }
+    @if (source()?.inputId && source()?.outputId) {
+      <div class="content-choice">
+        <ex-segmented label="Tool content" size="sm" [options]="parts" [value]="part()" (changed)="switchPart($event)" />
+      </div>
+    }
+    @if (unreachable() && !visiblePage()) {
+      <ex-opens-when-back
+        [machine]="unreachable()!"
+        what="This transcript page"
+        [backLabel]="canReturnToLoaded() ? 'Back to loaded page' : ''"
+        (tryRequested)="reconnectRequested.emit()"
+        (backRequested)="returnToLoaded()"
+      />
+    }
     @if (busy()) {
       <p role="status">Loading content…</p>
     }
@@ -39,7 +45,7 @@
       <button exButton (click)="reload()">Retry</button>
     }
     @if (visiblePage(); as page) {
-      <pre [attr.aria-busy]="busy()">{{
+      <pre #content tabindex="0" [attr.aria-label]="source() ? (part() === 'input' ? 'Original tool input' : 'Original tool output') : 'Message content'" [attr.aria-busy]="busy()">{{
         page.text || "No content supplied."
       }}</pre>
       <footer>

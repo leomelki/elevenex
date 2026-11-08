@@ -7,6 +7,7 @@ import type {
   SessionChatPage,
   SessionChatState,
   SessionChatCommandReply,
+  SessionChatContentRead,
 } from "@elevenex/shared";
 import {
   BackendClientService,
@@ -95,6 +96,7 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
   };
   let resolve!: (value: BackendResult<SessionChatCommandReply>) => void;
   const bridge = {
+    writeClipboardText: vi.fn<(text: string) => Promise<void>>(async () => undefined),
     sessionChatCatalog: vi.fn(async () => ({
       ok: true as const,
       value: {
@@ -106,6 +108,8 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
     })),
     sessionChatMedia: vi.fn(async (_scope: string, input: { itemId: string; mediaId: string }) => ({ ok: true as const, value: { ...input, source: 'data:image/png;base64,iVBORw0KGgo=' } })),
     sessionChatRead: vi.fn(async () => ({ ok: true as const, value: page })),
+    sessionChatContent: vi.fn(async (_scope: string, input: SessionChatContentRead) => ({ ok: true as const,
+      value: { itemId: input.itemId, part: input.part, offset: input.offset, text: `Complete ${input.part} for ${input.itemId}`, total: 100, nextOffset: null } })),
     sessionChatCommand: vi.fn(
       () =>
         new Promise<BackendResult<SessionChatCommandReply>>((yes) => {
@@ -153,6 +157,96 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it('copies reply and code text through the native bridge and reports native failures', async () => {
+    const text = '  café 👩🏽‍💻\n\t代码\r\n';
+    const { fixture, root, bridge } = setup([item('answer', 'assistant', text)]);
+    await settle(fixture);
+    fixture.componentInstance.turnAction({ id: fixture.componentInstance.store.exchanges()[0]!.id, action: 'copy' });
+    await settle(fixture);
+    expect(bridge.writeClipboardText).toHaveBeenLastCalledWith(text);
+    expect(fixture.componentInstance.store.notice()).toBe('Copied');
+    await fixture.componentInstance.copy(text, true); await settle(fixture);
+    expect(fixture.componentInstance.copiedCode()).toBe(text);
+    bridge.writeClipboardText.mockRejectedValueOnce(new Error('Clipboard busy'));
+    await fixture.componentInstance.copy('failed'); await settle(fixture);
+    expect(root.textContent).toContain('Could not copy.');
+    await fixture.componentInstance.copy('retry'); await settle(fixture);
+    expect(fixture.componentInstance.store.error()).toBe('');
+  });
+
+  it.each(['navigation', 'destruction', 'newer-copy'] as const)('rejects late clipboard feedback after %s', async change => {
+    const { fixture, bridge } = setup(); await settle(fixture);
+    let finish!: () => void;
+    bridge.writeClipboardText.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    const pending = fixture.componentInstance.copy('old', true);
+    if (change === 'navigation') {
+      fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 3 });
+      await settle(fixture);
+    } else if (change === 'destruction') fixture.destroy();
+    else await fixture.componentInstance.copy('latest', true);
+    finish(); await pending;
+    expect(fixture.componentInstance.copiedCode()).toBe(change === 'newer-copy' ? 'latest' : null);
+  });
+  it.each(['text', 'input'] as const)('opens shortened tool %s in the bounded reader and switches to the paired receipt', async part => {
+    const { root, fixture, bridge } = setup([
+      item('u', 'user', 'Check the output'),
+      { ...item('call', 'tool_use', ''), toolId: 'tool', toolKind: 'bash', input: '{"command":"pnpm test"}', truncated: true },
+      { ...item('earlier-result', 'tool_result', 'An earlier receipt'), toolId: 'tool' },
+      { ...item('result', 'tool_result', 'A shortened result'), toolId: 'tool', truncated: true },
+      item('answer', 'assistant', 'Done.'),
+    ]);
+    await settle(fixture);
+    root.querySelector<HTMLButtonElement>('.work')!.click();
+    await settle(fixture);
+    expect(root.querySelector('ex-tool-content')).toBeNull();
+    root.querySelector<HTMLButtonElement>('ex-tool-step .head')!.click();
+    await settle(fixture);
+    const button = [...root.querySelectorAll<HTMLButtonElement>('.full-content button')].find(button => button.textContent?.includes(part === 'text' ? 'output' : 'input'))!;
+    button.click(); await settle(fixture);
+    expect(bridge.sessionChatContent).toHaveBeenLastCalledWith('scope', expect.objectContaining({ itemId: part === 'text' ? 'result' : 'call', part }));
+    const other = [...document.querySelectorAll<HTMLButtonElement>('[role="radiogroup"][aria-label="Tool content"] button')].find(button => button.textContent?.includes(part === 'text' ? 'Input' : 'Output'))!;
+    other.click(); await settle(fixture);
+    expect(bridge.sessionChatContent).toHaveBeenLastCalledWith('scope', expect.objectContaining({ itemId: part === 'text' ? 'call' : 'result', part: part === 'text' ? 'input' : 'text', offset: 0 }));
+  });
+  it.each(["idle", "running"] as const)(
+    "keeps shortened tool inputs and results inside work during %s replies",
+    async (phase) => {
+      const tools = Array.from({ length: 12 }, (_, index) => [
+        { ...item(`tool-${index}`, "tool_use", ""), toolId: `call-${index}`, toolKind: "bash", input: '{"command":"pnpm test"}', truncated: true },
+        { ...item(`result-${index}`, "tool_result", "Tests passed\n… [display shortened]"), toolId: `call-${index}`, truncated: true },
+      ]).flat();
+      const { fixture, root } = setup([
+        item("prompt", "user", "Check the changes"),
+        ...tools,
+        { ...item("orphan", "tool_result", "Earlier tool output"), truncated: true },
+        item("answer", "assistant", "The changes are verified."),
+      ], { ...state, phase });
+      await settle(fixture);
+      expect(root.textContent).not.toContain("Read full tool");
+      expect(root.querySelector("ex-turn .answer")?.textContent).toContain("The changes are verified.");
+      const work = root.querySelector<HTMLButtonElement>("ex-turn .work")!;
+      if (work.getAttribute("aria-expanded") !== "true") {
+        work.click(); await settle(fixture);
+      }
+      const heads = root.querySelectorAll<HTMLButtonElement>("ex-work-timeline ex-tool-step .head");
+      heads[heads.length - 2]!.click();
+      heads[heads.length - 1]!.click();
+      await settle(fixture);
+      expect(root.querySelector("ex-work-timeline")?.textContent).toContain("Tests passed");
+      expect(root.querySelector("ex-work-timeline")?.textContent).toContain("Earlier tool output");
+    },
+  );
+
+  it("retains full-message access for shortened assistant replies", async () => {
+    const { fixture, root } = setup([
+      item("prompt", "user", "Explain the changes"),
+      { ...item("answer", "assistant", "A shortened reply"), truncated: true },
+    ]);
+    await settle(fixture);
+    expect(root.querySelector("ex-turn .answer")?.textContent).toContain("A shortened reply");
+    expect(root.querySelector("ex-chat-scroll .content > button[exButton]")?.textContent).toContain("Read full message");
+  });
+
   it.each(["claude", "codex", "opencode", "pi", "custom-agent"])(
     "uses the %s harness identity for the reply mark",
     async (provider) => {
@@ -273,6 +367,8 @@ describe("connected chat reply rendering", () => {
     work.click(); await settle(fixture);
     const tools = root.querySelectorAll('ex-tool-step');
     expect(tools).toHaveLength(2);
+    tools[0]!.querySelector<HTMLButtonElement>('.head')!.click();
+    await settle(fixture);
     expect(tools[0]?.querySelector('.tool-preview')?.textContent).toContain('Retry safety');
     expect(tools[0]?.querySelector('.tool-preview')?.textContent).not.toContain('{');
     expect(tools[1]?.querySelector('.verb')?.textContent).toBe('Attempted to edit');
@@ -317,6 +413,8 @@ describe("connected chat reply rendering", () => {
     await settle(fixture);
     const tools = root.querySelectorAll("ex-tool-step");
     expect(tools).toHaveLength(2);
+    tools[0]!.querySelector<HTMLButtonElement>('.head')!.click();
+    await settle(fixture);
     expect(tools[0]?.querySelector(".verb")?.textContent).toBe("Read");
     expect(tools[1]?.querySelector(".verb")?.textContent).toBe("Failed to run");
     expect(tools[0]?.querySelector("section.failed")).toBeNull();
@@ -367,7 +465,7 @@ describe("connected chat reply rendering", () => {
     await settle(fixture);
     fixture.detectChanges();
     expect(root.querySelector("ex-turn .work")).toBeNull();
-    expect(root.querySelector("ex-turn ex-work-timeline")).toBeNull();
+    expect(root.querySelector("ex-turn ex-tool-step")).toBeNull();
     expect(root.querySelector("ex-turn .answer")?.textContent).toContain(
       "Here is the final reply.",
     );

@@ -171,6 +171,17 @@ describe('desktop workspace git boundary', () => {
       includeUnstaged: true,
     });
   });
+  it.each(['rejected', 'interrupted'])('reports a saved commit after a %s push and allows push without committing again', async (failure) => {
+    if (failure === 'rejected') push.mockResolvedValueOnce({ pushed: false });
+    else push.mockRejectedValueOnce(new Error('Transport interrupted'));
+    await expect(service.action(taskId, { type: 'commit', message: 'Save first', push: true }))
+      .rejects.toMatchObject({ response: { code: 'commit-saved-push-failed' } });
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(await service.summary(taskId)).not.toHaveProperty('commitPhase');
+    await service.action(taskId, { type: 'push' });
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(commit).toHaveBeenCalledTimes(1);
+  });
   it('renames the actual branch and updates its durable task/session ownership together', async () => {
     await service.action(taskId, {
       type: 'rename-branch',

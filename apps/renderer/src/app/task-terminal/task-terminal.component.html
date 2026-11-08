@@ -1,0 +1,16 @@
+<ex-terminal-view [animateTabs]="animateTabs()" [tabs]="tabs()" [active]="store.active() === null ? undefined : '' + store.active()" [scripts]="store.snapshot()?.scripts ?? []" [failure]="failure()" [disabled]="disabled()" [askDisabled]="!askAvailable()" [rerunDisabled]="!current()?.canRerun" [findStatus]="searchResult()" [findMatches]="searchMatches()"
+  (selected)="selected($event)" (added)="create()" (closed)="close($event)" (scriptRequested)="create($event.id)" (stopRequested)="interrupt($event)" (rerunRequested)="store.action(+$event.tabId, 'rerun')" (askRequested)="ask()" (portOpened)="openPort($event)" (portCopyRequested)="openPort($event, true)" (searchRequested)="find($event)">
+  @if (inputBlocked() && current()?.alive) { <button #resumeButton terminalActions exButton size="sm" variant="secondary" [disabled]="disabled()" (click)="resumeInput()">Resume typing</button> }
+  <div terminalContent class="live-content" [class.has-terminal]="!!current()">
+    @if (store.error()) { <div class="notice error" role="alert">{{ store.error() }}<button exButton size="sm" variant="ghost" [disabled]="disabled()" (click)="store.refresh()">Refresh</button></div> }
+    @if (!available()) { <p class="notice" role="status">Reconnect to reattach. Terminals continue on their machine.</p> }
+    @if (notice()) { <ex-toast class="connection-notice" [title]="inputBlocked() ? 'Typing paused' : 'Terminal connection'" [detail]="notice()" glyph="attention" [duration]="0" (dismissed)="dismissNotice()" /> }
+    @if (store.loading()) { <p class="notice" role="status">Loading task terminals…</p> }
+    @if (current()?.status === 'unavailable') { <p class="notice" role="status">Terminal history is unavailable for this engine generation. Open a new terminal to continue.</p> }
+    @if (current()?.status === 'exited') { <p class="notice" role="status">Shell exited {{ current()?.exitCode }}. Open a new terminal to continue.</p> }
+    @if (current()?.alive && (current()?.shellIntegration === 'unavailable' || current()?.shellIntegration === 'unsupported')) { <p class="notice" role="status">Command tracking is unavailable. You can still use this terminal.</p> }
+    @if (current()?.alive && current()?.shellIntegration === 'disabled') { <p class="notice" role="status">Command tracking is off for this terminal.</p> }
+    <div #surface class="surface" [hidden]="!current()" [attr.inert]="!visible() ? '' : null" aria-label="Interactive user terminal"></div>
+    @if (!selection()) { <p class="notice">Select a ready task to open its terminals.</p> }
+  </div>
+</ex-terminal-view>

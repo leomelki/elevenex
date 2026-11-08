@@ -428,11 +428,12 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
   const preview = { taskId: 1, revision: 'a'.repeat(64), items: [file], nextCursor: null, matches: 1, total: 1, unstaged: 0, selected: { files: 1, add: 3, del: 1, staged: 1, unstaged: 0 }, running: [], private: 'discard' };
   const summary = { taskId: 1, branch: 'work', upstream: null, ahead: 1, behind: 0, files: 0, additions: 0, deletions: 0, conflicted: false };
   let reply = preview;
+  let statusCode = 200;
   const url = await server(context, (request, response) => {
     let body = ''; request.setEncoding('utf8'); request.on('data', chunk => { body += chunk; });
     request.on('end', () => {
       requests.push({ method: request.method, path: request.url, body: body ? JSON.parse(body) : null });
-      response.writeHead(200, json); response.end(JSON.stringify(reply));
+      response.writeHead(statusCode, json); response.end(JSON.stringify(reply));
     });
   });
   const client = new BackendClient(() => local(url), () => {}); context.after(() => client.dispose()); client.attach(42);
@@ -458,6 +459,20 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
   for (const changesRevision of ['', 'x'.repeat(64), 123, 'a'.repeat(65)]) {
     reply = { ...summary, changesRevision };
     assert.equal((await handlers.get('workspace:git')(event, scope, 1)).error.code, 'invalid-response');
+  }
+  statusCode = 409;
+  for (const [code, expected] of [
+    ['commit-message-failed', 'Enter a message above'],
+    ['commit-changes-moved', 'Refresh files'],
+    ['commit-saved-push-failed', 'commit was saved'],
+    ['commit-index-locked', 'Another Git operation'],
+    ['commit-rejected', 'commit hooks'],
+    ['untrusted-server-code', 'conflicts with the current workspace'],
+  ]) {
+    reply = { code, message: 'private backend output that must never reach the renderer' };
+    const result = await handlers.get('workspace:git-action')(event, scope, { taskId: 1, type: 'commit', message: '' });
+    assert.equal(result.ok, false); assert.match(result.error.message, new RegExp(expected));
+    assert.doesNotMatch(result.error.message, /private backend/);
   }
   const count = requests.length; client.reset(42); assert.equal((await read()).error.code, 'stale-scope'); assert.equal(requests.length, count);
 });

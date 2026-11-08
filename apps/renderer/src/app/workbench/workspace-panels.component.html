@@ -7,8 +7,10 @@
   </div>
 </header>
 @for (tab of tabs; track tab.id) {
-  <section class="panel-body" [class.has-content]="(tab.id === 'changes' && !!changesContent()) || (tab.id === 'code' && !!codeContent()) || (tab.id === 'browser' && !!browserContent())" role="tabpanel" [id]="tab.panelId" [attr.aria-label]="tab.label" [hidden]="panel() !== tab.id" [attr.inert]="panel() !== tab.id ? '' : null" tabindex="0">
-    @if (tab.id === 'changes' && changesContent()) {
+  <section class="panel-body" [class.has-content]="(tab.id === 'changes' && !!changesContent()) || (tab.id === 'code' && !!codeContent()) || (tab.id === 'terminal' && !!terminalContent()) || (tab.id === 'browser' && !!browserContent())" role="tabpanel" [id]="tab.panelId" [attr.aria-label]="tab.label" [hidden]="panel() !== tab.id" [attr.inert]="panel() !== tab.id ? '' : null" tabindex="0">
+    @if (tab.id === 'terminal' && terminalContent()) {
+      <ng-content select="[workspaceTerminal]" />
+    } @else if (tab.id === 'changes' && changesContent()) {
       <ng-content select="[workspaceChanges]" />
     } @else if (tab.id === 'code' && codeContent()) {
       <ng-content select="[workspaceCode]" />
