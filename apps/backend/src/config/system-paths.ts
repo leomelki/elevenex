@@ -4,10 +4,17 @@ import { basename, extname, join } from 'path';
 import { spawn } from 'child_process';
 import { Logger } from '@nestjs/common';
 import simpleGit, { SimpleGit } from 'simple-git';
+import {
+  assertSubprocessEnvironment,
+  ShellEnvironmentProjection,
+} from './subprocess-environment.js';
 
 const logger = new Logger('SystemPaths');
 const IS_WINDOWS = process.platform === 'win32';
 const PATH_DELIMITER = IS_WINDOWS ? ';' : ':';
+const FNM_MULTISHELL_BIN = IS_WINDOWS
+  ? /(?:^|[/\\])fnm_multishells[/\\][^/\\]+[/\\]?$/i
+  : /(?:^|[/\\])fnm_multishells[/\\][^/\\]+[/\\]bin[/\\]?$/;
 
 export function isLoginShellEnvRefreshEnabled(): boolean {
   return !IS_WINDOWS;
@@ -71,6 +78,7 @@ const SHELL_REFRESH_CONCURRENCY = 2;
 // Mutated through the helpers below; not exported directly so all access goes
 // through `getCachedShellEnv()`.
 let _shellEnvCache: NodeJS.ProcessEnv | null = null;
+const shellProjection = new ShellEnvironmentProjection();
 let _lastRefreshAt = 0;
 const binaryPathCache = new Map<string, string>();
 
@@ -262,6 +270,15 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
         resolve(null);
         return;
       }
+      try {
+        assertSubprocessEnvironment(parsed);
+      } catch (error) {
+        logger.warn(
+          `async shell-env capture rejected (${cwdTag(cwd)}): ${error instanceof Error ? error.message : 'invalid environment'}`,
+        );
+        resolve(null);
+        return;
+      }
       logger.log(
         `async shell-env loaded (${cwdTag(cwd)} keys=${Object.keys(parsed).length} elapsed=${elapsed}ms)`,
       );
@@ -345,10 +362,17 @@ function drainShellRefreshes(): void {
       if (parsed) {
         const now = Date.now();
         if (job.cwd === undefined) {
-          _shellEnvCache = parsed;
-          _lastRefreshAt = now;
-          applyShellEnvToProcess();
-          binaryPathCache.clear();
+          try {
+            applyShellEnvToProcess(parsed);
+            _shellEnvCache = parsed;
+            _lastRefreshAt = now;
+            binaryPathCache.clear();
+          } catch (error) {
+            logger.warn(
+              `async shell-env projection rejected: ${error instanceof Error ? error.message : 'invalid environment'}`,
+            );
+            parsed = null;
+          }
         } else if (job.entry && _cwdEnvCache.get(job.cwd) === job.entry) {
           Object.assign(job.entry, {
             env: parsed,
@@ -405,37 +429,24 @@ function getCachedShellEnv(): NodeJS.ProcessEnv {
 // Node practice and what every shell integration ultimately does.
 //
 // Rules:
-//   - PATH is always recomputed (combined merge) so a user dotfile edit
-//     observed via refresh is reflected for subsequent spawns.
+//   - Remove our previous projection before merging the next capture, rather
+//     than accumulating obsolete shell variables and version-manager paths.
 //   - Other keys are added only if missing — we never clobber a value the
 //     app deliberately set (e.g. `process.env.GIT_OPTIONAL_LOCKS = '0'` in
 //     main.ts) or that the user passed via systemd/launchd/CLI.
-function applyShellEnvToProcess(): void {
-  const shellEnv = _shellEnvCache;
-  if (!shellEnv) return;
-
-  process.env.PATH = buildAugmentedPath(
-    process.env.PATH || '',
-    shellEnv.PATH || '',
-  );
+function applyShellEnvToProcess(shellEnv: NodeJS.ProcessEnv): void {
+  const baseline = shellProjection.baseline(process.env);
+  const next = { ...baseline };
+  next.PATH = buildAugmentedPath(baseline.PATH || '', shellEnv.PATH || '');
 
   for (const [key, value] of Object.entries(shellEnv)) {
     if (key === 'PATH' || value === undefined) continue;
-    if (process.env[key] === undefined) {
-      process.env[key] = value;
+    if (next[key] === undefined) {
+      next[key] = value;
     }
   }
 
-  const isUtf8 = (v: string | undefined) =>
-    typeof v === 'string' && /utf-?8/i.test(v);
-  if (
-    !isUtf8(process.env.LC_ALL) &&
-    !isUtf8(process.env.LANG) &&
-    !isUtf8(process.env.LC_CTYPE)
-  ) {
-    process.env.LANG = process.env.LANG || 'en_US.UTF-8';
-    process.env.LC_CTYPE = process.env.LC_CTYPE || 'en_US.UTF-8';
-  }
+  shellProjection.apply(process.env, baseline, ensureUtf8Locale(next));
 }
 
 // Mark a per-cwd entry as recently used and evict the oldest if we exceed the
@@ -622,8 +633,17 @@ export function buildAugmentedPath(
 ): string {
   const seen = new Set<string>();
   const parts: string[] = [];
+  let hasFnmMultishell = false;
 
   const addPart = (part: string) => {
+    // fnm allocates a new multishell directory on each login-shell capture.
+    // Exact deduplication alone lets thousands of obsolete bins accumulate in
+    // a long-lived backend's PATH until even `git status` fails with E2BIG.
+    // Retain the first (highest-priority) fnm bin, just as PATH resolution does.
+    if (FNM_MULTISHELL_BIN.test(part)) {
+      if (hasFnmMultishell) return;
+      hasFnmMultishell = true;
+    }
     if (part && !seen.has(part)) {
       seen.add(part);
       parts.push(part);
@@ -877,7 +897,11 @@ function mergeAugmentedEnv(
   const combinedPath = cwd
     ? buildAugmentedPath(getPathEnvValue(shellEnv), getPathEnvValue(base))
     : buildAugmentedPath(getPathEnvValue(base), getPathEnvValue(shellEnv));
-  return ensureUtf8Locale(withNormalizedPathEnv(merged, combinedPath, pathKey));
+  const env = ensureUtf8Locale(
+    withNormalizedPathEnv(merged, combinedPath, pathKey),
+  );
+  assertSubprocessEnvironment(env);
+  return env;
 }
 
 export async function buildAugmentedEnvAsync(

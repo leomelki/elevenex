@@ -206,6 +206,180 @@ describePosix('system-paths per-cwd env cache', () => {
   });
 });
 
+describePosix('global shell environment replacement', () => {
+  it('repairs an inherited PATH with thousands of FNM multishells before projecting or launching children', async () => {
+    const bins = Array.from(
+      { length: 6500 },
+      (_, index) => `/tmp/fnm_multishells/${index}_${'x'.repeat(40)}/bin`,
+    );
+    process.env.PATH = [
+      '/usr/bin',
+      bins[0],
+      '/custom/tools',
+      ...bins.slice(1),
+      '/bin',
+    ].join(':');
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const refresh = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(children[0], envOutput('/shell/bin'));
+    await refresh;
+    const paths = process.env.PATH.split(':');
+    expect(paths.filter((part) => part.includes('fnm_multishells'))).toEqual([
+      bins[0],
+    ]);
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        '/usr/bin',
+        '/custom/tools',
+        '/bin',
+        '/shell/bin',
+      ]),
+    );
+    expect(Buffer.byteLength(process.env.PATH)).toBeLessThan(2000);
+    expect(systemPaths.buildAugmentedEnv().PATH).toBe(process.env.PATH);
+  });
+
+  it("prefers a worktree shell's FNM bin over the global shell without accumulating either", async () => {
+    process.env.PATH = '/usr/bin:/tmp/fnm_multishells/launch/bin:/custom/bin';
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const refresh = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(
+      children[0],
+      envOutput('/tmp/fnm_multishells/global/bin:/usr/bin'),
+    );
+    await refresh;
+    const result = systemPaths.buildAugmentedEnvAsync(process.env, '/repo/fnm');
+    await closeShellProcess(
+      children[1],
+      envOutput('/tmp/fnm_multishells/worktree/bin:/usr/bin'),
+    );
+    const env = await result;
+    expect(
+      env.PATH?.split(':').filter((part) => part.includes('fnm_multishells')),
+    ).toEqual(['/tmp/fnm_multishells/worktree/bin']);
+    expect(process.env.PATH).toContain('/tmp/fnm_multishells/launch/bin');
+  });
+
+  it('replaces obsolete shell exports and paths while preserving launch and application overrides', async () => {
+    process.env.PATH = '/launch/bin';
+    process.env.GIT_OPTIONAL_LOCKS = '0';
+    process.env.ELEVENEX_TEST_OVERRIDE = 'launch';
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const first = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(
+      children[0],
+      `${envOutput('/shell/old/bin')}OLD_EXPORT=old\nCHANGED_EXPORT=old\nAPPLICATION_EXPORT=shell\nGIT_OPTIONAL_LOCKS=1\nELEVENEX_TEST_OVERRIDE=shell\n`,
+    );
+    await first;
+    process.env.APPLICATION_EXPORT = 'application';
+    const next = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(
+      children[1],
+      `${envOutput('/shell/new/bin')}CHANGED_EXPORT=new\nAPPLICATION_EXPORT=new-shell-value\n`,
+    );
+    await next;
+    expect(process.env.PATH).toContain('/launch/bin');
+    expect(process.env.PATH).toContain('/shell/new/bin');
+    expect(process.env.PATH).not.toContain('/shell/old/bin');
+    expect(process.env.OLD_EXPORT).toBeUndefined();
+    expect(process.env.CHANGED_EXPORT).toBe('new');
+    expect(process.env.APPLICATION_EXPORT).toBe('application');
+    expect(process.env.ELEVENEX_TEST_OVERRIDE).toBe('launch');
+    expect(process.env.GIT_OPTIONAL_LOCKS).toBe('0');
+  });
+
+  it('keeps hundreds of changing captures bounded and can still launch Git and a Node subprocess', async () => {
+    process.env.PATH = '/usr/bin:/bin';
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const initialBytes = Buffer.byteLength(JSON.stringify(process.env));
+    for (let index = 0; index < 400; index++) {
+      const refresh = systemPaths.refreshLoginShellEnv(true);
+      await closeShellProcess(
+        children[index],
+        `${envOutput(`/tools/${index}/${'x'.repeat(512)}`)}ROTATING_EXPORT_${index}=${'y'.repeat(512)}\n`,
+      );
+      await refresh;
+    }
+    expect(
+      Object.keys(process.env).filter((key) =>
+        key.startsWith('ROTATING_EXPORT_'),
+      ),
+    ).toEqual(['ROTATING_EXPORT_399']);
+    expect(
+      Buffer.byteLength(JSON.stringify(process.env)) - initialBytes,
+    ).toBeLessThan(3000);
+    const { execFile } =
+      jest.requireActual<typeof import('node:child_process')>(
+        'node:child_process',
+      );
+    const launch = (file: string, args: string[]) =>
+      new Promise<string>((resolve, reject) => {
+        execFile(
+          file,
+          args,
+          { env: process.env, timeout: 5000, maxBuffer: 4096 },
+          (error, stdout) => {
+            if (error) reject(new Error(error.message));
+            else resolve(stdout);
+          },
+        );
+      });
+    await expect(launch('git', ['--version'])).resolves.toMatch(
+      /^git version /,
+    );
+    await expect(
+      launch(process.execPath, ['-e', 'process.stdout.write("ok")']),
+    ).resolves.toBe('ok');
+  });
+
+  it('retains the last good global cache after rejecting an oversized capture', async () => {
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const first = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(children[0], envOutput('/shell/good/bin'));
+    await first;
+    const previous = { ...process.env };
+    const next = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(
+      children[1],
+      `${envOutput('/shell/bad/bin')}API_TOKEN=${'secret-value'.repeat(7000)}\n`,
+    );
+    await next;
+    expect(process.env).toEqual(previous);
+    expect(systemPaths.buildAugmentedEnv({}).PATH).toContain('/shell/good/bin');
+  });
+
+  it('rejects an oversized combined projection before mutating the backend environment or cache', async () => {
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const first = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(children[0], envOutput('/shell/good/bin'));
+    await first;
+    process.env.CALLER_A = 'a'.repeat(40000);
+    process.env.CALLER_B = 'b'.repeat(40000);
+    const previous = { ...process.env };
+    const next = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(
+      children[1],
+      `${envOutput('/shell/bad/bin')}SHELL_A=${'c'.repeat(40000)}\nSHELL_B=${'d'.repeat(40000)}\n`,
+    );
+    await next;
+    expect(process.env).toEqual(previous);
+    expect(systemPaths.buildAugmentedEnv({}).PATH).toContain('/shell/good/bin');
+  });
+
+  it('rejects oversized caller overrides for Git and agents without truncating them', async () => {
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const refresh = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(children[0], envOutput('/shell/bin'));
+    await refresh;
+    const base = { API_TOKEN: 'secret'.repeat(12000) };
+    expect(() => systemPaths.buildAugmentedEnv(base)).toThrow(/API_TOKEN:\d+/);
+    await expect(systemPaths.buildAugmentedEnvAsync(base)).rejects.toThrow(
+      /launch budget/,
+    );
+    expect(base.API_TOKEN.length).toBe(72000);
+  });
+});
+
 describePosix('system-paths bounded shell refreshes', () => {
   async function seedGlobalEnv(): Promise<void> {
     mockSpawn.mockImplementation(() => createShellProcess());
@@ -643,6 +817,15 @@ describe('system-paths Windows env handling', () => {
     );
 
     expect(pathValue).toBe('C:\\Windows\\System32;C:\\Tools;D:\\bin');
+  });
+
+  it('retains only the preferred FNM multishell directory on Windows', () => {
+    expect(
+      systemPaths.buildAugmentedPath(
+        'C:\\Windows\\System32;C:\\fnm_multishells\\current;C:\\Tools',
+        'C:\\fnm_multishells\\old;C:\\Tools',
+      ),
+    ).toBe('C:\\Windows\\System32;C:\\fnm_multishells\\current;C:\\Tools');
   });
 
   it('runs generic command shims through the Windows shell', () => {

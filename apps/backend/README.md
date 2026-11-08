@@ -27,6 +27,9 @@
 
 ## Project setup
 
+See [subprocess environments](src/config/README.md) for login-shell refresh
+ownership, FNM PATH handling and launch environment limits.
+
 ```bash
 $ pnpm install
 ```
