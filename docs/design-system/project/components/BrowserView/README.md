@@ -25,6 +25,7 @@ The Browser side view: a real browser that belongs to the task, shared by the ag
 - The agent stops and the pill says **Your turn**.
 - A banner opens above the page ("The agent needs you to sign in"), with **I'm done**.
 - Password, card and code fields are masked in everything the agent reads. It never sees what you type there.
+- A passkey or security-key request opens `PasskeyAsk`, a sheet over the window (never inside the page), which asks, waits for the key and explains a failure.
 
 **Point and ask** (⇧⌘C, or the target button):
 - Pick any element on the page. It gets a ring and its selector with the source file and line ("button.pay · CheckoutForm.tsx:88", through source maps).

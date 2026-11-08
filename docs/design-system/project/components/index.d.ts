@@ -743,6 +743,8 @@ export declare function EditMachine(props: { machine: Machine; step?: 'edit' | '
 export declare function AddMachine(props: AddMachineProps): React.ReactElement;
 export declare function HostField(props: { query?: string; hosts?: Array<{ name: string; detail: string }>; picked?: { name: string; user: string; port?: number; auth?: string; fromConfig?: boolean } | null }): React.ReactElement;
 export declare function HostKeyCheck(props: { host: string; fingerprint: string; type?: string; changed?: boolean }): React.ReactElement;
+/** A Browser site asks for a passkey or security key: one sheet that asks, waits for the key, picks an account and explains a failure. Implemented by the desktop process, not the renderer. */
+export declare function PasskeyAsk(props: { phase: 'confirm' | 'waiting' | 'accounts' | 'failed'; origin: string; operation: 'get' | 'create'; accounts?: Array<{ displayName?: string; name?: string }>; error?: string; platform?: 'win32' | 'other'; onChoice?: (choice: 'continue' | 'retry' | 'cancel' | `account:${number}`) => void }): React.ReactElement;
 export declare function PairingText(props: { text: string; copied?: boolean; onCopy?: () => void }): React.ReactElement;
 export declare function PairPaste(props: { text?: string; found?: { name: string; detail: string } | null }): React.ReactElement;
 export declare const MACHINE_ICON: Record<MachineKind, string>;

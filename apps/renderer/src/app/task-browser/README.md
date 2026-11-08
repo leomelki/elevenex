@@ -178,7 +178,8 @@ browser reports capacity instead of silently exceeding the bound.
 ## Capabilities and extension boundaries
 
 Hosts advertising `webAuthn: true` can relay explicit WebAuthn registration and
-sign-in to the viewing device. Native consent names the requesting origin;
+sign-in to the viewing device. A main-owned sheet (`PasskeyAsk`) names the
+requesting origin and asks first;
 ceremony options/results stay in main and the private viewer transport. No
 renderer control or credential access is added. See [WebAuthn architecture and
 native authenticator limits](../../../../../docs/task-browser-webauthn.md), including

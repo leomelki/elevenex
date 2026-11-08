@@ -1,8 +1,9 @@
 # Streamed browser WebAuthn
 
 WebAuthn registration and explicit sign-in use the viewing desktop's native
-authenticators. A native confirmation names the exact requesting origin before
-the device starts authentication. Requests never authorize an agent to use a key.
+authenticators. A main-owned authentication sheet (design-system `PasskeyAsk`)
+names the exact requesting origin and asks before the device starts
+authentication. Requests never authorize an agent to use a key.
 The remote host needs the managed Chromium distribution with extension support;
 installed Chrome versions which refuse unpacked extensions cannot provide this
 relay. No Chrome store installation or user-browser profile import is required.
@@ -36,7 +37,7 @@ rejected, rather than manufacturing a different `crossOrigin` assertion.
 validates identities and options, rejects remote origin-override extensions,
 and calls the application-owned `WebAuthnBroker`. The broker handles one native
 ceremony at a time; concurrent requests fail instead of queuing authentication.
-Each request requires explicit native consent. A persistent, separate Electron
+Each request requires explicit consent in the sheet. A persistent, separate Electron
 session holds native authenticator metadata, independent of website/agent
 profiles. Public keys, assertions and options never enter Angular, MCP or saved
 browser metadata; private keys remain with the authenticator.
@@ -51,6 +52,33 @@ the local browser independently enforces RP binding and user verification. No
 TLS errors, CSP, browser sandbox or origin checks are disabled. Allowed origins
 are HTTPS and the explicit trustworthy HTTP development hosts `localhost`,
 `*.localhost`, `127.0.0.1` and `[::1]`.
+
+## Authentication sheet
+
+The same inert document is the whole user interface: one modal child window
+(a native sheet on macOS) that confirms, waits for the device, chooses among
+discoverable accounts and explains failures. It replaces the earlier native
+message boxes and the unstyled waiting window.
+
+- `webauthn-prompt-document.ts` builds the document: fixed markup, the design
+  tokens staged as `dist/browser/tokens.css`, and Instrument Sans inlined as a
+  `data:` font from the renderer's bundled fonts, so the session still serves a
+  single URL. Its CSP keeps `script-src 'none'`; styles use a per-ceremony nonce.
+  Missing assets degrade the look, never authentication.
+- Main injects one fixed controller with `executeJavaScript` (the only code in
+  that document) and drives it with JSON views from `webauthn-prompt-view.ts`.
+  Strings, including authenticator account names, are written with
+  `textContent` and bounded. Choices come back as allow-listed strings.
+- Nothing calls `navigator.credentials` before Continue. Proceeding choices are
+  ignored for 500 ms after the sheet appears or regains focus, so input aimed at
+  the page underneath cannot approve it. Cancel, Esc and closing the window abort
+  the ceremony, which destroys the window and rejects the pending call.
+- A failed attempt shows the DOMException's meaning and keeps the consented
+  request open for Try again; the two-minute ceremony timeout still applies.
+  Results returned to the site keep their existing `NotAllowedError` mapping.
+
+`node apps/desktop/test/webauthn-prompt-preview.cjs` renders every phase in
+light and dark from the built app to ignored `artifacts/webauthn-prompt/`.
 
 Aborting the website request, navigating its document, hiding the presented
 origin, losing the viewer, switching task/scope, closing the window or timing
@@ -98,9 +126,9 @@ IPC integration tests cover transport denial without a viewer lease.
 
 After building both applications, run
 `node apps/desktop/test/browser-webauthn-native.cjs` for native Electron + remote
-Chromium registration, discoverable-account choice, signed assertions and denied
-consent. Only the test process installs a virtual authenticator and substitutes
-native consent. It checks genuine returned credential objects, the original
+Chromium registration, discoverable-account choice, signed assertions, denied
+consent and the failure phase. Only the test process installs a virtual
+authenticator and clicks the real sheet after its input guard. It checks genuine returned credential objects, the original
 origin, challenge, RP hash and assertion signature. It does not verify a physical
 key, platform biometrics, packaged signing or another host OS. Per-run evidence
 belongs under ignored `artifacts/`, not in this guide.

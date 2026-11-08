@@ -1,25 +1,50 @@
-import { BrowserWindow, dialog, session, type Session } from 'electron';
+import { BrowserWindow, nativeTheme, session, type Session } from 'electron';
+import { randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { BrowserWebAuthnOptions, BrowserWebAuthnResult } from '@elevenex/shared';
+import { PROMPT_WIDTH, promptBackground, promptDocument, type PromptAssets } from './webauthn-prompt-document';
+import { WebAuthnPrompt } from './webauthn-prompt';
+import { accountsView, confirmView, failedView, promptPlatform, waitingView, type PromptPlatform } from './webauthn-prompt-view';
 
 const brokerPath = '/.elevenex-webauthn';
-const document = '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>Device authentication</title><main><p>Complete authentication using your device or security key. Close this window to cancel.</p></main></html>';
+const CEREMONY_TIMEOUT_MS = 120000;
+
+/** Staged by the desktop build (`dist/browser/tokens.css`) and the renderer's
+ * bundled font. Either may be missing in a partial development build. */
+export async function loadPromptAssets(): Promise<PromptAssets> {
+  const [tokens, font] = await Promise.all([
+    readFile(join(__dirname, 'tokens.css'), 'utf8').catch(() => ''),
+    readFile(join(__dirname, '../../renderer/fonts/instrument-sans.woff2')).then(bytes => bytes.toString('base64'), () => undefined),
+  ]);
+  return font === undefined ? { tokens } : { tokens, font };
+}
+
+type Outcome = { readonly ok: true; readonly json: string } | { readonly ok: false; readonly name: string };
+interface Ceremony { readonly url: string; readonly request: BrowserWebAuthnOptions; readonly abort: () => void; window?: BrowserWindow; prompt?: WebAuthnPrompt; document?: { html: string; policy: string } }
 
 /** Application-owned authenticator profile, independent of website/renderer
  * profiles. It executes only fixed trusted code, never downloads an RP page.
  * As the remote-desktop client, main vouches for the engine-validated origin
- * after explicit human consent. Protocol interception is confined to this session
- * and to the single active ceremony document; it grants no network access. */
+ * after explicit human consent in its own authentication sheet. Protocol
+ * interception is confined to this session and to the single active ceremony
+ * document; it grants no network access. */
 export class WebAuthnBroker {
-  private active?: { url: string; window?: BrowserWindow; abort: () => void };
-  constructor(private readonly profile: Session = session.fromPartition('persist:elevenex-device-authenticator', { cache: false })) {
+  private active?: Ceremony;
+  private assets?: Promise<PromptAssets>;
+  constructor(
+    private readonly profile: Session = session.fromPartition('persist:elevenex-device-authenticator', { cache: false }),
+    private readonly loadAssets: () => Promise<PromptAssets> = loadPromptAssets,
+    private readonly platform: PromptPlatform = promptPlatform(process.platform),
+  ) {
     this.profile.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     this.profile.setPermissionCheckHandler(() => false);
     this.profile.setDevicePermissionHandler(() => false);
     const serve = (request: Request) => {
-      if (request.method !== 'GET' || request.url !== this.active?.url) return new Response(null, { status: 403 });
-      return new Response(document, { headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Content-Security-Policy': "default-src 'none'; script-src 'none'; style-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+      const document = this.active?.document;
+      if (request.method !== 'GET' || request.url !== this.active?.url || !document) return new Response(null, { status: 403 });
+      return new Response(document.html, { headers: {
+        'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': document.policy,
         'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
       } });
     };
@@ -27,13 +52,9 @@ export class WebAuthnBroker {
     this.profile.protocol.handle('http', serve);
     this.profile.webRequest.onBeforeRequest((details, callback) => callback({ cancel: details.url !== this.active?.url || details.resourceType !== 'mainFrame' }));
     this.profile.on('select-webauthn-account', (_event, details, callback) => {
-      const window = this.active?.window;
-      if (!window || details.frame !== window.webContents.mainFrame || details.accounts.length > 32) { callback(); return; }
-      void dialog.showMessageBox(window, {
-        type: 'question', title: 'Choose a passkey', message: 'Sign in to ' + details.relyingPartyId,
-        buttons: [...details.accounts.map(account => account.displayName || account.name || 'Account'), 'Cancel'],
-        cancelId: details.accounts.length, defaultId: details.accounts.length, noLink: true,
-      }).then(result => callback(this.active?.window === window ? details.accounts[result.response]?.credentialId : undefined), () => callback());
+      const active = this.active;
+      if (!active?.prompt || !active.window || details.frame !== active.window.webContents.mainFrame || details.accounts.length > 32) { callback(); return; }
+      void this.chooseAccount(active, details.accounts).then(callback, () => callback());
     });
   }
   async platformAvailable(parent: BrowserWindow): Promise<boolean> {
@@ -43,27 +64,27 @@ export class WebAuthnBroker {
     const denied: BrowserWebAuthnResult = { error: { name: 'NotAllowedError', message: 'Authentication was canceled or is unavailable.' } };
     if (this.active || signal.aborted || parent.isDestroyed()) return denied;
     const controller = new AbortController();
-    const active: NonNullable<WebAuthnBroker['active']> = { url: request.origin + brokerPath, abort: () => controller.abort() };
+    const active: Ceremony = { url: request.origin + brokerPath, request, abort: () => controller.abort() };
     this.active = active;
     signal.addEventListener('abort', active.abort, { once: true });
-    const timer = setTimeout(active.abort, 120000);
+    const timer = setTimeout(active.abort, CEREMONY_TIMEOUT_MS);
     const abortWindow = () => { if (active.window && !active.window.isDestroyed()) active.window.destroy(); };
     controller.signal.addEventListener('abort', abortWindow, { once: true });
     parent.once('closed', active.abort);
     try {
-      const permission = await dialog.showMessageBox(parent, {
-        type: 'question', title: 'Use your device to authenticate',
-        message: request.operation === 'create' ? 'Create a credential for ' + request.origin + '?' : 'Sign in to ' + request.origin + '?',
-        detail: 'This request comes from the streamed browser. Your device handles authentication; private keys stay on your device.',
-        buttons: ['Cancel', 'Continue'], defaultId: 0, cancelId: 0, noLink: true, signal: controller.signal,
-      });
-      if (permission.response !== 1 || controller.signal.aborted) return denied;
+      this.assets ??= this.loadAssets();
+      const assets = await this.assets;
+      if (controller.signal.aborted) return denied;
+      active.document = promptDocument(assets, randomBytes(18).toString('base64'));
       const window = new BrowserWindow({
-        parent, modal: true, show: false, width: 520, height: 220, title: 'Authenticate · ' + request.origin,
-        webPreferences: { session: this.profile, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, devTools: false, navigateOnDragDrop: false },
+        parent, modal: true, show: false, useContentSize: true, width: PROMPT_WIDTH, height: 240,
+        resizable: false, minimizable: false, maximizable: false, fullscreenable: false,
+        title: 'Sign in · ' + request.origin, backgroundColor: promptBackground(assets.tokens, nativeTheme.shouldUseDarkColors),
+        webPreferences: { session: this.profile, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, devTools: false, navigateOnDragDrop: false, spellcheck: false },
       });
       active.window = window;
       window.setMenu(null);
+      window.once('closed', active.abort);
       window.on('page-title-updated', event => event.preventDefault());
       window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       window.webContents.on('will-navigate', event => event.preventDefault());
@@ -71,10 +92,21 @@ export class WebAuthnBroker {
       window.webContents.on('will-attach-webview', event => event.preventDefault());
       await window.loadURL(active.url);
       if (controller.signal.aborted) return denied;
-      window.show(); window.focus();
-      const result: unknown = await window.webContents.executeJavaScript(authenticationScript(request), true);
-      if (controller.signal.aborted || typeof result !== 'string' || result.length > 65536) return denied;
-      return { responseJson: result };
+      const prompt = new WebAuthnPrompt(window);
+      await prompt.install();
+      // Consent comes first and nothing touches the authenticator before it.
+      await prompt.render(confirmView(request));
+      if (await prompt.choice() !== 'continue' || controller.signal.aborted) return denied;
+      active.prompt = prompt;
+      for (;;) {
+        const outcome = await this.attempt(active, prompt, window);
+        if (controller.signal.aborted) return denied;
+        if (outcome.ok) return outcome.json.length > 65536 ? denied : { responseJson: outcome.json };
+        // The site keeps waiting while the person reads why and may retry the
+        // same consented request; the ceremony timeout still bounds it.
+        await prompt.render(failedView(request, outcome.name));
+        if (await prompt.choice() !== 'retry' || controller.signal.aborted) return denied;
+      }
     } catch { return denied; }
     finally {
       clearTimeout(timer);
@@ -91,15 +123,52 @@ export class WebAuthnBroker {
     this.profile.webRequest.onBeforeRequest(null);
     this.profile.removeAllListeners('select-webauthn-account');
   }
+
+  /** One authenticator call. Cancel in the sheet (or Esc) aborts the ceremony,
+   * which destroys the window and rejects the pending call. */
+  private async attempt(active: Ceremony, prompt: WebAuthnPrompt, window: BrowserWindow): Promise<Outcome> {
+    await prompt.render(waitingView(active.request, this.platform));
+    let watching = true;
+    void (async () => {
+      while (watching) if (await prompt.choice() === 'cancel' && watching) active.abort();
+    })();
+    try {
+      return outcome(await window.webContents.executeJavaScript(authenticationScript(active.request), true));
+    } finally { watching = false; }
+  }
+
+  private async chooseAccount(active: Ceremony, accounts: readonly Electron.WebAuthnAccount[]): Promise<string | undefined> {
+    const prompt = active.prompt;
+    if (!prompt) return undefined;
+    await prompt.render(accountsView(active.request, accounts));
+    const choice = await prompt.choice();
+    if (this.active !== active || !choice.startsWith('account:')) return undefined;
+    const credential = accounts[Number(choice.slice('account:'.length))]?.credentialId;
+    await prompt.render(waitingView(active.request, this.platform));
+    return credential;
+  }
 }
 
-/** Fixed program; the request is data, including when it contains JS metacharacters. */
+function outcome(value: unknown): Outcome {
+  if (typeof value === 'object' && value !== null) {
+    if ('json' in value && typeof value.json === 'string') return { ok: true, json: value.json };
+    if ('name' in value && typeof value.name === 'string') return { ok: false, name: value.name.slice(0, 64) };
+  }
+  return { ok: false, name: 'UnknownError' };
+}
+
+/** Fixed program; the request is data, including when it contains JS metacharacters.
+ * It reports the DOMException name so the sheet can say what went wrong. */
 export function authenticationScript(request: BrowserWebAuthnOptions): string {
   return `(async () => {
-    const options = JSON.parse(${JSON.stringify(request.optionsJson)});
-    const publicKey = PublicKeyCredential.${request.operation === 'create' ? 'parseCreationOptionsFromJSON' : 'parseRequestOptionsFromJSON'}(options);
-    const credential = await navigator.credentials.${request.operation}({publicKey});
-    if (!(credential instanceof PublicKeyCredential)) throw new Error('Authentication unavailable');
-    return JSON.stringify(credential.toJSON());
+    try {
+      const options = JSON.parse(${JSON.stringify(request.optionsJson)});
+      const publicKey = PublicKeyCredential.${request.operation === 'create' ? 'parseCreationOptionsFromJSON' : 'parseRequestOptionsFromJSON'}(options);
+      const credential = await navigator.credentials.${request.operation}({publicKey});
+      if (!(credential instanceof PublicKeyCredential)) return { name: 'NotSupportedError' };
+      return { json: JSON.stringify(credential.toJSON()) };
+    } catch (error) {
+      return { name: error && typeof error.name === 'string' ? error.name : 'UnknownError' };
+    }
   })()`;
 }

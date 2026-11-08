@@ -1,6 +1,7 @@
 /* global __filename, __dirname, window, navigator, PublicKeyCredential */
 // Node entry spawns native Electron with disposable profiles. Only this test uses
-// a virtual authenticator / automatic consent; neither is in the production path.
+// a virtual authenticator and answers the sheet automatically; neither is in the
+// production path. Answers are clicks in the real sheet, after its input guard.
 const assert = require('node:assert/strict');
 const { mkdtemp, rm, writeFile, mkdir } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
@@ -20,7 +21,7 @@ async function parent() {
 }
 
 async function native() {
-  const { app, BrowserWindow, dialog } = require('electron');
+  const { app, BrowserWindow } = require('electron');
   app.setPath('userData', process.argv[2]);
   await app.whenReady();
   const { chromium } = require('../../backend/node_modules/playwright-core');
@@ -31,8 +32,28 @@ async function native() {
   let context, relay, broker, owner;
   let credentials = [], localDebugger, authenticatorId;
   let consent = 1;
-  const originalDialog = dialog.showMessageBox;
-  dialog.showMessageBox = async (_parent, options) => ({ response: options.title === 'Choose a passkey' ? 0 : consent });
+  const phases = [];
+  const sheets = new Map();
+  let answering = true;
+  // A person at the sheet: Continue (or Cancel), the first account, and Close
+  // on a failure. Clicks wait out the guard that protects against stray input.
+  const person = (async () => {
+    const answered = new WeakMap();
+    while (answering) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      for (const [contents, execute] of sheets) {
+        if (contents.isDestroyed()) { sheets.delete(contents); continue; }
+        const phase = await execute('document.getElementById("sheet")?.dataset.phase + ":" + document.getElementById("title")?.textContent').catch(() => undefined);
+        if (typeof phase !== 'string' || phase.startsWith('undefined') || phase.endsWith(':') || answered.get(contents) === phase) continue;
+        answered.set(contents, phase); phases.push(phase);
+        const kind = phase.split(':')[0];
+        if (kind === 'waiting') continue;
+        await new Promise(resolve => setTimeout(resolve, 650));
+        const target = kind === 'confirm' ? (consent ? '#primary' : '#secondary') : kind === 'accounts' ? '.account' : '#secondary';
+        await execute('document.querySelector(' + JSON.stringify(target) + ').click()').catch(() => undefined);
+      }
+    }
+  })();
   try {
     const extension = await prepareWebAuthnExtension(process.argv[2]);
     context = await chromium.launchPersistentContext(join(process.argv[2], 'remote-profile'), {
@@ -53,8 +74,10 @@ async function native() {
     app.on('web-contents-created', (_event, contents) => {
       if (contents === owner.webContents) return;
       const execute = contents.executeJavaScript.bind(contents);
+      sheets.set(contents, execute);
       contents.executeJavaScript = async (...args) => {
         const result = await execute(...args);
+        if (!String(args[0]).includes('navigator.credentials')) return result;
         const value = await contents.debugger.sendCommand('WebAuthn.getCredentials', { authenticatorId });
         if (value.credentials.length) credentials = value.credentials;
         return result;
@@ -114,12 +137,16 @@ async function native() {
     secureOptions.rp.id = 'attacker.test';
     const spoofed = await broker.run(owner, { ...registration.options, origin: 'https://login.example.test', optionsJson: JSON.stringify(secureOptions) }, new AbortController().signal);
     assert.ok(spoofed.error, 'the local browser independently rejects an unrelated RP');
+    assert.ok(phases.some(phase => phase.startsWith('confirm:Create a passkey for login.localhost')), phases.join(', '));
+    assert.ok(phases.some(phase => phase.startsWith('confirm:Sign in to login.localhost')), phases.join(', '));
+    assert.ok(phases.some(phase => phase.startsWith('waiting:')), phases.join(', '));
+    assert.ok(phases.some(phase => phase.startsWith('failed:Couldn’t create a passkey for login.example.test')), phases.join(', '));
     const output = join(__dirname, '../../../artifacts/webauthn');
     await mkdir(output, { recursive: true });
-    await writeFile(join(output, 'native-result.json'), JSON.stringify({ verified: true, registration: true, assertionSignature: true, originalOrigin: true, nativeCredential: true, cancellation: true, authenticator: 'test-only virtual', platform: process.platform }, null, 2));
+    await writeFile(join(output, 'native-result.json'), JSON.stringify({ verified: true, registration: true, assertionSignature: true, originalOrigin: true, nativeCredential: true, cancellation: true, sheetPhases: phases, authenticator: 'test-only virtual', platform: process.platform }, null, 2));
     console.log('WebAuthn: remote Chromium → native broker → original page; registration, signed assertion and cancellation verified');
   } finally {
-    dialog.showMessageBox = originalDialog;
+    answering = false; await person;
     broker?.dispose(); owner?.destroy(); await relay?.destroy(); await context?.close(); app.quit();
   }
 }

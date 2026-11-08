@@ -55,6 +55,8 @@ async function compileMain() {
   await run(tsc, ['-p', join(desktop, 'tsconfig.json')]);
   await stageBackendRelease(root);
   await stageCodeAssets(root);
+  // The WebAuthn sheet is a main-owned document styled with the design tokens.
+  await copyFile(join(root, 'docs/design-system/project/tokens.css'), join(desktop, 'dist/browser/tokens.css'));
 }
 
 async function syncTokens() {
