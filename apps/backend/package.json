@@ -7,10 +7,10 @@
   "license": "CC-BY-NC-4.0",
   "scripts": {
     "build-info": "node ../../scripts/generate-build-info.js",
-    "build": "pnpm --filter @elevenex/browser-network --filter @elevenex/shared build && pnpm build-info && nest build",
-    "start": "pnpm --filter @elevenex/browser-network --filter @elevenex/shared build && pnpm build-info && nest start",
-    "start:dev": "pnpm --filter @elevenex/browser-network --filter @elevenex/shared build && pnpm build-info && nest start --watch",
-    "start:debug": "pnpm --filter @elevenex/browser-network --filter @elevenex/shared build && pnpm build-info && nest start --debug --watch",
+    "build": "pnpm --filter @elevenex/browser-network --filter @elevenex/shared --filter @elevenex/browser-inspection build && pnpm build-info && nest build",
+    "start": "pnpm --filter @elevenex/browser-network --filter @elevenex/shared --filter @elevenex/browser-inspection build && pnpm build-info && nest start",
+    "start:dev": "pnpm --filter @elevenex/browser-network --filter @elevenex/shared --filter @elevenex/browser-inspection build && pnpm build-info && nest start --watch",
+    "start:debug": "pnpm --filter @elevenex/browser-network --filter @elevenex/shared --filter @elevenex/browser-inspection build && pnpm build-info && nest start --debug --watch",
     "rebuild:native": "cd ../.. && pnpm rebuild node-pty && cd node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty && npx node-gyp rebuild",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start:prod": "node dist/main",
@@ -59,7 +59,8 @@
     "ws": "^8.20.0",
     "zod": "^3.25.76",
     "@elevenex/browser-network": "workspace:*",
-    "@elevenex/shared": "workspace:*"
+    "@elevenex/shared": "workspace:*",
+    "@elevenex/browser-inspection": "workspace:*"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

@@ -179,10 +179,17 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   await command({ kind: 'pick', enabled: true });
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 7 });
   const rect = await native.executeJavaScript(`(() => {const r=document.querySelector('button').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+  await native.executeJavaScript(`document.querySelector('button').__reactFiber$test = { _debugSource: { fileName: 'src/Checkout.tsx', lineNumber: 88, columnNumber: 7 } }`);
+  const { elementAt } = require('../dist/browser/page-inspection');
+  assert.equal((await elementAt(native, rect.x, rect.y)).source, undefined, 'Agent inspection must not read source metadata');
+  assert.deepEqual((await elementAt(native, rect.x, rect.y, () => true)).source, { file: 'src/Checkout.tsx', line: 88, column: 7, kind: 'react-debug-source' });
+  await native.executeJavaScript(`document.querySelector('button').__reactFiber$test = { _debugStack: Object.assign(new Error(), { stack: 'Error\\n at Checkout (' + location.origin + '/source-fixture.js:1:1)' }) }`);
   native.sendInputEvent({ type: 'mouseDown', ...rect, button: 'left', clickCount: 1 });
   native.sendInputEvent({ type: 'mouseUp', ...rect, button: 'left', clickCount: 1 });
   state = await until(async () => { const state = await read(); return state.picked ? state : null; }, 'Element picker did not return');
   assert.match(state.picked.selector, /button:nth-child/); await delay(50); assert.equal(await visibleCount(), 0);
+  assert.deepEqual(state.picked.source, { file: 'src/Checkout.tsx', line: 88, column: 1, kind: 'react-source-map' });
+  await native.executeJavaScript(`delete document.querySelector('button').__reactFiber$test`);
   assert.equal(await native.executeJavaScript('window.clicks'), 0, 'Picker must consume page input');
   await command({ kind: 'pick', enabled: false });
   const previousUrl = native.getURL();

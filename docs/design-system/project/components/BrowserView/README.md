@@ -32,6 +32,13 @@ The Browser side view: a real browser that belongs to the task, shared by the ag
 - **Point.** The page gets a thin indigo frame and one pill at its top: "Click an element to ask about it · Esc". The agent's frame, cursor and ring step aside. Where the page can be inspected on hover, the element under the pointer gets a light ring and a chip with its selector and source line ("button.pay · CheckoutForm.tsx:88", through source maps). That ring **snaps** to the pointer; a ring gliding behind a pointer only lags. Clicks never reach the page. Esc, the target button or ⇧⌘C again cancels.
 - **Pick.** The ring locks in: it turns solid, and one ring goes out from the element, once.
 - **Ask.** A small card comes out of the element: under it, or over it when it sits low; on a narrow page (under 400px) or when the element is out of view, docked across the page at the edge away from it. It never covers what you picked. It holds the element's name and source line, a draft that grows to six lines, one quiet line on what it sends (`askNote`), and the send button with ↵. ↵ sends (⇧↵ for a new line), Esc or × dismisses and focus goes back where it was (the target button, when the pick left it in the page), and the target in the card picks another element and keeps the draft.
+
+Source locations are optional platform data. The task browser resolves React
+development file/line/column metadata on explicit human picks and shows it in the
+card; Add to composer stages it for review. `askNote` distinguishes a detected
+location from the selector-only fallback. A reported location never authorizes
+filesystem access, and unavailable metadata must not block asking. See the
+[source resolver contract](../../../../../packages/browser-inspection/README.md).
 - In the app, the page pauses while you write (it never takes input then): the card and ring sit over a quiet dotted ground with "Page paused while you ask".
 
 **Errors:** console errors and failed requests show in the bar under the page ("2 errors · POST /charges 504 after 8s") with **Send to agent**. While the agent is working on this page, it gets them as they happen.

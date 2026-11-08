@@ -1,6 +1,13 @@
 /** Task-owned browser contracts. Page content never receives this bridge. */
 export interface BrowserRect { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
-export interface BrowserElement extends BrowserRect { readonly selector: string; readonly tag: string }
+/** Page-reported development metadata, never authority to read or open a file. */
+export interface BrowserSourceLocation {
+  readonly file: string;
+  readonly line: number;
+  readonly column?: number;
+  readonly kind: 'react-debug-source' | 'react-source-map';
+}
+export interface BrowserElement extends BrowserRect { readonly selector: string; readonly tag: string; readonly source?: BrowserSourceLocation }
 /** Engine placement and task-server routing, independent of embedded/stream display. */
 export type TaskBrowserPlacement = 'desktop' | 'desktop-proxy' | 'machine';
 export interface TaskBrowserCapabilities {

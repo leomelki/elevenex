@@ -13,6 +13,9 @@ importers:
 
   apps/backend:
     dependencies:
+      '@elevenex/browser-inspection':
+        specifier: workspace:*
+        version: link:../../packages/browser-inspection
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.296
         version: 0.3.296(@anthropic-ai/sdk@0.133.0)(@modelcontextprotocol/sdk@1.29.0)(zod@3.25.76)
@@ -215,6 +218,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@elevenex/browser-inspection':
+        specifier: workspace:*
+        version: link:../../packages/browser-inspection
       '@elevenex/browser-network':
         specifier: workspace:*
         version: link:../../packages/browser-network
@@ -467,6 +473,19 @@ importers:
       '@playwright/test':
         specifier: ^1.50.1
         version: 1.61.0
+
+  packages/browser-inspection:
+    dependencies:
+      '@elevenex/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: 26.6.5
+        version: 26.6.5
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
   packages/shared:
     devDependencies:

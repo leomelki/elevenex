@@ -6,6 +6,7 @@ import type {
 } from "@elevenex/shared";
 import { browserId, browserUrl, record } from "./validation";
 import { webAuthnRequest } from './webauthn-validation';
+import { browserSourceLocation } from '@elevenex/browser-inspection';
 function invalid(): never {
   throw new Error("Incompatible remote browser state");
 }
@@ -48,9 +49,12 @@ function element(value: unknown): BrowserElement {
       invalid();
     return n;
   });
+  const source = browserSourceLocation(raw['source']);
   return {
     selector,
     tag,
+    // Unknown/malformed optional metadata degrades independently of the usable pick.
+    ...(source ? { source } : {}),
     x: coordinates[0]!,
     y: coordinates[1]!,
     width: coordinates[2]!,

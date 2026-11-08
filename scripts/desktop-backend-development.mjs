@@ -11,7 +11,7 @@ import { buildLinuxDevelopmentRuntime } from './desktop-backend-linux.mjs';
 export async function developmentRevision(root) {
   const git = promisify(execFile);
   const paths = (await git('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--',
-    'apps/backend/src', 'apps/backend/drizzle', 'apps/backend/package.json', 'packages/shared/src', 'packages/browser-network/src', 'packages/browser-network/package.json', 'packages/browser-network/tsconfig.json',
+    'apps/backend/src', 'apps/backend/drizzle', 'apps/backend/package.json', 'packages/shared/src', 'packages/browser-inspection/src', 'packages/browser-inspection/package.json', 'packages/browser-inspection/tsconfig.json', 'packages/browser-network/src', 'packages/browser-network/package.json', 'packages/browser-network/tsconfig.json',
     'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/frontend/proxy.conf.json', 'scripts/bundle-electron-backend.js',
     'scripts/stage-electron-backend.js', 'scripts/prepare-vscode-web-runtime.js',
     'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-runtime.mjs',
@@ -44,6 +44,7 @@ export async function prepareDevelopmentBackend(root, run, { linuxArchitecture, 
   const networkRequire=createRequire(join(root,'packages/browser-network/package.json'));
   await run(networkRequire.resolve('typescript/bin/tsc'), ['-p',join(root,'packages/browser-network/tsconfig.json')]);
   await run(networkRequire.resolve('typescript/bin/tsc'), ['-p',join(root,'packages/shared/tsconfig.json')]);
+  await run(networkRequire.resolve('typescript/bin/tsc'), ['-p',join(root,'packages/browser-inspection/tsconfig.json')]);
   await run(require.resolve('typescript/bin/tsc'), ['-p', 'tsconfig.build.json'], backend);
   await run(join(root, 'scripts/bundle-electron-backend.js'));
 

@@ -4,6 +4,16 @@ const { WebSocketServer } = require('../../backend/node_modules/ws');
 module.exports = async () => {
   const held = new Set();
   const server = createServer((request, response) => {
+    if (request.url === '/source-fixture.js') {
+      response.writeHead(200, { 'content-type': 'text/javascript' });
+      response.end('compiled\n//# sourceMappingURL=/source-fixture.js.map');
+      return;
+    }
+    if (request.url === '/source-fixture.js.map') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ version: 3, sources: ['src/Checkout.tsx'], names: [], mappings: 'AAuFA' }));
+      return;
+    }
     if (request.url === '/browser-test?held-navigation') {
       held.add(response);
       response.once('close', () => held.delete(response));

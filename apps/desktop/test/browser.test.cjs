@@ -168,6 +168,12 @@ test('remote browser replies are bounded, resource matched and content allowlist
   assert.equal('pageText' in remoteBrowserState(value,'scope',1),false);
   const tab = { id, title: 'Page', url: 'https://example.com/', by: 'you', driver: 'you', agentSessionId: null, generation: 1, loading: false, ready: true, canGoBack: true, error: null, errors: 0, width: 'full', theme: 'system', slowNetwork: false, waiting: false };
   const withTab = { ...value, tabs: [tab], active: id };
+  const picked = { selector: 'html > body:nth-child(1) > button:nth-child(1)', tag: 'button', x: 1, y: 1, width: 20, height: 20 };
+  const source = { file: 'src/App.tsx', line: 88, column: 7, kind: 'react-source-map' };
+  assert.deepEqual(remoteBrowserState({ ...withTab, picked: { ...picked, source: { ...source, props: 'secret' } } }, 'scope', 1).picked.source, source);
+  for (const metadata of [undefined, { ...source, line: -1 }, { ...source, file: '../secret.tsx' }, { ...source, file: 'app.tsx?token=secret' }]) {
+    assert.deepEqual(remoteBrowserState({ ...withTab, picked: { ...picked, source: metadata } }, 'scope', 1).picked, picked);
+  }
   assert.equal(remoteBrowserState(withTab, 'scope', 1).tabs[0].canGoForward, false);
   assert.equal(remoteBrowserState({ ...withTab, tabs: [{ ...tab, canGoForward: true }] }, 'scope', 1).tabs[0].canGoForward, true);
   assert.throws(() => remoteBrowserState({ ...withTab, tabs: [{ ...tab, canGoForward: 'true' }] }, 'scope', 1));

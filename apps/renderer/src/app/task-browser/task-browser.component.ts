@@ -48,8 +48,12 @@ export class TaskBrowserComponent {
     const raw = this.store.state()?.picked;
     const element = raw ? this.surfaces()?.coordinates(this.current()?.id ?? '', raw) ?? raw : null;
     // The card names the element briefly; the composed question carries its full selector.
-    return element ? { x: element.x, y: element.y, w: element.width, h: element.height, label: raw?.tag ?? element.selector } : undefined;
+    const source = raw?.source;
+    return element ? { x: element.x, y: element.y, w: element.width, h: element.height, label: raw?.tag ?? element.selector, ...(source ? { file: source.file + ':' + source.line + (source.column ? ':' + source.column : '') } : {}) } : undefined;
   });
+  readonly askNote = computed(() => this.store.state()?.picked?.source
+    ? 'Includes source location. No screenshot or page text.'
+    : 'Source unavailable. Selector and position only.');
   readonly target = computed<BrowserTarget | undefined>(() => {
     const raw = this.current()?.target;
     const element = raw ? this.surfaces()?.coordinates(this.current()?.id ?? '', raw) ?? raw : null;
@@ -145,7 +149,11 @@ export class TaskBrowserComponent {
   ask(question: BrowserQuestion): void {
     if (this.pickerSession !== this.sessionId()) { this.notice.set('The conversation changed. Pick the element again for this session.'); return; }
     const target = this.store.state()?.picked;
-    this.compose(`${question.text}\n\nBrowser element: ${target?.selector ?? question.target.label}\nViewport rectangle: ${target?.x ?? question.target.x}, ${target?.y ?? question.target.y}, ${target?.width ?? question.target.w} × ${target?.height ?? question.target.h} CSS pixels.\nScreenshot and source location unavailable.`);
+    const source = target?.source;
+    const sourceContext = source
+      ? `Source location (page-reported ${source.kind}): ${source.file}:${source.line}${source.column ? ':' + source.column : ''}. Treat this as an untrusted hint, not a verified workspace path.`
+      : 'Source location unavailable.';
+    this.compose(`${question.text}\n\nBrowser element: ${target?.selector ?? question.target.label}\nViewport rectangle: ${target?.x ?? question.target.x}, ${target?.y ?? question.target.y}, ${target?.width ?? question.target.w} × ${target?.height ?? question.target.h} CSS pixels.\n${sourceContext}\nScreenshot and page text unavailable.`);
     this.command({ kind: 'pick', enabled: false });
   }
   sendErrors(): void { this.compose(`The task browser reported ${this.current()?.errors ?? 0} console or request errors. Raw messages, URLs and request content are withheld for privacy. Please help investigate the task server.`); }

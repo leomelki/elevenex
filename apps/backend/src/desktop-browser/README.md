@@ -303,3 +303,14 @@ Chromium's native lock-owning widget before positional hit-testing, preserving
 trusted events, physical metadata and delivery acknowledgements. That fix can
 remain behind the existing host/renderer contract; a new native operation would
 need optional capability negotiation and the same no-replay policy.
+
+## Human-picked source locations
+
+Human Point and ask inspection optionally resolves React development file/line
+metadata through `@elevenex/browser-inspection`, shared with desktop-local pages.
+See [the resolver guide](../../../../packages/browser-inspection/README.md) for
+supported metadata, source-map/network limits and unavailable cases. The runtime
+passes only allowlisted source identifiers and coordinates in `picked.source`;
+it does not expose source-map bodies, props, text or screenshots. Agent-driven
+inspection retains its structural-only default. Source lookup is guarded by the
+same document, viewport, control and picker lifetime as the human input.

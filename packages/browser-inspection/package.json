@@ -1,0 +1,10 @@
+{
+  "name": "@elevenex/browser-inspection",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": { "build": "tsc -p tsconfig.json" },
+  "dependencies": { "@elevenex/shared": "workspace:*" },
+  "devDependencies": { "@types/node": "26.6.5", "typescript": "6.0.3" }
+}

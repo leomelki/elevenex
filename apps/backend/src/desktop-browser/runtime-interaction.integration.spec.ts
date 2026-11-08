@@ -23,6 +23,16 @@ describe('remote browser interaction and display ownership', () => {
     previous = process.env['ELEVENEX_DATA_ROOT'];
     process.env['ELEVENEX_DATA_ROOT'] = directory;
     server = createServer((_request, response) => {
+      if (_request.url === '/source.js') {
+        response.setHeader('Content-Type', 'text/javascript');
+        response.end('compiled\n//# sourceMappingURL=/source.js.map');
+        return;
+      }
+      if (_request.url === '/source.js.map') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ version: 3, sources: ['src/Checkout.tsx'], names: [], mappings: 'AAuFA' }));
+        return;
+      }
       response.setHeader('Content-Type', 'text/html');
       response.end(
         `<!doctype html><input id="field">
@@ -82,6 +92,26 @@ describe('remote browser interaction and display ownership', () => {
     expect(next?.displayEpoch).toBe(tab.displayEpoch);
     expect(next!.displayEpoch).toBeGreaterThan(first!.displayEpoch!);
     expect(next!.sequence).toBeGreaterThan(first!.sequence);
+  });
+
+  it('resolves source maps only for an explicit human pick, across the remote state boundary', async () => {
+    await page.evaluate(() => {
+      Object.defineProperty(document.querySelector('#hover'), '__reactFiber$test', { configurable: true, enumerable: true, value: {
+        _debugStack: Object.assign(new Error(), { stack: 'Error\n at Checkout (' + location.origin + '/source.js:1:1)' }),
+      } });
+    });
+    const tab = task.page(tabId);
+    try {
+      expect((await tab.inspect(350, 150))?.source).toBeUndefined();
+      expect((await tab.inspect(350, 150, () => true))?.source).toEqual({ file: 'src/Checkout.tsx', line: 88, column: 1, kind: 'react-source-map' });
+      await task.command({ kind: 'pick', enabled: true });
+      await task.input(tabId, tab.generation, { kind: 'pointer', type: 'down', x: 350, y: 150, button: 'left', buttons: 1, clicks: 1, modifiers: 0 });
+      expect(task.state().picked?.source).toEqual({ file: 'src/Checkout.tsx', line: 88, column: 1, kind: 'react-source-map' });
+    } finally {
+      await task.command({ kind: 'pick', enabled: false });
+      await task.layout(800, 600, true, true);
+      await page.evaluate(() => Reflect.deleteProperty(document.querySelector('#hover')!, '__reactFiber$test'));
+    }
   });
 
   it('serializes pipelined whole batches without broadcasting unchanged state', async () => {

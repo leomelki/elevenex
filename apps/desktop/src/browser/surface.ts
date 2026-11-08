@@ -395,9 +395,9 @@ export class BrowserPage {
       if (this.cancelTool === cancel) this.cancelTool = undefined;
     }
   }
-  private inspectAt(x: number, y: number): Promise<BrowserElement | null> {
+  private inspectAt(x: number, y: number, sourceCurrent?: () => boolean): Promise<BrowserElement | null> {
     if (this.inspection) return Promise.reject(new Error('The page is still responding to its previous inspection'));
-    const operation = elementAt(this.contents, x, y); this.inspection = operation;
+    const operation = elementAt(this.contents, x, y, sourceCurrent); this.inspection = operation;
     void operation.finally(() => { if (this.inspection === operation) this.inspection = undefined; }).catch(() => undefined);
     return operation;
   }
@@ -405,7 +405,7 @@ export class BrowserPage {
     const navigation = this.navigation, viewport = this.viewportRevision, generation = this.lease.generation;
     const current = () => !this.destroyed && this.picking && this.attached && this.navigation === navigation && this.viewportRevision === viewport && this.lease.generation === generation;
     try {
-      const element = await this.inspectAt(x, y);
+      const element = await this.inspectAt(x, y, current);
       if (current()) { this.hide(); this.host.pick(element); }
     } catch { if (current()) this.host.pick(null); }
   }

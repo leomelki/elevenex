@@ -6,9 +6,6 @@ import { ViewTab, type ViewTabMove } from './view.models';
 /** Matches the strip's edge mask in view-tabs.component.css. */
 const FADE_WIDTH = 24;
 
-/** Matches the strip's edge mask in view-tabs.component.css. */
-const FADE_WIDTH = 24;
-
 @Component({
   selector: 'ex-view-tabs',
   imports: [IconComponent, StatusGlyphComponent, CdkDrag, CdkDragHandle, CdkDropList],

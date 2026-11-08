@@ -11,6 +11,7 @@ import { RuntimeBrowserNetwork, runtimeUrl } from './runtime-network.js';
 import { RuntimeBrowserInput } from './runtime-input.js';
 import { RuntimeBrowserCursor } from './runtime-cursor.js';
 import { RuntimePointerLock } from './runtime-pointer-lock.js';
+import { detectBrowserSource } from '@elevenex/browser-inspection';
 
 import { RuntimeBrowserCapture, type RuntimeFrame, type RuntimeVideoCapture } from './runtime-capture.js';
 export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
@@ -548,7 +549,9 @@ export class RuntimeBrowserTab {
     };
     if (this.picking) {
       if (input.kind === 'pointer' && input.type === 'down') {
-        const element = await this.inspect(input.x, input.y);
+        const element = await this.inspect(input.x, input.y, () => {
+          try { current(); return this.picking && !this.disposed; } catch { return false; }
+        });
         current();
         if (this.picking) this.picked(element);
       }
@@ -568,8 +571,9 @@ export class RuntimeBrowserTab {
   async releaseInput(): Promise<void> {
     await this.input?.reset(); await this.input?.unlockPointer();
   }
-  async inspect(x: number, y: number): Promise<BrowserElement | null> {
-    return this.page!.evaluate(
+  async inspect(x: number, y: number, sourceCurrent?: () => boolean): Promise<BrowserElement | null> {
+    const pageUrl = this.documentUrl;
+    const element = await this.page!.evaluate(
       ({ x, y }) => {
         const node = document.elementFromPoint(x, y);
         if (
@@ -613,6 +617,14 @@ export class RuntimeBrowserTab {
       },
       { x, y },
     );
+    if (!element || !sourceCurrent) return element;
+    const current = () => !this.disposed && this.documentUrl === pageUrl && sourceCurrent();
+    const source = await detectBrowserSource(async expression => {
+      if (!current() || !this.cdp) return undefined;
+      const reply = await this.cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, timeout: 900 });
+      return reply.result.value;
+    }, element.selector, pageUrl, current);
+    return source && current() ? { ...element, source } : element;
   }
   async agentClick(
     x: number,

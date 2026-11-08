@@ -7,8 +7,8 @@ import { TaskBrowserComponent } from './task-browser.component';
 function tab(id = 'tab-1'): TaskBrowserTab {
   return { id, title: 'New tab', url: '', by: 'you', driver: 'you', agentSessionId: null, generation: 1, loading: false, ready: false, canGoBack: false, error: null, errors: 0, width: 'full', theme: 'system', slowNetwork: false, waiting: false };
 }
-function setup(tabs: readonly TaskBrowserTab[] = [], availablePlacements?: readonly TaskBrowserPlacement[]) {
-  let state: TaskBrowserState = { availablePlacements, placement: 'desktop', scopeId: 'scope', taskId: 1, revision: 0, surfaceEpoch: 0, controlsFocus: 0, active: tabs[0]?.id ?? null, tabs, picked: null, picking: false, pickerMessage: null, feedback: false, ports: [3000], privacy: 'content-withheld' };
+function setup(tabs: readonly TaskBrowserTab[] = [], availablePlacements?: readonly TaskBrowserPlacement[], picked: TaskBrowserState['picked'] = null) {
+  let state: TaskBrowserState = { availablePlacements, placement: 'desktop', scopeId: 'scope', taskId: 1, revision: 0, surfaceEpoch: 0, controlsFocus: 0, active: tabs[0]?.id ?? null, tabs, picked, picking: false, pickerMessage: null, feedback: false, ports: [3000], privacy: 'content-withheld' };
   const bridge = {
     taskBrowserDetach: vi.fn<NonNullable<ElevenexBridge['taskBrowserDetach']>>(async () => undefined),
     taskBrowserReturn: vi.fn<NonNullable<ElevenexBridge['taskBrowserReturn']>>(async () => undefined),
@@ -40,6 +40,36 @@ async function render(fixture: ComponentFixture<TaskBrowserComponent>): Promise<
   });
 }
 afterEach(() => TestBed.resetTestingModule());
+describe('Point and ask source context', () => {
+  const element = { selector: 'html > body:nth-child(1) > button:nth-child(1)', tag: 'button', x: 20, y: 20, width: 100, height: 30 };
+  const source = { file: 'src/Checkout.tsx', line: 88, column: 7, kind: 'react-source-map' as const };
+  it.each([undefined, source])('shows only available metadata and stages it for human review (%j)', async metadata => {
+    const { fixture } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }], undefined, { ...element, source: metadata });
+    fixture.componentRef.setInput('sessionId', 2);
+    fixture.componentRef.setInput('active', true);
+    const intents: string[] = [];
+    fixture.componentInstance.contextRequested.subscribe(intent => intents.push(intent.text));
+    await render(fixture);
+    const text = fixture.nativeElement.textContent;
+    expect(text).toContain(metadata ? 'src/Checkout.tsx:88:7' : 'Source unavailable.');
+    expect(intents).toHaveLength(0);
+    fixture.componentInstance.ask({ tabId: 'tab-1', text: 'Make it wider', target: { x: 20, y: 20, w: 100, h: 30, label: 'button', file: 'forged.tsx:1' } });
+    expect(intents).toHaveLength(1);
+    expect(intents[0]).toContain(element.selector);
+    expect(intents[0]).toContain(metadata ? 'src/Checkout.tsx:88:7' : 'Source location unavailable.');
+    expect(intents[0]).not.toContain('forged');
+    if (metadata) expect(intents[0]).toContain('untrusted hint');
+  });
+  it('rejects a pick retained from a different conversation', async () => {
+    const { fixture } = setup([tab()], undefined, { ...element, source });
+    fixture.componentRef.setInput('sessionId', 2); await render(fixture);
+    fixture.componentRef.setInput('sessionId', 3); fixture.detectChanges();
+    const emit = vi.fn(); fixture.componentInstance.contextRequested.subscribe(emit);
+    fixture.componentInstance.ask({ tabId: 'tab-1', text: 'Change it', target: { x: 20, y: 20, w: 100, h: 30, label: 'button' } });
+    expect(emit).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.notice()).toContain('conversation changed');
+  });
+});
 describe('Browser location controls', () => {
   it('keeps local tasks native without a display-mode choice', async () => {
     const { fixture } = setup([tab()], ['desktop']);

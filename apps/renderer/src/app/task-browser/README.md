@@ -114,8 +114,15 @@ Unsupported site flows retain Open outside, which uses a separate browser profil
 The real picker consumes page input, resolves a structural `nth-child` selector,
 tag and rectangle at viewport CSS coordinates, and excludes editable controls,
 embedded frames and open shadow hosts. Closed roots remain opaque. App zoom, scrolling and responsive layout are
-accounted for. Text, attributes, source locations and element screenshots are
-unavailable; the question card's `askNote` states that limit. The card names the
+accounted for. Text, attributes and element screenshots remain unavailable.
+An explicit human pick also resolves React development source metadata through
+the shared [browser inspection runtime](../../../../../packages/browser-inspection/README.md):
+React 18 debug source and React 19 debug stacks with bounded same-origin source
+maps. Agent clicks do not run source detection. The optional, page-reported
+file/line/column is displayed in the card and staged in the selected conversation's
+composer only on request; it never grants file access. Missing/unsupported metadata
+keeps the selector-and-position fallback, and `askNote` states what is available.
+The card names the
 element by its tag; the staged question carries the full selector. Main pauses
 (hides) the page after a pick, so the trusted preview slot shows a dotted
 "Page paused while you ask" ground under the ring and card. Main does not inspect
