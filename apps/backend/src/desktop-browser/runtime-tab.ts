@@ -45,6 +45,7 @@ export class RuntimeBrowserTab {
   private page?: Page;
   private context?: BrowserContext;
   private cdp?: CDPSession;
+  private stopNavigation?: () => void;
   private input?: RuntimeBrowserInput;
   private disposed = false;
   private crashed = false;
@@ -248,35 +249,7 @@ export class RuntimeBrowserTab {
       this.capture.invalidate();
       this.changed();
     });
-    page.on('framenavigated', (frame) => {
-      if (this.page !== page) return;
-      if (frame === page.mainFrame()) {
-        void this.workflows.documentChanged();
-        this.cursor = 'default';
-        void this.input?.reset();
-        this.navigation++;
-        this.generation++;
-        this.invalidateDisplay();
-        try {
-          this.url = runtimeUrl(frame.url()).href;
-          this.documentUrl = this.url;
-        } catch {
-          /* Initial blank page. */
-        }
-        // Same-document navigation may keep the title without mutating <head>.
-        const previousTitle = this.pageTitle, navigation = this.navigation;
-        if (previousTitle && previousTitle.url !== this.url) {
-          void page.title().then(title => {
-            if (this.disposed || this.page !== page || this.navigation !== navigation || this.pageTitle !== previousTitle) return;
-            this.pageTitle = { url: this.url, text: title.replace(/\s+/gu, ' ').trim().slice(0, 200) };
-            this.changed();
-          }).catch(() => undefined);
-        }
-        this.target = undefined;
-        void this.history();
-        this.changed();
-      }
-    });
+    await this.watchNavigation(page, this.cdp);
     if (adopted) {
       try { this.url = runtimeUrl(page.url()).href; this.documentUrl = this.url; } catch { /* about:blank popup */ }
       this.loading = false;
@@ -286,6 +259,62 @@ export class RuntimeBrowserTab {
     }
   }
 
+  private async watchNavigation(page: Page, cdp: CDPSession): Promise<void> {
+    const { frameTree } = await cdp.send('Page.getFrameTree');
+    if (this.disposed || this.page !== page || this.cdp !== cdp) return;
+    let mainFrameId = frameTree.frame.id;
+    const documentChanged = ({ frame }: { frame: { id: string; parentId?: string; url: string; urlFragment?: string } }) => {
+      if (frame.parentId) return;
+      mainFrameId = frame.id;
+      this.navigated(page, frame.url + (frame.urlFragment ?? ''), false);
+    };
+    const withinDocument = ({ frameId, url }: { frameId: string; url: string }) => {
+      if (frameId === mainFrameId) this.navigated(page, url, true);
+    };
+    // Playwright's framenavigated merges these events. Only a new document
+    // invalidates human coordinates: SPA panels often route before data arrives.
+    cdp.on('Page.frameNavigated', documentChanged);
+    cdp.on('Page.navigatedWithinDocument', withinDocument);
+    this.stopNavigation = () => {
+      cdp.off('Page.frameNavigated', documentChanged);
+      cdp.off('Page.navigatedWithinDocument', withinDocument);
+    };
+    await cdp.send('Page.enable');
+  }
+  private navigated(page: Page, address: string, sameDocument: boolean): void {
+    if (this.disposed || this.page !== page) return;
+    if (!sameDocument) {
+      void this.workflows.documentChanged();
+      this.cursor = 'default';
+      this.navigation++;
+      this.generation++;
+      this.invalidateDisplay();
+    } else {
+      // Route changes still invalidate agent observations and pending actions.
+      // Human gestures and held state belong to the surviving document.
+      if (this.driver === 'agent') { this.navigation++; this.generation++; }
+      this.capture.changed();
+    }
+    try {
+      this.url = runtimeUrl(address).href;
+      this.documentUrl = this.url;
+    } catch {
+      /* Initial blank page. */
+    }
+    const previousTitle = this.pageTitle, navigation = this.navigation, url = this.url;
+    if (sameDocument && previousTitle) {
+      this.pageTitle = { url, text: previousTitle.text };
+    } else if (previousTitle && previousTitle.url !== url) {
+      void page.title().then(title => {
+        if (this.disposed || this.page !== page || this.navigation !== navigation || this.url !== url || this.pageTitle !== previousTitle) return;
+        this.pageTitle = { url, text: title.replace(/\s+/gu, ' ').trim().slice(0, 200) };
+        this.changed();
+      }).catch(() => undefined);
+    }
+    this.target = undefined;
+    void this.history();
+    this.changed();
+  }
   private async history(): Promise<void> {
     if (this.historyPending || !this.cdp) return;
     this.historyPending = true;
@@ -674,6 +703,7 @@ export class RuntimeBrowserTab {
   async destroy(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.stopNavigation?.(); this.stopNavigation = undefined;
     await this.workflows.destroy();
     this.takeover();
     this.capture.detach();
@@ -686,6 +716,7 @@ export class RuntimeBrowserTab {
   async resetEngine(): Promise<void> {
     await this.workflows.clear();
     this.invalidateDisplay();
+    this.stopNavigation?.(); this.stopNavigation = undefined;
     const page = this.page,
       cdp = this.cdp;
     this.page = undefined;

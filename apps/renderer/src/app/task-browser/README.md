@@ -232,12 +232,17 @@ allow four outstanding writes to absorb network jitter; older hosts retain one.
 Clipboard commands travel separately as barriers, preserving copy/paste order.
 Queue pressure or uncertain delivery requests held-state cleanup on capable
 hosts. Typing stays stopped until fresh interaction; cleanup never replays input.
-Navigation, authority changes and unknown outcomes discard queued work. Following
-uncertain delivery, fresh state alone does not resume typing: the user must click
+Document replacement, authority changes and unknown outcomes discard queued work.
+Following uncertain delivery, fresh state alone does not resume typing: the user must click
 the page or explicitly Focus page. Failed batches are never replayed.
 Document/viewport changes still invalidate coordinates and queued input; this is
 distinct from an ordinary video-frame delay. The bounded buffer is not an offline
-editor and does not preserve typing across navigation or an unknown delivery outcome.
+editor and does not preserve typing across document replacement or an unknown
+delivery outcome.
+On current remote hosts, a site's history/fragment update within the same document
+preserves human gestures, queued input, cursor and display epoch. A panel may
+therefore change the URL and fetch data without pausing the page's controls.
+Such route changes still clear agent targets and invalidate pending agent actions.
 
 A crashed/disconnected remote engine requires explicit Reload. The task preserves
 safe locations/provenance, revokes old ownership, replaces its closed context/page

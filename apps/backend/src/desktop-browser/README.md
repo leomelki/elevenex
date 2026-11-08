@@ -109,8 +109,8 @@ clients retain JPEG. CDP capture still supplies JPEG input to the encoder; no ra
 or zero-copy capture, audio or WebRTC is implied by this capability.
 
 `RuntimeBrowserInput` owns the page's ordered human writes and pressed state.
-Hidden/noninteractive presentations, resize, navigation and ownership changes
-invalidate queued writes and release held keys/buttons/composition. Agent mouse
+Hidden/noninteractive presentations, resize, document replacement and ownership
+changes invalidate queued writes and release held keys/buttons/composition. Agent mouse
 actions await that cleanup. Editing intents use fixed Blink commands so the
 viewing device's undo/redo/select-all do not depend on the host OS. Focus emulation
 is page-owned rather than bringing companion pages to front on every heartbeat.
@@ -128,8 +128,13 @@ after queue pressure or an uncertain outcome; it never retries text or actions.
 Ordinary input does not publish unchanged task snapshots.
 
 `displayEpoch` identifies the document and logical viewport independently of
-driver ownership. Navigation clears old captures, serializes screencast restart
-and seeds the current page; H.264 starts a new keyframe epoch at that boundary.
+driver ownership. Document replacement clears old captures, serializes screencast
+restart and seeds the current page; H.264 starts a new keyframe epoch at that boundary.
+Site-driven history/fragment changes retain the document, display epoch and
+human input, so a routed panel stays interactive while it fetches data. They
+still clear agent targets and invalidate pending agent actions. Chromium's
+separate document/within-document events establish that boundary; a URL update
+alone does not mean the document was replaced.
 Both binary transports preserve the field. A producer always announces its end,
 including normal presentation expiry. Receipt deadlines tolerate fifteen seconds
 of jitter; no input is replayed. Layout acknowledges intent while installation is
