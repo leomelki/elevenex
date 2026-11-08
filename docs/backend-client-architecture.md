@@ -437,6 +437,10 @@ older remote runtime that omits the route; rebuild and install the backend too.
 Unpackaged desktop launches log bounded WebSocket errors and close codes/reasons
 in main's console, with private capability values redacted. These diagnostics
 do not enter renderer events or change the no-replay input contract.
+Protocol rejection logs use fixed reason codes for packet parsing, delivery,
+cursor/generation, snapshot and input-ack validation, with handshake/stream phase;
+raw rejected packets and parser errors are never logged. Valid server `closed`
+packets also produce bounded, capability-redacted diagnostics.
 
 The PTY manager owns an isolated headless screen worker. Expired cursors restore a
 bounded checkpoint instead of treating an arbitrary output tail as complete screen

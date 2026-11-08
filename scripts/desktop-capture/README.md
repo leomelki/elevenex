@@ -660,3 +660,9 @@ creation and automatic revelation, edge fades, wheel browsing without
 selection changes, metadata refresh, Home/End/Delete, ancestor scroll and focus retention,
 empty strips and 320px reduced-motion layouts in both themes. Run against the
 component preview with `--url http://127.0.0.1:4310`.
+
+`scenarios/terminal-attachment.mjs` uses `/terminal-stream` to exercise the
+production task-terminal owner and xterm with a preview-only stream transport.
+It checks automatic first creation, retained DOM/focus and native typing through
+metadata/output changes, plus one replacement stream after interruption. Both
+themes and a narrow reduced-motion layout run against the same preview URL.

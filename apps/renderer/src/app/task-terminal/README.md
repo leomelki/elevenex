@@ -70,6 +70,16 @@ Angular. Output bypasses Signals; metadata updates only the relevant controls.
 The metadata store stops its HTTP loop when streaming is supported. Ordinary
 older engines retain the HTTP output adapter and its bounded pages.
 
+Visible attachments are keyed by machine, backend scope, task, terminal,
+generation, protocol and connection availability, plus the DOM host. Metadata,
+output cursors, titles and command state update the existing entry without
+detaching its surface or releasing input ownership. Lifetime reconciliation runs
+untracked so reads/writes of metadata and seen cursors cannot feed back into
+attachment teardown. A stream interruption retains the DOM, waits for pending
+output to settle and schedules one owned backoff; hiding or replacing the view
+cancels it. Development-console attachment counters distinguish lifetime changes
+from stream retries without logging PTY content or input.
+
 Input is pipelined over the stream without a remote round trip per chunk. Text
 and binary mouse input share one bounded, ordered queue. No input is retried.
 Unknown outcomes clear pending data and require explicit **Resume typing**;

@@ -9,6 +9,7 @@ import {
   ElementRef,
   inject,
   input,
+  isDevMode,
   output,
   signal,
   untracked,
@@ -85,6 +86,9 @@ export class TaskTerminalComponent {
   private readonly optionsMenu = viewChild(CdkMenuTrigger);
   private readonly surfaces = new Map<string, SurfaceEntry>();
   private attached?: SurfaceEntry;
+  private attachmentKey = '';
+  private attachmentHost?: HTMLElement;
+  private readonly attachmentCounts = { attach: 0, detach: 0, streamAttach: 0, streamDetach: 0, retry: 0 };
   private revision = 0;
   private disposed = false;
   private timer?: ReturnType<typeof setTimeout>;
@@ -161,7 +165,7 @@ export class TaskTerminalComponent {
       if (this.lastMachine !== machine) {
         this.lastMachine = machine;
         this.store.reset();
-        this.stopAttachment();
+        this.stopAttachment('machine-change');
         for (const entry of this.surfaces.values()) this.disposeEntry(entry);
         this.surfaces.clear();
       }
@@ -197,14 +201,29 @@ export class TaskTerminalComponent {
       const selection = this.store.selection(),
         id = this.store.active(),
         visible = this.visible(),
-        host = this.host()?.nativeElement;
-      this.store.connected();
-      this.available();
-      this.protocolVersion();
-      const terminal = untracked(this.current);
-      this.stopAttachment();
-      if (id && selection && terminal && visible && host)
-        void this.attach(selection, terminal, host, this.revision);
+        host = this.host()?.nativeElement,
+        terminal = this.current();
+      const key = id && selection && terminal && visible && host
+        ? JSON.stringify([this.machineId(), selection.scopeId, selection.taskId, id,
+          terminal.generation, this.protocolVersion(), this.store.connected(), this.available()])
+        : '';
+      // Attachment work reads/writes metadata and seen cursors. Those are not
+      // lifetime dependencies: tracking them creates a detach/attach feedback loop.
+      untracked(() => {
+        if (key === this.attachmentKey && host === this.attachmentHost) {
+          if (this.attached && terminal) {
+            this.attached.terminal = terminal;
+            this.attached.surface.terminal.options.windowsPty = terminal.windowsPty;
+            this.attached.surface.setEnabled(this.canType(this.attached));
+          }
+          return;
+        }
+        this.stopAttachment();
+        this.attachmentKey = key;
+        this.attachmentHost = host;
+        if (key && selection && terminal && host)
+          void this.attach(selection, terminal, host, this.revision);
+      });
     });
     afterRenderEffect((onCleanup) => {
       if (!this.store.snapshot() || this.animateTabs()) return;
@@ -221,28 +240,34 @@ export class TaskTerminalComponent {
           ids.has(entry.terminal.id)
         )
           continue;
-        if (entry === this.attached) this.stopAttachment();
+        if (entry === this.attached) this.stopAttachment('terminal-removed');
         this.disposeEntry(entry);
         this.surfaces.delete(key);
       }
     });
     inject(DestroyRef).onDestroy(() => {
       this.disposed = true;
-      this.stopAttachment();
+      this.stopAttachment('destroyed');
       for (const entry of this.surfaces.values()) this.disposeEntry(entry);
       this.surfaces.clear();
     });
   }
-  private stopAttachment(): void {
+  private stopAttachment(reason = 'effect/identity'): void {
     this.revision++;
     clearTimeout(this.timer);
+    this.timer = undefined;
+    if (this.attachmentKey) this.diagnoseAttachment('detach', reason);
+    this.attachmentKey = '';
+    this.attachmentHost = undefined;
     if (this.attached) {
       this.store.markSeen(this.attached.terminal.id, this.attached.surface.sequence);
       if (this.attached.stream) {
+        this.diagnoseAttachment('streamDetach', reason);
         if (this.attached.stream.uncertain) this.attached.input.interrupt('Input may have been interrupted. Inspect the terminal, then resume typing.');
         this.attached.reading = this.attached.stream.settled();
         this.attached.stream.dispose(); this.attached.stream = undefined;
       }
+      this.attached.streamReady = false;
       this.attached.input.reconnect();
       this.attached.desiredSize = undefined;
       this.attached.size = undefined;
@@ -347,6 +372,7 @@ export class TaskTerminalComponent {
       this.surfaces.delete(oldest);
     }
     this.attached = entry;
+    this.diagnoseAttachment('attach', 'effect/lifetime');
     this.notice.set(entry.notice);
     this.inputBlocked.set(entry.input.blocked);
     entry.surface.attach(host, this.canType(entry), true);
@@ -363,37 +389,61 @@ export class TaskTerminalComponent {
   }
   private async startStream(entry: SurfaceEntry, revision: number): Promise<void> {
     await entry.reading;
-    if (this.disposed || revision !== this.revision || entry !== this.attached) return;
+    if (this.disposed || revision !== this.revision || entry !== this.attached || entry.stream) return;
     const stream = new TerminalStreamAttachment(this.bridge, entry.target.scopeId, {
       taskId: entry.target.taskId, terminalId: entry.terminal.id, generation: entry.surface.generation, after: entry.surface.sequence,
     }, entry.surface, {
       inputIdle: () => entry.input.idle,
       terminal: terminal => {
-        if (entry !== this.attached || revision !== this.revision) return;
+        if (entry !== this.attached || revision !== this.revision || entry.stream !== stream) return;
         entry.terminal = terminal;
         entry.surface.terminal.options.windowsPty = terminal.windowsPty;
         if (terminal.generation) entry.input.bind({ ...entry.target, terminalId: terminal.id, generation: terminal.generation });
         this.store.acceptStreamTerminal(entry.target, terminal);
       },
-      metadata: value => this.store.acceptStreamMetadata(entry.target, value),
+      metadata: value => {
+        if (entry === this.attached && revision === this.revision && entry.stream === stream)
+          this.store.acceptStreamMetadata(entry.target, value);
+      },
       changed: () => {
-        if (entry !== this.attached || revision !== this.revision) return;
+        if (entry !== this.attached || revision !== this.revision || entry.stream !== stream) return;
         entry.surface.setEnabled(this.canType(entry));
-        if (stream.ready && !entry.streamReady) { entry.size = undefined; entry.retries = 0; entry.surface.fit(); }
+        if (stream.ready && !entry.streamReady) {
+          clearTimeout(this.timer); this.timer = undefined;
+          entry.size = undefined; entry.retries = 0; entry.surface.fit();
+          if (!entry.input.blocked) { entry.notice = ''; this.notice.set(''); }
+          if (entry.surface.terminal.element?.contains(document.activeElement)) stream.focus();
+        }
         entry.streamReady = stream.ready;
       },
       interrupted: (message, uncertain) => {
-        if (entry !== this.attached || revision !== this.revision) return;
+        if (entry !== this.attached || revision !== this.revision || entry.stream !== stream) return;
+        this.diagnoseAttachment('retry', 'stream/interrupted');
+        this.diagnoseAttachment('streamDetach', 'stream/interrupted');
+        entry.reading = stream.settled();
+        entry.stream = undefined; entry.streamReady = false;
         if (uncertain) entry.input.interrupt(message);
         else { entry.input.reconnect(); entry.notice = message; this.notice.set(message); }
         entry.surface.setEnabled(false);
         void this.store.refresh();
-        this.timer = setTimeout(() => void this.startStream(entry, revision), Math.min(15000, 500 * 2 ** Math.min(5, entry.retries ?? 0)));
+        clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+          this.timer = undefined;
+          void this.startStream(entry, revision);
+        }, Math.min(15000, 500 * 2 ** Math.min(5, entry.retries ?? 0)));
         entry.retries = (entry.retries ?? 0) + 1;
       },
     });
     entry.stream = stream;
+    this.diagnoseAttachment('streamAttach', entry.retries ? 'stream/retry' : 'effect/lifetime');
     await stream.start();
+  }
+  private diagnoseAttachment(action: keyof TaskTerminalComponent['attachmentCounts'], reason: string): void {
+    if (!isDevMode()) return;
+    this.attachmentCounts[action]++;
+    // Identity/counters only: never log terminal output, commands or input.
+    console.debug('Terminal attachment:', { key: this.attachmentKey, attachmentId: this.attached?.stream?.target.attachmentId,
+      action, reason, ...this.attachmentCounts });
   }
   private canType(entry: SurfaceEntry): boolean {
     return (

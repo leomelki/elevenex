@@ -8,9 +8,10 @@ const accepted = { ok: true as const, value: { accepted: true as const } };
 const unavailable = (): BackendResult<never> => ({ ok: false, error: { code: 'unavailable', message: 'The terminal stream is unavailable. Reattach before typing.' } });
 
 export interface TerminalStreamDiagnostic {
-  readonly type: 'error' | 'close';
+  readonly type: 'error' | 'close' | 'protocol' | 'server-closed';
   readonly detail: string;
   readonly code?: number;
+  readonly phase?: 'handshake' | 'stream';
 }
 
 export interface TerminalStreamConnection {
@@ -95,34 +96,50 @@ export function connectTerminalStream(
     socket.on('message', (data, binary) => {
       if (closed) return;
       lastActivity = Date.now();
+      let reason = 'binary-frame';
       try {
         if (binary) throw invalidResponse();
-        const packet = parseTerminalStreamPacket(JSON.parse(data.toString()), target.taskId, target.terminalId);
+        reason = 'invalid-json';
+        const raw: unknown = JSON.parse(data.toString());
+        reason = 'invalid-packet';
+        const packet = parseTerminalStreamPacket(raw, target.taskId, target.terminalId);
         if (packet.type === 'output' || packet.type === 'snapshot') {
+          reason = 'delivery-order-or-credit-limit';
           if (packet.delivery !== ++delivery || delivery - acknowledged > 256) throw invalidResponse();
           if (packet.type === 'output') {
+            reason = 'output-generation-or-cursor';
             if (restoring || packet.output.gap || packet.output.generation !== currentGeneration || packet.output.from !== cursor) throw invalidResponse();
             cursor = packet.output.next;
           } else {
             if (packet.first) {
+              reason = 'overlapping-snapshot';
               if (restoring) throw invalidResponse();
               restoring = { sequence: packet.sequence, size: JSON.stringify(packet.size), length: 0 };
               currentGeneration = packet.terminal.generation;
             }
+            reason = 'snapshot-generation-sequence-or-size';
             if (!restoring || restoring.sequence !== packet.sequence || restoring.size !== JSON.stringify(packet.size) || packet.terminal.generation !== currentGeneration) throw invalidResponse();
             restoring.length += packet.data.length;
+            reason = 'snapshot-limit';
             if (restoring.length > 4 * 1024 * 1024) throw invalidResponse();
             if (packet.last) { cursor = packet.sequence; restoring = undefined; }
           }
         } else if (packet.type === 'input-ack') {
+          reason = 'input-ack-sequence';
           if (packet.sequence <= ackInput || packet.sequence > sentInput) throw invalidResponse();
           ackInput = packet.sequence;
           for (const [sequence, size] of inputSizes) if (sequence <= ackInput) { pendingBytes -= size; inputSizes.delete(sequence); }
         }
+        if (packet.type === 'closed') report({ type: 'server-closed', phase: ready ? 'stream' : 'handshake', detail: packet.message });
         if (!ready && packet.type === 'metadata') { ready = true; clearTimeout(deadline); settle(accepted); }
+        reason = 'packet-dispatch';
         emit(packet);
         if (packet.type === 'closed') stream.close();
-      } catch { stream.close(true); }
+      } catch {
+        // Use fixed reason codes, never parser errors containing raw PTY data.
+        report({ type: 'protocol', phase: ready ? 'stream' : 'handshake', detail: reason });
+        stream.close(true);
+      }
     });
     socket.on('error', error => { report({ type: 'error', detail: error.message }); stream.close(true); });
     socket.on('close', (code, reason) => { report({ type: 'close', code, detail: reason.toString() }); stream.close(true); });

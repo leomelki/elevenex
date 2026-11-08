@@ -102,6 +102,13 @@ test('trusted IPC pipelines over a private socket, validates cursors and isolate
   assert.equal(events.at(-1).event.packet.uncertain, true);
   assert.equal((await invoke('task-terminal:stream-write', { ...writeTarget, sequence: 3, kind: 'text', data: 'never' })).ok, false);
   assert.equal(connections, 1, 'transport never reconnects or replays input itself');
+  const replacement = { ...request, attachmentId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' };
+  assert.equal((await invoke('task-terminal:attach', replacement)).ok, true);
+  await invoke('task-terminal:detach', { taskId: request.taskId, terminalId: request.terminalId, attachmentId });
+  assert.equal((await invoke('task-terminal:stream-write', { ...writeTarget, attachmentId: replacement.attachmentId,
+    sequence: 1, kind: 'text', data: 'replacement' })).ok, true, 'a delayed detach cannot close a replacement attachment');
+  await until(() => input.some(frame => frame.data === 'replacement'));
+  assert.equal(connections, 2);
   assert.equal(handlers.size, 7); stop(); assert.equal(handlers.size, 0);
 });
 
@@ -151,3 +158,42 @@ test('stream packets validate terminal identity, bounded snapshots, geometry and
     assert.throws(() => parseTerminalStreamPacket({ ...packet, ...value }, 1, 2));
   assert.throws(() => parseTerminalStreamPacket({ type: 'unknown' }, 1, 2));
 });
+
+for (const failure of ['binary-frame', 'invalid-json', 'invalid-packet', 'delivery-order-or-credit-limit',
+  'output-generation-or-cursor', 'input-ack-sequence', 'server-closed']) {
+  test(`stream diagnostics identify ${failure} with bounded, sanitized details`, async context => {
+    const server = createServer(), wss = new WebSocketServer({ server });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    context.after(() => { for (const peer of wss.clients) peer.terminate(); wss.close(); return new Promise(resolve => server.close(resolve)); });
+    const capability = 'private-capability', generation = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const terminal = { id: 2, taskId: 1, title: 'bash', cwd: '/task', branch: 'work', generation, sequence: 4,
+      alive: true, status: 'idle', command: '', exitCode: null, port: null, canRerun: false };
+    const output = { terminal, generation, from: 0, next: 4, data: 'test', gap: false, more: false };
+    wss.on('connection', peer => {
+      if (failure === 'binary-frame') peer.send(Buffer.from(capability));
+      else if (failure === 'invalid-json') peer.send(`invalid ${capability}`);
+      else if (failure === 'invalid-packet') peer.send(JSON.stringify({ type: capability }));
+      else {
+        peer.send(JSON.stringify({ type: 'metadata', list: { taskId: 1, terminals: [terminal], scripts: [], limit: 16, streamVersion: 1 } }));
+        if (failure === 'server-closed') peer.send(JSON.stringify({ type: 'closed', uncertain: false, message: `Unavailable: ${capability}` }));
+        else if (failure === 'input-ack-sequence') peer.send(JSON.stringify({ type: 'input-ack', sequence: 1 }));
+        else peer.send(JSON.stringify({ type: 'output', delivery: failure === 'delivery-order-or-credit-limit' ? 2 : 1,
+          output: failure === 'output-generation-or-cursor' ? { ...output, from: 1, data: 'est' } : output }));
+      }
+    });
+    const diagnostics = [], packets = [];
+    let releases = 0;
+    const result = connectTerminalStream('scope', { taskId: 1, terminalId: 2, generation, after: 0 }, {
+      endpoint: { url: `http://127.0.0.1:${server.address().port}`, headers: { 'x-private': capability } },
+      signal: new AbortController().signal, release: () => releases++,
+    }, packet => packets.push(packet), () => {}, diagnostic => diagnostics.push(diagnostic));
+    assert.equal(result.ok, true); context.after(() => result.value.close());
+    await until(() => packets.some(packet => packet.type === 'closed'));
+    const handshake = ['binary-frame', 'invalid-json', 'invalid-packet'].includes(failure);
+    assert.deepEqual(diagnostics, [{ type: failure === 'server-closed' ? 'server-closed' : 'protocol',
+      phase: handshake ? 'handshake' : 'stream', detail: failure === 'server-closed' ? 'Unavailable: [redacted]' : failure }]);
+    assert.equal(JSON.stringify(diagnostics).includes(capability), false);
+    assert.equal(releases, 1);
+    assert.equal(packets.filter(packet => packet.type === 'closed').length, 1);
+  });
+}
