@@ -21,6 +21,8 @@ starts a fresh shell; hiding a panel with existing shells only detaches them.
 The metadata store owns scoped reads and four task snapshots. The component owns
 up to eight xterm surfaces, each with 2,000 scrollback rows, selection, reading
 position and a bounded input queue. Eviction disposes a surface, never its PTY.
+Selecting a terminal tab focuses its attached xterm input, including cached surfaces.
+Metadata and output updates preserve the current focus.
 Observers belong to the visible attachment. Hidden panels are inert and detach their output subscription; reconnect and show reattach by task/terminal/generation/offset.
 Reattachment waits for a pending xterm write and its cursor update before reading
 another page, so rapid hide/show cannot duplicate output.

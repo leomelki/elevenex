@@ -588,6 +588,11 @@ export class TaskTerminalComponent {
     await closing;
   }
   selected(id: string): void {
+    this.focusOnAttach = true;
+    if (this.store.active() === Number(id) && this.attached && this.visible() && this.available()) {
+      this.focusOnAttach = false;
+      this.attached.surface.focus();
+    }
     this.store.active.set(Number(id));
     this.searchResult.set("");
     this.searchMatches.set(null);

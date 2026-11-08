@@ -27,12 +27,14 @@ function setup() {
     generation: 'original', sequence: 0, alive: true, status: 'idle',
     command: '', exitCode: null, port: null, canRerun: false,
   };
+  const rows = [row, { ...row, id: 2, generation: 'second' }];
   const bridge = {
     taskTerminalList: vi.fn(async () => ({ ok: true, value: {
-      taskId: 1, terminals: [row], scripts: [], limit: 16,
+      taskId: 1, terminals: rows, scripts: [], limit: 16,
     } })),
     taskTerminalRead: vi.fn(async (_scope: string, input: TaskTerminalRead) => ({ ok: true, value: {
-      terminal: row, generation: row.generation, from: input.after, next: input.after,
+      terminal: rows.find(row => row.id === input.terminalId)!,
+      generation: input.terminalId === row.id ? row.generation : 'second', from: input.after, next: input.after,
       data: '', gap: false, more: false,
     } })),
     taskTerminalInput: vi.fn(async () => ({ ok: true, value: { accepted: true } })),
@@ -50,6 +52,23 @@ function setup() {
 
 describe('Task terminal attachment ownership', () => {
   afterEach(() => { TestBed.resetTestingModule(); vi.restoreAllMocks(); });
+
+  it('focuses new and cached terminal surfaces on selection without stealing focus on refresh', async () => {
+    const { fixture, component, surfaces } = setup();
+    await vi.waitFor(async () => { await settle(fixture); expect(surfaces).toHaveLength(1); });
+    const focus = vi.mocked(TerminalSurface.prototype.focus);
+    focus.mockClear();
+    component.selected('2'); await settle(fixture);
+    expect(surfaces).toHaveLength(2);
+    expect(focus.mock.instances).toEqual([surfaces[1]]);
+    component.selected('1'); await settle(fixture);
+    expect(focus.mock.instances).toEqual([surfaces[1], surfaces[0]]);
+    focus.mockClear();
+    await component.store.refresh(); await settle(fixture);
+    expect(focus).not.toHaveBeenCalled();
+    component.selected('1'); await settle(fixture);
+    expect(focus.mock.instances).toEqual([surfaces[0]]);
+  });
 
   it('stops queued paste on detach and requires explicit resume on reopening', async () => {
     const { fixture, bridge, component, surfaces } = setup();
