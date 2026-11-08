@@ -1,4 +1,5 @@
-import type { BrowserContext } from 'playwright-core';
+import { RuntimeWorkflowBudget } from './runtime-workflows.js';
+import type { BrowserContext, Page } from 'playwright-core';
 import { RuntimeBrowserNetwork } from './runtime-network.js';
 import { browserLoopbackHost } from '@elevenex/browser-network';
 import type { SavedRuntimeBrowser } from './runtime-persistence.js';
@@ -16,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 /** The task owns browser execution. A viewer owns only presentation and human input. */
 export class RuntimeBrowserTask {
   readonly id = randomUUID();
+  private readonly workflowBudget = new RuntimeWorkflowBudget();
   readonly tabs = new Map<string, RuntimeBrowserTab>();
   active: string | null = null;
   private readonly presentations = new Map<string, { width: number; height: number; visible: boolean; interactive: boolean; pixelRatio: number; colorScheme: 'light' | 'dark'; seen: number }>();
@@ -124,13 +126,14 @@ export class RuntimeBrowserTask {
   touch(): void {
     this.expirePresentations();
   }
-  reconcile(): void {
+  reconcile(clearRequests = true): void {
     this.clearPicker();
     this.layoutRevision++;
     this.selectionRevision++;
     this.visible = false;
     this.presentations.clear();
     for (const tab of this.tabs.values()) {
+      if (clearRequests) void tab.workflows.clear();
       void tab.layout(this.viewport.width, this.viewport.height, false);
     }
     this.revision++;
@@ -142,6 +145,8 @@ export class RuntimeBrowserTask {
   }
   state(): TaskBrowserState {
     return {
+      workflows: true,
+      pointerLock: true,
       streamVersion: 1,
       videoStream: 'h264',
       videoWindow: 8,
@@ -202,26 +207,7 @@ export class RuntimeBrowserTask {
       } catch {
         continue;
       }
-      const tab = new RuntimeBrowserTab(
-        item.by,
-        item.agentSessionId,
-        () => this.alive,
-        () => this.revision++,
-        (element) => {
-          this.picked = element;
-          this.pickerMessage = element
-            ? null
-            : 'Editable fields and embedded content are private. Pick another element.';
-          this.picking = false;
-          tab.picking = false;
-          this.revision++;
-        },
-        this.network,
-        (kind, message) => {
-          this.attention = { kind, message, outside: true, tabId: tab.id };
-          this.revision++;
-        },
-      );
+      const tab = this.makeTab(item.by, item.agentSessionId);
       tab.url = item.url;
       tab.documentUrl = item.url;
       tab.width = item.width;
@@ -265,7 +251,7 @@ export class RuntimeBrowserTask {
         // Playwright maps an explicit empty grant list to Chromium's reject-all
         // override. Omitting it would leave browser permission prompts pending.
         permissions: [],
-        acceptDownloads: false,
+        acceptDownloads: true,
         proxy: { server: proxy, bypass: '<-loopback>' },
         serviceWorkers: 'allow',
       });
@@ -282,34 +268,49 @@ export class RuntimeBrowserTask {
         await context.close();
         throw new Error('Browser task closed');
       }
-      context.on('page', (popup) => {
-        if (context.pages().length > 12) {
-          void popup.close().catch(() => undefined);
-          return;
-        }
-        void popup
-          .opener()
-          .then((opener) => {
-            if (opener) {
-              void popup.close().catch(() => undefined);
-              const origin = [...this.tabs.values()].find(tab => tab.owns(opener));
-              origin?.takeover(true);
-              this.attention = {
-                kind: 'popup',
-                message: 'This page opened a popup. Open the originating page outside to continue; sign-in state is separate.',
-                outside: !!origin,
-                ...(origin ? { tabId: origin.id } : {}),
-              };
-              this.revision++;
-            }
-          })
-          .catch(() => undefined);
+      context.on('page', popup => {
+        if (context.pages().length > 12) { void popup.close().catch(() => undefined); return; }
+        void this.adoptPopup(context, popup).catch(() => popup.close().catch(() => undefined));
       });
       return context;
     })().catch((error) => {
       this.context = undefined;
       throw error;
     }));
+  }
+  private async adoptPopup(context: BrowserContext, popup: Page): Promise<void> {
+    const opener = await popup.opener();
+    if (!opener) return; // Ordinary tabs are adopted by ensure().
+    const origin = [...this.tabs.values()].find(tab => tab.owns(opener));
+    if (!origin || !this.alive || this.tabs.size >= 12) { await popup.close(); return; }
+    origin.takeover(true);
+    const tab = this.makeTab('you', null);
+    // Keep the actual page in this context: OAuth relies on window.opener,
+    // postMessage, window.close and the task's shared cookies.
+    this.tabs.set(tab.id, tab);
+    popup.once('close', () => {
+      if (!this.alive || this.tabs.get(tab.id) !== tab) return;
+      this.tabs.delete(tab.id); this.presentations.delete(tab.id);
+      if (this.active === tab.id) {
+        this.active = this.tabs.has(origin.id) ? origin.id : [...this.tabs.keys()].at(-1) ?? null;
+        if (this.active) void this.select(this.active).catch(() => undefined);
+      }
+      void tab.destroy(); this.revision++;
+    });
+    await tab.start(context, popup);
+    if (!this.alive || !this.tabs.has(tab.id)) return;
+    if (this.active === origin.id) await this.select(tab.id);
+    this.revision++;
+  }
+  private makeTab(by: 'you' | 'agent', sessionId: number | null): RuntimeBrowserTab {
+    const tab = new RuntimeBrowserTab(by, sessionId, () => this.alive, () => this.revision++, element => {
+      this.picked = element;
+      this.pickerMessage = element ? null : 'Editable fields and embedded content are private. Pick another element.';
+      this.picking = false; tab.picking = false; this.revision++;
+    }, this.network, (kind, message) => {
+      this.attention = { kind, message, outside: true, tabId: tab.id }; this.revision++;
+    }, this.workflowBudget);
+    return tab;
   }
   private async ensure(
     page: RuntimeBrowserTab,
@@ -363,26 +364,7 @@ export class RuntimeBrowserTask {
   ): Promise<RuntimeBrowserTab> {
     if (url) this.authorize(url);
     if (this.tabs.size >= 12) throw new Error('Task browser tab limit reached');
-    const tab = new RuntimeBrowserTab(
-      by,
-      sessionId,
-      () => this.alive,
-      () => this.revision++,
-      (element) => {
-        this.picked = element;
-        this.pickerMessage = element
-          ? null
-          : 'Editable fields and embedded content are private. Pick another element.';
-        this.picking = false;
-        tab.picking = false;
-        this.revision++;
-      },
-      this.network,
-      (kind, message) => {
-        this.attention = { kind, message, outside: true, tabId: tab.id };
-        this.revision++;
-      },
-    );
+    const tab = this.makeTab(by, sessionId);
     const previous = this.active;
     tab.url = url;
     tab.loading = !!url;
@@ -558,6 +540,8 @@ export class RuntimeBrowserTask {
     } else if (input.kind === 'feedback') this.feedback = input.enabled;
     else {
       const page = this.page(input.tabId);
+      if (input.kind === 'dialog-response') await page.workflows.respond(input.requestId, input.accept, input.text);
+      else if (input.kind === 'cancel-workflow') await page.workflows.cancel(input.requestId);
       if (input.kind === 'navigate') this.authorize(input.url);
       if (input.kind === 'close' || (page.id === this.active && ['navigate', 'reload', 'back', 'forward'].includes(input.kind))) this.clearPicker();
       if (input.kind === 'select') await this.select(page.id);
@@ -569,7 +553,10 @@ export class RuntimeBrowserTask {
           this.active = [...this.tabs.keys()].at(-1) ?? null;
           if (this.active) await this.select(this.active);
         }
-      } else if (input.kind === 'handoff') page.handoff(input.sessionId);
+      } else if (input.kind === 'handoff') {
+        if (page.workflows.snapshot().length) throw new Error('Resolve site requests before handing control back');
+        page.handoff(input.sessionId);
+      }
       else if (input.kind === 'takeover' || input.kind === 'focus')
         page.takeover();
       else if (input.kind === 'navigate') {

@@ -44,9 +44,10 @@ only committed locations, without query/hash, never page storage or frames.
 Task server grants are explicit. Port discovery is only a suggestion. Public DNS
 is pinned to validated public addresses; private/rebinding/control destinations
 are denied. HTTP(S), WebSockets and ordinary site storage/API behavior use actual
-Chromium. Permissions/client certificates/popups/dialogs are denied with truthful
-needs-user attention. Remote audio/accessibility/file selection/download relay
-are unavailable in the remote display. Open outside uses a separate profile.
+Chromium. Permissions and client certificates remain denied. Popup pages retain their task
+context and opener for OAuth; site dialogs and file requests use human-only pending
+requests on hosts advertising `workflows: true`. Bounded file transfer routes require
+the private viewer lease. Remote audio/accessibility remain unavailable. Open outside uses a separate profile.
 
 Tests include the real Nest private-socket transport and sandboxed Chromium,
 plus driver/mailbox/persistence/logging/validation boundaries. This does not
@@ -186,3 +187,20 @@ CPU-only streams use the same 1920×1440 resolution bounds as hardware, with a
 tall panels; they do not round them down to landscape width buckets. Bitrate
 retains a text-quality floor at low FPS, and the encoder buffer reserves at least
 two frame budgets so sparse updates do not become heavily quantized keyframes.
+
+## Human site workflows
+
+`runtime-workflows` owns expiring dialog/file handles and their task-wide budget;
+`runtime-download-policy` owns Chromium progress limits and its debugger attachment.
+The private `transfer` endpoint accepts only request identities and bounded chunks,
+never caller-provided host paths. Uploads cap at sixteen files / 32 MiB aggregate
+per task; two retained downloads cap at 32 MiB each. Site requests, prompt contents
+and file bytes are excluded from the separate agent reply allowlist and metadata
+persistence. Viewer loss clears pending requests without replay.
+
+Popup adoption keeps the actual page and opener in the task context rather than
+reopening a URL. Background popups do not steal another selected user tab.
+`pointerLock: true` advertises genuine Chromium lock state and bounded relative
+motion input; the viewing device requires its own explicit user gesture. Native
+cursor metadata is restricted to CSS keywords. These optional fields leave older
+JPEG/video/input contracts available.

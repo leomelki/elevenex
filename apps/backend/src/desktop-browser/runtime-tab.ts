@@ -1,3 +1,5 @@
+import { RuntimeBrowserWorkflows, RuntimeWorkflowBudget } from './runtime-workflows.js';
+import { browserCursors, type TaskBrowserCursor } from '@elevenex/shared';
 import type { BrowserContext, CDPSession, Page, Request } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import type {
@@ -14,6 +16,9 @@ export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
 /** A tab has one driver, one navigation generation, one frame waiter and no text observation. */
 export class RuntimeBrowserTab {
   readonly id = randomUUID();
+  readonly workflows: RuntimeBrowserWorkflows;
+  private cursor: TaskBrowserCursor = 'default';
+  private pointerLocked = false;
   driver: 'you' | 'agent' | 'needs';
   generation = 1;
   displayEpoch = 1;
@@ -70,7 +75,9 @@ export class RuntimeBrowserTab {
       kind: 'popup' | 'dialog' | 'file-picker' | 'download',
       message: string,
     ) => void = () => undefined,
+    workflowBudget = new RuntimeWorkflowBudget(),
   ) {
+    this.workflows = new RuntimeBrowserWorkflows(() => this.changed(), () => this.takeover(true), workflowBudget, message => this.attention('download', message));
     this.driver = by;
     if (by === 'agent') this.step = { n: 1, text: 'Opening page' };
     this.agentSessionId = sessionId;
@@ -78,6 +85,7 @@ export class RuntimeBrowserTab {
   }
   takeover(needs = false): void {
     void this.input?.reset();
+    void this.input?.unlockPointer();
     this.ownership++;
     this.waiting ||= this.driver === 'agent';
     this.driver = needs ? 'needs' : 'you';
@@ -86,6 +94,7 @@ export class RuntimeBrowserTab {
   }
   handoff(sessionId: number): void {
     void this.input?.reset();
+    void this.input?.unlockPointer();
     this.ownership++;
     this.agentSessionId = sessionId;
     this.driver = 'agent';
@@ -123,19 +132,39 @@ export class RuntimeBrowserTab {
   get agentReady(): boolean {
     return this.active() && this.started && !this.loading && !this.viewportChanging && !this.error && !this.disposed;
   }
-  async start(context: BrowserContext): Promise<void> {
+  async start(context: BrowserContext, adopted?: Page): Promise<void> {
     this.context = context;
     if (this.disposed) return;
-    const page = await this.context.newPage();
+    const page = adopted ?? await this.context.newPage();
     if (this.disposed) {
       await page.close();
       return;
     }
     this.page = page;
     this.crashed = false;
+    page.on('dialog', dialog => this.workflows.dialog(dialog));
+    page.on('filechooser', chooser => this.workflows.upload(chooser));
+    page.on('download', download => {
+      // A download navigation keeps the existing document. It is not a failed
+      // replacement page, and must not leave input/capture stuck loading.
+      this.loadRevision++; this.documentRequest = undefined;
+      this.loading = false; this.error = null; this.url = this.documentUrl;
+      this.workflows.download(download); void this.capture.start(); this.changed();
+    });
     this.cdp = await this.context.newCDPSession(page);
     this.input = new RuntimeBrowserInput(page, this.cdp);
     this.capture.attach(this.cdp);
+    await page.exposeBinding('__elevenexPointerLock', async () => {
+      const locked = (await Promise.all(page.frames().map(frame => frame.evaluate(() => !!document.pointerLockElement).catch(() => false)))).some(Boolean);
+      if (this.page !== page || this.disposed || this.pointerLocked === locked) return;
+      this.pointerLocked = locked; if (!locked) void this.input?.unlockPointer(); this.changed();
+    });
+    await page.addInitScript(() => {
+      document.addEventListener('pointerlockchange', () => {
+        const send: unknown = Reflect.get(globalThis, '__elevenexPointerLock');
+        if (typeof send === 'function') void Promise.resolve(Reflect.apply(send, globalThis, [])).catch(() => undefined);
+      });
+    });
     // Companion views must not steal document focus from one another on layout heartbeats.
     await this.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
     // Headless Chromium target metadata does not report document.title changes.
@@ -200,37 +229,8 @@ export class RuntimeBrowserTab {
     page.on('response', (response) => {
       if (response.status() >= 400) this.countError();
     });
-    page.on('filechooser', (chooser) => {
-      this.takeover(true);
-      this.attention(
-        'file-picker',
-        'File selection is unavailable in streamed display. Continue this workflow outside.',
-      );
-      void chooser
-        .element()
-        .dispose()
-        .catch(() => undefined);
-      this.changed();
-    });
-    page.on('download', (download) => {
-      void download.cancel().catch(() => undefined);
-      this.takeover(true);
-      this.attention(
-        'download',
-        'Downloads are unavailable in streamed display. Continue this workflow outside.',
-      );
-      this.changed();
-    });
-    page.on('dialog', (dialog) => {
-      void dialog.dismiss().catch(() => undefined);
-      this.attention(
-        'dialog',
-        'This site requested a browser dialog. Continue this workflow outside; sign-in state is separate.',
-      );
-      this.takeover(true);
-      this.changed();
-    });
     page.on('crash', () => {
+      void this.workflows.clear();
       this.crashed = true;
       this.takeover(true);
       this.loading = false;
@@ -239,6 +239,7 @@ export class RuntimeBrowserTab {
     });
     page.on('close', () => {
       if (this.disposed || this.page !== page) return;
+      void this.workflows.clear();
       this.crashed = true;
       this.takeover(true);
       this.loading = false;
@@ -250,6 +251,8 @@ export class RuntimeBrowserTab {
     page.on('framenavigated', (frame) => {
       if (this.page !== page) return;
       if (frame === page.mainFrame()) {
+        void this.workflows.documentChanged();
+        this.cursor = 'default';
         void this.input?.reset();
         this.navigation++;
         this.generation++;
@@ -274,6 +277,13 @@ export class RuntimeBrowserTab {
         this.changed();
       }
     });
+    if (adopted) {
+      try { this.url = runtimeUrl(page.url()).href; this.documentUrl = this.url; } catch { /* about:blank popup */ }
+      this.loading = false;
+      this.pageTitle = { url: this.url, text: (await page.title()).replace(/\s+/gu, ' ').trim().slice(0, 200) };
+      await this.history();
+      this.changed();
+    }
   }
 
   private async history(): Promise<void> {
@@ -319,6 +329,9 @@ export class RuntimeBrowserTab {
     if (this.pageTitle?.url === this.url && this.url === this.documentUrl && this.pageTitle.text) title = this.pageTitle.text;
     return {
       id: this.id,
+      workflows: this.workflows.snapshot(),
+      cursor: this.cursor,
+      pointerLocked: this.pointerLocked,
       title,
       url: this.url,
       by: this.by,
@@ -387,6 +400,9 @@ export class RuntimeBrowserTab {
     this.visible = visible;
     this.interactive = interactive;
     if (changed) this.changed();
+    if (!visible || !interactive) {
+      await this.input?.unlockPointer();
+    }
     if (visible && !interactive) {
       await this.input?.reset();
       if (!current()) return;
@@ -454,6 +470,8 @@ export class RuntimeBrowserTab {
     }
   }
   private invalidateDisplay(): void {
+    this.pointerLocked = false;
+    void this.input?.unlockPointer();
     this.displayEpoch++;
     this.humanEpoch++;
     void this.input?.reset();
@@ -502,11 +520,27 @@ export class RuntimeBrowserTab {
       return {};
     }
     const result = await this.input!.dispatch(input, current);
+    if (input.kind === 'pointer' || input.kind === 'pointer-exit') {
+      const x = input.kind === 'pointer' ? input.x : -1, y = input.kind === 'pointer' ? input.y : -1;
+      const cursor = await this.page!.evaluate(({ x, y }) => {
+        let element = document.elementFromPoint(x, y);
+        while (element?.shadowRoot) { const inner = element.shadowRoot.elementFromPoint(x, y); if (!inner || inner === element) break; element = inner; }
+        if (!element) return 'default';
+        const cursor = getComputedStyle(element).cursor;
+        if (cursor === 'auto' && element.closest('input:not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio]),textarea,[contenteditable=true]')) return 'text';
+        // CSS custom cursor images remain on the host. Only their keyword
+        // fallback is relayed, never a URL or page-provided CSS expression.
+        return cursor.split(',').at(-1)?.trim() ?? 'default';
+      }, { x, y }).catch(() => 'default');
+      current();
+      const safe = browserCursors.find(value => value === cursor) ?? 'default';
+      if (safe !== this.cursor) { this.cursor = safe; this.changed(); }
+    }
     this.capture.changed();
     return result;
   }
-  releaseInput(): Promise<void> {
-    return this.input?.reset() ?? Promise.resolve();
+  async releaseInput(): Promise<void> {
+    await this.input?.reset(); await this.input?.unlockPointer();
   }
   async inspect(x: number, y: number): Promise<BrowserElement | null> {
     return this.page!.evaluate(
@@ -640,6 +674,7 @@ export class RuntimeBrowserTab {
   async destroy(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    await this.workflows.destroy();
     this.takeover();
     this.capture.detach();
     await this.capture.stop();
@@ -649,6 +684,7 @@ export class RuntimeBrowserTab {
   }
   /** Explicit human recovery; no navigation or queued action is resumed here. */
   async resetEngine(): Promise<void> {
+    await this.workflows.clear();
     this.invalidateDisplay();
     const page = this.page,
       cdp = this.cdp;

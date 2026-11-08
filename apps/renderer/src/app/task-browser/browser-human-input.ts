@@ -29,6 +29,7 @@ export class BrowserHumanInput {
     private readonly shortcut: (intent: 'open' | 'pick' | 'controls') => void,
     private readonly keyText: () => boolean = () => false,
     private readonly pointerExit: () => boolean = () => false,
+    private readonly pointerLocked: () => boolean = () => false,
   ) {}
   clear(): void {
     this.heldKeys.clear();
@@ -49,6 +50,10 @@ export class BrowserHumanInput {
     event.stopPropagation();
     event.preventDefault();
     if (type !== 'move' && event.button > 2) return;
+    if (type === 'move' && this.pointerLocked()) {
+      this.send({ kind: 'pointer-relative', deltaX: Math.max(-10000, Math.min(10000, event.movementX)), deltaY: Math.max(-10000, Math.min(10000, event.movementY)), buttons: event.buttons, modifiers: this.modifiers(event) });
+      return;
+    }
     const point = this.point(event);
     if (!point) return;
     if (type === 'down') {
@@ -95,7 +100,7 @@ export class BrowserHumanInput {
     this.send(input);
   }
   leavePointer(): void {
-    if (!this.heldPointer && this.pointerExit()) this.send({ kind: 'pointer-exit' });
+    if (!this.pointerLocked() && !this.heldPointer && this.pointerExit()) this.send({ kind: 'pointer-exit' });
   }
   cancelPointer(): void {
     const pointer = this.heldPointer;

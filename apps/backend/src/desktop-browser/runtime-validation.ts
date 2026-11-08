@@ -22,6 +22,8 @@ const unit = z.number().finite().min(0).max(16384),
 export const runtimeCommand = z.union([
   z.object({ kind: z.literal('move-tab'), tabId, beforeTabId: tabId.nullable() }).strict(),
   z.object({ kind: z.literal('new-tab') }).strict(),
+  z.object({ kind: z.literal('dialog-response'), tabId, requestId: tabId, accept: z.boolean(), text: z.string().max(4096) }).strict(),
+  z.object({ kind: z.literal('cancel-workflow'), tabId, requestId: tabId }).strict(),
   z.object({ kind: z.literal('dismiss-attention') }).strict(),
   z.object({ kind: z.literal('open'), url }).strict(),
   z
@@ -68,6 +70,8 @@ export const runtimeCommand = z.union([
 const runtimeEvent = z.union([
   z.object({ kind: z.literal('release') }).strict(),
   z.object({ kind: z.literal('pointer-exit') }).strict(),
+  z.object({ kind: z.literal('pointer-unlock') }).strict(),
+  z.object({ kind: z.literal('pointer-relative'), deltaX: z.number().finite().min(-10000).max(10000), deltaY: z.number().finite().min(-10000).max(10000), buttons: z.number().int().min(0).max(31), modifiers }).strict(),
   z
     .object({
       kind: z.literal('pointer'),
@@ -144,3 +148,13 @@ export const runtimeInput = z.union([
         ) <= 65536,
     ),
 ]);
+
+export const runtimeTransfer = z.object({
+  tabId, requestId: tabId,
+  transfer: z.union([
+    z.object({ kind: z.literal('upload-start'), files: z.array(z.object({ name: z.string().min(1).max(200).refine(name => !/[\\/\x00-\x1f\x7f]/.test(name) && name !== '.' && name !== '..'), size: z.number().int().min(0).max(33554432) }).strict()).min(1).max(16) }).strict(),
+    z.object({ kind: z.literal('upload-chunk'), index: z.number().int().min(0).max(15), offset: z.number().int().min(0).max(33554432), data: z.string().min(4).max(65536) }).strict(),
+    z.object({ kind: z.literal('upload-finish') }).strict(),
+    z.object({ kind: z.literal('download-read'), offset: z.number().int().min(0).max(33554432) }).strict(),
+  ]),
+}).strict();

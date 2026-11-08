@@ -161,6 +161,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
     this.assertScope();
+    if (input.kind === 'dialog-response' || input.kind === 'choose-files' || input.kind === 'save-download' || input.kind === 'cancel-workflow') throw new Error('This site request belongs to a streamed browser.');
     if (input.kind === 'move-tab') {
       const page = this.page(input.tabId);
       if (input.beforeTabId !== null) this.page(input.beforeTabId);

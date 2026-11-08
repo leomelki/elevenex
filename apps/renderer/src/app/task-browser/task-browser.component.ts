@@ -1,3 +1,4 @@
+import { BrowserSiteRequestsComponent } from './browser-site-requests.component';
 import { BrowserSurfacesComponent } from './browser-surfaces.component';
 import { OverlayContainer } from '@angular/cdk/overlay';
 import { ChangeDetectionStrategy, Component, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
@@ -9,7 +10,7 @@ import { NativePageLayout } from './native-page-layout';
 export interface BrowserComposerIntent { readonly scopeId: string; readonly taskId: number; readonly sessionId: number; readonly text: string }
 @Component({
   selector: 'ex-task-browser',
-  imports: [BrowserSurfacesComponent, BrowserViewComponent, ButtonComponent, DropdownComponent, FoldComponent, IconComponent, ModalLayerComponent],
+  imports: [BrowserSiteRequestsComponent, BrowserSurfacesComponent, BrowserViewComponent, ButtonComponent, DropdownComponent, FoldComponent, IconComponent, ModalLayerComponent],
   providers: [TaskBrowserStore],
   templateUrl: './task-browser.component.html', styleUrl: './task-browser.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,

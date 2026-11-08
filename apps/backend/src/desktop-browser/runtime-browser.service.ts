@@ -55,7 +55,9 @@ export class RuntimeBrowserService implements OnModuleDestroy {
         code: 'browser-viewer-in-use',
         message: 'This task browser already has an active viewer',
       });
-    task.reconcile();
+    // A first viewer may arrive to answer an agent's pending site request.
+    // Rotating an existing viewer invalidates that viewer's old requests.
+    task.reconcile(old !== undefined);
     task.touch();
     this.tasks.delete(taskId);
     this.tasks.set(taskId, task);

@@ -209,8 +209,14 @@ async function registerRendererProtocol(): Promise<void> {
 }
 
 void app.whenReady().then(async () => {
-  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  session.defaultSession.setPermissionCheckHandler(() => false);
+  // Pointer lock is needed only by the trusted streamed-page canvas. Website
+  // guests and editor subframes keep their separate deny-by-default sessions.
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => callback(
+    permission === 'pointerLock' && details.isMainFrame && isAppUrl(details.requestingUrl, devUrl) && trusted(contents.mainFrame, contents) && taskBrowser?.permitsPointerLock(contents.id) === true,
+  ));
+  session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) =>
+    permission === 'pointerLock' && details.isMainFrame && !!details.requestingUrl && isAppUrl(details.requestingUrl, devUrl) && !!contents && trusted(contents.mainFrame, contents) && taskBrowser?.permitsPointerLock(contents.id) === true,
+  );
   if (devUrl) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({ responseHeaders: {

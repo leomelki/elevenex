@@ -15,7 +15,8 @@ function streamEvent(value: unknown): TaskBrowserStreamEvent {
   const number = (key: string, min: number, max: number): number => { const n = raw[key]; if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) throw new Error('Invalid browser input'); return n; };
   const integer = (key: string, min: number, max: number): number => { const n = number(key, min, max); if (!Number.isSafeInteger(n)) throw new Error('Invalid browser input integer'); return n; };
   const text = (key: string, max: number): string => { const s = raw[key]; if (typeof s !== 'string' || s.length > max) throw new Error('Invalid browser input'); return s; };
-  if (kind === 'release' || kind === 'pointer-exit') { exact(raw, ['kind']); return { kind }; }
+  if (kind === 'release' || kind === 'pointer-exit' || kind === 'pointer-unlock') { exact(raw, ['kind']); return { kind }; }
+  if (kind === 'pointer-relative') { exact(raw, ['kind', 'deltaX', 'deltaY', 'buttons', 'modifiers']); return { kind, deltaX: number('deltaX', -10000, 10000), deltaY: number('deltaY', -10000, 10000), buttons: integer('buttons', 0, 31), modifiers: integer('modifiers', 0, 15) }; }
   if (kind === 'text') { exact(raw, ['kind', 'text']); return { kind, text: text('text', 65536) }; }
   if (kind === 'composition') {
     exact(raw, ['kind', 'text', 'selectionStart', 'selectionEnd']);
@@ -71,6 +72,8 @@ export function command(value: unknown): TaskBrowserCommand {
   if (kind === 'open') { exact(raw, ['kind', 'url']); return { kind, url: browserUrl(raw['url']) }; }
   if (kind === 'pick' || kind === 'feedback') { exact(raw, ['kind', 'enabled']); if (typeof raw['enabled'] !== 'boolean') throw new Error('Invalid browser toggle'); return { kind, enabled: raw['enabled'] }; }
   const tabId = browserId(raw['tabId']);
+  if (kind === 'choose-files' || kind === 'save-download' || kind === 'cancel-workflow') { exact(raw, ['kind', 'tabId', 'requestId']); return { kind, tabId, requestId: browserId(raw['requestId']) }; }
+  if (kind === 'dialog-response') { exact(raw, ['kind', 'tabId', 'requestId', 'accept', 'text']); if (typeof raw['accept'] !== 'boolean' || typeof raw['text'] !== 'string' || raw['text'].length > 4096) throw new Error('Invalid dialog response'); return { kind, tabId, requestId: browserId(raw['requestId']), accept: raw['accept'], text: raw['text'] }; }
   if (kind === 'move-tab') { exact(raw, ['kind', 'tabId', 'beforeTabId']); return { kind, tabId, beforeTabId: raw['beforeTabId'] === null ? null : browserId(raw['beforeTabId']) }; }
   if (kind === 'handoff') { exact(raw, ['kind', 'tabId', 'sessionId']); return { kind, tabId, sessionId: taskId(raw['sessionId']) }; }
   if (kind === 'navigate') { exact(raw, ['kind', 'tabId', 'url']); return { kind, tabId, url: browserUrl(raw['url']) }; }

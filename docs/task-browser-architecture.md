@@ -129,8 +129,9 @@ Engine selection is now an actual supported operation instead of an unused remot
 flag inside the desktop engine.
 
 The current JPEG source is bounded, backpressured and usable over the private
-machine connection. It has no audio, browser accessibility relay, file transfer
-or download relay. A fast video transport can replace frame delivery without
+machine connection. It has no audio or browser accessibility relay. Capable
+hosts expose human-only dialogs and bounded file relays through the private viewer;
+see the [production workflow contract](../apps/renderer/src/app/task-browser/README.md#capabilities-and-extension-boundaries). A fast video transport can replace frame delivery without
 changing task/tab authority, network grants or presentation ownership. Add an
 explicit negotiated capability before adding those features.
 

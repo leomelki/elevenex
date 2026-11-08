@@ -1,3 +1,4 @@
+import { browserCursors, type TaskBrowserWorkflow } from '@elevenex/shared';
 import type {
   BrowserElement,
   TaskBrowserState,
@@ -55,6 +56,13 @@ function element(value: unknown): BrowserElement {
     height: coordinates[3]!,
   };
 }
+function workflow(value: unknown): TaskBrowserWorkflow {
+  const raw = record(value), id = browserId(raw['id']);
+  if (raw['kind'] === 'upload') return { id, kind: 'upload', multiple: boolean(raw['multiple']) };
+  if (raw['kind'] === 'download' && (raw['status'] === 'receiving' || raw['status'] === 'ready')) return { id, kind: 'download', name: text(raw['name'], 200), status: raw['status'] };
+  if (raw['kind'] === 'dialog' && (raw['type'] === 'alert' || raw['type'] === 'confirm' || raw['type'] === 'prompt' || raw['type'] === 'beforeunload')) return { id, kind: 'dialog', type: raw['type'], message: text(raw['message'], 4000), defaultValue: text(raw['defaultValue'], 4096) };
+  return invalid();
+}
 function tab(value: unknown): TaskBrowserTab {
   const raw = record(value);
   const id = browserId(raw["id"]),
@@ -73,9 +81,16 @@ function tab(value: unknown): TaskBrowserTab {
     invalid();
   const session =
     raw["agentSessionId"] === null ? null : integer(raw["agentSessionId"], 1);
+  const workflows = raw['workflows'];
+  if (workflows !== undefined && (!Array.isArray(workflows) || workflows.length > 4)) invalid();
+  const cursor = raw['cursor'] === undefined ? undefined : browserCursors.find(value => value === raw['cursor']);
+  if (raw['cursor'] !== undefined && cursor === undefined) invalid();
   const step = raw["step"] === undefined ? undefined : record(raw["step"]);
   return {
     id,
+    ...(Array.isArray(workflows) ? { workflows: workflows.map(workflow) } : {}),
+    ...(cursor ? { cursor } : {}),
+    ...(raw['pointerLocked'] === undefined ? {} : { pointerLocked: boolean(raw['pointerLocked']) }),
     url,
     by,
     driver,
@@ -137,6 +152,8 @@ export function remoteBrowserState(
   )
     invalid();
   return {
+    ...(raw['pointerLock'] === true ? { pointerLock: true } : {}),
+    ...(raw['workflows'] === true ? { workflows: true } : {}),
     canDetach: raw['canDetach'] === true,
     canReorder: raw['canReorder'] === true,
     ...(raw['streamVersion'] === 1 ? { streamVersion: 1 as const } : {}),

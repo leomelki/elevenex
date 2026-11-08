@@ -39,13 +39,21 @@ presentations fifteen seconds and video receipts fifteen seconds. Tests include 
 twelve-second artificial transport pause and out-of-order input receipts. These
 are bounded recovery policies, not a claim that an offline link remains interactive.
 
+## Human workflow contract
+
+Machine hosts advertising `workflows: true` support task-profile popup/OAuth tabs,
+human dialog responses, and bounded file relays using native pick/save dialogs in
+main. `pointerLock: true` adds explicit viewing-device consent and genuine relative
+motion. Cursor keywords travel as allowlisted presentation metadata. Requests
+expire and release with viewer/tab lifetime; navigation invalidates document-owned
+choosers and dialogs. See the [production contract](../apps/renderer/src/app/task-browser/README.md#capabilities-and-extension-boundaries)
+for limits and remaining local/remote differences.
+
 ## Remaining gaps and implementation boundaries
 
 | Priority | Gap | Appropriate next implementation |
 | --- | --- | --- |
-| High | Uploads and downloads | Human-only, viewer-bound transfer IDs; bounded streamed files, device dialogs in main, path confinement on the host, cancellation and cleanup with the viewer. Never buffer arbitrary files in renderer IPC or expose host paths. |
-| High | OAuth popups and dialogs | Adopt bounded popup tabs in the same task profile while preserving opener semantics and task network policy. Dialog IDs must bind to the document/driver generation; display and resolve them through human-only chrome. |
-| High | Cursor shape, link preview and context menu | Narrow human-only presentation metadata, enum-validated cursors, sanitized link locations and explicit context actions. Handle iframe/shadow-root targets and reject stale pointer results. Do not send arbitrary CSS cursor URLs. |
+| High | Link preview and context menu | Sanitized link locations and explicit context actions. Cursor keyword relay and explicit pointer lock are implemented; custom cursor images remain on the host. |
 | High | Rich clipboard and page Clipboard API | Support bounded MIME types and page copy/paste events under current human ownership. Text copy/cut now follows focused frames and open shadow inputs; richer formats remain unavailable. |
 | Medium | Native browser shortcuts, find, zoom, custom viewports and hard reload | Route explicit browser-chrome intents to the task owner; keep page shortcuts scoped to the focused page and logical viewport separate from encoded resolution. |
 | Medium | Audio, media permissions and accessibility | Separate owned media/accessibility adapters with explicit permission and resource lifetimes. Pixels alone cannot provide native screen-reader semantics or audio. |

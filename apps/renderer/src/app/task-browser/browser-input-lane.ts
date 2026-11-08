@@ -83,6 +83,8 @@ export class BrowserInputLane {
       previous.modifiers === input.modifiers
     )
       this.queue[this.queue.length - 1] = input;
+    else if (input.kind === 'pointer-relative' && previous?.kind === 'pointer-relative' && previous.buttons === input.buttons && previous.modifiers === input.modifiers && Math.abs(previous.deltaX + input.deltaX) <= 10000 && Math.abs(previous.deltaY + input.deltaY) <= 10000)
+      this.queue[this.queue.length - 1] = { ...input, deltaX: previous.deltaX + input.deltaX, deltaY: previous.deltaY + input.deltaY };
     else if (input.kind === "composition" && previous?.kind === "composition")
       this.queue[this.queue.length - 1] = input;
     else if (

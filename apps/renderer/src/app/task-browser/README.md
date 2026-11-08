@@ -103,9 +103,13 @@ canvas, frames, closed shadow roots, console strings or screenshots. **All those
 agent-readable channels are withheld** on every page. There is no advertised
 masking. Only bounded error counts and structural geometry are shared. Chromium
 or Playwright debug logging that could expose private page data fails closed.
-Sign-in/2FA/payment fields hand control to the user. Popups, dialogs and unsupported
-site flows have explicit attention messages and Open outside, which uses a
-separate browser profile rather than promising transferred sign-in state.
+Sign-in/2FA/payment fields hand control to the user. Machine hosts advertising
+`workflows: true` adopt popup pages into the same task context, retaining cookies,
+`window.opener`, `postMessage` and site-driven close for OAuth. A popup from the
+active page selects its new tab; background popups do not replace another selected
+tab. Closing a selected popup returns to its surviving opener. The twelve-tab cap
+and network policy still apply. Local native popup behavior remains unchanged.
+Unsupported site flows retain Open outside, which uses a separate browser profile.
 
 The real picker consumes page input, resolves a structural `nth-child` selector,
 tag and rectangle at viewport CSS coordinates, and excludes editable controls,
@@ -176,9 +180,31 @@ browser reports capacity instead of silently exceeding the bound.
 Theme and slow-network tools use private, fixed CDP commands, with no CDP bridge.
 Local guests support native accessibility, audio, file inputs and user-initiated
 OS downloads (two concurrent, 32 MB each); agent downloads require the user.
-The remote display does **not** relay audio, page accessibility, device
-permission prompts, file picking or downloads. Tools explain those limits and
-provide Open outside. Unsupported controls do not silently succeed. No web/mobile
+The remote display does **not** relay audio, page accessibility or device
+permission prompts. On capable hosts, site requests appear above the page:
+alert/confirm/prompt/beforeunload dialogs require a human response; prompt drafts
+remain local until confirmation. Uploads use the desktop's native file picker
+and downloads require its native Save dialog. No renderer filesystem paths or
+file bytes enter IPC or agent observations. Older hosts omit the capability and
+retain the update/Open outside explanation.
+
+Transfers use the viewer-authenticated private HTTP transport, with 48 KiB
+chunks, at most sixteen files per upload, a 32 MiB total task upload budget,
+two concurrent uploads, and two retained downloads of at most 32 MiB each.
+Chromium download progress cancels oversized/slow responses. Pending site requests
+expire after five minutes. Navigation invalidates dialogs/choosers; completed
+files may still be saved after navigation. Viewer loss, engine failure, tab/task
+closure and explicit cancellation release requests and temporary files. Transfers
+are never resumed or replayed after disconnect. Saves write a sibling temporary
+file and replace the chosen destination only after all bytes are validated.
+
+Stream surfaces carry an allowlisted CSS cursor keyword, with custom cursor images
+reduced to their keyword fallback. Hosts advertising `pointerLock: true` publish
+page lock state. The user explicitly clicks **Use pointer lock** to grant the
+viewing canvas relative motion; Escape releases both ends. Main permits this only
+for a trusted app main frame with a visible, interactive, human-owned locked stream.
+Hidden pages, navigation, handoff, focus loss and disposal release the lock.
+Remote input verifies genuine Chromium lock state before accepting relative motion. Unsupported controls do not silently succeed. No web/mobile
 client ships in this foundation; remote desktops use the same private runtime
 protocol. A future web/phone client can implement the presentation/transport
 adapter behind an authenticated gateway without changing the task/driver contract or exposing generic HTTP/CDP.
@@ -212,7 +238,7 @@ and returns user control. A failed old agent launch cannot destroy a tab the use
 has taken over. Pending picker/clipboard observations check navigation and owner
 again before applying their result; private picker targets produce visible feedback.
 
-Popup/dialog notices retain their originating tab ID. Open outside uses that
+Legacy popup/dialog notices retain their originating tab ID. Open outside uses that
 captured resource even after selecting another tab; closing it clears the notice.
 Completed downloads similarly retain their initiating page identity and never
 publish OS save paths. Unowned popups are closed without suggesting an unrelated

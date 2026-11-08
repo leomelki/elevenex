@@ -4,3 +4,5 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .stream-status { position: absolute; inset: 0; display: grid; place-content: center; padding: var(--space-4); color: var(--ink-muted); background: var(--surface); font-size: var(--text-ui-size); pointer-events: none; }
 
 .stream-status.has-frame { inset: auto var(--space-2) var(--space-2); padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-raised); font-size: var(--text-caption-size); }
+
+.pointer-lock-control { position: absolute; top: var(--space-2); right: var(--space-2); max-width: calc(100% - var(--space-4)); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--ink); background: var(--surface-raised); font-size: var(--text-caption-size); }

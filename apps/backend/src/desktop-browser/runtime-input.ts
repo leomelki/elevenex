@@ -12,6 +12,8 @@ export class RuntimeBrowserInput {
     Extract<TaskBrowserStreamEvent, { kind: 'pointer' }>
   >();
   private composing = false;
+  private relative = false;
+  private pointer = { x: 0, y: 0 };
   private revision = 0;
   private tail: Promise<unknown> = Promise.resolve();
   constructor(
@@ -59,8 +61,8 @@ export class RuntimeBrowserInput {
         await this.cdp
           .send('Input.dispatchMouseEvent', {
             type: 'mouseReleased',
-            x: button.x,
-            y: button.y,
+            x: this.relative ? this.pointer.x : button.x,
+            y: this.relative ? this.pointer.y : button.y,
             button: button.button,
             buttons: 0,
             clickCount: 0,
@@ -90,6 +92,11 @@ export class RuntimeBrowserInput {
     return result;
   }
 
+  async unlockPointer(): Promise<void> {
+    this.relative = false;
+    await Promise.all(this.page.frames().map(frame => frame.evaluate(() => { if (document.pointerLockElement) document.exitPointerLock(); }).catch(() => undefined)));
+  }
+
   private async edit(command: 'Undo' | 'Redo' | 'SelectAll'): Promise<void> {
     // Blink commands follow the viewing device's intent, regardless of the host OS.
     await this.cdp.send('Input.dispatchKeyEvent', {
@@ -102,13 +109,24 @@ export class RuntimeBrowserInput {
     input: Exclude<TaskBrowserStreamEvent, { kind: 'release' }>,
     current: () => void,
   ): Promise<{ clipboard?: string }> {
-    if (input.kind === 'pointer-exit') {
+    if (input.kind === 'pointer-unlock') {
+      await this.unlockPointer();
+    } else if (input.kind === 'pointer-relative') {
+      const locked = await Promise.all(this.page.frames().map(frame => frame.evaluate(() => !!document.pointerLockElement).catch(() => false)));
+      current();
+      if (!locked.some(Boolean)) throw new Error('Pointer lock ended');
+      this.relative = true;
+      this.pointer = { x: this.pointer.x + input.deltaX, y: this.pointer.y + input.deltaY };
+      if (Math.abs(this.pointer.x) > 1_000_000_000 || Math.abs(this.pointer.y) > 1_000_000_000) { await this.unlockPointer(); throw new Error('Pointer movement exceeded bounds'); }
+      await this.cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...this.pointer, buttons: input.buttons, modifiers: input.modifiers });
+    } else if (input.kind === 'pointer-exit') {
       // Preserve keyboard focus and held keys. A captured drag leaves only after
       // its release, so this event must never terminate a held host gesture.
-      if (!this.buttons.size) await this.cdp.send('Input.dispatchMouseEvent', {
+      if (!this.buttons.size) { this.pointer = { x: -1, y: -1 }; await this.cdp.send('Input.dispatchMouseEvent', {
         type: 'mouseMoved', x: -1, y: -1, button: 'none', buttons: 0,
-      });
+      }); }
     } else if (input.kind === 'pointer') {
+      if (!this.relative) this.pointer = { x: input.x, y: input.y };
       if (input.type === 'down') this.buttons.set(input.button, input);
       else if (input.type === 'up') this.buttons.delete(input.button);
       else
@@ -121,8 +139,7 @@ export class RuntimeBrowserInput {
             : input.type === 'up'
               ? 'mouseReleased'
               : 'mouseMoved',
-        x: input.x,
-        y: input.y,
+        ...this.pointer,
         button: input.button,
         buttons: input.buttons,
         clickCount: input.clicks,

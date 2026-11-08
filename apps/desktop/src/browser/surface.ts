@@ -278,7 +278,7 @@ export class BrowserPage {
   }
   acknowledge(stream: string, sequence: number): void { this.frames?.acknowledge(stream, sequence); }
   async userInput(generation: number, input: TaskBrowserStreamEvent): Promise<void> {
-    if (input.kind === 'release' || input.kind === 'pointer-exit') throw new Error('This input requires a machine stream');
+    if (input.kind === 'release' || input.kind === 'pointer-exit' || input.kind === 'pointer-relative' || input.kind === 'pointer-unlock') throw new Error('This input requires a machine stream');
     if (!this.attached || !this.hasContents || !this.host.authorized() || this.presentation !== 'stream') throw new Error('Browser presentation or control changed');
     const previousGeneration = this.lease.generation;
     if (this.lease.driver === 'agent') { this.lease.takeOver(); this.host.changed(); }

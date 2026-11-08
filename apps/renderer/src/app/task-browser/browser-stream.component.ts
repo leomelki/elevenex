@@ -1,3 +1,5 @@
+import { BrowserPointerLock } from './browser-pointer-lock';
+import { ButtonComponent } from '../ui';
 import { browserFrameSize } from './browser-frame';
 import { BrowserVideoDecoder } from './browser-video';
 import { BrowserInputLane } from './browser-input-lane';
@@ -24,6 +26,7 @@ import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 /** Presentation and human input only. No pixels or input text enter agent observation. */
 @Component({
   selector: 'ex-browser-stream',
+  imports: [ButtonComponent],
   templateUrl: './browser-stream.component.html',
   styleUrl: './browser-stream.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -55,6 +58,7 @@ export class BrowserStreamComponent {
     () => this.surface().inputWindow ?? 1,
     generation => this.surface().inputWindow === 4 ? this.dispatchInput(generation, { kind: 'release' }) : Promise.resolve(),
   );
+  readonly pointerLock = new BrowserPointerLock(input => this.inputLane.send(input));
   readonly humanInput = new BrowserHumanInput(
     input => this.inputLane.send(input),
     () => this.inputElement()?.nativeElement,
@@ -63,6 +67,7 @@ export class BrowserStreamComponent {
     intent => { this.inputLane.cancel(); this.shortcutRequested.emit(intent); },
     () => this.surface().keyText === true,
     () => this.surface().pointerExit === true,
+    () => this.pointerLock.locked(),
   );
   private surfaceIdentity = '';
   private displayRevision = 0;
@@ -109,6 +114,7 @@ export class BrowserStreamComponent {
     });
     effect(() => {
       const surface = this.surface();
+      if (!surface.visible || !surface.interactive || !surface.pointerLocked) this.pointerLock.release();
       const identity = JSON.stringify([surface.scopeId, surface.taskId, surface.tabId]);
       if (this.pendingDisplay && (!surface.visible || identity !== this.surfaceIdentity || (surface.displayEpoch ?? 0) >= this.pendingDisplay.epoch))
         this.pendingDisplay.finish();
@@ -130,9 +136,10 @@ export class BrowserStreamComponent {
       }
       this.updateAuthority();
     });
-    const blur = () => this.humanInput.releaseInput();
+    const blur = () => { this.pointerLock.release(); this.humanInput.releaseInput(); };
     window.addEventListener('blur', blur);
     inject(DestroyRef).onDestroy(() => {
+      this.pointerLock.destroy();
       this.humanInput.destroy();
       this.disposed = true;
       this.pendingDisplay?.finish();
@@ -142,6 +149,12 @@ export class BrowserStreamComponent {
       this.videoDecoder.destroy();
       this.inputLane.destroy();
     });
+  }
+  startPointerLock(): void {
+    const canvas = this.canvas()?.nativeElement;
+    if (!canvas || !this.surface().interactive || !this.surface().pointerLocked) return;
+    this.inputElement()?.nativeElement.focus({ preventScroll: true });
+    void this.pointerLock.start(canvas);
   }
   private async paint(): Promise<void> {
     if (this.decoding || !this.latest) return;

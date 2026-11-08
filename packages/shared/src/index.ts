@@ -2,6 +2,7 @@ import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceS
 export type * from './code-workspace';
 import type { TaskBrowserPlacement, TaskBrowserWindowInfo, TaskBrowserWindowContext, TaskBrowserState, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserSurface, TaskBrowserFrame, TaskBrowserStreamInput } from './task-browser';
 export type * from './task-browser';
+export { browserCursors } from './task-browser';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
 import type { SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';

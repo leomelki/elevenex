@@ -18,7 +18,7 @@ import { RuntimeBrowserService } from './runtime-browser.service.js';
 import { TasksService } from '../tasks/tasks.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { TaskBrowserServers } from './task-browser-servers.js';
-import { runtimeCommand, runtimeInput } from './runtime-validation.js';
+import { runtimeCommand, runtimeInput, runtimeTransfer } from './runtime-validation.js';
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value);
@@ -184,6 +184,17 @@ export class RuntimeBrowserController {
         'Browser input was interrupted. Release controls and reconcile before retrying.',
       );
     }
+  }
+  @Post('transfer') async transfer(
+    @Req() request: Pick<Request, 'socket' | 'headers'>,
+    @Param('taskId') value: string,
+    @Headers('x-elevenex-browser-view') token: string,
+    @Body() input: unknown,
+  ) {
+    const id = await this.task(request, value);
+    const message = parse(runtimeTransfer, input);
+    const task = this.browsers.viewer(id, token);
+    return task.page(message.tabId).workflows.transfer(message.requestId, message.transfer);
   }
   @Post('disconnect') async disconnect(
     @Req() request: Pick<Request, 'socket' | 'headers'>,

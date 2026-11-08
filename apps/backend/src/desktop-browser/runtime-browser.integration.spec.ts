@@ -1,3 +1,4 @@
+import type { TaskBrowserTab } from '@elevenex/shared';
 import { chromium, type BrowserContext } from 'playwright-core';
 import { RuntimeBrowserPersistence } from './runtime-persistence.js';
 import { createServer, request as httpRequest, type Server, type ServerResponse } from 'node:http';
@@ -187,6 +188,11 @@ describe('Remote browser public HTTP behavior', () => {
         })
       ).status,
     ).toBe(403);
+  });
+  it('keeps file transfer off the public TCP boundary and rejects requests without a viewer lease', async () => {
+    const body = { tabId: '11111111-1111-4111-8111-111111111111', requestId: '11111111-1111-4111-8111-111111111111', transfer: { kind: 'download-read', offset: 0 } };
+    expect((await fetch(tcpUrl + '/desktop-browser/runtime/tasks/1/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).status).toBe(403);
+    expect((await request('transfer', body, { 'x-elevenex-browser-view': 'invalid' })).status).toBe(403);
   });
   it('waits for cancelled startup during host disposal and never restarts a disposed host', async () => {
     const owned = new RuntimeBrowserPool();
@@ -557,23 +563,22 @@ describe('Remote browser public HTTP behavior', () => {
     picking = await request('state').then((r) => r.json());
     expect(picking.picked).toBeNull();
     expect(picking.pickerMessage).toMatch(/private/);
-    const dialog = await request('command', {
-      kind: 'navigate',
-      tabId,
-      url: pageUrl + '/dialog',
-    }).then((r) => r.json());
-    expect(dialog.attention).toMatchObject({
-      kind: 'dialog',
-      tabId,
-      outside: true,
-    });
-    expect(JSON.stringify(dialog)).not.toContain('private-dialog-fixture');
+    const navigation = request('command', { kind: 'navigate', tabId, url: pageUrl + '/dialog' });
+    let dialog = await request('state').then(r => r.json());
+    for (let i = 0; i < 200 && !dialog.tabs.find((tab: TaskBrowserTab) => tab.id === tabId)?.workflows?.length; i++) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      dialog = await request('state').then(r => r.json());
+    }
+    const pending = dialog.tabs.find((tab: TaskBrowserTab) => tab.id === tabId).workflows[0];
+    expect(pending).toMatchObject({ kind: 'dialog', message: 'private-dialog-fixture' });
+    await request('command', { kind: 'dialog-response', tabId, requestId: pending.id, accept: false, text: '' });
+    await navigation;
     const next = await request('command', {
       kind: 'open',
       url: pageUrl + '/next',
     }).then((r) => r.json());
     expect(next.active).not.toBe(tabId);
-    expect(next.attention.tabId).toBe(tabId);
+    expect(next.tabs.find((tab: TaskBrowserTab) => tab.id === tabId).workflows).toEqual([]);
     const closed = await request('command', { kind: 'close', tabId }).then(
       (r) => r.json(),
     );

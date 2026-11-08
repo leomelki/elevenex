@@ -118,6 +118,8 @@ export class RemoteBrowserPresentation {
         viewport: this.layout?.viewport,
         generation: tab.generation,
         ...(tab.displayEpoch === undefined ? {} : { displayEpoch: tab.displayEpoch }),
+        ...(this.host.state()?.pointerLock ? { pointerLocked: tab.pointerLocked === true } : {}),
+        ...(tab.cursor ? { cursor: tab.cursor } : {}),
         ...(this.host.state()?.pointerExit ? { pointerExit: true } : {}),
         ...(this.host.state()?.keyText ? { keyText: true } : {}),
         ...(this.host.state()?.inputWindow === 4 ? { inputWindow: 4 } : {}),

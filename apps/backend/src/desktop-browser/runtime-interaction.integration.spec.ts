@@ -231,30 +231,27 @@ describe('remote browser interaction and display ownership', () => {
     expect(task.state().active).toBe(tabId);
   });
 
-  it('attributes a background popup to its opener without changing another tab', async () => {
+  it('adopts a background popup without replacing the selected user tab', async () => {
     const other = await task.create('you', null, '');
     const opening = context.waitForEvent('page');
-    await page.evaluate(() => {
-      window.open('/popup');
-    });
+    await page.evaluate(() => { window.open('/popup'); });
     const popup = await opening;
-    if (!popup.isClosed()) await popup.waitForEvent('close');
+    for (let i = 0; i < 200 && ![...task.tabs.values()].some(tab => tab.owns(popup)); i++) await new Promise(resolve => setTimeout(resolve, 25));
+    expect([...task.tabs.values()].some(tab => tab.owns(popup))).toBe(true);
     expect(task.page(tabId).driver).toBe('needs');
+    expect(task.active).toBe(other.id);
     expect(other.driver).toBe('you');
-    expect(task.state().attention).toMatchObject({
-      kind: 'popup',
-      tabId,
-      outside: true,
-    });
+    await popup.close();
     const orphanOpening = context.waitForEvent('page');
-    await page.evaluate(() => {
-      window.open('/popup', '_blank', 'noopener');
-    });
+    await page.evaluate(() => { window.open('/popup', '_blank', 'noopener'); });
     const orphan = await orphanOpening;
-    task.sweep();
-    if (!orphan.isClosed()) await orphan.waitForEvent('close');
+    for (let i = 0; i < 200 && !orphan.isClosed() && ![...task.tabs.values()].some(tab => tab.owns(orphan)); i++) await new Promise(resolve => setTimeout(resolve, 25));
+    if (!orphan.isClosed()) {
+      await orphan.waitForURL(location => location.pathname === '/popup', { waitUntil: 'domcontentloaded' });
+      expect(await orphan.evaluate(() => window.opener === null)).toBe(true);
+      await orphan.close();
+    }
     expect(other.driver).toBe('you');
-    expect(task.state().attention?.outside).toBe(false);
   });
 });
 

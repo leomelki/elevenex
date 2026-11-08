@@ -3,6 +3,7 @@
 } @else if (!store.state()) {
   <div class="no-task" [attr.aria-busy]="store.pending() > 0"><ex-icon name="globe" [size]="24" /><p role="status">{{ store.error() || 'Opening task browser…' }}</p>@if (store.error()) { <button exButton (click)="store.read()">Refresh browser</button> }</div>
 } @else {
+  @if (current(); as tab) { <ex-browser-site-requests [tabId]="tab.id" [requests]="tab.workflows ?? []" (commandRequested)="command($event)" /> }
   <ex-fold [open]="!!store.state()?.attention"><div class="notice" role="status"><span>{{ store.state()?.attention?.message }}</span>@if(store.state()?.attention?.outside){<button exButton size="sm" (click)="tabCommand('outside', store.state()?.attention?.tabId)">Open outside</button>}<button exButton size="sm" variant="ghost" (click)="command({kind:'dismiss-attention'})">Dismiss</button></div></ex-fold>
   <ex-fold [open]="!!store.state()?.connection?.message"><div class="notice" role="status"><span>{{ store.state()?.connection?.message }}</span><button exButton size="sm" [disabled]="store.state()?.connection?.phase === 'connecting'" (click)="store.read()">Reconnect</button></div></ex-fold>
   <ex-fold [open]="!!store.error() || !!notice() || !!store.state()?.pickerMessage"><div class="notice" role="status"><span>{{ store.error() || notice() || store.state()?.pickerMessage }}</span>@if (store.error()) { <button exButton size="sm" (click)="store.read()">Refresh</button> }<button exButton size="sm" variant="ghost" (click)="dismissNotice()">Dismiss</button></div></ex-fold>
@@ -52,7 +53,7 @@
         @if (!detachedWindow()) { <label class="feedback"><input type="checkbox" [checked]="store.state()?.feedback" (change)="command({kind: 'feedback', enabled: !store.state()?.feedback})" />Share error counts during agent work</label><small>Opt-in shares counts only while the agent owns a tab. Messages and requests remain private.</small> }
         <button exButton [disabled]="!current() || (current()?.driver !== 'agent' && !sessionId())" (click)="current()?.driver === 'agent' ? tabCommand('takeover') : handToSelected(); dialogOpen.set(false)">{{ current()?.driver === 'agent' ? 'Take over' : 'Allow agent to drive this tab' }}</button>
         <button exButton [disabled]="!current()?.url" (click)="tabCommand('outside'); dialogOpen.set(false)"><ex-icon name="link" [size]="14" />Open outside</button>
-        <div class="unavailable" [hidden]="embeddedAvailable() || !current()?.url"><span>Remote browser</span><small>Audio, page accessibility and device permission prompts are unavailable here. File selection and downloads require Open outside, with a separate sign-in profile.</small></div>
+        <div class="unavailable" [hidden]="embeddedAvailable() || !current()?.url"><span>Remote browser</span><small>Audio, page accessibility and device permission prompts are unavailable here. {{ store.state()?.workflows ? 'Files use native pick and save dialogs (32 MB limit).' : 'Update the task machine to enable file transfers.' }}</small></div>
         <div class="unavailable"><span>Screenshot to chat unavailable</span><small>Pixels can expose sign-in, code and payment secrets. No screenshot is captured or sent.</small></div>
         <div class="actions"><button exButton variant="primary" (click)="dialogOpen.set(false)">Done</button></div>
     </section>

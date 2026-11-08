@@ -1,6 +1,8 @@
 import { installRuntimeBrowser } from './runtime-install.js';
 import { chromium, type BrowserContext, type BrowserContextOptions } from 'playwright-core';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { installDownloadPolicy } from './runtime-download-policy.js';
 import { join, sep } from 'node:path';
 import { Injectable, type OnModuleDestroy } from '@nestjs/common';
 import { getElevenexDataRoot } from '../config/app-data-paths.js';
@@ -54,6 +56,7 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
   private readonly contexts = new Map<string, BrowserContext>();
   private readonly lifetime = new AbortController();
   private disposed = false;
+  private readonly cleanup = new Set<Promise<void>>();
   private installation?: Promise<void>;
   private readonly cache = join(getElevenexDataRoot(), 'browser-runtime');
   async acquire(identity: string, contextOptions: BrowserContextOptions): Promise<BrowserContext> {
@@ -80,7 +83,9 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
     const executablePath = join(this.cache, ...parts.slice(index));
     const profile = join(getElevenexDataRoot(), 'task-browser-profiles', identity);
     await mkdir(profile, { recursive: true, mode: 0o700 });
+    const downloadsPath = await mkdtemp(join(tmpdir(), 'elevenex-downloads-'));
     const options = {
+      downloadsPath,
       ...contextOptions,
       executablePath,
       headless: true,
@@ -106,17 +111,28 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
           channel: 'chrome',
         });
       } catch {
-        await this.install();
-        if (this.disposed) throw new Error('Browser runtime stopped');
+        try { await this.install(); }
+        catch (error) { await rm(downloadsPath, { recursive: true, force: true }); throw error; }
+        if (this.disposed) { await rm(downloadsPath, { recursive: true, force: true }); throw new Error('Browser runtime stopped'); }
         try {
           context = await chromium.launchPersistentContext(profile, options);
         } catch {
+          await rm(downloadsPath, { recursive: true, force: true });
           throw new Error(
             'This host cannot start sandboxed Chromium. Its browser system libraries or OS sandbox need setup. No sandbox bypass is used.',
           );
         }
       }
     }
+    if (contextOptions.acceptDownloads) {
+      try { await installDownloadPolicy(context, downloadsPath); }
+      catch (error) { await context.close(); await rm(downloadsPath, { recursive: true, force: true }); throw error; }
+    }
+    context.once('close', () => {
+      const operation = rm(downloadsPath, { recursive: true, force: true }).catch(() => undefined);
+      this.cleanup.add(operation);
+      void operation.finally(() => this.cleanup.delete(operation));
+    });
     if (this.disposed) {
       await context.close();
       throw new Error('Browser runtime stopped');
@@ -138,5 +154,6 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
     this.lifetime.abort();
     await Promise.allSettled(this.pending.values());
     await Promise.allSettled([...this.contexts.values()].map(context => context.close()));
+    await Promise.all(this.cleanup);
   }
 }

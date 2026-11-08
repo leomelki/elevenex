@@ -224,3 +224,17 @@ test('a late native screencast start reconciles the current visible presentation
   assert.equal(commands.at(-1), 'Page.startScreencast', 'An older completion must not leave a visible stream stopped');
   stream.destroy();
 });
+
+test('site workflow replies and relative input are human-only bounded intents', () => {
+  const { streamInput } = require('../dist/browser/validation');
+  const reply = { kind: 'dialog-response', tabId: id, requestId: id, accept: true, text: 'private response' };
+  assert.deepEqual(command(reply), reply);
+  assert.throws(() => command({ ...reply, text: 'x'.repeat(4097) }));
+  assert.throws(() => command({ ...reply, filePath: '/etc/passwd' }));
+  assert.throws(() => agentCommand({ ...reply, generation: 1 }));
+  assert.throws(() => agentCommand({ kind: 'choose-files', tabId: id, requestId: id }));
+  const relative = { kind: 'pointer-relative', deltaX: 10, deltaY: -10, buttons: 0, modifiers: 0 };
+  assert.deepEqual(streamInput(relative), relative);
+  assert.throws(() => streamInput({ ...relative, deltaX: Infinity }));
+  assert.throws(() => streamInput({ ...relative, deltaY: 10001 }));
+});

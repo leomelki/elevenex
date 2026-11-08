@@ -12,6 +12,8 @@ export interface TaskBrowserCapabilities {
 }
 /** Trusted presentation descriptors. Never supplied to a website or agent tool. */
 export interface TaskBrowserSurface {
+  readonly cursor?: TaskBrowserCursor;
+  readonly pointerLocked?: boolean;
   readonly scopeId: string;
   readonly taskId: number;
   readonly tabId: string;
@@ -51,6 +53,8 @@ export interface TaskBrowserFrame {
 export type TaskBrowserStreamEvent =
   | { readonly kind: 'release' }
   | { readonly kind: 'pointer-exit' }
+  | { readonly kind: 'pointer-unlock' }
+  | { readonly kind: 'pointer-relative'; readonly deltaX: number; readonly deltaY: number; readonly buttons: number; readonly modifiers: number }
   | { readonly kind: 'pointer'; readonly type: 'down' | 'up' | 'move'; readonly x: number; readonly y: number; readonly button: 'left' | 'middle' | 'right' | 'none'; readonly buttons: number; readonly clicks: number; readonly modifiers: number }
   | { readonly kind: 'wheel'; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number; readonly modifiers: number }
   | { readonly kind: 'key'; readonly type: 'down' | 'up'; readonly key: string; readonly code: string; readonly keyCode: number; readonly modifiers: number; readonly text?: string }
@@ -60,7 +64,17 @@ export type TaskBrowserStreamEvent =
   | { readonly kind: 'clipboard'; readonly operation: 'copy' | 'cut' | 'paste' | 'selectAll' };
 /** Human-only ordered input. No nesting; clipboard operations travel separately. */
 export type TaskBrowserStreamInput = TaskBrowserStreamEvent | { readonly kind: 'batch'; readonly events: readonly TaskBrowserStreamEvent[] };
+/** Human-only site requests. No paths, bytes or dialog text enter agent replies. */
+export type TaskBrowserWorkflow =
+  | { readonly id: string; readonly kind: 'dialog'; readonly type: 'alert' | 'confirm' | 'prompt' | 'beforeunload'; readonly message: string; readonly defaultValue: string }
+  | { readonly id: string; readonly kind: 'upload'; readonly multiple: boolean }
+  | { readonly id: string; readonly kind: 'download'; readonly name: string; readonly status: 'receiving' | 'ready' };
+export const browserCursors = ['default', 'none', 'pointer', 'text', 'vertical-text', 'crosshair', 'move', 'grab', 'grabbing', 'wait', 'progress', 'help', 'not-allowed', 'no-drop', 'copy', 'alias', 'cell', 'context-menu', 'all-scroll', 'col-resize', 'row-resize', 'n-resize', 'e-resize', 's-resize', 'w-resize', 'ne-resize', 'nw-resize', 'se-resize', 'sw-resize', 'ew-resize', 'ns-resize', 'nesw-resize', 'nwse-resize', 'zoom-in', 'zoom-out'] as const;
+export type TaskBrowserCursor = typeof browserCursors[number];
 export interface TaskBrowserTab {
+  readonly workflows?: readonly TaskBrowserWorkflow[];
+  readonly cursor?: TaskBrowserCursor;
+  readonly pointerLocked?: boolean;
   readonly id: string;
   readonly title: string;
   readonly url: string;
@@ -86,6 +100,9 @@ export interface TaskBrowserTab {
   readonly target?: BrowserElement;
 }
 export interface TaskBrowserState {
+  /** Popup adoption, dialogs and bounded native file relay. */
+  readonly workflows?: true;
+  readonly pointerLock?: true;
   /** Independent panel/tab ordering; omitted by older machine hosts. */
   readonly layoutLanes?: true;
   /** Additive input capability; strict older hosts must receive legacy events. */
@@ -126,6 +143,8 @@ export interface TaskBrowserState {
   readonly privacy: 'content-withheld';
 }
 export type TaskBrowserCommand =
+  | { readonly kind: 'dialog-response'; readonly tabId: string; readonly requestId: string; readonly accept: boolean; readonly text: string }
+  | { readonly kind: 'choose-files' | 'save-download' | 'cancel-workflow'; readonly tabId: string; readonly requestId: string }
   | { readonly kind: 'dismiss-attention' }
   | { readonly kind: 'new-tab' }
   | { readonly kind: 'open'; readonly url: string }

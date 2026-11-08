@@ -1,3 +1,4 @@
+import { RemoteBrowserFiles } from './remote-files';
 import { RemoteBrowserStream } from './remote-stream';
 import type { MachineBrowserHost } from "./host";
 import { remoteBrowserState } from "./remote-state";
@@ -34,6 +35,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
   readonly engine = "machine";
   private readonly detached = new Map<string, RemoteBrowserPresentation>();
   private readonly panel: RemoteBrowserPresentation;
+  private readonly files: RemoteBrowserFiles;
   private readonly layoutSequences = new Map<string, number>();
   private readonly ownerId: number;
   private readonly network: TaskBrowserNetwork;
@@ -69,6 +71,9 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     remoteNetwork = true,
   ) {
     this.ownerId = window.webContents.id;
+    this.files = new RemoteBrowserFiles(window, () => !this.disposed && !this.reconnect && this.selected() && this.client.state(this.ownerId).scope?.id === this.scopeId,
+      body => this.request('transfer', body, 20000),
+      async (tabId, requestId) => { if (!this.disposed && !this.reconnect) this.accept(await this.request('command', { kind: 'cancel-workflow', tabId, requestId })); });
     this.network = new TaskBrowserNetwork(
       remoteNetwork,
       (port) => remote.browserForward(this.ownerId, port),
@@ -235,7 +240,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
             path:
               "/api/desktop-browser/runtime/tasks/" + this.taskId + "/" + path,
             ...(body === undefined ? {} : { method: "POST", body }),
-            limit: 65536,
+            limit: path === 'transfer' ? 100000 : 512000,
             conflictMessages: {
               "browser-viewer-in-use":
                 "This task browser is active in another window. Close its browser panel, then reconnect here.",
@@ -285,8 +290,8 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
         embedded: false,
         audio: false,
         accessibility: false,
-        filePicker: false,
-        downloads: false,
+        filePicker: this.state.workflows === true,
+        downloads: this.state.workflows === true,
       },
       revision: this.revision,
       surfaceEpoch: this.panel.epoch,
@@ -324,6 +329,15 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     await this.ensureConnection(true);
     if (this.disposed || this.reconnect || !this.selected())
       throw new Error(this.connection.message ?? 'Browser is not connected. Reconnect before trying again.');
+    if (input.kind === 'choose-files' || input.kind === 'save-download') {
+      if (!this.state?.workflows) throw new Error('Update the task machine to transfer browser files.');
+      const workflow = this.state.tabs.find(tab => tab.id === input.tabId)?.workflows?.find(item => item.id === input.requestId);
+      if (!workflow || (input.kind === 'choose-files' ? workflow.kind !== 'upload' : workflow.kind !== 'download')) throw new Error('Site request changed');
+      await this.files.run(input.tabId, workflow);
+      this.accept(await this.request('state'));
+      return this.snapshot();
+    }
+    if ((input.kind === 'dialog-response' || input.kind === 'cancel-workflow') && !this.state?.workflows) throw new Error('Update the task machine to answer site requests.');
     if (input.kind === 'move-tab') {
       if (!this.state?.canReorder) throw new Error('Update the task machine to reorder browser tabs.');
       // Ordering does not change any document, viewport or driver generation.

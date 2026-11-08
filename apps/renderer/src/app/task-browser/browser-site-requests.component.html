@@ -1,0 +1,20 @@
+@for (request of requests(); track request.id) {
+  <div class="site-request" role="status">
+    @switch (request.kind) {
+      @case ('dialog') { <span>This site needs a dialog response.</span><button exButton size="sm" (click)="review(request)">Review dialog</button> }
+      @case ('upload') { <span>This site requested {{ request.multiple ? 'files' : 'a file' }}.</span><button exButton size="sm" (click)="transfer(request)">Choose files…</button> }
+      @case ('download') { <span>{{ request.name }} · {{ request.status === 'ready' ? 'Ready to save' : 'Downloading…' }}</span><button exButton size="sm" [disabled]="request.status !== 'ready'" (click)="transfer(request)">Save…</button> }
+    }
+    <button exButton size="sm" variant="ghost" (click)="cancel(request)">Cancel</button>
+  </div>
+}
+@if (selected(); as request) {
+  <ex-modal-layer [open]="open()" (closeRequested)="answer(false)" (closed)="selected.set(null)">
+    <section class="site-dialog" role="dialog" aria-modal="true" aria-label="Site dialog" [attr.inert]="open() ? null : ''">
+      <h2>Site dialog</h2><p class="site-message">{{ request.message }}</p>
+      @if (request.type === 'beforeunload') { <p>This page is asking whether to leave. Continue leaves the page.</p> }
+      @if (request.type === 'prompt') { <label>Response<input [value]="draft()" (input)="updateDraft($event)" maxlength="4096" (keydown.enter)="answer(true)" /></label> }
+      <div class="actions">@if(request.type !== 'alert'){<button exButton (click)="answer(false)">Cancel</button>}<button exButton variant="primary" (click)="answer(true)">{{ request.type === 'beforeunload' ? 'Continue' : 'OK' }}</button></div>
+    </section>
+  </ex-modal-layer>
+}
