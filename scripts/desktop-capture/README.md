@@ -653,3 +653,11 @@ paired original input/output, keyboard focus, scoped motion frames, both themes
 and narrow reduced-motion layouts. Run against the connected component preview
 with `--url`. `SessionChatFixture.timeline(scene)` supplies stable harness-shaped
 receipts outside the production graph.
+
+`scenarios/commit-recovery.mjs` checks the production commit owner with controlled
+backend failures: retained messages and selections, duplicate-submit protection,
+session switching during a commit, message failure recovery, unknown-outcome
+reconciliation, successful dismissal, both themes and compact reduced-motion
+layouts. Use the connected-workspace preview URL, and run native captures
+sequentially. `task-screen-update.mjs` and `commit-panel-motion.mjs` cover the
+existing selection and anchored-panel motion contracts.

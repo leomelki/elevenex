@@ -57,6 +57,14 @@ export class CommitPanelComponent implements OnChanges {
   readonly files = input<readonly CommitFile[]>([]);
   readonly running = input<readonly string[]>([]);
   readonly push = input(false);
+  readonly busy = input(false);
+  readonly busyLabel = input("Committing…");
+  readonly submissionError = input<string | null>(null);
+  readonly blocked = input(false);
+  readonly statusRequested = output<void>();
+  readonly errorDismissed = output<void>();
+  private readonly submitted = signal(false);
+  protected readonly pending = computed(() => this.busy() || this.submitted());
   readonly fileProvider = input<CommitFileProvider>();
   /** Default first page for immediate display on opening; the provider still validates it. */
   readonly initialWindow = input<CommitFileWindow | null>(null);
@@ -79,6 +87,15 @@ export class CommitPanelComponent implements OnChanges {
   protected readonly loading = signal(false);
   protected readonly error = signal<string | null>(null);
   protected readonly more = signal(false);
+  private readonly checkedQuery = signal("");
+  private readonly queryKey = computed(() =>
+    JSON.stringify([this.selection(), this.query(), this.cursor()]),
+  );
+  protected readonly checking = computed(
+    () =>
+      this.loading() ||
+      (!!this.fileProvider() && this.checkedQuery() !== this.queryKey()),
+  );
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly destroy = inject(DestroyRef);
@@ -196,6 +213,7 @@ export class CommitPanelComponent implements OnChanges {
       this.retry();
       const provider = this.fileProvider();
       if (!provider) return;
+      const key = this.queryKey();
       const query = {
         ...this.selection(),
         query: this.query(),
@@ -210,6 +228,7 @@ export class CommitPanelComponent implements OnChanges {
             (result) => {
               if (!abort.signal.aborted) {
                 this.remote.set(result);
+                this.checkedQuery.set(key);
                 if (!this.secretFile() || (!query.query && !query.cursor))
                   this.secretFile.set(
                     result.items.find((file) => file.flag) ?? null,
@@ -320,12 +339,18 @@ export class CommitPanelComponent implements OnChanges {
         this.closeRequested.emit();
       }
     };
+    const resized = () => this.fit();
+    this.root.ownerDocument.defaultView?.addEventListener("resize", resized);
     this.root.ownerDocument.addEventListener("mousedown", outside);
     this.root.ownerDocument.addEventListener("keydown", escape, true);
     this.destroy.onDestroy(() => {
       clearTimeout(this.focusTimer);
       this.motion?.dispose();
       this.resize?.disconnect();
+      this.root.ownerDocument.defaultView?.removeEventListener(
+        "resize",
+        resized,
+      );
       this.root.ownerDocument.removeEventListener("mousedown", outside);
       this.root.ownerDocument.removeEventListener("keydown", escape, true);
       this.opener?.removeAttribute("aria-expanded");
@@ -333,9 +358,13 @@ export class CommitPanelComponent implements OnChanges {
     });
   }
   ngOnChanges(changes: SimpleChanges): void {
+    if ((changes["busy"] && !this.busy()) || changes["submissionError"])
+      this.submitted.set(false);
     if (changes["open"] && this.open() && !this.retained()) {
       this.retained.set(true);
       this.presenting.set(false);
+      this.submitted.set(false);
+      this.checkedQuery.set("");
       this.message.set("");
       this.list.set(false);
       this.query.set("");
@@ -363,7 +392,7 @@ export class CommitPanelComponent implements OnChanges {
     );
   }
   protected flip(file: CommitFile): void {
-    if (!this.canPick(file) || this.loading()) return;
+    if (!this.canPick(file) || this.pending()) return;
     if (file.flag)
       this.includedSecrets.update((paths) =>
         paths.includes(file.path)
@@ -393,8 +422,16 @@ export class CommitPanelComponent implements OnChanges {
     );
   }
   protected commit(): void {
-    if (!this.open() || this.loading() || this.error() || !this.stats().files)
+    if (
+      !this.open() ||
+      this.pending() ||
+      this.blocked() ||
+      this.checking() ||
+      this.error() ||
+      !this.stats().files
+    )
       return;
+    this.submitted.set(true);
     this.commitRequested.emit({
       message: this.message().trim(),
       files: this.chosen().map((file) => file.path),
@@ -402,6 +439,12 @@ export class CommitPanelComponent implements OnChanges {
       selection: this.selection(),
       ...(this.remote() ? { revision: this.remote()!.revision } : {}),
     });
+  }
+  protected refreshFiles(): void {
+    this.errorDismissed.emit();
+    this.checkedQuery.set("");
+    this.loading.set(!!this.fileProvider());
+    this.retry.update(this.increment);
   }
   protected messageKey(event: KeyboardEvent): void {
     if (event.key === "Enter" && !event.isComposing) {
@@ -422,7 +465,10 @@ export class CommitPanelComponent implements OnChanges {
   }
   private fit(): void {
     const layer = this.layer()?.nativeElement;
-    if (layer)
+    if (layer) {
+      const anchor = this.root.closest("ex-git-bar")?.getBoundingClientRect();
+      layer.style.maxHeight = `${Math.max(120, window.innerHeight - (anchor?.bottom ?? 0) - 24)}px`;
       layer.style.width = `${Math.min(460, (this.root.closest("ex-task-header")?.getBoundingClientRect().width ?? window.innerWidth) - 24)}px`;
+    }
   }
 }

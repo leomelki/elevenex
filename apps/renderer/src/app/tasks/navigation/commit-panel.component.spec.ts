@@ -108,6 +108,58 @@ describe("commit panel public behavior", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it('keeps file controls usable during revalidation and blocks Enter before the new selection is checked', async () => {
+    vi.useFakeTimers();
+    try {
+      const window: CommitFileWindow = {
+        revision: 'checked', items: [files[1]!], nextCursor: null, total: 1, matches: 1, unstaged: 0,
+        selected: { files: 1, add: 100, del: 0, staged: 1, unstaged: 0 }, running: [],
+      };
+      const { fixture, root } = panel();
+      fixture.componentRef.setInput('fileProvider', async () => window);
+      fixture.detectChanges(); await vi.advanceTimersByTimeAsync(0); fixture.detectChanges();
+      const commit = vi.fn(); fixture.componentInstance.commitRequested.subscribe(commit);
+      const check = root.querySelector<HTMLInputElement>('.file input')!;
+      check.click();
+      root.querySelector<HTMLInputElement>('.message input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      expect(commit).not.toHaveBeenCalled();
+      fixture.detectChanges();
+      expect(check.disabled).toBe(false);
+      expect(root.querySelector<HTMLButtonElement>('footer button[exButton]')!.disabled).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('blocks duplicate pointer/Enter submissions and retains a failed draft for manual recovery', () => {
+    const { fixture, root } = panel();
+    const commit = vi.fn(); fixture.componentInstance.commitRequested.subscribe(commit);
+    const message = root.querySelector<HTMLInputElement>('.message input')!;
+    message.value = 'Keep my message'; message.dispatchEvent(new Event('input'));
+    const submit = root.querySelector<HTMLButtonElement>('footer button[exButton]')!;
+    submit.click(); message.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(commit).toHaveBeenCalledTimes(1);
+    fixture.componentRef.setInput('busy', true); fixture.componentRef.setInput('busyLabel', 'Writing the message…'); fixture.detectChanges();
+    expect(submit.disabled).toBe(true); expect(message.disabled).toBe(true);
+    expect(root.querySelector('[role=status]')?.textContent).toContain('Writing the message…');
+    fixture.componentRef.setInput('busy', false);
+    fixture.componentRef.setInput('submissionError', 'Enter a message and try again.'); fixture.detectChanges();
+    expect(message.value).toBe('Keep my message'); expect(message.disabled).toBe(false);
+    expect(root.querySelector('[role=alert]')?.textContent).toContain('Enter a message');
+    submit.click(); expect(commit).toHaveBeenCalledTimes(2);
+  });
+
+  it('explains an empty selection and requires status reconciliation for an unknown outcome', () => {
+    const { fixture, root } = panel();
+    fixture.componentRef.setInput('files', []); fixture.detectChanges();
+    expect(root.querySelector('[role=status]')?.textContent).toContain('No changes to commit');
+    fixture.componentRef.setInput('files', files);
+    fixture.componentRef.setInput('blocked', true);
+    fixture.componentRef.setInput('submissionError', 'The result could not be confirmed.'); fixture.detectChanges();
+    expect(root.querySelector<HTMLButtonElement>('footer button[exButton]')!.disabled).toBe(true);
+    const refresh = vi.fn(); fixture.componentInstance.statusRequested.subscribe(refresh);
+    root.querySelector<HTMLButtonElement>('.submission-error button')!.click();
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
   it("hides the completed exit before cancelling its filled animation and can open again", async () => {
     let finish!: (completed: boolean) => void;
     const closing = new Promise<boolean>((resolve) => { finish = resolve; });
@@ -359,6 +411,6 @@ it("keeps the task header creation action when selecting a nested session", () =
 it('summarizes multiple running sessions in one note without attributing files', () => {
   const {fixture, root} = panel(); fixture.componentRef.setInput('running', ['First', 'Second']); fixture.detectChanges();
   expect(root.textContent).toContain('2 sessions');
-  expect(root.textContent).toContain('What they change from now on');
+  expect(root.textContent).toContain('What they change after you commit stays in your workspace');
   expect(root.textContent).not.toContain('First is still running');
 });

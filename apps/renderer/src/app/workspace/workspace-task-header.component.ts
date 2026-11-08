@@ -26,8 +26,12 @@ export class WorkspaceTaskHeaderComponent {
   protected readonly closeError = signal<string | null>(null);
   protected readonly commitOpen = signal(false);
   protected readonly pushAfter = signal(false);
-  protected readonly commitProvider = computed<CommitFileProvider | undefined>(() => {
+  private readonly commitTask = computed(() => {
     const selected = this.store.selected();
+    return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null;
+  }, { equal: (a, b) => a?.scopeId === b?.scopeId && a?.taskId === b?.taskId });
+  protected readonly commitProvider = computed<CommitFileProvider | undefined>(() => {
+    const selected = this.commitTask();
     if (!selected) return undefined;
     const scopeId = selected.scopeId, taskId = selected.taskId, available = this.store.commitPanelAvailable();
     return async (query, signal) => {
@@ -100,8 +104,9 @@ export class WorkspaceTaskHeaderComponent {
   }
   protected async commit(intent: CommitIntent): Promise<void> {
     if (this.git.busy() || !intent.revision) return;
-    this.commitOpen.set(false);
-    await this.git.perform({ type: 'commit', message: intent.message, selection: intent.selection, revision: intent.revision, push: intent.push });
+    const epoch = this.epoch;
+    const saved = await this.git.perform({ type: 'commit', message: intent.message, selection: intent.selection, revision: intent.revision, push: intent.push });
+    if (saved && epoch === this.epoch) this.commitOpen.set(false);
   }
   protected openGitDialog(): void {
     this.dialogTask = this.store.selectedTask()?.id;

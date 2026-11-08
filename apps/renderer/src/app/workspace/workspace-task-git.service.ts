@@ -39,7 +39,7 @@ export class WorkspaceTaskGitService {
 
   constructor() {
     let previousTask: number | undefined;
-    effect(() => { const key = this.key(), task = this.store.selected()?.taskId; untracked(() => { this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); if (previousTask !== task) this.summary.set(null); previousTask = task; this.clearCommitPreview(); this.reading = false; this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
+    effect(() => { const key = this.key(); untracked(() => { const task = this.store.selected()?.taskId; this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); if (previousTask !== task) this.summary.set(null); previousTask = task; this.clearCommitPreview(); this.reading = false; this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
     effect(() => {
       const selected = this.store.selected(), scope = this.backend.state().scope?.id;
       if (selected && selected.scopeId !== scope) untracked(() => {
@@ -88,7 +88,7 @@ export class WorkspaceTaskGitService {
       this.error.set(result.error.message);
       if (result.error.code === 'outcome-unknown' || result.error.code === 'transport' || result.error.code === 'timeout') this.uncertain.set(true);
     } catch { if (this.current(selected.scopeId, selected.taskId) && epoch === this.selectionEpoch) { this.uncertain.set(true); this.error.set('The git operation could not be confirmed. Refresh its status before trying again.'); } }
-    finally { if (this.current(selected.scopeId, selected.taskId) && epoch === this.selectionEpoch) { clearTimeout(this.phaseTimer); this.phase.set(null); this.busy.set(null); this.schedule(); } }
+    finally { if (this.current(selected.scopeId, selected.taskId) && epoch === this.selectionEpoch) { clearTimeout(this.phaseTimer); this.phase.set(null); this.busy.set(null); if (this.error() && !this.uncertain()) void this.refresh(true); else this.schedule(); } }
     return false;
   }
 
@@ -105,7 +105,7 @@ export class WorkspaceTaskGitService {
       const result = await this.bridge.workspaceCommitPreview(scope, input);
       if (!this.current(scope, input.taskId) || generation !== this.previewGeneration) throw new Error('The task changes moved on. Refresh the files.');
       if (!result.ok) throw new Error(result.error.message);
-      if (defaults) {
+      if (defaults && this.summary()?.changesRevision === revision) {
         this.commitPreview.set(result.value); this.previewRevision = revision; this.previewCheckedAt = Date.now();
       }
       return result.value;
@@ -118,8 +118,10 @@ export class WorkspaceTaskGitService {
   }
 
   private acceptSummary(summary: WorkspaceGitSummary): void {
+    // A panel read has its own validated revision. Background working edits only
+    // invalidate the cache; task changes and mutations invalidate its lifetime.
     if (summary.changesRevision !== this.summary()?.changesRevision) {
-      this.previewGeneration++; this.previewRequest = undefined;
+      this.previewRequest = undefined; this.previewRevision = undefined; this.previewCheckedAt = 0;
     }
     this.summary.set(summary);
   }

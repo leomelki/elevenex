@@ -1,7 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { basename, resolve } from 'node:path';
+import { basename } from 'node:path';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 import type { GitStatusSummary } from '../git/git.service.js';
 
@@ -53,19 +52,8 @@ export async function commitRevision(
   path: string,
   status: GitStatusSummary,
 ): Promise<string> {
-  const indexPath = resolve(
-    path,
-    (
-      await worktreeSimpleGit(path, { readOnly: true }).raw([
-        'rev-parse',
-        '--git-path',
-        'index',
-      ])
-    ).trim(),
-  );
-  const index = await readFile(indexPath);
   return createHash('sha256')
-    .update(index)
+    .update(await stagedRevision(path))
     .update(
       JSON.stringify([
         status.headSha,
@@ -80,6 +68,29 @@ export async function commitRevision(
     )
     .digest('hex');
 }
+/** Index stat/cache extensions change on ordinary status reads. Only staged content
+ * (blob IDs, modes, paths) belongs in the commit guard, never those metadata bytes. */
+export async function stagedRevision(
+  path: string,
+  indexFile?: string,
+): Promise<string> {
+  const git = worktreeSimpleGit(path, { readOnly: true });
+  if (indexFile) git.env('GIT_INDEX_FILE', indexFile);
+  return createHash('sha256')
+    .update(
+      await git.raw([
+        'diff',
+        '--cached',
+        '--raw',
+        '--no-abbrev',
+        '--no-renames',
+        '-z',
+        '--',
+      ]),
+    )
+    .digest('hex');
+}
+
 export function selectedPaths(
   status: GitStatusSummary,
   selection: CommitSelection,

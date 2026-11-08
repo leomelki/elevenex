@@ -324,7 +324,10 @@ snapshots across filters/pages; its lifetime ends with the backend service.
 
 Commit exceptions are bounded to 1,000 paths / 64 KiB per list, and match only
 server-observed changed paths. Likely secret paths require explicit inclusion.
-The commit revision includes HEAD, changed paths and index bytes. Existing files may continue changing before submission; their contents are frozen when Commit is pressed. Preview caches also key on the worktree fingerprint. The backend
+The commit revision includes HEAD, changed paths and staged blob IDs/modes.
+Ordinary index stat/cache refreshes do not invalidate a reviewed selection.
+Existing files may continue changing before submission; their contents are frozen
+when Commit is pressed. Preview caches also key on the worktree fingerprint. The backend
 captures a private index before generating a message, checks concurrent branch
 and index changes before publication, and holds the real index lock only through
 commit/publication. Excluded staged entries remain staged; later working edits
@@ -336,8 +339,18 @@ collected by Git status. Remote tracking changes do not invalidate it. Main
 validates it; older engines omit it. The selected renderer uses this token to
 skip unchanged background commit previews and retains one bounded default page.
 Recent pages are reused for five seconds, with expired reads coalesced and the
-existing submission revision guard unchanged. This token is a cache validator,
+existing submission revision guard unchanged. A background working-edit update
+invalidates the cache without cancelling an independently checked panel window.
+Task/scope changes and mutations still reject old file reads. Switching sessions
+inside the same task retains its pending Git operation and panel provider.
+This token is a cache validator,
 not a replacement for commit authorization or the frozen-index revision.
+Known commit conflicts carry allowlisted codes for moved selections, unresolved
+conflicts, index contention, message-generation failure, Git rejection and a saved
+commit whose push failed. Main maps these to fixed recovery instructions; raw
+provider/hook output stays private. Saved-commit reconciliation failures retain
+the unknown-outcome policy. Snapshot Git operations preserve the augmented
+workspace environment so hooks use the configured tools.
 The existing git status operation may carry an optional commit phase; the feature
 polls it only during its pending commit, with selection/epoch/cleanup guards.
 

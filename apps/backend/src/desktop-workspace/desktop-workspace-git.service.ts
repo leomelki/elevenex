@@ -162,13 +162,17 @@ export class DesktopWorkspaceGitService {
         try {
           if (selection) {
             const status = await this.git.getStatusSummary(current.path);
-            if (await commitRevision(current.path, status) !== input.revision) throw new ConflictException('The changes have moved on. Review the files before committing.');
+            if (await commitRevision(current.path, status) !== input.revision) throw new ConflictException({ code: 'commit-changes-moved', message: 'The changes have moved on. Review the files before committing.' });
             await commitSnapshot(current.path, this.git, status, selection, input.message as string, phase => this.phases.set(id, phase));
           } else await this.git.commit(current.path, { message: input.message as string, includeUnstaged: true });
           if (input.push) {
             this.phases.set(id, 'pushing');
-            const result = await this.git.push(current.path);
-            if (!result.pushed) throw new ConflictException('The commit was saved, but push was rejected. Refresh status before pushing again.');
+            try {
+              const result = await this.git.push(current.path);
+              if (!result.pushed) throw new Error('Push rejected');
+            } catch {
+              throw new ConflictException({ code: 'commit-saved-push-failed', message: 'The commit was saved, but push failed. Refresh status before pushing again.' });
+            }
           }
         } finally { this.phases.delete(id); }
       }

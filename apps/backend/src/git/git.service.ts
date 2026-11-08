@@ -462,7 +462,7 @@ export class GitService {
     const requestId = options.requestId ?? this.createRequestId();
     this.invalidateStatusSummaries(worktreePath);
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
-    if (options.indexFile) git.env({ ...process.env, GIT_INDEX_FILE: options.indexFile });
+    if (options.indexFile) git.env('GIT_INDEX_FILE', options.indexFile);
 
     this.logger.log(
       `[commit:${requestId}] service started worktreePath="${worktreePath}" includeUnstaged=${Boolean(options.includeUnstaged)}`,
@@ -558,7 +558,7 @@ export class GitService {
     );
 
     const git: SimpleGit = worktreeSimpleGit(worktreePath);
-    if (indexFile) git.env({ ...process.env, GIT_INDEX_FILE: indexFile });
+    if (indexFile) git.env('GIT_INDEX_FILE', indexFile);
     try {
       const status = await git.status();
       const stagedFiles = this.getUniqueStagedFiles(status);
