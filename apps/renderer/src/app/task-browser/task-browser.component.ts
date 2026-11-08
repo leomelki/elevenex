@@ -47,7 +47,8 @@ export class TaskBrowserComponent {
   readonly picked = computed<BrowserTarget | undefined>(() => {
     const raw = this.store.state()?.picked;
     const element = raw ? this.surfaces()?.coordinates(this.current()?.id ?? '', raw) ?? raw : null;
-    return element ? { x: element.x, y: element.y, w: element.width, h: element.height, label: element.selector } : undefined;
+    // The card names the element briefly; the composed question carries its full selector.
+    return element ? { x: element.x, y: element.y, w: element.width, h: element.height, label: raw?.tag ?? element.selector } : undefined;
   });
   readonly target = computed<BrowserTarget | undefined>(() => {
     const raw = this.current()?.target;

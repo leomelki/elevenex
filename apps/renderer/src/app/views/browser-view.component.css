@@ -26,23 +26,59 @@ small { color: var(--ink-muted); font-size: var(--text-caption-size); }
 /* Paint above the opaque page: an inset shadow on the preview is covered by it. */
 .driving-frame { position: absolute; inset: 0; z-index: 3; display: flex; align-items: flex-start; justify-content: flex-end; padding: var(--space-2); box-shadow: inset 0 0 0 2px var(--accent); pointer-events: none; }
 .takeover-hint { padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); background: var(--accent); color: var(--on-accent); font-size: var(--text-overline-size); font-weight: var(--text-overline-weight); }
-.target { position: absolute; top: 0; left: 0; z-index: 1; border-radius: var(--radius-md); box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px color-mix(in oklab, var(--accent) 22%, transparent); pointer-events: none; transition: transform var(--dur-slow) var(--ease-in-out), width var(--dur-slow) var(--ease-in-out), height var(--dur-slow) var(--ease-in-out); }
-.target > span { position: absolute; bottom: calc(100% + var(--space-1)); left: 0; padding: 0 var(--space-2); border-radius: var(--radius-xs); background: var(--accent); color: var(--on-accent); font-size: var(--text-overline-size); white-space: nowrap; }
-.target.picked { box-shadow: 0 0 0 2px var(--review), 0 0 0 6px var(--review-soft); }
-.target.picked > span { background: var(--review); color: var(--surface); }
+/* Rings. The agent's target is teal and glides; yours (hover and picked) is review indigo. */
+.target { position: absolute; top: 0; left: 0; z-index: 1; border-radius: var(--radius-md); box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px color-mix(in oklab, var(--accent) 22%, transparent); pointer-events: none; transition: transform var(--dur-slow) var(--ease-in-out), width var(--dur-slow) var(--ease-in-out), height var(--dur-slow) var(--ease-in-out), box-shadow var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out); }
+.ring-label { position: absolute; bottom: calc(100% + var(--space-1)); left: 0; display: inline-flex; gap: var(--space-2); max-width: max(100%, 16rem); overflow: hidden; padding: 0 var(--space-2); border-radius: var(--radius-xs); background: var(--accent); color: var(--on-accent); font: var(--text-mono-meta-weight) var(--text-overline-size)/var(--text-mono-meta-line) var(--font-mono); white-space: nowrap; text-overflow: ellipsis; }
+.label-below > .ring-label { top: calc(100% + var(--space-1)); bottom: auto; }
+.target.hover { z-index: 2; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--review) 10%, transparent); box-shadow: 0 0 0 1.5px var(--review); transition: none; }
+.target.hover > .ring-label { background: var(--review); color: var(--surface); }
+.target.hover .ring-label small { color: inherit; font-size: inherit; opacity: .72; }
+.target.picked { background: color-mix(in oklab, var(--review) 6%, transparent); box-shadow: 0 0 0 2px var(--review), 0 0 0 6px var(--review-soft); }
+/* Picking is felt once: one ring goes out from the element as it locks in. */
+.target.picked::after { content: ''; position: absolute; inset: 0; border-radius: inherit; animation: ring-lock var(--dur-deliberate) var(--ease-out) both; pointer-events: none; }
+@keyframes ring-lock { from { box-shadow: 0 0 0 2px var(--review); } to { box-shadow: 0 0 0 14px transparent; } }
+.ring-enter { animation: ring-enter var(--dur-base) var(--ease-out); }
+.ring-leave { animation: ring-fade var(--dur-fast) var(--ease-in) both; }
+@keyframes ring-enter { from { opacity: 0; scale: 1.04; } }
+@keyframes ring-fade { to { opacity: 0; } }
 .agent-cursor { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; transition: transform var(--dur-slow) var(--ease-in-out); }
 .agent-cursor svg { position: relative; display: block; filter: drop-shadow(0 1px 2px var(--line-strong)); }
 .cursor-pulse { position: absolute; top: calc(-1 * var(--space-2)); left: calc(-1 * var(--space-2)); width: var(--space-6); height: var(--space-6); border: 2px solid var(--accent); border-radius: var(--radius-full); animation: cursor-pulse calc(var(--dur-base) * 8) var(--ease-out) infinite; }
 @keyframes cursor-pulse { from { transform: scale(.4); opacity: .8; } to { transform: scale(1.6); opacity: 0; } }
-.question { position: absolute; bottom: var(--space-3); left: var(--space-3); right: var(--space-3); z-index: 5; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line); }
-.question-header { display: flex; align-items: flex-start; gap: var(--space-2); }
-.target-name { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; font-family: var(--font-mono); font-size: var(--text-overline-size); color: var(--review); }
-.target-name ex-icon { flex: none; }
-.target-name > span, .target-name small { min-width: 0; overflow-wrap: anywhere; }
-.target-name small { font-size: inherit; }
+/* Picking: a quiet frame and one hint, both above the page and transparent to the pointer. */
+.page.pointing { cursor: crosshair; }
+.pointing-frame { position: absolute; inset: 0; z-index: 3; box-shadow: inset 0 0 0 2px var(--review); pointer-events: none; }
+.pointing-hint { position: absolute; top: var(--space-3); left: 50%; z-index: 4; display: inline-flex; align-items: center; gap: var(--space-2); max-width: calc(100% - var(--space-3) * 2); padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3); border-radius: var(--radius-full); background: var(--surface-raised); box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line); color: var(--ink); font-size: var(--text-caption-size); font-weight: var(--text-ui-weight); white-space: nowrap; translate: -50% 0; pointer-events: none; }
+.pointing-hint > ex-icon { flex: none; color: var(--review); }
+.pointing-hint > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.frame-enter { animation: fade-in var(--dur-base) var(--ease-out); }
+.frame-leave { animation: fade-in var(--dur-fast) var(--ease-in) reverse both; }
+.hint-enter { animation: hint-enter var(--dur-base) var(--ease-glide); }
+.hint-leave { animation: hint-enter var(--dur-fast) var(--ease-in) reverse both; }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes hint-enter { from { opacity: 0; transform: translateY(calc(-1 * var(--space-2))) scale(.96); } }
+
+/* The question card comes out of the picked element: under it, over it, or docked at the page edge away from it. */
+.question { --card-shift: calc(-1 * var(--space-1)); position: absolute; z-index: 5; display: flex; flex-direction: column; gap: var(--space-1); width: min(22.5rem, calc(100% - var(--space-3) * 2)); padding: var(--space-2); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line); transform-origin: var(--card-origin, 50% 100%); cursor: auto; }
+.question:focus-within { box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line-strong); }
+.question[data-side="above"], .question[data-side="bottom"] { --card-shift: var(--space-1); translate: 0 -100%; }
+.question[data-side="top"], .question[data-side="bottom"] { width: calc(100% - var(--space-3) * 2); }
+.question[data-side="top"] { --card-shift: calc(-1 * var(--space-2)); }
+.question[data-side="bottom"] { --card-shift: var(--space-2); }
+.question > header { display: flex; align-items: center; gap: var(--space-1); min-width: 0; padding-left: var(--space-1); }
+.target-name { display: flex; flex: 1; align-items: baseline; gap: var(--space-2); min-width: 0; font: var(--text-mono-meta-weight) var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono); white-space: nowrap; }
+.target-name > b, .target-name > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: inherit; }
+.target-name > b { flex: 0 1 auto; color: var(--review); }
+.target-name > small { flex: 0 10 auto; color: var(--ink-muted); }
+.question textarea { field-sizing: content; min-height: calc(var(--text-ui-line) + var(--space-1) * 2); max-height: calc(var(--text-ui-line) * 6 + var(--space-1) * 2); padding: var(--space-1); border: 0; border-radius: var(--radius-xs); outline: none; background: transparent; color: var(--ink); font: var(--text-ui-weight) var(--text-ui-size)/var(--text-ui-line) var(--font-sans); resize: none; }
+.question textarea::placeholder { color: var(--ink-muted); }
+.question > footer { display: flex; align-items: center; gap: var(--space-2); padding-left: var(--space-1); }
+.question .note { flex: 1; min-width: 0; color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-caption-line); overflow-wrap: anywhere; }
+.question > footer > button { flex: none; }
+.question-enter { animation: question-enter var(--dur-base) var(--ease-out); }
+.question-leave { animation: question-enter var(--dur-fast) var(--ease-in) reverse both; pointer-events: none; }
+@keyframes question-enter { from { opacity: 0; transform: translateY(var(--card-shift)) scale(.96); } }
 .page[hidden], .driver[hidden] { display: none; }
-textarea { border: 0; padding: var(--space-1); border-radius: var(--radius-xs); background: transparent; color: var(--ink); font: inherit; font-size: var(--text-ui-size); resize: none; }
-textarea:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 footer, .foot { display: flex; align-items: center; gap: var(--space-2); color: var(--ink-muted); font-size: var(--text-caption-size); }
 footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .foot { padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); color: var(--ink); }
@@ -75,6 +111,8 @@ footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) {
   .driver, .page, .target, .agent-cursor, .step-dots i { transition: none; }
   .cursor-pulse { animation: none; opacity: 0; }
+  .ring-enter, .ring-leave, .frame-enter, .frame-leave, .hint-enter, .hint-leave, .question-enter, .question-leave { animation: none; }
+  .target.picked::after { animation: none; opacity: 0; }
 }
 
 /* The container owns the rounding; a rounded, unpadded input clips the caret. */

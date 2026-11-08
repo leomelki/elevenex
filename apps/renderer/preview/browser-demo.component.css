@@ -20,3 +20,4 @@ small { color: var(--ink-muted); font-size: var(--text-caption-size); line-heigh
 .order-total { display: flex; justify-content: space-between; padding-top: var(--space-1); }
 .pay { width: 100%; height: calc(var(--control-height) + var(--space-2)); justify-content: space-between; margin-top: var(--space-2); }
 .example { text-align: center; }
+.checkout.pointing, .checkout.pointing * { cursor: crosshair; }

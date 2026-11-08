@@ -115,7 +115,11 @@ The real picker consumes page input, resolves a structural `nth-child` selector,
 tag and rectangle at viewport CSS coordinates, and excludes editable controls,
 embedded frames and open shadow hosts. Closed roots remain opaque. App zoom, scrolling and responsive layout are
 accounted for. Text, attributes, source locations and element screenshots are
-unavailable; the question sheet states that limit. Sending stages the geometric
+unavailable; the question card's `askNote` states that limit. The card names the
+element by its tag; the staged question carries the full selector. Main pauses
+(hides) the page after a pick, so the trusted preview slot shows a dotted
+"Page paused while you ask" ground under the ring and card. Main does not inspect
+on hover, so production omits `hovered`. Sending stages the geometric
 context in the selected session's composer for review.
 
 Errors retain counts only, capped at 999. **Send to agent** is an explicit composer

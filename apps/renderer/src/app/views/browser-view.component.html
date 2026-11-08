@@ -20,7 +20,7 @@
       <ex-ease-swap [value]="driver() === 'agent' ? 'Driving' : driver() === 'needs' ? 'Your turn' : 'You'" />
     </button>
     <div class="tools">
-      @if (pickerAvailable()) { <ex-icon-button icon="target" label="Point and ask (⇧⌘C)" size="sm" [active]="picking()" [disabled]="!current() || controlsDisabled()" (pressed)="pickingChange.emit(!picking())" /> }
+      @if (pickerAvailable()) { <ex-icon-button #pickToggle icon="target" label="Point and ask (⇧⌘C)" size="sm" [active]="pointAndAsk()" [disabled]="!current() || controlsDisabled()" (pressed)="togglePointAndAsk()" /> }
       <ex-icon-button icon="phone" [label]="width() === 'phone' ? 'Full width' : 'Phone width'" size="sm" [active]="width() === 'phone'" [disabled]="!current() || controlsDisabled()" (pressed)="widthChange.emit(width() === 'phone' ? 'full' : 'phone')" />
       <ex-icon-button icon="more" label="More browser actions" size="sm" [disabled]="controlsDisabled()" (pressed)="moreRequested.emit()" />
     </div>
@@ -32,31 +32,48 @@
       <button exButton variant="primary" size="sm" (click)="handBack()">I’m done</button>
     </div>
   </ex-fold>
-  <div #preview class="preview" tabindex="0" aria-label="Page preview" [class.agent-driving]="driver() === 'agent'" [attr.aria-busy]="loading()" (pointerdown)="takeOver()" (keydown)="takeOver()">
-    <div class="page" [class.clipped]="clipPreview()" [hidden]="!current() && !keepPreviewMounted()" [class.keeping-empty]="!current()" [attr.inert]="!current() ? '' : null" [class.phone]="width() === 'phone'">
+  <div #preview class="preview" tabindex="0" aria-label="Page preview" [class.agent-driving]="driver() === 'agent' && !pointing()" [attr.aria-busy]="loading()" (pointerdown)="takeOver()" (keydown)="takeOver()">
+    <div #page class="page" [class.clipped]="clipPreview()" [class.pointing]="pointing()" [hidden]="!current() && !keepPreviewMounted()" [class.keeping-empty]="!current()" [attr.inert]="!current() ? '' : null" [class.phone]="width() === 'phone'">
       <ng-content select="[browserPreview]" />
-      @if (target(); as target) {
-        <span class="target" [class.picked]="!!picked()" [style.transform]="targetTransform()" [style.width.px]="coordinate(target.w) + 8" [style.height.px]="coordinate(target.h) + 8" aria-hidden="true">
-          <span>{{ target.label }}</span>
+      @if (pointing() && hovered(); as hover) {
+        <!-- Snaps to the pointer: a highlight that glides behind a pointer only lags. -->
+        <span class="target hover" [class.label-below]="labelBelow(hover)" [style.transform]="ringTransform(hover)" [style.width.px]="coordinate(hover.w) + 8" [style.height.px]="coordinate(hover.h) + 8" animate.enter="ring-enter" animate.leave="ring-leave" aria-hidden="true">
+          <span class="ring-label">{{ hover.label }}@if (hover.file) { <small>{{ hover.file }}</small> }</span>
         </span>
       }
-      @if (driver() === 'agent' && action() && !picked()) {
+      @if (target(); as target) {
+        <span class="target" [class.picked]="!!picked()" [class.label-below]="labelBelow(target)" [style.transform]="ringTransform(target)" [style.width.px]="coordinate(target.w) + 8" [style.height.px]="coordinate(target.h) + 8" animate.enter="ring-enter" animate.leave="ring-leave" aria-hidden="true">
+          @if (!picked()) { <span class="ring-label">{{ target.label }}</span> }
+        </span>
+      }
+      @if (driver() === 'agent' && action() && !picked() && !pointing()) {
         <span class="agent-cursor" [style.transform]="cursorTransform()" aria-hidden="true">
           <span class="cursor-pulse"></span>
           <svg width="20" height="20" viewBox="0 0 16 16" fill="var(--surface-raised)" stroke="var(--ink)" stroke-width="1.2" stroke-linejoin="round"><path d="M3.5 2l9 5.2-4 1.1 2.4 4.3-1.7 1-2.4-4.3-3.3 2.7z" /></svg>
         </span>
       }
+      @if (current() && picked(); as picked) {
+        @let place = cardPlacement();
+        <form #questionCard class="question" [attr.data-side]="place?.side ?? 'below'" [style.left.px]="place?.left" [style.top.px]="place?.top" [style.--card-origin]="place?.origin" animate.enter="question-enter" animate.leave="question-leave"
+          aria-label="Ask about the selected element" (submit)="$event.preventDefault(); ask()" (pointerdown)="$event.stopPropagation()" (keydown)="questionKeydown($event)">
+          <header>
+            <span class="target-name" [title]="picked.file ? picked.label + ' · ' + picked.file : picked.label"><b>{{ picked.label }}</b>@if (picked.file) { <small>{{ picked.file }}</small> }</span>
+            <ex-icon-button icon="target" label="Pick another element" size="sm" (pressed)="pickingChange.emit(true)" />
+            <ex-icon-button icon="x" label="Dismiss question (Esc)" size="sm" (pressed)="dismissQuestion()" />
+          </header>
+          <textarea #askInput rows="1" maxlength="2000" aria-label="What should change here?" placeholder="What should change here?" [value]="askText()" (input)="askText.set(askInput.value)" (keydown)="askKeydown($event)"></textarea>
+          <footer>
+            @if (askNote()) { <span class="note">{{ askNote() }}</span> } @else { <span class="note" aria-hidden="true"></span> }
+            <ex-kbd aria-hidden="true">↵</ex-kbd>
+            <button exButton variant="primary" size="sm" type="submit" [disabled]="!askText().trim()">{{ askLabel() }}<ex-icon name="arrow-up" [size]="14" /></button>
+          </footer>
+        </form>
+      }
     </div>
-    @if (current() && driver() === 'agent') { <span class="driving-frame" aria-hidden="true"><span class="takeover-hint">Click anywhere to take over</span></span> }
-    @if (current() && picked(); as picked) {
-      <form class="question" (submit)="$event.preventDefault(); ask()" (pointerdown)="$event.stopPropagation()" (keydown)="$event.stopPropagation()">
-        <div class="question-header">
-          <div class="target-name"><ex-icon name="target" [size]="12" /><span [title]="picked.label">{{ picked.label }}</span>@if (picked.file) { <small [title]="picked.file">{{ picked.file }}</small> }</div>
-          <ex-icon-button icon="x" label="Dismiss question (Esc)" size="sm" (pressed)="pickingChange.emit(false)" />
-        </div>
-        <textarea #askInput rows="2" maxlength="2000" aria-label="What should change here?" placeholder="What should change here?" [value]="askText()" (input)="askText.set(askInput.value)" (keydown)="askKeydown($event)"></textarea>
-        <footer><span>Ask about the selected element</span><button exButton variant="primary" size="sm" type="submit" [disabled]="!askText().trim()">{{ askLabel() }}</button></footer>
-      </form>
+    @if (current() && driver() === 'agent' && !pointing()) { <span class="driving-frame" aria-hidden="true"><span class="takeover-hint">Click anywhere to take over</span></span> }
+    @if (pointing()) {
+      <span class="pointing-frame" animate.enter="frame-enter" animate.leave="frame-leave" aria-hidden="true"></span>
+      <span class="pointing-hint" role="status" animate.enter="hint-enter" animate.leave="hint-leave"><ex-icon name="target" [size]="14" /><span>Click an element to ask about it</span><ex-kbd>Esc</ex-kbd></span>
     }
     @if (!current()) { <div class="empty"><ex-icon name="globe" [size]="24" /><p>Open a page for this task.</p><button exButton variant="secondary" (click)="added.emit()">New tab</button></div> }
   </div>

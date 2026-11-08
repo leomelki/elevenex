@@ -289,6 +289,79 @@ describe('Side-view interactions', () => {
     expect(picking).toHaveBeenCalledWith(false);
   });
 
+  it('shows where to point, follows the hovered element and cancels picking with Escape', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Checkout', url: 'localhost' }]);
+    fixture.componentRef.setInput('driver', 'agent');
+    fixture.componentRef.setInput('action', { x: 20, y: 80, w: 100, h: 30, label: 'Pay' });
+    fixture.componentRef.setInput('picking', true);
+    fixture.componentRef.setInput('hovered', { x: 10, y: 40, w: 120, h: 20, label: 'h3.title', file: 'CheckoutForm.tsx:41' });
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelector('[role="status"].pointing-hint')?.textContent).toContain('Click an element to ask about it');
+    // Picking replaces the agent's frame, cursor and target with your own ring.
+    expect(root.querySelector('.driving-frame, .agent-cursor')).toBeNull();
+    expect(root.querySelectorAll('.target')).toHaveLength(1);
+    expect(root.querySelector('.target.hover')?.textContent).toContain('h3.title');
+    expect(root.querySelector('[aria-label="Point and ask (⇧⌘C)"]')?.getAttribute('aria-pressed')).toBe('true');
+    const picking = vi.fn();
+    fixture.componentInstance.pickingChange.subscribe(picking);
+    root.querySelector('.preview')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(picking).toHaveBeenCalledWith(false);
+  });
+
+  it('keeps point and ask active while asking, offers another pick and toggles it off', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Checkout', url: 'localhost' }]);
+    fixture.componentRef.setInput('picked', { x: 10, y: 20, w: 100, h: 30, label: 'button.pay', file: 'CheckoutForm.tsx:88' });
+    fixture.componentRef.setInput('askNote', 'Sends the source line');
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelector('.pointing-hint')).toBeNull();
+    expect(root.querySelector('.question .target-name b')?.textContent).toBe('button.pay');
+    expect(root.querySelector('.question .target-name small')?.textContent).toBe('CheckoutForm.tsx:88');
+    expect(root.querySelector('.question .note')?.textContent).toBe('Sends the source line');
+    const picking = vi.fn();
+    fixture.componentInstance.pickingChange.subscribe(picking);
+    root.querySelector<HTMLButtonElement>('[aria-label="Pick another element"]')!.click();
+    expect(picking).toHaveBeenLastCalledWith(true);
+    const toggle = root.querySelector<HTMLButtonElement>('[aria-label="Point and ask (⇧⌘C)"]')!;
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    toggle.click();
+    expect(picking).toHaveBeenLastCalledWith(false);
+  });
+
+  it('places the question beside its element when there is room, otherwise docks it away from the element', () => {
+    // jsdom has no layout: supply the page and card sizes the card measures.
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(() => pageWidth);
+    vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(500);
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(300);
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(100);
+    let pageWidth = 440;
+    try {
+      const fixture = TestBed.createComponent(BrowserViewComponent);
+      fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Checkout', url: 'localhost' }]);
+      fixture.componentRef.setInput('picked', { x: 300, y: 20, w: 100, h: 30, label: 'button.pay' });
+      fixture.detectChanges();
+      const card = () => fixture.nativeElement.querySelector('.question') as HTMLElement;
+      // Under the ring, clamped inside the page's right edge.
+      expect(card().dataset['side']).toBe('below');
+      expect(card().style.top).toBe('62px'); expect(card().style.left).toBe('128px');
+      fixture.componentRef.setInput('picked', { x: 20, y: 400, w: 100, h: 40, label: 'button.pay' });
+      fixture.detectChanges();
+      expect(card().dataset['side']).toBe('above');
+      expect(card().style.top).toBe('388px'); expect(card().style.left).toBe('16px');
+      // A new pick measures again: a narrow page docks it at the visible foot.
+      fixture.componentRef.setInput('picked', undefined);
+      fixture.detectChanges();
+      pageWidth = 360;
+      fixture.componentRef.setInput('picked', { x: 20, y: 30, w: 100, h: 40, label: 'button.pay' });
+      fixture.detectChanges();
+      expect(card().dataset['side']).toBe('bottom');
+      expect(card().style.top).toBe('488px'); expect(card().style.left).toBe('12px');
+    } finally { vi.restoreAllMocks(); }
+  });
+
   it('shows bounded workflow progress and the active agent tab, then clears driving UI on takeover', () => {
     const fixture = TestBed.createComponent(BrowserViewComponent);
     fixture.componentRef.setInput('tabs', [{ id: 'checkout', title: 'Checkout', by: 'agent' }, { id: 'docs', title: 'Docs', by: 'agent' }]);

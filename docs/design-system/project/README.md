@@ -180,7 +180,7 @@ The agent writes Markdown and `Markdown` renders all of it, in full. One convent
 ### Side views: Browser and Terminal
 
 - **The Browser is shared, the driver is one.** The agent opens tabs and drives the ones it opened. Its tabs carry its mark, which breathes while it acts; its cursor glides to each target with a ring and a label; a bar says the step. Your click or keystroke takes over at once, and Hand back returns it. When it needs you (sign-in, 2FA, payment), it stops, says "Your turn", and never sees password, card or code fields. A site asking for a passkey or security key gets one sheet over the window (`PasskeyAsk`) that names the exact origin, waits for the key and explains a failure; the agent never sees any of it.
-- **Point and ask** turns any element into a message with its source file and line. Errors in the page go to the agent with one click.
+- **Point and ask** turns any element into a message with its source file and line: point (a thin indigo frame and one hint pill), pick (the ring locks in), ask (a small card comes out of the element and never covers it). It is yours, so it is `review` indigo, never the agent's teal. Errors in the page go to the agent with one click.
 - **The Terminal is yours.** The agent's commands are tool calls in the chat and never show there. Tabs say what they're doing (running, serving on a port, failed, new output); + runs the project's scripts; a failed command is one click from Ask the agent.
 - **Both belong to the task:** its workspace, branch and dev servers; they come back when you reopen it.
 
@@ -268,6 +268,7 @@ Motion explains change and never makes you wait. Timings and curves are tokens (
   - **It starts from the card, where you see it.** The card's place on screen is read before anything else moves, so a card that's about to change group or reflow still launches from where it was. It never starts from the middle.
   - **Home holds still.** While a machine is open or opening, nothing on Home moves; a card getting ready or about to open keeps its place. Home catches up when it shows again, and the card lands back where it now is.
   - **Only a ready machine launches.** Getting ready happens on the card; when it's done, the dot settles and the line says so, and the launch starts about 450ms later, from a card at rest.
+- **A question comes out of what you picked.** In Point and ask the picked ring locks in with one ring going out, once; the question card grows from the element (0.96 and 4px towards it, `dur-base`, `ease-out`), under it or over it, and never covers it. A growing draft extends away from the element, so the edge beside it stays put. The hover ring snaps to the pointer instead of gliding (see the decision on pointer highlights).
 - **The reminder slides, it doesn't pop.** `ChatScroll`'s pinned message slides down 8px and fades in, leaves on `ease-in`, and its text blurs in when the exchange changes; on first paint it's simply there.
 - **A control that changes its label stays the same element and eases its width.** Git's one button (Commit 7 → Committing… → Push 2 → gone) is never swapped for another: its icon and label crossfade in place (`EaseSwap`) while its width eases on `ease-in-out` (sizes never spring). It only grows in or closes when there's a step to show or none: the empty pill grows out from the right and its label fades in once there's room (closing is the reverse), so text is never cut by a hard edge; right-aligned controls give way into the space beside them, so nothing else in the row moves.
 - **Opening context never moves what you're reading.** In `DiffReview`, lines opened above a hunk grow upward while the scroll follows, so the hunk stays put; lines opened below grow under where you were. Switching Changes ↔ Full files keeps the change you were reading at the same height. Marking a long file Viewed from inside it moves to its start under the stuck header before folding, so nothing jumps. Lines that load late arrive the same way: in view the skeleton eases to the real height, and above the view the scroll absorbs the change.
@@ -316,7 +317,7 @@ One meaning per shortcut, everywhere. Check this table before giving anything a 
 | ⌥↵ | Steer (in the composer) · save as Planned (in New task) |
 | S · F · C | With a message focused: side chat · fork · copy |
 | ← → · Esc | In the picture viewer: previous · next · close |
-| ⌘T · ⇧⌘C | In the Browser or Terminal (focused): new tab · point and ask (Browser) |
+| ⌘T · ⇧⌘C | In the Browser or Terminal (focused): new tab · point and ask (Browser; again, or Esc, to cancel) |
 | ⇧⌘B | New sub-task from where you are |
 | ⇧⌘R | Wider review: the Changes panel takes over the chat (again, or Esc, to go back) |
 | ⌥↑ · ⌥↓ · V · F7 | In the Changes review: previous · next file · mark viewed · next change (⇧F7 previous) |

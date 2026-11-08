@@ -480,7 +480,9 @@ export interface BrowserViewProps {
   tabs: BrowserTab[]; active?: string; onSelect?: (id: string) => void; onClose?: (id: string) => void; onNew?: () => void;
   /** who drives the active tab */ driver?: 'agent' | 'you' | 'needs'; onTakeOver?: () => void; onHandBack?: () => void; agentWaiting?: boolean;
   step?: { n: number; total?: number; text: string }; /** the element the agent acts on, in page coordinates */ action?: { x: number; y: number; w: number; h: number; label?: string };
-  picking?: boolean; onPick?: () => void; picked?: { x: number; y: number; w: number; h: number; label: string; file?: string }; onAsk?: (text: string) => void;
+  /** point and ask: choosing an element; the owner inspects the page */ picking?: boolean; /** start (true: also to pick another element) or cancel picking */ onPick?: (on: boolean) => void;
+  /** the element under the pointer while picking, when the page can be inspected on hover */ hovered?: { x: number; y: number; w: number; h: number; label: string; file?: string };
+  picked?: { x: number; y: number; w: number; h: number; label: string; file?: string }; onAsk?: (text: string) => void; /** the send button, e.g. "Add to composer" */ askLabel?: string; /** one short line on what the question carries */ askNote?: string;
   errors?: number; errorText?: string; onSendErrors?: () => void; width?: 'full' | 'phone'; onWidth?: () => void;
   needsTitle?: string; needsText?: string; onBack?: () => void; onReload?: () => void; children?: React.ReactNode; className?: string; style?: React.CSSProperties;
 }

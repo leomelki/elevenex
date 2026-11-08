@@ -34,6 +34,25 @@ capture and source resolution remain platform capabilities. The production
 [task browser adapter](../task-browser/README.md) owns the real isolated Electron
 page, task persistence, control leases and privacy policy.
 
+Point and ask is controlled by `picking`, `hovered` and `picked`; the owner does
+the inspection. While picking without a pick, the view shows a non-interactive
+`review` frame and hint pill above the page, hides the agent frame, cursor and
+target, and emits `pickingChange(false)` for Escape from anywhere in the view. If a
+page shortcut starts picking while focus is outside the view, the preview takes
+focus so Escape works. Supply `hovered` only when the platform can inspect the
+element under the pointer; its ring follows without easing. The page itself must
+receive the click, so the view never intercepts page pointer input. With `picked`,
+the question card is positioned in page coordinates beside the element (under,
+then over), or docked across the visible page at the edge away from it when the
+page is under 400px wide, the element is out of view, or there is no room beside it.
+The card measures the page and itself with an owned `ResizeObserver` and scroll
+listener, both removed with the card. The card's target button emits
+`pickingChange(true)` to pick another element and keeps the draft; the toolbar
+button and Command/Ctrl-Shift-C stay pressed while asking and toggle point and ask
+off. `askNote` adds one muted line saying what the question carries. Escape or ×
+dismisses and restores focus to the previous control, or to the toolbar button
+when the pick left focus inside the page.
+
 While the agent drives, the active agent tab breathes and an overlay paints the
 accent frame above the projected page. The target ring and cursor follow page
 coordinates, including phone width and scrolling. The workflow bar crossfades
