@@ -145,6 +145,13 @@ async function main() {
     logLevel: 'info',
   });
 
+  // Screen parsing runs outside the backend event loop in local and SSH builds.
+  await esbuild.build({
+    entryPoints: [path.join(backendRoot, 'dist/user-terminal/screen/terminal-screen-worker.js')],
+    outfile: path.join(backendBundleRoot, 'terminal-screen-worker.cjs'),
+    bundle: true, platform: 'node', format: 'cjs', target: 'node22', sourcemap: true,
+  });
+
   // Pi loads the mission extension in its own CLI process, outside main.cjs.
   await esbuild.build({
     entryPoints: [path.join(backendRoot, 'src', 'pi-runtime', 'pi-agent-extension.ts')],

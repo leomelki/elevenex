@@ -91,12 +91,16 @@ export class TerminalOutputEvents {
         this.escaped = true;
         continue;
       }
-      this.plain = (this.plain + char).slice(-2304);
+      this.plain += char;
+      // Long ordinary output must not copy a 2 KiB suffix for every character.
+      // Compact in bounded batches; whitespace ends a URL candidate below.
+      if (this.plain.length > 4608) this.plain = this.plain.slice(-2304);
       // Require a delimiter; a chunk ending with :3 may continue with 000.
       if (char > ' ' && char !== '/') continue;
       const match = (char === '/' ? ROOT_SERVICE : PATH_SERVICE).exec(
         this.plain,
       );
+      if (char <= ' ') this.plain = '';
       if (match) {
         const port = Number(match[2]);
         if (port > 0 && port <= 65535)

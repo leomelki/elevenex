@@ -422,13 +422,22 @@ bounded authenticated command-start offsets for local xterm navigation. The
 optional observed `currentCwd` is display-only; existing `cwd` keeps its original
 launch-workspace semantics. Older engines may omit all of these additions.
 
-The additive `task-terminal:*` bridge operations use the existing per-window HTTP
-lease. Main validates task/process identity, bounds, generations and contiguous
-output offsets. `user-terminal/desktop-terminal` routes share the existing PTY
-manager and task lifecycle. Reads never spawn; input/mutations never retry.
-See [terminal ownership and limits](../apps/renderer/src/app/task-terminal/README.md)
-for bounded output catch-up, producer gaps, user input backpressure, window/task
-cleanup, prompt integration and the typed Browser/forwarding handoff.
+The additive `task-terminal:*` bridge preserves bounded HTTP lifecycle/history
+operations and capability-selects the ordered `/desktop-terminal/v1` stream.
+Named attach/detach, write, resize, focus and acknowledge operations bind a main-owned
+WebSocket to the existing per-window backend lease. Renderer events contain only
+validated domain packets. Credits span the socket and Electron IPC and are returned
+after xterm consumes output. Input is pipelined and never replayed. Scope/document
+changes abort both bounded reads and live leases.
+
+The PTY manager owns an isolated headless screen worker. Expired cursors restore a
+bounded checkpoint instead of treating an arbitrary output tail as complete screen
+state. Terminal-generated replies have one server owner, and replay cannot send
+historical replies. Main/renderer reject stale identities, process generations,
+cursor discontinuities and oversized packets. Older engines retain their HTTP
+contract. Per-machine shell/prediction preferences use narrow typed methods and
+private desktop storage. See [stream ownership and budgets](../apps/backend/src/user-terminal/stream/README.md)
+and [renderer behavior and prediction limits](../apps/renderer/src/app/task-terminal/README.md).
 
 Main stamps terminal creation with an opaque app-launch owner, shared across
 windows and absent from renderer arguments. App quit and last-window close send

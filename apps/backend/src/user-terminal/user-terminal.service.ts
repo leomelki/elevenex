@@ -36,10 +36,11 @@ export class UserTerminalService {
     worktreePath: string;
     name?: string;
     desktopOwner?: string;
+    shell?: string;
   }) {
     const workspace = await currentWorkspaceForPath(this.db, dto.worktreePath);
     if (workspace) await assertWorkspaceCanExecute(this.db, workspace.id);
-    const shell = this.defaultShell;
+    const shell = dto.shell ?? this.defaultShell;
     const name = dto.name || path.basename(shell);
 
     const rows = await this.db

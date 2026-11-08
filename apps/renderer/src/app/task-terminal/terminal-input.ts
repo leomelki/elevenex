@@ -8,7 +8,7 @@ export interface TerminalInputTarget {
 /** Ordered, bounded input. A queued chunk can never acquire a replacement process. */
 export class TerminalInputQueue {
   private target?: TerminalInputTarget;
-  private pending = "";
+  private pending: { data: string; kind: 'text' | 'binary' }[] = [];
   private pendingBytes = 0;
   private readonly encoder = new TextEncoder();
   private sending = false;
@@ -16,10 +16,10 @@ export class TerminalInputQueue {
   private revision = 0;
   blocked = false;
   get idle(): boolean {
-    return !this.sending && !this.pending && !this.blocked && !this.closed && !!this.target;
+    return !this.sending && !this.pending.length && !this.blocked && !this.closed && !!this.target;
   }
   constructor(
-    private readonly send: (data: string, target: TerminalInputTarget) => Promise<boolean>,
+    private readonly send: (data: string, target: TerminalInputTarget, kind: 'text' | 'binary') => Promise<boolean>,
     private readonly failed: (message: string) => void,
   ) {}
   bind(target: TerminalInputTarget): void {
@@ -29,19 +29,17 @@ export class TerminalInputQueue {
     this.reconnect();
     this.target = { ...target };
   }
-  push(data: string): boolean {
+  push(data: string, kind: 'text' | 'binary' = 'text'): boolean {
     if (this.closed || this.blocked || !this.target) return false;
-    if (this.pending.length + data.length > 128 * 1024) {
-      this.failed("Paste is too large. Send at most 128 KiB at a time.");
-      return false;
-    }
     const bytes = this.encoder.encode(data).byteLength;
     if (this.pendingBytes + bytes > 128 * 1024) {
       this.failed("Paste is too large. Send at most 128 KiB at a time.");
       return false;
     }
     this.pendingBytes += bytes;
-    this.pending += data;
+    const last = this.pending.at(-1);
+    if (last?.kind === kind) last.data += data;
+    else this.pending.push({ data, kind });
     if (!this.sending) void this.flush();
     return true;
   }
@@ -54,26 +52,28 @@ export class TerminalInputQueue {
     await Promise.resolve();
     try {
       while (
-        this.pending &&
+        this.pending.length &&
         !this.closed &&
         !this.blocked &&
         revision === this.revision
       ) {
-        let end = Math.min(4096, this.pending.length);
+        const pending = this.pending[0]!;
+        let end = Math.min(4096, pending.data.length);
         if (
-          end < this.pending.length &&
-          /[\uDC00-\uDFFF]/.test(this.pending[end]!)
+          pending.kind === 'text' && end < pending.data.length &&
+          /[\uDC00-\uDFFF]/.test(pending.data[end]!)
         )
           end--;
-        const data = this.pending.slice(0, end);
-        this.pending = this.pending.slice(end);
+        const data = pending.data.slice(0, end);
+        pending.data = pending.data.slice(end);
+        if (!pending.data) this.pending.shift();
         this.pendingBytes -= this.encoder.encode(data).byteLength;
-        if (!(await this.send(data, target)))
+        if (!(await this.send(data, target, pending.kind)))
           throw new Error("Input outcome is unknown");
       }
     } catch {
       if (revision !== this.revision) return;
-      this.pending = "";
+      this.pending = [];
       this.pendingBytes = 0;
       this.blocked = true;
       this.failed(
@@ -81,13 +81,13 @@ export class TerminalInputQueue {
       );
     } finally {
       this.sending = false;
-      if (this.pending && !this.closed && !this.blocked) void this.flush();
+      if (this.pending.length && !this.closed && !this.blocked) void this.flush();
     }
   }
   reconnect(): void {
-    const interrupted = this.sending || !!this.pending;
+    const interrupted = this.sending || !!this.pending.length;
     this.revision++;
-    this.pending = "";
+    this.pending = [];
     this.pendingBytes = 0;
     if (interrupted) {
       this.blocked = true;
@@ -96,16 +96,19 @@ export class TerminalInputQueue {
       );
     }
   }
+  interrupt(message: string): void {
+    this.revision++; this.pending = []; this.pendingBytes = 0; this.blocked = true; this.failed(message);
+  }
   resume(): void {
     this.revision++;
-    this.pending = "";
+    this.pending = [];
     this.pendingBytes = 0;
     this.blocked = false;
   }
   dispose(): void {
     this.revision++;
     this.closed = true;
-    this.pending = "";
+    this.pending = [];
     this.pendingBytes = 0;
   }
 }

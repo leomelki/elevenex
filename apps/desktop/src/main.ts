@@ -3,6 +3,7 @@ import { registerCodeIpc } from './code/ipc';
 import { app, BrowserWindow, Menu, dialog, net, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
 import { registerTerminalPorts } from './backend-client/terminal-ports';
 import { TerminalLifetime } from './backend-client/terminal-lifetime';
+import { TerminalPreferences } from './backend-client/terminal-preferences';
 import { readFile, realpath } from 'node:fs/promises';
 import { extname, join, relative, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -65,6 +66,7 @@ const backendClient = createBackendClient(backend, remote,
   (windowId, snapshot) => sendToWindow(windowId, 'backend-client:changed', snapshot));
 const code = new CodeSurfaces(backendClient.client, join(app.getPath('userData'), 'code-runtimes'), join(rendererRoot, 'fonts'), (windowId, target, snapshot) => sendToWindow(windowId, 'code:changed', { target, state: snapshot }), (windowId, target) => sendToWindow(windowId, 'code:exit-requested', target), (context, configurationIdentity) => createWindow(context.selection, context, configurationIdentity), devUrl ? new URL(devUrl).origin : APP_ORIGIN);
 const machinePreferences = new MachinePreferences(join(app.getPath('userData'), 'machine-preferences.json'));
+const terminalPreferences = new TerminalPreferences(join(app.getPath('userData'), 'terminal-preferences.json'));
 let terminals = new TerminalLifetime();
 const machines = new MachineApplication(backend, remote, machinePreferences,
   (windowId, snapshot) => sendToWindow(windowId, 'machines:changed', snapshot));
@@ -233,7 +235,7 @@ void app.whenReady().then(async () => {
   const unregisterClient = registerBackendClientIpc(backendClient.client, trusted, {
     get owner() { return terminals.owner; },
     track: (endpoint, engine) => terminals.track(endpoint, engine),
-  });
+  }, terminalPreferences);
   const unregisterTerminalPorts = registerTerminalPorts(backendClient.client, remote, trusted, url => shell.openExternal(url));
   app.once('will-quit', () => { unregisterClient(); unregisterTerminalPorts(); });
   const unregisterRemote = registerRemoteIpc(remote, backend, trusted);
@@ -289,7 +291,7 @@ void app.whenReady().then(async () => {
   disposeIdentity = undefined;
   backendClient.dispose();
   machines.dispose();
-  void terminals.close().then(() => Promise.allSettled([code.dispose(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()])).then(() => app.exit(1));
+  void terminals.close().then(() => Promise.allSettled([code.dispose(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush(), terminalPreferences.flush()])).then(() => app.exit(1));
 });
 
 app.on('window-all-closed', () => {
@@ -300,5 +302,5 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  void code.dispose().then(async () => { disposeIdentity?.(); disposeIdentity = undefined; backendClient.dispose(); machines.dispose(); await terminals.close(); await Promise.allSettled([state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush()]); app.quit(); }, async error => { quitting = false; await dialog.showMessageBox({ type: 'warning', message: 'Editor changes are still retained in the open window', detail: error instanceof Error ? error.message : 'Finish backing up your editor changes before quitting.', buttons: ['Keep open'] }); });
+  void code.dispose().then(async () => { disposeIdentity?.(); disposeIdentity = undefined; backendClient.dispose(); machines.dispose(); await terminals.close(); await Promise.allSettled([state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush(), terminalPreferences.flush()]); app.quit(); }, async error => { quitting = false; await dialog.showMessageBox({ type: 'warning', message: 'Editor changes are still retained in the open window', detail: error instanceof Error ? error.message : 'Finish backing up your editor changes before quitting.', buttons: ['Keep open'] }); });
 });

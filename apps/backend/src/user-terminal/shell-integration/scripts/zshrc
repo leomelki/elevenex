@@ -31,7 +31,10 @@ function _elevenex_user_precmd() {
   if (( ${#directory} > 8192 )); then directory=''; fi
   directory=${directory//\\/\\\\}
   directory=${directory//;/\\x3b}
-  builtin printf '\033]133;D;__ELEVENEX_TOKEN__;%s\007\033]133;P;__ELEVENEX_TOKEN__;%s\007\033]133;B;__ELEVENEX_TOKEN__\007' "$result" "$directory"
+  builtin printf '\033]133;D;__ELEVENEX_TOKEN__;%s\007\033]133;P;__ELEVENEX_TOKEN__;%s\007' "$result" "$directory"
+  local marker=$'%{\033]133;B;__ELEVENEX_TOKEN__\007%}'
+  PROMPT="${PROMPT%"$marker"}$marker"
+  typeset -g +x PROMPT
   return "$result"
 }
 builtin autoload -Uz add-zsh-hook

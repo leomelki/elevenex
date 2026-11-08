@@ -1,0 +1,29 @@
+<ex-sheet [open]="open()" label="Terminal settings" (closeRequested)="closed.emit()">
+  <div sheetNavHead class="heading">Terminal settings</div>
+  <div class="settings" [attr.inert]="!open() ? '' : null">
+    <h2>Terminal settings</h2>
+    <p>Applies to your terminals on this machine. Shell changes apply to new terminals.</p>
+    <ex-set-group title="Typing">
+      <ex-set-row label="Automatic input prediction" sub="Show predicted edits when remote echo is slow and predictions are reliable.">
+        <ex-switch label="Automatic input prediction" [on]="prediction()" [disabled]="busy()" (changed)="prediction.set($event)" />
+      </ex-set-row>
+    </ex-set-group>
+    <ex-set-group title="Shell" note="With custom startup arguments or login mode, your shell starts without injected command hooks.">
+      <ex-set-row label="Use a custom shell">
+        <ex-switch label="Use a custom shell" [on]="custom()" [disabled]="busy()" (changed)="custom.set($event)" />
+      </ex-set-row>
+      @if (custom()) {
+        <ex-set-row label="Executable"><ex-set-field label="Shell executable" [mono]="true" [wide]="true" [value]="executable()" [disabled]="busy()" (valueChanged)="executable.set($event)" /></ex-set-row>
+        <ex-set-row label="Login shell" sub="For POSIX shells that support -l."><ex-switch label="Login shell" [on]="login()" [disabled]="busy()" (changed)="login.set($event)" /></ex-set-row>
+      }
+    </ex-set-group>
+    @if (custom()) {
+      <label [for]="id + '-args'">Arguments <span>One argument per line; quotes are literal.</span></label>
+      <textarea #arguments [id]="id + '-args'" rows="3" spellcheck="false" [disabled]="busy()" [value]="args()" (input)="args.set(arguments.value)"></textarea>
+      <label [for]="id + '-env'">Environment <span>One NAME=value per line. A name alone removes it.</span></label>
+      <textarea #environment [id]="id + '-env'" rows="4" spellcheck="false" autocomplete="off" [disabled]="busy()" [value]="env()" (input)="env.set(environment.value)"></textarea>
+    }
+    @if (invalid() || error()) { <p class="error" role="alert">{{ invalid() || error() }}</p> }
+    <footer #footer><button exButton variant="ghost" [disabled]="busy()" (click)="closed.emit()">Cancel</button><button exButton variant="primary" [disabled]="busy()" (click)="save()">{{ busy() ? 'Saving…' : 'Save settings' }}</button></footer>
+  </div>
+</ex-sheet>

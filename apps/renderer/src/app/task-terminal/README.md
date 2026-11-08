@@ -21,8 +21,7 @@ starts a fresh shell; hiding a panel with existing shells only detaches them.
 The metadata store owns scoped reads and four task snapshots. The component owns
 up to eight xterm surfaces, each with 2,000 scrollback rows, selection, reading
 position and a bounded input queue. Eviction disposes a surface, never its PTY.
-Observers belong to the visible attachment. Hidden panels are inert and stop
-output reads; reconnect and show reattach by task/terminal/generation/offset.
+Observers belong to the visible attachment. Hidden panels are inert and detach their output subscription; reconnect and show reattach by task/terminal/generation/offset.
 Reattachment waits for a pending xterm write and its cursor update before reading
 another page, so rapid hide/show cannot duplicate output.
 Session changes within a task keep the same surface and process. Switching
@@ -62,61 +61,67 @@ checkout. Desktop PTYs use the manager's direct mode on local and remote engines
 UI disconnects do not detach their operating-system processes. The legacy
 WebSocket/tmux contract is unchanged.
 
-Each process owns a random generation and a 256 KiB output window. UTF-16 cursor
-identity matches JavaScript on both sides; output responses contain at most
-32 KiB characters. The next request waits for xterm's write callback, providing
-consumer backpressure without accumulating event batches in Angular. Producer
-bursts can expire history; the next response reports a gap and the panel labels
-it. Generation changes reset the surface and are labelled. Engine restart expires
-desktop records; neither reads nor reconnect start shells. Explicit replacement
-through a legacy client can still invalidate an attached stream and is labelled.
-One active output read runs at a time; metadata refresh is bounded to 16 tabs.
-Script discovery reads one confined root package manifest (256 KiB, 100 scripts),
-coalesced/cached for three seconds. Launch and rerun rediscover it.
+Each process owns a random generation and a bounded 256 Ki-unit indexed output
+window. New engines advertise `streamVersion: 1`. `TerminalStreamAttachment` owns
+one visible attachment's typed IPC subscription, ordered writes, cursor commits
+and render credits. Main owns its WebSocket and private endpoint lease; scope,
+window/document changes and detach close it. No socket or credential reaches
+Angular. Output bypasses Signals; metadata updates only the relevant controls.
+The metadata store stops its HTTP loop when streaming is supported. Ordinary
+older engines retain the HTTP output adapter and its bounded pages.
 
-Input dispatch is serialized, capped at 128 KiB per pending paste and split into
-small Unicode-safe requests. Oversize pastes are refused visibly. Input is never
-retried. Unknown input outcomes clear pending data, disable typing and require
-an explicit Resume typing after inspection. Detaching, connection and process generation
-changes invalidate pending input. Queued chunks retain their original scope and
-process identity; replacement requires explicit Resume typing if a dispatch was
-interrupted. Resize is fit-to-container, frame-coalesced and single-flight.
-Output pages carry their original PTY grid and stop at resize boundaries. The
-surface replays them with that grid before fitting the visible pane, without
-sending historical resizes back to the process. This keeps zsh's startup spacer
-from wrapping into blank rows in narrow panes, including on reattachment. Geometry
-history is bounded to 256 boundaries within the retained output window; expiration
-uses the existing history-gap notice. Engines without grid metadata retain the
-original output contract.
+Input is pipelined over the stream without a remote round trip per chunk. Text
+and binary mouse input share one bounded, ordered queue. No input is retried.
+Unknown outcomes clear pending data and require explicit **Resume typing**;
+this also applies when hiding a view with unacknowledged input. Reconnect uses a
+new attachment and input sequence, and only resumes confirmed output. One focused
+view owns input/resize when several windows display the same PTY.
 
-Integrated shells support local input prediction through an optional
-`inputPreview.prompt` output field. The backend grants it only at an authenticated
-shell prompt, on the final output page, and revokes it on submission, control
-input, command start, integration disable or process exit. The renderer consumes
-each prompt grant once; delayed pre-submission replies cannot reenable prediction.
-A new grant racing with user input is discarded. New grants require an output
-read started after earlier input acknowledgements, since reads and input requests
-can travel independently. Older engines and plain shells continue to display
-only remote echo.
+The backend worker retains confirmed screen state independently of the view and
+answers terminal queries even while hidden. Cursor recovery uses incremental
+history when available, otherwise a bounded serialized checkpoint plus subsequent
+output. Snapshot application disables input/replies; live views suppress queries
+already answered by the server. The public serializer and incomplete-sequence
+suffix preserve supported terminal state across reattachment. See the
+[stream architecture, security, flow control and budgets](../../../../backend/src/user-terminal/stream/README.md).
 
-`TerminalLocalEcho` owns a transient, inaccessible overlay above xterm's cells.
-Ordinary ASCII typing and end-of-line backspace appear immediately while the
-existing bounded queue sends input in order. Confirmed server screen/cursor states
-retire predictions, including coalesced echoes and ANSI shell redraws. Predictions
-never enter the authoritative buffer, history, selection, search or agent context.
-Input acknowledgements wake output polling without the usual idle polling delay.
-No input is retried or replayed.
+Resize is fit-to-container, frame-coalesced and single-flight. Predictions roll
+back and finish drawing before resize/reflow. Output carries its producing grid;
+historical resizes never reach the PTY. Initial creation supplies font-measured
+geometry when available. Windows replies carry validated ConPTY metadata.
+Visible and headless emulators both use the official Unicode 11 addon.
 
-Prediction is intentionally conservative: Enter, editing/history/control keys,
-bracketed paste, Unicode input, line wrapping, shell suggestions to the right,
-alternate screens and mouse-tracking applications use remote echo. It stops on
-unexpected output, selection, focus loss, scrolling, resize, detach, disabled
-input, transport failure or five seconds without confirmation. At most 256 edits
-are retained. It resumes at a fresh authenticated prompt; command output and
-password/program input always remain server controlled. This improves shell
-typing latency without changing the remote line editor or terminal protocol.
-The reusable `terminal-local-echo.mjs` capture scenario exercises trusted typing,
-partial echoes, deletion and password transitions on the terminal preview.
+`TerminalLocalEcho` maintains a bounded reversible prediction timeline through
+xterm's renderer. There is no DOM text overlay. The public serialization addon
+saves the affected row and current drawing attributes, which are restored before
+real output in the same xterm write. Matching screen/cursor states retire edits;
+mismatches roll back and wait for a fresh authenticated prompt. Empty output and
+input acknowledgements cannot confirm speculative characters.
+
+Auto prediction requires a confirmed echo in the current prompt, at least four
+samples, 80% accuracy and median echo latency of at least 30 ms. It supports
+single-row ASCII insertion/deletion, backspace, CSI/SS3 arrows, Home/End and common
+line/word deletion keys. Enter, history/completion keys, bracketed paste, IME,
+Unicode widths, wrapping and alternate/mouse-tracking applications retain normal
+server echo. These limitations affect prediction, not terminal input support.
+Pending prediction expires after five seconds or 256 edits and stops on detach,
+scrolling away, resize, transport failure or disabled input. New prompt grants
+must not race with queued/unacknowledged input or later user edits.
+
+Copy and search follow visible text, including tentative characters. **Ask the
+agent** uses only bounded confirmed backend context (80 lines/8,000 characters);
+older engines roll back predictions before collecting local context. No prompt
+is sent automatically. Prediction can be switched between **Auto** and **Off**.
+
+**Terminal settings** stores the user's default/custom shell profile per machine
+in a private, atomic file under desktop application data. Executable, literal
+argument arrays, environment overrides/removals and POSIX login mode apply to new
+shells. Shells use explicit argument arrays in the resolved task directory.
+Profiles with startup arguments/login mode bypass injected hooks so the user's
+initialization wins; ordinary supported shells retain optional integration.
+Engine capability variables are not inherited by desktop shells. Settings do not
+mutate existing PTYs or write into task checkouts. Script discovery still reads
+one confined root manifest (256 KiB/100 scripts), with its bounded cache.
 
 ANSI is rendered by the installed xterm 6 adapter, loaded lazily. Its matching
 WebGL addon draws Powerline caps/separators, box drawing and blocks to cell edges,
@@ -220,7 +225,7 @@ picker is not part of this slice. Scripts rerun by their rediscovered ID. Reads 
 bar uses Fold; ViewTabs retains its existing motion, and initial history stays
 still. Failed processes retain output until close.
 
-Ask the agent adds the command, exit code and last 80 rendered lines (8,000
+Ask the agent adds the command, exit code and last 80 confirmed lines (8,000
 characters) to the selected conversation's existing composer draft. Existing
 writing is preserved. It restores chat focus and never sends a prompt. Archived
 conversations cannot receive this action.

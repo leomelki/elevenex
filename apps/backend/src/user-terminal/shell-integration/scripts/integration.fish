@@ -48,6 +48,16 @@ function _elevenex_user_ready --on-event fish_prompt
     if test (string length -- "$directory") -gt 8192
         set directory ''
     end
-    builtin printf '\e]133;P;__ELEVENEX_TOKEN__;%s\a\e]133;B;__ELEVENEX_TOKEN__\a' (_elevenex_user_escape "$directory" | string collect --allow-empty)
+    builtin printf '\e]133;P;__ELEVENEX_TOKEN__;%s\a' (_elevenex_user_escape "$directory" | string collect --allow-empty)
     return $result
+end
+# A fish_prompt event precedes rendering. Wrap the existing prompt without
+# replacing its editing/history policy, and grant input only after it returns.
+if functions --copy fish_prompt _elevenex_user_original_prompt
+    function fish_prompt
+        _elevenex_user_original_prompt
+        set -l result $status
+        builtin printf '\e]133;B;__ELEVENEX_TOKEN__\a'
+        return $result
+    end
 end

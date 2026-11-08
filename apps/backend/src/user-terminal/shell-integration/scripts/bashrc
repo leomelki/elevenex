@@ -55,7 +55,12 @@ _elevenex_user_ready() {
   if (( ${#directory} > 8192 )); then directory=''; fi
   directory=${directory//\\/\\\\}
   directory=${directory//;/\\x3b}
-  builtin printf '\033]133;P;__ELEVENEX_TOKEN__;%s\007\033]133;B;__ELEVENEX_TOKEN__\007' "$directory"
+  builtin printf '\033]133;P;__ELEVENEX_TOKEN__;%s\007' "$directory"
+  # Prompt hooks run before PS1 is drawn. The input grant must be the last
+  # nonprinting bytes of the actual prompt, even with fragmented PTY delivery.
+  local marker=$'\\[\033]133;B;__ELEVENEX_TOKEN__\007\\]'
+  PS1="${PS1%"$marker"}$marker"
+  export -n PS1
   return "$result"
 }
 

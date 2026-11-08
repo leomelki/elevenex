@@ -141,6 +141,15 @@ function checkUpload(invoke: <K extends keyof import('@elevenex/shared').InvokeC
 void checkUpload;
 
 function checkTerminals(invoke: import('@elevenex/shared').Invoke) {
+  void invoke('task-terminal:attach', 'scope', { taskId: 1, terminalId: 2, attachmentId: 'attachment', generation: null, after: 0 });
+  // @ts-expect-error Terminal streams require a window-bound attachment, not a socket URL.
+  void invoke('task-terminal:attach', 'scope', { url: 'ws://other-host' });
+  // @ts-expect-error Output credits require an attachment and a committed delivery ID.
+  void invoke('task-terminal:stream-ack', 'scope', { taskId: 1, terminalId: 2, after: 0 });
+  // @ts-expect-error Stream writes distinguish text and binary input explicitly.
+  void invoke('task-terminal:stream-write', 'scope', { taskId: 1, terminalId: 2, attachmentId: 'attachment', generation: 'generation', sequence: 1, data: 'input' });
+  // @ts-expect-error A profile is executable plus literal arguments, never a generic shell command.
+  void invoke('task-terminal:save-preferences', 'scope', { prediction: 'auto', profile: { command: 'anything' } });
   void invoke('task-terminal:create', 'scope', { taskId: 1, shellIntegration: false });
   // @ts-expect-error Shell integration is a bounded boolean, not a script or command.
   void invoke('task-terminal:create', 'scope', { taskId: 1, shellIntegration: 'source ~/.zshrc' });

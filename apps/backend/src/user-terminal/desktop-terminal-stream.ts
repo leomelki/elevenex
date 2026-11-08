@@ -9,11 +9,20 @@ import {
 } from './terminal-output-events.js';
 import type { ShellIntegrationState } from './desktop-shell-integration.js';
 import { TerminalServices } from './ports/terminal-services.js';
+import type { TerminalLaunchOptions } from './terminal-launch.js';
 
 export const DESKTOP_TERMINAL_INITIAL_SIZE = { cols: 80, rows: 24 } as const;
 
 /** Bounded process-owned stream. Character offsets use JS UTF-16 on both ends. */
 export class DesktopTerminalStream {
+  private readonly listeners = new Set<() => void>();
+  /** New clients delegate protocol replies to the authoritative screen model. */
+  protocolOwned = false;
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+  changed(): void { for (const listener of this.listeners) listener(); }
   readonly generation = randomUUID();
   readonly tracking = new TerminalCommandTracker();
   private readonly output = new TerminalOutputBuffer(256 * 1024);
@@ -90,6 +99,7 @@ export class DesktopTerminalStream {
       cmd: string;
     } | null = null,
     promptToken: string | null = null,
+    readonly launch: TerminalLaunchOptions = {},
   ) {
     this.command = script?.cmd ?? '';
     this.events = new TerminalOutputEvents(promptToken);
@@ -100,6 +110,7 @@ export class DesktopTerminalStream {
     this.output.append(data);
     this.trimSizes();
     this.events.append(data, (event) => this.outputEvent(event));
+    this.changed();
   }
   private outputEvent(event: TerminalOutputEvent): void {
     if (this.processExited) return;
@@ -177,6 +188,7 @@ export class DesktopTerminalStream {
     if (last.at === size.at) this.sizes[this.sizes.length - 1] = size;
     else this.sizes.push(size);
     this.trimSizes();
+    this.changed();
   }
   private trimSizes(): void {
     const first = Math.max(0, this.sequence - 256 * 1024);
@@ -191,7 +203,8 @@ export class DesktopTerminalStream {
   input(data: string): void {
     // Only a shell-authenticated prompt can authorize prediction. Submission,
     // history/editing keys, paste framing and program input revoke that grant.
-    if (/[^\x20-\x7e\x7f\x08]/.test(data)) this.previewPrompt = undefined;
+    const editing = data.replace(/\x1b(?:\[[DCFH]|O[DCFH]|\[[13478]~)/g, '').replace(/[\x01\x05\x15\x17]/g, '');
+    if (/[^\x20-\x7e\x7f\x08]/.test(editing)) this.previewPrompt = undefined;
     // An unfinished/edited prompt must never receive an injected rerun. We only
     // invalidate readiness here; command text comes exclusively from shell hooks.
     if (data) {
@@ -219,6 +232,7 @@ export class DesktopTerminalStream {
     this.exitCode = Math.max(0, Math.min(255, code));
     this.services.clear();
     this.commandStatus = code ? 'failed' : 'exited';
+    this.changed();
   }
   get canRerun(): boolean {
     return (
@@ -232,14 +246,13 @@ export class DesktopTerminalStream {
     return this.canRerun && !this.script ? this.rerunCommand + '\r' : null;
   }
   read(generation: string | null, after: number) {
-    const data = this.output.snapshot();
-    const bufferFirst = this.sequence - data.length;
+    const bufferFirst = this.sequence - this.output.size;
     const first = Math.max(bufferFirst, this.sizes[0].at);
     const gap =
       generation !== this.generation || after < first || after > this.sequence;
     let from = gap ? first : after;
     // Do not split a surrogate pair at a response boundary.
-    if (from > first && /[\uDC00-\uDFFF]/.test(data[from - bufferFirst] ?? ''))
+    if (from > first && /[\uDC00-\uDFFF]/.test(this.output.read(from - bufferFirst, 1)))
       from--;
     const index = this.sizes.findIndex((size) => size.at > from);
     const size = this.sizes[index < 0 ? this.sizes.length - 1 : index - 1];
@@ -250,14 +263,14 @@ export class DesktopTerminalStream {
     );
     if (
       next < this.sequence &&
-      /[\uDC00-\uDFFF]/.test(data[next - bufferFirst] ?? '')
+      /[\uDC00-\uDFFF]/.test(this.output.read(next - bufferFirst, 1))
     )
       next--;
     return {
       generation: this.generation,
       from,
       next,
-      data: data.slice(from - bufferFirst, next - bufferFirst),
+      data: this.output.read(from - bufferFirst, next - from),
       gap,
       more: next < this.sequence,
       size: { cols: size.cols, rows: size.rows },

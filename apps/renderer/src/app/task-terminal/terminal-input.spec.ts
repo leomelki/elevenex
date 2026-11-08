@@ -46,7 +46,7 @@ describe("User terminal input ownership", () => {
     expect(failed).toHaveBeenCalled();
     queue.resume();
     queue.push("new");
-    await vi.waitFor(() => expect(send).toHaveBeenLastCalledWith("new", target));
+    await vi.waitFor(() => expect(send).toHaveBeenLastCalledWith("new", target, "text"));
     queue.dispose();
   });
   it("clears pending input when the connection generation changes during a dispatch", async () => {
@@ -107,11 +107,11 @@ it("discards the rest of a paste on process replacement and binds new typing exp
   await Promise.resolve();
   await Promise.resolve();
   expect(queue.blocked).toBe(true);
-  expect(send).toHaveBeenCalledExactlyOnceWith("x".repeat(4096), target);
+  expect(send).toHaveBeenCalledExactlyOnceWith("x".repeat(4096), target, "text");
   queue.push("discarded");
   queue.resume();
   queue.push("new");
-  await vi.waitFor(() => expect(send).toHaveBeenLastCalledWith("new", replacement));
+  await vi.waitFor(() => expect(send).toHaveBeenLastCalledWith("new", replacement, "text"));
   resolve(true);
   queue.dispose();
 });

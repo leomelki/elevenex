@@ -69,6 +69,14 @@ environment and disables hooks when set in a sourced user rc. The explicit
 plain-shell create option bypasses preparation entirely. Pending state times out
 only for display; it never kills or relaunches a slow shell.
 
+Prompt-ready markers belong at the end of the rendered prompt, not merely in a
+pre-prompt hook. Bash/zsh append a nonprinting marker after user prompt hooks;
+fish wraps its existing prompt, and PowerShell appends after its prompt text.
+A missing/unsupported prompt wrapper may reduce metadata/prediction but never
+blocks PTY input. Editing-key prediction is optional and still requires a confirmed
+echo in each prompt epoch. A prompt grant is not a guarantee about arbitrary
+user-defined shell widgets or echo policy.
+
 ## Command metadata and navigation
 
 `TerminalCommandTracker` owns one running record and immutable completed records,

@@ -14,6 +14,8 @@ import * as path from 'node:path';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { assertWorkspaceCanExecute } from '../workspaces/workspace-ownership.js';
+import { release } from 'node:os';
+import { parseTerminalLaunch } from './terminal-launch.js';
 import { UserTerminalService } from './user-terminal.service.js';
 import { UserPtyManager } from './user-pty-manager.service.js';
 
@@ -182,6 +184,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
       commandTracking: true as const,
       branch: task.taskBranch ?? '',
       alive: this.ptys.isAlive(terminal.id),
+      ...(process.platform === 'win32' ? { windowsPty: { backend: 'conpty' as const, buildNumber: Number(release().split('.')[2]) || 0 } } : {}),
       generation: stream?.generation ?? null,
       sequence: stream?.sequence ?? 0,
       status: stream?.status ?? 'unavailable',
@@ -268,6 +271,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
       scripts: scripts.map(({ id, name, cmd }) => ({ id, name, cmd })),
       limit: 16,
       shellIntegrationControl: true,
+      ...(this.ptys.screens.supported ? { streamVersion: 1 as const } : {}),
     };
   }
   create(taskId: number, value: unknown) {
@@ -279,7 +283,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
     const input = terminalObject(value);
     if (
       Object.keys(input).some(
-        (key) => !['scriptId', 'owner', 'shellIntegration'].includes(key),
+        (key) => !['scriptId', 'owner', 'shellIntegration', 'size', 'profile', 'protocol'].includes(key),
       ) ||
       (input.shellIntegration !== undefined &&
         typeof input.shellIntegration !== 'boolean') ||
@@ -287,6 +291,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
         (typeof input.scriptId !== 'string' || input.scriptId.length > 100))
     )
       throw new BadRequestException('Invalid terminal launch');
+    const launch = parseTerminalLaunch(input);
     const owner =
       input.owner === undefined ? this.engineOwner : generation(input.owner);
     if (this.closingOwners.has(owner))
@@ -320,6 +325,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
       const terminal = await this.terminals.create({
         worktreePath: task.path,
         desktopOwner: owner,
+        ...(launch.profile && !script ? { shell: launch.profile.executable } : {}),
         ...(script ? { name: script.name } : {}),
       });
       id = terminal.id;
@@ -340,6 +346,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
         script ?? null,
         fence,
         input.shellIntegration !== false,
+        launch,
       );
       const final = await this.task(taskId, true);
       if (final.path !== latest.path)
@@ -379,6 +386,27 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
             more: false,
           }),
     };
+  }
+  /** Authorize once for observing this exact process. Writes still revalidate
+   * durable task ownership through command(), including after queued work. */
+  async attach(taskId: number, id: number) {
+    let { task, terminal } = await this.owned(taskId, id);
+    const stream = this.ptys.desktopStream(id);
+    if (!terminal.desktopOwner || !stream || !this.ptys.screens.available)
+      throw new ConflictException('Terminal screen is unavailable');
+    stream.protocolOwned = true;
+    return {
+      stream,
+      read: (gen: string | null, after: number) => ({ terminal: this.view(task, terminal), ...stream.read(gen, after) }),
+      snapshot: () => this.ptys.screens.snapshot(id),
+      refresh: async () => { const latest = await this.owned(taskId, id); task = latest.task; terminal = latest.terminal; },
+      current: () => this.ptys.desktopStream(id) === stream && this.ptys.screens.available,
+    };
+  }
+  async context(taskId: number, id: number, gen: unknown): Promise<string> {
+    await this.owned(taskId, id);
+    if (this.ptys.desktopStream(id)?.generation !== generation(gen)) throw new ConflictException('Terminal process changed');
+    return this.ptys.screens.context(id);
   }
   async service(taskId: number, id: number, gen: unknown, port: unknown) {
     const expected = generation(gen);
@@ -435,6 +463,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
     const type = input.type;
     const keys: Record<string, string[]> = {
       input: ['type', 'generation', 'data'],
+      binary: ['type', 'generation', 'data'],
       resize: ['type', 'generation', 'cols', 'rows'],
       interrupt: ['type', 'generation'],
       rerun: ['type', 'generation'],
@@ -487,6 +516,8 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
         terminal.shell,
         script,
         fence + 1,
+        true,
+        stream.launch,
       );
       try {
         const final = await this.owned(taskId, id, true);
@@ -502,14 +533,17 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
     } else {
       if (!this.ptys.isAlive(id))
         throw new ConflictException('Terminal has exited');
-      if (type === 'input') {
+      if (type === 'input' || type === 'binary') {
         if (
           typeof input.data !== 'string' ||
           !input.data ||
           Buffer.byteLength(input.data) > 32768
         )
           throw new BadRequestException('Invalid terminal input');
-        this.ptys.write(id, input.data);
+        if (type === 'binary') {
+          if (/[^\x00-\xff]/.test(input.data)) throw new BadRequestException('Invalid binary terminal input');
+          this.ptys.writeBinary(id, input.data);
+        } else this.ptys.write(id, input.data);
       } else if (type === 'resize') {
         if (
           typeof input.cols !== 'number' ||

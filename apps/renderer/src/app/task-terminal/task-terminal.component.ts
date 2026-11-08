@@ -14,7 +14,7 @@ import {
   untracked,
   viewChild,
 } from "@angular/core";
-import type { TaskTerminal, TerminalBrowserIntent } from "@elevenex/shared";
+import type { TaskTerminal, TerminalBrowserIntent, TaskTerminalPreferences } from "@elevenex/shared";
 import { TerminalViewComponent, type TerminalTab } from "../views";
 import { ButtonComponent, IconComponent, DropdownMenuComponent, DropdownItemComponent } from "../ui";
 import {
@@ -23,6 +23,9 @@ import {
 } from "./task-terminal.store";
 import { TerminalInputQueue } from "./terminal-input";
 import type { TerminalSurface } from "./terminal-surface";
+import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
+import { TerminalStreamAttachment } from './terminal-stream-attachment';
+import { TerminalPreferencesComponent } from './terminal-preferences.component';
 
 interface SurfaceEntry {
   readonly surface: TerminalSurface;
@@ -35,6 +38,9 @@ interface SurfaceEntry {
   outputRequested?: boolean;
   desiredSize?: { cols: number; rows: number };
   size?: string;
+  stream?: TerminalStreamAttachment;
+  streamReady?: boolean;
+  retries?: number;
 }
 export interface TerminalQuestion {
   readonly scopeId: string;
@@ -53,7 +59,7 @@ export interface TerminalBrowserState {
 @Component({
   selector: "ex-task-terminal",
   providers: [TaskTerminalStore],
-  imports: [TerminalViewComponent, ButtonComponent, IconComponent, DropdownMenuComponent, DropdownItemComponent, CdkMenuTrigger],
+  imports: [TerminalViewComponent, ButtonComponent, IconComponent, DropdownMenuComponent, DropdownItemComponent, CdkMenuTrigger, TerminalPreferencesComponent],
   templateUrl: "./task-terminal.component.html",
   styleUrl: "./task-terminal.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -73,6 +79,7 @@ export class TaskTerminalComponent {
   readonly lastClosed = output<void>();
   readonly store = inject(TaskTerminalStore);
   private readonly styles = inject(TerminalStylePolicy);
+  private readonly bridge = inject(ELEVENEX_BRIDGE);
   private focusOnAttach = false;
   private readonly host = viewChild<ElementRef<HTMLElement>>("surface");
   private readonly optionsMenu = viewChild(CdkMenuTrigger);
@@ -89,7 +96,16 @@ export class TaskTerminalComponent {
   readonly inputBlocked = signal(false);
   readonly searchResult = signal("");
   readonly searchMatches = signal<number | null>(null);
+  readonly preferences = signal<TaskTerminalPreferences>({ profile: null, prediction: 'auto' });
+  readonly prediction = computed(() => this.preferences().prediction === 'auto');
+  readonly settingsOpen = signal(false);
+  readonly settingsBusy = signal(false);
+  readonly settingsError = signal('');
+  private settingsScope = '';
+  private preferencesRead?: Promise<void>;
+  private preferencesRevision = 0;
   readonly current = this.store.current;
+  private readonly protocolVersion = computed(() => this.store.snapshot()?.streamVersion);
   readonly tabs = computed<readonly TerminalTab[]>(() =>
     (this.store.snapshot()?.terminals ?? []).map((row) => {
       const title = row.activityTitle ?? row.title;
@@ -127,6 +143,14 @@ export class TaskTerminalComponent {
       this.store.loading(),
   );
   constructor() {
+    afterRenderEffect(() => {
+      const scope = this.store.selection()?.scopeId ?? '';
+      if (scope === this.settingsScope) return;
+      this.settingsScope = scope; this.settingsOpen.set(false);
+      this.settingsBusy.set(false); this.settingsError.set('');
+      this.preferences.set({ profile: null, prediction: 'auto' });
+      if (scope) untracked(() => { this.preferencesRead = this.loadPreferences(scope); });
+    });
     afterRenderEffect(() => {
       this.visible(); this.available(); this.store.selection();
       const menu = this.optionsMenu();
@@ -176,6 +200,7 @@ export class TaskTerminalComponent {
         host = this.host()?.nativeElement;
       this.store.connected();
       this.available();
+      this.protocolVersion();
       const terminal = untracked(this.current);
       this.stopAttachment();
       if (id && selection && terminal && visible && host)
@@ -212,6 +237,12 @@ export class TaskTerminalComponent {
     this.revision++;
     clearTimeout(this.timer);
     if (this.attached) {
+      this.store.markSeen(this.attached.terminal.id, this.attached.surface.sequence);
+      if (this.attached.stream) {
+        if (this.attached.stream.uncertain) this.attached.input.interrupt('Input may have been interrupted. Inspect the terminal, then resume typing.');
+        this.attached.reading = this.attached.stream.settled();
+        this.attached.stream.dispose(); this.attached.stream = undefined;
+      }
       this.attached.input.reconnect();
       this.attached.desiredSize = undefined;
       this.attached.size = undefined;
@@ -247,9 +278,20 @@ export class TaskTerminalComponent {
           }
         },
         () => this.styles.retain(),
+        {
+          binary: data => {
+            const active = this.surfaces.get(key);
+            if (active && active === this.attached && active.stream && this.canType(active)) active.input.push(data, 'binary');
+          },
+          focused: () => this.surfaces.get(key)?.stream?.focus(),
+        },
       );
       const input = new TerminalInputQueue(
-        async (data, target) => {
+        async (data, target, kind) => {
+          const entry = this.surfaces.get(key);
+          if (entry && (entry.target.scopeId !== target.scopeId || entry.target.taskId !== target.taskId)) return false;
+          if (entry?.stream) return entry.stream.input(data, target.generation, kind);
+          if (kind === 'binary') return false;
           const reply = await this.store.input(
             target,
             target.terminalId,
@@ -308,12 +350,50 @@ export class TaskTerminalComponent {
     this.notice.set(entry.notice);
     this.inputBlocked.set(entry.input.blocked);
     entry.surface.attach(host, this.canType(entry), true);
+    entry.surface.terminal.options.windowsPty = terminal.windowsPty;
+    entry.surface.localEcho.setEnabled(this.prediction());
     if (this.focusOnAttach && this.available()) {
       this.focusOnAttach = false;
       entry.surface.focus();
     }
-    if (this.store.connected() && this.available())
-      void this.pump(entry, revision);
+    if (this.store.connected() && this.available()) {
+      if (this.store.snapshot()?.streamVersion === 1) void this.startStream(entry, revision);
+      else { entry.surface.setServerProtocol(false); void this.pump(entry, revision); }
+    }
+  }
+  private async startStream(entry: SurfaceEntry, revision: number): Promise<void> {
+    await entry.reading;
+    if (this.disposed || revision !== this.revision || entry !== this.attached) return;
+    const stream = new TerminalStreamAttachment(this.bridge, entry.target.scopeId, {
+      taskId: entry.target.taskId, terminalId: entry.terminal.id, generation: entry.surface.generation, after: entry.surface.sequence,
+    }, entry.surface, {
+      inputIdle: () => entry.input.idle,
+      terminal: terminal => {
+        if (entry !== this.attached || revision !== this.revision) return;
+        entry.terminal = terminal;
+        entry.surface.terminal.options.windowsPty = terminal.windowsPty;
+        if (terminal.generation) entry.input.bind({ ...entry.target, terminalId: terminal.id, generation: terminal.generation });
+        this.store.acceptStreamTerminal(entry.target, terminal);
+      },
+      metadata: value => this.store.acceptStreamMetadata(entry.target, value),
+      changed: () => {
+        if (entry !== this.attached || revision !== this.revision) return;
+        entry.surface.setEnabled(this.canType(entry));
+        if (stream.ready && !entry.streamReady) { entry.size = undefined; entry.retries = 0; entry.surface.fit(); }
+        entry.streamReady = stream.ready;
+      },
+      interrupted: (message, uncertain) => {
+        if (entry !== this.attached || revision !== this.revision) return;
+        if (uncertain) entry.input.interrupt(message);
+        else { entry.input.reconnect(); entry.notice = message; this.notice.set(message); }
+        entry.surface.setEnabled(false);
+        void this.store.refresh();
+        this.timer = setTimeout(() => void this.startStream(entry, revision), Math.min(15000, 500 * 2 ** Math.min(5, entry.retries ?? 0)));
+        entry.retries = (entry.retries ?? 0) + 1;
+      },
+    });
+    entry.stream = stream;
+    await stream.start();
   }
   private canType(entry: SurfaceEntry): boolean {
     return (
@@ -321,6 +401,7 @@ export class TaskTerminalComponent {
       this.store.connected() &&
       entry.terminal.alive &&
       !!entry.terminal.generation &&
+      (this.store.snapshot()?.streamVersion !== 1 || entry.stream?.ready === true) &&
       !entry.input.blocked
     );
   }
@@ -377,7 +458,7 @@ export class TaskTerminalComponent {
       entry.surface.generation = reply.generation;
       entry.surface.sequence = reply.next;
       if (this.disposed || revision !== this.revision) return;
-      entry.surface.localEcho.reconcile(reply.inputPreview?.prompt, inputRevision, inputIdle);
+      entry.surface.localEcho.reconcile(reply.inputPreview?.prompt, inputRevision, inputIdle, reply.data.length > 0);
       this.store.markSeen(entry.terminal.id, reply.next);
       entry.surface.setEnabled(this.canType(entry));
       more = reply.more;
@@ -403,7 +484,8 @@ export class TaskTerminalComponent {
         entry.desiredSize = undefined;
         const key = `${entry.target.scopeId}:${entry.terminal.generation}:${size.cols}:${size.rows}`;
         if (key === entry.size) continue;
-        await this.store.resize(
+        if (entry.stream) await entry.stream.resize(size.cols, size.rows);
+        else await this.store.resize(
           entry.target,
           entry.terminal.id,
           entry.terminal.generation,
@@ -427,7 +509,16 @@ export class TaskTerminalComponent {
   }
   async create(scriptId?: string, shellIntegration = true): Promise<void> {
     this.focusOnAttach = true;
-    await this.store.create(scriptId, shellIntegration);
+    const target = this.store.selection(), host = this.host()?.nativeElement;
+    let size;
+    if (host && this.store.snapshot()?.streamVersion === 1) {
+      await this.preferencesRead;
+      const { prepareTerminalFonts, initialTerminalSize } = await import('./terminal-surface');
+      await prepareTerminalFonts();
+      if (this.disposed || target?.scopeId !== this.store.selection()?.scopeId || target?.taskId !== this.store.selection()?.taskId) return;
+      size = initialTerminalSize(host);
+    }
+    await this.store.create(scriptId, shellIntegration, size, this.preferences().profile ?? undefined);
     requestAnimationFrame(() => this.attached?.surface.focus());
   }
   private async open(signal: AbortSignal): Promise<void> {
@@ -471,17 +562,57 @@ export class TaskTerminalComponent {
         : "",
     );
   }
-  ask(): void {
+  async ask(): Promise<void> {
     const row = this.current(),
       entry = this.attached;
     if (!row || !entry || !this.askAvailable() || row.exitCode === null) return;
+    const scope = entry.target.scopeId;
+    let output: string;
+    if (entry.stream && row.generation) {
+      const reply = await this.bridge.taskTerminalContext(entry.target.scopeId, { taskId: row.taskId, terminalId: row.id, generation: row.generation });
+      if (!reply.ok || entry !== this.attached || entry.target.scopeId !== scope || this.current()?.generation !== row.generation || !this.askAvailable()) return;
+      output = reply.value;
+    } else {
+      entry.surface.localEcho.suspend();
+      await entry.surface.write('\x00');
+      if (entry !== this.attached) return;
+      output = entry.surface.context();
+    }
     this.question.emit({
       scopeId: entry.target.scopeId,
       taskId: row.taskId,
       command: row.command || row.title,
       code: row.exitCode,
-      output: entry.surface.context(),
+      output,
     });
+  }
+  togglePrediction(): void {
+    void this.savePreferences({ ...this.preferences(), prediction: this.prediction() ? 'off' : 'auto' });
+  }
+  private async loadPreferences(scope: string): Promise<void> {
+    const revision = this.preferencesRevision;
+    let reply;
+    try { reply = await this.bridge.taskTerminalPreferences(scope); } catch { return; }
+    if (this.settingsScope !== scope || this.disposed || revision !== this.preferencesRevision) return;
+    if (reply?.ok) {
+      this.preferences.set(reply.value);
+      for (const entry of this.surfaces.values()) entry.surface.localEcho.setEnabled(this.prediction());
+    }
+  }
+  async savePreferences(value: TaskTerminalPreferences): Promise<void> {
+    const scope = this.settingsScope;
+    if (!scope || this.settingsBusy()) return;
+    this.preferencesRevision++;
+    this.settingsBusy.set(true); this.settingsError.set('');
+    try {
+      const reply = await this.bridge.taskTerminalSavePreferences(scope, value);
+      if (this.settingsScope !== scope || this.disposed) return;
+      if (!reply.ok) { this.settingsError.set(reply.error.message); return; }
+      this.preferences.set(value);
+      for (const entry of this.surfaces.values()) entry.surface.localEcho.setEnabled(this.prediction());
+      this.settingsOpen.set(false);
+    } catch { if (this.settingsScope === scope) this.settingsError.set('Terminal settings could not be saved.'); }
+    finally { if (this.settingsScope === scope) this.settingsBusy.set(false); }
   }
   openPort(port: number): void {
     const target = this.selection(),

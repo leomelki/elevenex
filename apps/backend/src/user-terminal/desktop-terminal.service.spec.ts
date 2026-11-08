@@ -81,6 +81,29 @@ describe('Desktop task terminals with real PTYs', () => {
     db.sqlite.close();
     await rm(root, { recursive: true, force: true });
   });
+  it('honors literal shell profiles, initial geometry and environment removals without leaking desktop capabilities', async () => {
+    const saved = process.env.ELEVENEX_CODE_ACCESS; process.env.ELEVENEX_CODE_ACCESS = 'private-capability';
+    try {
+      const terminal = await service.create(task, { protocol: 1, size: { cols: 37, rows: 9 }, profile: {
+        executable: '/bin/sh', args: ['-i'], env: { TERMINAL_CUSTOM: 'literal $(value)' }, login: false,
+      } });
+      ids.push(terminal.id);
+      expect((await service.read(task, terminal.id, null, 0)).size).toEqual({ cols: 37, rows: 9 });
+      await service.command(task, terminal.id, { type: 'input', generation: terminal.generation,
+        data: 'printf \'PROFILE=%s CAP=%s\\n\' "$TERMINAL_CUSTOM" "${ELEVENEX_CODE_ACCESS-unset}"\r' });
+      await waitFor(async () => (await service.read(task, terminal.id, null, 0)).data.includes('PROFILE=literal $(value) CAP=unset'));
+      await service.close(task, terminal.id);
+    } finally { if (saved === undefined) delete process.env.ELEVENEX_CODE_ACCESS; else process.env.ELEVENEX_CODE_ACCESS = saved; }
+  });
+  it('answers live terminal queries without an attached renderer and retains confirmed context after exit', async () => {
+    const script = "process.stdin.setRawMode(true);process.stdin.once('data',data=>process.stdout.write('reply='+data.toString('hex')+'\\n',()=>process.exit(0)));process.stdout.write('\\x1b[6n')";
+    const terminal = await service.create(task, { protocol: 1, profile: { executable: process.execPath, args: ['-e', script], env: {}, login: false } });
+    ids.push(terminal.id);
+    await waitFor(async () => (await service.read(task, terminal.id, null, 0)).data.includes('reply=1b5b313b3152'));
+    await waitFor(() => !ptys.isAlive(terminal.id));
+    expect(await service.context(task, terminal.id, terminal.generation)).toContain('reply=1b5b313b3152');
+    await service.close(task, terminal.id);
+  });
   it('read/list do not create a shell; durable task identity determines the startup cwd', async () => {
     expect((await service.list(task)).terminals).toEqual([]);
     const cwd = join(root, 'moved');

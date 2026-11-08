@@ -45,6 +45,7 @@ export interface TaskTerminal {
   readonly currentCwd?: string | null;
   /** Capability for the separate bounded command metadata read. */
   readonly commandTracking?: true;
+  readonly windowsPty?: { readonly backend: 'conpty'; readonly buildNumber: number };
 }
 export interface TaskTerminalScript {
   readonly id: string;
@@ -57,6 +58,8 @@ export interface TaskTerminalList {
   readonly scripts: readonly TaskTerminalScript[];
   readonly limit: number;
   readonly shellIntegrationControl?: boolean;
+  /** Additive ordered terminal protocol. Older engines retain the HTTP adapter. */
+  readonly streamVersion?: 1;
 }
 export interface TaskTerminalRead extends TaskTerminalTarget {
   readonly generation: string | null;
@@ -87,7 +90,49 @@ export interface TaskTerminalCreate {
   readonly scriptId?: string;
   /** False starts the user's ordinary shell without injecting command hooks. */
   readonly shellIntegration?: boolean;
+  readonly size?: TaskTerminalSize;
+  readonly profile?: TaskTerminalProfile;
+  readonly protocol?: 1;
 }
+/** User-selected shell configuration. Never interpreted by an OS command shell. */
+export interface TaskTerminalProfile {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string | null>>;
+  readonly login: boolean;
+}
+export interface TaskTerminalPreferences {
+  readonly profile: TaskTerminalProfile | null;
+  readonly prediction: 'auto' | 'off';
+}
+
+export interface TaskTerminalAttachment extends TaskTerminalTarget {
+  readonly attachmentId: string;
+}
+export interface TaskTerminalAttach extends TaskTerminalAttachment {
+  readonly generation: string | null;
+  readonly after: number;
+}
+export interface TaskTerminalStreamWrite extends TaskTerminalAttachment {
+  readonly generation: string;
+  readonly sequence: number;
+  readonly kind: 'text' | 'binary';
+  /** Binary input is a bounded latin-1 string, not UTF-8 text. */
+  readonly data: string;
+}
+export type TaskTerminalStreamPacket =
+  | { readonly type: 'output'; readonly delivery: number; readonly output: TaskTerminalOutput }
+  | { readonly type: 'snapshot'; readonly delivery: number; readonly terminal: TaskTerminal;
+      readonly sequence: number; readonly size: TaskTerminalSize; readonly data: string;
+      readonly first: boolean; readonly last: boolean }
+  | { readonly type: 'metadata'; readonly list: TaskTerminalList }
+  | { readonly type: 'input-ack'; readonly sequence: number }
+  | { readonly type: 'control'; readonly writable: boolean }
+  | { readonly type: 'closed'; readonly uncertain: boolean; readonly message: string };
+export type TaskTerminalStreamEvent = TaskTerminalAttachment & {
+  readonly scopeId: string;
+  readonly packet: TaskTerminalStreamPacket;
+};
 export interface TaskTerminalInput extends TaskTerminalTarget {
   readonly generation: string;
   readonly data: string;

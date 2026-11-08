@@ -8,6 +8,7 @@ import { UserTerminalController } from './user-terminal.controller.js';
 import { UserTerminalService } from './user-terminal.service.js';
 import { UserTerminalGateway } from './user-terminal.gateway.js';
 import { UserPtyManager } from './user-pty-manager.service.js';
+import { DesktopTerminalGateway } from './stream/desktop-terminal.gateway.js';
 
 @Module({
   controllers: [
@@ -16,11 +17,12 @@ import { UserPtyManager } from './user-pty-manager.service.js';
     DesktopTerminalOwnerController,
   ],
   providers: [
+    DesktopTerminalGateway,
     DesktopTerminalService,
     UserTerminalService,
     UserTerminalGateway,
     UserPtyManager,
   ],
-  exports: [UserTerminalService, UserTerminalGateway, UserPtyManager],
+  exports: [UserTerminalService, UserTerminalGateway, UserPtyManager, DesktopTerminalGateway],
 })
 export class UserTerminalModule {}

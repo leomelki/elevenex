@@ -12,6 +12,16 @@ const subscribe: Subscribe = (channel, listener) => {
 };
 
 const bridge = Object.freeze<ElevenexBridge>({
+  taskTerminalPreferences: scope => invoke('task-terminal:preferences', scope),
+  taskTerminalSavePreferences: (scope, value) => invoke('task-terminal:save-preferences', scope, value),
+  taskTerminalAttach: (scope, input) => invoke('task-terminal:attach', scope, input),
+  taskTerminalDetach: (scope, input) => invoke('task-terminal:detach', scope, input),
+  taskTerminalStreamWrite: (scope, input) => invoke('task-terminal:stream-write', scope, input),
+  taskTerminalStreamResize: (scope, input) => invoke('task-terminal:stream-resize', scope, input),
+  taskTerminalStreamFocus: (scope, input) => invoke('task-terminal:stream-focus', scope, input),
+  taskTerminalStreamAcknowledge: (scope, input) => invoke('task-terminal:stream-ack', scope, input),
+  taskTerminalContext: (scope, input) => invoke('task-terminal:context', scope, input),
+  onTaskTerminalStream: listener => subscribe('task-terminal:stream', listener),
   onCodeExitRequested: listener => subscribe('code:exit-requested', listener),
   onCodeChanged: listener => subscribe('code:changed', listener),
   codeRecover: target => invoke('code:recover', target),

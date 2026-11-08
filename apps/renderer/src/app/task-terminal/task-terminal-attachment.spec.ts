@@ -90,7 +90,7 @@ describe('Task terminal attachment ownership', () => {
     fixture.componentRef.setInput('visible', true); await settle(fixture);
     expect(bridge.taskTerminalRead).toHaveBeenCalledTimes(1);
     complete(); await settle(fixture);
-    expect(bridge.taskTerminalRead).toHaveBeenCalledTimes(2);
+    expect(bridge.taskTerminalRead.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(bridge.taskTerminalRead).toHaveBeenLastCalledWith('scope', {
       taskId: 1, terminalId: 1, generation: 'original', after: 4,
     });

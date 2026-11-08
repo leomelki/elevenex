@@ -35,6 +35,9 @@ export class DesktopTerminalController {
       after,
     );
   }
+  @Get(':id/context') context(@Param('taskId') task: string, @Param('id') id: string, @Query('generation') gen: string) {
+    return this.service.context(terminalId(task), terminalId(id), gen).then(text => ({ text }));
+  }
   @Get(':id/commands') commands(
     @Param('taskId') task: string,
     @Param('id') id: string,

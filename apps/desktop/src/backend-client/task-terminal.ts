@@ -12,6 +12,7 @@ import type { BackendEndpoint } from './transport';
 import { object, text, integer, generation, keys } from './terminal-validation';
 import { parseTerminalCommands } from './terminal-commands';
 import { parseTerminalServiceAddress } from './terminal-service-address';
+import { terminalProfile } from './terminal-launch-validation';
 export { parseTerminalCommands } from './terminal-commands';
 
 export function parseTaskTerminal(
@@ -57,6 +58,9 @@ export function parseTaskTerminal(
         /[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/.test(activityTitle) ||
         /[\uD800-\uDFFF]/u.test(activityTitle))) throw invalidResponse();
     const currentCwd = value['currentCwd'];
+    const rawPty = value['windowsPty'] === undefined ? undefined : object(value['windowsPty']);
+    if (rawPty && rawPty['backend'] !== 'conpty') throw invalidResponse();
+    const windowsPty = rawPty ? { backend: 'conpty' as const, buildNumber: integer(rawPty['buildNumber']) } : undefined;
     const commandTracking = value['commandTracking'];
     if (commandTracking !== undefined && commandTracking !== true) throw invalidResponse();
     const port =
@@ -76,6 +80,7 @@ export function parseTaskTerminal(
       id,
       taskId,
       alive: value["alive"],
+      ...(windowsPty ? { windowsPty } : {}),
       title: text(value["title"], 120),
       ...(activityTitle === undefined ? {} : { activityTitle }),
       cwd: text(value["cwd"], 8192),
@@ -132,7 +137,9 @@ export function parseTerminalList(
       throw invalidResponse();
     const control = value['shellIntegrationControl'];
     if (control !== undefined && typeof control !== 'boolean') throw invalidResponse();
+    if (value['streamVersion'] !== undefined && value['streamVersion'] !== 1) throw invalidResponse();
     return { taskId: task, terminals, scripts, limit: 16,
+      ...(value['streamVersion'] === 1 ? { streamVersion: 1 as const } : {}),
       ...(control === undefined ? {} : { shellIntegrationControl: control }),
     };
   } catch {
@@ -241,7 +248,11 @@ export function registerTaskTerminalIpc(
     handleForWindow("task-terminal:create", trusted, (window, ...args) => {
       const scopeId = scope(args),
         value = object(args[1]);
-      keys(value, ["taskId", "scriptId", "shellIntegration"]);
+      keys(value, ["taskId", "scriptId", "shellIntegration", 'size', 'profile', 'protocol']);
+      const rawSize = value['size'] === undefined ? undefined : object(value['size']);
+      const size = rawSize ? { cols: integer(rawSize['cols'], 2, 500), rows: integer(rawSize['rows'], 1, 300) } : undefined;
+      const profile = value['profile'] === undefined ? undefined : terminalProfile(value['profile']);
+      if (value['protocol'] !== undefined && value['protocol'] !== 1) throw new Error('Invalid terminal protocol');
       const shellIntegration = value['shellIntegration'];
       if (shellIntegration !== undefined && typeof shellIntegration !== 'boolean')
         throw new Error('Invalid shell integration option');
@@ -264,6 +275,7 @@ export function registerTaskTerminalIpc(
                 path: path(task),
                 method: "POST",
                 body: { ...(script === undefined ? {} : { scriptId: script }),
+                  ...(size ? { size } : {}), ...(profile ? { profile } : {}), ...(value['protocol'] === 1 ? { protocol: 1 } : {}),
                   ...(shellIntegration === undefined ? {} : { shellIntegration }),
                   ...(lifetime ? { owner: lifetime.owner } : {}) },
                 limit: 16384,

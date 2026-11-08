@@ -19,6 +19,7 @@ export interface BackendTarget extends BackendEndpoint {
 }
 
 interface WindowClient {
+  readonly leases: Set<AbortController>;
   state: BackendClientState;
   target: BackendTarget | null;
   operations: Map<
@@ -53,11 +54,13 @@ export class BackendClient {
       state: { revision: 0, scope: null },
       target: null,
       operations: new Map(),
+      leases: new Set(),
     });
     this.refresh(windowId);
   }
 
   detach(windowId: number): void {
+    for (const lease of this.windows.get(windowId)?.leases ?? []) lease.abort();
     this.windows.get(windowId)?.pending?.controller.abort();
     for (const pending of this.windows.get(windowId)?.operations.values() ?? [])
       pending.controller.abort();
@@ -97,6 +100,21 @@ export class BackendClient {
   configurationIdentity(windowId: number, scopeId: string): string | null {
     this.refresh(windowId); const window = this.windows.get(windowId);
     return window?.state.scope?.id === scopeId ? window.target?.configurationIdentity ?? JSON.stringify(window.state.scope.environment) : null;
+  }
+
+  /** Domain transports share HTTP's scope invalidation. Never exposed to preload. */
+  lease(windowId: number, scopeId: string): BackendResult<{
+    readonly endpoint: BackendEndpoint; readonly signal: AbortSignal; release(): void;
+  }> {
+    this.refresh(windowId);
+    const window = this.windows.get(windowId);
+    if (!window?.target || !window.state.scope) return unavailable();
+    if (window.state.scope.id !== scopeId) return stale();
+    if (window.leases.size >= 8) return { ok: false, error: { code: 'unavailable', message: 'Too many active backend streams.' } };
+    const controller = new AbortController(); window.leases.add(controller);
+    return { ok: true, value: { endpoint: window.target, signal: controller.signal,
+      release: () => { window.leases.delete(controller); controller.abort(); },
+    } };
   }
 
   info(windowId: number, scopeId: string): Promise<BackendResult<BackendInfo>> {
@@ -244,6 +262,8 @@ export class BackendClient {
     window: WindowClient,
     target: BackendTarget | null,
   ): void {
+    for (const lease of window.leases) lease.abort();
+    window.leases.clear();
     for (const pending of window.operations.values())
       pending.controller.abort();
     window.operations.clear();

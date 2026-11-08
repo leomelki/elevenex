@@ -30,6 +30,8 @@ import { execFileQuiet } from '../terminal/async-process.js';
 import { shouldUseTmux } from '../config/backend-runtime-mode.js';
 import { terminatePtyAndWait } from '../terminal/pty-termination.js';
 import { TerminalPortDiscovery } from './ports/terminal-port-discovery.js';
+import { TerminalScreenHost } from './screen/terminal-screen-host.js';
+import type { TerminalLaunchOptions } from './terminal-launch.js';
 
 const TMUX_SESSION_PREFIX = 'elevenex-uterm';
 
@@ -54,6 +56,7 @@ interface TmuxResizeState {
 
 @Injectable()
 export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
+  readonly screens = new TerminalScreenHost(undefined, () => { for (const stream of this.desktopStreams.values()) stream.changed(); });
   private shuttingDown = false;
   // Metadata remains until explicit close. No attachment can create/restart a desktop shell.
   private readonly desktopStreams = new Map<number, DesktopTerminalStream>();
@@ -79,6 +82,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     script: DesktopTerminalStream['script'] = null,
     generation = this.getGeneration(id),
     shellIntegration = true,
+    launch: TerminalLaunchOptions = {},
   ): Promise<void> {
     if (
       this.shuttingDown ||
@@ -96,28 +100,36 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
       const expired = [...this.desktopStreams.keys()].find(
         (key) => !this.isAlive(key) && !this.spawnInFlight.has(key),
       );
-      if (expired !== undefined) this.desktopStreams.delete(expired);
+      if (expired !== undefined) this.forgetDesktop(expired);
       else throw new Error('User terminal process limit reached');
     }
     const promptToken = randomUUID();
-    const stream = new DesktopTerminalStream(script, promptToken);
+    const stream = new DesktopTerminalStream(script, promptToken, launch);
+    stream.protocolOwned = launch.protocol === 1;
     this.desktopStreams.set(id, stream);
     const promise = Promise.resolve()
       .then(async () => {
+        const inherited = stripInheritedTmuxEnv(await buildAugmentedEnvAsync(process.env, cwd));
+        // Desktop/backend capabilities must never become shell environment data.
+        delete inherited.ELEVENEX_CODE_ACCESS; delete inherited.ELEVENEX_DESKTOP_SOCKET;
+        for (const [key, value] of Object.entries(launch.profile?.env ?? {})) {
+          if (value === null) delete inherited[key];
+          else Object.defineProperty(inherited, key, { value, enumerable: true, configurable: true, writable: true });
+        }
         const baseEnv = {
-          ...stripInheritedTmuxEnv(
-            await buildAugmentedEnvAsync(process.env, cwd),
-          ),
+          ...inherited,
           ELEVENEX_USER_CWD: cwd,
           TERM_PROGRAM: 'elevenex',
         };
+        const selectedShell = launch.profile?.executable ?? normalizeShellForPlatform(shell);
+        const customArgs = launch.profile ? [...(launch.profile.login ? ['-l'] : []), ...launch.profile.args] : [];
         const integration = script
           ? { args: script.args, env: baseEnv, cleanup: async () => {} }
           : await desktopShellIntegration(
-              normalizeShellForPlatform(shell),
+              selectedShell,
               baseEnv,
               promptToken,
-              shellIntegration,
+              shellIntegration && customArgs.length === 0,
             );
         if ('integration' in integration)
           stream.configureIntegration(integration.integration);
@@ -135,14 +147,15 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
         return this.spawnDirect(
           id,
           cwd,
-          script?.file ?? normalizeShellForPlatform(shell),
+          script?.file ?? selectedShell,
           {
             ...integration.env,
             TERM: 'xterm-256color',
             COLORTERM: 'truecolor',
           },
           this.getTmuxSessionName(id),
-          integration.args,
+          customArgs.length && !script ? customArgs : integration.args,
+          launch.size,
         );
       })
       .finally(() => {
@@ -256,7 +269,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   ): Promise<pty.IPty | null> {
     // A legacy replacement keeps its original replay protocol. Old desktop
     // cursors/keystrokes must not silently attach to that new process.
-    this.desktopStreams.delete(terminalId);
+    this.forgetDesktop(terminalId);
     // Persisted shells may be POSIX paths (e.g. /bin/zsh) that cannot launch on
     // Windows; fall back to the platform default so the terminal still opens.
     const shell = normalizeShellForPlatform(rawShell);
@@ -449,10 +462,11 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     env: NodeJS.ProcessEnv,
     tmuxSessionName: string,
     args: string[] = [],
+    size: { readonly cols: number; readonly rows: number } = DESKTOP_TERMINAL_INITIAL_SIZE,
   ): pty.IPty {
     const ptyProcess = pty.spawn(shell, args, {
       name: 'xterm-256color',
-      ...DESKTOP_TERMINAL_INITIAL_SIZE,
+      ...size,
       cwd: worktreePath,
       env,
     });
@@ -475,17 +489,30 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
             stopPortDiscovery: this.portDiscovery.register(
               terminalId,
               pid,
-              (listeners) => stream.services.reconcile(listeners),
+              (listeners) => { stream.services.reconcile(listeners); stream.changed(); },
             ),
           }
         : {}),
     });
 
+    if (stream) {
+      stream.resize(size.cols, size.rows);
+      this.screens.open(terminalId, size.cols, size.rows, {
+        pause: () => { if (this.processes.get(terminalId)?.pty === ptyProcess) ptyProcess.pause(); },
+        resume: () => { if (this.processes.get(terminalId)?.pty === ptyProcess) ptyProcess.resume(); },
+        reply: data => {
+          if (stream.protocolOwned && this.processes.get(terminalId)?.pty === ptyProcess) ptyProcess.write(data);
+        },
+      });
+    }
     ptyProcess.onData((data) => {
       if (this.processes.get(terminalId)?.pty !== ptyProcess) {
         return;
       }
       output?.append(data);
+      // Post to the model before notifying consumers. A checkpoint requested
+      // by that notification must include the bytes which advanced its cursor.
+      if (stream) this.screens.write(terminalId, data, stream.sequence + data.length);
       this.desktopStreams.get(terminalId)?.append(data);
       this.gateway.sendToTerminal(terminalId, data);
     });
@@ -506,6 +533,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
           this.logger.warn('Terminal integration cleanup failed'),
         );
       this.processes.delete(terminalId);
+      stream?.changed();
       if (!this.pendingKills.get(terminalId)?.has(ptyProcess)) {
         this.gateway.onProcessExit(terminalId);
       }
@@ -520,6 +548,12 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     this.desktopStreams.get(terminalId)?.input(data);
     session.pty.write(data);
   }
+  writeBinary(terminalId: number, data: string): void {
+    const session = this.processes.get(terminalId);
+    if (!session) return;
+    this.desktopStreams.get(terminalId)?.input('\x1b');
+    session.pty.write(Buffer.from(data, 'latin1'));
+  }
 
   resize(terminalId: number, cols: number, rows: number): void {
     const session = this.processes.get(terminalId);
@@ -527,6 +561,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     if (cols < 2 || rows < 1) return;
 
     session.pty.resize(cols, rows);
+    if (this.desktopStreams.has(terminalId)) this.screens.resize(terminalId, cols, rows);
     this.desktopStreams.get(terminalId)?.resize(cols, rows);
 
     if (session.useTmux) {
@@ -663,7 +698,10 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
   }
 
   forgetDesktop(terminalId: number): void {
+    const stream = this.desktopStreams.get(terminalId);
     this.desktopStreams.delete(terminalId);
+    stream?.changed();
+    this.screens.close(terminalId);
     // Keep the existing cancellation fence: a legacy service can still be
     // awaiting workspace validation before registering its manager spawn.
   }
@@ -701,6 +739,7 @@ export class UserPtyManager implements OnModuleDestroy, OnApplicationShutdown {
     );
     this.shuttingDown = true;
     this.portDiscovery.dispose();
+    this.screens.dispose();
     const ids = new Set([
       ...this.processes.keys(),
       ...this.spawnInFlight.keys(),

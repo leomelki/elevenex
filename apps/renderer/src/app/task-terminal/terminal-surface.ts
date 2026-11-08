@@ -2,6 +2,7 @@ import type { TerminalStyleLease } from "./terminal-style-nonce";
 import type { TaskTerminalSize } from "@elevenex/shared";
 import { type IMarker, Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { findTerminalMatches } from "./terminal-search";
 import { TerminalCellRenderer } from "./terminal-cell-renderer";
 import { TerminalLocalEcho } from './terminal-local-echo';
@@ -21,6 +22,7 @@ export class TerminalSurface {
   private disposed = false;
   private readonly writes = new Set<() => void>();
   private replaying = false;
+  private fitting = false;
   private searchPosition = -1;
   private query = "";
   private commandMarkers: IMarker[] = [];
@@ -32,6 +34,7 @@ export class TerminalSurface {
     input: (data: string) => boolean | void,
     private readonly resized: (cols: number, rows: number) => void,
     private readonly retainStyles: () => TerminalStyleLease,
+    private readonly interaction: { readonly binary?: (data: string) => void; readonly focused?: () => void } = {},
   ) {
     this.terminal = new Terminal({
       scrollback: 2000,
@@ -39,7 +42,8 @@ export class TerminalSurface {
       cursorInactiveStyle: "outline",
       screenReaderMode: true,
       convertEol: false,
-      allowProposedApi: false,
+      // Unicode providers are an official, version-pinned xterm addon API.
+      allowProposedApi: true,
       disableStdin: true,
       logLevel: "off",
       // The DOM renderer ignores this; the WebGL addon draws shapes to cell edges.
@@ -48,23 +52,35 @@ export class TerminalSurface {
       linkHandler: { activate: () => {} },
     });
     this.terminal.loadAddon(this.fitAddon);
+    this.terminal.loadAddon(new Unicode11Addon());
+    this.terminal.unicode.activeVersion = '11';
     this.localEcho = new TerminalLocalEcho(this.terminal);
     this.disposers.push(
       this.terminal.onData(data => {
         this.navigationMarker = undefined;
         if (input(data) !== false) this.localEcho.input(data);
       }),
+      this.terminal.onBinary(data => { this.localEcho.suspend(); this.interaction.binary?.(data); }),
       this.terminal.onScroll(viewport => {
-        this.localEcho.suspend();
+        if (viewport !== this.terminal.buffer.active.baseY) this.localEcho.suspend();
         if (viewport !== this.navigationViewport) this.navigationMarker = undefined;
       }),
       this.terminal.onResize((size) => {
         this.localEcho.suspend();
         if (!this.replaying) resized(size.cols, size.rows);
       }),
-      this.terminal.onSelectionChange(() => this.localEcho.suspend()),
       this.terminal.parser.registerOscHandler(52, () => true),
     );
+    // Stream terminals have one server-side protocol responder, including when
+    // hidden. Public parser hooks consume queries in views without duplicating
+    // CPR/DA/DECRQSS responses or leaking a speculative cursor to the PTY.
+    for (const id of [
+      { final: 'n' }, { prefix: '?', final: 'n' }, { final: 'c' },
+      { prefix: '>', final: 'c' }, { prefix: '=', final: 'c' },
+      { intermediates: '$', final: 'p' }, { prefix: '?', intermediates: '$', final: 'p' },
+      { final: 't' },
+    ]) this.disposers.push(this.terminal.parser.registerCsiHandler(id, () => this.serverProtocol));
+    this.disposers.push(this.terminal.parser.registerDcsHandler({ intermediates: '$', final: 'q' }, () => this.serverProtocol));
     this.terminal.attachCustomKeyEventHandler((event) => {
       if (event.type === 'keydown' && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey &&
           (event.key === 'ArrowUp' || event.key === 'ArrowDown') && this.navigateCommand(event.key === 'ArrowUp')) {
@@ -86,6 +102,8 @@ export class TerminalSurface {
       return true;
     });
   }
+  private serverProtocol = false;
+  setServerProtocol(enabled: boolean): void { this.serverProtocol = enabled; }
   attach(container: HTMLElement, enabled: boolean, replay = false): void {
     if (this.disposed) return;
     this.replaying = replay;
@@ -97,7 +115,10 @@ export class TerminalSurface {
         const element = this.terminal.element;
         const blur = () => this.localEcho.suspend();
         element?.addEventListener('focusout', blur);
+        const focused = () => this.interaction.focused?.();
+        element?.addEventListener('focusin', focused);
         this.disposers.push({ dispose: () => element?.removeEventListener('focusout', blur) });
+        this.disposers.push({ dispose: () => element?.removeEventListener('focusin', focused) });
         this.cellRenderer = new TerminalCellRenderer(this.terminal, lease);
         this.mounted = true;
       } catch (error) {
@@ -136,6 +157,13 @@ export class TerminalSurface {
     if (this.resizeFrame !== undefined) return;
     this.resizeFrame = requestAnimationFrame(() => {
       this.resizeFrame = undefined;
+      void this.fitVisible();
+    });
+  }
+  private async fitVisible(): Promise<void> {
+    if (this.fitting) return;
+    this.fitting = true;
+    try {
       if (
         this.disposed ||
         this.replaying ||
@@ -143,15 +171,23 @@ export class TerminalSurface {
         !this.terminal.element.offsetWidth
       )
         return;
-      const size = this.fitAddon.proposeDimensions();
+      let size = this.fitAddon.proposeDimensions();
       if (size) {
-        const cols = Math.max(2, Math.min(500, size.cols)),
+        let cols = Math.max(2, Math.min(500, size.cols)),
           rows = Math.max(1, Math.min(300, size.rows));
-        if (this.terminal.cols !== cols || this.terminal.rows !== rows)
+        if (this.terminal.cols !== cols || this.terminal.rows !== rows) {
+          // Rollback must finish before reflow; onResize would be too late.
+          // A no-op fit must leave the prediction epoch intact.
+          this.localEcho.suspend(); await this.writeChunk('');
+          if (this.disposed || this.replaying || !this.terminal.element?.isConnected) return;
+          size = this.fitAddon.proposeDimensions();
+          if (!size) return;
+          cols = Math.max(2, Math.min(500, size.cols)); rows = Math.max(1, Math.min(300, size.rows));
           this.terminal.resize(cols, rows);
+        }
         else this.resized(cols, rows);
       }
-    });
+    } finally { this.fitting = false; }
   }
   async write(data: string, size?: TaskTerminalSize, more = false,
     starts: readonly { readonly id: number; readonly at: number }[] = [], from = this.sequence): Promise<void> {
@@ -160,8 +196,11 @@ export class TerminalSurface {
       // Replay with the producer's grid, including across output pages. Local
       // fitting resumes after catch-up; historical resizes must never reach the PTY.
       this.replaying = true;
-      if (this.terminal.cols !== size.cols || this.terminal.rows !== size.rows)
+      if (this.terminal.cols !== size.cols || this.terminal.rows !== size.rows) {
+        this.localEcho.suspend(); await this.writeChunk('');
+        if (this.disposed) return;
         this.terminal.resize(size.cols, size.rows);
+      }
     }
     let written = 0;
     for (const start of starts) {
@@ -182,11 +221,12 @@ export class TerminalSurface {
     }
   }
   private async writeChunk(data: string): Promise<void> {
-    if (!data || this.disposed) return;
+    if (this.disposed) return;
+    const output = this.localEcho.beforeOutput() + data;
     await new Promise<void>(resolve => {
       const complete = () => { this.writes.delete(complete); resolve(); };
       this.writes.add(complete);
-      this.terminal.write(data, complete);
+      this.terminal.write(output, complete);
     });
   }
   /** Navigate server-authenticated command starts; xterm markers follow reflow. */
@@ -213,7 +253,9 @@ export class TerminalSurface {
   reset(): void {
     this.localEcho.reset();
     this.clearMarkers();
-    this.terminal.reset();
+    // Queue RIS behind any in-flight drawing; a synchronous reset would allow
+    // already queued speculative writes to paint into the replacement buffer.
+    this.terminal.write('\x1bc');
     this.sequence = 0;
     this.searchPosition = -1;
   }
@@ -300,7 +342,7 @@ export class TerminalSurface {
     this.resizeFrame = undefined;
   }
   dispose(): void {
-    this.localEcho.suspend();
+    this.localEcho.dispose();
     this.disposed = true;
     this.clearMarkers();
     this.detachObservers();
@@ -330,4 +372,23 @@ export async function prepareTerminalFonts(): Promise<void> {
   } catch {
     /* A missing font asset must not prevent shell interaction. */
   }
+}
+
+/** Initial fit uses the same local font/tokens as xterm. Actual FitAddon
+ * measurement follows attachment; no guessed fixed character size is persisted. */
+export function initialTerminalSize(host: HTMLElement): TaskTerminalSize | undefined {
+  const style = getComputedStyle(host), parent = host.parentElement;
+  const width = host.clientWidth || parent?.clientWidth || 0, height = host.clientHeight || parent?.clientHeight || 0;
+  const fontSize = Number.parseFloat(style.getPropertyValue('--text-terminal-size'));
+  const lineHeight = Number.parseFloat(style.getPropertyValue('--text-terminal-line'));
+  if (!width || !height || !fontSize || !lineHeight) return undefined;
+  const context = document.createElement('canvas').getContext('2d');
+  if (!context) return undefined;
+  context.font = `${fontSize}px ${style.getPropertyValue('--font-mono')}`;
+  const cellWidth = context.measureText('W').width;
+  if (!cellWidth) return undefined;
+  const horizontal = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+  const vertical = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+  return { cols: Math.max(2, Math.min(500, Math.floor((width - horizontal) / cellWidth))),
+    rows: Math.max(1, Math.min(300, Math.floor((height - vertical) / lineHeight))) };
 }

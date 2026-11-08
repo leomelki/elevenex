@@ -1,6 +1,7 @@
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
 import type { TaskTerminalCommandsRead, TaskTerminalCommands, TaskTerminalTarget, TaskTerminal, TaskTerminalList, TaskTerminalRead, TaskTerminalOutput, TaskTerminalCreate, TaskTerminalInput, TaskTerminalResize, TaskTerminalAction } from './task-terminal';
+import type { TaskTerminalAttachment, TaskTerminalAttach, TaskTerminalStreamWrite, TaskTerminalStreamEvent, TaskTerminalSize, TaskTerminalPreferences } from './task-terminal';
 export type * from './task-terminal';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
@@ -38,6 +39,15 @@ export interface GitStatus {
 }
 
 export interface InvokeContracts {
+  'task-terminal:preferences': { args: [scopeId: string]; result: BackendResult<TaskTerminalPreferences> };
+  'task-terminal:save-preferences': { args: [scopeId: string, value: TaskTerminalPreferences]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:attach': { args: [scopeId: string, input: TaskTerminalAttach]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:detach': { args: [scopeId: string, input: TaskTerminalAttachment]; result: void };
+  'task-terminal:stream-write': { args: [scopeId: string, input: TaskTerminalStreamWrite]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:stream-resize': { args: [scopeId: string, input: TaskTerminalAttachment & TaskTerminalSize]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:stream-focus': { args: [scopeId: string, input: TaskTerminalAttachment]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:stream-ack': { args: [scopeId: string, input: TaskTerminalAttachment & { readonly delivery: number }]; result: void };
+  'task-terminal:context': { args: [scopeId: string, input: TaskTerminalTarget & { readonly generation: string }]; result: BackendResult<string> };
   'code:window-context': { args: []; result: CodeWindowContext | null };
   'code:open': { args: [target: CodeTarget]; result: BackendResult<CodeSurfaceState> };
   'code:present': { args: [target: CodeTarget, presentation: CodePresentation]; result: void };
@@ -132,6 +142,7 @@ export interface InvokeContracts {
 }
 
 export interface EventContracts {
+  'task-terminal:stream': TaskTerminalStreamEvent;
   'code:exit-requested': CodeTarget;
   'code:changed': { readonly target: CodeTarget; readonly state: CodeSurfaceState };
   'machines:changed': MachineState;
@@ -153,6 +164,16 @@ export type Subscribe = <C extends keyof EventContracts>(
 
 /** The entire public preload API; raw IPC and Electron events stay private. */
 export interface ElevenexBridge {
+  taskTerminalPreferences(scopeId: string): Promise<BackendResult<TaskTerminalPreferences>>;
+  taskTerminalSavePreferences(scopeId: string, value: TaskTerminalPreferences): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalAttach(scopeId: string, input: TaskTerminalAttach): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalDetach(scopeId: string, input: TaskTerminalAttachment): Promise<void>;
+  taskTerminalStreamWrite(scopeId: string, input: TaskTerminalStreamWrite): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalStreamResize(scopeId: string, input: TaskTerminalAttachment & TaskTerminalSize): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalStreamFocus(scopeId: string, input: TaskTerminalAttachment): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalStreamAcknowledge(scopeId: string, input: TaskTerminalAttachment & { readonly delivery: number }): Promise<void>;
+  taskTerminalContext(scopeId: string, input: TaskTerminalTarget & { readonly generation: string }): Promise<BackendResult<string>>;
+  onTaskTerminalStream(listener: (event: TaskTerminalStreamEvent) => void): () => void;
   onCodeExitRequested(listener: (target: CodeTarget) => void): () => void;
   onCodeChanged(listener: (event: { readonly target: CodeTarget; readonly state: CodeSurfaceState }) => void): () => void;
   codeWindowContext(): Promise<CodeWindowContext | null>;

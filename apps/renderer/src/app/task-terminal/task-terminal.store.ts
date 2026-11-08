@@ -10,6 +10,8 @@ import type {
   TaskTerminal,
   TaskTerminalList,
   TaskTerminalOutput,
+  TaskTerminalProfile,
+  TaskTerminalSize,
 } from "@elevenex/shared";
 import {
   BackendClientService,
@@ -155,10 +157,24 @@ export class TaskTerminalStore {
   }
   private async refreshLoop(revision: number): Promise<void> {
     await this.refresh();
-    if (!this.disposed && revision === this.revision)
+    if (!this.disposed && revision === this.revision && this.snapshot()?.streamVersion !== 1)
       this.timer = setTimeout(() => void this.refreshLoop(revision), 1800);
   }
-  async create(scriptId?: string, shellIntegration = true): Promise<void> {
+  acceptStreamMetadata(target: TerminalSelection, value: TaskTerminalList): void {
+    if (!this.currentSelection(target, this.revision) || value.taskId !== target.taskId) return;
+    this.readRecovered();
+    const terminals = value.terminals.filter(row => !this.closing.has(this.closeKey(target, row.id)));
+    this.resetSeenForGeneration(terminals, true);
+    this.snapshot.set({ ...value, terminals });
+    if (!terminals.some(row => row.id === this.active())) this.active.set(terminals[0]?.id ?? null);
+  }
+  acceptStreamTerminal(target: TerminalSelection, terminal: TaskTerminal): void {
+    if (!this.currentSelection(target, this.revision)) return;
+    const previous = this.snapshot()?.terminals.find(row => row.id === terminal.id);
+    if (!previous || JSON.stringify({ ...previous, sequence: 0 }) === JSON.stringify({ ...terminal, sequence: 0 })) return;
+    this.snapshot.update(value => value ? { ...value, terminals: value.terminals.map(row => row.id === terminal.id ? terminal : row) } : value);
+  }
+  async create(scriptId?: string, shellIntegration = true, size?: TaskTerminalSize, profile?: TaskTerminalProfile): Promise<void> {
     const target = this.selection(),
       revision = this.revision;
     if (!target || !this.connected() || this.busy()) return;
@@ -169,6 +185,7 @@ export class TaskTerminalStore {
         taskId: target.taskId,
         ...(scriptId ? { scriptId } : {}),
         ...(shellIntegration ? {} : { shellIntegration: false }),
+        ...(this.snapshot()?.streamVersion === 1 ? { protocol: 1 as const, ...(size ? { size } : {}), ...(profile && !scriptId ? { profile } : {}) } : {}),
       });
       if (!this.currentSelection(target, revision)) return;
       if (reply.ok) {
