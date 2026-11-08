@@ -67,8 +67,9 @@ Older engines omit the capability and retain their original send contract.
   the useful result and avoiding repeated paths, parameters, IDs or routine success
   receipts. Commands use a short output tail; edits show the focused diff; plans
   favor unfinished work; web/MCP results favor titles and meaningful state.
-  Full parsed evidence lives under Details; original data is nested beneath it; shortened previews retain the existing
-  paged transcript reader. Plans stay in the work timeline instead of becoming prose.
+  Full parsed evidence lives under Details; original data is nested beneath it.
+  Shortened tool inputs/results do not add full-content buttons below the answer;
+  tool evidence stays in the work timeline. Plans stay there instead of becoming prose.
 - Codex history restores native command, patch, MCP and web-search receipts with
   the live stream's tool IDs. Code-mode `exec` envelopes are omitted when native
   receipts supply the work, retaining separate output and exit/error status for

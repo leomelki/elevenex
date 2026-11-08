@@ -228,6 +228,7 @@ export class SessionChatFixture {
       | "ready"
       | "unknown"
       | "long"
+      | "long-message"
       | "tools"
       | "tools-running"
       | "tools-incomplete"
@@ -359,6 +360,12 @@ export class SessionChatFixture {
           { length: 1600 },
           (_, i) => "Verified concurrent request " + i + ": passed",
         ).join("\n"),
+        truncated: true,
+      };
+    if (mode === "long-message")
+      session.items[7] = {
+        ...session.items[7]!,
+        text: Array.from({ length: 1600 }, (_, i) => "Verified concurrent request " + i + ": passed").join("\n"),
         truncated: true,
       };
     if (mode === "unknown") this.commandFailure = true;

@@ -211,15 +211,13 @@ export function chatExchanges(
       .filter(media => media.inline && !answer.includes(`](${media.path})`));
     return {
       overflow: group.items
-        .filter((item) => item.truncated)
+        // Tool evidence belongs in the work timeline, not below the answer.
+        .filter(
+          (item) => item.truncated && item.kind !== "tool_use" && item.kind !== "tool_result",
+        )
         .map((item) => ({
           id: item.id,
-          label:
-            item.kind === "tool_use"
-              ? "tool input"
-              : item.kind === "tool_result"
-                ? "tool output"
-                : "message",
+          label: "message",
         })),
       id: group.id,
       prompt: group.prompt,

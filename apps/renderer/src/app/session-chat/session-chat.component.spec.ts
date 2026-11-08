@@ -153,6 +153,45 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it.each(["idle", "running"] as const)(
+    "keeps shortened tool inputs and results inside work during %s replies",
+    async (phase) => {
+      const tools = Array.from({ length: 12 }, (_, index) => [
+        { ...item(`tool-${index}`, "tool_use", ""), toolId: `call-${index}`, toolKind: "bash", input: '{"command":"pnpm test"}', truncated: true },
+        { ...item(`result-${index}`, "tool_result", "Tests passed\n… [display shortened]"), toolId: `call-${index}`, truncated: true },
+      ]).flat();
+      const { fixture, root } = setup([
+        item("prompt", "user", "Check the changes"),
+        ...tools,
+        { ...item("orphan", "tool_result", "Earlier tool output"), truncated: true },
+        item("answer", "assistant", "The changes are verified."),
+      ], { ...state, phase });
+      await settle(fixture);
+      expect(root.textContent).not.toContain("Read full tool");
+      expect(root.querySelector("ex-turn .answer")?.textContent).toContain("The changes are verified.");
+      const work = root.querySelector<HTMLButtonElement>("ex-turn .work")!;
+      if (work.getAttribute("aria-expanded") !== "true") {
+        work.click(); await settle(fixture);
+      }
+      const heads = root.querySelectorAll<HTMLButtonElement>("ex-work-timeline ex-tool-step .head");
+      heads[heads.length - 2]!.click();
+      heads[heads.length - 1]!.click();
+      await settle(fixture);
+      expect(root.querySelector("ex-work-timeline")?.textContent).toContain("Tests passed");
+      expect(root.querySelector("ex-work-timeline")?.textContent).toContain("Earlier tool output");
+    },
+  );
+
+  it("retains full-message access for shortened assistant replies", async () => {
+    const { fixture, root } = setup([
+      item("prompt", "user", "Explain the changes"),
+      { ...item("answer", "assistant", "A shortened reply"), truncated: true },
+    ]);
+    await settle(fixture);
+    expect(root.querySelector("ex-turn .answer")?.textContent).toContain("A shortened reply");
+    expect(root.querySelector("ex-chat-scroll .content > button")?.textContent).toContain("Read full message");
+  });
+
   it.each(["claude", "codex", "opencode", "pi", "custom-agent"])(
     "uses the %s harness identity for the reply mark",
     async (provider) => {
