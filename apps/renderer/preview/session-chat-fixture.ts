@@ -1,6 +1,7 @@
 import { previewChatImage } from './session-chat-media-fixture';
 import type { DestroyRef } from "@angular/core";
 import { sessionCodexFileItems, sessionToolItems } from './session-tools-fixture';
+import { sessionTimelineItems, type TimelineScene } from './session-timeline-fixture';
 import type {
   BackendResult,
   SessionChatChangesRead,
@@ -135,6 +136,14 @@ const opening = () => [
 ];
 /** Harness-shaped fixtures stay outside the production import graph. */
 export class SessionChatFixture {
+  timeline(scene: TimelineScene, id = 101): void {
+    const session = this.session(id);
+    session.items = [...sessionTimelineItems(scene)];
+    session.state = { ...previewChatState(), providerLocked: true,
+      phase: scene === 'finished' ? 'idle' : 'running', canInterrupt: scene !== 'finished' };
+    this.changed();
+    this.resetVersion = this.version;
+  }
   private presets = [...savedPresets];
   private defaultProvider = 'codex';
   private defaultIds: readonly string[] = ['deep'];

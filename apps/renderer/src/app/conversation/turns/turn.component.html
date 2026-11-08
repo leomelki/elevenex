@@ -22,7 +22,8 @@
           }}</span>
           @if (header.live) {
             <span
-              >{{ stepCount() }} {{ stepCount() === 1 ? "step" : "steps" }}</span
+              >{{ stepCount() }}
+              {{ stepCount() === 1 ? "step" : "steps" }}</span
             >
           }
           @if (facts().length) {
@@ -68,39 +69,32 @@
       </div>
     }
   </ex-fold>
-  @if (showWork()) {
-    <ex-fold [open]="expanded() && timelineSteps().length > 0">
-      <div class="preceding-work">
-        <ex-work-timeline
-          [steps]="timelineSteps()"
-          [live]="status() === 'live'"
-          [maxVisible]="maxVisible()"
-        />
-      </div>
-    </ex-fold>
-    <ex-fold #nowRegion [open]="nowStep() !== null">
-      @for (step of nowStep() ? [nowStep()!] : []; track step.id) {
-        <div class="preceding-work">
-          <ex-now-line [step]="step" [streaming]="activeStep()?.id === step.id" />
-        </div>
-      }
-    </ex-fold>
-  }
-  <ex-fold [open]="status() === 'live' && !!reach()"><div class="reach-line" role="status"><b>Out of reach since {{ reachTime() }}.</b> It may still be running on {{ reach()?.machine }}; what it did shows up when it’s back.</div></ex-fold>
-  <div class="answer" exAutoHeight>
-    <div><ng-content /></div>
-  </div>
-  @if (followingSteps().length && showWork()) {
-    <ex-fold [open]="expanded()">
-      <div class="following-work">
-        <ex-work-timeline
-          [steps]="followingSteps()"
-          [live]="status() === 'live'"
-          [maxVisible]="maxVisible()"
-        />
-      </div>
-    </ex-fold>
-  }
+  <ng-template #answerContent><ng-content /></ng-template>
+  <ex-work-timeline
+    [steps]="timelineSteps()"
+    [live]="status() === 'live'"
+    [expanded]="expanded()"
+    [maxVisible]="maxVisible()"
+    [answer]="answer()"
+    [answerId]="answerId()"
+    [answerBeforeStepId]="answerBeforeStepId()"
+    [answerTemplate]="answerContent"
+    [streaming]="streaming()"
+    [resolve]="resolve()"
+    [copiedCode]="copiedCode()"
+    (inspectionChanged)="inspecting.set($event)"
+    (openFile)="openFile.emit($event)"
+    (openLink)="openLink.emit($event)"
+    (openPage)="openPage.emit($event)"
+    (copyCode)="copyCode.emit($event)"
+    (contentRequested)="contentRequested.emit($event)"
+  />
+  <ex-fold [open]="status() === 'live' && !!reach()"
+    ><div class="reach-line" role="status">
+      <b>Out of reach since {{ reachTime() }}.</b> It may still be running on
+      {{ reach()?.machine }}; what it did shows up when it’s back.
+    </div></ex-fold
+  >
   @if (status() === "failed" || status() === "stopped") {
     <div class="error" [class.failed]="status() === 'failed'">
       <span>{{

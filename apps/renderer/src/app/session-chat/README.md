@@ -165,9 +165,10 @@ welcome card even before history contains a user item.
 user receipts through the preview adapter in light/dark and narrow layouts.
 
 The projection supplies `answerBeforeStepId` for work following the latest
-assistant text. Tool results remain paired with their original calls; late
-receipts do not move those calls past the reply. Earlier commentary and tools
-retain source order as subsequent replies arrive. `session-work-order.mjs`
+assistant text. The projection also supplies `answerId`, so that message keeps the same
+Markdown instance when it becomes earlier commentary. Tool results remain paired
+with their original calls; late receipts do not move calls past the reply. One
+flat timeline retains tool instances, disclosure and focus across message boundaries. `session-work-order.mjs`
 checks this ordering, tool/work disclosures, top hover/focus summaries, keyboard
 operation and narrow reduced-motion layouts in both themes.
 
@@ -475,3 +476,20 @@ checks actual reading position and unread feedback through recovery.
 During recovery, earlier local writing drains before a new direct submission can
 overtake it. The input remains editable. A paused backend queue stays paused;
 automatic delivery joins that queue instead of restarting the agent.
+
+## Tool timeline and original content
+
+The production timeline has one recent-work budget across alternating messages
+and tool calls. Running/unknown work and unresolved failures stay outside age
+compaction; commentary stays in order. Discovery grouping and completion preserve
+inspection. `session-tool-timeline.mjs` exercises these transitions, repeated and
+interrupted disclosures, full-output paging and paired call/input selection with
+provider-shaped fixtures in the connected preview.
+
+Shortened tool evidence carries explicit call/result IDs in `WorkStep.fullContent`.
+The connected owner resolves the available pair for the original-content reader.
+Input reads target the call; output reads target its receipt. Tab changes start
+at offset zero, cancel previous reads and reject stale responses. A message or
+an orphan result never displays an input tab for a missing call. The reader
+retains existing machine scope checks, bounded pages, inert text and cancellation
+on close/navigation.

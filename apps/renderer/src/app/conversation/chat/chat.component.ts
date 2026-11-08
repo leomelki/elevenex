@@ -12,7 +12,7 @@ import type {
   TurnAction,
   TurnNavigationItem,
 } from "../conversation.models";
-import { MarkdownComponent } from "../markdown/markdown.component";
+import type { ToolContentRequest } from '../tool-presentation';
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
 import { TurnComponent } from "../turns/turn.component";
 import { TurnNavComponent } from "../turns/turn-nav.component";
@@ -26,7 +26,6 @@ import { MentionComponent } from '../composer/mention.component';
   imports: [
     ButtonComponent,
     AttachmentsComponent,
-    MarkdownComponent,
     TurnComponent,
     TurnNavComponent,
     ChatScrollComponent,
@@ -47,6 +46,7 @@ export class ChatComponent {
   readonly retryable = input(true);
   readonly copiedCode = input<string | null>(null);
   readonly contentRequested = output<string>();
+  readonly toolContentRequested = output<ToolContentRequest>();
   readonly resolve = input<MarkdownAssetResolver>();
   readonly turnAction = output<{ id: string; action: TurnAction }>();
   readonly openFile = output<string>();

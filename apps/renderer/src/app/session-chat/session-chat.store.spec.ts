@@ -786,6 +786,15 @@ describe("session chat ownership", () => {
   });
 });
 describe("provider-neutral transcript presentation", () => {
+  it('pairs a result with the call identity when a provider omits its separate tool ID', () => {
+    const [exchange] = chatExchanges([
+      item('user', 'user', 'Check it'),
+      item('call', 'tool_use', '', { toolKind: 'bash', input: '{"command":"pnpm test"}' }),
+      item('result', 'tool_result', 'Tests passed', { toolId: 'call', truncated: true }),
+    ], state, new Set());
+    expect(exchange?.steps).toHaveLength(1);
+    expect(exchange?.steps[0]).toMatchObject({ id: 'call', status: 'done', output: expect.stringContaining('Tests passed'), fullContent: { outputId: 'result' } });
+  });
   it("preserves commentary order, tool input/output, explicit failures and final Markdown", () => {
     const exchanges = chatExchanges(
       [

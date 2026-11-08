@@ -645,3 +645,11 @@ not verify the operating system's picker appearance. Run sequentially with other
 native captures after building. When starting a disposable backend, set both
 `DB_PATH` and `ELEVENEX_DATA_ROOT` explicitly, as well as its runtime/migrations
 directory, to avoid inheriting a running development session's database.
+
+`scenarios/session-tool-timeline.mjs` covers the single chronological work
+timeline: inspection through new replies and discovery grouping, persistent
+Earlier/Show fewer controls, running and failure visibility, stable completion,
+paired original input/output, keyboard focus, scoped motion frames, both themes
+and narrow reduced-motion layouts. Run against the connected component preview
+with `--url`. `SessionChatFixture.timeline(scene)` supplies stable harness-shaped
+receipts outside the production graph.

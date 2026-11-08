@@ -77,7 +77,7 @@ describe("turn work disclosure", () => {
       fixture.detectChanges();
       const host: HTMLElement = fixture.nativeElement;
       expect(host.querySelector(".work-row")).toBeNull();
-      expect(host.querySelector("ex-work-timeline")).toBeNull();
+      expect(host.querySelector("ex-tool-step")).toBeNull();
       expect(host.querySelector(".work-region")?.hasAttribute("inert")).toBe(true);
       expect(host.querySelector(".answer")?.textContent).toContain(
         "Hi. How can I help?",
@@ -152,9 +152,13 @@ describe("turn work disclosure", () => {
     ]);
     fixture.detectChanges();
     const host: HTMLElement = fixture.nativeElement;
-    expect(host.querySelector(".work-row")).toBeNull();
-    expect(host.querySelector("ex-work-timeline")).toBeNull();
-    expect(host.querySelector(".answer")?.textContent).toContain("Hi.");
+    expect(fixture.componentInstance.steps().filter(step => step.kind !== 'say' && step.kind !== 'note')).toHaveLength(0);
+    expect(host.querySelector(".work")?.textContent).toContain('Earlier messages');
+    expect(host.querySelector('ex-tool-step')).toBeNull();
+    host.querySelector<HTMLButtonElement>('.work')!.click();
+    fixture.detectChanges();
+    expect(host.querySelector('.prose')?.textContent).toContain('Checking the details.');
+    expect(host.querySelector('.answer')?.textContent).toContain('Hi.');
     fixture.destroy();
   });
 
@@ -223,14 +227,15 @@ describe("turn evidence", () => {
     },
   );
 
-  it("releases a held action when it moves before commentary or after the answer", () => {
+  it("retains one tool across commentary and answer boundary updates", () => {
     const fixture = TestBed.createComponent(TurnComponent);
     const host: HTMLElement = fixture.nativeElement;
     const running = { id: "tool", kind: "run", status: "running", detail: "Long command" } as const;
     fixture.componentRef.setInput("status", "live");
     fixture.componentRef.setInput("steps", [running]);
     fixture.detectChanges();
-    expect(host.querySelectorAll("ex-now-line")).toHaveLength(1);
+    const tool = host.querySelector("ex-tool-step");
+    expect(tool).not.toBeNull();
     fixture.componentRef.setInput("steps", [running, { id: "say", kind: "say", text: "Still checking" }]);
     fixture.detectChanges();
     expect(host.querySelector("ex-now-line")).toBeNull();
@@ -241,11 +246,11 @@ describe("turn evidence", () => {
     fixture.componentRef.setInput("answerBeforeStepId", "tool");
     fixture.detectChanges();
     expect(host.querySelector("ex-now-line")).toBeNull();
-    expect(host.querySelectorAll(".following-work ex-tool-step")).toHaveLength(1);
+    expect(host.querySelector("ex-tool-step")).toBe(tool);
     fixture.destroy();
   });
 
-  it("restores focus when an inspected live tool completes and resets disclosure for the next tool", async () => {
+  it("restores focus for removed work and retains inspected completed tools", async () => {
     const fixture = TestBed.createComponent(TurnComponent);
     const host: HTMLElement = fixture.nativeElement;
     document.body.append(host);
@@ -263,7 +268,7 @@ describe("turn evidence", () => {
     fixture.componentRef.setInput("steps", [running]);
     fixture.detectChanges();
     await fixture.whenStable();
-    const head = host.querySelector<HTMLButtonElement>("ex-now-line .head")!;
+    const head = host.querySelector<HTMLButtonElement>("ex-tool-step .head")!;
     head.click();
     head.focus();
     fixture.detectChanges();
@@ -273,7 +278,7 @@ describe("turn evidence", () => {
     fixture.detectChanges();
     await fixture.whenStable();
     expect(document.activeElement).toBe(host.querySelector(".work"));
-    const next = host.querySelector<HTMLButtonElement>("ex-now-line .head")!;
+    const next = host.querySelector<HTMLButtonElement>("ex-tool-step .head")!;
     expect(next).not.toBe(head);
     expect(next.getAttribute("aria-expanded")).toBe("false");
     next.focus();
@@ -283,7 +288,8 @@ describe("turn evidence", () => {
     ]);
     fixture.detectChanges();
     await fixture.whenStable();
-    expect(document.activeElement).toBe(host.querySelector(".work"));
+    expect(document.activeElement).toBe(next);
+    expect(next.closest(".step-fold")?.hasAttribute("inert")).toBe(false);
     fixture.destroy();
     host.remove();
   });

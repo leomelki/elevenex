@@ -19,6 +19,7 @@ describe("tool evidence", () => {
         { kind: "diff", title: "removed.txt", before: "  old  \n", after: "" },
       ],
     });
+    fixture.componentRef.setInput("open", true);
     fixture.detectChanges();
     const host: HTMLElement = fixture.nativeElement;
     expect(
@@ -45,6 +46,7 @@ describe("tool evidence", () => {
         },
       ],
     });
+    fixture.componentRef.setInput("open", true);
     fixture.detectChanges();
     const host: HTMLElement = fixture.nativeElement;
     expect(

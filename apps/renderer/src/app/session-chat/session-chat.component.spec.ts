@@ -7,6 +7,7 @@ import type {
   SessionChatPage,
   SessionChatState,
   SessionChatCommandReply,
+  SessionChatContentRead,
 } from "@elevenex/shared";
 import {
   BackendClientService,
@@ -106,6 +107,8 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
     })),
     sessionChatMedia: vi.fn(async (_scope: string, input: { itemId: string; mediaId: string }) => ({ ok: true as const, value: { ...input, source: 'data:image/png;base64,iVBORw0KGgo=' } })),
     sessionChatRead: vi.fn(async () => ({ ok: true as const, value: page })),
+    sessionChatContent: vi.fn(async (_scope: string, input: SessionChatContentRead) => ({ ok: true as const,
+      value: { itemId: input.itemId, part: input.part, offset: input.offset, text: `Complete ${input.part} for ${input.itemId}`, total: 100, nextOffset: null } })),
     sessionChatCommand: vi.fn(
       () =>
         new Promise<BackendResult<SessionChatCommandReply>>((yes) => {
@@ -153,6 +156,27 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it.each(['text', 'input'] as const)('opens shortened tool %s in the bounded reader and switches to the paired receipt', async part => {
+    const { root, fixture, bridge } = setup([
+      item('u', 'user', 'Check the output'),
+      { ...item('call', 'tool_use', ''), toolId: 'tool', toolKind: 'bash', input: '{"command":"pnpm test"}', truncated: true },
+      { ...item('earlier-result', 'tool_result', 'An earlier receipt'), toolId: 'tool' },
+      { ...item('result', 'tool_result', 'A shortened result'), toolId: 'tool', truncated: true },
+      item('answer', 'assistant', 'Done.'),
+    ]);
+    await settle(fixture);
+    root.querySelector<HTMLButtonElement>('.work')!.click();
+    await settle(fixture);
+    expect(root.querySelector('ex-tool-content')).toBeNull();
+    root.querySelector<HTMLButtonElement>('ex-tool-step .head')!.click();
+    await settle(fixture);
+    const button = [...root.querySelectorAll<HTMLButtonElement>('.full-content button')].find(button => button.textContent?.includes(part === 'text' ? 'output' : 'input'))!;
+    button.click(); await settle(fixture);
+    expect(bridge.sessionChatContent).toHaveBeenLastCalledWith('scope', expect.objectContaining({ itemId: part === 'text' ? 'result' : 'call', part }));
+    const other = [...document.querySelectorAll<HTMLButtonElement>('[role="radiogroup"][aria-label="Tool content"] button')].find(button => button.textContent?.includes(part === 'text' ? 'Input' : 'Output'))!;
+    other.click(); await settle(fixture);
+    expect(bridge.sessionChatContent).toHaveBeenLastCalledWith('scope', expect.objectContaining({ itemId: part === 'text' ? 'call' : 'result', part: part === 'text' ? 'input' : 'text', offset: 0 }));
+  });
   it.each(["idle", "running"] as const)(
     "keeps shortened tool inputs and results inside work during %s replies",
     async (phase) => {
@@ -189,7 +213,7 @@ describe("connected chat reply rendering", () => {
     ]);
     await settle(fixture);
     expect(root.querySelector("ex-turn .answer")?.textContent).toContain("A shortened reply");
-    expect(root.querySelector("ex-chat-scroll .content > button")?.textContent).toContain("Read full message");
+    expect(root.querySelector("ex-chat-scroll .content > button[exButton]")?.textContent).toContain("Read full message");
   });
 
   it.each(["claude", "codex", "opencode", "pi", "custom-agent"])(
@@ -312,6 +336,8 @@ describe("connected chat reply rendering", () => {
     work.click(); await settle(fixture);
     const tools = root.querySelectorAll('ex-tool-step');
     expect(tools).toHaveLength(2);
+    tools[0]!.querySelector<HTMLButtonElement>('.head')!.click();
+    await settle(fixture);
     expect(tools[0]?.querySelector('.tool-preview')?.textContent).toContain('Retry safety');
     expect(tools[0]?.querySelector('.tool-preview')?.textContent).not.toContain('{');
     expect(tools[1]?.querySelector('.verb')?.textContent).toBe('Attempted to edit');
@@ -356,6 +382,8 @@ describe("connected chat reply rendering", () => {
     await settle(fixture);
     const tools = root.querySelectorAll("ex-tool-step");
     expect(tools).toHaveLength(2);
+    tools[0]!.querySelector<HTMLButtonElement>('.head')!.click();
+    await settle(fixture);
     expect(tools[0]?.querySelector(".verb")?.textContent).toBe("Read");
     expect(tools[1]?.querySelector(".verb")?.textContent).toBe("Failed to run");
     expect(tools[0]?.querySelector("section.failed")).toBeNull();
@@ -406,7 +434,7 @@ describe("connected chat reply rendering", () => {
     await settle(fixture);
     fixture.detectChanges();
     expect(root.querySelector("ex-turn .work")).toBeNull();
-    expect(root.querySelector("ex-turn ex-work-timeline")).toBeNull();
+    expect(root.querySelector("ex-turn ex-tool-step")).toBeNull();
     expect(root.querySelector("ex-turn .answer")?.textContent).toContain(
       "Here is the final reply.",
     );

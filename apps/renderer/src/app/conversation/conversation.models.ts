@@ -1,4 +1,4 @@
-import type { ToolPresentation } from './tool-presentation';
+import type { ToolContentSource, ToolPresentation } from './tool-presentation';
 
 /** Renderer-owned view models. IDs are stable across streamed and incremental updates. */
 export type ConversationStatus =
@@ -151,6 +151,8 @@ export interface WorkStep {
   readonly output?: string;
   /** Parsed, bounded evidence. Original output stays separately inspectable. */
   readonly presentation?: ToolPresentation;
+  /** Optional bounded-reader targets for input/output shortened by transport. */
+  readonly fullContent?: ToolContentSource;
   readonly hunk?: readonly string[];
   readonly recovered?: boolean | string;
   readonly expected?: boolean | string;
@@ -227,6 +229,8 @@ export interface ChatExchange {
   readonly steps: readonly WorkStep[];
   /** Keep work after the latest reply in source order; omitted means all work precedes it. */
   readonly answerBeforeStepId?: string;
+  /** Identity of the latest assistant message, retained when it becomes commentary. */
+  readonly answerId?: string;
   readonly answer: string;
   readonly duration?: number;
   readonly elapsed?: number;

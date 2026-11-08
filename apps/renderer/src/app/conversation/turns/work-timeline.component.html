@@ -1,78 +1,129 @@
 <ol>
-  @if (hiddenCount() > 1) {
-    <li>
-      <button type="button" class="earlier" (click)="earlierOpen.set(true)">
-        {{ hiddenCount() }} earlier steps
+  <li class="earlier-row">
+    <ex-fold [open]="showEarlier()">
+      <button
+        type="button"
+        class="earlier"
+        [attr.aria-expanded]="earlierOpen()"
+        [attr.aria-disabled]="!earlierOpen() && !hiddenCount() ? 'true' : null"
+        (click)="toggleEarlier()"
+      >
+        <ex-icon
+          name="chevron-right"
+          [size]="12"
+          [class.turned]="earlierOpen()"
+        />
+        <ex-ease-swap [value]="earlierLabel()" />
       </button>
-    </li>
-  }
-  @for (entry of visible(); track entry.id) {
-    <li>
-      @if (entry.kind === "group") {
-        <button
-          type="button"
-          class="group"
-          [attr.aria-expanded]="openGroups().has(entry.id)"
-          (click)="toggleGroup(entry.id)"
-        >
-          <ex-icon name="file" [size]="14" />{{ entry.label
-          }}<ex-icon
-            [name]="
-              openGroups().has(entry.id) ? 'chevron-down' : 'chevron-right'
-            "
-            [size]="12"
-          />
-        </button>
-        <ex-fold [open]="openGroups().has(entry.id)"
-          ><div class="nested">
-            @for (step of entry.items; track step.id) {
-              <ex-tool-step
-                [icon]="icon(step)"
-                [verb]="verb(step)"
-                [detail]="step.detail || ''"
-                [status]="step.status || 'done'"
-                [output]="step.output || ''"
-                [presentation]="step.presentation"
-                [meta]="step.meta || ''"
-              />
-            }</div
-        ></ex-fold>
-      } @else if (prose(entry)) {
-        <div class="prose"><ex-markdown [source]="entry.text || ''" /></div>
-      } @else {
-        <div
-          [class.recovered]="entry.recovered"
-          [class.expected]="entry.expected"
-        >
-          <ex-tool-step
-            [icon]="icon(entry)"
-            [verb]="verb(entry)"
-            [detail]="entry.title || entry.detail || ''"
-            [status]="
-              entry.recovered || entry.expected
-                ? 'done'
-                : entry.status || 'done'
-            "
-            [meta]="
-              entry.recovered
-                ? 'fixed'
-                : entry.expected
-                  ? 'reproduced'
-                  : entry.result ||
-                    entry.meta ||
-                    (entry.duration && entry.duration > 1
-                      ? duration(entry.duration)
-                      : '')
-            "
-            [output]="
-              entry.kind === 'think'
-                ? entry.text || ''
-                : entry.output || entry.hunk?.join('\n') || ''
-            "
-            [presentation]="entry.presentation"
-          />
-        </div>
-      }
+    </ex-fold>
+  </li>
+  @for (row of rows(); track row.step.id) {
+    @let step = row.step;
+    <li
+      class="timeline-row"
+      [class.reply]="step.id === replyId()"
+      [attr.data-work-step]="step.id"
+      [animate.enter]="arrivals().has(step.id) ? 'step-enter' : ''"
+    >
+      <div class="row-clip">
+        <ex-fold class="group-fold" [open]="groupVisible(row)">
+          @if (row.group; as group) {
+            @if (group.id === step.id) {
+              <button
+                type="button"
+                class="group"
+                [attr.aria-expanded]="groupOpen(row)"
+                (click)="toggleGroup(group.id)"
+              >
+                <ex-icon name="file" [size]="14" /><span>{{
+                  group.label
+                }}</span>
+                <ex-icon
+                  name="chevron-right"
+                  [size]="12"
+                  [class.turned]="groupOpen(row)"
+                />
+              </button>
+            }
+          }
+        </ex-fold>
+        <ex-fold class="step-fold" [open]="visible(row)">
+          @if (prose(step)) {
+            <div
+              [class.answer]="step.id === replyId()"
+              [class.prose]="step.id !== replyId()"
+              exAutoHeight
+            >
+              <div>
+                @if (
+                  step.id === replyId() &&
+                    answer() === undefined &&
+                    answerTemplate();
+                  as template
+                ) {
+                  <ng-container [ngTemplateOutlet]="template" />
+                } @else {
+                  <ex-markdown
+                    [source]="step.text || ''"
+                    [streaming]="step.id === replyId() && streaming()"
+                    [resolve]="resolve()"
+                    [copiedCode]="copiedCode()"
+                    (openFile)="openFile.emit($event)"
+                    (openLink)="openLink.emit($event)"
+                    (openPage)="openPage.emit($event)"
+                    (copyCode)="copyCode.emit($event)"
+                  />
+                }
+              </div>
+            </div>
+          } @else {
+            <div
+              class="tool-row"
+              [class.recovered]="step.recovered"
+              exAutoHeight
+            >
+              <div>
+                @if (
+                  step.kind === "think" && step.status === "running" && live()
+                ) {
+                  <ex-now-line [step]="step" />
+                } @else {
+                  <ex-tool-step
+                    [icon]="icon(step)"
+                    [verb]="verb(step)"
+                    [detail]="step.title || step.detail || ''"
+                    [status]="
+                      step.recovered || step.expected
+                        ? 'done'
+                        : step.status || 'done'
+                    "
+                    [meta]="
+                      step.recovered
+                        ? 'fixed'
+                        : step.expected
+                          ? 'reproduced'
+                          : step.result ||
+                            step.meta ||
+                            (step.duration && step.duration > 1
+                              ? duration(step.duration)
+                              : '')
+                    "
+                    [output]="
+                      step.kind === 'think'
+                        ? step.text || ''
+                        : step.output || step.hunk?.join('\n') || ''
+                    "
+                    [presentation]="step.presentation"
+                    [fullContent]="step.fullContent"
+                    (expandedChange)="toolExpanded(step.id, $event)"
+                    (contentRequested)="contentRequested.emit($event)"
+                  />
+                }
+              </div>
+            </div>
+          }
+        </ex-fold>
+      </div>
     </li>
   }
 </ol>

@@ -11,7 +11,7 @@ section {
   color: var(--ink);
 }
 header,
-nav,
+.content-choice,
 footer {
   display: flex;
   align-items: center;
@@ -25,7 +25,7 @@ h2 {
   font-size: var(--text-title-size);
   margin: 0;
 }
-nav {
+.content-choice {
   margin-block: var(--space-3);
 }
 pre {

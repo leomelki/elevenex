@@ -33,6 +33,8 @@ import {
   type AgentModel,
   type PermissionChoice,
   type ConversationMention,
+  type ToolContentRequest,
+  type ToolContentSource,
 } from "../conversation";
 import {
   ButtonComponent,
@@ -85,6 +87,17 @@ import { presentSessionTool } from './session-chat-tools';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SessionChatComponent {
+  openToolContent(request: ToolContentRequest): void {
+    const items = this.store.items();
+    const item = items.find(item => item.id === request.itemId);
+    const toolId = item?.toolId ?? item?.id;
+    this.contentSource.set(item?.kind === 'tool_use' || item?.kind === 'tool_result' ? {
+      inputId: item.kind === 'tool_use' ? item.id : items.find(value => value.kind === 'tool_use' && (value.toolId ?? value.id) === toolId)?.id,
+      outputId: item.kind === 'tool_result' ? item.id : [...items].reverse().find(value => value.kind === 'tool_result' && value.toolId === toolId)?.id,
+    } : undefined);
+    this.contentPart.set(request.part);
+    this.contentId.set(request.itemId);
+  }
   readonly selection = input.required<ChatSelection>();
   readonly archived = input(false);
   readonly active = input(true);
@@ -118,12 +131,8 @@ export class SessionChatComponent {
   );
   readonly copiedCode = signal<string | null>(null);
   readonly contentId = signal<string | null>(null);
-  readonly contentPart = computed(() =>
-    this.store.items().find((item) => item.id === this.contentId())?.kind ===
-    "tool_use"
-      ? ("input" as const)
-      : ("text" as const),
-  );
+  readonly contentSource = signal<ToolContentSource | undefined>(undefined);
+  readonly contentPart = signal<'input' | 'text'>('text');
   readonly identity = computed(
     () =>
       `${this.selection().scopeId}:${this.selection().taskId}:${this.selection().sessionId}`,

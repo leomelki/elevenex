@@ -10,7 +10,7 @@ export default async function* (capture) {
     await capture.settle();
     await capture.waitFor(() => document.getAnimations().every(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running'));
   };
-  const tool = index => `ex-work-timeline > ol > li:nth-child(${index + 1}) ex-tool-step`;
+  const tool = index => `[data-work-step="${index === 23 ? 'example-live' : 'example-' + index}"] ex-tool-step`;
   const scroll = selector => capture.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), selector);
   const hideReminder = async () => {
     if (await capture.evaluate(() => !!document.querySelector('ex-chat-scroll .reminder-top button')))
@@ -53,6 +53,9 @@ export default async function* (capture) {
       await capture.click('ex-turn .work');
     await finish();
     assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-work-timeline ex-tool-step').length), examples.length);
+    if (await capture.evaluate(() => document.querySelector('ex-work-timeline .earlier')?.getAttribute('aria-expanded') !== 'true'))
+      await capture.click('ex-work-timeline .earlier');
+    await finish();
 
     for (let index = 0; index < examples.length; index++) {
       const [name, expected, screenshot] = examples[index];
@@ -166,11 +169,11 @@ export default async function* (capture) {
     await capture.waitFor(() => document.querySelector('ex-turn .answer')?.textContent.includes('still running'));
     await finish();
     await hideReminder();
-    const live = 'ex-now-line ex-tool-step';
+    const live = '[data-work-step="example-live"] ex-tool-step';
     if (await capture.evaluate(() => document.querySelector('ex-work-timeline .earlier')))
       await capture.click('ex-work-timeline .earlier');
     await finish();
-    await capture.waitFor(() => document.querySelector('ex-now-line ex-tool-step'));
+    await capture.waitFor(() => document.querySelector('[data-work-step="example-live"] ex-tool-step'));
     await scroll(live + ' .head');
     await capture.click(live + ' .head');
     await finish();
@@ -190,11 +193,11 @@ export default async function* (capture) {
     await mode('tools-incomplete');
     await capture.waitFor(() => document.querySelector('[aria-label="Completion unknown"]'));
     await finish();
-    assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-turn .work')), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('[data-work-step="example-live"] ex-tool-step').contains(document.activeElement)), true);
     const incomplete = tool(23);
     await scroll(incomplete + ' .head');
     await hideReminder();
-    await capture.click(incomplete + ' .head');
+    if (await capture.evaluate(selector => document.querySelector(selector + ' .head').getAttribute('aria-expanded') !== 'true', incomplete)) await capture.click(incomplete + ' .head');
     await finish();
     assert.equal(await capture.evaluate(selector => document.querySelector(selector + ' .verb').textContent, incomplete), 'Attempted to run');
     await scroll(incomplete);

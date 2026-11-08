@@ -9,21 +9,32 @@ import {
   model,
   output,
   signal,
+  ElementRef,
+  viewChild,
+  afterRenderEffect,
 } from "@angular/core";
-import { OpensWhenBackComponent } from '../machines';
+import { OpensWhenBackComponent } from "../machines";
 import type { SessionChatContent } from "@elevenex/shared";
+import type { ToolContentSource } from "../conversation";
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import {
   ButtonComponent,
   IconButtonComponent,
   ModalLayerComponent,
+  SegmentedComponent,
 } from "../ui";
 import type { ChatSelection } from "./session-chat.store";
 
 /** A bounded original-content reader; output is always text, including tool-generated HTML. */
 @Component({
   selector: "ex-session-chat-content",
-  imports: [OpensWhenBackComponent, ModalLayerComponent, ButtonComponent, IconButtonComponent],
+  imports: [
+    OpensWhenBackComponent,
+    ModalLayerComponent,
+    ButtonComponent,
+    IconButtonComponent,
+    SegmentedComponent,
+  ],
   templateUrl: "./session-chat-content.component.html",
   styleUrl: "./session-chat-content.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -31,26 +42,60 @@ import type { ChatSelection } from "./session-chat.store";
 export class SessionChatContentComponent {
   readonly selection = input.required<ChatSelection>();
   readonly itemId = input.required<string>();
+  readonly source = input<ToolContentSource>();
   readonly unreachable = input<string>();
   readonly reconnectRequested = output<void>();
   readonly closed = output<void>();
   readonly copyRequested = output<string>();
   readonly open = signal(true);
   readonly part = model<"text" | "input">("text");
+  protected readonly parts = [{ id: 'text', label: 'Output' }, { id: 'input', label: 'Input' }] as const;
   readonly previousOffsets = signal<readonly number[]>([]);
   readonly offset = signal(0);
   readonly page = signal<SessionChatContent | null>(null);
-  readonly visiblePage = computed(() => { const page = this.page(); return page?.itemId === this.itemId() && page.part === this.part() && page.offset === this.offset() ? page : null; });
+  readonly canReturnToLoaded = computed(() => {
+    const page = this.page();
+    return (
+      !!page &&
+      [this.itemId(), this.source()?.inputId, this.source()?.outputId].includes(
+        page.itemId,
+      )
+    );
+  });
+  readonly selectedId = computed(
+    () =>
+      (this.part() === "input"
+        ? this.source()?.inputId
+        : this.source()?.outputId) ?? this.itemId(),
+  );
+  readonly visiblePage = computed(() => {
+    const page = this.page();
+    return page?.itemId === this.selectedId() &&
+      page.part === this.part() &&
+      page.offset === this.offset()
+      ? page
+      : null;
+  });
   readonly busy = signal(true);
   readonly error = signal("");
   private readonly client = inject(SessionChatClient);
   private request: { scope: string; id: string } | undefined;
   private generation = 0;
+  private readonly content = viewChild<ElementRef<HTMLElement>>('content');
+  private positionPage = '';
   constructor() {
+    afterRenderEffect(() => {
+      const page = this.visiblePage();
+      const content = this.content()?.nativeElement;
+      if (!page || !content) return;
+      const key = `${page.itemId}:${page.part}:${page.offset}`;
+      if (key !== this.positionPage) content.scrollTop = 0;
+      this.positionPage = key;
+    });
     effect(() => {
       void this.load(
         this.selection(),
-        this.itemId(),
+        this.selectedId(),
         this.part(),
         this.offset(),
       );
@@ -66,7 +111,8 @@ export class SessionChatContentComponent {
     this.open.set(false);
     this.cancel();
   }
-  switchPart(part: "text" | "input"): void {
+  switchPart(part: string): void {
+    if ((part !== 'text' && part !== 'input') || part === this.part()) return;
     this.part.set(part);
     this.offset.set(0);
     this.previousOffsets.set([]);
@@ -86,9 +132,20 @@ export class SessionChatContentComponent {
       this.previousOffsets.set(offsets.slice(0, -1));
     }
   }
-  returnToLoaded(): void { const page = this.page(); if (page?.itemId === this.itemId()) { this.part.set(page.part); this.offset.set(page.offset); } }
+  returnToLoaded(): void {
+    const page = this.page();
+    if (page && this.canReturnToLoaded()) {
+      this.part.set(page.part);
+      this.offset.set(page.offset);
+    }
+  }
   reload(): void {
-    void this.load(this.selection(), this.itemId(), this.part(), this.offset());
+    void this.load(
+      this.selection(),
+      this.selectedId(),
+      this.part(),
+      this.offset(),
+    );
   }
   private async load(
     target: ChatSelection,
@@ -97,7 +154,10 @@ export class SessionChatContentComponent {
     offset: number,
   ): Promise<void> {
     this.cancel();
-    if (!this.open() || this.unreachable()) { this.busy.set(false); return; }
+    if (!this.open() || this.unreachable()) {
+      this.busy.set(false);
+      return;
+    }
     const generation = this.generation,
       requestId = crypto.randomUUID();
     this.request = { scope: target.scopeId, id: requestId };

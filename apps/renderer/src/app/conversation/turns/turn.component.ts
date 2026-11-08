@@ -5,19 +5,13 @@ import {
   type OnChanges,
   afterRenderEffect,
   computed,
-  effect,
   inject,
   input,
   output,
   signal,
   viewChild,
 } from "@angular/core";
-import {
-  AutoHeightDirective,
-  ButtonComponent,
-  FoldComponent,
-  IconComponent,
-} from "../../ui";
+import { ButtonComponent, FoldComponent, IconComponent } from "../../ui";
 import type {
   ChangedFile,
   TurnAction,
@@ -25,20 +19,19 @@ import type {
   WorkStep,
 } from "../conversation.models";
 import { WorkTimelineComponent } from "./work-timeline.component";
-import { NowLineComponent } from "./now-line.component";
 import { OutcomeBarComponent } from "./outcome-bar.component";
 import { TurnActsComponent } from "./turn-acts.component";
 import { formatDuration, isProse, summarizeWork } from "./work-summary";
+import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
+import type { ToolContentRequest } from "../tool-presentation";
 import { ReplyMarkComponent } from "./reply-mark.component";
 @Component({
   selector: "ex-turn",
   imports: [
-    AutoHeightDirective,
     ButtonComponent,
     FoldComponent,
     IconComponent,
     WorkTimelineComponent,
-    NowLineComponent,
     OutcomeBarComponent,
     ReplyMarkComponent,
     TurnActsComponent,
@@ -64,6 +57,16 @@ export class TurnComponent implements OnChanges {
   readonly status = input<TurnStatus>("done");
   readonly steps = input<readonly WorkStep[]>([]);
   readonly answerBeforeStepId = input<string>();
+  readonly answerId = input<string>();
+  readonly answer = input<string>();
+  readonly streaming = input(false);
+  readonly copiedCode = input<string | null>(null);
+  readonly resolve = input<MarkdownAssetResolver>();
+  readonly openLink = output<string>();
+  readonly openPage = output<string>();
+  readonly copyCode = output<string>();
+  readonly contentRequested = output<ToolContentRequest>();
+  protected readonly inspecting = signal(false);
   readonly duration = input(0);
   readonly elapsed = input(0);
   readonly files = input<readonly ChangedFile[]>([]);
@@ -75,8 +78,19 @@ export class TurnComponent implements OnChanges {
   readonly mark = input("EX");
   readonly harness = input<string>();
   readonly time = input("");
-  readonly reach = input<{ readonly machine: string; readonly since: number }>();
-  protected readonly reachTime = computed(() => { const since = this.reach()?.since; return since ? new Date(since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'the connection was lost'; });
+  readonly reach = input<{
+    readonly machine: string;
+    readonly since: number;
+  }>();
+  protected readonly reachTime = computed(() => {
+    const since = this.reach()?.since;
+    return since
+      ? new Date(since).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "the connection was lost";
+  });
   readonly stoppable = input(true);
   readonly retryable = input(true);
   readonly actions = input<readonly TurnAction[]>([
@@ -91,37 +105,13 @@ export class TurnComponent implements OnChanges {
   readonly review = output<void>();
   readonly toggled = signal<boolean | null>(null);
   readonly expanded = computed(
-    () => this.toggled() ?? (this.status() === "live" || this.open()),
-  );
-  private readonly answerBoundary = computed(() => {
-    const boundary = this.answerBeforeStepId();
-    const index = this.steps().findIndex((step) => step.id === boundary);
-    return index < 0 ? this.steps().length : index;
-  });
-  readonly precedingSteps = computed(() =>
-    this.steps().slice(0, this.answerBoundary()),
-  );
-  readonly followingSteps = computed(() =>
-    this.steps().slice(this.answerBoundary()),
-  );
-  readonly activeStep = computed(() => {
-    const last = this.precedingSteps().at(-1);
-    return this.status() === "live" && last?.status === "running" ? last : null;
-  });
-  readonly heldStep = signal<WorkStep | null>(null);
-  readonly nowStep = computed(() => {
-    if (this.status() !== "live") return null;
-    const active = this.activeStep();
-    if (active) return active;
-    const held = this.heldStep();
-    // A step handed to either timeline must stop rendering as current in the
-    // same update. Only bridge gaps where that step has left the supplied list.
-    return held && !this.steps().some((step) => step.id === held.id) ? held : null;
-  });
-  readonly timelineSteps = computed(() =>
-    this.precedingSteps().filter((step) => step.id !== this.activeStep()?.id),
+    () =>
+      this.toggled() ??
+      (this.status() === "live" || this.open() || this.inspecting()),
   );
   readonly workLabel = computed(() => {
+    if (this.status() === "done" && !this.stepCount() && this.hasCommentary())
+      return "Earlier messages";
     const seconds = this.status() === "live" ? this.elapsed() : this.duration();
     const label =
       this.status() === "live"
@@ -138,8 +128,17 @@ export class TurnComponent implements OnChanges {
   readonly stepCount = computed(
     () => this.steps().filter((step) => !isProse(step)).length,
   );
+  private readonly hasCommentary = computed(() =>
+    this.steps().some((step) => step.kind === "say" && !!step.text?.trim()),
+  );
+  protected readonly timelineSteps = computed(() =>
+    this.stepCount()
+      ? this.steps()
+      : this.steps().filter((step) => step.kind === "say"),
+  );
   protected readonly showWork = computed(
-    () => this.status() === "live" || this.stepCount() > 0,
+    () =>
+      this.status() === "live" || this.stepCount() > 0 || this.hasCommentary(),
   );
   // Retain the last visible heading through Fold's exit and interrupted reopen.
   // History without work never mounts a heading or invents a Worked label.
@@ -163,11 +162,6 @@ export class TurnComponent implements OnChanges {
     "workRegion",
     { read: ElementRef },
   );
-  private readonly nowRegion = viewChild<unknown, ElementRef<HTMLElement>>(
-    "nowRegion",
-    { read: ElementRef },
-  );
-  private currentStepId: string | undefined;
   protected readonly factsClipped = signal(false);
   constructor() {
     afterRenderEffect((cleanup) => {
@@ -182,18 +176,6 @@ export class TurnComponent implements OnChanges {
       observer.observe(element);
       cleanup(() => observer.disconnect());
     });
-    effect((cleanup) => {
-      const step = this.activeStep();
-      if (step) {
-        this.heldStep.set(step);
-        return;
-      }
-      const timer = setTimeout(
-        () => this.heldStep.set(null),
-        this.status() === "live" ? 700 : 0,
-      );
-      cleanup(() => clearTimeout(timer));
-    });
   }
   ngOnChanges(): void {
     if (!this.initialized) {
@@ -206,24 +188,28 @@ export class TurnComponent implements OnChanges {
         live: this.status() === "live",
       });
     }
-    // Run before the template updates: hiding or replacing a focused live tool
-    // would otherwise move focus to the document and hide it from accessibility.
-    const region = this.nowRegion()?.nativeElement;
-    const nextId = this.activeStep()?.id;
     const focused = this.host.nativeElement.ownerDocument.activeElement;
     if (
       !this.showWork() &&
-      (this.workRegion()?.nativeElement.contains(focused) ||
-        region?.contains(focused))
+      this.workRegion()?.nativeElement.contains(focused)
     ) {
       this.host.nativeElement.focus({ preventScroll: true });
     } else if (
-      region?.contains(region.ownerDocument.activeElement) &&
-      nextId !== this.currentStepId
-    )
-      this.workButton()?.nativeElement.focus();
-    this.currentStepId = nextId;
+      focused instanceof HTMLElement &&
+      this.host.nativeElement.contains(focused)
+    ) {
+      const id =
+        focused.closest<HTMLElement>("[data-work-step]")?.dataset["workStep"];
+      if (
+        id &&
+        id !== (this.answerId() ?? "$answer") &&
+        !this.steps().some((step) => step.id === id)
+      ) {
+        this.workButton()?.nativeElement.focus({ preventScroll: true });
+      }
+    }
   }
+
   protected arrivalFinished(event: AnimationEvent): void {
     // Ignore the mark's entry/breathing and animations inside streamed content.
     if (event.target === event.currentTarget) this.arriving.set(false);

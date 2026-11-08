@@ -18,3 +18,24 @@ it('opens an uncached page only when reachable and retains the loaded page throu
   expect(document.body.textContent).toContain('Opens when dev-box is back'); expect(client.content).toHaveBeenCalledOnce();
   fixture.componentInstance.returnToLoaded(); fixture.detectChanges(); expect(document.querySelector('ex-session-chat-content pre, .cdk-overlay-container pre')?.textContent).toContain('Already loaded text');
 });
+
+it('returns to a paired loaded output while input is unreachable and resets scroll on a new page', async () => {
+  const client = { content: vi.fn(async (_scope: string, input: { itemId: string; part: string; offset: number }) => ({ ok: true,
+    value: { itemId: input.itemId, part: input.part, offset: input.offset, text: 'Loaded content', nextOffset: input.offset ? null : 100, total: 200 } })), cancel: vi.fn() };
+  TestBed.configureTestingModule({ providers: [{ provide: SessionChatClient, useValue: client }] });
+  const fixture = TestBed.createComponent(SessionChatContentComponent);
+  fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 2 });
+  fixture.componentRef.setInput('itemId', 'result');
+  fixture.componentRef.setInput('source', { inputId: 'call', outputId: 'result' });
+  fixture.detectChanges(); await fixture.whenStable(); fixture.detectChanges();
+  document.querySelector<HTMLElement>('pre[aria-label="Original tool output"]')!.scrollTop = 120;
+  fixture.componentInstance.next(); fixture.detectChanges(); await fixture.whenStable(); fixture.detectChanges();
+  expect(document.querySelector<HTMLElement>('pre[aria-label="Original tool output"]')!.scrollTop).toBe(0);
+  fixture.componentRef.setInput('unreachable', 'dev-box');
+  fixture.componentInstance.switchPart('input'); fixture.detectChanges(); await fixture.whenStable(); fixture.detectChanges();
+  expect(document.body.textContent).toContain('Back to loaded page');
+  const calls = client.content.mock.calls.length;
+  fixture.componentInstance.returnToLoaded(); fixture.detectChanges(); await fixture.whenStable(); fixture.detectChanges();
+  expect(fixture.componentInstance.visiblePage()?.itemId).toBe('result');
+  expect(client.content.mock.calls).toHaveLength(calls);
+});

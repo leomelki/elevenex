@@ -2,23 +2,40 @@
   <ex-chat-scroll (activeExchange)="active.set($event)">
     <ng-content select="[chatHistory]" />
     @for (exchange of exchanges(); track exchange.renderId ?? exchange.id) {
-      @if (exchange.prompt || exchange.attachments?.length || exchange.mentions?.length) {
+      @if (
+        exchange.prompt ||
+        exchange.attachments?.length ||
+        exchange.mentions?.length
+      ) {
         <ex-message
           role="user"
           [messageId]="exchange.id"
           [isNew]="exchange.isNew || false"
           [sendOrigin]="exchange.sendOrigin"
           [time]="exchange.time || ''"
-          >{{ exchange.prompt }}@if (exchange.mentions?.length) {
-            <div class="message-mentions" role="list" aria-label="Mentioned sessions">
-              @for (mention of exchange.mentions; track mention.kind + ':' + mention.id) {
+          >{{ exchange.prompt }}
+          @if (exchange.mentions?.length) {
+            <div
+              class="message-mentions"
+              role="list"
+              aria-label="Mentioned sessions"
+            >
+              @for (
+                mention of exchange.mentions;
+                track mention.kind + ":" + mention.id
+              ) {
                 <ex-mention role="listitem" [mention]="mention" />
               }
             </div>
-          }@if (exchange.attachments?.length) {
-            <ex-attachments [files]="exchange.attachments || []" [resolve]="resolve()" (copyPath)="copyCode.emit($event)" />
-          }</ex-message
-        >
+          }
+          @if (exchange.attachments?.length) {
+            <ex-attachments
+              [files]="exchange.attachments || []"
+              [resolve]="resolve()"
+              (copyPath)="copyCode.emit($event)"
+            />
+          }
+        </ex-message>
       }
       <ex-turn
         [reach]="reach()"
@@ -28,6 +45,15 @@
         [stoppable]="stoppable()"
         [retryable]="retryable()"
         [steps]="exchange.steps"
+        [answer]="exchange.answer"
+        [answerId]="exchange.answerId"
+        [streaming]="exchange.streaming ?? exchange.status === 'live'"
+        [copiedCode]="copiedCode()"
+        [resolve]="resolve()"
+        (openLink)="openLink.emit($event)"
+        (openPage)="openPage.emit($event)"
+        (copyCode)="copyCode.emit($event)"
+        (contentRequested)="toolContentRequested.emit($event)"
         [answerBeforeStepId]="exchange.answerBeforeStepId"
         [duration]="exchange.duration || 0"
         [elapsed]="exchange.elapsed || 0"
@@ -38,20 +64,14 @@
         [mark]="exchange.mark || 'EX'"
         [harness]="exchange.harness"
         (action)="turnAction.emit({ id: exchange.id, action: $event })"
-        (openFile)="openFile.emit($event); fileReview.emit({ id: exchange.id, path: $event })"
+        (openFile)="
+          openFile.emit($event);
+          fileReview.emit({ id: exchange.id, path: $event })
+        "
         (review)="review.emit(exchange.id)"
         (stop)="stop.emit(exchange.id)"
         (retry)="retry.emit(exchange.id)"
-        ><ex-markdown
-          [source]="exchange.answer"
-          [copiedCode]="copiedCode()"
-          [streaming]="exchange.streaming ?? (exchange.status === 'live')"
-          [resolve]="resolve()"
-          (openFile)="openFile.emit($event); fileReview.emit({ id: exchange.id, path: $event })"
-          (openLink)="openLink.emit($event)"
-          (openPage)="openPage.emit($event)"
-          (copyCode)="copyCode.emit($event)"
-      /></ex-turn>
+      />
       @for (content of exchange.overflow || []; track content.id) {
         <button
           exButton

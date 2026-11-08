@@ -6,9 +6,9 @@ These standalone OnPush components consume renderer view models and emit typed i
 
 - `ChatComponent` composes `ChatScroll`, user messages, turns, Markdown and turn navigation from `readonly ChatExchange[]`. Project a composer with `chatComposer`, and optional decision cards with `chatContent`.
 - `ChatExchange.mentions` supplies read-only context chips inside the corresponding user message. These reuse the composer mention appearance, retain stable IDs and full labels, and expose no removal controls in history. The owner supplies these for optimistic and restored messages; snapshot contents and transcript paths never belong in this view model.
-- `TurnComponent` owns only expanded evidence and a 700ms current-step hold between actions. A step handed to either work timeline leaves the current row immediately, so completed work never appears twice. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
+- `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Completion folds untouched work; inspected or explicitly expanded work stays open without expanding the recent window. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
 - `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. Both render through the internal `ReplyMark` (`turns/reply-mark.component.ts`): a 28px tinted tile (peach for Claude, periwinkle with a gradient glyph for Codex, neutral for OpenCode/Pi and monograms), exposed as `role="img"` named by `author`. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
-- `WorkTimeline` groups adjacent successful discovery steps. Failed work stays visible. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
+- `WorkTimeline` groups adjacent successful discovery steps using flat, keyed rows, so grouping never reparents a tool. One recent-work budget covers the turn. Commentary, running/unknown tools, unresolved failures and inspected work stay visible. Earlier steps use a persistent Show fewer toggle with retained focus. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
 - `ComposerComponent` owns the draft (`[(draft)]` is optional), mention query, local overlay state and file-drop feedback. It emits `ComposerSubmission` with `send`, `queue` or `steer`. Queue mutations, context additions/removals, recording and all agent settings are controlled by the owner. File attachment outputs contain user-selected browser `File` objects, which the integration must resolve through the permitted platform boundary.
 - `QueuedMessage.renderId` optionally preserves an optimistic queue row through its saved receipt. Keep that key stable while the row remains present; `id` remains the durable identity emitted by queue actions. Replacing the mounted key would retain the outgoing row during its exit and briefly inflate the composer's measured height.
 - Session drops emit the same `mentionInserted` intent as the @ picker. Supply `sessionMentionScope` for connected references, bounded `mentionItems` for keyboard discovery and controlled `context`; handle `contextRemoved` in the owner. Session references live only in their controlled context chips. Drops preserve the draft and its selection; choosing a session from the @ picker consumes the active query without inserting a text copy. Both restore textarea focus and never submit or navigate. Removing the chip removes the session reference; ordinary message text stays independent. Duplicate session IDs and more than eight references are refused. Disabled/sending states reject drops. Cancellation/exit releases the indicator; drop transitions and chip entry respect reduced motion. Long chip labels truncate while retaining their full accessible removal name.
@@ -163,14 +163,23 @@ thinking line visible without keeping its cursor alive during the handoff to
 assistant text.
 
 `ChatExchange.answerBeforeStepId` (also accepted by `Turn`) places the latest
-reply before that work step. Omit it when all work precedes the answer. Both
-timeline sections follow the same work disclosure; individual tools retain
-their output disclosures. This keeps commentary before tools that follow it,
-including during streaming, while keeping the latest answer visible on collapse.
-Only the last preceding running step uses `NowLine`; overlapping running tools
-stay in their original timeline positions. Hover/focus facts include completed
-edits, searches, listings, web requests and generic tools as well as reads and
-commands, and remain available during live work.
+reply before that work step; omission means all work precedes it. Supply
+`answerId` with the assistant message's stable identity. The connected `Chat`
+passes `answer`, `streaming`, `copiedCode` and `resolve` to the same Markdown
+instance as earlier commentary. File/link/page/copy intents work in both places.
+`Turn` still supports projected answer content for existing standalone callers.
+
+The timeline retains every step's component in its original keyed list. Discovery
+groups control the visibility of flat members, and automatically stay open around
+an inspected member. A group never opens merely because its header receives
+focus. `maxVisible` is one turn-wide budget of recent work entries (a discovery
+group is one entry), independent of live/completed status. “N earlier steps”
+counts tools only; commentary remains in order. Show fewer is an explicit request
+to release old inspection pins. Closed folds are inert immediately and retain
+disclosure state through their exit and reopening. Running tools remain visible
+when live history is collapsed. History is still on mount; appended rows grow
+before their ink appears. Existing Fold and AutoHeight handle reversible
+compaction, output and reasoning-height transitions with reduced-motion support.
 
 
 ## Connected composer controls
@@ -309,9 +318,19 @@ updates retain the tool disclosure. The `/connected-workspace` tools preview and
 `session-tools.mjs` capture scenario exercise every normalized family.
 `WorkStep.status='unknown'` means no completion receipt was received: it uses a
 neutral clock, stays outside discovery groups and completed-work facts, and does
-not imply failure or success. A live tool's focus returns to the turn's work
-control before replacement/completion hides it; each new tool starts with its
-own disclosure state.
+not imply failure or success. Tools retain focus and disclosure through results,
+new commentary and completion; removing a focused tool restores focus to the
+work control. Each new tool starts with its own disclosure state.
+
+Tool previews mount on first inspection, not for every closed tool in history.
+`WorkStep.fullContent` provides optional `inputId` / `outputId` targets when the
+transport shortened evidence. `ToolStep` and `ToolContent` emit a typed
+`ToolContentRequest` through `WorkTimeline` → `Turn` → `Chat.toolContentRequested`.
+The owner opens the bounded reader; it never fetches from these components.
+Full-content actions sit beside the primary result, outside Details. Original
+data is the received payload and can itself be shortened. The connected reader
+switches between the original call and its paired receipt, resetting pagination
+on tab changes. Missing counterparts do not create empty tabs.
 
 Image `MarkdownAsset` values may carry `loading` or `error` for an asynchronous
 owner-supplied resolver. Media shows those states without claiming that a file is

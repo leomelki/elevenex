@@ -1,39 +1,67 @@
-<div class="tool-content">
-  <div class="tool-preview">
-    @for (block of preview(); track $index) {
-      <ex-tool-block [block]="block" [compact]="true" />
+<div class="tool-content" exAutoHeight>
+  <div>
+    <div class="tool-preview">
+      @for (block of preview(); track $index) {
+        <ex-tool-block [block]="block" [compact]="true" />
+      }
+    </div>
+    @if (fullContent(); as source) {
+      <div class="full-content">
+        @if (source.outputId; as id) {
+          <button
+            exButton
+            variant="ghost"
+            size="sm"
+            (click)="contentRequested.emit({ itemId: id, part: 'text' })"
+          >
+            View full output
+          </button>
+        }
+        @if (source.inputId; as id) {
+          <button
+            exButton
+            variant="ghost"
+            size="sm"
+            (click)="contentRequested.emit({ itemId: id, part: 'input' })"
+          >
+            View full input
+          </button>
+        }
+      </div>
+    }
+    @if (hasDetails()) {
+      <details class="more-details" (toggle)="showDetails($event)">
+        <summary>
+          Details
+          @if (presentation().previewNotice; as notice) {
+            <span class="detail-count"> · {{ notice }}</span>
+          }
+        </summary>
+        @if (detailsOpen()) {
+          <div class="tool-details">
+            @if (presentation().preview) {
+              @for (block of presentation().blocks; track $index) {
+                <ex-tool-block [block]="block" />
+              }
+            }
+            @if (presentation().notice; as notice) {
+              <p class="notice">{{ notice }}</p>
+            }
+            @if (original()) {
+              <details class="raw-details" (toggle)="showOriginal($event)">
+                <summary>Original data</summary>
+                @if (originalOpen()) {
+                  <pre
+                    tabindex="0"
+                    aria-label="Original tool input and output"
+                    >{{ original() }}</pre
+                  >
+                }
+              </details>
+            }
+          </div>
+        }
+      </details>
     }
   </div>
-  @if (hasDetails()) {
-    <details class="more-details" (toggle)="showDetails($event)">
-      <summary>
-        Details
-        @if (presentation().previewNotice; as notice) {
-          <span class="detail-count"> · {{ notice }}</span>
-        }
-      </summary>
-      @if (detailsOpen()) {
-        <div class="tool-details">
-          @if (presentation().preview) {
-            @for (block of presentation().blocks; track $index) {
-              <ex-tool-block [block]="block" />
-            }
-          }
-          @if (presentation().notice; as notice) {
-            <p class="notice">{{ notice }}</p>
-          }
-          @if (original()) {
-            <details class="raw-details" (toggle)="showOriginal($event)">
-              <summary>Original data</summary>
-              @if (originalOpen()) {
-                <pre tabindex="0" aria-label="Original tool input and output">{{
-                  original()
-                }}</pre>
-              }
-            </details>
-          }
-        </div>
-      }
-    </details>
-  }
 </div>

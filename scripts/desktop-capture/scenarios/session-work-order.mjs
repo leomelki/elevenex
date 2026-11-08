@@ -26,14 +26,15 @@ export default async function* (capture) {
     assert.deepEqual(order, { preceding: true, following: true });
     assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-turn .answer .caret').length), 0);
     yield { name: theme + '-message-before-running-tool', inspect: ['ex-turn .answer', 'ex-turn ex-work-timeline', 'ex-turn .facts'] };
-    await capture.click('ex-turn .answer + ex-fold ex-tool-step .head');
+    if (await capture.evaluate(() => document.querySelector('[data-work-step="test"] ex-tool-step .head').getAttribute('aria-expanded') !== 'true'))
+      await capture.click('[data-work-step="test"] ex-tool-step .head');
     await finish();
     assert.equal(await capture.evaluate(() => [...document.querySelectorAll('ex-turn ex-tool-step .head')].at(-1)?.getAttribute('aria-expanded')), 'true');
     yield { name: theme + '-tool-input-expanded', inspect: ['ex-turn ex-tool-step pre'] };
     await capture.click('ex-turn .work');
     await finish();
     assert.equal(await capture.evaluate(() => document.querySelector('ex-turn .work').getAttribute('aria-expanded')), 'false');
-    assert.equal(await capture.evaluate(() => [...document.querySelectorAll('ex-turn ex-work-timeline')].every(t => !!t.closest('ex-fold[inert]'))), true);
+    assert.equal(await capture.evaluate(() => [...document.querySelectorAll('ex-turn ex-tool-step')].filter(t => !t.querySelector('section.running')).every(t => !!t.closest('ex-fold[inert]'))), true);
     await capture.click('ex-turn .work');
     await finish();
     yield { name: theme + '-work-reopened', inspect: ['ex-turn .answer', 'ex-turn ex-work-timeline'] };
