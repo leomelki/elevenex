@@ -3,7 +3,7 @@
 } @else if (!store.state()) {
   <div class="no-task" [attr.aria-busy]="store.pending() > 0"><ex-icon name="globe" [size]="24" /><p role="status">{{ store.error() || 'Opening task browser…' }}</p>@if (store.error()) { <button exButton (click)="store.read()">Refresh browser</button> }</div>
 } @else {
-  @if (current(); as tab) { <ex-browser-site-requests [tabId]="tab.id" [requests]="tab.workflows ?? []" (commandRequested)="command($event)" /> }
+  @if (current(); as tab) { <ex-browser-site-requests [tabId]="tab.id" [pageUrl]="tab.url" [requests]="tab.workflows ?? []" (commandRequested)="command($event)" /> }
   <ex-fold [open]="!!store.state()?.attention"><div class="notice" role="status"><span>{{ store.state()?.attention?.message }}</span>@if(store.state()?.attention?.outside){<button exButton size="sm" (click)="tabCommand('outside', store.state()?.attention?.tabId)">Open outside</button>}<button exButton size="sm" variant="ghost" (click)="command({kind:'dismiss-attention'})">Dismiss</button></div></ex-fold>
   <ex-fold [open]="!!store.state()?.connection?.message"><div class="notice" role="status"><span>{{ store.state()?.connection?.message }}</span><button exButton size="sm" [disabled]="store.state()?.connection?.phase === 'connecting'" (click)="store.read()">Reconnect</button></div></ex-fold>
   <ex-fold [open]="!!store.error() || !!notice() || !!store.state()?.pickerMessage"><div class="notice" role="status"><span>{{ store.error() || notice() || store.state()?.pickerMessage }}</span>@if (store.error()) { <button exButton size="sm" (click)="store.read()">Refresh</button> }<button exButton size="sm" variant="ghost" (click)="dismissNotice()">Dismiss</button></div></ex-fold>

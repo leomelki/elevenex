@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { afterEach, expect, it } from 'vitest';
-import { BrowserSiteRequestsComponent } from './browser-site-requests.component';
+import { BrowserSiteRequestsComponent, siteIdentity } from './browser-site-requests.component';
 afterEach(() => TestBed.resetTestingModule());
 it('keeps prompt drafts private until explicit confirmation and binds responses to their originating tab', () => {
   const fixture = TestBed.createComponent(BrowserSiteRequestsComponent);
@@ -21,4 +21,45 @@ it('closes a retained dialog on tab change and cannot send its draft to the repl
   const sent: unknown[] = []; component.commandRequested.subscribe(value => sent.push(value));
   fixture.componentRef.setInput('tabId', 'second'); fixture.detectChanges(); component.answer(true);
   expect(component.open()).toBe(false); expect(sent).toEqual([]);
+});
+it('names the asking site from the tab URL and keeps that identity while the dialog exits', () => {
+  const fixture = TestBed.createComponent(BrowserSiteRequestsComponent), component = fixture.componentInstance;
+  const request = { id: 'request', kind: 'dialog' as const, type: 'confirm' as const, message: 'Remove this item?', defaultValue: '' };
+  fixture.componentRef.setInput('tabId', 'first'); fixture.componentRef.setInput('pageUrl', 'https://xn--pple-43d.com:8443/cart'); fixture.componentRef.setInput('requests', [request]); fixture.detectChanges();
+  expect(document.querySelector('.site-request')?.textContent).toContain('xn--pple-43d.com asks you to confirm');
+  component.review(request); fixture.detectChanges();
+  const dialog = document.querySelector('.site-dialog');
+  expect(dialog?.getAttribute('role')).toBe('alertdialog');
+  expect(document.getElementById(dialog?.getAttribute('aria-labelledby') ?? '')?.textContent).toBe('xn--pple-43d.com says');
+  expect(dialog?.querySelector('.origin')?.textContent).toContain('https://xn--pple-43d.com:8443');
+  expect([...dialog!.querySelectorAll('footer button')].map(button => button.textContent?.trim())).toEqual(['Cancel', 'OK']);
+  fixture.componentRef.setInput('pageUrl', 'https://other.example/'); fixture.detectChanges();
+  expect(dialog?.querySelector('h2')?.textContent).toBe('xn--pple-43d.com says');
+});
+it('asks to leave in its own words, never the site’s, and defaults to staying', () => {
+  const fixture = TestBed.createComponent(BrowserSiteRequestsComponent), component = fixture.componentInstance;
+  const request = { id: 'leave', kind: 'dialog' as const, type: 'beforeunload' as const, message: 'Your account will be deleted unless you stay!', defaultValue: '' };
+  fixture.componentRef.setInput('tabId', 'first'); fixture.componentRef.setInput('pageUrl', 'https://shop.example/'); fixture.componentRef.setInput('requests', [request]); fixture.detectChanges();
+  const sent: unknown[] = []; component.commandRequested.subscribe(value => sent.push(value));
+  component.review(request); fixture.detectChanges();
+  const dialog = document.querySelector('.site-dialog')!;
+  expect(dialog.querySelector('h2')?.textContent).toBe('Leave this site?');
+  expect(dialog.textContent).not.toContain('deleted');
+  const [stay, leave] = [...dialog.querySelectorAll<HTMLButtonElement>('footer button')];
+  expect([stay?.textContent?.trim(), leave?.textContent?.trim()]).toEqual(['Stay', 'Leave']);
+  expect(stay?.hasAttribute('cdkFocusInitial')).toBe(true);
+  stay?.click();
+  expect(sent).toEqual([{ kind: 'dialog-response', tabId: 'first', requestId: 'leave', accept: false, text: '' }]);
+});
+it('falls back to “This page” without a network origin and omits an empty message', () => {
+  expect(siteIdentity('about:blank')).toEqual({ host: null, origin: null });
+  expect(siteIdentity('not a url')).toEqual({ host: null, origin: null });
+  const fixture = TestBed.createComponent(BrowserSiteRequestsComponent), component = fixture.componentInstance;
+  const request = { id: 'empty', kind: 'dialog' as const, type: 'alert' as const, message: '', defaultValue: '' };
+  fixture.componentRef.setInput('tabId', 'first'); fixture.componentRef.setInput('pageUrl', 'data:text/html,hi'); fixture.componentRef.setInput('requests', [request]); fixture.detectChanges();
+  component.review(request); fixture.detectChanges();
+  const dialog = document.querySelector('.site-dialog')!;
+  expect(dialog.querySelector('h2')?.textContent).toBe('This page says');
+  expect(dialog.querySelector('.origin')).toBeNull(); expect(dialog.querySelector('.site-message')).toBeNull();
+  expect(dialog.hasAttribute('aria-describedby')).toBe(false);
 });

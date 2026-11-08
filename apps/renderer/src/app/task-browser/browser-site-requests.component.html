@@ -1,20 +1,62 @@
 @for (request of requests(); track request.id) {
-  <div class="site-request" role="status">
+  <div class="site-request" role="status" [attr.data-kind]="request.kind">
+    <span class="request-mark" aria-hidden="true"><ex-icon [name]="requestIcon(request)" [size]="14" /></span>
     @switch (request.kind) {
-      @case ('dialog') { <span>This site needs a dialog response.</span><button exButton size="sm" (click)="review(request)">Review dialog</button> }
-      @case ('upload') { <span>This site requested {{ request.multiple ? 'files' : 'a file' }}.</span><button exButton size="sm" (click)="transfer(request)">Choose files…</button> }
-      @case ('download') { <span>{{ request.name }} · {{ request.status === 'ready' ? 'Ready to save' : 'Downloading…' }}</span><button exButton size="sm" [disabled]="request.status !== 'ready'" (click)="transfer(request)">Save…</button> }
+      @case ('dialog') {
+        <span class="request-copy"><b [title]="site().host ?? ''">{{ site().host ?? 'This page' }}</b><span class="verb"> {{ requestText(request) }}</span></span>
+        <button exButton size="sm" variant="ghost" (click)="cancel(request)">Dismiss</button>
+        <button exButton size="sm" variant="secondary" (click)="review(request)">Respond</button>
+      }
+      @case ('upload') {
+        <span class="request-copy"><b [title]="site().host ?? ''">{{ site().host ?? 'This page' }}</b><span class="verb"> wants {{ request.multiple ? 'files' : 'a file' }}</span></span>
+        <button exButton size="sm" variant="ghost" (click)="cancel(request)">Cancel</button>
+        <button exButton size="sm" variant="secondary" (click)="transfer(request)">Choose…</button>
+      }
+      @case ('download') {
+        <span class="request-copy"><b class="file-name" [title]="request.name">{{ request.name }}</b><small> {{ request.status === 'ready' ? 'Ready to save' : 'Downloading…' }}</small></span>
+        <button exButton size="sm" variant="ghost" (click)="cancel(request)">Cancel</button>
+        <button exButton size="sm" variant="secondary" [disabled]="request.status !== 'ready'" (click)="transfer(request)">Save…</button>
+      }
     }
-    <button exButton size="sm" variant="ghost" (click)="cancel(request)">Cancel</button>
   </div>
 }
 @if (selected(); as request) {
+  @let site = selectedSite();
+  @let titleId = 'site-dialog-title-' + request.id;
+  @let messageId = 'site-dialog-message-' + request.id;
   <ex-modal-layer [open]="open()" (closeRequested)="answer(false)" (closed)="selected.set(null)">
-    <section class="site-dialog" role="dialog" aria-modal="true" aria-label="Site dialog" [attr.inert]="open() ? null : ''">
-      <h2>Site dialog</h2><p class="site-message">{{ request.message }}</p>
-      @if (request.type === 'beforeunload') { <p>This page is asking whether to leave. Continue leaves the page.</p> }
-      @if (request.type === 'prompt') { <label>Response<input [value]="draft()" (input)="updateDraft($event)" maxlength="4096" (keydown.enter)="answer(true)" /></label> }
-      <div class="actions">@if(request.type !== 'alert'){<button exButton (click)="answer(false)">Cancel</button>}<button exButton variant="primary" (click)="answer(true)">{{ request.type === 'beforeunload' ? 'Continue' : 'OK' }}</button></div>
-    </section>
+    <!-- The page's words sit apart from Elevenex's: the title and origin are ours, the quoted message is the site's. -->
+    <form class="site-dialog" [attr.data-type]="request.type" [attr.role]="request.type === 'prompt' ? 'dialog' : 'alertdialog'" aria-modal="true"
+      [attr.aria-labelledby]="titleId" [attr.aria-describedby]="request.type === 'beforeunload' || request.message ? messageId : null" [attr.inert]="open() ? null : ''" (submit)="$event.preventDefault(); answer(true)">
+      <header>
+        <span class="mark" aria-hidden="true"><ex-icon [name]="dialogIcon(request.type)" [size]="18" /></span>
+        <span class="heading">
+          <h2 [id]="titleId">{{ dialogTitle(request.type, site) }}</h2>
+          @if (site.origin) { <span class="origin" [title]="site.origin"><ex-icon name="globe" [size]="12" /><span>{{ site.origin }}</span></span> }
+        </span>
+      </header>
+      @if (request.type === 'beforeunload') {
+        <!-- Like other browsers, a leave prompt never shows site text: it can't dress up a reason to stay. -->
+        <p class="detail" [id]="messageId">Changes you made may not be saved.</p>
+      } @else if (request.message) {
+        <p class="site-message" [id]="messageId">{{ request.message }}</p>
+      }
+      @if (request.type === 'prompt') {
+        <input #response class="response" cdkFocusInitial maxlength="4096" spellcheck="false" autocomplete="off" aria-label="Response" [attr.aria-labelledby]="request.message ? messageId : null" [value]="draft()" (input)="updateDraft($event)" (focus)="response.select()" />
+      }
+      <footer>
+        @switch (request.type) {
+          @case ('alert') { <button exButton variant="primary" cdkFocusInitial (click)="answer(true)">OK</button> }
+          @case ('beforeunload') {
+            <button exButton variant="secondary" cdkFocusInitial (click)="answer(false)">Stay</button>
+            <button exButton variant="primary" (click)="answer(true)">Leave</button>
+          }
+          @default {
+            <button exButton variant="secondary" (click)="answer(false)">Cancel</button>
+            <button exButton variant="primary" (click)="answer(true)" [attr.cdkFocusInitial]="request.type === 'confirm' ? '' : null">OK</button>
+          }
+        }
+      </footer>
+    </form>
   </ex-modal-layer>
 }

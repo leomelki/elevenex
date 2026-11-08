@@ -26,6 +26,7 @@ The Browser side view: a real browser that belongs to the task, shared by the ag
 - A banner opens above the page ("The agent needs you to sign in"), with **I'm done**.
 - Password, card and code fields are masked in everything the agent reads. It never sees what you type there.
 - A passkey or security-key request opens `PasskeyAsk`, a sheet over the window (never inside the page), which asks, waits for the key and explains a failure.
+- A page's `alert`, `confirm`, `prompt` or leave prompt, and its uploads and downloads, wait in a request bar above the page; **Respond** opens `SiteDialog`, which names the asking site, quotes its message and answers only for that tab.
 
 **Point and ask** (⇧⌘C, or the target button). Three moments, all in `review` indigo so your selection never reads as the agent's teal:
 - **Point.** The page gets a thin indigo frame and one pill at its top: "Click an element to ask about it · Esc". The agent's frame, cursor and ring step aside. Where the page can be inspected on hover, the element under the pointer gets a light ring and a chip with its selector and source line ("button.pay · CheckoutForm.tsx:88", through source maps). That ring **snaps** to the pointer; a ring gliding behind a pointer only lags. Clicks never reach the page. Esc, the target button or ⇧⌘C again cancels.

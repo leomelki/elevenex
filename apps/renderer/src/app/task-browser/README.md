@@ -195,7 +195,12 @@ OS downloads (two concurrent, 32 MB each); agent downloads require the user.
 The remote display does **not** relay audio, page accessibility or device
 permission prompts. On capable hosts, site requests appear above the page:
 alert/confirm/prompt/beforeunload dialogs require a human response; prompt drafts
-remain local until confirmation. Uploads use the desktop's native file picker
+remain local until confirmation. `BrowserSiteRequestsComponent` renders the
+request bar and the `SiteDialog` design (see
+`docs/design-system/project/components/SiteDialog/README.md`). It names the
+asking site from the tab's `pageUrl` because runtime dialogs carry no frame
+origin, so a cross-origin iframe's dialog shows the tab's site. Leave prompts
+show fixed copy instead of site text. Uploads use the desktop's native file picker
 and downloads require its native Save dialog. No renderer filesystem paths or
 file bytes enter IPC or agent observations. Older hosts omit the capability and
 retain the update/Open outside explanation.

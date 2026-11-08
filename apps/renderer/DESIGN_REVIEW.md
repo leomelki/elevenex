@@ -341,6 +341,7 @@ IPC/security boundaries changed.
 | --- | --- | --- |
 | Changes review | The overview ruler and viewed-progress ring are missing. | `src/app/views/diff-review.component.html`, design `DiffReview` |
 | Browser point and ask | The production task browser cannot show the hover ring (main inspects only on click) and pauses the page after a pick, so the ring and card sit over a placeholder. Source lines and element screenshots stay withheld for privacy. The preview shows the full design. | `src/app/task-browser/task-browser.component.html`, design `BrowserView` |
+| Browser site dialogs | Runtime dialogs carry no frame origin, so a dialog from a cross-origin iframe is titled with the tab's site rather than "An embedded page says". | `src/app/task-browser/browser-site-requests.component.html`, design `SiteDialog` |
 | Diff content | Loading/content swaps and expanded context do not implement all specified height easing, line fade, and scroll-preservation choreography. | `src/app/views/diff-file.component.html`, design `DiffReview` |
 | Work timeline | Thread insertions/removals still lack the full grow/fade/collapse sequence. The sidebar now retains keyed rows and folds their complete occupied space, with separate reorder scopes. | `src/app/conversation/turns/work-timeline.component.html`, design Motion |
 | Composer popovers | Entry animation is present; CDK picker closure still removes the panel without the designed exit animation. | `src/app/conversation/composer/agent-picker.component.html` and sibling pickers, design Presence |
