@@ -8,6 +8,8 @@ arbitrary CDP. Driver generations are rechecked after every await; input is neve
 replayed after interruption.
 
 The remote host uses pinned `playwright-core@1.61.0` over a private Chromium pipe.
+Streamed WebAuthn uses Chromium's fixed proxy extension and a human-approved
+desktop authenticator broker. See [WebAuthn architecture and native limits](../../../../docs/task-browser-webauthn.md).
 `RuntimeBrowserPool` owns up to four sandboxed Chromium processes, persistent
 task profiles and the bounded managed installation;
 `RuntimeBrowserTask` owns its persistent shared profile, task SOCKS connector,

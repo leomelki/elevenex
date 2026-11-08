@@ -100,6 +100,8 @@ export interface TaskBrowserTab {
   readonly target?: BrowserElement;
 }
 export interface TaskBrowserState {
+  readonly webAuthn?: true;
+  readonly webAuthnRequest?: import('./browser-webauthn').BrowserWebAuthnRequest;
   /** Popup adoption, dialogs and bounded native file relay. */
   readonly workflows?: true;
   readonly pointerLock?: true;

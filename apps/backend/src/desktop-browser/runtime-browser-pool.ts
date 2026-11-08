@@ -6,6 +6,7 @@ import { installDownloadPolicy } from './runtime-download-policy.js';
 import { join, sep } from 'node:path';
 import { Injectable, type OnModuleDestroy } from '@nestjs/common';
 import { getElevenexDataRoot } from '../config/app-data-paths.js';
+import { prepareWebAuthnExtension } from './runtime-webauthn-extension.js';
 
 export function privateBrowserLoggingEnabled(
   environment: NodeJS.ProcessEnv,
@@ -58,6 +59,7 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
   private disposed = false;
   private readonly cleanup = new Set<Promise<void>>();
   private installation?: Promise<void>;
+  private extension?: Promise<string>;
   private readonly cache = join(getElevenexDataRoot(), 'browser-runtime');
   async acquire(identity: string, contextOptions: BrowserContextOptions): Promise<BrowserContext> {
     if (!/^[a-f0-9]{64}$/.test(identity)) throw new Error('Invalid browser profile identity');
@@ -83,6 +85,7 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
     const executablePath = join(this.cache, ...parts.slice(index));
     const profile = join(getElevenexDataRoot(), 'task-browser-profiles', identity);
     await mkdir(profile, { recursive: true, mode: 0o700 });
+    const extension = await (this.extension ??= prepareWebAuthnExtension(this.cache));
     const downloadsPath = await mkdtemp(join(tmpdir(), 'elevenex-downloads-'));
     const options = {
       downloadsPath,
@@ -95,7 +98,10 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
       handleSIGTERM: false,
       handleSIGHUP: false,
       timeout: 30000,
+      ignoreDefaultArgs: ['--disable-extensions'],
       args: [
+        '--disable-extensions-except=' + extension,
+        '--load-extension=' + extension,
         '--proxy-bypass-list=<-loopback>',
         '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
       ],

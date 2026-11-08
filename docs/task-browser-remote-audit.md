@@ -60,7 +60,12 @@ for limits and remaining local/remote differences.
 | Medium | HTML drag-and-drop, file drops and touch gestures | Add typed drag/touch lifecycles and cancellation beyond the repaired mouse dragging path; file drops should reuse the transfer boundary. |
 | Medium | Sharper idle text and lower capture/encode cost | Measure real WAN latency/quality first. CDP JPEG → H.264 still requires decoding/re-encoding and chroma subsampling; examine a full-resolution idle refresh or native capture before introducing another transport. |
 | Separate policy | Agent DOM/AX, screenshots, text entry, evaluation and debugging | The current tool deliberately withholds page observations. Implementing these requires an explicit privacy/observation design; this interaction revision preserves that policy. |
-| Separate product scope | Multiple spectators, web/mobile clients, profile import and passkeys | Add authenticated presentation gateways and scoped identity/permission ownership; persistent task profiles do not imply access to the user's ordinary browser profile. |
+| Separate product scope | Multiple spectators, web/mobile clients and profile import | Add authenticated presentation gateways and scoped identity/permission ownership; persistent task profiles do not imply access to the user's ordinary browser profile. |
+
+Explicit WebAuthn now has an engine-proxy / native-client boundary; see
+[its architecture and native capability limits](task-browser-webauthn.md).
+Conditional autofill, cross-origin ceremonies, security-key PIN entry and
+arbitrary macOS synced passkeys remain unsupported by the current adapter.
 
 ## Research and verification
 

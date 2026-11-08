@@ -177,6 +177,13 @@ browser reports capacity instead of silently exceeding the bound.
 
 ## Capabilities and extension boundaries
 
+Hosts advertising `webAuthn: true` can relay explicit WebAuthn registration and
+sign-in to the viewing device. Native consent names the requesting origin;
+ceremony options/results stay in main and the private viewer transport. No
+renderer control or credential access is added. See [WebAuthn architecture and
+native authenticator limits](../../../../../docs/task-browser-webauthn.md), including
+unsupported security-key PIN entry and arbitrary macOS synced passkeys.
+
 Theme and slow-network tools use private, fixed CDP commands, with no CDP bridge.
 Local guests support native accessibility, audio, file inputs and user-initiated
 OS downloads (two concurrent, 32 MB each); agent downloads require the user.

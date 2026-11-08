@@ -194,6 +194,12 @@ describe('Remote browser public HTTP behavior', () => {
     expect((await fetch(tcpUrl + '/desktop-browser/runtime/tasks/1/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).status).toBe(403);
     expect((await request('transfer', body, { 'x-elevenex-browser-view': 'invalid' })).status).toBe(403);
   });
+  it('confines WebAuthn options and responses to the private viewer lease', async () => {
+    const body = { requestId: '11111111-1111-4111-8111-111111111111' };
+    expect((await fetch(tcpUrl + '/desktop-browser/runtime/tasks/1/webauthn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).status).toBe(403);
+    expect((await request('webauthn', body, { 'x-elevenex-browser-view': 'invalid' })).status).toBe(403);
+    expect((await request('webauthn', body, { Origin: 'https://untrusted.example' })).status).toBe(403);
+  });
   it('waits for cancelled startup during host disposal and never restarts a disposed host', async () => {
     const owned = new RuntimeBrowserPool();
     const opening = owned.acquire('a'.repeat(64), {});

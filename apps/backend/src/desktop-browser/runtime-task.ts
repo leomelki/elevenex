@@ -13,9 +13,20 @@ import type {
 import { RuntimeBrowserTab } from './runtime-tab.js';
 import type { RuntimeBrowserPool } from './runtime-browser-pool.js';
 import { randomUUID } from 'node:crypto';
+import { RuntimeWebAuthn } from './runtime-webauthn.js';
 
 /** The task owns browser execution. A viewer owns only presentation and human input. */
 export class RuntimeBrowserTask {
+  readonly webAuthn = new RuntimeWebAuthn(() => this.revision++, origin => {
+    const matches = [...this.tabs.values()].filter(tab => {
+      try { return new URL(tab.documentUrl).origin === origin; } catch { return false; }
+    });
+    if (!matches.some(tab => this.isPresented(tab.id))) return false;
+    // Proxy API requests have origin identity, not a tab identity. Revoke agent
+    // control on every matching tab before exposing a human ceremony.
+    for (const tab of matches) if (tab.driver === 'agent') tab.takeover(true);
+    return true;
+  });
   readonly id = randomUUID();
   private readonly workflowBudget = new RuntimeWorkflowBudget();
   readonly tabs = new Map<string, RuntimeBrowserTab>();
@@ -127,6 +138,7 @@ export class RuntimeBrowserTask {
     this.expirePresentations();
   }
   reconcile(clearRequests = true): void {
+    void this.webAuthn.configure(false, false);
     this.clearPicker();
     this.layoutRevision++;
     this.selectionRevision++;
@@ -145,6 +157,10 @@ export class RuntimeBrowserTask {
   }
   state(): TaskBrowserState {
     return {
+      // Advertise the private protocol before the lazy Chromium launch so clients
+      // can opt in on connect without sending new fields to older engines.
+      webAuthn: true,
+      ...(this.webAuthn.snapshot() ? { webAuthnRequest: this.webAuthn.snapshot() } : {}),
       workflows: true,
       pointerLock: true,
       streamVersion: 1,
@@ -256,6 +272,7 @@ export class RuntimeBrowserTask {
         serviceWorkers: 'allow',
       });
       this.ownedContext = context;
+      await this.webAuthn.start(context);
       context.once('close', () => {
         if (this.ownedContext === context) {
           this.ownedContext = undefined;
@@ -555,6 +572,8 @@ export class RuntimeBrowserTask {
         }
       } else if (input.kind === 'handoff') {
         if (page.workflows.snapshot().length) throw new Error('Resolve site requests before handing control back');
+        const authentication = this.webAuthn.snapshot();
+        if (authentication && page.documentUrl && new URL(page.documentUrl).origin === authentication.origin) throw new Error('Finish authentication before handing control back');
         page.handoff(input.sessionId);
       }
       else if (input.kind === 'takeover' || input.kind === 'focus')
@@ -828,6 +847,7 @@ export class RuntimeBrowserTask {
     this.disposed = true;
     this.controller.abort();
     this.listeners.clear();
+    await this.webAuthn.destroy();
     this.presentations.clear();
     this.displayStarting.clear();
     this.inputTails.clear();

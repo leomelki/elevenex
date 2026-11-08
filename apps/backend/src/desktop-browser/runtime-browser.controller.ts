@@ -19,6 +19,10 @@ import { TasksService } from '../tasks/tasks.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { TaskBrowserServers } from './task-browser-servers.js';
 import { runtimeCommand, runtimeInput, runtimeTransfer } from './runtime-validation.js';
+const webAuthnResult = z.union([
+  z.object({ responseJson: z.string().min(2).max(65536) }).strict(),
+  z.object({ error: z.object({ name: z.enum(['NotAllowedError', 'AbortError', 'NotSupportedError']), message: z.string().max(200) }).strict() }).strict(),
+]);
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value);
@@ -75,8 +79,8 @@ export class RuntimeBrowserController {
     @Body() input: unknown,
   ) {
     const id = await this.task(request, value);
-    const { clientId } = parse(
-      z.object({ clientId: z.string().uuid() }).strict(),
+    const { clientId, webAuthn } = parse(
+      z.object({ clientId: z.string().uuid(), webAuthn: z.object({ platform: z.boolean() }).strict().optional() }).strict(),
       input,
     );
     const record = await this.tasks.record(id);
@@ -84,8 +88,24 @@ export class RuntimeBrowserController {
       .update(JSON.stringify([record.repoId, record.id, record.createdAt]))
       .digest('hex');
     const result = await this.browsers.connect(id, clientId, identity);
-    this.browsers.viewer(id, result.token).setPorts(await this.ports.ports(id));
+    const viewer = this.browsers.viewer(id, result.token);
+    await viewer.webAuthn.configure(!!webAuthn, webAuthn?.platform ?? false);
+    viewer.setPorts(await this.ports.ports(id));
     return result;
+  }
+  @Post('webauthn') async webAuthn(
+    @Req() request: Pick<Request, 'socket' | 'headers'>,
+    @Param('taskId') value: string,
+    @Headers('x-elevenex-browser-view') token: string,
+    @Body() input: unknown,
+  ) {
+    const id = await this.task(request, value);
+    const body = parse(z.object({ requestId: z.string().uuid(), result: webAuthnResult.optional() }).strict(), input);
+    const task = this.browsers.viewer(id, token);
+    try {
+      if (body.result) { await task.webAuthn.complete(body.requestId, body.result); return {}; }
+      return task.webAuthn.read(body.requestId);
+    } catch { throw new BadRequestException('Authentication expired'); }
   }
   @Get('state') async state(
     @Req() request: Pick<Request, 'socket' | 'headers'>,

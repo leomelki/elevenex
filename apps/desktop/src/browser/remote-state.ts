@@ -5,6 +5,7 @@ import type {
   TaskBrowserTab,
 } from "@elevenex/shared";
 import { browserId, browserUrl, record } from "./validation";
+import { webAuthnRequest } from './webauthn-validation';
 function invalid(): never {
   throw new Error("Incompatible remote browser state");
 }
@@ -152,6 +153,8 @@ export function remoteBrowserState(
   )
     invalid();
   return {
+    ...(raw['webAuthn'] === true ? { webAuthn: true as const } : {}),
+    ...(raw['webAuthnRequest'] === undefined ? {} : { webAuthnRequest: webAuthnRequest(raw['webAuthnRequest']) }),
     ...(raw['pointerLock'] === true ? { pointerLock: true } : {}),
     ...(raw['workflows'] === true ? { workflows: true } : {}),
     canDetach: raw['canDetach'] === true,

@@ -13,6 +13,7 @@ import { BrowserTaskProfiles } from './task-session';
 import { BrowserPersistence } from './persistence';
 import { browserId, command, layout, record, taskId, streamInput, windowContext } from './validation';
 import { BrowserAutomation } from './automation';
+import { WebAuthnBroker } from './webauthn-broker';
 import type { BrowserHost as BrowserTask, DesktopBrowserHost } from './host';
 interface WindowBrowsers { readonly placements: Map<string, TaskBrowserPlacement>; readonly tasks: Map<string, BrowserTask>; readonly opening: Map<string, Promise<BrowserTask>>; readonly automation: Map<DesktopBrowserHost, BrowserAutomation>; readonly attaching: Set<string>; surfaceSnapshot: string; readonly guests: Map<number, { contents: Electron.WebContents; timer: ReturnType<typeof setTimeout> }>; cleanup(): void; selection: number; requested?: string; selected?: BrowserTask }
 
@@ -21,6 +22,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
   const detached = new DetachedBrowserWindows(createBrowserWindow, (id, scope) => client.state(id).scope?.id === scope);
   const persistence = new BrowserPersistence(root);
   const profiles = new BrowserTaskProfiles();
+  const authenticator = new WebAuthnBroker();
   const availablePlacements = (id: number): readonly TaskBrowserPlacement[] => client.state(id).scope?.environment.kind === 'remote' ? ['desktop', 'desktop-proxy', 'machine'] : ['desktop'];
   const surfaces = (id: number) => detached.get(id) ? detached.surfaces(id) : [...(windows.get(id)?.tasks.values() ?? [])].flatMap(task => task.surfaces());
   const publishSurfaces = (id: number) => { const current = surfaces(id); const claims = windows.get(id)?.attaching; if (claims) for (const bootstrap of claims) if (!current.some(surface => surface.bootstrap === bootstrap)) claims.delete(bootstrap); const owner=windows.get(id),signature=JSON.stringify(current);if(owner&&owner.surfaceSnapshot!==signature){owner.surfaceSnapshot=signature;sendToWindow(id, 'task-browser:surfaces-changed', current);} };
@@ -109,7 +111,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
           const onFrame = (frame: import('@elevenex/shared').TaskBrowserFrame) => { if (!detached.frame(created, frame)) sendToWindow(id, 'task-browser:frame', frame); };
           // Local pages always embed natively; only a remote private host streams.
           const created: BrowserTask = placement === 'machine' && environment.kind === 'remote'
-            ? new RemoteTaskBrowser(scope, task, window, client, onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, remote, environment.kind === 'remote')
+            ? new RemoteTaskBrowser(scope, task, window, client, onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, remote, environment.kind === 'remote', authenticator)
             : new TaskBrowser(scope, task, window, client, remote, persistence, placement === 'desktop' ? identity : identity + ':' + placement, profiles, placement === 'desktop-proxy' && environment.kind === 'remote', onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, Number(reply.value['applicationPort']));
           if (created.engine === 'desktop') created.setPorts(reply.value.ports);
           let evict: [string, BrowserTask] | undefined;
@@ -265,5 +267,5 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
     }),
   ];
   const timer = setInterval(() => { for (const owner of windows.values()) for (const task of owner.tasks.values()) { task.maintain(); if (task !== owner.selected && !detached.has(task)) { if (task.engine === 'desktop') owner.automation.get(task)?.deactivate(task); } } detached.maintain(); }, 250);
-  return { permitsPointerLock(id: number) { return surfaces(id).some(surface => surface.presentation === 'stream' && surface.visible && surface.interactive && surface.driver !== 'agent' && surface.pointerLocked); }, permitsGuest(id: number, params: Record<string, string>) { return surfaces(id).some(surface => surface.partition === params['partition'] && surface.bootstrap === params['src']); }, dispose() { clearInterval(timer); detached.dispose(); for (const stop of stops) stop(); for (const owner of [...windows.values()]) owner.cleanup(); windows.clear(); }, flush: () => Promise.all([persistence.flush(), profiles.flush()]) };
+  return { permitsPointerLock(id: number) { return surfaces(id).some(surface => surface.presentation === 'stream' && surface.visible && surface.interactive && surface.driver !== 'agent' && surface.pointerLocked); }, permitsGuest(id: number, params: Record<string, string>) { return surfaces(id).some(surface => surface.partition === params['partition'] && surface.bootstrap === params['src']); }, dispose() { clearInterval(timer); authenticator.dispose(); detached.dispose(); for (const stop of stops) stop(); for (const owner of [...windows.values()]) owner.cleanup(); windows.clear(); }, flush: () => Promise.all([persistence.flush(), profiles.flush()]) };
 }

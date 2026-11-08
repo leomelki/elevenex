@@ -1,4 +1,6 @@
 import { RemoteBrowserFiles } from './remote-files';
+import { RemoteWebAuthn } from './remote-webauthn';
+import type { WebAuthnBroker } from './webauthn-broker';
 import { RemoteBrowserStream } from './remote-stream';
 import type { MachineBrowserHost } from "./host";
 import { remoteBrowserState } from "./remote-state";
@@ -36,8 +38,10 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
   private readonly detached = new Map<string, RemoteBrowserPresentation>();
   private readonly panel: RemoteBrowserPresentation;
   private readonly files: RemoteBrowserFiles;
+  private readonly webAuthn?: RemoteWebAuthn;
   private readonly layoutSequences = new Map<string, number>();
   private readonly ownerId: number;
+  private readonly ownerWindow: BrowserWindow;
   private readonly network: TaskBrowserNetwork;
   private readonly clientId = randomUUID();
   private state?: TaskBrowserState;
@@ -69,8 +73,13 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     private readonly deliver: (frame: TaskBrowserFrame) => void,
     remote: RemoteManager,
     remoteNetwork = true,
+    private readonly authenticator?: WebAuthnBroker,
   ) {
     this.ownerId = window.webContents.id;
+    this.ownerWindow = window;
+    if (authenticator) this.webAuthn = new RemoteWebAuthn(window, authenticator,
+      () => !this.disposed && !this.reconnect && this.selected() && this.visible() && this.client.state(this.ownerId).scope?.id === this.scopeId,
+      body => this.request('webauthn', body));
     this.files = new RemoteBrowserFiles(window, () => !this.disposed && !this.reconnect && this.selected() && this.client.state(this.ownerId).scope?.id === this.scopeId,
       body => this.request('transfer', body, 20000),
       async (tabId, requestId) => { if (!this.disposed && !this.reconnect) this.accept(await this.request('command', { kind: 'cancel-workflow', tabId, requestId })); });
@@ -309,6 +318,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     if (this.serverRevision >= 0 && state.revision === this.state?.revision) return;
     this.serverRevision = state.revision;
     this.state = state;
+    this.webAuthn?.sync(state.webAuthnRequest);
     for (const key of this.layoutSequences.keys())
       if (
         key !== "legacy" &&
@@ -484,7 +494,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     if (this.disposed || !this.selected()) return;
     this.connection = { phase: "connecting", message: "Connecting browser…" };
     const reply = record(
-      await this.request("connect", { clientId: this.clientId }),
+      await this.request("connect", { clientId: this.clientId, ...(this.authenticator && this.state?.webAuthn ? { webAuthn: { platform: await this.authenticator.platformAvailable(this.ownerWindow) } } : {}) }),
     );
     if (this.disposed) return;
     this.connectionRevision++;
@@ -553,6 +563,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     }
   }
   private fail(error?: unknown): void {
+    this.webAuthn?.cancel();
     if (this.disposed) return;
     this.connectionRevision++;
     this.stream?.destroy();
@@ -678,6 +689,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     }
     this.panel.maintain();
     for (const view of this.detached.values()) view.maintain();
+    this.webAuthn?.sync(this.state?.webAuthnRequest);
     if (!this.visible() && !this.reconnect && !this.connecting)
       this.disconnect();
   }
@@ -696,6 +708,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
     this.fail();
   }
   private disconnect(): void {
+    this.webAuthn?.cancel();
     if (this.reconnect) return;
     this.connection = { phase: "idle" };
     this.reconnect = true;
