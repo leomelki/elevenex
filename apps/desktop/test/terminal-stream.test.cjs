@@ -8,6 +8,7 @@ const { BackendClient } = require('../dist/backend-client/client');
 const { TerminalPreferences } = require('../dist/backend-client/terminal-preferences');
 const { terminalProfile } = require('../dist/backend-client/terminal-launch-validation');
 const { parseTerminalStreamPacket } = require('../dist/backend-client/terminal-stream-validation');
+const { connectTerminalStream } = require('../dist/backend-client/terminal-stream-connection');
 const vm = require('node:vm');
 const { WebSocketServer } = require('ws');
 const { createServer } = require('node:http');
@@ -16,6 +17,43 @@ const until = async predicate => {
   const end = Date.now() + 4000;
   while (!predicate()) { if (Date.now() > end) throw new Error('Terminal IPC condition timed out'); await new Promise(resolve => setTimeout(resolve, 5)); }
 };
+
+for (const mode of ['rejected-upgrade', 'server-close']) {
+  test(`stream diagnostics preserve ${mode} details without exposing capabilities or replaying input`, async context => {
+    const server = createServer(), wss = new WebSocketServer({ noServer: true });
+    const capability = 'a'.repeat(64);
+    let upgrades = 0;
+    server.on('upgrade', (request, socket, head) => {
+      upgrades++;
+      if (mode === 'rejected-upgrade') socket.destroy();
+      else wss.handleUpgrade(request, socket, head, peer => peer.close(4000, `Terminal unavailable: ${capability}`));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    context.after(() => { for (const peer of wss.clients) peer.terminate(); wss.close(); return new Promise(resolve => server.close(resolve)); });
+    const packets = [], diagnostics = [];
+    let released = 0, closed = 0;
+    const connection = connectTerminalStream('scope', { taskId: 1, terminalId: 2, after: 0, generation: null }, {
+      endpoint: { url: `http://127.0.0.1:${server.address().port}`, headers: { 'X-Elevenex-Code-Access': capability } },
+      signal: new AbortController().signal,
+      release: () => released++,
+    }, packet => packets.push(packet), () => closed++, diagnostic => diagnostics.push(diagnostic));
+    assert.equal(connection.ok, true);
+    context.after(() => connection.value.close());
+    assert.equal((await connection.value.ready).ok, false);
+    await until(() => connection.value.socket.readyState === 3);
+    assert.deepEqual(diagnostics, [mode === 'rejected-upgrade'
+      ? { type: 'error', detail: 'socket hang up' }
+      : { type: 'close', code: 4000, detail: 'Terminal unavailable: [redacted]' }]);
+    assert.deepEqual(packets, [{ type: 'closed', uncertain: false, message: 'Terminal connection interrupted. Reattaching never replays input.' }]);
+    assert.equal(JSON.stringify({ packets, diagnostics }).includes(capability), false);
+    assert.equal(upgrades, 1);
+    assert.equal(released, 1);
+    assert.equal(closed, 1);
+    connection.value.close(true);
+    assert.equal(diagnostics.length, 1);
+    assert.equal(released, 1);
+  });
+}
 
 test('trusted IPC pipelines over a private socket, validates cursors and isolates windows/scopes', async context => {
   const handlers = new Map(), ipc = {}, events = [];

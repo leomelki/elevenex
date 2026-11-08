@@ -430,6 +430,14 @@ validated domain packets. Credits span the socket and Electron IPC and are retur
 after xterm consumes output. Input is pipelined and never replayed. Scope/document
 changes abort both bounded reads and live leases.
 
+The edge proxy's shared `apps/frontend/proxy.conf.json` must expose the
+`/desktop-terminal` WebSocket prefix, including `/desktop-terminal/v1`. Runtime
+assembly copies this allowlist, so updating a desktop alone cannot repair an
+older remote runtime that omits the route; rebuild and install the backend too.
+Unpackaged desktop launches log bounded WebSocket errors and close codes/reasons
+in main's console, with private capability values redacted. These diagnostics
+do not enter renderer events or change the no-replay input contract.
+
 The PTY manager owns an isolated headless screen worker. Expired cursors restore a
 bounded checkpoint instead of treating an arbitrary output tail as complete screen
 state. Terminal-generated replies have one server owner, and replay cannot send

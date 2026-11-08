@@ -7,8 +7,9 @@ import type { TerminalLifetime } from './terminal-lifetime';
 import { registerTerminalStreamIpc } from './terminal-stream';
 import { TerminalPreferences } from './terminal-preferences';
 import { registerTerminalPreferencesIpc } from './terminal-preferences-ipc';
+import type { TerminalStreamDiagnostic } from './terminal-stream-connection';
 
-export function registerBackendClientIpc(client: BackendClient, trusted: TrustedSender, terminals?: Pick<TerminalLifetime, 'owner' | 'track'>, preferences = new TerminalPreferences(null)): () => void {
+export function registerBackendClientIpc(client: BackendClient, trusted: TrustedSender, terminals?: Pick<TerminalLifetime, 'owner' | 'track'>, preferences = new TerminalPreferences(null), diagnoseTerminal?: (diagnostic: TerminalStreamDiagnostic) => void): () => void {
   const stopState = handleForWindow('backend-client:state', trusted, (windowId, ...args) => {
     if (args.length !== 0) throw new Error('Backend client state accepts no arguments');
     return client.state(windowId);
@@ -22,7 +23,7 @@ export function registerBackendClientIpc(client: BackendClient, trusted: Trusted
   const stopWorkspace = registerWorkspaceIpc(client, trusted);
   const stopChat = registerSessionChatIpc(client, trusted);
   const stopTerminals = registerTaskTerminalIpc(client, trusted, terminals);
-  const stopStreams = registerTerminalStreamIpc(client, trusted);
+  const stopStreams = registerTerminalStreamIpc(client, trusted, diagnoseTerminal);
   const stopPreferences = registerTerminalPreferencesIpc(client, trusted, preferences);
   return () => { stopState(); stopInfo(); stopWorkspace(); stopChat(); stopTerminals(); stopStreams(); stopPreferences(); };
 }

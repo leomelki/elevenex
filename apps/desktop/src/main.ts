@@ -235,7 +235,7 @@ void app.whenReady().then(async () => {
   const unregisterClient = registerBackendClientIpc(backendClient.client, trusted, {
     get owner() { return terminals.owner; },
     track: (endpoint, engine) => terminals.track(endpoint, engine),
-  }, terminalPreferences);
+  }, terminalPreferences, app.isPackaged ? undefined : diagnostic => console.warn('Terminal stream interrupted:', diagnostic));
   const unregisterTerminalPorts = registerTerminalPorts(backendClient.client, remote, trusted, url => shell.openExternal(url));
   app.once('will-quit', () => { unregisterClient(); unregisterTerminalPorts(); });
   const unregisterRemote = registerRemoteIpc(remote, backend, trusted);

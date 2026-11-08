@@ -1,5 +1,5 @@
 import { WebSocket } from 'ws';
-import { connectTerminalStream, type TerminalStreamConnection } from './terminal-stream-connection';
+import { connectTerminalStream, type TerminalStreamConnection, type TerminalStreamDiagnostic } from './terminal-stream-connection';
 import type { BackendResult, TaskTerminalAttachment, TaskTerminalAttach, TaskTerminalStreamWrite } from '@elevenex/shared';
 import { handleForWindow, sendToWindow, type TrustedSender } from '../ipc';
 import type { BackendClient } from './client';
@@ -17,7 +17,7 @@ function attachment(raw: unknown): TaskTerminalAttachment {
 
 /** One visible attachment per window. End-to-end credits cover Electron IPC as
  * well as the network. Raw bytes never enter Angular's change graph. */
-export function registerTerminalStreamIpc(client: BackendClient, trusted: TrustedSender): () => void {
+export function registerTerminalStreamIpc(client: BackendClient, trusted: TrustedSender, diagnose?: (diagnostic: TerminalStreamDiagnostic) => void): () => void {
   const streams = new Map<number, TerminalStreamConnection>();
   const lookup = (window: number, scope: string, input: TaskTerminalAttachment): TerminalStreamConnection | undefined => {
     if (client.state(window).scope?.id !== scope) return undefined;
@@ -36,7 +36,7 @@ export function registerTerminalStreamIpc(client: BackendClient, trusted: Truste
       if (client.state(window).scope?.id === scope) sendToWindow(window, 'task-terminal:stream', {
         taskId: target.taskId, terminalId: target.terminalId, attachmentId: target.attachmentId, scopeId: scope, packet,
       });
-    }, stream => { if (streams.get(window) === stream) streams.delete(window); });
+    }, stream => { if (streams.get(window) === stream) streams.delete(window); }, diagnose);
     if (!connection.ok) return connection;
     streams.set(window, connection.value);
     return connection.value.ready;

@@ -7,6 +7,12 @@ import { parseTerminalStreamPacket } from './terminal-stream-validation';
 const accepted = { ok: true as const, value: { accepted: true as const } };
 const unavailable = (): BackendResult<never> => ({ ok: false, error: { code: 'unavailable', message: 'The terminal stream is unavailable. Reattach before typing.' } });
 
+export interface TerminalStreamDiagnostic {
+  readonly type: 'error' | 'close';
+  readonly detail: string;
+  readonly code?: number;
+}
+
 export interface TerminalStreamConnection {
   readonly ready: Promise<BackendResult<{ readonly accepted: true }>>;
   readonly target: TaskTerminalAttach;
@@ -24,6 +30,7 @@ export function connectTerminalStream(
   lease: { readonly endpoint: BackendEndpoint; readonly signal: AbortSignal; release(): void },
   emit: (packet: TaskTerminalStreamEvent['packet']) => void,
   closedConnection: (connection: TerminalStreamConnection) => void,
+  diagnose?: (diagnostic: TerminalStreamDiagnostic) => void,
 ): BackendResult<TerminalStreamConnection> {
     const { endpoint, signal, release } = lease;
     if (signal.aborted) { release(); return unavailable(); }
@@ -40,6 +47,14 @@ export function connectTerminalStream(
     try { socket = new WebSocket(url, { headers: endpoint.headers, perMessageDeflate: false, maxPayload: 1024 * 1024, handshakeTimeout: 10000, followRedirects: false }); }
     catch { release(); return unavailable(); }
     let closed = false, ready = false, sentInput = 0, ackInput = 0, delivery = 0, acknowledged = 0, cursor = target.after;
+    const report = (diagnostic: TerminalStreamDiagnostic) => {
+      if (closed || !diagnose) return;
+      // Diagnostics stay in main. Never include request URLs, headers or PTY
+      // data, and redact capabilities echoed by an upstream close/error.
+      let detail = diagnostic.detail;
+      for (const value of Object.values(endpoint.headers ?? {})) if (value) detail = detail.replaceAll(value, '[redacted]');
+      diagnose({ ...diagnostic, detail: detail.slice(0, 512) });
+    };
     let currentGeneration = target.generation;
     let restoring: { sequence: number; size: string; length: number } | undefined;
     const inputSizes = new Map<number, number>(); let pendingBytes = 0;
@@ -109,7 +124,8 @@ export function connectTerminalStream(
         if (packet.type === 'closed') stream.close();
       } catch { stream.close(true); }
     });
-    socket.on('error', () => stream.close(true)); socket.on('close', () => stream.close(true));
+    socket.on('error', error => { report({ type: 'error', detail: error.message }); stream.close(true); });
+    socket.on('close', (code, reason) => { report({ type: 'close', code, detail: reason.toString() }); stream.close(true); });
     socket.on('ping', () => { lastActivity = Date.now(); });
     return { ok: true, value: stream };
 }

@@ -1,5 +1,7 @@
 import { createServer } from 'node:http';
+import { join } from 'node:path';
 import { WebSocket } from 'ws';
+import { createEdgeProxyServer } from '../../proxy/edge-proxy.server.js';
 import { DesktopTerminalStream } from '../desktop-terminal-stream.js';
 import { DesktopTerminalGateway, terminalStreamAuthorized } from './desktop-terminal.gateway.js';
 
@@ -12,7 +14,7 @@ const until = async (predicate: () => boolean) => {
 };
 interface Packet { type: string; delivery?: number; output?: { data: string }; sequence?: number; writable?: boolean }
 
-async function setup() {
+async function setup(mode: 'direct' | 'local' | 'upstream' = 'direct') {
   const stream = new DesktopTerminalStream(); stream.append('$ ');
   const commands: string[] = [];
   let hold: Promise<void> | undefined;
@@ -32,7 +34,23 @@ async function setup() {
   const gateway = new DesktopTerminalGateway(service as never), server = createServer();
   gateway.attachToServer(server);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address(); if (!address || typeof address === 'string') throw new Error('No server address');
+  const backendAddress = server.address();
+  if (!backendAddress || typeof backendAddress === 'string')
+    throw new Error('No server address');
+  const proxy =
+    mode === 'direct'
+      ? undefined
+      : createEdgeProxyServer({
+          repoRoot: join(__dirname, '../../../../..'),
+          ...(mode === 'local'
+            ? { localHttpServer: server }
+            : { upstreamOrigin: `http://127.0.0.1:${backendAddress.port}` }),
+        });
+  if (proxy)
+    await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+  const address = (proxy ?? server).address();
+  if (!address || typeof address === 'string')
+    throw new Error('No stream address');
   const sockets: WebSocket[] = [];
   async function connect(autoAck = true) {
     const ws = new WebSocket(`ws://127.0.0.1:${address && typeof address !== 'string' ? address.port : 0}/desktop-terminal/v1?taskId=1&terminalId=2&after=0`);
@@ -47,27 +65,38 @@ async function setup() {
   }
   return { stream, commands, service, connect, hold: (promise: Promise<void>) => { hold = promise; }, close: async () => {
     for (const socket of sockets) socket.terminate(); gateway.onModuleDestroy();
+    if (proxy)
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
     await new Promise<void>(resolve => server.close(() => resolve()));
   } };
 }
 
 describe('Desktop terminal bidirectional protocol', () => {
-  it('pushes output immediately and accepts pipelined input independently of remote acknowledgements', async () => {
-    const fixture = await setup();
-    try {
-      const { ws, packets } = await fixture.connect();
-      let release!: () => void; fixture.hold(new Promise(resolve => { release = resolve; }));
-      for (const [index, data] of ['a', 'b'].entries()) ws.send(JSON.stringify({ type: 'input', kind: 'text', sequence: index + 1, generation: fixture.stream.generation, data }));
-      await until(() => fixture.service.command.mock.calls.length === 1);
-      expect(packets.some(packet => packet.type === 'input-ack')).toBe(false);
-      release(); await until(() => fixture.commands.length === 2);
-      expect(fixture.commands).toEqual(['a', 'b']);
-      await until(() => packets.some(packet => packet.type === 'input-ack' && packet.sequence === 2));
-      fixture.stream.append('pushed');
-      await until(() => packets.some(packet => packet.output?.data.includes('pushed')));
-      expect(fixture.service.attach).toHaveBeenCalledTimes(1);
-    } finally { await fixture.close(); }
-  });
+  it.each(['direct', 'local', 'upstream'] as const)(
+    'pushes output and accepts pipelined input independently of acknowledgements via %s',
+    async (mode) => {
+      const fixture = await setup(mode);
+      try {
+        const { ws, packets } = await fixture.connect();
+        let release!: () => void;
+        fixture.hold(new Promise((resolve) => { release = resolve; }));
+        for (const [index, data] of ['a', 'b'].entries()) {
+          ws.send(JSON.stringify({ type: 'input', kind: 'text', sequence: index + 1, generation: fixture.stream.generation, data }));
+        }
+        await until(() => fixture.service.command.mock.calls.length === 1);
+        expect(packets.some(packet => packet.type === 'input-ack')).toBe(false);
+        release();
+        await until(() => fixture.commands.length === 2);
+        expect(fixture.commands).toEqual(['a', 'b']);
+        await until(() => packets.some(packet => packet.type === 'input-ack' && packet.sequence === 2));
+        fixture.stream.append('pushed');
+        await until(() => packets.some(packet => packet.output?.data.includes('pushed')));
+        expect(fixture.service.attach).toHaveBeenCalledTimes(1);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
   it('bounds a stalled consumer and transfers input/resize ownership without stopping the process', async () => {
     const fixture = await setup();
     try {
